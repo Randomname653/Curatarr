@@ -1,0 +1,103 @@
+# ==========================================
+# Curatarr - Watertight .gitignore
+# ==========================================
+
+# 1. Credentials & Environments (CRITICAL)
+# ==========================================
+.env
+.env.*
+*.pem
+*.key
+secret.key
+
+# 2. Virtual Environments
+# ==========================================
+venv/
+.venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 3. Databases & Vector Stores
+# ==========================================
+# Lokale SQLite-Datenbanken (verhindert das Hochladen deiner User-Historie)
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# ChromaDB Vektor-Speicher (oft gigantisch groß)
+chroma_db/
+chroma/
+vector_store/
+.chroma/
+
+# 4. Python Specific
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 5. Logs & Temp Files
+# ==========================================
+*.log
+logs/
+tmp/
+temp/
+*.bak
+*.swp
+*.tmp
+
+# 6. OS & IDE Specific
+# ==========================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# VS Code / JetBrains
+.vscode/
+.idea/
+*.code-workspace
+
+# 7. Frontend / Node (Falls später erweitert wird)
+# ==========================================
+node_modules/
+npm-debug.log
+yarn-error.log
+# 8. One-off Debug & Repair Scripts
+# ==========================================
+debug_*.py
+fix_*.py
+repair_*.py
+migrate_*.py
+clean_*.py

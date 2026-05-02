@@ -1,0 +1,2019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curatarr</title>
+<style>
+:root {
+  --bg: #1a1d23;
+  --bg2: #21252e;
+  --bg3: #282d38;
+  --border: #2e3340;
+  --border2: #3a4050;
+  --amber: #e5a00d;
+  --amber2: #f0b429;
+  --amber-dim: rgba(229,160,13,.12);
+  --text: #c8cdd8;
+  --text2: #8b91a0;
+  --text3: #555e6e;
+  --danger: #e55353;
+  --danger-dim: rgba(229,83,83,.12);
+  --success: #3ddc97;
+  --success-dim: rgba(61,220,151,.1);
+  --info: #5b8dee;
+  --radius: 6px;
+  --sidebar-w: 220px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── TOPBAR ── */
+#topbar { height: 46px; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 12px; flex-shrink: 0; z-index: 10; }
+#logo { font-size: 15px; font-weight: 700; color: var(--amber); letter-spacing: .5px; margin-right: 4px; }
+#logo span { color: var(--text2); font-weight: 400; font-size: 11px; margin-left: 4px; }
+.tb-spacer { flex: 1; }
+#msg-bell { position: relative; cursor: pointer; background: none; border: none; color: var(--text2); padding: 6px; border-radius: var(--radius); transition: color .15s; }
+#msg-bell:hover { color: var(--amber); }
+#msg-badge { position: absolute; top: 2px; right: 2px; background: var(--amber); color: #000; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 3px; }
+#msg-badge.show { display: flex; }
+#user-pill { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px 4px 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); cursor: pointer; }
+#user-pill:hover { border-color: var(--border2); }
+.avatar { width: 20px; height: 20px; border-radius: 50%; background: var(--amber-dim); border: 1px solid var(--amber); display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--amber); font-weight: 700; }
+
+/* ── LAYOUT ── */
+#layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── SIDEBAR ── */
+#sidebar { width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
+.sb-section { padding: 8px 0; }
+.sb-label { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; padding: 8px 16px 4px; }
+.sb-item { display: flex; align-items: center; gap: 10px; padding: 8px 16px; cursor: pointer; color: var(--text2); border-left: 2px solid transparent; transition: all .12s; user-select: none; }
+.sb-item:hover { background: var(--bg3); color: var(--text); }
+.sb-item.active { background: var(--amber-dim); color: var(--amber); border-left-color: var(--amber); }
+.sb-item svg { flex-shrink: 0; opacity: .7; }
+.sb-item.active svg { opacity: 1; }
+.sb-footer { margin-top: auto; padding: 12px; border-top: 1px solid var(--border); }
+.sb-footer button { width: 100%; background: none; border: 1px solid var(--border); color: var(--text2); padding: 7px; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
+.sb-footer button:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── CONTENT ── */
+#content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+.view.active { display: flex; }
+.view-header { padding: 20px 24px 0; flex-shrink: 0; }
+.view-header h1 { font-size: 18px; font-weight: 600; color: var(--text); }
+.view-header p { color: var(--text2); margin-top: 4px; font-size: 13px; }
+.view-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
+
+/* ── CAT TABS ── */
+.cat-tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.cat-tab { background: none; border: none; color: var(--text2); padding: 8px 16px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .12s; }
+.cat-tab:hover { color: var(--text); }
+.cat-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
+
+/* ── CHAT ── */
+#chat-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+#chat-view.active { display: flex; }
+#messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+.msg { max-width: 72%; line-height: 1.6; font-size: 13px; }
+.msg.user { align-self: flex-end; background: var(--amber); color: #000; padding: 10px 14px; border-radius: 12px 12px 3px 12px; font-weight: 500; }
+.msg.assistant { align-self: flex-start; background: var(--bg3); border: 1px solid var(--border); padding: 10px 14px; border-radius: 12px 12px 12px 3px; }
+.msg.assistant .fb { display: flex; gap: 6px; margin-top: 8px; }
+.fb-btn { background: none; border: 1px solid var(--border); color: var(--text3); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all .12s; }
+.fb-btn:hover { border-color: var(--amber); color: var(--amber); }
+#chat-input-area { padding: 12px 24px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-shrink: 0; }
+#chat-input { flex: 1; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; resize: none; height: 44px; font-family: inherit; }
+#chat-input:focus { outline: none; border-color: var(--amber); }
+#send-btn { background: var(--amber); color: #000; border: none; padding: 10px 18px; border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
+#send-btn:hover { background: var(--amber2); }
+
+/* ── TABLES ── */
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text3); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; }
+.tbl td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tr:hover td { background: var(--bg3); }
+.tbl-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+
+/* ── BADGES ── */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge.amber { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(229,160,13,.25); }
+.badge.danger { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(229,83,83,.25); }
+.badge.success { background: var(--success-dim); color: var(--success); border: 1px solid rgba(61,220,151,.2); }
+.badge.muted { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+
+/* ── CARDS ── */
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.card h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.card p { font-size: 12px; color: var(--text2); line-height: 1.5; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.stat-row { display: flex; gap: 12px; margin-bottom: 20px; }
+.stat-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.stat-box .num { font-size: 24px; font-weight: 700; color: var(--amber); }
+.stat-box .lbl { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+/* ── BUTTONS ── */
+.btn { padding: 7px 14px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: all .12s; }
+.btn-primary { background: var(--amber); color: #000; }
+.btn-primary:hover { background: var(--amber2); }
+.btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { border-color: var(--border2); }
+.btn-danger { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(229,83,83,.25); }
+.btn-danger:hover { background: rgba(229,83,83,.2); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* ── FORMS ── */
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; font-weight: 500; }
+.form-group input, .form-group select { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: var(--radius); font-size: 13px; font-family: inherit; }
+.form-group input:focus, .form-group select:focus { outline: none; border-color: var(--amber); }
+.form-group .hint { font-size: 11px; color: var(--text3); margin-top: 4px; line-height: 1.5; }
+.form-group .used-for { font-size: 11px; color: var(--amber); margin-top: 3px; }
+.test-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; }
+.test-status.ok { color: var(--success); }
+.test-status.err { color: var(--danger); }
+
+/* ── PROGRESS ── */
+.progress-bar { background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; margin-top: 8px; }
+.progress-fill { height: 100%; background: var(--amber); border-radius: 4px; transition: width .3s; }
+.progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 4px; }
+
+/* ── SETUP WIZARD ── */
+#setup-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 100; display: flex; align-items: center; justify-content: center; }
+#setup-overlay.hidden { display: none; }
+#setup-box { width: 560px; max-height: 90vh; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
+#setup-box .setup-header { padding: 24px 28px 16px; border-bottom: 1px solid var(--border); }
+#setup-box .setup-header h1 { font-size: 20px; font-weight: 700; color: var(--amber); }
+#setup-box .setup-header p { font-size: 13px; color: var(--text2); margin-top: 4px; }
+.setup-steps { display: flex; gap: 0; padding: 16px 28px 0; border-bottom: 1px solid var(--border); }
+.setup-step-dot { flex: 1; text-align: center; padding-bottom: 12px; font-size: 11px; color: var(--text3); position: relative; border-bottom: 2px solid var(--border); }
+.setup-step-dot.active { color: var(--amber); border-bottom-color: var(--amber); }
+.setup-step-dot.done { color: var(--success); border-bottom-color: var(--success); }
+.setup-body { padding: 24px 28px; }
+.setup-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 28px 20px; border-top: 1px solid var(--border); margin-top: 8px; }
+
+/* ── AUTH SCREEN ── */
+#auth-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 99; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+#auth-overlay.hidden { display: none; }
+#onboarding-overlay.hidden { display: none !important; }
+#auth-overlay .logo-big { font-size: 32px; font-weight: 800; color: var(--amber); letter-spacing: 1px; }
+#auth-overlay p { color: var(--text2); max-width: 360px; text-align: center; line-height: 1.6; font-size: 13px; }
+#pin-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; text-align: center; width: 340px; }
+#pin-box .pin-code { font-size: 36px; font-weight: 800; letter-spacing: 10px; color: var(--amber); margin: 12px 0; font-family: monospace; }
+#pin-box small { font-size: 12px; color: var(--text2); }
+
+/* ── MESSAGES PANEL ── */
+#msg-panel { position: fixed; right: 16px; top: 60px; width: 360px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 50; display: none; }
+#msg-panel.open { display: block; }
+#msg-panel .mp-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+.msg-item { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .12s; }
+.msg-item:hover { background: var(--bg3); }
+.msg-item:last-child { border-bottom: none; }
+.msg-item .mi-text { font-size: 13px; line-height: 1.5; }
+.msg-item .mi-time { font-size: 11px; color: var(--text3); margin-top: 4px; }
+.msg-item .mi-badge { font-size: 10px; background: var(--amber-dim); color: var(--amber); padding: 1px 6px; border-radius: 4px; }
+#msg-empty { padding: 24px; text-align: center; color: var(--text3); font-size: 13px; }
+
+/* ── DELETION FEEDBACK ── */
+.del-row { display: flex; gap: 8px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.del-row:last-child { border-bottom: none; }
+.del-info { flex: 1; }
+.del-title { font-weight: 600; font-size: 13px; }
+.del-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.del-reason { font-size: 12px; color: var(--text3); margin-top: 4px; }
+.del-comment { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: var(--radius); font-size: 12px; margin-top: 8px; font-family: inherit; resize: none; height: 60px; }
+.del-comment:focus { outline: none; border-color: var(--amber); }
+.del-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+/* ── MISC ── */
+.loading { color: var(--text3); font-style: italic; font-size: 13px; }
+.divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.inline-flex { display: flex; align-items: center; gap: 8px; }
+.ml-auto { margin-left: auto; }
+select option { background: var(--bg2); }
+</style>
+</head>
+<body>
+
+<!-- SETUP OVERLAY -->
+<div id="setup-overlay">
+  <div id="setup-box">
+    <div class="setup-header">
+      <h1>⚙️ Curatarr Setup</h1>
+      <p>Let's connect your services. You only need to fill in what you actually use.</p>
+    </div>
+    <div class="setup-steps">
+      <div class="setup-step-dot active" id="step-dot-0">Plex</div>
+      <div class="setup-step-dot" id="step-dot-1">Ollama</div>
+      <div class="setup-step-dot" id="step-dot-2">Metadata</div>
+      <div class="setup-step-dot" id="step-dot-3">*arr Services</div>
+      <div class="setup-step-dot" id="step-dot-4">Done</div>
+    </div>
+    <div class="setup-body" id="setup-body"></div>
+    <div class="setup-nav">
+      <button class="btn btn-secondary" id="setup-back" onclick="setupNav(-1)" style="visibility:hidden">← Back</button>
+      <span id="setup-step-label" style="font-size:12px;color:var(--text3)">Step 1 of 5</span>
+      <button class="btn btn-primary" id="setup-next" onclick="setupNav(1)">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- AUTH OVERLAY -->
+<div id="auth-overlay" class="hidden">
+  <div class="logo-big">Curatarr</div>
+  <p>Your personal AI media curator for Plex. Sign in to continue.</p>
+  <button class="btn btn-primary" style="padding:12px 28px;font-size:14px" onclick="startPlexLogin()">Sign in with Plex</button>
+  <div id="pin-box" style="display:none">
+    <p style="font-size:13px;color:var(--text2)">Enter this PIN at plex.tv/link</p>
+    <div class="pin-code" id="pin-code">···· ····</div>
+    <small id="poll-status">Waiting for authentication…</small>
+  </div>
+</div>
+
+<!-- PROACTIVE MESSAGES PANEL -->
+<div id="msg-panel">
+  <div class="mp-header">
+    <span>🤖 Curator Messages</span>
+    <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px" onclick="toggleMsgPanel()">×</button>
+  </div>
+  <div id="msg-list"><div id="msg-empty">No new messages</div></div>
+</div>
+
+<!-- ONBOARDING OVERLAY -->
+<div id="onboarding-overlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:90;display:flex;align-items:center;justify-content:center">
+  <div style="width:520px;max-height:90vh;overflow-y:auto;background:var(--bg2);border:1px solid var(--border);border-radius:10px">
+    <div style="padding:24px 28px 16px;border-bottom:1px solid var(--border)">
+      <h1 id="onboarding-title" style="font-size:18px;font-weight:700;color:var(--amber)"></h1>
+      <p id="onboarding-sub" style="font-size:13px;color:var(--text2);margin-top:6px;line-height:1.5"></p>
+    </div>
+    <div id="onboarding-body" style="padding:24px 28px"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="topbar">
+  <span id="logo">Curatarr <span>1.0</span></span>
+  <div class="tb-spacer"></div>
+  <button id="msg-bell" onclick="toggleMsgPanel()" title="Curator messages">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    <div id="msg-badge"></div>
+  </button>
+  <div id="user-pill" onclick="toggleUserMenu()">
+    <div class="avatar" id="user-avatar">?</div>
+    <span id="user-name">Not signed in</span>
+  </div>
+</div>
+
+<div id="layout">
+  <nav id="sidebar">
+    <div class="sb-section">
+      <div class="sb-label">Main</div>
+      <div class="sb-item active" onclick="showView('chat',this)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Chat
+      </div>
+      <div class="sb-item" onclick="showView('history',this)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        History & Taste
+      </div>
+      <div class="sb-item" onclick="showView('recs',this)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Recommendations
+      </div>
+      <div class="sb-item" onclick="showView('deletions',this)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        Deletions
+      </div>
+    </div>
+    <div class="sb-section">
+      <div class="sb-label">System</div>
+      <div class="sb-item" onclick="showView('enrich',this)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        Knowledge Base
+      </div>
+      <div class="sb-item" onclick="showView('tasks',this)" id="tasks-nav">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Activity
+        <span id="tasks-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none">0</span>
+      </div>
+      <div class="sb-item" onclick="showView('libraries',this)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        Libraries
+      </div>
+      <div class="sb-item admin-only" onclick="showView('admin',this)" style="display:none">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Users
+      </div>
+    </div>
+    <div class="sb-footer">
+      <button onclick="logout()">Sign out</button>
+    </div>
+  </nav>
+
+  <div id="content">
+
+    <!-- CHAT -->
+    <div class="view active" id="chat-view">
+      <div id="messages">
+        <div class="msg assistant">
+          👋 Hey! I'm Curatarr — your personal media curator. Ask me what to watch, how to clean up your library, or anything about your taste.
+        </div>
+      </div>
+      <div id="chat-input-area">
+        <textarea id="chat-input" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <!-- HISTORY & TASTE -->
+    <div class="view" id="history-view">
+      <div class="view-header">
+        <h1>History & Taste</h1>
+        <p>Your watch history and computed taste profile</p>
+      </div>
+      <div class="view-body">
+        <div class="inline-flex" style="margin-bottom:16px;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="syncHistory(false)">🔄 Sync Plex</button>
+          <button class="btn btn-secondary" onclick="syncHistory(true)">⚡ Force sync</button>
+          <button class="btn btn-secondary" onclick="loadHistoryStatus()">Refresh</button>
+          <button class="btn btn-secondary" onclick="recomputeTaste()">🧠 Recompute taste</button>
+          <button class="btn btn-secondary" onclick="showView('libraries',document.querySelector('.sb-item[onclick*=libraries]'))">⚙️ Library Config</button>
+        </div>
+        <div id="history-stats" style="margin-bottom:20px"></div>
+        <div class="cat-tabs" id="taste-tabs"></div>
+        <div id="taste-content"></div>
+        <hr class="divider">
+        <div id="recent-history"></div>
+      </div>
+    </div>
+
+    <!-- RECOMMENDATIONS -->
+    <div class="view" id="recs-view">
+      <div class="view-header">
+        <h1>Recommendations</h1>
+        <p>Curatarr's personalised picks based on your taste profile</p>
+      </div>
+      <div class="view-body">
+        <div class="cat-tabs">
+          <button class="cat-tab active" onclick="loadRecs(null,this)">All</button>
+          <button class="cat-tab" onclick="loadRecs('movie',this)">🎬 Movies</button>
+          <button class="cat-tab" onclick="loadRecs('show',this)">📺 TV Shows</button>
+          <button class="cat-tab" onclick="loadRecs('anime',this)">⛩️ Anime</button>
+          <button class="cat-tab" onclick="loadRecs('music',this)">🎵 Music</button>
+        </div>
+        <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+            <button id="src-cache-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecSource('cache',this)">📚 My Library</button>
+            <button id="src-ext-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecSource('external',this)">🌐 Discover</button>
+          </div>
+          <button class="btn btn-secondary" onclick="loadRecs(currentRecsCategory,null,true)">🔄 Regenerate</button>
+          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">Showing picks from your downloaded library</span>
+        </div>
+        <div id="recs-content"><p class="loading">Click "Get recommendations" to load…</p></div>
+      </div>
+    </div>
+
+    <!-- DELETIONS -->
+    <div class="view" id="deletions-view">
+      <div class="view-header">
+        <h1>Deletion Proposals</h1>
+        <p>Items Curatarr thinks you can free up. Each needs your approval. Add comments to teach Curatarr your reasoning.</p>
+      </div>
+      <div class="view-body">
+        <div class="cat-tabs">
+          <button class="cat-tab active" onclick="loadDeletions(null,this)">All</button>
+          <button class="cat-tab" onclick="loadDeletions('movie',this)">🎬 Movies</button>
+          <button class="cat-tab" onclick="loadDeletions('show',this)">📺 TV Shows</button>
+          <button class="cat-tab" onclick="loadDeletions('anime',this)">⛩️ Anime</button>
+          <button class="cat-tab" onclick="loadDeletions('music',this)">🎵 Music</button>
+        </div>
+        <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary" onclick="loadDeletions(currentDelCategory,null,true)">Analyse library</button>
+          <button class="btn btn-secondary" onclick="loadDeletions(currentDelCategory)">Show cached</button>
+          <span style="font-size:12px;color:var(--text3)">Nothing is deleted without your explicit approval.</span>
+        </div>
+        <div id="del-content"></div>
+      </div>
+    </div>
+
+    <!-- KNOWLEDGE BASE -->
+    <div class="view" id="enrich-view">
+      <div class="view-header">
+        <h1>Knowledge Base</h1>
+        <p>Fetch metadata from TMDB, AniList, and MusicBrainz, then compute real embedding-based taste vectors.</p>
+      </div>
+      <div class="view-body">
+        <div id="enrich-overview" style="margin-bottom:20px"></div>
+
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+          <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Enrich by category</h3>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> 🎵 Music</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-movie" checked> 🎬 Movies</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-show" checked> 📺 TV Shows</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-anime" checked> ⛩️ Anime</label>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <span style="font-size:12px;color:var(--text3)">Source:</span>
+            <label style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="watch_history" checked> Watch history only</label>
+            <label style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="all"> Watch history + full ARR libraries</label>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="startEnrichNew()">Start Enrichment</button>
+            <button class="btn btn-secondary" onclick="loadEnrichStatus()">Refresh</button>
+            <button class="btn btn-secondary" onclick="computeTaste()">Recompute taste vectors</button>
+            <button class="btn btn-secondary" style="color:var(--danger);border-color:var(--danger)"
+              onclick="startEnrichForce(this)"
+              title="Clears cache and re-enriches all selected categories — use after model or prompt changes">
+              🔄 Force Re-Enrich
+            </button>
+          </div>
+        </div>
+
+        <div id="enrich-progress-area"></div>
+        <div id="enrich-cat-status"></div>
+
+        <hr class="divider" style="margin:24px 0">
+
+        <!-- MAPPING STATS -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <h3 style="font-size:14px;font-weight:600">Anime ID Mapping</h3>
+          <button class="btn btn-secondary btn-sm" onclick="loadMappingStats()">Check stats</button>
+          <button class="btn btn-secondary btn-sm" onclick="checkMappingCoverage()">Coverage check</button>
+        </div>
+        <div id="mapping-stats" style="font-size:12px;color:var(--text3)">anime-lists crossref database — resolves TVDB→AniDB→AniList IDs for your Sonarr library</div>
+
+        <hr class="divider" style="margin:24px 0">
+
+        <!-- PROFILE BROWSER -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <h3 style="font-size:14px;font-weight:600">Profile Browser</h3>
+          <span style="font-size:12px;color:var(--text3)">Inspect enriched metadata profiles</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <select id="profile-cat" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+            <option value="movie">🎬 Movies</option>
+            <option value="show">📺 TV Shows</option>
+            <option value="anime">⛩️ Anime</option>
+            <option value="music">🎵 Music</option>
+          </select>
+          <input id="profile-search" placeholder="Search title…" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px;width:180px">
+          <button class="btn btn-secondary btn-sm" onclick="loadProfiles()">Browse</button>
+        </div>
+        <div id="profile-browser"></div>
+      </div>
+    </div>
+
+    <!-- LIBRARIES -->
+    <div class="view" id="libraries-view">
+      <div class="view-header">
+        <h1>Library Configuration</h1>
+        <p>Map your Plex libraries so Curatarr knows what to do with each one.</p>
+      </div>
+      <div class="view-body">
+        <div id="lib-config-content"><p class="loading">Loading…</p></div>
+        <button class="btn btn-primary" style="margin-top:16px" onclick="saveLibraries()">Save Configuration</button>
+        <hr class="divider" style="margin:24px 0">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <h3 style="font-size:14px;font-weight:600">Orphaned Libraries</h3>
+          <button class="btn btn-secondary btn-sm" onclick="checkOrphans()">Check for orphaned entries</button>
+        </div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">History entries from Plex libraries that no longer exist in your config. These are missing from your taste profile.</p>
+        <div id="orphan-content"></div>
+      </div>
+    </div>
+
+    <!-- TASKS / ACTIVITY -->
+    <div class="view" id="tasks-view">
+      <div class="view-header">
+        <h1>Activity</h1>
+        <p>Live background tasks and automation history</p>
+      </div>
+      <div class="view-body">
+        <div id="tasks-list"><p class="loading">Connecting to task stream…</p></div>
+        <hr class="divider" style="margin:20px 0">
+        <h3 style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:12px">Last Run Per Type</h3>
+        <div id="tasks-history"><p class="loading" style="font-size:12px">Loading history…</p></div>
+      </div>
+    </div>
+
+    <!-- ADMIN -->
+    <div class="view admin-only" id="admin-view">
+      <div class="view-header"><h1>User Management</h1></div>
+      <div class="view-body">
+        <button class="btn btn-secondary" onclick="loadUsers()" style="margin-bottom:16px">Refresh</button>
+        <div id="user-list"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('curatarr_token') || '';
+let pendingDiscussContext = null;
+let currentUser = null;
+let pollInterval = null;
+let lastJobId = null;
+let libraryCfg = [];
+let setupData = {};
+let setupStep = 0;
+const SETUP_STEPS = ['plex','ollama','metadata','arr','done'];
+const CAT_LABELS = {music:'🎵 Music', movie:'🎬 Movies', show:'📺 TV Shows', anime:'⛩️ Anime'};
+
+// ── BOOT ──────────────────────────────────────────────────────────────────────
+window.onload = async () => {
+  // Check if setup is needed
+  const status = await api('/api/setup/status').catch(()=>({first_run:true}));
+  if (status.first_run) {
+    renderSetupStep(0);
+    return;
+  }
+  document.getElementById('setup-overlay').classList.add('hidden');
+
+  if (token) {
+    try {
+      const r = await api('/api/auth/status');
+      if (r.authenticated) { setUser(r); showApp(); return; }
+    } catch {}
+    token = ''; localStorage.removeItem('curatarr_token');
+  }
+  document.getElementById('auth-overlay').classList.remove('hidden');
+};
+
+// ── SETUP WIZARD ──────────────────────────────────────────────────────────────
+const SETUP_CONTENT = {
+  plex: () => `
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Plex Connection</h2>
+    <div class="form-group">
+      <label>Plex Server URL</label>
+      <input id="s-plex-url" placeholder="http://192.168.1.100:32400" value="${setupData.plex_url||''}">
+      <div class="hint">The local IP address of your Plex server.</div>
+    </div>
+    <div class="form-group">
+      <label>Plex Auth Token</label>
+      <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${setupData.plex_token||''}">
+      <div class="hint">Settings → Troubleshooting → "Show XML" → copy the X-Plex-Token from the URL.</div>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="testConn('plex')">Test connection</button>
+    <div id="test-plex-result"></div>`,
+
+  ollama: () => `
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Ollama — Local AI</h2>
+    <div class="form-group">
+      <label>Ollama Endpoint</label>
+      <input id="s-ollama" placeholder="http://localhost:11434" value="${setupData.ollama_endpoint||'http://localhost:11434'}">
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="testConn('ollama')">Detect models</button>
+    <div id="test-ollama-result" style="margin:8px 0"></div>
+    <div class="form-group" style="margin-top:12px">
+      <label>Curator model (large — for chat & recommendations)</label>
+      <select id="s-curator-model"><option value="qwen2.5:32b">qwen2.5:32b (recommended)</option></select>
+      <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
+    </div>
+    <div class="form-group">
+      <label>Summarizer model (small — for metadata processing)</label>
+      <select id="s-summarizer-model"><option value="qwen2.5:3b">qwen2.5:3b (recommended)</option></select>
+      <div class="hint">Fast model used to structure metadata. Runs thousands of times during enrichment.</div>
+    </div>
+    <div class="form-group">
+      <label>Embedding model</label>
+      <select id="s-embed-model"><option value="nomic-embed-text">nomic-embed-text (recommended)</option></select>
+    </div>`,
+
+  metadata: () => `
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Metadata APIs</h2>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:16px">These are optional but significantly improve recommendation quality. Skip any you don't need.</p>
+    <div class="form-group">
+      <label>TMDB API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
+      <input id="s-tmdb" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.tmdb_api_key||''}">
+      <div class="hint">Free at <a href="https://www.themoviedb.org/settings/api" style="color:var(--amber)" target="_blank">themoviedb.org/settings/api</a>. Needed for movie and TV metadata, cast, themes.</div>
+    </div>
+    <div class="form-group">
+      <label>Last.fm API Key <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.lastfm_api_key||''}">
+      <div class="hint">Free at last.fm/api. Adds music tags, similar artists, and bio. MusicBrainz works without a key.</div>
+      <div class="used-for">Skip if you don't use Curatarr for music.</div>
+    </div>`,
+
+  arr: () => `
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">*arr Services</h2>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:16px">Skip services you don't use. These enable library management and deletion proposals.</p>
+    ${['Radarr:Movies:7878','Sonarr:TV & Anime:8989','Lidarr:Music:8686'].map(s=>{
+      const [name,what,port] = s.split(':');
+      const id = name.toLowerCase();
+      return `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <strong style="font-size:13px">${name}</strong>
+          <span class="badge muted" style="font-size:10px">${what}</span>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>URL</label>
+          <input id="s-${id}-url" placeholder="http://192.168.1.100:${port}" value="${setupData[id+'_url']||''}">
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>API Key</label>
+          <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${setupData[id+'_api_key']||''}">
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="testConn('${id}')">Test ${name}</button>
+        <div id="test-${id}-result"></div>
+      </div>`;
+    }).join('')}`,
+
+  done: () => `
+    <div style="text-align:center;padding:20px 0">
+      <div style="font-size:40px;margin-bottom:16px">🎬</div>
+      <h2 style="font-size:16px;font-weight:600;color:var(--amber);margin-bottom:8px">Ready to launch!</h2>
+      <p style="font-size:13px;color:var(--text2);line-height:1.6;max-width:380px;margin:0 auto 20px">
+        Curatarr will save your configuration, build the AI models with <code>ollama create</code>, 
+        then start the initial sync. This will take a few minutes the first time.
+      </p>
+      <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" onclick="finishSetup()">
+        Save & Start Curatarr
+      </button>
+      <div id="setup-saving" style="margin-top:16px;color:var(--text2);font-size:13px"></div>
+    </div>`,
+};
+
+function renderSetupStep(step) {
+  setupStep = step;
+  const key = SETUP_STEPS[step];
+  document.getElementById('setup-body').innerHTML = SETUP_CONTENT[key]();
+  document.getElementById('setup-step-label').textContent = `Step ${step+1} of ${SETUP_STEPS.length}`;
+  document.getElementById('setup-back').style.visibility = step > 0 ? 'visible' : 'hidden';
+  document.getElementById('setup-next').style.display = step === SETUP_STEPS.length-1 ? 'none' : 'inline-block';
+  SETUP_STEPS.forEach((s,i) => {
+    const dot = document.getElementById(`step-dot-${i}`);
+    if (dot) dot.className = 'setup-step-dot' + (i===step?' active':i<step?' done':'');
+  });
+
+  // Load Ollama models if on ollama step
+  if (key === 'ollama' && setupData.ollama_endpoint) {
+    testConn('ollama');
+  }
+}
+
+function collectStep() {
+  const key = SETUP_STEPS[setupStep];
+  if (key === 'plex') {
+    setupData.plex_url = document.getElementById('s-plex-url')?.value?.trim() || '';
+    setupData.plex_token = document.getElementById('s-plex-token')?.value?.trim() || '';
+  } else if (key === 'ollama') {
+    setupData.ollama_endpoint = document.getElementById('s-ollama')?.value?.trim() || 'http://localhost:11434';
+    setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'qwen2.5:32b';
+    setupData.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'qwen2.5:3b';
+    setupData.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text';
+  } else if (key === 'metadata') {
+    setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
+    setupData.lastfm_api_key = document.getElementById('s-lastfm')?.value?.trim() || '';
+  } else if (key === 'arr') {
+    setupData.radarr_url = document.getElementById('s-radarr-url')?.value?.trim() || '';
+    setupData.radarr_api_key = document.getElementById('s-radarr-key')?.value?.trim() || '';
+    setupData.sonarr_url = document.getElementById('s-sonarr-url')?.value?.trim() || '';
+    setupData.sonarr_api_key = document.getElementById('s-sonarr-key')?.value?.trim() || '';
+    setupData.lidarr_url = document.getElementById('s-lidarr-url')?.value?.trim() || '';
+    setupData.lidarr_api_key = document.getElementById('s-lidarr-key')?.value?.trim() || '';
+  }
+}
+
+function setupNav(dir) {
+  collectStep();
+  renderSetupStep(Math.max(0, Math.min(SETUP_STEPS.length-1, setupStep + dir)));
+}
+
+async function testConn(service) {
+  const resultEl = document.getElementById(`test-${service}-result`);
+  if (resultEl) resultEl.innerHTML = '<div class="test-status">Testing…</div>';
+
+  let url='', token_='', apiKey='';
+  if (service==='plex') { url=document.getElementById('s-plex-url')?.value; token_=document.getElementById('s-plex-token')?.value; }
+  else if (service==='ollama') { url=document.getElementById('s-ollama')?.value || setupData.ollama_endpoint; }
+  else if (service==='radarr') { url=document.getElementById('s-radarr-url')?.value; apiKey=document.getElementById('s-radarr-key')?.value; }
+  else if (service==='sonarr') { url=document.getElementById('s-sonarr-url')?.value; apiKey=document.getElementById('s-sonarr-key')?.value; }
+  else if (service==='lidarr') { url=document.getElementById('s-lidarr-url')?.value; apiKey=document.getElementById('s-lidarr-key')?.value; }
+  else if (service==='tmdb') { apiKey=document.getElementById('s-tmdb')?.value; }
+  else if (service==='lastfm') { apiKey=document.getElementById('s-lastfm')?.value; }
+
+  try {
+    const r = await api('/api/setup/test', 'POST', {service, url, token: token_, api_key: apiKey});
+    if (resultEl) resultEl.innerHTML = r.ok
+      ? `<div class="test-status ok">✓ Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
+      : `<div class="test-status err">✗ ${esc(r.error)}</div>`;
+
+    // Populate Ollama model dropdowns
+    if (service==='ollama' && r.ok && r.models) {
+      ['s-curator-model','s-summarizer-model','s-embed-model'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = r.models.map(m=>`<option value="${esc(m)}" ${m===cur?'selected':''}>${esc(m)}</option>`).join('');
+      });
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+  }
+}
+
+async function finishSetup() {
+  collectStep();
+  const el = document.getElementById('setup-saving');
+  el.textContent = 'Saving configuration…';
+  try {
+    const r = await api('/api/setup/complete', 'POST', setupData);
+    el.innerHTML = '✅ Saved! Building Ollama models in background… <strong>Please close and reopen Curatarr.</strong>';
+    setTimeout(()=>location.reload(), 5000);
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--danger)">Error: ${esc(e.message)}</span>`;
+  }
+}
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+async function startPlexLogin() {
+  const data = await api('/api/auth/plex/pin','POST');
+  document.getElementById('pin-box').style.display='block';
+  document.getElementById('pin-code').textContent = data.code.slice(0,4)+' '+data.code.slice(4);
+  window.open(data.auth_url,'_blank');
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(async()=>{
+    try {
+      const r = await api(`/api/auth/plex/poll/${data.pin_id}`);
+      if (r.status==='ok') {
+        clearInterval(pollInterval);
+        token=r.token; localStorage.setItem('curatarr_token',token);
+        // Restart stream with new token
+        if (taskEventSource) { taskEventSource.close(); taskEventSource = null; taskStreamRetries = 0; }
+        setUser(r.user); showApp();
+      }
+    } catch {}
+  }, 2000);
+}
+
+function setUser(u) {
+  currentUser = u;
+  document.getElementById('user-name').textContent = u.username || 'User';
+  document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
+  if (u.is_admin) {
+    // Show admin nav item in sidebar (needs flex), but NOT the admin view panel
+    document.querySelectorAll('.sb-item.admin-only').forEach(el => el.style.display = 'flex');
+    // Admin view panel stays hidden until user navigates to it
+  }
+  document.getElementById('auth-overlay').classList.add('hidden');
+  loadUnreadMessages();
+}
+
+async function showApp() {
+  document.getElementById('auth-overlay').classList.add('hidden');
+
+  // Check if onboarding is needed
+  const cfg = await api('/api/libraries/config').catch(()=>({configured:false, libraries:[]}));
+  if (!cfg.configured || !cfg.libraries?.length) {
+    showOnboarding('libraries');
+    return;
+  }
+
+  // Check if initial sync has happened
+  const hist = await api('/api/history/status').catch(()=>({watch_history_entries:0}));
+  if (hist.watch_history_entries === 0) {
+    showOnboarding('sync');
+    return;
+  }
+
+  loadLibraryConfig();
+  loadHistoryStatus();
+  startTaskStream();
+}
+
+// ── ONBOARDING ────────────────────────────────────────────────────────────────
+let onboardingStep = null;
+
+async function showOnboarding(step) {
+  onboardingStep = step;
+  const overlay = document.getElementById('onboarding-overlay');
+  overlay.classList.remove('hidden');
+  renderOnboardingStep(step);
+}
+
+function hideOnboarding() {
+  document.getElementById('onboarding-overlay').classList.add('hidden');
+  loadLibraryConfig();
+  loadHistoryStatus();
+}
+
+async function renderOnboardingStep(step) {
+  const body = document.getElementById('onboarding-body');
+  const title = document.getElementById('onboarding-title');
+  const sub = document.getElementById('onboarding-sub');
+
+  if (step === 'libraries') {
+    title.textContent = '📚 Step 1 — Configure your Plex libraries';
+    sub.textContent = 'Tell Curatarr what each Plex library contains so it can handle them correctly.';
+    
+    const disc = await api('/api/libraries/discover').catch(()=>({sections:[]}));
+    discoverSections = disc.sections || [];
+    
+    body.innerHTML = `
+      <div class="tbl-wrap" style="margin-bottom:20px">
+        <table class="tbl"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
+        ${discoverSections.map(s=>`<tr>
+          <td style="font-weight:500">${esc(s.title)}</td>
+          <td style="color:var(--text3);font-size:12px">${esc(s.type)}</td>
+          <td><select id="ob-libcat-${s.key}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+            ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${o}</option>`).join('')}
+          </select></td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>
+      <button class="btn btn-primary" style="width:100%;padding:12px" onclick="saveOnboardingLibraries()">
+        Save & Continue →
+      </button>`;
+  }
+
+  else if (step === 'sync') {
+    title.textContent = '🔄 Step 2 — Initial sync';
+    sub.textContent = 'Curatarr will now pull your complete watch history from Plex and compute your taste profile. This takes a moment.';
+    body.innerHTML = `
+      <div id="ob-sync-status" style="margin-bottom:20px">
+        <div class="progress-bar" style="margin-bottom:8px"><div class="progress-fill" id="ob-sync-bar" style="width:0%"></div></div>
+        <div style="font-size:12px;color:var(--text2)" id="ob-sync-label">Waiting to start…</div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;padding:12px" id="ob-sync-btn" onclick="startOnboardingSync()">
+        Start sync
+      </button>`;
+  }
+
+  else if (step === 'models') {
+    title.textContent = '🤖 Step 3 — Build AI models';
+    sub.textContent = 'Curatarr will bake its personality into the Ollama models. This only happens once.';
+    body.innerHTML = `
+      <p style="font-size:13px;color:var(--text2);margin-bottom:16px">
+        This creates <code>curatarr-curator</code> and <code>curatarr-summarizer</code> 
+        with Curatarr's system prompt baked in.
+      </p>
+      <div id="ob-model-status" style="margin-bottom:20px"></div>
+      <button class="btn btn-primary" style="width:100%;padding:12px" onclick="buildOnboardingModels()">
+        Build models
+      </button>
+      <button class="btn btn-secondary" style="width:100%;padding:10px;margin-top:8px" onclick="hideOnboarding()">
+        Skip for now (use base models)
+      </button>`;
+  }
+
+  else if (step === 'done') {
+    title.textContent = '🎬 All set!';
+    sub.textContent = 'Curatarr is ready. Your taste profile has been computed.';
+    body.innerHTML = `
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:48px;margin-bottom:16px">✅</div>
+        <p style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:24px">
+          Watch history synced and taste vectors computed.<br>
+          You can now chat with your curator, get recommendations, and manage your library.
+        </p>
+        <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" onclick="hideOnboarding()">
+          Open Curatarr
+        </button>
+      </div>`;
+  }
+}
+
+async function saveOnboardingLibraries() {
+  const libraries = discoverSections.map(s=>({
+    key: s.key, title: s.title, plex_type: s.type,
+    category: document.getElementById(`ob-libcat-${s.key}`)?.value || s.suggested_category,
+  }));
+  await api('/api/libraries/configure','POST',{libraries});
+  libraryCfg = libraries;
+  renderOnboardingStep('sync');
+  onboardingStep = 'sync';
+}
+
+async function startOnboardingSync() {
+  const btn = document.getElementById('ob-sync-btn');
+  const lbl = document.getElementById('ob-sync-label');
+  const bar = document.getElementById('ob-sync-bar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+
+  try {
+    await api('/api/history/sync?force=true','POST');
+    lbl.textContent = 'Fetching your library…';
+
+    // Poll until done
+    const poll = setInterval(async () => {
+      try {
+        const s = await api('/api/history/status');
+        const entries = s.watch_history_entries || 0;
+        lbl.textContent = `${entries.toLocaleString()} entries synced…`;
+        if (entries > 0) bar.style.width = '60%';
+        if (s.taste_vector?.computed) {
+          bar.style.width = '100%';
+          lbl.textContent = `✅ ${entries.toLocaleString()} entries · taste profile computed`;
+          clearInterval(poll);
+          setTimeout(() => {
+            renderOnboardingStep('models');
+            onboardingStep = 'models';
+          }, 1500);
+        }
+      } catch {}
+    }, 3000);
+  } catch(e) {
+    if (lbl) lbl.textContent = `Error: ${esc(e.message)}`;
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+  }
+}
+
+async function buildOnboardingModels() {
+  const el = document.getElementById('ob-model-status');
+  el.innerHTML = '<p class="loading">Building models… this may take a few minutes.</p>';
+  
+  try {
+    const r = await api('/api/setup/build-models','POST');
+    if (r.curator && r.summarizer) {
+      el.innerHTML = '<p style="color:var(--success)">✅ curatarr-curator and curatarr-summarizer created!</p>';
+      setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; }, 1500);
+    } else {
+      let msg = '';
+      if (!r.curator) msg += `❌ curatarr-curator failed<br>`;
+      if (!r.summarizer) msg += `❌ curatarr-summarizer failed<br>`;
+      msg += '<br>Make sure base models are pulled in Ollama.';
+      el.innerHTML = `<div style="color:var(--danger);font-size:13px">${msg}</div>`;
+    }
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger)">${esc(e.message)}</div>`;
+  }
+}
+
+function logout() {
+  token=''; localStorage.removeItem('curatarr_token'); location.reload();
+}
+
+function toggleUserMenu() {}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(path, method='GET', body=null) {
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if (token) opts.headers['Authorization']='Bearer '+token;
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API+path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ── NAV ───────────────────────────────────────────────────────────────────────
+function showView(name, btn) {
+  document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // Clear all views — remove active class AND reset any inline display styles
+  document.querySelectorAll('.view').forEach(v => {
+    v.classList.remove('active');
+    v.style.display = '';  // clear inline style so CSS .view / .view.active takes over
+  });
+  const el = document.getElementById(name + '-view');
+  if (el) el.classList.add('active');
+  if (name==='history') loadHistoryStatus();
+  if (name==='tasks') loadTaskHistory();
+  if (name==='libraries') loadLibraryConfig();
+  if (name==='admin') loadUsers();
+  if (name==='enrich') loadEnrichStatus();
+  if (name==='recs') loadRecs(currentRecsCategory);
+  if (name==='deletions') loadDeletions(currentDelCategory);
+  // tasks view uses live SSE, no manual load needed
+}
+
+// ── PROACTIVE MESSAGES ────────────────────────────────────────────────────────
+async function loadUnreadMessages() {
+  try {
+    const r = await api('/api/messages/unread');
+    const badge = document.getElementById('msg-badge');
+    badge.textContent = r.count;
+    badge.classList.toggle('show', r.count > 0);
+    const list = document.getElementById('msg-list');
+    if (!r.messages.length) { list.innerHTML='<div id="msg-empty">No new messages</div>'; return; }
+    list.innerHTML = r.messages.map(m=>`
+      <div class="msg-item" onclick="readMessage(${m.id},this)">
+        <div class="mi-text">${esc(m.message)}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+          <span class="mi-badge">${esc(m.trigger_type.replace('_',' '))}</span>
+          <span class="mi-time">${new Date(m.created_at).toLocaleString()}</span>
+          <span style="font-size:10px;color:var(--text3);margin-left:auto">Click to respond →</span>
+        </div>
+      </div>`).join('');
+  } catch {}
+}
+
+async function readMessage(id, el) {
+  await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+  el.style.opacity = '.5';
+
+  const msgText = el.querySelector('.mi-text')?.textContent || '';
+  toggleMsgPanel();
+
+  // Open chat and pre-fill — let user review before sending
+  showView('chat', document.querySelector('[onclick*="showView(\'chat\'"]'));
+  const input = document.getElementById('chat-input');
+  if (input && msgText) {
+    input.value = msgText;
+    input.focus();
+    // Don't auto-send — user should be able to edit/review the question first
+  }
+  loadUnreadMessages();
+}
+
+function toggleMsgPanel() {
+  document.getElementById('msg-panel').classList.toggle('open');
+}
+
+// ── CHAT ──────────────────────────────────────────────────────────────────────
+function handleKey(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
+
+async function sendMessage() {
+  const inp = document.getElementById('chat-input');
+  const text = inp.value.trim(); if (!text) return;
+  inp.value = ''; inp.style.height = 'auto';
+  addMsg(text, 'user');
+  const thinking = addMsg('…', 'assistant');
+
+  try {
+    const tok = localStorage.getItem('curatarr_token') || sessionStorage.getItem('curatarr_token') || '';
+    const resp = await fetch('/api/chat/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${tok}`,
+      },
+      body: JSON.stringify({ message: text }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      thinking.textContent = '⚠️ ' + (err.detail || resp.statusText);
+      return;
+    }
+
+    // Stream SSE tokens
+    thinking.textContent = '';
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop(); // keep incomplete line
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.token) thinking.textContent += data.token;
+          if (data.done) break;
+        } catch {}
+      }
+    }
+
+    // Add feedback buttons
+    const fb = document.createElement('div'); fb.className = 'fb';
+    fb.innerHTML = `<button class="fb-btn" onclick="sendFeedback(this,1)">👍</button><button class="fb-btn" onclick="sendFeedback(this,-1)">👎</button>`;
+    thinking.appendChild(fb);
+
+  } catch(e) {
+    thinking.textContent = '⚠️ ' + e.message;
+  }
+}
+
+function addMsg(text,role) {
+  const div = document.createElement('div'); div.className='msg '+role;
+  div.textContent=text;
+  const msgs = document.getElementById('messages');
+  msgs.appendChild(div); msgs.scrollTop=msgs.scrollHeight;
+  return div;
+}
+function sendFeedback(btn,val){btn.textContent=val>0?'✅':'❌';btn.disabled=true;}
+
+// ── HISTORY & TASTE ───────────────────────────────────────────────────────────
+async function recomputeTaste() {
+  const el = document.getElementById('history-stats');
+  const orig = el.innerHTML;
+  el.innerHTML += '<p style="color:var(--amber);font-size:12px;margin-top:8px">🧠 Recomputing taste vectors…</p>';
+  try {
+    await api('/api/history/recompute-taste','POST');
+    setTimeout(() => {
+      loadHistoryStatus();
+      // Also refresh enrichment status if on that tab
+      if (document.getElementById('enrich-view')?.classList.contains('active')) {
+        loadEnrichStatus();
+      }
+    }, 8000);
+  } catch(e) {
+    el.innerHTML = orig + `<p class="loading">${esc(e.message)}</p>`;
+  }
+}
+
+async function syncHistory(force=false) {
+  const el=document.getElementById('history-stats');
+  el.innerHTML='<p class="loading">' + (force?'Force syncing…':'Syncing Plex history…') + '</p>';
+  try {
+    const r=await api('/api/history/sync?force='+(force?'true':'false'),'POST');
+    el.innerHTML=`<div style="color:var(--success);font-size:13px">✅ ${esc(r.message)}</div>`;
+    setTimeout(loadHistoryStatus,5000);
+  } catch(e){el.innerHTML=`<p class="loading">${esc(e.message)}</p>`;}
+}
+
+async function loadHistoryStatus() {
+  try {
+    const s=await api('/api/history/status');
+    const tv=s.taste_vector;
+    const byType=tv.by_type||{};
+    const types=Object.keys(byType);
+
+    const coverageOk = tv.covers_all || !tv.computed;
+    document.getElementById('history-stats').innerHTML=`
+      <div class="stat-row">
+        <div class="stat-box"><div class="num">${s.watch_history_entries.toLocaleString()}</div><div class="lbl">Entries synced</div></div>
+        <div class="stat-box">
+          <div class="num" style="color:${coverageOk?'var(--amber)':'var(--danger)'}">${tv.watch_count?.toLocaleString()||0}</div>
+          <div class="lbl">In taste profile ${coverageOk?'':'⚠️ outdated'}</div>
+        </div>
+        <div class="stat-box"><div class="num">${tv.computed?'✅':'⏳'}</div><div class="lbl">Profile status</div></div>
+      </div>
+      ${tv.note?`<div style="font-size:12px;color:var(--danger);margin-bottom:12px;padding:8px 12px;background:var(--danger-dim);border-radius:var(--radius)">⚠️ ${esc(tv.note)}</div>`:''}`;
+
+    if (types.length) {
+      document.getElementById('taste-tabs').innerHTML = types.map((t,i)=>
+        `<button class="cat-tab ${i===0?'active':''}" onclick="showTasteTab('${t}',this)">${CAT_LABELS[t]||t}</button>`
+      ).join('');
+      showTasteTabData(byType, tv.summary||'', types[0]);
+
+      const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
+      renderRecent(h.entries, types[0]);
+    }
+  } catch(e){ document.getElementById('history-stats').innerHTML=`<p class="loading">${esc(e.message)}</p>`; }
+}
+
+function showTasteTab(type,btn) {
+  document.querySelectorAll('#taste-tabs .cat-tab').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  api('/api/history/status').then(s=>showTasteTabData(s.taste_vector.by_type||{},s.taste_vector.summary||'',type)).catch(()=>{});
+  api(`/api/history/recent?limit=100&category=${type}`).then(h=>renderRecent(h.entries,type)).catch(()=>{});
+}
+
+function showTasteTabData(byType, summary, type) {
+  const d=byType[type];
+  if(!d){document.getElementById('taste-content').innerHTML='<p class="loading">No data for this category yet.</p>';return;}
+  const typeUpper=type.toUpperCase();
+  const match=summary.match(new RegExp(`\\[${typeUpper}\\]([^\\[]*)`));
+  const typeSummary=match?match[1].trim():'';
+  const cb = d.completion_breakdown || {};
+  const compRow = cb.total
+    ? `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+        <span><strong style="color:var(--success)">${cb.completed||0}</strong> <span style="font-size:12px;color:var(--text2)">finished</span></span>
+        ${cb.in_progress?`<span><strong style="color:var(--amber)">${cb.in_progress}</strong> <span style="font-size:12px;color:var(--text2)">in progress</span></span>`:''}
+        ${cb.dropped?`<span><strong style="color:var(--danger)">${cb.dropped}</strong> <span style="font-size:12px;color:var(--text2)">dropped &lt;40%</span></span>`:''}
+        ${cb.nearly_done?`<span><strong style="color:var(--info)">${cb.nearly_done}</strong> <span style="font-size:12px;color:var(--text2)">&gt;80% done</span></span>`:''}
+      </div>`
+    : `<div style="margin-bottom:12px"><span style="font-size:22px;font-weight:700;color:var(--amber)">${d.watch_count?.toLocaleString()||0}</span><span style="font-size:12px;color:var(--text2);margin-left:6px">items</span></div>`;
+  document.getElementById('taste-content').innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      ${compRow}
+      ${d.top_genres?.length?`<div style="margin-bottom:8px"><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Top genres</span><div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${d.top_genres.slice(0,8).map(g=>`<span class="badge amber">${esc(g)}</span>`).join('')}</div></div>`:''}
+      ${d.top_titles?.length?`<div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Most watched</span><div style="margin-top:4px;font-size:12px;color:var(--text2)">${d.top_titles.slice(0,8).map(esc).join(' · ')}</div></div>`:''}
+      ${typeSummary?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text2);line-height:1.7">${esc(typeSummary)}</div>`:''}
+    </div>`;
+}
+
+function renderRecent(entries, category) {
+  if(!entries?.length){document.getElementById('recent-history').innerHTML=`<p class="loading">No ${CAT_LABELS[category]||category} history yet.</p>`;return;}
+  const label = CAT_LABELS[category]||category;
+  document.getElementById('recent-history').innerHTML=`
+    <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Recent ${label}</div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Title</th><th>Genre</th><th>Date</th></tr></thead><tbody>
+    ${entries.slice(0,50).map(e=>{
+      let title=e.title;
+      if(e.media_type==='music'&&e.series_title) title=`${e.title} — ${e.series_title}`;
+      else if((e.media_type==='anime'||e.media_type==='show')&&e.series_title) title=`${e.series_title}: ${e.title}`;
+      return `<tr><td>${esc(title)}</td><td><span style="color:var(--text3);font-size:12px">${esc((e.genres||'').split(',')[0])}</span></td><td style="color:var(--text3);font-size:12px;white-space:nowrap">${(e.viewed_at||'').slice(0,10)}</td></tr>`;
+    }).join('')}
+    </tbody></table></div>`;
+}
+
+let currentRecsSource = 'library';
+
+function setRecSource(src, btn) {
+  currentRecsSource = src;
+  document.getElementById('src-cache-btn').className = 'btn btn-' + (src==='cache'||src==='library' ? 'primary' : 'secondary') + ' btn-sm';
+  document.getElementById('src-ext-btn').className = 'btn btn-' + (src==='external' ? 'primary' : 'secondary') + ' btn-sm';
+  document.getElementById('recs-source-hint').textContent = src === 'external'
+    ? 'Discovering new titles outside your library'
+    : 'Showing picks from your downloaded library';
+  loadRecs(currentRecsCategory);
+}
+
+// ── RECOMMENDATIONS ───────────────────────────────────────────────────────────
+let currentRecsCategory = null;
+
+async function loadRecs(category=null, btn=null, refresh=false) {
+  currentRecsCategory = category;
+  document.querySelectorAll('#recs-view .cat-tab').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  const el = document.getElementById('recs-content');
+  el.innerHTML = '<p class="loading">Loading…</p>';
+  try {
+    const url = '/api/recommendations/?' + (category ? `category=${category}&` : '') + `limit=8&refresh=${refresh}&source=${currentRecsSource || 'library'}`;
+    const r = await api(url);
+    if (!r.recommendations?.length) {
+      // No cache — auto-generate in background and show loading state
+      el.innerHTML = `<div style="text-align:center;padding:32px">
+        <p style="color:var(--text2);margin-bottom:12px">Generating personalised recommendations…</p>
+        <p style="font-size:12px;color:var(--text3)">This takes ~30s the first time. The tab will update automatically.</p>
+      </div>`;
+      // Trigger background generation
+      api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
+      // Poll every 15s until results appear
+      const poll = setInterval(async () => {
+        try {
+          const r2 = await api('/api/recommendations/?limit=8' + (category ? `&category=${category}` : ''));
+          if (r2.recommendations?.length) {
+            clearInterval(poll);
+            loadRecs(category, btn, false);
+          }
+        } catch {}
+      }, 15000);
+      // Stop polling after 5 minutes
+      setTimeout(() => clearInterval(poll), 300000);
+      return;
+    }
+    const cacheNote = r.from_cache && r.cached_at
+      ? `<div style="font-size:11px;color:var(--text3);margin-bottom:12px">Cached ${new Date(r.cached_at).toLocaleString()} · <a href="#" onclick="loadRecs(currentRecsCategory,null,true);return false" style="color:var(--amber)">Refresh now</a></div>`
+      : '';
+    el.innerHTML = cacheNote + r.recommendations.map(rec => `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:flex-start;gap:12px">
+          ${rec.poster_url
+            ? `<img src="${esc(rec.poster_url)}" alt="${esc(rec.title)}" style="width:54px;height:81px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
+            : `<div style="width:54px;height:81px;background:var(--bg3);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px">${{movie:'🎬',show:'📺',anime:'⛩️',music:'🎵'}[rec.category]||'📋'}</div>`
+          }
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px">${esc(rec.title)}</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(rec.category_label||'')} ${rec.genres?'· '+esc(rec.genres):''}</div>
+            <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6">${esc(rec.reason||rec.pitch||'')}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+            <span class="badge amber">${Math.round((rec.confidence||0.7)*100)}%</span>
+            <button class="btn btn-secondary btn-sm" onclick="discussInChat('rec',${JSON.stringify({title:rec.title,reason:rec.reason||rec.pitch||'',category:rec.category}).replace(/"/g,'&quot;')})">💬 Discuss</button>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+}
+
+// ── DELETIONS ─────────────────────────────────────────────────────────────────
+let currentDelCategory = null;
+
+async function loadDeletions(category=null, btn=null, refresh=false) {
+  currentDelCategory = category;
+  document.querySelectorAll('#deletions-view .cat-tab').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  const el = document.getElementById('del-content');
+  el.innerHTML = '<p class="loading">' + (refresh ? 'Analysing library with AI…' : 'Loading cached proposals…') + '</p>';
+  try {
+    const url = `/api/recommendations/deletions?refresh=${refresh}` + (category ? `&category=${category}` : '');
+    const r = await api(url);
+    if (r.message) { el.innerHTML = `<p class="loading">${esc(r.message)}</p>`; return; }
+    if (!r.proposals?.length) { el.innerHTML = '<p class="loading">No deletion proposals. Configure Radarr/Sonarr in Setup to enable this.</p>'; return; }
+    el.innerHTML = `
+      <div style="font-size:13px;color:var(--text2);margin-bottom:16px">
+        Potential savings: <strong style="color:var(--amber)">${r.total_gb} GB</strong> · ${r.proposals.length} proposals
+      </div>` +
+      r.proposals.map(p => `
+        <div class="card" style="margin-bottom:12px;border-color:${p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)'}">
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span></div>
+              <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
+              <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
+              ${p.user_comment?`<div style="font-size:12px;color:var(--amber);margin-top:6px">💬 ${esc(p.user_comment)}</div>`:''}
+              <textarea id="del-comment-${p.id}" class="del-comment" style="margin-top:10px" placeholder="${p.service==='lidarr'?"e.g. 'Keep — listen to this regularly' or 'Delete — haven\\'t touched it in years'":p.service==='radarr'?"e.g. 'Keep — haven\\'t watched it yet' or 'Delete — awful film'":"e.g. 'Keep — still watching this' or 'Delete — dropped after 2 eps'"}">${esc(p.user_comment||'')}</textarea>
+              <div class="del-actions" style="margin-top:8px">
+                <button class="btn btn-danger btn-sm" onclick="approveDelete(${p.id},this)">🗑 Delete</button>
+                <button class="btn btn-secondary btn-sm" onclick="rejectDelete(${p.id},this)">Keep</button>
+                <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">💬 Save note</button>
+                <button class="btn btn-secondary btn-sm" onclick="discussDeletion(${p.id},${JSON.stringify(p.title).replace(/"/g,'&quot;')},${JSON.stringify(p.pitch||p.reason||'').replace(/"/g,'&quot;')})">🗨 Discuss</button>
+                ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
+              </div>
+            </div>
+          </div>
+        </div>`).join('');
+  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+}
+
+function showDeleteConfirmModal(title) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center';
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--bg2);border:1px solid rgba(229,83,83,.4);border-radius:var(--radius);padding:28px 24px;max-width:380px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+    modal.innerHTML = `
+      <div style="font-size:36px;margin-bottom:12px">🗑</div>
+      <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
+      <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${esc(title)}</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.5">This removes it from your *arr library and deletes the files.<br>This cannot be undone.</div>
+      <div style="font-size:36px;font-weight:700;color:var(--danger);margin-bottom:16px;min-height:44px" id="_del_countdown">5</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="_del_confirm" class="btn btn-danger" disabled style="min-width:110px">Delete (5)</button>
+        <button id="_del_cancel" class="btn btn-secondary" style="min-width:80px">Cancel</button>
+      </div>`;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    let s = 5;
+    const cd = modal.querySelector('#_del_countdown');
+    const confirmBtn = modal.querySelector('#_del_confirm');
+    const cancelBtn = modal.querySelector('#_del_cancel');
+    const timer = setInterval(() => {
+      s--;
+      cd.textContent = s > 0 ? s : '';
+      confirmBtn.textContent = s > 0 ? `Delete (${s})` : 'Delete';
+      if (s <= 0) { clearInterval(timer); confirmBtn.disabled = false; }
+    }, 1000);
+
+    const cleanup = (result) => { clearInterval(timer); document.body.removeChild(overlay); resolve(result); };
+    confirmBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+  });
+}
+
+async function approveDelete(id, btn) {
+  const title = btn.closest('.card')?.querySelector('div[style*="font-weight:600"]')?.firstChild?.textContent?.trim() || 'this item';
+  const confirmed = await showDeleteConfirmModal(title);
+  if (!confirmed) return;
+
+  const reason = prompt('What made you decide to delete this? (Curatarr will learn)\nLeave blank to skip.');
+  if (reason === null) return;
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  try {
+    if (reason.trim()) {
+      await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent('Deleted: ' + reason)}`, 'POST').catch(()=>{});
+    }
+    const r = await api(`/api/recommendations/deletions/${id}/approve`, 'POST');
+    btn.textContent = r.ok ? '✅ Deleted' : '❌ Failed';
+    if (r.ok) {
+      btn.closest('.card').style.opacity = '0.4';
+      if (reason.trim()) {
+        setTimeout(() => {
+          if (confirm(`Want to tell Curatarr more about why you deleted "${title}"?`)) {
+            discussInChat('delete', {title, reason});
+          }
+        }, 600);
+      }
+    }
+  } catch(e) { btn.disabled = false; btn.textContent = '🗑 Delete'; }
+}
+
+async function rejectDelete(id, btn) {
+  const reason = prompt('Why are you keeping this? (Optional — helps Curatarr learn)');
+  if (reason === null) return; // cancelled
+  btn.disabled = true;
+  if (reason.trim()) {
+    await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent('Keeping: ' + reason)}`, 'POST').catch(()=>{});
+  }
+  await api(`/api/recommendations/deletions/${id}/reject`, 'POST').catch(()=>{});
+  btn.textContent = '✓ Kept';
+}
+
+// ── DISCUSS IN CHAT ───────────────────────────────────────────────────────────
+function discussInChat(type, data) {
+  // Switch to chat view
+  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+
+  // Prime the chat with context
+  let primer = '';
+  if (type === 'rec') {
+    primer = `I want to talk about the recommendation for "${data.title}". You suggested it because: "${data.reason}". Let's discuss whether this actually fits my taste.`;
+  } else if (type === 'delete') {
+    primer = `I just deleted "${data.title}" from my library. My reason: "${data.reason || 'no specific reason given'}". What does this tell you about my taste? What should I avoid in the future?`;
+  } else if (type === 'custom') {
+    primer = data.message || '';
+  }
+
+  if (primer) {
+    const input = document.getElementById('chat-input');
+    input.value = primer;
+    input.focus();
+    // Auto-send after short delay so user can see what's being sent
+    setTimeout(() => sendMessage(), 300);
+  }
+}
+
+async function saveComment(id) {
+  const comment = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
+  const btn = event.target;
+  btn.disabled = true;
+
+  await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent(comment)}`, 'POST').catch(()=>{});
+
+  // Auto-keep when note contains an explicit keep signal
+  const keepSignals = /\b(keep|behalten|nicht l.schen|stay|retain|watching with|schaue mit|will ich|ich behalte|lasse ich)\b/i;
+  if (comment && keepSignals.test(comment)) {
+    await api(`/api/recommendations/deletions/${id}/reject`, 'POST').catch(()=>{});
+    btn.textContent = '✅ Saved + Kept';
+    btn.closest('.card').style.opacity = '0.4';
+  } else {
+    btn.textContent = '✅ Saved';
+  }
+
+  btn.disabled = false;
+  setTimeout(() => btn.textContent = '💬 Save note', 2500);
+}
+
+function discussDeletion(id, title, pitch) {
+  const userNote = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
+  
+  // 1. Speichere den Kontext für den nächsten Sendevorgang an die API
+  pendingDiscussContext = { title: title, pitch: pitch, action: "deletion" };
+
+  // 2. Wechsle in den Chat-View
+  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+
+  // 3. Zeige den Pitch SOFORT als Assistant-Nachricht im Chat-Fenster an (Visueller Trick)
+  addMsg(`Ich habe "${title}" zur Löschung vorgeschlagen. Mein Grund: "${pitch}"`, 'assistant');
+
+  // 4. Bereite das Eingabefeld für dich (den User) vor
+  const input = document.getElementById('chat-input');
+  if (userNote) {
+    input.value = `Meine Notiz dazu: "${userNote}". Lass uns darüber reden.`;
+  } else {
+    input.value = `Lass uns darüber reden, ob das in meiner Bibliothek bleiben soll.`;
+  }
+  
+  input.focus();
+  // Wir machen hier KEIN setTimeout(() => sendMessage(), 300) mehr.
+  // Du sollst Zeit haben, die Nachricht zu sehen und selbst auf "Send" zu drücken!
+}
+
+// ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
+async function loadMappingStats() {
+  const el = document.getElementById('mapping-stats');
+  el.innerHTML = '<span style="color:var(--amber)">Loading…</span>';
+  try {
+    const s = await api('/api/enrichment/mapping-stats');
+    el.innerHTML = `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
+        <span><strong style="color:var(--amber)">${(s.total_entries||0).toLocaleString()}</strong> <span style="color:var(--text2)">total entries</span></span>
+        <span><strong style="color:var(--success)">${(s.tvdb_mapped||0).toLocaleString()}</strong> <span style="color:var(--text2)">TVDB mapped</span></span>
+        <span><strong style="color:var(--info)">${(s.anilist_resolved||0).toLocaleString()}</strong> <span style="color:var(--text2)">AniList resolved</span></span>
+        <span><strong style="color:var(--danger)">${(s.anilist_missing||0).toLocaleString()}</strong> <span style="color:var(--text2)">AniList pending</span></span>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">
+        Downloaded: ${s.downloaded_at ? new Date(s.downloaded_at).toLocaleString() : 'never'} · refreshes weekly
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  }
+}
+
+async function checkMappingCoverage() {
+  const el = document.getElementById('mapping-stats');
+  el.innerHTML = '<span style="color:var(--amber)">Checking Sonarr coverage… this may take a moment</span>';
+  try {
+    const c = await api('/api/enrichment/mapping-coverage');
+    if (c.error) { el.innerHTML = `<span style="color:var(--danger)">${esc(c.error)}</span>`; return; }
+    el.innerHTML = `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
+        <span><strong style="color:var(--amber)">${c.total_anime}</strong> <span style="color:var(--text2)">anime in Sonarr</span></span>
+        <span><strong style="color:var(--success)">${c.covered} (${c.coverage_pct}%)</strong> <span style="color:var(--text2)">in mapping</span></span>
+        <span><strong style="color:var(--info)">${c.anilist_resolved}</strong> <span style="color:var(--text2)">AniList ready</span></span>
+        <span><strong style="color:var(--danger)">${c.missing}</strong> <span style="color:var(--text2)">not in mapping</span></span>
+      </div>
+      ${c.missing_sample?.length ? `
+      <details style="margin-top:8px">
+        <summary style="font-size:11px;color:var(--text3);cursor:pointer">Not mapped (${c.missing} total)</summary>
+        <div style="margin-top:6px">
+          ${c.missing_sample.map(m=>`<div style="font-size:11px;color:var(--danger)">✗ ${esc(m.title)} tvdb:${m.tvdb_id||'?'} — ${esc(m.reason)}</div>`).join('')}
+        </div>
+      </details>` : ''}`;
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  }
+}
+
+async function loadProfiles(offset=0) {
+  const cat = document.getElementById('profile-cat')?.value || 'movie';
+  const search = document.getElementById('profile-search')?.value || '';
+  const el = document.getElementById('profile-browser');
+  el.innerHTML = '<p class="loading">Loading profiles…</p>';
+  try {
+    const r = await api(`/api/enrichment/profiles?category=${cat}&limit=8&offset=${offset}&search=${encodeURIComponent(search)}`);
+    if (!r.profiles?.length) {
+      el.innerHTML = '<p class="loading">No enriched profiles found. Run enrichment first.</p>';
+      return;
+    }
+    el.innerHTML = `
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">${r.total} enriched · showing ${offset+1}–${Math.min(offset+8,r.total)}</div>
+      ${r.profiles.map(p => `
+        <div class="card" style="margin-bottom:10px">
+          <div style="display:flex;align-items:flex-start;gap:8px;justify-content:space-between;cursor:pointer"
+               onclick="this.closest('.card').querySelector('.pd').style.display=this.closest('.card').querySelector('.pd').style.display==='none'?'block':'none'">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:13px">${esc(p.title)}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">
+                ${p.has_profile?'✅':'❌'} ·
+                <span style="color:${p.source?.includes('+llm')?'var(--success)':p.source?.includes('rule_based')?'var(--amber)':'var(--text3)'}">
+                  ${esc(p.source||'?')}
+                  ${p.source?.includes('rule_based')?'⚠':''}
+                </span>
+                · ${p.rating?`⭐ ${p.rating}`:''} · ${p.enriched_at?new Date(p.enriched_at).toLocaleDateString():'?'}
+              </div>
+              ${p.genres?.length?`<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${p.genres.slice(0,5).map(g=>`<span class="badge muted">${esc(g)}</span>`).join('')}</div>`:''}
+            </div>
+            <span style="font-size:11px;color:var(--text3);flex-shrink:0">▼</span>
+          </div>
+          <div class="pd" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            ${p.themes?.length?`<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Themes</span><div style="font-size:12px;color:var(--text2);margin-top:2px">${p.themes.join(' · ')}</div></div>`:''}
+            ${p.mood?.length?`<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Mood</span><div style="font-size:12px;color:var(--text2);margin-top:2px">${p.mood.join(' · ')}</div></div>`:''}
+            ${p.plot_summary?`<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Summary</span><div style="font-size:12px;color:var(--text2);margin-top:2px;line-height:1.6">${esc(p.plot_summary)}</div></div>`:''}
+            ${p.embedding_text?`<div><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Embedding text</span><div style="font-size:11px;color:var(--text3);margin-top:2px;font-family:monospace;line-height:1.5;word-break:break-word">${esc(p.embedding_text)}</div></div>`:''}
+          </div>
+        </div>`).join('')}
+      <div style="display:flex;gap:8px;margin-top:4px">
+        ${offset>0?`<button class="btn btn-secondary btn-sm" onclick="loadProfiles(${offset-8})">← Prev</button>`:''}
+        ${offset+8<r.total?`<button class="btn btn-secondary btn-sm" onclick="loadProfiles(${offset+8})">Next →</button>`:''}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+  }
+}
+
+// ── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
+async function refreshArrCounts(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  await api('/api/enrichment/arr-refresh', 'POST').catch(()=>{});
+  await loadEnrichStatus();
+  if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+}
+
+async function loadEnrichStatus() {
+  try {
+    const s = await api('/api/enrichment/status');
+    const cats = s.categories || {};
+    const rows = Object.entries(cats).map(([cat, d]) => `
+      <tr>
+        <td>${CAT_LABELS[cat]||cat}</td>
+        <td>
+          <div style="font-size:13px;font-weight:600">${(d.total_unique||d.total_in_history).toLocaleString()}</div>
+          <div style="font-size:11px;color:var(--text3)">${d.unit||'items'} · ${d.total_in_history.toLocaleString()} entries</div>
+        </td>
+        <td>
+          <div class="progress-bar" style="margin-bottom:2px"><div class="progress-fill" style="width:${d.pct}%"></div></div>
+          <div class="progress-label">
+            <span style="color:var(--success)">${d.enriched.toLocaleString()} enriched</span>
+            ${d.not_enriched>0?`<span style="color:var(--text3)">${d.not_enriched.toLocaleString()} pending</span>`:''}
+            <span>${d.pct}%</span>
+          </div>
+        </td>
+        <td>${d.vector_ready.toLocaleString()}</td>
+      </tr>`).join('');
+
+    // ARR section
+    const arr = s.arr || {};
+    const arrRow = (icon, key) => {
+      const a = arr[key];
+      if (!a) return '';
+      // Show error only if no cached data at all
+      if (a.error && !a.total) return `<tr><td>${icon} ${key}</td><td colspan="3" style="color:var(--danger)">${esc(a.error)}</td></tr>`;
+      const pct = a.pct || 0;
+      const staleTag = a.stale ? `<span style="font-size:10px;color:var(--amber);margin-left:4px" title="${esc(a.stale_reason||'Unreachable — showing cached data')}">⚠ cached</span>` : '';
+      const albumRow = key === 'lidarr' && a.total_albums
+        ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${(a.total_albums||0).toLocaleString()} albums · ${(a.enriched_albums||0)} enriched</div>`
+        : '';
+      return `<tr>
+        <td>${icon} ${key.charAt(0).toUpperCase()+key.slice(1)}${staleTag}</td>
+        <td>${(a.total||0).toLocaleString()}<br><span style="font-size:11px;color:var(--text3)">${(a.downloaded||0).toLocaleString()} downloaded</span></td>
+        <td>${(a.monitored||0).toLocaleString()}</td>
+        <td>
+          <div class="progress-bar" style="margin-bottom:2px"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <div class="progress-label"><span style="color:var(--success)">${a.enriched||0} enriched</span><span>${pct}%</span></div>
+          ${albumRow}
+        </td>
+      </tr>`;
+    };
+    const arrRows = [arrRow('🎬','radarr'), arrRow('📺','sonarr'), arrRow('🎵','lidarr')].filter(Boolean).join('');
+
+    document.getElementById('enrich-cat-status').innerHTML = `
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">
+        Items marked as "enriched" won't be re-fetched unless you re-run enrichment manually.
+        Items already in progress are skipped automatically.
+      </div>
+      <div class="tbl-wrap" style="margin-bottom:16px">
+        <table class="tbl"><thead><tr><th>Category</th><th>Unique / Total entries</th><th>Enriched</th><th>Vector ready</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>
+      ${arrRows ? `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2)">ARR Libraries</div>
+        <button class="btn btn-secondary btn-sm" onclick="refreshArrCounts(this)">↻</button>
+      </div>
+      <div class="tbl-wrap" style="margin-bottom:12px">
+        <table class="tbl"><thead><tr><th>Service</th><th>Total / Downloaded</th><th>Monitored</th><th>Enriched</th></tr></thead>
+        <tbody>${arrRows}</tbody></table>
+      </div>` : ''}
+      ${s.running?'<p style="color:var(--amber);margin-top:8px;font-size:12px">⚙️ Enrichment running… <span id="enrich-pct-live"></span></p>':''}
+      ${s.last_run?`<p style="color:var(--text3);font-size:11px;margin-top:6px">Last run: ${new Date(s.last_run).toLocaleString()}</p>`:''}`;
+    if (s.running) setTimeout(loadEnrichStatus, 8000);  // slower poll, ARR is cached 5min
+  } catch(e) {
+    document.getElementById('enrich-cat-status').innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+  }
+}
+
+async function startEnrichNew() {
+  const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
+  const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
+  const el = document.getElementById('enrich-progress-area');
+  el.innerHTML = '<p class="loading">Starting enrichment…</p>';
+  try {
+    const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src});
+    el.innerHTML = `<p style="color:var(--success);font-size:13px">✅ Enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}</p>`;
+    setTimeout(loadEnrichStatus, 3000);
+  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+}
+
+async function startEnrichForce(btn) {
+  const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
+  if (!cats.length) {
+    alert('Select at least one category first.');
+    return;
+  }
+  if (!confirm(`Force re-enrich ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}?\n\nThis clears all existing profiles and re-processes from scratch. Use after changing the AI model or enrichment prompts.`)) return;
+
+  const el = document.getElementById('enrich-progress-area');
+  el.innerHTML = '<p class="loading" style="color:var(--amber)">🔄 Clearing cache and starting force re-enrichment…</p>';
+  if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+  try {
+    const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
+    const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src, force: true});
+    el.innerHTML = `<p style="color:var(--amber);font-size:13px">🔄 Force re-enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')} — cache cleared</p>`;
+    setTimeout(loadEnrichStatus, 3000);
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Force Re-Enrich'; }
+  }
+}
+
+async function computeTaste() {
+  const el = document.getElementById('enrich-progress-area');
+  el.innerHTML = '<p class="loading">Computing taste vectors…</p>';
+  try {
+    await api('/api/enrichment/compute-taste', 'POST');
+    el.innerHTML = '<p style="color:var(--success);font-size:13px">✅ Taste vector computation started</p>';
+    setTimeout(() => showView('history', document.querySelector('.sb-item[onclick*=history]')), 3000);
+  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+}
+
+// Legacy - keep for compatibility
+async function startEnrich() { await startEnrichNew(); }
+function checkEnrichJob() { loadEnrichStatus(); }
+
+// ── LIBRARIES ─────────────────────────────────────────────────────────────────
+let discoverSections=[];
+async function loadLibraryConfig() {
+  const el=document.getElementById('lib-config-content');
+  el.innerHTML='<p class="loading">Fetching library info from Plex…</p>';
+  try {
+    const [cfg,disc]=await Promise.all([
+      api('/api/libraries/config'),
+      api('/api/libraries/discover').catch(()=>({sections:[]}))
+    ]);
+    discoverSections=disc.sections||[];
+    const cfgMap=Object.fromEntries((cfg.libraries||[]).map(l=>[l.key,l.category]));
+
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'})
+             + ' ' + d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+    }
+    function catIcon(c) {
+      return {music:'🎵',movie:'🎬',show:'📺',anime:'⛩️',ignore:'🚫'}[c]||'📁';
+    }
+
+    el.innerHTML = discoverSections.map(s => {
+      const cat = cfgMap[s.key] || s.suggested_category;
+      const enrichPct = s.plex_item_count > 0
+        ? Math.round(100 * s.enriched_count / Math.max(s.plex_item_count, 1)) : 0;
+      const paths = (s.locations||[]).join('<br>');
+      return `
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <span style="font-size:18px">${catIcon(cat)}</span>
+              <span style="font-weight:600;font-size:15px">${esc(s.title)}</span>
+              <span style="font-size:11px;color:var(--text3);background:var(--bg3);padding:1px 6px;border-radius:8px">${esc(s.type)}</span>
+            </div>
+            ${paths ? `<div style="font-size:11px;color:var(--text3);font-family:monospace;margin-bottom:6px">${paths}</div>` : ''}
+            <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-bottom:8px">
+              <span title="Items in Plex">📦 ${s.plex_item_count.toLocaleString()} items in Plex</span>
+              <span title="Playback events in Curatarr DB">🗃 ${s.db_entry_count.toLocaleString()} plays tracked</span>
+              <span title="Enriched with metadata">✨ ${s.enriched_count.toLocaleString()} enriched</span>
+            </div>
+            <div style="font-size:11px;color:var(--text3)">
+              Last scan: <span style="color:var(--text2)">${fmtDate(s.scanned_at)}</span>
+              &nbsp;·&nbsp; Last update: <span style="color:var(--text2)">${fmtDate(s.updated_at)}</span>
+            </div>
+            ${s.plex_item_count > 0 ? `
+            <div style="margin-top:8px">
+              <div style="font-size:11px;color:var(--text3);margin-bottom:3px">Enrichment: ${enrichPct}%</div>
+              <div style="background:var(--bg3);border-radius:4px;height:4px;width:180px">
+                <div style="background:var(--amber);height:4px;border-radius:4px;width:${Math.min(enrichPct,100)}%"></div>
+              </div>
+            </div>` : ''}
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
+            <select id="libcat-${s.key}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:13px">
+              ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${cat===o?'selected':''}>${catIcon(o)} ${o}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>`;
+    }).join('') || '<p style="color:var(--text3)">No Plex libraries found.</p>';
+
+  } catch(e){el.innerHTML=`<p class="loading">${esc(e.message)}</p>`;}
+}
+
+async function saveLibraries() {
+  const libraries=discoverSections.map(s=>({
+    key:s.key, title:s.title, plex_type:s.type,
+    category:document.getElementById(`libcat-${s.key}`)?.value||s.suggested_category
+  }));
+  await api('/api/libraries/configure','POST',{libraries});
+  alert('Library configuration saved!');
+}
+
+// ── ORPHAN REPAIR ─────────────────────────────────────────────────────────────
+async function checkOrphans() {
+  const el = document.getElementById('orphan-content');
+  el.innerHTML = '<p class="loading">Scanning Plex history for orphaned entries…</p>';
+  try {
+    const r = await api('/api/libraries/orphaned');
+    if (!r.has_orphans) {
+      el.innerHTML = '<p style="color:var(--success);font-size:13px">✅ No orphaned entries found.</p>';
+      return;
+    }
+    const sections = r.orphaned;
+    el.innerHTML = `
+      <div style="font-size:13px;color:var(--amber);margin-bottom:12px">
+        Found ${sections.reduce((s,x)=>s+x.count,0)} entries from ${sections.length} removed libraries.
+        Assign each to a category to import them into your taste profile.
+      </div>
+      <div class="tbl-wrap" style="margin-bottom:16px">
+        <table class="tbl">
+          <thead><tr><th>Section ID</th><th>Entries</th><th>Sample titles</th><th>Assign to</th></tr></thead>
+          <tbody>
+          ${sections.map(s=>`<tr>
+            <td style="font-family:monospace;color:var(--text3)">${esc(s.section_id)}</td>
+            <td>${s.count}</td>
+            <td style="font-size:12px;color:var(--text2)">${s.sample_titles.slice(0,4).map(esc).join(' · ')}</td>
+            <td><select id="orphan-cat-${s.section_id}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+              ${['anime','music','movie','show','ignore'].map(o=>`
+                <option value="${o}" ${o===s.suggested_category?'selected':''}>${o}</option>
+              `).join('')}
+            </select></td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <button class="btn btn-primary" onclick="applyOrphanRepair(${JSON.stringify(sections).replace(/"/g,'&quot;')})">
+        Import missing entries
+      </button>`;
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+  }
+}
+
+async function applyOrphanRepair(sections) {
+  const el = document.getElementById('orphan-content');
+  const mappings = sections.map(s => ({
+    section_id: s.section_id,
+    title: `Recovered Section ${s.section_id}`,
+    plex_type: Object.keys(s.plex_types)[0] === 'track' ? 'artist' : 'show',
+    category: document.getElementById(`orphan-cat-${s.section_id}`)?.value || s.suggested_category,
+  }));
+  el.innerHTML = '<p class="loading">Importing entries… this may take a moment.</p>';
+  try {
+    const r = await api('/api/libraries/repair-orphans', 'POST', {mappings});
+    el.innerHTML = `<p style="color:var(--success);font-size:13px">
+      ✅ Saved ${r.saved} library mappings · Imported ${r.synced} new history entries.<br>
+      <span style="color:var(--text2)">Run Force Sync to recompute your taste profile with the new data.</span>
+    </p>`;
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+  }
+}
+
+// ── ADMIN ─────────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const el=document.getElementById('user-list');
+  try {
+    const users=await api('/api/users/');
+    el.innerHTML=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+      ${users.map(u=>`<tr>
+        <td>${esc(u.plex_username)}</td>
+        <td><span class="badge ${u.is_admin?'amber':'muted'}">${u.is_admin?'admin':'user'}</span></td>
+        <td><span class="badge ${u.is_active?'success':'danger'}">${u.is_active?'active':'disabled'}</span></td>
+        <td><button class="btn btn-secondary btn-sm" onclick="toggleUser(${u.id},${!u.is_active})">${u.is_active?'Disable':'Enable'}</button></td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+  } catch(e){el.innerHTML=`<p class="loading">${esc(e.message)}</p>`;}
+}
+async function toggleUser(id,active){await api(`/api/users/${id}`,'PATCH',{is_active:active});loadUsers();}
+
+// ── TASK MONITOR ──────────────────────────────────────────────────────────────
+let taskEventSource = null;
+let taskStreamRetries = 0;
+
+function startTaskStream() {
+  if (taskEventSource) return;
+  const tok = token || localStorage.getItem('curatarr_token');
+  if (!tok) { setTimeout(startTaskStream, 2000); return; }
+
+  taskEventSource = new EventSource(`/api/tasks/stream?token=${encodeURIComponent(tok)}`);
+
+  taskEventSource.onopen = () => {
+    taskStreamRetries = 0;
+    const el = document.getElementById('tasks-list');
+    if (el?.textContent.includes('Connecting')) el.innerHTML = '';
+  };
+
+  taskEventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      // Handle auth failure — clear token and reload
+      if (data.error === 'auth_failed') {
+        taskEventSource?.close();
+        taskEventSource = null;
+        localStorage.removeItem('curatarr_token');
+        token = '';
+        location.reload();
+        return;
+      }
+      const tasks = Array.isArray(data) ? data : [];
+      renderTasks(tasks);
+      updateTaskBadge(tasks);
+    } catch {}
+  };
+
+  taskEventSource.onerror = (evt) => {
+    taskEventSource?.close();
+    taskEventSource = null;
+    taskStreamRetries++;
+
+    // After 3 retries, likely an auth issue — show message and stop retrying
+    if (taskStreamRetries >= 3) {
+      const el = document.getElementById('tasks-list');
+      if (el) el.innerHTML = `<p class="loading" style="color:var(--danger)">
+        ⚠ Task stream disconnected — 
+        <a href="#" onclick="location.reload()" style="color:var(--amber)">reload page</a>
+        to reconnect.
+      </p>`;
+      taskStreamRetries = 0; // reset so reload works
+      setTimeout(startTaskStream, 30000); // retry after 30s
+    } else {
+      setTimeout(startTaskStream, 3000 * taskStreamRetries);
+    }
+  };
+}
+
+function updateTaskBadge(tasks) {
+  const running = tasks.filter(t => t.status === 'running' || t.status === 'pending');
+  const badge = document.getElementById('tasks-badge');
+  if (!badge) return;
+  if (running.length > 0) {
+    badge.textContent = running.length;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+const TASK_ICONS = {
+  sync: '🔄', enrichment: '⚙️', embedding: '🧮',
+  taste: '🧠', proactive: '🤖', arr_sync: '📦',
+  memory_decay: '🧹', orphan_check: '🔍', default: '📋'
+};
+const STATUS_COLORS = {
+  running: 'var(--amber)', done: 'var(--success)',
+  error: 'var(--danger)', pending: 'var(--text3)', skipped: 'var(--text2)'
+};
+const STATUS_LABELS = {
+  running: '▶ Running', done: '✓ Done',
+  error: '✗ Error', pending: '⏳ Queued', skipped: '✕ Cancelled'
+};
+
+function fmtTime(s) {
+  if (!s) return '';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+}
+
+function renderTasks(tasks) {
+  const el = document.getElementById('tasks-list');
+  if (!el) return;
+  if (!tasks?.length) {
+    el.innerHTML = '<p class="loading">No tasks yet. Actions like Sync and Enrichment will appear here.</p>';
+    return;
+  }
+
+  el.innerHTML = tasks.map(t => {
+    const icon = TASK_ICONS[t.category] || TASK_ICONS.default;
+    const color = STATUS_COLORS[t.status] || 'var(--text2)';
+    const label = STATUS_LABELS[t.status] || t.status;
+    const rate = t.rate > 0 ? `${t.rate.toFixed(1)}/s` : '';
+    const eta = t.eta_s ? `ETA ${fmtTime(t.eta_s)}` : '';
+    const elapsed = t.elapsed_s > 0 ? fmtTime(Math.round(t.elapsed_s)) : '';
+    const recentLog = t.logs?.slice(-1)[0]?.msg || '';
+
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:8px;${t.status==='running'?'border-color:rgba(229,160,13,.3)':''}">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:${t.status==='running'?'10':'0'}px">
+        <span style="font-size:16px">${icon}</span>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">${esc(t.name)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;display:flex;gap:10px">
+            <span style="color:${color};font-weight:600">${label}</span>
+            ${elapsed?`<span>⏱ ${elapsed}</span>`:''}
+            ${t.processed&&t.total?`<span>${t.processed.toLocaleString()} / ${t.total.toLocaleString()}</span>`:''}
+            ${rate?`<span>${rate}</span>`:''}
+            ${eta?`<span style="color:var(--amber)">${eta}</span>`:''}
+          </div>
+        </div>
+        ${t.status==='running'?`<span style="font-size:13px;font-weight:700;color:var(--amber)">${t.progress}%</span>`:''}
+        ${t.status==='error'?`<span style="font-size:11px;color:var(--danger)">${esc(t.error||'')}</span>`:''}
+      </div>
+      ${t.status==='running'&&t.total>0?`
+        <div class="progress-bar" style="margin-bottom:6px">
+          <div class="progress-fill" style="width:${t.progress}%;transition:width .5s"></div>
+        </div>`:''}
+      ${recentLog?`<div style="font-size:11px;color:var(--text3);font-family:monospace;margin-top:4px">${esc(recentLog)}</div>`:''}
+      ${t.status==='running'||t.status==='pending'?`
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px;color:var(--danger);border-color:var(--danger)"
+          onclick="cancelTask('${esc(t.id)}',this)">✕ Cancel</button>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function loadTaskHistory() {
+  const el = document.getElementById('tasks-history');
+  if (!el) return;
+  try {
+    const r = await api('/api/tasks/history');
+    const runs = r.last_runs || {};
+    const entries = Object.entries(runs);
+    if (!entries.length) {
+      el.innerHTML = '<p style="font-size:12px;color:var(--text3)">No completed tasks yet this session.</p>';
+      return;
+    }
+    const statusColor = { done: 'var(--success)', error: 'var(--danger)', skipped: 'var(--text2)' };
+    const statusIcon  = { done: '✓', error: '✗', skipped: '✕' };
+    entries.sort((a,b) => (b[1].at||'').localeCompare(a[1].at||''));
+    el.innerHTML = `<div style="display:grid;gap:6px">` + entries.map(([cat, run]) => {
+      const icon  = TASK_ICONS[cat] || TASK_ICONS.default;
+      const color = statusColor[run.status] || 'var(--text2)';
+      const mark  = statusIcon[run.status]  || '·';
+      const when  = run.at ? new Date(run.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const dur   = run.elapsed_s > 0 ? fmtTime(Math.round(run.elapsed_s)) : '';
+      return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:14px">${icon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600">${esc(run.name||cat)}</div>
+          ${run.message?`<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(run.message)}</div>`:''}
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:11px;color:${color};font-weight:600">${mark} ${run.status}</div>
+          <div style="font-size:10px;color:var(--text3)">${when}${dur?' · '+dur:''}</div>
+        </div>
+      </div>`;
+    }).join('') + `</div>`;
+  } catch(e) {
+    el.innerHTML = `<p style="font-size:12px;color:var(--text3)">${esc(e.message)}</p>`;
+  }
+}
+
+async function cancelTask(taskId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Cancelling…';
+  try {
+    await api(`/api/tasks/${taskId}/cancel`, 'POST');
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '✕ Cancel';
+  }
+}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+</script>
+</body>
+</html>
