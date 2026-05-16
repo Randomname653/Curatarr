@@ -37,13 +37,24 @@ class Settings(BaseSettings):
 
     # ── Ollama ───────────────────────────────────────────────────────────────
     OLLAMA_ENDPOINT: HttpUrl = "http://localhost:11434"
-    # These are the baked modelfile names created by setup wizard
-    CURATOR_MODEL: str = "curatarr-curator"       # large model, system prompt baked in
-    SUMMARIZER_MODEL: str = "curatarr-summarizer"  # small model, system prompt baked in
+    # ── Model names — set these in .env, do not edit here ────────────────────
+    # Baked modelfile names (created by python build_models.py)
+    CURATOR_MODEL: str = "curatarr-curator"
+    SUMMARIZER_MODEL: str = "curatarr-summarizer"
     EMBEDDING_MODEL: str = "nomic-embed-text"
-    # Base models (used to build the above)
-    BASE_CURATOR_MODEL: str = "qwen2.5:32b"
-    BASE_SUMMARIZER_MODEL: str = "dolphin3"  # Llama 3.1 8B — better cultural knowledge than qwen2.5:3b
+    # Primary models — .env is the single source of truth.
+    # Defaults here are only used when .env has no entry.
+    BASE_CURATOR_MODEL: str = "qwen3.6:27b"       # chat + recommendations
+    BASE_SUMMARIZER_MODEL: str = "gpt-oss:20b"    # enrichment + memory extraction
+    # Backup models — defined in .env for easy switching, not yet used in code.
+    BACKUP_CURATOR_MODEL: str = "laguna-xs.2:q4_K_M"
+    BACKUP_SUMMARIZER_MODEL: str = "nemotron-3-nano:4b"
+    # When True, <think>...</think> blocks are stripped from LLM responses.
+    # Set False — current models (gpt-oss:20b, qwen3.6:27b) do not emit think blocks.
+    # Keep this flag so switching to a reasoning model only requires an .env change.
+    LLM_THINK_TAGS: bool = False
+    # Kept for .env backward-compat; no longer used — enrichment uses a single LLM worker.
+    ENRICH_PARALLEL_SLOTS: int = 0
 
     # ── ARR Services ─────────────────────────────────────────────────────────
     RADARR_URL: Optional[str] = None
@@ -56,7 +67,9 @@ class Settings(BaseSettings):
     # ── Metadata APIs ────────────────────────────────────────────────────────
     TMDB_API_KEY: Optional[str] = None
     OMDB_API_KEY: Optional[str] = None   # optional — free at omdbapi.com, 1000 req/day
-    LASTFM_API_KEY: Optional[str] = None   # music tags + similar artists (optional)
+    LASTFM_API_KEY: Optional[str] = None         # music tags + similar artists (optional)
+    SPOTIFY_CLIENT_ID: Optional[str] = None      # Client Credentials — no user login needed
+    SPOTIFY_CLIENT_SECRET: Optional[str] = None  # from developer.spotify.com
     # AniList: no key needed (public GraphQL)
     # MusicBrainz: no key needed
 
@@ -68,6 +81,18 @@ class Settings(BaseSettings):
     BINGE_EPISODE_THRESHOLD: int = 3      # episodes in one session = binge
     BINGE_SESSION_HOURS: int = 6          # session window
     BINGE_SERIES_PERCENT: float = 0.5     # >50% of season in 48h = binge
+
+    # ── Enrichment TTL & game-pause ──────────────────────────────────────────
+    # Items enriched longer than TTL_DAYS ago are queued for refresh (staggered).
+    ENRICHMENT_TTL_DAYS: int = 90
+    # Max items marked for refresh per daily scheduler run (spread across ~90 days).
+    ENRICHMENT_REFRESH_BATCH_SIZE: int = 150
+    # ARR pre-enrichment batch: items enriched nightly (02:30) before deletion sync.
+    # Each item takes ~15-25s (TMDB + LLM + embedding). 80 ≈ 20-30 min per night.
+    ARR_PRE_ENRICH_BATCH: int = 80
+    # Comma-separated extra game .exe names (e.g. "RDR2.exe,HogwartsLegacy.exe").
+    # Tier-1 launcher signals and DB-classified processes are always checked first.
+    EXTRA_GAME_PROCESSES: str = ""
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     # Override via .env as JSON: CORS_ORIGINS=["http://myserver:8000"]

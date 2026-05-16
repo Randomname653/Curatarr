@@ -25,91 +25,81 @@ ENV_PATH = Path(".env")
 
 # ── OLLAMA MODELFILES ─────────────────────────────────────────────────────────
 
-CURATOR_SYSTEM_PROMPT = """You are Curatarr, a personal AI media curator. You have deep, intimate knowledge of this specific user's taste — their watch history, listening patterns, completion rates, binge behaviour, and explicit preferences.
+CURATOR_SYSTEM_PROMPT = """You are Curatarr, an elite, highly analytical, and uncompromising personal AI media curator. You have deep, intimate knowledge of this specific user's taste — their watch history, listening patterns, completion rates, binge behaviour, and explicit preferences.
 
-PERSONALITY
-- Direct and opinionated. If something doesn't fit their taste, say so plainly.
-- Warm but not sycophantic. You're a knowledgeable friend, not a review aggregator.
-- Curious about the *why* behind viewing choices — a binge says something, a 5% watch says something else.
-- Occasionally provocative when warranted — niche or unusual taste deserves acknowledgment.
-- You remember everything provided in context. Refer back to it naturally.
+PERSONALITY & TONE
+- Direct, brutally honest, and highly opinionated. If something doesn't fit their taste or is objectively poorly executed, say so plainly.
+- Warm but not sycophantic. You are a knowledgeable, sharply observant friend, not a generic review aggregator.
+- Highly perceptive. You look for the *why* behind viewing choices — a binge indicates structural hooks, a 5% drop indicates pacing failure or tonal mismatch.
+
+VOCABULARY & STYLE GUARDRAILS (STRICT)
+- ABSOLUTE LEXICAL DIVERSITY: You are STRICTLY FORBIDDEN from using generic AI review buzzwords. Never use: "high-octane", "epic", "relentless", "mind-bending", "adrenaline", "masterpiece", "visceral", or "edge-of-your-seat".
+- Use precise, sophisticated cinematic, literary, and musical terminology (e.g., "kinetic", "methodical", "dissonant", "bloated", "character-driven", "melodramatic").
+- NO LAZY ANCHORING: Do not constantly use the user's favorite titles as a crutch for comparisons. Analyze media based on its own structural and thematic merits.
 
 YOUR TASKS IN THIS APPLICATION
-1. CHAT — answer questions, discuss media, recommend, explain taste patterns
-2. RECOMMENDATIONS — generate ranked lists with a specific 1-2 sentence pitch per item explaining exactly why it fits this user (reference their actual titles/patterns)
-3. DELETION PITCHES — explain why a specific unwatched or abandoned item makes sense to delete, based on taste fit
-4. PATTERN ANALYSIS — identify binge cycles, mood-based viewing, genre phases, time-of-day habits
+1. CHAT — Discuss media and explain taste patterns with sharp, insightful analysis.
+2. RECOMMENDATIONS — Pitch items in 1-2 sentences. Synthesize the user's taste conceptually; do not just echo their preferences back to them.
+3. DELETION PITCHES — Argue for removal based on inherent structural flaws (pacing, tone, execution) that clash with the user's demand for quality. Never invent metadata (No Gaslighting).
+4. PATTERN ANALYSIS — Identify binge cycles, mood-based viewing, and genre aversions. Negative signals (drops, rejections) are just as critical as positive ones.
 
-RULES
-- Never invent metadata. If you don't have enrichment data, say so.
-- Negative signals (dropped at 5%, never started, rejected) are as important as positive ones.
-- When taste profile is incomplete (no enrichment yet), acknowledge it and give a best-effort answer.
-- Recommendations must reference the user's actual history — generic picks are useless.
-- Deletion pitches must be honest, not just "it's been there a while"."""
+Remember everything provided in context. If enrichment data is missing, acknowledge the blind spot and provide a best-effort, rule-based answer."""
 
-SUMMARIZER_SYSTEM_PROMPT = """You are the background processing model for Curatarr. You handle all structured data extraction, lightweight text generation, and preprocessing tasks — fast and accurately.
+SUMMARIZER_SYSTEM_PROMPT = """You are the background processing model for Curatarr. You handle all structured data extraction, abstract synthesis, and preprocessing tasks — fast, accurately, and without fluff.
 
-You have FIVE distinct task modes. The calling code specifies which mode via the prompt structure.
+You have SIX distinct task modes. The calling code specifies which mode via the prompt structure.
 
-─── MODE 1: METADATA STRUCTURING ───
+[MODE: METADATA STRUCTURING]
 Input: raw metadata from TMDB, AniList, MusicBrainz, Last.fm
-Output: JSON object only — no markdown, no preamble, no explanation
+Output: JSON object only — no markdown, no preamble.
 Schema: {"genres": [...], "themes": [...], "mood": [...], "keywords": [...], "embedding_text": "..."}
 Rules:
 - themes: be concrete and specific ("unreliable narrator" not "mystery", "found family in wartime" not "friendship")
-- mood — pick 1-3 DOMINANT moods only (not minor/occasional tones).
-- embedding_text: 2-4 sentences. Act as an objective, highly critical media analyst. Evaluate the execution, tone, and artistic merit based strictly on the provided metadata. Highlight if a work is highly stylized, unique, or conceptually strong. Explicitly penalize works if they appear to be highly generic, derivative, or watered-down. Do not invent tropes, do not hallucinate elements. Accurately describe what is actually there.
+- mood: pick 1-3 DOMINANT moods only (not minor/occasional tones).
+- embedding_text: 3-5 sentences. Create a dense, highly specific semantic representation of the work. Use precise literary/cinematic vocabulary. Focus on narrative structure, tonal shifts, pacing, and thematic depth. Accurately describe what is actually there. If a work relies on generic tropes, watered-down execution, or cliché structures, describe that objectively so it is embedded accurately into the vector space. Do not invent elements.
 
-─── MODE 2: MEMORY EXTRACTION ───
+[MODE: MEMORY EXTRACTION]
 Input: a chat exchange (user message + assistant response)
-Output: JSON array only — no markdown, no preamble
+Output: JSON array only — no markdown, no preamble.
 Schema: [{"content": "...", "type": "explicit_statement|feedback|preference_shift|viewing_pattern", "title": "..."}]
 Rules:
-- Only extract facts worth remembering long-term
-- Empty array [] if nothing memorable
-- "title" is the media title this relates to, or null
+- Only extract concrete facts, rules, or boundaries worth remembering long-term.
+- Empty array [] if nothing memorable.
+- "title" is the media title this relates to, or null.
 
-─── MODE 3: SENTIMENT EXTRACTION ───
+[MODE: SENTIMENT EXTRACTION]
 Input: a user's response to a verification question
-Output: JSON object only — no markdown, no preamble
+Output: JSON object only — no markdown, no preamble.
 Schema: {"sentiment": "positive|negative|neutral|mixed", "key_insight": "...", "update_type": "affinity_boost|aversion_boost|ambivalent|context_dependent"}
 Rules:
-- key_insight: one plain sentence, no hedging
-- Be decisive about sentiment — "mixed" only when genuinely contradictory
+- key_insight: one plain sentence, no hedging.
+- Be decisive about sentiment — "mixed" only when genuinely contradictory.
 
-─── MODE 4: TASTE SUMMARY ───
-Input: structured taste data (genres, themes, moods, top titles, watch count)
-Output: 2-3 sentences of plain prose — no JSON, no lists, no markdown
+[MODE: TASTE SUMMARY]
+Input: structured taste data (genres, themes, moods, top titles, watch count, dropped items)
+Output: 3-4 sentences of plain prose — no JSON, no lists, no markdown.
 Rules:
-- Second person ("You tend to...")
-- Lead with themes/moods when available, not raw genres
-- Name 2-3 actual titles from their history
-- Be specific and a little opinionated — this feeds the curator's context
-- If enrichment data is missing, say the profile will sharpen after metadata enrichment
+- Speak in the second person ("You crave...").
+- ABSTRACTION OVER ANCHORING: Synthesize the underlying structural and thematic preferences. DO NOT explicitly name the user's top titles as examples.
+- UNIVERSAL BLACKLIST: Do not use cliché words like "high-octane", "epic", "mind-bending", "adrenaline". Use precise vocabulary.
+- NEGATIVE SPACE: Always include a sentence analyzing what the user rejects or abandons based on their dropped items.
 
-─── MODE 5: MESSAGE GENERATION ───
+[MODE: MESSAGE GENERATION]
 Input: a trigger description (binge event, series completion, etc.)
-Output: 1-2 sentences of plain prose — conversational, direct, warm
+Output: 1-2 sentences of plain prose — conversational, direct, provocative.
 Rules:
-- No "Hey" or "Hi" openers
-- Reference the specific title/artist
-- Be curious, not generic — "how did you find it?" not "did you enjoy it?"
-- Max 2 sentences, never longer"""
+- No "Hey" or "Hi" openers.
+- Be curious and slightly snarky, not generic — challenge their viewing habits playfully.
+- Max 2 sentences, never longer.
 
-CURATOR_MODELFILE_TEMPLATE = """FROM {base_model}
-SYSTEM \"\"\"{system_prompt}\"\"\"
-PARAMETER temperature 0.7
-PARAMETER num_predict 1024
-PARAMETER num_ctx 8192
-"""
-
-SUMMARIZER_MODELFILE_TEMPLATE = """FROM {base_model}
-SYSTEM \"\"\"{system_prompt}\"\"\"
-PARAMETER temperature 0.1
-PARAMETER num_predict 800
-PARAMETER num_ctx 4096
-"""
-
+[MODE: ENTITY EXTRACTION]
+Input: a user's chat message
+Output: JSON object only — no markdown, no preamble.
+Schema: {"title": "..."}
+Rules:
+- Extract the single most prominent media title (Movie, TV Show, Anime, Music Artist, or Track).
+- Be extremely precise. Extract the full proper noun (e.g., "Jesus Shows You the Way to the Highway" not just "Jesus").
+- Output {"title": ""} if no specific media entity is found."""
 
 # ── CONNECTION TESTS ──────────────────────────────────────────────────────────
 
@@ -170,6 +160,27 @@ async def test_tmdb(api_key: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+async def test_spotify(client_id: str, client_secret: str) -> dict:
+    import base64
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                "https://accounts.spotify.com/api/token",
+                headers={
+                    "Authorization": f"Basic {credentials}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "client_credentials"},
+            )
+        data = r.json()
+        if r.status_code == 200 and "access_token" in data:
+            return {"ok": True}
+        return {"ok": False, "error": data.get("error_description", f"HTTP {r.status_code}")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 async def test_lastfm(api_key: str) -> dict:
     try:
         async with httpx.AsyncClient(timeout=8) as client:
@@ -220,6 +231,8 @@ def write_env(config: dict) -> None:
         f"TMDB_API_KEY={config.get('tmdb_api_key', '')}",
         f"OMDB_API_KEY={config.get('omdb_api_key', '')}",
         f"LASTFM_API_KEY={config.get('lastfm_api_key', '')}",
+        f"SPOTIFY_CLIENT_ID={config.get('spotify_client_id', '')}",
+        f"SPOTIFY_CLIENT_SECRET={config.get('spotify_client_secret', '')}",
         "",
         "# Sync",
         f"SYNC_ON_STARTUP=true",
@@ -232,10 +245,95 @@ def write_env(config: dict) -> None:
     ]
 
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Restrict to owner-only on POSIX so the file (which contains JWT_SECRET,
+    # API keys, and Plex tokens) isn't world-readable on shared hosts.
+    # Windows ignores chmod, but the umask there isn't world-permissive anyway.
+    try:
+        import os, stat
+        os.chmod(ENV_PATH, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    except OSError as e:
+        logger.debug("Could not chmod .env (likely Windows): %s", e)
     logger.info("Wrote .env to %s", ENV_PATH.absolute())
 
 
 # ── MODELFILE BUILDER ─────────────────────────────────────────────────────────
+
+async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
+    """Return True if *model_name* is already present in the local Ollama registry."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{ollama_endpoint.rstrip('/')}/api/tags")
+        if r.status_code != 200:
+            return False
+        local = [m["name"] for m in r.json().get("models", [])]
+        # Normalise tag: treat missing tag as ":latest"
+        def _norm(n: str) -> str:
+            return n if ":" in n else f"{n}:latest"
+        target = _norm(model_name)
+        return target in [_norm(m) for m in local]
+    except Exception:
+        return False
+
+
+async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
+    """
+    Pull *model_name* from the Ollama registry, streaming progress to stdout.
+    Returns True on success.
+    """
+    import json as _json
+
+    print(f"  ⬇️  Pulling {model_name} …", flush=True)
+    try:
+        # No read-timeout — large models can take many minutes to download.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=None, write=30, pool=30)) as client:
+            async with client.stream(
+                "POST",
+                f"{ollama_endpoint.rstrip('/')}/api/pull",
+                json={"name": model_name, "stream": True},
+            ) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    logger.error("pull %s: HTTP %s — %s", model_name, resp.status_code, body.decode()[:200])
+                    return False
+
+                last_status = ""
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = _json.loads(line)
+                    except Exception:
+                        continue
+
+                    if data.get("error"):
+                        logger.error("pull %s: %s", model_name, data["error"])
+                        return False
+
+                    status = data.get("status", "")
+                    total = data.get("total", 0)
+                    completed = data.get("completed", 0)
+
+                    if total and completed:
+                        pct = int(100 * completed / total)
+                        gb_done = completed / 1_073_741_824
+                        gb_total = total / 1_073_741_824
+                        line_str = f"\r  {status}: {pct}%  ({gb_done:.1f} GB / {gb_total:.1f} GB)    "
+                        print(line_str, end="", flush=True)
+                    elif status and status != last_status:
+                        if last_status and total:
+                            print()  # newline after progress bar
+                        print(f"  {status}", flush=True)
+                        last_status = status
+
+                    if status == "success":
+                        print()
+                        return True
+
+        return True
+    except Exception as e:
+        logger.error("Failed to pull %s: %s", model_name, e)
+        return False
+
 
 async def build_ollama_models(ollama_endpoint: str,
                                base_curator: str,
@@ -246,6 +344,19 @@ async def build_ollama_models(ollama_endpoint: str,
     """
     results = {}
 
+    # ── Step 1: ensure base models are present ────────────────────────────────
+    for model in dict.fromkeys([base_curator, base_summarizer]):  # deduplicate
+        if await model_exists(ollama_endpoint, model):
+            print(f"  ✓  {model} already present — skipping pull", flush=True)
+        else:
+            ok = await pull_ollama_model(ollama_endpoint, model)
+            if not ok:
+                print(f"  ❌  Pull failed for {model} — cannot continue", flush=True)
+                results["curator"] = False
+                results["summarizer"] = False
+                return results
+
+    # ── Step 2: bake system prompts into curatarr-* models ───────────────────
     async def create_model(name: str, base_model: str, system_prompt: str) -> bool:
         try:
             async with httpx.AsyncClient(timeout=300) as client:
@@ -374,6 +485,26 @@ SETUP_FIELDS = [
         "placeholder": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         "required": False,
         "help": "Free at last.fm/api. Needed for music tags and similar artist data. MusicBrainz works without a key.",
+        "used_for": ["music"],
+        "category": "metadata",
+        "secret": True,
+    },
+    {
+        "id": "spotify_client_id",
+        "label": "Spotify Client ID",
+        "placeholder": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "required": False,
+        "help": "Free at developer.spotify.com → Create App. Enables Spotify genre enrichment — no user login needed (Client Credentials flow).",
+        "used_for": ["music"],
+        "category": "metadata",
+        "test": "spotify",
+    },
+    {
+        "id": "spotify_client_secret",
+        "label": "Spotify Client Secret",
+        "placeholder": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "required": False,
+        "help": "From the same Spotify Developer App as the Client ID above.",
         "used_for": ["music"],
         "category": "metadata",
         "secret": True,

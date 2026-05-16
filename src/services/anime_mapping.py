@@ -51,31 +51,36 @@ class AnimeMapping:
 
 # Module-level singleton
 _mapping: Optional[AnimeMapping] = None
-_loading = False
+_load_lock: Optional[asyncio.Lock] = None
+
+
+def _get_load_lock() -> asyncio.Lock:
+    """Lazily build the lock so it's bound to the running event loop."""
+    global _load_lock
+    if _load_lock is None:
+        _load_lock = asyncio.Lock()
+    return _load_lock
 
 
 async def get_anime_mapping(force_refresh: bool = False) -> AnimeMapping:
-    """Get the anime mapping, downloading if necessary."""
-    global _mapping, _loading
+    """Get the anime mapping, downloading if necessary.
+
+    Concurrent callers serialize on a real asyncio.Lock so a single download
+    happens and every caller receives the same populated mapping (no empty
+    fallback on a coincident timeout).
+    """
+    global _mapping
 
     if _mapping and not force_refresh:
         return _mapping
 
-    if _loading:
-        # Wait for existing download
-        for _ in range(30):
-            await asyncio.sleep(1)
-            if _mapping:
-                return _mapping
-        return AnimeMapping()
-
-    _loading = True
-    try:
+    async with _get_load_lock():
+        # Double-check after acquiring the lock — a previous waiter may have
+        # already populated the mapping.
+        if _mapping and not force_refresh:
+            return _mapping
         _mapping = await _load_or_download()
-    finally:
-        _loading = False
-
-    return _mapping
+        return _mapping
 
 
 async def _load_or_download() -> AnimeMapping:

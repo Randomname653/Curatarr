@@ -168,6 +168,27 @@ class TaskMonitor:
         }
 
     def done(self, task: Task, message: str = None) -> Task:
+        # Pass 92: don't clobber a prior SKIPPED status with DONE. When a
+        # task is cancelled mid-run (``self.cancel(task_id)`` from the
+        # /api/tasks/{id}/cancel endpoint), the cooperative-cancel path
+        # — producer breaks the loop, consumer drains the queue and
+        # calls done() at the end — used to flip status straight back to
+        # DONE. The UI then showed "✓ Done" for an obviously-truncated
+        # run (e.g. "56/3,186 processed"), masking the cancellation. Keep
+        # the SKIPPED status but append the done-time message so the
+        # audit log still records what got through. The progress bar
+        # stays at the truncated value so the partial-completion is
+        # visible at a glance.
+        if task.status == TaskStatus.SKIPPED:
+            if message:
+                task.logs.append(TaskLog(
+                    ts=time.time(),
+                    message=f"(after cancel) {message}",
+                    level="info",
+                ))
+            self._record_last_run(task, message)
+            self._broadcast()
+            return task
         task.status = TaskStatus.DONE
         task.progress = 100
         task.finished_at = time.time()
@@ -219,7 +240,6 @@ class TaskMonitor:
         return q
 
     def unsubscribe(self, q: asyncio.Queue):
-        self._subscribers.discard(q) if hasattr(self._subscribers, 'discard') else None
         try:
             self._subscribers.remove(q)
         except ValueError:

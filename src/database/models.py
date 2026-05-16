@@ -4,7 +4,10 @@ ARR Suite LLM - Database Models (Phase A)
 SQLite database models for users, sessions, and encrypted user data.
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, JSON, Float, ForeignKey, Index
+from sqlalchemy import (
+    Boolean, Column, DateTime, Float, ForeignKey, Index, Integer,
+    String, Text, UniqueConstraint,
+)
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
 
@@ -43,57 +46,15 @@ class Session(Base):
     )
 
 
-class MediaItem(Base):
-    """Media knowledge base with vector embeddings."""
-    __tablename__ = "media_items"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tmdb_id = Column(Integer, unique=True, nullable=True, index=True)
-    tvdb_id = Column(Integer, unique=True, nullable=True, index=True)
-    anilist_id = Column(Integer, unique=True, nullable=True, index=True)
-    media_type = Column(String(32), nullable=False)  # movie, episode, anime
-    title = Column(String(512), nullable=False)
-    original_title = Column(String(512), nullable=True)
-    year = Column(Integer, nullable=True)
-    genres = Column(JSON, nullable=True)  # Encrypted if sensitive
-    overview = Column(Text, nullable=True)
-    rating = Column(Float, nullable=True)
-    vote_count = Column(Integer, nullable=True)
-    
-    # Metadata hash for deduplication
-    metadata_hash = Column(String(64), unique=True, nullable=True, index=True)
-
-    # Enrichment status
-    enriched = Column(Boolean, default=False)
-    enrichment_date = Column(DateTime, nullable=True)
-    enrichment_source = Column(String(32), nullable=True)  # tmdb, anidb, omdb
-    
-    # Metadata as JSON (encrypted at rest)
-    metadata_json = Column(Text, nullable=True)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class ChatInteraction(Base):
-    """User chat interactions with curator LLM."""
-    __tablename__ = "chat_interactions"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    message = Column(Text, nullable=False)
-    response = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    feedback = Column(Integer, default=0)  # -1 (thumbs down), 0 (no feedback), 1 (thumbs up)
-    
-    # Context for RAG
-    context_media_ids = Column(String, nullable=True)  # Comma-separated media IDs
-    user_taste_vector_hash = Column(String(64), nullable=True)
-    
-    # Index for quick lookups
-    __table_args__ = (
-        Index("idx_user_timestamp", "user_id", "timestamp"),
-    )
+# Pass 48: ``ChatInteraction`` was a write-only table — chat.py wrote a
+# row per turn but nothing in src/ ever queried it. The redundant copy
+# of (user message, assistant response) duplicated ``ConversationMessage``,
+# and the ``feedback`` column belonged to a removed thumbs-up/down UI
+# with no learning loop on the other end. Model class deleted; the
+# physical SQLite table is left in place for old DBs so we don't risk a
+# destructive migration on someone's running install. A follow-up
+# migration can DROP TABLE chat_interactions; until then it just doesn't
+# accumulate new rows.
 
 
 class UserPinHash(Base):
@@ -105,24 +66,6 @@ class UserPinHash(Base):
     pin_hash = Column(String(256), nullable=False)  # PBKDF2 hash
     salt = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class BatchJob(Base):
-    """Batch processing jobs (media enrichment, etc.)."""
-    __tablename__ = "batch_jobs"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    job_type = Column(String(64), nullable=False)  # media_enrichment, taste_vector_generation
-    status = Column(String(32), default="pending")  # pending, running, completed, failed
-    progress = Column(Integer, default=0)  # Percentage 0-100
-    total_items = Column(Integer, nullable=True)
-    processed_items = Column(Integer, default=0)
-    error_message = Column(Text, nullable=True)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -145,6 +88,13 @@ class WatchHistoryEntry(Base):
     completed = Column(Boolean, default=False)
     genres = Column(Text, nullable=True)
     tmdb_id = Column(Integer, nullable=True)
+    # Music / Spotify
+    spotify_uri = Column(String(100), nullable=True)   # full spotify:track:xxx URI
+    source      = Column(String(16),  nullable=True)   # "plex" | "spotify" | "manual"
+    # Pass 16f: pre-resolved MusicBrainz artist ID — populated by Phase 1.4
+    # (resolve_artist_mbids) so the Spotify-Backlog → Lidarr add flow has
+    # the MBID immediately, no live lookup at click time.
+    artist_mbid = Column(String(40), nullable=True, index=True)
 
     __table_args__ = (
         Index("idx_wh_user_item", "user_id", "plex_item_id"),
@@ -228,9 +178,21 @@ class DeletionProposal(Base):
     user_comment = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+    category  = Column(String(32), nullable=True)         # movie/show/anime/music
+    poster_url = Column(String(512), nullable=True)
+    synopsis   = Column(Text, nullable=True)
+    genres     = Column(String(300), nullable=True)
+    # Pass 17: most recent file-level activity timestamp (latest episode
+    # file imported / movie file added / track file added). Distinct from
+    # ``created_at`` (when this proposal row was generated) and from
+    # series.added (when Sonarr added the series). Powers the "🆕 Just-
+    # arrived" filter — items that came alive recently regardless of
+    # when the parent entity was first added to the arr.
+    latest_activity_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("idx_dp_user_status", "user_id", "status"),
+        Index("idx_dp_latest_activity", "latest_activity_at"),
     )
 
 
@@ -240,14 +202,104 @@ class ProtectedMedia(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    # Wir speichern die ID (TMDB/AniList) oder den exakten Titel
-    identifier = Column(String(255), nullable=False, index=True) 
-    category = Column(String(32), nullable=True) # movie, show, anime
-    reason = Column(Text, nullable=True)         # "Mitbewohner", "Sammlerstück"
+    # Stores either the external ID (TMDB / AniList) or the exact title.
+    identifier = Column(String(255), nullable=False, index=True)
+    category = Column(String(32), nullable=True)  # movie, show, anime
+    reason = Column(Text, nullable=True)          # e.g. "Roommate", "Collector's item"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         Index("idx_protected_lookup", "user_id", "identifier"),
+    )
+
+
+class CuratorResolutionLog(Base):
+    """Append-only history of how each keep/delete debate resolved.
+
+    Pass 66. Distinct from ``ProtectedMedia`` (the current whitelist
+    STATE): this is the HISTORY of every settled deletion debate — the
+    data foundation for the year-in-review recap.
+
+    One row per resolved title:
+
+      outcome          "kept" | "deleted"
+      resolution_type  "consensus" — the two sides ended up agreeing: the
+                         user convinced the curator, or the curator
+                         convinced the user. A genuine meeting of minds.
+                       "override"  — the title was kept OVER the curator's
+                         standing objection. The curator never conceded the
+                         title has merit; it only accepted that the title
+                         stays. The user overruled it.
+      curator_stance   the curator's FINAL take, short ("disposable
+                       franchise noise"). On an override this is the
+                       objection it never dropped; on a consensus it's
+                       where it actually landed.
+      override_reason  CATEGORY of why the user overrode ("Sentimental/
+                       Partner", "Completionism", "Nostalgia", …) — NULL on
+                       consensus.
+
+    The recap is then a single ``SELECT … GROUP BY`` over this table.
+    Nothing migrates ``ProtectedMedia`` — state and history stay separate.
+    """
+    __tablename__ = "curator_resolution_log"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    user_id         = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title           = Column(String(512), nullable=False)
+    category        = Column(String(32), nullable=True)   # movie/show/anime/music
+    outcome         = Column(String(16), nullable=False)  # kept / deleted
+    resolution_type = Column(String(16), nullable=False)  # consensus / override
+    curator_stance  = Column(Text, nullable=True)
+    override_reason = Column(String(64), nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_crl_user_created", "user_id", "created_at"),
+        Index("idx_crl_user_title", "user_id", "title"),
+    )
+
+
+class PlexRating(Base):
+    """User-set Plex star ratings (1-5 ★), captured from PlexAmp / Plex Web.
+
+    Pass 82. Scoped to MUSIC ONLY by design: in this user's setup the
+    ``userRating`` field on movies/shows is overwritten by Kometa with
+    aggregated platform ratings (TMDB / IMDb averages), so using it as
+    "personal opinion" would be misleading. Music ratings come directly
+    from the user via PlexAmp and are the real signal.
+
+    Rating scale: Plex stores ratings on a 0-10 float scale where each
+    UI star = 2.0 points (5★ = 10.0, 4.5★ = 9.0, … 1★ = 2.0, 0.5★ = 1.0).
+    We store the raw Plex value to preserve half-star precision; the
+    analysis layer converts to 1-5 stars for thresholds.
+
+    One row per ``(user_id, plex_item_id)`` — upserted on every sync.
+    Ratings can sit on tracks (type 10), albums (type 9), or artists
+    (type 8); the ``media_type`` column distinguishes. ``artist_name``
+    is captured on every row regardless of level so the deletion-scoring
+    "max rating across this artist's content" lookup is a single index
+    scan instead of a join through Plex's grandparent/parent hierarchy.
+    """
+    __tablename__ = "plex_ratings"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    user_id       = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    plex_item_id  = Column(String(64), nullable=False, index=True)
+    media_type    = Column(String(16), nullable=False)   # "track" | "album" | "artist"
+    rating        = Column(Float, nullable=False)         # 0-10 Plex scale (5★ = 10)
+    rated_at      = Column(DateTime, nullable=True)       # from Plex ``lastRatedAt``
+
+    # Denormalised artist name for fast "max rating per artist" lookups.
+    # Always lowercase-comparable; we store as-typed and use func.lower at
+    # query time for case-insensitive matches against Lidarr artistName.
+    artist_name   = Column(String(512), nullable=True, index=True)
+
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "plex_item_id", name="uq_plex_rating_user_item"),
+        Index("idx_plex_rating_artist_lookup", "user_id", "artist_name"),
     )
 
 
@@ -275,7 +327,14 @@ class AppState(Base):
 
 
 class ConversationMessage(Base):
-    """Persisted chat history per user for LLM context window."""
+    """Persisted chat history per user for LLM context window.
+
+    ``thread_id`` isolates discussions: free chat lives on ``general`` (or NULL
+    for legacy rows that were written before Pass 3.5), each deletion-proposal
+    discussion on ``deletion_proposal:{id}``, each proactive-message discussion
+    on ``proactive_message:{id}``. ``_load_conversation`` filters by thread so
+    one topic's history can't bleed into another.
+    """
     __tablename__ = "conversation_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -284,6 +343,11 @@ class ConversationMessage(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     tokens_approx = Column(Integer, default=0)   # rough estimate for window management
+    thread_id = Column(String(64), nullable=True, index=True)
+
+    __table_args__ = (
+        Index("idx_conv_user_thread", "user_id", "thread_id", "created_at"),
+    )
 
 
 class EpisodicMemory(Base):
@@ -324,6 +388,7 @@ class CachedRecommendation(Base):
     confidence  = Column(Float, default=0.7)
     genres      = Column(String(200))
     poster_url  = Column(String(500))
+    synopsis    = Column(Text, nullable=True)
     cached_at   = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -365,6 +430,18 @@ class MediaIdentity(Base):
         Index("ix_media_id_anilist", "anilist_id"),
         Index("ix_media_id_anidb",   "anidb_id"),
     )
+
+
+class GameProcess(Base):
+    """
+    User-classified processes: is_game=True → pause LLM during enrichment.
+    is_game=False → ignore (never shown again in the classify prompt).
+    """
+    __tablename__ = "game_processes"
+
+    process_name = Column(String(200), primary_key=True)
+    is_game      = Column(Boolean, nullable=False)
+    added_at     = Column(DateTime, default=datetime.utcnow)
 
 
 class ArrEnrichmentStatus(Base):

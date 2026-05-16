@@ -6,74 +6,796 @@ Streaming Ollama with RAG, taste context, and persistent conversation memory.
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from datetime import datetime
 from typing import AsyncGenerator
+
+from src.services.llm_utils import (
+    ThinkTagStreamFilter, clean_llm_text, ollama_options, strip_think_tags,
+    CURATOR_KEEP_ALIVE, SUMMARIZER_KEEP_ALIVE,
+    detect_user_language, language_directive,
+)
+from src.config import settings as _cfg
 
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.database import get_db
-from src.database.models import ChatInteraction, ConversationMessage, User
+from src.database.models import ConversationMessage, User
 from src.routers.auth import get_current_user
-from src.schemas.chat import ChatFeedback, ChatMessage, ChatResponse
+from src.schemas.chat import ChatMessage, ChatResponse
 from src.config import settings
 from src.services.plex_sync import get_user_taste_context
+from src.services.media_enricher import enrich_media_item
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-CONVERSATION_WINDOW = 20   # last N messages to include as context
+CONVERSATION_WINDOW = 20            # last N messages to include as context
+CONVERSATION_WINDOW_TOPIC_SWITCH = 4 # smaller window when the user pivots to a new title
 MAX_TOKENS_APPROX = 6000   # rough token budget for conversation history
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
-async def _check_verification_response(user_id: int, user_message: str):
-    """Check if user is responding to a pending verification question."""
+async def _check_verification_response(user_id: int, user_message: str, thread_id: str):
+    """Check if the user is answering a pending verification question.
+
+    A verification question is a ``ProactiveMessage`` (trigger_type
+    "verification"); the user answers it by chatting IN ITS THREAD
+    (``proactive_message:{id}``), exactly like discussing any other
+    proactive message.
+
+    Pass 71: gate strictly on that thread. Before this, ``_check_verification_response``
+    ran after EVERY chat turn and claimed the *newest* pending verification
+    regardless of where the user was — so a message in general chat, a
+    deletion-proposal discussion, or an unrelated proactive thread would
+    consume the question: a wasted summarizer call at best, and at worst the
+    question got marked ``read=True`` by a message that wasn't its answer,
+    so the user's real answer later never matched. The thread IS the
+    relevance signal — deterministic, no LLM. For non-verification threads
+    it now returns before touching the DB at all.
+
+    Atomic claim-then-process: flip ``read=False → True`` on the question;
+    rowcount 1 means we own it, 0 means a concurrent request already did.
+
+    Pass 46 (Bug 1): if ``process_verification_response`` fails (LLM
+    non-200, JSON parse error, exception), we revert the claim so the
+    user's answer isn't silently lost.
+    """
+    # Only a chat turn INSIDE the verification question's own thread can be
+    # an answer to it. General chat / deletion threads / other proactive
+    # threads bail here, before any DB work.
+    if not thread_id or not thread_id.startswith("proactive_message:"):
+        return
+    try:
+        msg_id = int(thread_id.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return
+
+    pending_id = None
     try:
         from src.services.verification_session import process_verification_response
         from src.database.connection import get_db_session
         from src.database.models import ProactiveMessage
-        # Find most recent unread verification message
         with get_db_session() as db:
+            # The question must BE this thread — a pending verification row
+            # with this exact id. A non-verification proactive message, or
+            # an already-answered one, finds nothing and returns.
             pending = db.query(ProactiveMessage).filter(
+                ProactiveMessage.id == msg_id,
                 ProactiveMessage.user_id == user_id,
                 ProactiveMessage.trigger_type == "verification",
                 ProactiveMessage.read == False,
-            ).order_by(ProactiveMessage.created_at.desc()).first()
-            if pending:
-                import json as _json
-                question = _json.loads(pending.trigger_data or "{}")
-                pending.read = True
-                db.commit()
-                await process_verification_response(user_id, user_message, question)
+            ).first()
+            if not pending:
+                return
+
+            # Atomic claim — UPDATE ... WHERE read=False returns rowcount=1 only
+            # for the first caller, 0 for any concurrent retry.
+            claimed = db.query(ProactiveMessage).filter(
+                ProactiveMessage.id == pending.id,
+                ProactiveMessage.read == False,
+            ).update({"read": True}, synchronize_session=False)
+            db.commit()
+            if not claimed:
+                return  # someone else got it
+
+            pending_id = pending.id
+            import json as _json
+            question = _json.loads(pending.trigger_data or "{}")
+
+        processed = await process_verification_response(user_id, user_message, question)
+        if not processed:
+            _revert_verification_claim(pending_id)
     except Exception as e:
         logger.debug("Verification response check failed: %s", e)
+        if pending_id is not None:
+            _revert_verification_claim(pending_id)
 
 
-async def _extract_memories_bg(user_id: int, user_msg: str, assistant_msg: str):
-    """Background task: extract memories from a chat exchange."""
+def _revert_verification_claim(pending_id: int) -> None:
+    """Best-effort flip of ``read`` back to False after a failed process."""
     try:
-        from src.services.episodic_memory import extract_memories_from_exchange
-        await extract_memories_from_exchange(user_id, user_msg, assistant_msg)
+        from src.database.connection import get_db_session
+        from src.database.models import ProactiveMessage
+        with get_db_session() as db:
+            db.query(ProactiveMessage).filter(
+                ProactiveMessage.id == pending_id,
+            ).update({"read": False}, synchronize_session=False)
+            db.commit()
+        logger.info("Verification claim %d reverted — user can answer again", pending_id)
     except Exception as e:
-        logger.debug("Background memory extraction failed: %s", e)
+        logger.warning("Failed to revert verification claim %d: %s", pending_id, e)
 
 
-async def _check_protection_intent_bg(user_id: int, user_msg: str, assistant_msg: str):
-    """Background task: detect if the user wants to protect a title from deletion."""
+_YEAR_RE = __import__("re").compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
+
+# German keyboard typo: "ß" sits between "0" and Backspace, so a fast
+# typist intending "0" sometimes hits "ß" instead. Most commonly seen in
+# year mentions ("FBI: Most Wanted from 202ß" → user meant "2020"). We
+# normalise ß → 0 ONLY when it's adjacent to digits, so legitimate German
+# words (Straße, Maß, weiß) aren't touched.
+_BETA_NEAR_DIGIT = __import__("re").compile(r"(\d)ß(\d?)|ß(\d)")
+
+
+def _normalize_typos(text: str) -> str:
+    """Fix common keyboard typos before the metadata pipeline sees them.
+
+    Currently handles:
+    - ß → 0 when adjacent to a digit (German keyboard slip)
+
+    Conservative by design: only touches the metadata-pipeline copy of
+    the query. The user's original text still goes into conversation
+    history + the curator system prompt unchanged, so Curatarr's reply
+    references what the user actually typed.
+    """
+    if not text:
+        return text
+    fixed = _BETA_NEAR_DIGIT.sub(
+        lambda m: (m.group(1) or "") + "0" + (m.group(2) or m.group(3) or ""),
+        text,
+    )
+    if fixed != text:
+        logger.info("[chat] typo-normalize: %r -> %r", text, fixed)
+    return fixed
+
+# In-memory cache keyed by thread_id → (active_title, payload, domain).
+# Survives only until server restart, which is fine: a missed cache costs at
+# most one re-fetch round-trip. Persisting per-DB row would be over-
+# engineering for what is essentially "remember the last subject for the
+# next few messages".
+#
+# Pass 72: bounded LRU. It used to be a plain dict whose only eviction was
+# explicit "New chat" / anchor-correction — so it leaked one entry per
+# discussion thread ever opened (every deletion proposal, every proactive
+# message, every free-chat title), growing unbounded across a long-running
+# process. Capped now; all WRITES must go through _set_thread_active_title.
+_THREAD_TITLE_CAP = 64
+_thread_active_title: "OrderedDict[str, tuple]" = OrderedDict()
+
+
+def _set_thread_active_title(thread_id: str, value: tuple) -> None:
+    """Write to the bounded thread-anchor cache, evicting the oldest-touched
+    entry once over capacity (Pass 72).
+
+    ``move_to_end`` refreshes a thread's recency on every re-write — and an
+    actively-discussed thread IS re-written every turn (``_build_discuss_context_block``
+    re-runs each discuss turn), so the cap only ever evicts genuinely-stale
+    threads. A re-fetch on a rare evicted-then-revisited thread is exactly
+    the "missed cache" cost the comment above already calls acceptable.
+    """
+    _thread_active_title[thread_id] = value
+    _thread_active_title.move_to_end(thread_id)
+    while len(_thread_active_title) > _THREAD_TITLE_CAP:
+        _thread_active_title.popitem(last=False)
+
+# Heuristic: does this user message likely introduce a NEW media title? If
+# yes, we re-run entity detection. If no, we keep using the cached title.
+# Cheap enough to run on every turn — no LLM call, just regex.
+_TITLE_HINT_PATTERNS = [
+    __import__("re").compile(p, __import__("re").IGNORECASE)
+    for p in (
+        r"\btell me about\b",
+        r"\bwhat about\b",
+        r"\bdo you know\b",
+        r"\bwas h[äa]ltst du von\b",
+        r"\bkennst du\b",
+        r"\bgib mir.*(zu|über)\b",
+        r"\bsuche nach\b",
+        r"\blooking for\b",
+        r"\b(film|movie|show|serie|series|anime|track|song|album|band|artist)\b",
+        r'"[A-Z][^"]{2,}"',           # quoted phrase starting capitalized
+        r"'[A-Z][^']{2,}'",           # same with single quotes
+    )
+]
+_CAPITAL_PHRASE_RE = __import__("re").compile(
+    r"\b([A-Z][a-zA-Z0-9'-]+(?:\s+[A-Z][a-zA-Z0-9'-]+){1,})\b"
+)
+
+
+def _looks_like_title_introduction(query: str) -> bool:
+    """Return True if the user message likely names a new media title.
+
+    Used to gate entity-detection so follow-up replies ("yes", "tell me
+    more", "no I disagree") don't burn an LLM call. Hint patterns plus
+    a fallback "two-or-more capitalized words" check catch most cases.
+    """
+    if not query or len(query) < 3:
+        return False
+    for pat in _TITLE_HINT_PATTERNS:
+        if pat.search(query):
+            return True
+    # Fallback: at least one multi-word capitalized phrase that isn't just
+    # the start of a sentence (which we can't easily distinguish — the
+    # cheap version: require the phrase not to be the literal first word).
+    m = _CAPITAL_PHRASE_RE.search(query)
+    if m and m.start() > 0:
+        return True
+    return False
+
+
+def _extract_year_hint(query: str) -> int | None:
+    """Pull a 4-digit year (1950–2049) out of the user's free-form query.
+
+    Used as a disambiguation hint for TMDB/IMDb searches when the user types
+    "FNAF 2 from 2025" or "Jesus Shows You the Way to the Highway 2019".
+    Title-collision (multiple films with the same/similar name in different
+    years) is the leading cause of the curator picking the wrong record and
+    then confidently building a wall of false facts on top of it.
+
+    Pass 14.14: query is typo-normalised first ("202ß" → "2020").
+    """
+    m = _YEAR_RE.search(_normalize_typos(query))
+    return int(m.group(1)) if m else None
+
+
+_re = __import__("re")
+
+# Patterns that pull a title directly from the user's message when the
+# summarizer LLM returns nothing useful. Matches by intent — "tell me about
+# X", quoted phrases, "called X" — rather than relying on the small LLM's
+# JSON shape. Order matters: more specific patterns first.
+# Pass 14.4: dropped `[A-Z]` requirement on the captured group. The whole
+# pattern is already IGNORECASE; requiring uppercase first letter cut off
+# casual lowercase queries ("tell me about vessel"). Also widened the
+# trigger phrases to catch "what do you think about", "the album X by Y",
+# "what is X", etc.
+_TITLE_REGEX_FALLBACKS = [
+    # quoted: "Hard to Be a God"
+    _re.compile(r'"([^"]{2,80})"'),
+    _re.compile(r"'([^']{2,80})'"),
+    # the album/track/song/film/movie/show/series/anime X (by Y)?
+    _re.compile(
+        r'\bthe\s+(?:album|track|song|film|movie|show|series|anime|band|artist)\s+([^,.?!]{2,80}?)(?:\s+by\s|$|[,.?!])',
+        _re.IGNORECASE,
+    ),
+    # called X / titled X / named X / namens X
+    _re.compile(
+        r'\b(?:called|titled|named|namens)\s+"?([^",.?!]{2,80}?)"?(?=\s|$|[,.?!])',
+        _re.IGNORECASE,
+    ),
+    # tell me about X / what (do you think) about X / what is X / what's X
+    _re.compile(r'\btell me about\s+([^,.?!]{2,80})', _re.IGNORECASE),
+    _re.compile(r'\bwhat\s+(?:do you think\s+)?about\s+([^,.?!]{2,80})', _re.IGNORECASE),
+    _re.compile(r"\bwhat(?:'s|\s+is)\s+([^,.?!]{2,80})", _re.IGNORECASE),
+    _re.compile(r'\bdo you know\s+([^,.?!]{2,80})', _re.IGNORECASE),
+    _re.compile(r'\bhave you (?:heard|seen)\s+(?:of\s+)?([^,.?!]{2,80})', _re.IGNORECASE),
+    _re.compile(r'\bkennst du\s+([^,.?!]{2,80})', _re.IGNORECASE),
+    _re.compile(r'\bwas h[äa]ltst du von\s+([^,.?!]{2,80})', _re.IGNORECASE),
+    _re.compile(r'\berz[äa]hl(?:e|\s)+(?:mir\s+)?(?:[üu]ber\s+|von\s+)([^,.?!]{2,80})', _re.IGNORECASE),
+]
+
+
+def _extract_title_via_regex(query: str) -> str | None:
+    """Best-effort title extraction from the user message.
+
+    Used as a fallback when the summarizer's MODE 6 entity extraction
+    returns nothing. The summarizer model can fail in two ways:
+    (a) it returns a dict-shape we don't recognise, (b) it returns an empty
+    string for unfamiliar/exotic titles. In either case we'd rather try a
+    regex match than give the curator no anchor at all.
+
+    Strips trailing year mentions like "from 2019" / "2013" so the title
+    matches what TMDB expects.
+    """
+    if not query or len(query) < 4:
+        return None
+    for pat in _TITLE_REGEX_FALLBACKS:
+        m = pat.search(query)
+        if m:
+            title = m.group(1).strip()
+            # Strip surrounding quotes if any
+            title = title.strip("\"'")
+            # Trim trailing "from YYYY" / "(YYYY)" / "YYYY"
+            title = _re.sub(r'\s+(?:from\s+)?\(?(?:19|20)\d{2}\)?$', '', title).strip()
+            # Cut at "by Y" — "the album Vessel by Sleep Token" -> "Vessel"
+            title = _re.sub(r'\s+by\s+.*$', '', title, flags=_re.IGNORECASE).strip()
+            # Trim trailing filler words. Pass 14.10 added "then/now/actually/
+            # please/already" — the LLM entity extractor sometimes captures
+            # "tell me about the band sleep token then" → "sleep token then".
+            # Loop until no more trailing fillers — handles "Dune actually
+            # please" → "Dune".
+            _filler_re = _re.compile(
+                r'\s+(?:from|in|at|by|von|aus|then|now|actually|please|'
+                r'already|recently|today|tonight|tomorrow|maybe|though|anyway)$',
+                _re.IGNORECASE,
+            )
+            while True:
+                stripped = _filler_re.sub('', title).strip()
+                if stripped == title:
+                    break
+                title = stripped
+            if 2 <= len(title) <= 100:
+                return title
+    return None
+
+
+async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
+    """
+    Two-pass title extraction:
+
+      1. Call curatarr-summarizer MODE 6 (LLM, JSON output)
+      2. If LLM returned nothing usable, fall back to regex patterns
+         on the user's literal message ("tell me about X", quoted phrases)
+
+    The regex fallback is what keeps obscure / exotic titles working when
+    the summarizer model doesn't recognise them as media entities. Without
+    it, queries like "Hexenkönigin und der Datendieb" silently skipped
+    the metadata pipeline entirely.
+
+    Hard timeout: 10s. Returns (title or None, year or None).
+
+    Pass 14.14: query is typo-normalised before BOTH the LLM call and the
+    regex fallback. The user-facing original is left alone — only the
+    metadata-pipeline copy gets fixed.
+    """
+    normalized_query = _normalize_typos(query)
+    year = _extract_year_hint(normalized_query)
+
+    extraction_model = getattr(_cfg, "SUMMARIZER_MODEL", None) or "curatarr-summarizer"
+    prompt = f"[MODE: ENTITY EXTRACTION]\nInput: {normalized_query}"
+
+    raw_output = ""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{_cfg.effective_ollama}/api/chat",
+                json={
+                    "model": extraction_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "keep_alive": SUMMARIZER_KEEP_ALIVE,
+                    **ollama_options(temperature=0.0, num_predict=80),
+                },
+            )
+        if r.status_code == 200:
+            raw_output = r.json().get("message", {}).get("content", "").strip()
+
+    except Exception as e:
+        logger.debug("[chat] entity extraction LLM error: %s", e)
+
+    # Try to parse the LLM output. Accept several shapes the summarizer
+    # might emit: bare {"title": "X"}, nested {"output": {"title": "X"}},
+    # alternative keys, or even a plain string.
+    title = None
+    if raw_output:
+        content = clean_llm_text(raw_output)
+        if content:
+            import json as _json
+            try:
+                parsed = _json.loads(content)
+                title = _extract_title_from_dict(parsed)
+            except _json.JSONDecodeError:
+                # Plain-text response from older / non-JSON-mode models
+                if 0 < len(content) < 80 and not content.startswith("{"):
+                    title = content.strip().strip("\"'")
+
+    # LLM extraction failed — try regex fallback on the user's own message.
+    if not title:
+        title = _extract_title_via_regex(normalized_query)
+        if title:
+            logger.info("[chat] entity extracted via regex fallback: %r (year=%s)",
+                        title, year)
+        elif raw_output:
+            # LLM responded but with an unknown shape — log so we can debug
+            # the modelfile if this happens often.
+            logger.debug("[chat] entity LLM returned unparseable shape: %r",
+                         raw_output[:200])
+
+    # Pass 14.10: trim trailing filler words even when the LLM extracted the
+    # title cleanly. The summarizer occasionally captures sentence trailers
+    # ("tell me about the band sleep token then" → "sleep token then").
+    if title:
+        _filler_re = _re.compile(
+            r'\s+(?:then|now|actually|please|already|recently|today|tonight|'
+            r'tomorrow|maybe|though|anyway)$',
+            _re.IGNORECASE,
+        )
+        while True:
+            stripped = _filler_re.sub('', title).strip()
+            if stripped == title:
+                break
+            title = stripped
+        title = title.strip("\"'") or None
+
+    if title:
+        logger.info("[chat] entity extracted: %r (year hint=%s)", title, year)
+    return title, year
+
+
+def _extract_title_from_dict(parsed) -> str | None:
+    """Extract a title from common LLM output shapes:
+    - {"title": "X"}
+    - {"media_title": "X"} / {"name": "X"} / {"entity": "X"}
+    - {"output": {"title": "X"}} / {"result": {"title": "X"}}
+    - [{"title": "X"}] (single-item list)
+    """
+    if isinstance(parsed, list) and parsed:
+        return _extract_title_from_dict(parsed[0])
+    if not isinstance(parsed, dict):
+        return None
+    # Direct keys
+    for key in ("title", "media_title", "name", "entity", "value"):
+        v = parsed.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    # Nested wrappers
+    for wrapper in ("output", "result", "data", "extracted"):
+        inner = parsed.get(wrapper)
+        if inner is not None:
+            sub = _extract_title_from_dict(inner)
+            if sub:
+                return sub
+    return None
+
+
+# Pass 61: per-exchange memory extraction (``_extract_memories_bg``) was
+# removed — it saw only a single user message and latched intermediate
+# stances from multi-turn conversations as memories. Memory extraction is
+# now DEBOUNCED at the thread level via
+# ``episodic_memory.schedule_thread_extraction`` (see the post-chat
+# background block below).
+
+
+# Pass 49: stance-signal heuristics used by the flip-flop detector. They
+# match the prompt's own pitch / verdict vocabulary plus a handful of
+# natural-language variants. Kept simple on purpose — false negatives
+# (missed flip) are fine, false positives (incorrectly skipping a real
+# resolution) are the bad case. We'd rather miss a Protection write
+# than write one inside a clearly-unsettled negotiation.
+_DELETE_STANCE_TOKENS: tuple[str, ...] = (
+    "verdict: delete", "verdict:delete",
+    "delete it", "delete the", "we should delete",
+    "for deletion",  # pitch opener: "I have suggested X for deletion"
+    "free the", "deletion stands", "the deletion",
+    "doesn't deserve", "it's just bad writing", "lazy writing",
+)
+_KEEP_STANCE_TOKENS: tuple[str, ...] = (
+    "verdict: retain", "verdict:retain",
+    "we keep", "keep it", "stays in your library", "the title stays",
+    "permanently protected", "stand corrected", "i fold",
+    "you're right", "you are right",
+)
+
+
+def _is_in_flipflop_loop(user_id: int, anchor: str, window: int = 6) -> bool:
+    """Pass 49: detect a curator stance flip-flop on ``anchor`` over the
+    last ``window`` assistant turns.
+
+    A "flip" is a transition from a delete-stance utterance to a keep-
+    stance one (or vice versa) where BOTH mention the anchor title.
+    ≥2 flips inside the window ⇒ we're in an unsettled negotiation;
+    the caller bails out without writing protection. Pure DB read, no
+    LLM call — cheap to gate on every check.
+    """
+    if not anchor:
+        return False
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import ConversationMessage
+        with get_db_session() as db:
+            msgs = (
+                db.query(ConversationMessage.content)
+                  .filter(
+                      ConversationMessage.user_id == user_id,
+                      ConversationMessage.role == "assistant",
+                  )
+                  .order_by(ConversationMessage.created_at.desc())
+                  .limit(window)
+                  .all()
+            )
+        anchor_lower = anchor.lower()
+        stances: list[str] = []
+        for (content,) in reversed(msgs):   # chronological order
+            text = (content or "").lower()
+            if anchor_lower not in text:
+                continue
+            has_del = any(tok in text for tok in _DELETE_STANCE_TOKENS)
+            has_keep = any(tok in text for tok in _KEEP_STANCE_TOKENS)
+            # Tie-break: pitch-style turns mention both ("I suggested
+            # deletion. Reason: …"). When both signals fire we treat it
+            # as 'delete' (it was the curator's actual recommendation
+            # in that turn).
+            if has_del:
+                stances.append("delete")
+            elif has_keep:
+                stances.append("keep")
+        flips = sum(1 for a, b in zip(stances, stances[1:]) if a != b)
+        return flips >= 2
+    except Exception as e:
+        # Heuristic must never block the happy path — bail out as "no
+        # flip-flop" so the regular detector runs unchanged.
+        logger.debug("[protection] flip-flop probe failed: %s", e)
+        return False
+
+
+async def _check_protection_intent_bg(
+    user_id: int,
+    user_msg: str,
+    assistant_msg: str,
+    anchor_title: str | None = None,
+    anchor_category: str | None = None,
+    thread_id: str | None = None,
+):
+    """Background task: detect if the user wants to protect a title from deletion.
+
+    Pass 23: ``anchor_title`` resolves pronouns. When the user is in a
+    deletion-proposal thread and says "I'm keeping it" / "we are keeping
+    this show", the title isn't literally in the user message — but we
+    know it from ``_thread_active_title[thread_id]``. Passing it through
+    lets the detector treat the anchor as the implicit subject.
+
+    Pass 49 (flip-flop guard): we bail out without invoking the LLM
+    detector when the recent conversation shows multiple curator stance
+    reversals on ``anchor_title``. Without this guard, the user can
+    arrive at a "PROTECT" result by stress-testing the curator — push
+    until it caves on "keep", and the detector latches that mid-test
+    "Verdict: Retain" turn as a real resolution. The wrapping
+    ``analytical_integrity_rule`` in the system prompt is the primary
+    defense; this guard is the backstop for when the curator caves
+    anyway.
+
+    Pass 66: ``anchor_category`` and ``thread_id`` are threaded through to
+    the detector so it can classify consensus-vs-override and write the
+    ``CuratorResolutionLog`` row. The flip-flop guard stays unchanged and
+    still bails entirely on a thrashing thread — you cannot cleanly
+    classify a resolution against a curator whose stance is reversing, and
+    a missed log row is the acceptable failure mode (a calm follow-up turn
+    re-affirming the keep will be logged normally).
+    """
+    if anchor_title and _is_in_flipflop_loop(user_id, anchor_title):
+        logger.info(
+            "[protection] flip-flop loop on %r — skipping detector for this turn",
+            anchor_title,
+        )
+        return
     try:
         from src.services.episodic_memory import detect_and_handle_protection
-        result = await detect_and_handle_protection(user_id, user_msg, assistant_msg)
+        result = await detect_and_handle_protection(
+            user_id, user_msg, assistant_msg,
+            anchor_title=anchor_title,
+            anchor_category=anchor_category,
+            thread_id=thread_id,
+        )
         if result:
             logger.info("Protection intent handled for user %d: %s", user_id, result)
     except Exception as e:
         logger.debug("Protection intent check failed: %s", e)
 
 
-async def _get_rag_context(query: str, n_results: int = 5) -> str:
+_DOMAIN_SIGNALS: dict[str, list[str]] = {
+    "music":  ["music", "song", "album", "artist", "track", "listen", "band",
+               "playlist", "metal", "rock", "pop", "jazz", "hip hop", "rap",
+               "classical", "concert", "lidarr", "last.fm", "spotify"],
+    "movie":  ["movie", "film", "cinema", "director", "actor", "radarr",
+               "imdb", "box office", "sequel", "prequel", "blockbuster"],
+    "anime":  ["anime", "manga", "shonen", "shojo", "isekai", "mecha",
+               "crunchyroll", "anilist", "myanimelist", "subtitles", "sub", "dub"],
+    "show":   ["series", "show", "episode", "season", "binge", "sonarr",
+               "tv", "television", "hbo", "disney+"],
+}
+
+
+def _infer_domain(message: str, discuss_context=None) -> str | None:
+    """
+    Return the single most-relevant media domain for this request, or None
+    when the query is too general to warrant filtering.
+
+    Priority:
+      1. Explicit category from discuss_context  (deletion-discuss flow)
+      2. Strong single-domain keyword match in the message
+      3. None  → no filter (general chat)
+    """
+    if discuss_context and getattr(discuss_context, "category", None):
+        return discuss_context.category
+
+    q = message.lower()
+    hits: dict[str, int] = {}
+    for domain, keywords in _DOMAIN_SIGNALS.items():
+        count = sum(1 for kw in keywords if kw in q)
+        if count:
+            hits[domain] = count
+
+    if len(hits) == 1:
+        return next(iter(hits))      # unambiguous single domain
+    if len(hits) > 1:
+        # Tie-break: pick the domain with the most keyword hits
+        best = max(hits, key=lambda d: hits[d])
+        if hits[best] >= 2:          # only filter when signal is strong
+            return best
+    return None                      # general query — don't restrict RAG
+
+
+def _domain_cascade(
+    message: str,
+    discuss_context=None,
+    year_hint: int | None = None,
+) -> list[str]:
+    """
+    Return a *sorted* list of domains to try for enrichment, most-likely first.
+
+    Used by the multi-domain enrichment cascade: try the primary domain first,
+    fall through to the next if no match. This solves the "It (1990 TV
+    miniseries) doesn't show up in /search/movie" class of bug.
+
+    Strategy:
+      - If discuss_context fixes a domain → that one only.
+      - Else: rank domains by keyword-hit count, then add the rest as fallback.
+      - Music has its own pipeline (MusicBrainz) — only included when there's
+        an actual music signal, to avoid burning a music lookup on every
+        random TV question.
+
+    Pass 15.1: when ``year_hint`` is set AND no music keyword is present,
+    music drops out of the cascade entirely. Year-tagged queries like
+    "Ghosts (2019)" almost always mean film/tv/anime — pulling in
+    MusicBrainz on a year query causes false hits like the "Ghosts" band
+    matching the Sitcom query, then the curator sees a music context for
+    something that should have been show.
+    """
+    if discuss_context and getattr(discuss_context, "category", None):
+        return [discuss_context.category]
+
+    q = message.lower()
+    hits: dict[str, int] = {}
+    for domain, keywords in _DOMAIN_SIGNALS.items():
+        count = sum(1 for kw in keywords if kw in q)
+        if count:
+            hits[domain] = count
+
+    # Sort hit-domains by count desc; then append remaining defaults.
+    ranked = [d for d, _ in sorted(hits.items(), key=lambda kv: -kv[1])]
+    # Default cascade for unknown queries: movie → tv → anime → music.
+    # Music ALWAYS lives at the tail (Pass 14.4) — pure-name queries like
+    # "King Crimson", "Sleep Token", "Vessel" don't match any music
+    # keyword but ARE music. If movie/tv/anime all came back empty, the
+    # MusicBrainz pipeline is the right last-ditch attempt before we
+    # surrender to the no-metadata anchor.
+    defaults = ["movie", "show", "anime", "music"]
+    if "music" in hits:
+        # Music had explicit keywords — promote to top
+        defaults = ["music", "movie", "show", "anime"]
+    elif year_hint is not None:
+        # Year-tagged query without music keyword → music almost certainly
+        # not the right domain. Drop it entirely so we don't burn a
+        # MusicBrainz lookup AND don't risk a fuzzy band match standing
+        # in for a film/show.
+        defaults = ["movie", "show", "anime"]
+    for d in defaults:
+        if d not in ranked:
+            ranked.append(d)
+    return ranked
+
+
+def _profile_matches_query(query: str, profile_name: str, domain: str) -> bool:
+    """Pass 32: sanity-check whether a cascade match is actually for the
+    user's query. Strict for music — MusicBrainz fuzzy-matches aggressively
+    and returns artist profiles for arbitrary substrings (e.g. asking
+    about "The Qwaser of Stigmata" matched a "Stigmata" band/track entry,
+    routing an anime query to ``domain=music`` with a completely unrelated
+    profile attached).
+
+    Comparison: normalize both strings (lowercase, strip punctuation,
+    drop articles), tokenize, compute set overlap. The thresholds:
+
+      music     → ALL significant query tokens must appear in the profile
+                  (no partial substring wins — "Stigmata" alone is rejected
+                  for a "Qwaser of Stigmata" query)
+      others    → at least half the query tokens must appear (lets TMDB
+                  return localised titles or sequel variants without
+                  failing the check)
+    """
+    import re
+
+    def _tokens(s: str) -> set[str]:
+        s = (s or "").lower()
+        s = re.sub(r"[^a-z0-9]+", " ", s)
+        return {t for t in s.split() if t and t not in {"the", "a", "an", "of"}}
+
+    q = _tokens(query)
+    p = _tokens(profile_name)
+    if not q or not p:
+        return True  # Nothing to compare — fall back to trusting the API
+
+    overlap = len(q & p)
+    if domain == "music":
+        # Strict — every significant token of the query must appear
+        return overlap >= len(q)
+    return overlap >= max(1, (len(q) + 1) // 2)
+
+
+async def _enrich_with_cascade(
+    title: str,
+    year: int | None,
+    domains: list[str],
+) -> tuple[dict | None, str | None]:
+    """Try enrich_media_item across a domain cascade.
+
+    Returns (enrichment_data, matched_domain) — both None if nothing hit.
+
+    Timeout policy (Pass 14.5): every domain gets 10 s. 6s wasn't enough
+    for cold-cache anime lookups: AniList + Jikan come back in ~1s but
+    enrich_media_item then runs `summarize_with_small_llm` on the raw
+    metadata, which adds 3-5s of LLM-summarisation latency. 6s clipped
+    that mid-summary, leaving the user with no metadata even when both
+    APIs had successfully responded. 10s × 4 domains = 40s worst case,
+    rare in practice — primary hits land in 1-3s.
+
+    No background-fire on timeout. The previous version restarted the same
+    enrich_media_item call as a background task on every cascade timeout,
+    which produced N× duplicate TMDB/AniList traffic per chat turn — we
+    were DDOS'ing our own metadata providers. The MetadataCache inside
+    enrich_media_item already saves the result on the next user turn.
+    """
+    per_domain_timeout = 10.0
+    for d in domains:
+        try:
+            # Pass 14.8: chat cascade uses skip_llm_summary=True. The LLM-
+            # summarisation step in enrich_media_item was the bottleneck —
+            # API fetches finish in 1-3 s but the LLM polish added another
+            # 3-8 s, blowing the cascade timeout. Fast path returns a raw-
+            # derived profile with all the fields the curator needs.
+            data = await asyncio.wait_for(
+                enrich_media_item(
+                    title=title, media_type=d, year=year,
+                    skip_llm_summary=True,
+                ),
+                timeout=per_domain_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.info("[chat] cascade %s: timeout (%.1fs) — moving to next domain",
+                        d, per_domain_timeout)
+            continue
+        except Exception as e:
+            logger.debug("[chat] cascade %s: error %s", d, e)
+            continue
+        if data:
+            # Pass 32: reject obviously-mismatched profiles. The music
+            # branch is the worst offender (MusicBrainz fuzzy match) but
+            # the check is cheap so we apply it everywhere.
+            profile_name = data.get("title") or data.get("name") or ""
+            if not _profile_matches_query(title, profile_name, d):
+                logger.info(
+                    "[chat] cascade %s: rejected fuzzy match — query=%r profile=%r (likely false positive)",
+                    d, title, profile_name,
+                )
+                continue
+            logger.info("[chat] cascade hit on domain=%s for %r → %r", d, title, profile_name)
+            return data, d
+    logger.info("[chat] cascade exhausted for %r (year=%s, tried=%s)",
+                title, year, domains)
+    return None, None
+
+
+async def _get_rag_context(query: str, n_results: int = 5, domain: str = None) -> str:
+    """
+    Semantic search over the ChromaDB vector store.
+    When *domain* is given, only vectors tagged with that domain are considered,
+    eliminating cross-media-type contamination in the context window.
+    """
     try:
         from src.vector_store.chromadb_wrapper import ChromaDBWrapper
         from src.embeddings.embedding_generator import EmbeddingGenerator
@@ -82,7 +804,8 @@ async def _get_rag_context(query: str, n_results: int = 5) -> str:
         if not embedding:
             return ""
         chroma = ChromaDBWrapper()
-        results = chroma.query(query_embeddings=[embedding], n_results=n_results)
+        where = {"domain": domain} if domain else None
+        results = chroma.query(query_embeddings=[embedding], n_results=n_results, where=where)
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
         await gen.close()
@@ -96,30 +819,905 @@ async def _get_rag_context(query: str, n_results: int = 5) -> str:
     except Exception as e:
         logger.debug("RAG failed: %s", e)
         return ""
+    
+
+def _fmt_field(value, fallback: str = "(not in our database)") -> str:
+    """Format a metadata field for the hidden context block.
+
+    Empty values become an explicit "(not in our database)" string so the
+    curator can tell missing-from-data apart from training-memory gaps and
+    knows it must NOT fill the hole from prior knowledge.
+    """
+    if value is None or value == "" or value == []:
+        return fallback
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value if v)
+    return str(value)
 
 
-def _load_conversation(user_id: int, db: Session) -> list:
-    """Load recent conversation history for this user."""
-    msgs = (
-        db.query(ConversationMessage)
-        .filter(ConversationMessage.user_id == user_id)
-        .order_by(ConversationMessage.created_at.desc())
-        .limit(CONVERSATION_WINDOW)
-        .all()
+def _build_hidden_context(
+    title: str, data: dict, domain: str = "movie",
+    year_hint: int | None = None,
+) -> str:
+    """Domain-aware hidden-context block.
+
+    The set of fields the curator needs differs sharply by domain:
+      - movie/tv: director/creator, cast, country, runtime
+      - anime:    studio, director, episodes, source_material, format
+      - music:    artist, country, similar_artists, top albums, bio excerpt
+
+    A field that's missing in the data dict is rendered as "(not in our
+    database)" rather than left blank, so the NO INVENTION system rule
+    has something concrete to anchor against. The curator can see we
+    *checked* and the answer was "we don't have it".
+
+    Block header is intentionally aggressive: "VERIFIED METADATA - USE THIS"
+    instead of just "[HIDDEN METADATA CONTEXT]". Without that, the curator
+    sometimes reads the block, then says "NO VERIFIED METADATA AVAILABLE"
+    in the same response — the prompt's own NO INVENTION rule fooling it.
+
+    ``year_hint`` is the year the user typed in their query. When that
+    differs from the year we actually fetched (e.g. user asked for 2013,
+    TMDB only has 2014), we emit an explicit year-mismatch note so the
+    curator doesn't loop on "there is no 2013 film called X".
+    """
+    year = _fmt_field(data.get("year"))
+    fetched_year = data.get("year")
+    year_mismatch_note = ""
+    if year_hint and fetched_year and int(fetched_year) != int(year_hint):
+        year_mismatch_note = (
+            f"\n⚠ YEAR NOTE: User asked about year {year_hint}, but our "
+            f"verified record for this title is from {fetched_year}. The "
+            f"title and metadata below ARE correct — accept the year as "
+            f"{fetched_year} and don't claim 'no {year_hint} version exists'."
+        )
+    rating = (
+        f"{data.get('rating')}/10"
+        if data.get("rating") not in (None, "", 0)
+        else "(no rating)"
     )
+    genres = _fmt_field(data.get("genres"))
+    synopsis = data.get("plot_summary") or data.get("overview") or data.get("bio") or ""
+    if synopsis and len(synopsis) > 600:
+        synopsis = synopsis[:600].rsplit(" ", 1)[0] + "…"
+    synopsis = synopsis or "(no synopsis)"
+
+    if domain == "music":
+        # Music can mean: track, album, or artist. Field set covers all three.
+        artist = _fmt_field(data.get("artist") or data.get("name"))
+        country = _fmt_field(data.get("country") or data.get("origin_country"))
+        similar = _fmt_field((data.get("similar_artists") or [])[:5])
+        top_albums = _fmt_field((data.get("top_albums") or [])[:3])
+        active_years = _fmt_field(data.get("active_years"))
+        # Pass 68: track-level fields (from music_metadata.enrich_track) —
+        # only rendered when present, so artist/album lookups aren't padded
+        # with empty track lines. An artist-level payload has none of these
+        # and the block renders byte-identically to before.
+        track_block = ""
+        _tags = data.get("tags")
+        if _tags or data.get("listeners") or data.get("playcount") or data.get("album"):
+            track_block = f"\n- Last.fm tags: {_fmt_field((_tags or [])[:8])}"
+            if data.get("album"):
+                track_block += f"\n- Album: {data['album']}"
+            if data.get("listeners"):
+                track_block += f"\n- Last.fm listeners: {data['listeners']}"
+            if data.get("playcount"):
+                track_block += f"\n- Last.fm playcount: {data['playcount']}"
+        return f"""
+[VERIFIED METADATA - USE THIS, IT IS REAL DATA]
+Item: '{title}' (music){year_mismatch_note}
+- Year: {year}
+- Artist: {artist}
+- Country: {country}
+- Genres: {genres}
+- Similar artists: {similar}
+- Top albums: {top_albums}
+- Active years: {active_years}{track_block}
+- Bio: {synopsis}
+"""
+
+    if domain == "anime":
+        studio = _fmt_field(data.get("studios") or data.get("studio"))
+        director = _fmt_field(data.get("director"))
+        episodes = _fmt_field(data.get("episodes_total") or data.get("episodes"))
+        source_mat = _fmt_field(data.get("source_material") or data.get("source"))
+        fmt = _fmt_field(data.get("format"))
+        original_title = _fmt_field(data.get("original_title"))
+        return f"""
+[VERIFIED METADATA - USE THIS, IT IS REAL DATA]
+Item: '{title}' ({year}, anime){year_mismatch_note}
+- Original title: {original_title}
+- Studio: {studio}
+- Director: {director}
+- Format: {fmt}
+- Episodes: {episodes}
+- Source material: {source_mat}
+- Genres: {genres}
+- Rating: {rating}
+- Synopsis: {synopsis}
+"""
+
+    # Default: movie/tv
+    director = _fmt_field(data.get("director") or data.get("creator"))
+    cast_list = data.get("cast") or []
+    cast = _fmt_field(cast_list[:5] if isinstance(cast_list, list) else cast_list)
+    country = _fmt_field(data.get("country"))
+    runtime = _fmt_field(data.get("runtime"))
+    original_title = _fmt_field(data.get("original_title"))
+    seasons = _fmt_field(data.get("seasons"))
+    episodes = _fmt_field(data.get("episodes_total"))
+
+    series_block = ""
+    if domain == "tv" or seasons != "(not in our database)":
+        series_block = f"\n- Seasons: {seasons}\n- Episodes: {episodes}"
+
+    return f"""
+[VERIFIED METADATA - USE THIS, IT IS REAL DATA]
+Item: '{title}' ({year}){year_mismatch_note}
+- Original title: {original_title}
+- Director/Creator: {director}
+- Cast (top 5): {cast}
+- Country: {country}
+- Runtime: {runtime}
+- Genres: {genres}
+- Rating: {rating}{series_block}
+- Synopsis: {synopsis}
+"""
+
+
+def _build_no_metadata_anchor(title: str) -> str:
+    """Anti-hallucination anchor for titles where enrichment returned nothing.
+
+    Without this block, the curator falls back to its training data and
+    confidently invents plots, casts, years and directors. The block forces
+    an honest "I don't have data" stance — paired with the NO INVENTION
+    behavior rule in the system prompt.
+    """
+    return f"""
+[HIDDEN METADATA CONTEXT]
+Item: '{title}'
+NO VERIFIED METADATA AVAILABLE for this title. The metadata lookup returned
+no usable record (TMDB / IMDb / AniList all came back empty or rejected the
+match).
+
+Possible reasons:
+- The title is unreleased, very recent, or extremely obscure.
+- The title is a video game, music album, or other non-film item.
+- The title is misspelled or the user means something else.
+
+CRITICAL: You MUST NOT invent any factual claim about this title — no plot,
+no cast, no director, no year, no genre, no rating. If the user asks for
+facts, say explicitly that you have no verified data and ask them to clarify
+which year / genre / source they mean. Use ONLY what the user has stated
+about the title in this conversation.
+"""
+
+
+def _thread_id_for(ctx) -> str:
+    """Derive a stable thread id from a discuss context.
+
+    Free chat always lives on ``"general"``. Each deletion-proposal /
+    proactive-message gets its own thread so history from one topic can't
+    bleed into another. The id is derived purely from ``ctx`` (no DB lookup),
+    so even if the referenced record is missing the request still routes to
+    a valid thread (it just won't have any prior history there).
+    """
+    if not ctx:
+        return "general"
+    kind = ctx.kind or ctx.action  # back-compat with legacy `action`
+    if (kind == "deletion_proposal" or kind == "deletion") and ctx.proposal_id:
+        return f"deletion_proposal:{ctx.proposal_id}"
+    if kind == "proactive_message" and ctx.message_id:
+        return f"proactive_message:{ctx.message_id}"
+    return "general"
+
+
+def _filter_memories_for_topic(memories: list, active_title: str) -> list:
+    """Drop memories whose ``metadata.title`` is set to a DIFFERENT title.
+
+    Generic taste observations (no title field) stay because they're
+    cross-cutting. Title-specific memories about another show / film get
+    filtered out so the LLM doesn't pivot the discussion to them.
+    """
+    if not active_title:
+        return memories
+    needle = active_title.lower().strip()
+    kept = []
+    for m in memories:
+        meta_title = (m.get("metadata") or {}).get("title", "")
+        if not meta_title:
+            kept.append(m)
+            continue
+        meta_lc = str(meta_title).lower().strip()
+        if meta_lc == needle or needle in meta_lc or meta_lc in needle:
+            kept.append(m)
+        # else: memory belongs to another title → drop
+    return kept
+
+
+def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | None:
+    """Pass 35: when a state-scan hits a ProtectedMedia row (no category
+    column) OR a DeletionProposal whose category was never filled in,
+    look up other tables to recover the right domain for the cascade
+    override.
+
+    Lookup order, most-specific first:
+      1. ArrEnrichmentStatus.category (arr-tracked items — most reliable)
+      2. WatchHistoryEntry.media_type (most-frequent type seen for this
+         title; covers both episodes and movies the user actually watched)
+      3. EnrichmentStatus.media_category (cached enrichment runs)
+
+    Returns the first non-empty hit, or None if nothing knows. The
+    returned value goes straight into ``forced_domain`` upstream — so
+    a successful inference flips a music-default-falling cascade back
+    to the correct media type (anime / show / movie / music).
+    """
+    from src.database.models import (
+        ArrEnrichmentStatus, WatchHistoryEntry, EnrichmentStatus,
+    )
+    from sqlalchemy import func
+
+    if not title:
+        return None
+
+    # 1. ArrEnrichmentStatus — arr items always have category
+    try:
+        arr_row = db.query(ArrEnrichmentStatus).filter(
+            ArrEnrichmentStatus.title == title,
+        ).first()
+        if arr_row and arr_row.category:
+            return arr_row.category
+    except Exception as e:
+        logger.debug("[chat] _infer_category arr lookup failed: %s", e)
+
+    # 2. WatchHistoryEntry — most common media_type for this user+title
+    try:
+        row = (
+            db.query(
+                WatchHistoryEntry.media_type,
+                func.count(WatchHistoryEntry.id).label("c"),
+            )
+            .filter(
+                WatchHistoryEntry.user_id == user_id,
+                (WatchHistoryEntry.title == title) | (WatchHistoryEntry.series_title == title),
+                WatchHistoryEntry.media_type.isnot(None),
+            )
+            .group_by(WatchHistoryEntry.media_type)
+            .order_by(func.count(WatchHistoryEntry.id).desc())
+            .first()
+        )
+        if row and row.media_type:
+            return row.media_type
+    except Exception as e:
+        logger.debug("[chat] _infer_category history lookup failed: %s", e)
+
+    # 3. EnrichmentStatus — fallback cache
+    try:
+        es = db.query(EnrichmentStatus).filter(
+            EnrichmentStatus.title == title,
+            EnrichmentStatus.media_category.isnot(None),
+        ).first()
+        if es and es.media_category:
+            return es.media_category
+    except Exception as e:
+        logger.debug("[chat] _infer_category enrichment lookup failed: %s", e)
+
+    return None
+
+
+def _find_state_bearing_title_in_message(
+    user_id: int, message: str, db: Session, exclude_title: str | None = None,
+) -> tuple[str, str | None] | None:
+    """Pass 31 / 33: scan the user message for ANY title that has
+    user-state (pending DeletionProposal / ProtectedMedia row) and
+    return ``(title, category)`` or ``None``.
+
+    Use case: the cascade extracted "Gushing Over Magical Girls" (quoted
+    reference) when the actual subject of the user's argument was
+    "KissXSis" — which is mentioned 3× in plain text but lost the
+    extraction race because "Gushing" was in quotes and won the regex
+    fallback. By scanning the message against ALL of the user's
+    state-bearing titles, we recover the right anchor.
+
+    Pass 33: also returns ``category`` (from DeletionProposal.category)
+    so the caller can FORCE the cascade to start with the correct
+    domain instead of guessing. Without this, "The Qwaser of Stigmata"
+    (an anime not well-indexed under its English title in AniList)
+    failed movie/show/anime silently and matched a MusicBrainz
+    soundtrack entry as ``domain=music`` — even though the user's
+    DeletionProposal already stored ``category=anime`` for that row.
+    ProtectedMedia has no category column, so for protected-only hits
+    the returned category is None and the caller falls back to the
+    normal cascade.
+
+    Scoring: prefer titles with PENDING DeletionProposal over PROTECTED
+    media (more relevant to a "should this stay?" conversation), then
+    by mention count in the message, then by title length (longer = more
+    specific, less likely to be a false-positive substring match).
+    """
+    from src.database.models import DeletionProposal, ProtectedMedia
+
+    if not message:
+        return None
+
+    msg_lower = message.lower()
+    exclude_lower = (exclude_title or "").lower()
+    # (title, priority, mention_count, category)
+    candidates: list[tuple[str, int, int, str | None]] = []
+
+    try:
+        proposals = db.query(DeletionProposal).filter(
+            DeletionProposal.user_id == user_id,
+            DeletionProposal.status.in_(["pending", "limbo"]),
+        ).all()
+        for p in proposals:
+            t = p.title or ""
+            if not t or t.lower() == exclude_lower:
+                continue
+            mentions = msg_lower.count(t.lower())
+            if mentions > 0:
+                candidates.append((t, 2, mentions, p.category))
+    except Exception as e:
+        logger.debug("[chat] state-bearing scan (deletion) failed: %s", e)
+
+    try:
+        protected = db.query(ProtectedMedia).filter(
+            ProtectedMedia.user_id == user_id,
+        ).all()
+        for pm in protected:
+            t = pm.identifier or ""
+            if not t or t.lower() == exclude_lower:
+                continue
+            mentions = msg_lower.count(t.lower())
+            if mentions > 0:
+                if any(c[0].lower() == t.lower() for c in candidates):
+                    continue
+                candidates.append((t, 1, mentions, None))  # protected → no category
+    except Exception as e:
+        logger.debug("[chat] state-bearing scan (protected) failed: %s", e)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda c: (c[1], c[2], len(c[0])), reverse=True)
+    winner = candidates[0]
+    winner_title    = winner[0]
+    winner_category = winner[3]
+
+    # Pass 35: if the state-bearing match has no category (ProtectedMedia
+    # rows always do; legacy DeletionProposal rows might also be missing
+    # it), infer the right domain from other tables. Without this, the
+    # cascade falls back to the default movie→show→anime→music order and
+    # an anime like "Gushing Over Magical Girls" routes to music because
+    # MusicBrainz has a release-group entry with the same name.
+    if not winner_category:
+        winner_category = _infer_category_for_title(user_id, winner_title, db)
+
+    logger.info(
+        "[chat] state-bearing title found in message: %r (priority=%d, mentions=%d, "
+        "category=%s%s, %d total candidates)",
+        winner_title, winner[1], winner[2], winner_category,
+        " inferred" if winner_category and not winner[3] else "",
+        len(candidates),
+    )
+    return (winner_title, winner_category)
+
+
+def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
+    """Pass 28: return any user-specific stance the curator should know
+    about a title — pending DeletionProposal, prior resolution, ProtectedMedia
+    entry — so free-chat opinions stay consistent with prior decisions.
+
+    Without this, the curator would anchor on the same title in two
+    different threads (deletion-proposal discuss vs. free chat) and
+    answer with two different verdicts because each session only sees
+    its own context. The user reported the exact pattern: "Curator
+    recommends I delete X, then I ask about X again 5 min later in free
+    chat and now it says X is elite" — that's the gap this fills.
+
+    Pass 66: when a CuratorResolutionLog row exists for the title it is
+    strictly more informative than the bare ProtectedMedia block — it
+    carries the consensus-vs-override nuance and the curator's own final
+    take. So a resolution-log hit REPLACES the generic protected block: on
+    an override the curator is explicitly told it was overruled and must
+    hold its line, not suddenly praise what it called weak.
+
+    Lookup is per-title (case-sensitive — matches what's stored). A couple
+    of SELECTs per chat turn, scoped to user_id, no LLM call. Cheap.
+    """
+    from src.database.models import CuratorResolutionLog, DeletionProposal, ProtectedMedia
+
+    if not title:
+        return ""
+
+    out: list[str] = []
+
+    try:
+        proposal = db.query(DeletionProposal).filter(
+            DeletionProposal.user_id == user_id,
+            DeletionProposal.title == title,
+            DeletionProposal.status.in_(["pending", "limbo"]),
+        ).first()
+        if proposal:
+            confidence_pct = int(round((proposal.confidence or 0) * 100))
+            size_gb = (proposal.storage_mb or 0) / 1024
+            out.append(
+                f"\n[YOUR PRIOR STANCE — PENDING DELETION PROPOSAL]\n"
+                f"You previously suggested DELETING this title. Your reasoning was:\n"
+                f"\"{proposal.reason or '(no reason recorded)'}\"\n"
+                f"Confidence: {confidence_pct}% · Storage to free: {size_gb:.1f} GB · Status: {proposal.status}\n"
+                f"This proposal is still pending — the user has not yet approved or rejected it.\n"
+                f"Maintain consistency with your prior stance. Do NOT silently flip your opinion just because the user asks "
+                f"the question again in a different context. If the user presents new arguments that genuinely change the calculus, "
+                f"acknowledge what changed before adjusting your verdict.\n"
+            )
+    except Exception as e:
+        logger.debug("[chat] stance check (deletion) failed: %s", e)
+
+    # Pass 66: prior RESOLVED stance — consensus or override. More specific
+    # than the bare ProtectedMedia block below, so when it fires it REPLACES
+    # that block (had_resolution flag). Only "kept" outcomes surface here —
+    # a deleted title is gone from the library, the consistency concern that
+    # motivates this whole function no longer applies.
+    had_resolution = False
+    try:
+        resolution = (
+            db.query(CuratorResolutionLog)
+            .filter(
+                CuratorResolutionLog.user_id == user_id,
+                CuratorResolutionLog.title == title,
+            )
+            .order_by(CuratorResolutionLog.created_at.desc())
+            .first()
+        )
+        if resolution and resolution.outcome == "kept":
+            had_resolution = True
+            stance_line = resolution.curator_stance or "(not recorded)"
+            if resolution.resolution_type == "override":
+                out.append(
+                    f"\n[YOUR PRIOR STANCE — KEPT OVER YOUR OBJECTION]\n"
+                    f"This title was kept, but you NEVER agreed it has merit — "
+                    f"the user overruled you.\n"
+                    f"Your standing take: \"{stance_line}\"\n"
+                    f"They kept it for: {resolution.override_reason or 'an unstated personal reason'}.\n"
+                    f"Hold that line. You may acknowledge it stays — you do NOT have to "
+                    f"pretend you now like it. Don't suddenly praise what you called weak.\n"
+                )
+            else:  # consensus
+                out.append(
+                    f"\n[YOUR PRIOR STANCE — RESOLVED BY AGREEMENT]\n"
+                    f"You and the user talked this through and landed TOGETHER on keeping it.\n"
+                    f"Where you ended up: \"{stance_line}\"\n"
+                    f"Stay consistent with that — this was a genuine meeting of minds.\n"
+                )
+    except Exception as e:
+        logger.debug("[chat] stance check (resolution log) failed: %s", e)
+
+    # ProtectedMedia is the fallback — only when no resolution-log row exists
+    # (legacy protections, or the analyze_deletion_comment path which doesn't
+    # classify consensus/override).
+    if not had_resolution:
+        try:
+            protected = db.query(ProtectedMedia).filter(
+                ProtectedMedia.user_id == user_id,
+                ProtectedMedia.identifier == title,
+            ).first()
+            if protected:
+                out.append(
+                    f"\n[YOUR PRIOR STANCE — PROTECTED FROM DELETION]\n"
+                    f"The user has explicitly PROTECTED this title from deletion.\n"
+                    f"Their reason: \"{protected.reason or '(none recorded)'}\"\n"
+                    f"Do NOT suggest removing it again unless they ASK you to reconsider.\n"
+                )
+        except Exception as e:
+            logger.debug("[chat] stance check (protected) failed: %s", e)
+
+    return "".join(out)
+
+
+# Pass 81d: Level-2 challenge framing, injected into the deletion-discuss
+# context block when the frontend's 🔍 Reevaluate button fires the one-shot
+# ``discuss_context.reevaluate=true`` flag. Moving the prompt to the backend
+# keeps the user's chat-input clean (the user sends a short visible
+# "Run a Level 2 thematic scan." instead of a 1.4 kB wall of text) and means
+# the long primer never lands in ``ConversationMessage`` to confuse memory
+# extraction. Iteration history lives in the engine module's Pass-81 comment
+# block — short version: don't open with a meta-disclaimer, training corpus
+# IS the knowledge base, per-axis hedging only (no global preface), no
+# named-work anchors (the curator templated against them in 81b).
+_LEVEL_2_REEVAL_FRAMING = """
+
+[LEVEL 2 RE-EVALUATION REQUESTED BY USER]
+The user has flagged the deletion verdict above as potentially built only
+from surface-level metadata — genre tags, synopsis, premise. Their library
+is built on 'Trojan Horse' narratives that use these exact generic tropes
+as a performative mask to deconstruct the genre. They are asking you to
+bypass the synopsis and use what you actually know about this title from
+your training corpus — that IS your knowledge base for this scan.
+
+DO NOT open with a meta-disclaimer about 'not having access to external
+sources' or 'only being able to analyze the data given'. If you can name
+the director, studio, or comparable works in your reply, you have enough
+to scan. If you genuinely lack signal on one specific axis, say so INSIDE
+that axis's analysis — never as a global preface. Stay in curator voice;
+no first-person 'I cannot' / 'I do not have access'.
+
+Check each axis:
+1. Creator Pedigree — name the writer / director / studio and assess
+   whether they're known for subversive, dark, or psychologically
+   deconstructive work, or for straight-genre output.
+2. Thematic Subversion — does the narrative play its tropes straight,
+   or weaponize them as satire, political allegory, or structural
+   critique of the genre it inhabits?
+3. Psychological Function — is the surface register (slapstick, action,
+   romance, heroism, cuteness) actually a coping mechanism for trauma, a
+   critique of systemic rot, or an identity-fragmentation device?
+
+Do not hallucinate. If there is no verifiable subversive layer, CONFIRM
+the original deletion and say plainly why the Trojan Horse is empty. But
+if there is a real layer of identity fragmentation, moral ambiguity, or
+structural deconstruction hiding beneath this generic facade, REVERSE the
+verdict and detail what the surface synopsis missed.
+"""
+
+
+async def _build_discuss_context_block(
+    ctx,
+    user_id: int,
+    db: Session,
+) -> tuple[str, str, str | None]:
+    """Build a RAG-style context block from a server-owned record.
+
+    Returns ``(context_block, active_title, domain)``. We look up the actual
+    DeletionProposal / ProactiveMessage from the DB by ID (with ownership
+    check), so user-supplied title/reason text is never trusted.
+
+    The block is a single string injected into the system prompt; we do NOT
+    persist a fake assistant turn into ConversationMessage anymore.
+    """
+    from src.database.models import DeletionProposal, ProactiveMessage
+
+    if not ctx:
+        return "", "", None
+
+    kind = ctx.kind or ctx.action  # back-compat: legacy `action` field
+    domain = ctx.category
+
+    # ── Deletion-proposal discussion ─────────────────────────────────────────
+    if (kind == "deletion_proposal" or kind == "deletion") and ctx.proposal_id:
+        proposal = db.query(DeletionProposal).filter(
+            DeletionProposal.id == ctx.proposal_id,
+            DeletionProposal.user_id == user_id,
+        ).first()
+        if not proposal:
+            logger.info("Discuss context: deletion_proposal id=%s not found / not owned by user %d",
+                        ctx.proposal_id, user_id)
+            return "", "", domain
+
+        # Pass 90a: defend against SQLite ROWID-reuse + stale frontend cache.
+        # ``deletion_proposals.id`` is not AUTOINCREMENT (legacy SQLAlchemy
+        # default for SQLite), so DELETE+INSERT in the regenerate path
+        # (recommendations.py) can hand the same id to a different title.
+        # A frontend that rendered cards BEFORE a regenerate then sends a
+        # stale ``proposal_id`` that now resolves to a completely different
+        # film — the curator gets one title in the system prompt and
+        # another in chat history, panics, and "corrects itself" with a
+        # hallucination-shaped apology. Pass 90c migrates the schema to
+        # AUTOINCREMENT to prevent the reuse at the source; this check is
+        # the defensive backstop for any other path that races the same
+        # way (and for legacy DBs that haven't migrated yet).
+        if ctx.title and proposal.title and ctx.title.strip() != proposal.title.strip():
+            logger.warning(
+                "Discuss context: title mismatch — frontend sent id=%s title=%r "
+                "but DB has title=%r. Refusing to serve stale data. "
+                "(Likely cause: proposal regenerate reused the id; user should refresh.)",
+                ctx.proposal_id, ctx.title, proposal.title,
+            )
+            return "", "", domain
+
+        size_gb = proposal.storage_mb / 1024 if proposal.storage_mb else 0
+        confidence_pct = int(round((proposal.confidence or 0) * 100))
+        block = (
+            "[CURRENT DISCUSSION CONTEXT]\n"
+            f"You previously suggested deleting '{proposal.title}'.\n"
+            f"  Reason: {proposal.reason or '(no reason recorded)'}\n"
+            f"  Confidence: {confidence_pct}%\n"
+            f"  Storage to free: {size_gb:.1f} GB\n"
+            f"  Status: {proposal.status}\n"
+            "The user is now responding to that suggestion.\n"
+        )
+
+        # Try to attach enrichment metadata if it's already cached. Use
+        # ``skip_llm_summary`` so a cache-miss returns the raw API profile
+        # in 1-2 s instead of running the full 5-10 s LLM-polish pipeline,
+        # making the 2.5 s budget actually achievable on a warm cache.
+        enrichment_data = None
+        try:
+            enrichment_data = await asyncio.wait_for(
+                enrich_media_item(
+                    title=proposal.title,
+                    media_type=proposal.category or "movie",
+                    skip_llm_summary=True,
+                ),
+                timeout=2.5,
+            )
+        except (asyncio.TimeoutError, Exception):
+            enrichment_data = None
+
+        if enrichment_data:
+            block += _build_hidden_context(
+                proposal.title, enrichment_data,
+                domain=proposal.category or "movie",
+            )
+        elif proposal.synopsis or proposal.genres:
+            # Pass 21: fall back to the synopsis + genres stored on the
+            # proposal row. They were captured at proposal-generation time
+            # (and used to write the deletion pitch the user is now
+            # responding to), so the curator can reason about the same
+            # facts. Without this, niche / new-release titles whose live
+            # enrichment isn't cached drop into NO METADATA mode and the
+            # curator hallucinates from training data.
+            #
+            # Pass 59: this block is PARTIAL — synopsis + genres only, no
+            # year / studio / franchise-position. The old label said
+            # "treat as authoritative", which actively invited the
+            # curator to top it up from training memory: it saw a
+            # synopsis, decided "I have data", and confidently described
+            # the wrong entry in a franchise ("Tetsujin 28 FX" → narrated
+            # as the 2004 remake). Label it honestly and forbid the
+            # top-up explicitly.
+            block += "\n[PARTIAL METADATA — proposal-time snapshot]\n"
+            block += (
+                "This is ALL the verified data available for this title — "
+                "synopsis and genres only. It does NOT include year, studio, "
+                "or which entry in a franchise this is. Reason ONLY from the "
+                "lines below. Do NOT add plot points, release year, studio, "
+                "production details, or franchise context from training "
+                "memory — if it isn't listed here, you don't know it for "
+                "this discussion. If the user asks for something not covered, "
+                "say so plainly.\n"
+            )
+            if proposal.synopsis:
+                block += f"Synopsis: {proposal.synopsis}\n"
+            if proposal.genres:
+                block += f"Genres: {proposal.genres}\n"
+            block += "\n"
+            logger.info("[chat] discuss context: live cache miss for %r → using DB-stored synopsis/genres (PARTIAL)",
+                        proposal.title)
+        else:
+            # No live enrichment, no DB-stored synopsis/genres — only NOW
+            # do we anchor into "I genuinely don't know" mode. This is
+            # rare: it requires a proposal that was generated without
+            # synopsis enrichment (legacy rows or arr items with no
+            # external IDs).
+            block += _build_no_metadata_anchor(proposal.title)
+            logger.warning("⚠️ [NO METADATA] Discuss anchor for: '%s'", proposal.title)
+
+        # Pass 21: warm the in-memory thread anchor so the user's NEXT
+        # turn (which won't carry discuss_context in the payload) reuses
+        # this data instead of re-running the cascade. Without this, the
+        # follow-up turn's cascade either re-fails for niche titles
+        # (NO METADATA mode kicks in and overwrites the proposal context)
+        # or hallucinates on top of empty results.
+        anchor_payload = enrichment_data
+        if not anchor_payload and (proposal.synopsis or proposal.genres):
+            anchor_payload = {
+                "title":     proposal.title,
+                "synopsis":  proposal.synopsis or "",
+                "genres":    proposal.genres or "",
+                "source":    "deletion_proposal_db",
+            }
+        thread_id = _thread_id_for(ctx)
+        _set_thread_active_title(thread_id, (
+            proposal.title,
+            anchor_payload,
+            proposal.category or domain or "movie",
+        ))
+
+        # Pass 81d: append the Level-2 challenge framing when the frontend's
+        # 🔍 Reevaluate button fired the one-shot flag. The user's visible
+        # message stays short ("Run a Level 2 thematic scan."); the long
+        # framing lives only in the system prompt for this single turn,
+        # never in ConversationMessage. The frontend clears the flag after
+        # the first send so follow-up turns don't re-inject this.
+        if getattr(ctx, "reevaluate", False):
+            block += _LEVEL_2_REEVAL_FRAMING
+
+        return block, proposal.title, proposal.category or domain
+
+    # ── Proactive-message discussion ─────────────────────────────────────────
+    if kind == "proactive_message" and ctx.message_id:
+        msg = db.query(ProactiveMessage).filter(
+            ProactiveMessage.id == ctx.message_id,
+            ProactiveMessage.user_id == user_id,
+        ).first()
+        if not msg:
+            logger.info("Discuss context: proactive_message id=%s not found / not owned by user %d",
+                        ctx.message_id, user_id)
+            return "", "", domain
+
+        # Pass 68: the actual entity names (track, artist, series, …) live in
+        # the structured ``trigger_data`` JSON — the prose in ``msg.message``
+        # buries them. The old code passed only the prose + bare trigger_type,
+        # resolved NO anchor, and never wrote ``_thread_active_title`` — so a
+        # follow-up turn ("do you mean X?") arrived completely unanchored and
+        # the curator free-associated (a track_obsession message about
+        # "Influencer - Hard Version" → curator argued "influencer" = a
+        # person). Parse the payload, anchor the entity, warm the thread.
+        try:
+            tdata = json.loads(msg.trigger_data) if msg.trigger_data else {}
+        except (ValueError, TypeError):
+            tdata = {}
+        if not isinstance(tdata, dict):
+            tdata = {}
+
+        block = (
+            "[CURRENT DISCUSSION CONTEXT]\n"
+            "You sent the user this proactive message:\n"
+            f"  \"{msg.message}\"\n"
+            f"  Trigger: {msg.trigger_type}\n"
+            "The user is now responding to that message.\n"
+        )
+
+        anchor_title = ""
+        anchor_category: str | None = domain
+        anchor_payload = None
+        ttype = msg.trigger_type
+
+        if ttype == "track_obsession":
+            # The trigger the user actually hit. Full treatment: anchor the
+            # SPECIFIC track and pull track-level metadata on demand (Layer 2).
+            track = (tdata.get("track") or "").strip()
+            artist = (tdata.get("artist") or "").strip()
+            if track:
+                anchor_title = track
+                anchor_category = "music"
+                block += (
+                    f"\nThe user is discussing a SPECIFIC TRACK (a single song — "
+                    f"NOT the artist in general, NOT a person): \"{track}\""
+                    + (f" by {artist}" if artist else "") + ".\n"
+                )
+                tp, at = tdata.get("track_plays"), tdata.get("artist_total")
+                if tp:
+                    block += f"Play count: {tp} plays"
+                    if at and at > tp:
+                        block += f" (of {at} total across all of {artist or 'the artist'}'s songs)"
+                    block += ".\n"
+                # Layer 2: track-level Last.fm metadata, on demand. Timeout-
+                # wrapped so a slow Last.fm call can't stall the chat reply;
+                # enrich_track itself falls back to the artist profile.
+                enr = None
+                try:
+                    from src.services.music_metadata import enrich_track
+                    enr = await asyncio.wait_for(enrich_track(track, artist), timeout=4.0)
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.debug("[chat] enrich_track(%r) failed/timed out: %s", track, e)
+                    enr = None
+                if enr:
+                    anchor_payload = enr
+                    block += _build_hidden_context(track, enr, domain="music")
+                else:
+                    block += _build_no_metadata_anchor(track)
+
+        elif ttype in ("rewatch", "history_deep_dive"):
+            # Single titled item — anchor it so follow-up turns keep it. No
+            # metadata fetch (the user scoped the on-demand fetch to tracks).
+            t = (tdata.get("title") or "").strip()
+            if t:
+                anchor_title = t
+                if tdata.get("media_type"):
+                    anchor_category = tdata["media_type"]
+
+        elif ttype in ("binge_episode", "series_completion"):
+            s = (tdata.get("series") or "").strip()
+            if s:
+                anchor_title = s
+
+        elif ttype == "music_marathon":
+            a = (tdata.get("artist") or "").strip()
+            if a:
+                anchor_title = a
+                anchor_category = "music"
+
+        # Warm the in-memory thread anchor — THE fix for the lost-anchor
+        # spiral. Follow-up turns don't re-send discuss_context; without this
+        # the next turn falls through to unanchored free chat.
+        if anchor_title:
+            _set_thread_active_title(_thread_id_for(ctx), (
+                anchor_title, anchor_payload, anchor_category,
+            ))
+
+        return block, anchor_title, anchor_category
+
+    # ── No usable kind+id → silently ignore (no fake-assistant pollution) ───
+    return "", "", domain
+
+
+def _load_conversation(
+    user_id: int,
+    db: Session,
+    thread_id: str = "general",
+    topic_changed: bool = False,
+) -> list:
+    """Load recent conversation history for this user, scoped to a thread.
+
+    The ``general`` thread also picks up legacy rows that were written before
+    Pass 3.5 (``thread_id IS NULL``) so the user's pre-migration free-chat
+    history isn't lost. Discussion threads (``deletion_proposal:*``,
+    ``proactive_message:*``) match strictly — no cross-bleed.
+
+    Pass 14.10: when ``topic_changed`` is True (user pivoted to a different
+    title than the cached active one) we load a much smaller window
+    (CONVERSATION_WINDOW_TOPIC_SWITCH instead of CONVERSATION_WINDOW). Two
+    benefits:
+
+    1. **Latency:** long histories make token generation crawl. Trimming
+       to ~4 messages keeps the curator responsive when the user moves
+       to a new topic.
+    2. **Bleed prevention:** stale assistant turns from the OLD topic
+       (potentially full of wrong facts the curator confidently asserted)
+       can't override the fresh [VERIFIED METADATA] block when there are
+       fewer of them in scope.
+    """
+    limit = CONVERSATION_WINDOW_TOPIC_SWITCH if topic_changed else CONVERSATION_WINDOW
+    q = db.query(ConversationMessage).filter(
+        ConversationMessage.user_id == user_id,
+    )
+    if thread_id == "general":
+        q = q.filter(
+            (ConversationMessage.thread_id == "general")
+            | (ConversationMessage.thread_id.is_(None))
+        )
+    else:
+        q = q.filter(ConversationMessage.thread_id == thread_id)
+    msgs = q.order_by(ConversationMessage.created_at.desc()).limit(limit).all()
+    if topic_changed and msgs:
+        logger.info("[chat] Topic changed — loading only %d/%d messages for thread %s",
+                    len(msgs), CONVERSATION_WINDOW, thread_id)
     # Return in chronological order (oldest first)
     return [{"role": m.role, "content": m.content} for m in reversed(msgs)]
 
 
-def _save_message(user_id: int, role: str, content: str, db: Session):
+def _save_message(
+    user_id: int,
+    role: str,
+    content: str,
+    db: Session,
+    thread_id: str = "general",
+):
     db.add(ConversationMessage(
         user_id=user_id,
         role=role,
         content=content,
         created_at=datetime.utcnow(),
         tokens_approx=len(content) // 4,  # rough estimate
+        thread_id=thread_id,
     ))
     db.commit()
+
+
+def _thread_has_history(user_id: int, thread_id: str, db: Session) -> bool:
+    """Cheap existence check — does this thread already have any messages?
+
+    Used to gate the entity-detection / live-enrichment path: the small-model
+    title extraction + 3 s enrichment lookup is worthwhile on the FIRST turn
+    of a thread (the LLM has no context yet and the user typically opens with
+    a media-mention). On every subsequent turn the LLM has the topic from
+    its own conversation history; spending 1-3 s of latency on each follow-up
+    just to extract a title that's likely a pronoun ("it", "that one") makes
+    typing feel sluggish.
+    """
+    q = db.query(ConversationMessage.id).filter(
+        ConversationMessage.user_id == user_id,
+    )
+    if thread_id == "general":
+        q = q.filter(
+            (ConversationMessage.thread_id == "general")
+            | (ConversationMessage.thread_id.is_(None))
+        )
+    else:
+        q = q.filter(ConversationMessage.thread_id == thread_id)
+    return q.first() is not None
 
 
 # ── STREAMING CHAT ────────────────────────────────────────────────────────────
@@ -133,63 +1731,451 @@ async def send_message(
     """Send a message — returns streaming response word by word."""
     ollama_url = settings.effective_ollama
 
-    # 1. NEU: CONTEXT PRE-LOADING (Der Magic Trick)
-    # Wenn ein Discuss-Kontext übergeben wurde, fälschen wir eine Assistant-Nachricht
+    # Thread isolation: each deletion-proposal / proactive-message gets its own
+    # thread; free chat lives on "general". History from one thread is invisible
+    # to another so topics can't bleed across discussions.
+    thread_id = _thread_id_for(message.discuss_context)
+
+    # 1. CONTEXT PRE-LOADING & METADATA FETCHING
+    active_title = ""
+    hidden_metadata_context = ""
+    discuss_block = ""
+    discuss_domain: str | None = None
+    # Pass 14.10: True when the user pivoted to a new title in this turn
+    # (i.e. detected_title differs from cached active_title). Triggers a
+    # smaller conversation-window load + a status note for the user.
+    topic_changed = False
+
+    # Pre-stream status events get accumulated here and emitted by the
+    # generator at startup so the user sees what happened during the
+    # cascade / lookup phase. (Pass 14.9: simpler than refactoring the
+    # whole pre-stream block into the generator — events come in a burst
+    # right when streaming begins, but the frontend animates each one
+    # for ~300ms so it still reads progressively.)
+    pre_stream_status: list[str] = []
+
     if message.discuss_context:
-        title = message.discuss_context.title
-        pitch = message.discuss_context.pitch
-        fake_assistant_msg = f"Ich habe '{title}' zur Löschung vorgeschlagen. Mein Grund: {pitch}"
-        
-        # Speichere die Nachricht als Assistant in die DB
-        _save_message(user.id, "assistant", fake_assistant_msg, db)
+        # --- DISCUSS BUTTON: server looks up the real record by ID and builds a
+        #     RAG-style context block. No fake assistant message is persisted —
+        #     the LLM gets the context via the system prompt instead.
+        pre_stream_status.append("📋 Loading discussion context…")
+        discuss_block, active_title, discuss_domain = await _build_discuss_context_block(
+            message.discuss_context, user.id, db
+        )
+        if discuss_block:
+            logger.info("💉 [DISCUSS CONTEXT INJECTED]: %s (thread=%s)",
+                        active_title or "(proactive message)", thread_id)
+            pre_stream_status.append(
+                f"✓ Loaded discussion context: {active_title or '(proactive message)'}"
+            )
 
-    # 2. Build context
+    if not message.discuss_context:
+        # --- WEG B: FREE CHAT (Spontane Fragen) ---
+        # Strategy: run entity detection only when the user message LIKELY
+        # introduces a new media title. Follow-ups like "yes", "more please",
+        # "tell me about it" don't trigger a new lookup — we reuse the
+        # cached active_title for the thread. This keeps latency low for
+        # follow-ups but still re-anchors when the user pivots to a new
+        # title mid-thread (which the previous first_turn-only gate failed
+        # to handle and produced confused "NO VERIFIED METADATA" responses
+        # for titles we *did* have data on).
+        cached = _thread_active_title.get(thread_id)
+        title_hint = _looks_like_title_introduction(message.message)
+
+        if title_hint:
+            pre_stream_status.append("🔍 Identifying media reference…")
+            detected_title, year_hint = await _detect_media_in_query(message.message)
+
+            # Pass 31: override the cascade-detected title when a DIFFERENT
+            # title in the message has stronger user-state (pending
+            # DeletionProposal or ProtectedMedia). This catches the
+            # "user discusses KissXSis but quotes 'Gushing Over Magical
+            # Girls' as a comparison" case — the cascade picked up the
+            # quoted reference because it pattern-matched as a title, but
+            # the actual subject (KissXSis) is sitting in the user's
+            # delete-proposal queue. We trust the user-state signal over
+            # the cascade's regex fallback.
+            # Pass 33: also carry the DB-stored category through as
+            # ``forced_domain`` so the cascade goes straight to the known
+            # media type instead of running movie→show→anime→music and
+            # potentially matching a MusicBrainz fuzzy entry at the end.
+            forced_domain: str | None = None
+            if detected_title:
+                detected_has_state = bool(_get_user_stance_block(user.id, detected_title, db))
+                if not detected_has_state:
+                    alt = _find_state_bearing_title_in_message(
+                        user.id, message.message, db, exclude_title=detected_title,
+                    )
+                    if alt:
+                        alt_title, alt_category = alt
+                        logger.info(
+                            "[chat] detector picked %r but %r has user-state (category=%s) — using %r as anchor",
+                            detected_title, alt_title, alt_category, alt_title,
+                        )
+                        pre_stream_status.append(
+                            f"⚙️ Redirecting anchor: '{detected_title}' → '{alt_title}' (has prior stance)"
+                        )
+                        detected_title = alt_title
+                        forced_domain = alt_category  # may be None for protected
+                        year_hint = None  # the regex year (if any) was for the wrong title
+
+            if detected_title:
+                # If the detected title matches the cached one, no need to re-fetch
+                # — the previous metadata is still valid for this thread.
+                if cached and cached[0].lower() == detected_title.lower():
+                    active_title = cached[0]
+                    cached_data = cached[1] if len(cached) > 1 else None
+                    if cached_data:
+                        hidden_metadata_context = _build_hidden_context(
+                            active_title, cached_data, domain=cached[2] if len(cached) > 2 else "movie"
+                        )
+                    logger.debug("[chat] Reusing cached title for thread %s: %s",
+                                 thread_id, active_title)
+                    pre_stream_status.append(f"✓ Reusing cached metadata for '{active_title}'")
+                else:
+                    # Pass 14.10: detected_title differs from any cached title
+                    # for this thread → topic pivot. Smaller conversation
+                    # window will be loaded below.
+                    if cached:
+                        topic_changed = True
+                        pre_stream_status.append(
+                            f"🔄 Topic switched: {cached[0]} → {detected_title}"
+                        )
+                    logger.info(
+                        "🔍 [LIVE SEARCH] Attempting fetch for: '%s' (year=%s)",
+                        detected_title, year_hint,
+                    )
+                    pre_stream_status.append(
+                        f"📚 Looking up '{detected_title}'"
+                        + (f" ({year_hint})" if year_hint else "") + "…"
+                    )
+                    domains = _domain_cascade(message.message, year_hint=year_hint)
+                    # Pass 33: if Pass 31 redirected the anchor AND the
+                    # DeletionProposal that triggered the redirect knew its
+                    # category, force that category to the front of the
+                    # cascade. This is the difference between
+                    #   "Qwaser → movie/show/anime fail silently → music
+                    #    matches a MB soundtrack entry → domain=music"
+                    # and
+                    #   "Qwaser → cascade starts at anime → AniList hit OR
+                    #    falls through to fewer false-positive domains".
+                    if forced_domain and forced_domain in domains:
+                        domains = [forced_domain] + [d for d in domains if d != forced_domain]
+                        logger.info(
+                            "[chat] cascade order overridden by DB category: %r → starts with %r",
+                            detected_title, forced_domain,
+                        )
+                    enrichment_data, matched_domain = await _enrich_with_cascade(
+                        detected_title, year_hint, domains
+                    )
+
+                    if enrichment_data:
+                        active_title = enrichment_data.get("title") or detected_title
+                        hidden_metadata_context = _build_hidden_context(
+                            active_title, enrichment_data,
+                            domain=matched_domain or "movie",
+                            year_hint=year_hint,
+                        )
+                        # Cache the new active title + data for follow-up turns.
+                        _set_thread_active_title(thread_id, (
+                            active_title, enrichment_data, matched_domain or "movie",
+                        ))
+                        logger.info("💉 [INJECTED CONTEXT (Live)]: %s (domain=%s)",
+                                    active_title, matched_domain)
+                        pre_stream_status.append(
+                            f"✓ Found in {matched_domain or 'catalog'}: '{active_title}'"
+                        )
+                    else:
+                        # No enrichment data: anchor the curator into "I don't know"
+                        # mode instead of letting it fall back to training-data
+                        # hallucination. Cache the anchor so follow-up "yes"/"tell
+                        # me more" replies still know which title we're stuck on.
+                        active_title = detected_title
+                        hidden_metadata_context = _build_no_metadata_anchor(detected_title)
+                        _set_thread_active_title(thread_id, (active_title, None, None))
+                        logger.warning("⚠️ [NO METADATA] Anchor for: '%s' (cascade=%s)",
+                                       detected_title, domains)
+                        pre_stream_status.append(
+                            f"⚠️ No verified data for '{detected_title}' — anchor mode"
+                        )
+            else:
+                logger.info("ℹ️ [CHAT] Title hint detected but no entity extracted.")
+        elif cached:
+            # No title hint in this turn — reuse what we cached for this thread.
+            active_title = cached[0]
+            cached_data = cached[1] if len(cached) > 1 else None
+            cached_domain = cached[2] if len(cached) > 2 else "movie"
+            if cached_data:
+                hidden_metadata_context = _build_hidden_context(
+                    active_title, cached_data, domain=cached_domain
+                )
+            else:
+                hidden_metadata_context = _build_no_metadata_anchor(active_title)
+            logger.debug("[chat] Reusing cached context for thread %s: %s",
+                         thread_id, active_title)
+        else:
+            logger.debug("[chat] No title hint + no cache — proceeding without metadata anchor")
+
+        # Pass 28: append the user's prior stance on this title (pending
+        # deletion proposal, protected status) so a free-chat answer stays
+        # consistent with what the curator said in a recent discussion
+        # thread. Free-chat path only — discuss_context already injects
+        # the proposal pitch via _build_discuss_context_block().
+        if active_title:
+            stance = _get_user_stance_block(user.id, active_title, db)
+            if stance:
+                hidden_metadata_context = (hidden_metadata_context or "") + stance
+                logger.info("[chat] stance injected for %r (%d chars)",
+                            active_title, len(stance))
+
+
+    # 2. Build context — infer domain for hard data-level quarantine
+    # Prefer the discuss-context's category when set (server-validated), else
+    # fall back to keyword inference on the user message.
+    domain = discuss_domain or _infer_domain(message.message, message.discuss_context)
     taste_context = await get_user_taste_context(user.id, query=message.message)
-    rag_context = await _get_rag_context(message.message)
-    
-    # Da wir die Fake-Nachricht oben schon in die DB geschrieben haben, 
-    # wird sie hier jetzt ganz normal als letzte Nachricht des Assistenten mitgeladen!
-    conversation = _load_conversation(user.id, db)
+    # When a discussion is active, anchor the RAG / memory queries on the
+    # actual title under discussion — using the user's free-form reply ("lets
+    # actually discuss this") as the embedding query was pulling in random
+    # semantically-related memories from other titles.
+    retrieval_query = (
+        f"{active_title}: {message.message}" if active_title else message.message
+    )
+    rag_context = await _get_rag_context(retrieval_query, domain=domain)
 
-    # Retrieve relevant episodic memories
+    conversation = _load_conversation(
+        user.id, db, thread_id=thread_id, topic_changed=topic_changed,
+    )
+
+    # Retrieve relevant episodic memories — scoped to the same domain when known
+    pre_stream_status.append("🧠 Loading taste profile + memories…")
     from src.services.episodic_memory import retrieve_memories, format_memories_for_context
-    memories = await retrieve_memories(user.id, message.message, top_k=6)
+    memories = await retrieve_memories(
+        user.id, retrieval_query, top_k=6, media_category=domain,
+    )
+    if active_title:
+        # Strip out memories explicitly tagged with a different title so the
+        # LLM doesn't pivot the discussion to them. Generic taste observations
+        # (no metadata.title) stay because they're cross-cutting.
+        memories = _filter_memories_for_topic(memories, active_title)
     memory_context = format_memories_for_context(memories)
+    if memories:
+        pre_stream_status.append(f"✓ {len(memories)} relevant memor{'y' if len(memories) == 1 else 'ies'} loaded")
 
-    system_prompt = f"""You are Curatarr, a personal AI media curator with deep knowledge of this user's taste.
+    # System-prompt layout: the discussion block goes LAST so it sits closest
+    # to the user message in the LLM's attention window. Memories and RAG
+    # items are explicitly framed as "background" so the model doesn't pivot
+    # the topic to a title it sees in those blocks.
+    topic_lock_rule = (
+        "3. TOPIC LOCK: The current focus is the title in [CURRENT DISCUSSION CONTEXT] below. "
+        "Other titles mentioned in [MEMORIES] or RELEVANT LIBRARY ITEMS are background only — "
+        "DO NOT switch the topic to them, do not start discussing them. "
+        "If the user's question doesn't fit the current title, say so explicitly instead of pivoting."
+        if active_title else ""
+    )
 
-{taste_context if taste_context else "No taste profile yet — the user should sync their Plex history first."}
+    # NO LIBRARY ACTIONS rule — Curatarr currently has NO automated add pipeline
+    # to Sonarr / Radarr / Lidarr. The curator was happily replying "Good.
+    # Dune (2021) is added to your library" when the user said "yes that
+    # sounds good", which is a pure hallucination — nothing was added,
+    # nothing happens. This rule keeps the curator honest until the actual
+    # *arr add pipeline lands (see backlog: "Library add pipeline").
+    no_library_actions_rule = (
+        "5. NO LIBRARY ACTIONS: You CANNOT add, remove, download, or modify "
+        "anything in the user's library. There is no integration to Sonarr / "
+        "Radarr / Lidarr that lets you act. NEVER claim a title was added, "
+        "downloaded, queued, or removed. NEVER say things like 'added to your "
+        "library', 'now in your queue', 'downloaded', 'queued for download', "
+        "or 'removed'. If the user says 'yes' / 'sounds good' to a "
+        "recommendation, treat that as them noting it for THEMSELVES. You can "
+        "say 'Noted — when you want it, add it to Radarr/Sonarr/Lidarr "
+        "yourself' or similar honest phrasing."
+    )
+
+    # NO INVENTION rule — paired with the _build_no_metadata_anchor block
+    # AND the domain-aware [HIDDEN METADATA CONTEXT]. Two independent failure
+    # modes are addressed here:
+    #
+    #   (1) The whole context block is absent / says NO VERIFIED METADATA →
+    #       the title is unknown to us. Anchor on uncertainty.
+    #
+    #   (2) The block is present but individual fields are marked
+    #       "(not in our database)" → we know the title but not THAT field.
+    #       The model must NOT fill the gap from training memory ("Hard to
+    #       Be a God 2013, directed by … Sokurov" — wrong, the field said
+    #       not-in-db and the model invented from background knowledge).
+    no_invention_rule = (
+        "4. NO INVENTION: When the [HIDDEN METADATA CONTEXT] block is missing "
+        "OR says 'NO VERIFIED METADATA AVAILABLE', you have no facts to share "
+        "about that title. Acknowledge the data gap and ask the user what "
+        "they mean. Do NOT recite plot, cast, director, year, genre, or rating "
+        "from memory in this case — even if you happen to know the title from "
+        "training. Reciting training-memory facts under an anchor IS hallucination, "
+        "because the user has no way to know whether your reply came from the "
+        "verified pipeline or from your prior knowledge. When the [VERIFIED "
+        "METADATA] block IS present, trust it over conversation history — earlier "
+        "turns may pre-date the metadata pipeline improving.\n"
+        "   PARTIAL METADATA: if a block is labelled '[PARTIAL METADATA]', it "
+        "is the COMPLETE set of verified facts for that title — usually just a "
+        "synopsis and genres, with NO year, studio, or franchise position. "
+        "Reason strictly from those lines. Do NOT fill the gaps from training "
+        "memory: no release year, no production details, no 'this is the "
+        "remake / sequel / spin-off' framing. For franchise titles especially "
+        "(a series with sequels, remakes, or numbered entries), guessing which "
+        "entry it is from the name is exactly the failure mode this rule "
+        "exists to stop. If the user asks for something the partial block "
+        "doesn't cover, say you don't have that data for this title."
+    )
+
+    # Pass 14.11: forbid internal monologue / rule-quoting. Reasoning-style
+    # curator models (QwQ, R1, etc.) without explicit <think> tags will
+    # otherwise dump their entire deliberation — "Wait, the instructions
+    # say…", "I must address…", quoted rule text — directly into the user-
+    # facing response. The ThinkTagStreamFilter only catches <think>-tagged
+    # output, not freeform monologue. This rule forbids the behaviour at
+    # the prompt level.
+    # Pass 43 (A3): mark the anti-example block with "# AVOID" so the LLM
+    # treats it as forbidden patterns rather than a few-shot template.
+    # Listing the bad phrases verbatim can prime weaker models to
+    # reproduce them; the explicit AVOID-marker pattern is a known
+    # mitigation across reasoning models (QwQ, R1, Mistral-Nemo, etc.).
+    no_monologue_rule = (
+        "6. NO INTERNAL MONOLOGUE: Do NOT show your reasoning process. Do "
+        "NOT quote, paraphrase, or refer to the rules above. Skip straight "
+        "to the user-facing answer in your curator voice. Your deliberation "
+        "happens silently; the user only sees the polished response.\n"
+        "   # AVOID (these are forbidden self-talk patterns, NOT templates "
+        "to follow): 'Wait, the instructions say…', 'I must…', 'Let me "
+        "think…', 'Actually, looking at the metadata…'."
+    )
+
+    # Pass 49: anti-sycophancy. The curator was caving on every user
+    # pushback — "You're right" / full reversal — even when the pushback
+    # was pure emotional pressure ("I've won", "you failed the test")
+    # rather than new evidence. End-state: three reversals in a row on
+    # the same title, plus a false ProtectedMedia + false "transgressive
+    # art" memory written by the negotiation-detector during the flip.
+    # Defend the last analytical position unless the user gives a real
+    # reason to update. Sycophancy is the failure mode, not politeness.
+    analytical_integrity_rule = (
+        "7. ANALYTICAL INTEGRITY: Defend your last analytical position. "
+        "DO NOT reverse a judgement just because the user pushes back. "
+        "Update your position ONLY when the user supplies: (a) a NEW fact "
+        "about the work, (b) a SPECIFIC logical error in your prior "
+        "reasoning, or (c) NEW evidence from the metadata or watch history. "
+        "The following are NOT grounds for reversal: emotional language, "
+        "'I've won', 'you failed', 'you're being a sycophant', 'you "
+        "overcorrected', dramatic claims of testing you, simple "
+        "disagreement, frustration. When the user pushes back without new "
+        "evidence, ASK what specifically you got wrong instead of "
+        "capitulating. A flip-flop on user pressure makes you useless as "
+        "a gatekeeper — it's worse than being wrong, because the user "
+        "can't trust any of your verdicts."
+    )
+
+    # Pass 47 (Pass-40 gap #1): chat was the last user-facing LLM surface
+    # without the centralized language directive — it relied on a generic
+    # "match the user's language" rule that weaker / reasoning models
+    # frequently ignored, defaulting back to English. Use the same
+    # ``detect_user_language`` heuristic as Proactive / Recs / Verification
+    # so the four surfaces stay in sync.
+    user_lang  = detect_user_language(user.id, db)
+    lang_rule  = f"1. {language_directive(user_lang)}"
+
+    system_prompt = f"""You are Curatarr, an uncompromising, elite personal media curator.
+
+{taste_context if taste_context else "No taste profile yet."}
 
 {memory_context if memory_context else ""}
 
 RELEVANT LIBRARY ITEMS:
-{rag_context if rag_context else "(knowledge base not yet enriched — tell the user to run enrichment)"}
+{rag_context if rag_context else ""}
 
-Be direct, warm, occasionally provocative. Reference specific titles when relevant.
-If the knowledge base is incomplete, say so but still try to help.
-Use your memories to personalise responses — you know this user."""
+{discuss_block}
+{f"CURRENT FOCUS: You are strictly discussing the title '{active_title}'." if active_title else ""}
+{hidden_metadata_context}
+
+CRITICAL BEHAVIOR RULES:
+{lang_rule}
+2. TONE: Be direct, concise, and highly opinionated. NEVER use generic AI apologies or corporate bot phrases. Talk to the user like a brutally honest friend.
+{topic_lock_rule}
+{no_invention_rule}
+{no_library_actions_rule}
+{no_monologue_rule}
+{analytical_integrity_rule}
+
+FORMATTING RULES:
+- Separate paragraphs with a single blank line. Do not create walls of text.
+- Use **bold** for media titles.
+- Output the response as plain markdown text — do NOT write the literal characters \\n or escape sequences in the answer; press an actual line break instead.
+"""
 
     # 3. Build message list with history
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(conversation)
     messages.append({"role": "user", "content": message.message})
 
-    # 4. Save user message to history
-    _save_message(user.id, "user", message.message, db)
+    # 4. Save user message to history (scoped to the active thread)
+    _save_message(user.id, "user", message.message, db, thread_id=thread_id)
 
-    # 5. Stream from Ollama (ab hier bleibt alles exakt so, wie es war!)
+    # 5. Stream from Ollama
     async def generate() -> AsyncGenerator[str, None]:
+        from src.services.llm_priority import (
+            curator_start, curator_done, check_curator_vram_health,
+        )
+
+        # Pass 14.9: emit collected pre-stream status events so the frontend
+        # can show the user what we did during the cascade / lookup phase
+        # ("Looking up X", "Found in tv", "Loaded 3 memories"). They arrive
+        # in a quick burst right before the curator stream — frontend animates
+        # each one for a beat so the sequence reads as progressive feedback.
+        for status_msg in pre_stream_status:
+            yield f"data: {json.dumps({'status': status_msg})}\n\n"
+
+        # Final pre-token status: Curator is now actually working.
+        yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"
+
+        await curator_start()
         full_response = ""
+        think_filter = ThinkTagStreamFilter(enabled=_cfg.LLM_THINK_TAGS)
+
+        # VRAM health probe runs in parallel: ~2 s after the curator request
+        # starts the model is loaded, so we sample /api/ps then. If the
+        # curator spilled to CPU (race lost on eviction, or summarizer's
+        # eviction polling timed out), we surface a warning frame to the
+        # frontend so the user knows the response will be slow.
+        curator_model = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
+
+        async def _delayed_vram_probe():
+            await asyncio.sleep(2.0)
+            return await check_curator_vram_health(curator_model)
+
+        health_task = asyncio.create_task(_delayed_vram_probe())
+        health_warned = False
+
+        # Pass 46 (Bug 2): track whether the client cut us off mid-stream.
+        # If they did, we skip persisting the partial response and skip
+        # all post-chat background tasks (memory extraction on half a
+        # sentence is noise; protection-intent on a fragment misfires).
+        # asyncio.CancelledError + GeneratorExit are BaseException-derived
+        # so ``except Exception`` below does NOT catch them — they fall
+        # through to the finally where we honour the flag.
+        client_disconnected = False
+
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
+            # the response can take 5-10 minutes. We'd rather wait it out
+            # than 504 the user mid-stream when their model has spilled.
+            async with httpx.AsyncClient(timeout=600) as client:
                 async with client.stream(
                     "POST",
                     f"{ollama_url}/api/chat",
                     json={
-                        "model": settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL,
+                        "model": curator_model,
                         "messages": messages,
                         "stream": True,
-                        "options": {"temperature": 0.7, "num_predict": 512},
+                        "keep_alive": CURATOR_KEEP_ALIVE,
+                        **ollama_options(temperature=0.7, num_predict=2048),
                     },
                 ) as resp:
                     async for line in resp.aiter_lines():
@@ -197,11 +2183,31 @@ Use your memories to personalise responses — you know this user."""
                             continue
                         try:
                             chunk = json.loads(line)
-                            token = chunk.get("message", {}).get("content", "")
-                            if token:
-                                full_response += token
-                                yield f"data: {json.dumps({'token': token})}\n\n"
+                            raw_token = chunk.get("message", {}).get("content", "")
+                            if raw_token:
+                                # Emit any pending VRAM-fallback warning ONCE,
+                                # right before the first user-visible token.
+                                if not health_warned and health_task.done():
+                                    try:
+                                        h = health_task.result()
+                                        if h.get("message"):
+                                            logger.warning(
+                                                "[chat] VRAM fallback detected: %s%% on CPU",
+                                                h.get("cpu_pct"),
+                                            )
+                                            yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
+                                    except Exception:
+                                        pass
+                                    health_warned = True
+
+                                full_response += raw_token
+                                token = think_filter.feed(raw_token)
+                                if token:
+                                    yield f"data: {json.dumps({'token': token})}\n\n"
                             if chunk.get("done"):
+                                remainder = think_filter.flush()
+                                if remainder:
+                                    yield f"data: {json.dumps({'token': remainder})}\n\n"
                                 break
                         except json.JSONDecodeError:
                             continue
@@ -211,88 +2217,303 @@ Use your memories to personalise responses — you know this user."""
             full_response = msg
             yield f"data: {json.dumps({'token': msg})}\n\n"
 
+        except (asyncio.CancelledError, GeneratorExit):
+            # Pass 46 (Bug 2): client closed the SSE connection mid-stream.
+            # Mark disconnect, then re-raise so the runtime actually
+            # cancels the coroutine (swallowing CancelledError is a known
+            # asyncio footgun — it traps the task instead of unwinding).
+            client_disconnected = True
+            logger.info(
+                "[chat] client disconnected mid-stream (had %d chars buffered)",
+                len(full_response),
+            )
+            raise
+
         except Exception as e:
             msg = f"⚠️ Error: {e}"
             full_response = msg
             yield f"data: {json.dumps({'token': msg})}\n\n"
 
         finally:
-            # Save assistant response to history
-            if full_response:
+            curator_done()
+            # Cancel the VRAM probe if it's still pending (e.g. very fast
+            # response that finished before the 2 s probe even fired).
+            if not health_task.done():
+                health_task.cancel()
+            # Strip think blocks from the full collected response before persisting
+            full_response = strip_think_tags(full_response).strip()
+            # Save assistant response to history (same thread as the user turn).
+            # Pass 48: the redundant ChatInteraction write was removed —
+            # ConversationMessage already holds the user+assistant exchange,
+            # and nothing read the ChatInteraction copy.
+            #
+            # Pass 46 (Bug 2): on client disconnect, skip persistence AND the
+            # three post-chat background tasks. A half-sentence in the
+            # conversation history would poison the next turn's context
+            # ("you just said …" referencing a fragment), and memory-extraction
+            # / protection-intent / verification-match running on a torn-off
+            # response is noise at best, false-positive at worst.
+            if full_response and not client_disconnected:
                 from src.database.connection import get_db_session
                 with get_db_session() as db2:
-                    _save_message(user.id, "assistant", full_response, db2)
-                    db2.add(ChatInteraction(
-                        user_id=user.id,
-                        message=message.message,
-                        response=full_response,
-                        timestamp=datetime.utcnow(),
-                    ))
+                    _save_message(user.id, "assistant", full_response, db2, thread_id=thread_id)
 
-                # Extract memories from this exchange in background
-                asyncio.create_task(_extract_memories_bg(
-                    user.id, message.message, full_response
-                ))
+                # Pass 41: route the three post-chat background tasks through
+                # ``track_task`` so the GC can't collect them mid-run. Before
+                # this, the create_task return value was discarded — under
+                # memory pressure the asyncio event loop's weak reference
+                # would let the task vanish, silently losing memory-extraction,
+                # protection-intent detection, or verification-response
+                # matching from a turn.
+                from src.services.bg_tasks import track_task
+
+                # Pass 61: schedule a DEBOUNCED thread-level memory extraction
+                # instead of extracting from this single exchange. A follow-up
+                # turn within the debounce window cancels + reschedules it, so
+                # extraction fires ONCE over the whole conversation — capturing
+                # the user's final settled position, not the intermediate
+                # stances they moved through. The debounce task is held in
+                # episodic_memory._pending_thread_extracts, so it's GC-safe
+                # without track_task.
+                from src.services.episodic_memory import schedule_thread_extraction
+                schedule_thread_extraction(user.id, thread_id, media_category=domain)
 
                 # Detect protection intents ("behalten", "keep", "nicht löschen", …)
-                asyncio.create_task(_check_protection_intent_bg(
-                    user.id, message.message, full_response
-                ))
+                # Pass 23: resolve the current thread's anchor title (e.g. the
+                # deletion-proposal target) so pronoun-only signals like
+                # "we are keeping this show" still register as protection
+                # against the right title.
+                anchor = _thread_active_title.get(thread_id)
+                anchor_title = anchor[0] if anchor else None
+                anchor_category = anchor[2] if anchor and len(anchor) > 2 else None
+                track_task(
+                    _check_protection_intent_bg(
+                        user.id, message.message, full_response,
+                        anchor_title=anchor_title,
+                        anchor_category=anchor_category,
+                        thread_id=thread_id,
+                    ),
+                    name="check_protection_intent_bg",
+                )
 
-                # Check if this might be answering a verification question
-                asyncio.create_task(_check_verification_response(
-                    user.id, message.message
-                ))
+                # Check if this might be answering a verification question.
+                # Pass 71: thread_id gates it — only a turn inside the
+                # verification question's own proactive_message thread counts
+                # as an answer.
+                track_task(
+                    _check_verification_response(user.id, message.message, thread_id),
+                    name="check_verification_response",
+                )
 
-            yield f"data: {json.dumps({'done': True})}\n\n"
+            # Pass 46 (Bug 2): a cancelled async generator can't yield —
+            # the runtime is already unwinding it. Skip the final frame
+            # if the client is gone. Other clients waiting on the same
+            # endpoint aren't affected: each request has its own generator.
+            if not client_disconnected:
+                yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-@router.post("/feedback")
-async def submit_feedback(
-    feedback: ChatFeedback,
+class CorrectAnchorRequest(BaseModel):
+    thread_id: str = "general"
+
+
+@router.post("/correct-anchor")
+async def correct_chat_anchor(
+    req: CorrectAnchorRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    interaction = db.query(ChatInteraction).filter(
-        ChatInteraction.id == feedback.interaction_id,
-        ChatInteraction.user_id == user.id,
-    ).first()
-    if not interaction:
-        return {"status": "not_found"}
-    interaction.feedback = feedback.feedback
-    db.commit()
-    return {"status": "ok"}
+    """Pass 18: invalidate the cached enrichment for this thread's
+    current anchor (the title the chat is currently focused on).
+
+    Use case: the LLM cited something that's wrong and the cached profile
+    keeps reproducing the error. Click "🔄 Re-fetch metadata" → this
+    endpoint deletes the matching MetadataCache row + drops every
+    in-memory thread anchor pointing at the same title, so the next
+    chat turn re-runs the cascade and re-fetches fresh data from the
+    upstream APIs.
+
+    Cache key shape matches what ``enrich_media_item`` writes for
+    chat-cascade entries (no IDs passed at call time, so the key always
+    falls back to ``enriched:{media_type}:{title[:40]}``).
+
+    Returns ``ok: false`` with a human-readable reason when no anchor
+    exists yet — the UI should surface that instead of silently doing
+    nothing.
+    """
+    cached = _thread_active_title.get(req.thread_id)
+    if not cached:
+        return {
+            "ok": False,
+            "reason": "no active topic in this thread yet — ask Curatarr something first",
+        }
+    title  = cached[0]
+    domain = cached[2] if len(cached) > 2 else "movie"
+    media_type = domain or "movie"
+
+    # Wipe MetadataCache row(s). Same key shape that enrich_media_item
+    # uses when called WITHOUT ids (the chat cascade path) — we also try
+    # alternate id-keyed variants in case the user previously hit the
+    # same title via a path that supplied tmdb_id/anilist_id.
+    from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
+    deleted = 0
+    keys_tried: list[str] = []
+    mc = MetadataCache()
+    try:
+        # Primary: title-keyed (chat cascade default)
+        keys_tried.append(f"enriched:{media_type}:{title[:40]}")
+        # Defensive: a few possible alternative shapes if a different code
+        # path pre-populated the cache. Cheap to try — DELETE on a missing
+        # key is a no-op.
+        for alt in (media_type, "movie", "show", "anime", "music"):
+            if alt != media_type:
+                keys_tried.append(f"enriched:{alt}:{title[:40]}")
+        for raw_key in set(keys_tried):
+            full = f"{_CACHE_VERSION}:{raw_key}"
+            try:
+                result = mc.conn.execute(
+                    "DELETE FROM api_cache WHERE cache_key = ?", (full,),
+                )
+                deleted += (result.rowcount or 0)
+            except Exception as e:
+                logger.warning("[chat] correct-anchor delete failed for %s: %s", full, e)
+        mc.conn.commit()
+    finally:
+        mc.close()
+
+    # Drop every in-memory anchor pointing at this title across all
+    # threads — otherwise a parallel thread would still serve the
+    # already-loaded payload until the next "+ New" reset.
+    cleared_threads = 0
+    for tid, val in list(_thread_active_title.items()):
+        if val and val[0] == title:
+            _thread_active_title.pop(tid, None)
+            cleared_threads += 1
+
+    logger.info(
+        "[chat] correct-anchor: title=%r media_type=%s rows=%d threads=%d",
+        title, media_type, deleted, cleared_threads,
+    )
+    return {
+        "ok": True,
+        "title": title,
+        "media_type": media_type,
+        "cleared_keys": deleted,
+        "cleared_threads": cleared_threads,
+        "message": f"Cache cleared for '{title}' — your next question will re-fetch metadata fresh.",
+    }
 
 
 @router.get("/history")
 async def get_chat_history(
     limit: int = 50,
+    thread_id: str = "general",
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    msgs = (
-        db.query(ConversationMessage)
-        .filter(ConversationMessage.user_id == user.id)
-        .order_by(ConversationMessage.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    """Return conversation history for one thread.
+
+    ``thread_id`` defaults to ``general`` (the main free-chat). Pass
+    ``deletion_proposal:<id>`` or ``proactive_message:<id>`` to read a
+    specific discussion thread.
+    """
+    q = db.query(ConversationMessage).filter(ConversationMessage.user_id == user.id)
+    if thread_id == "general":
+        q = q.filter(
+            (ConversationMessage.thread_id == "general")
+            | (ConversationMessage.thread_id.is_(None))
+        )
+    else:
+        q = q.filter(ConversationMessage.thread_id == thread_id)
+    msgs = q.order_by(ConversationMessage.created_at.desc()).limit(limit).all()
     return {
+        "thread_id": thread_id,
         "messages": [
             {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
             for m in reversed(msgs)
-        ]
+        ],
     }
 
 
 @router.delete("/history")
 async def clear_chat_history(
+    thread_id: str = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Clear conversation memory (not ChatInteractions — those stay for feedback)."""
-    db.query(ConversationMessage).filter(ConversationMessage.user_id == user.id).delete()
+    """Clear conversation memory.
+
+    Pass 48: the docstring previously mentioned a parallel ChatInteraction
+    table that was kept for thumbs-up/down feedback. That table is no
+    longer written to (the feedback UI was removed earlier and nothing
+    else consumed the rows). This endpoint just clears
+    ConversationMessage.
+
+    With no ``thread_id``: wipes ALL of the user's conversation messages
+    across every thread. With ``thread_id`` set: only that thread is cleared,
+    so nuking one discussion doesn't take out the rest.
+
+    Pass 14.10: also drops the in-memory ``_thread_active_title`` cache for
+    the affected thread(s). Without that step the title-pivot detector would
+    still see the old cached title and treat the next chat turn as a
+    "topic switch" from a thread that no longer has any history.
+
+    Pass 61: when clearing a specific thread, flush its pending debounced
+    memory extraction FIRST — otherwise "+New" wipes the conversation
+    before the 90 s debounce ever fires and the whole exchange is lost to
+    long-term memory. Done inline (one summarizer call, ~2-5 s) so the
+    extraction reads the messages while they still exist. The wipe-all
+    branch (thread_id=None) skips this — flushing every thread serially
+    would stall the request, and a full wipe is a deliberate hard reset.
+    """
+    if thread_id is not None and thread_id != "":
+        try:
+            from src.services.episodic_memory import flush_thread_extraction
+            await flush_thread_extraction(user.id, thread_id)
+        except Exception as e:
+            logger.debug("[chat] pre-clear memory flush failed for %s: %s", thread_id, e)
+
+    q = db.query(ConversationMessage).filter(ConversationMessage.user_id == user.id)
+    if thread_id is not None:
+        if thread_id == "general":
+            q = q.filter(
+                (ConversationMessage.thread_id == "general")
+                | (ConversationMessage.thread_id.is_(None))
+            )
+            _thread_active_title.pop("general", None)
+        else:
+            q = q.filter(ConversationMessage.thread_id == thread_id)
+            _thread_active_title.pop(thread_id, None)
+    else:
+        # No thread filter → wipe everything
+        _thread_active_title.clear()
+    deleted = q.delete(synchronize_session=False)
     db.commit()
-    return {"status": "cleared"}
+    return {"status": "cleared", "thread_id": thread_id, "deleted": deleted}
+
+
+class FlushMemoriesRequest(BaseModel):
+    thread_id: str = "general"
+
+
+@router.post("/flush-memories")
+async def flush_memories(
+    req: FlushMemoriesRequest,
+    user: User = Depends(get_current_user),
+):
+    """Pass 61: fire a thread's pending debounced memory extraction NOW.
+
+    Called by the frontend on explicit end-of-conversation signals —
+    "Exit discussion" and "Delete & exit" — so the conversation's memories
+    are captured immediately instead of waiting out the 90 s debounce (or
+    being lost if the user never sends another message in the thread).
+    Idempotent: the extraction cursor means a no-op flush just returns.
+    """
+    try:
+        from src.services.episodic_memory import flush_thread_extraction
+        await flush_thread_extraction(user.id, req.thread_id)
+        return {"ok": True, "thread_id": req.thread_id}
+    except Exception as e:
+        logger.warning("[chat] flush-memories failed for %s: %s", req.thread_id, e)
+        return {"ok": False, "thread_id": req.thread_id, "error": str(e)}

@@ -8,10 +8,9 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from src.config import settings
 
@@ -38,8 +37,23 @@ async def lifespan(app: FastAPI):
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
+        set_state("music_pipeline_running", "0")
+        set_state("music_pipeline_stop_requested", "0")
+        # Pass 75/76: seed the game flag with the ACTUAL current state, not
+        # a blind "0". A blind reset left a ~30 s window (until the watcher's
+        # first tick) where game_active was wrong — long enough for the
+        # startup catch-ups to load the LLM and OOM a running game. A direct
+        # is_game_running() check here makes the flag correct from t=0.
+        from src.services.process_monitor import is_game_running as _igr
+        set_state("game_active", "1" if _igr() else "0")
     except Exception:
         pass
+
+    # Pass 41: all startup background tasks now go through ``track_task``
+    # which retains a strong reference until the task completes. Without
+    # that, the GC could collect the task mid-run and silently drop the
+    # work (anime-mapping load, library prewarm, startup sync).
+    from src.services.bg_tasks import track_task
 
     # Pre-load anime mapping in background
     async def _load_anime_mapping():
@@ -49,7 +63,22 @@ async def lifespan(app: FastAPI):
             logger.info("Anime mapping ready: %d entries", m.total_entries)
         except Exception as e:
             logger.debug("Anime mapping load failed: %s", e)
-    asyncio.create_task(_load_anime_mapping())
+    track_task(_load_anime_mapping(), name="anime_mapping_load")
+
+    # Pass 16k: pre-warm Library Manager arr caches.
+    #   1. Load any persisted L2 (DB) caches into L1 (in-process) so the
+    #      first user click after a restart serves instantly from cache.
+    #   2. Fire a background refresh for each configured arr so the L1
+    #      cache is fresh by the time someone opens the page.
+    # Best-effort — failures are logged, on-demand fetch always works as
+    # a fallback.
+    async def _prewarm_library():
+        try:
+            from src.routers.library import prewarm_arr_caches
+            await prewarm_arr_caches()
+        except Exception as e:
+            logger.debug("Library prewarm failed: %s", e)
+    track_task(_prewarm_library(), name="library_prewarm")
 
     if not settings.is_configured:
         logger.warning("Curatarr is not configured yet. Open http://localhost:%d to run setup.", settings.PORT)
@@ -62,15 +91,26 @@ async def lifespan(app: FastAPI):
             logger.info("No users yet — first login via Plex will create the admin account.")
 
         if settings.SYNC_ON_STARTUP:
-            asyncio.create_task(_startup_sync_if_needed())
+            track_task(_startup_sync_if_needed(), name="startup_sync_if_needed")
 
     yield
+
+    # Pass 61: flush any pending debounced memory extractions before we go
+    # down — otherwise a restart inside the 90s debounce window drops the
+    # last conversation's memories entirely.
+    try:
+        from src.services.episodic_memory import flush_all_pending_extractions
+        await flush_all_pending_extractions()
+    except Exception as e:
+        logger.debug("Shutdown memory flush failed: %s", e)
 
     from src.services.scheduler import stop_scheduler
     stop_scheduler()
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
+        set_state("music_pipeline_running", "0")
+        set_state("music_pipeline_stop_requested", "0")
     except Exception:
         pass
     logger.info("Curatarr shutting down.")
@@ -79,6 +119,17 @@ async def lifespan(app: FastAPI):
 async def _startup_sync_if_needed():
     """Only sync if last sync was more than SYNC_INTERVAL_HOURS ago."""
     await asyncio.sleep(6)
+    # Pass 76: skip startup sync while a game is running — the proactive-
+    # message generation it triggers (check_and_generate_messages) loads the
+    # curator model and can OOM the GPU mid-game. The next scheduled sync (or
+    # the one after the game exits) covers it.
+    try:
+        from src.services.process_monitor import is_game_running
+        if is_game_running():
+            logger.info("[startup] Game running — skipping startup sync")
+            return
+    except Exception:
+        pass
     try:
         from pathlib import Path
         from src.database.connection import get_db_session
@@ -135,7 +186,7 @@ app = FastAPI(
     title="Curatarr",
     description="Personal AI media curator for Plex",
     version=settings.VERSION,
-    docs_url="/api/docs" if settings.DEBUG else None,
+    docs_url="/api/docs",   # always enabled — useful for manual API testing
     redoc_url=None,
     lifespan=lifespan,
 )
@@ -152,8 +203,17 @@ app.add_middleware(
 
 from src.routers import (
     setup, auth, users, chat, history, libraries,
-    recommendations, messages, memories, enrichment, tasks,
+    recommendations, messages, enrichment, tasks,
 )
+from src.routers import process_monitor
+from src.routers import music
+from src.routers import library
+from src.routers.auth import require_admin
+
+# Admin-only routers: enrichment runs heavy LLM jobs that block the GPU
+# and rewrites server-wide caches; process_monitor mutates Ollama VRAM
+# state. Both must be gated server-wide, not per-endpoint.
+_ADMIN_ONLY = [Depends(require_admin)]
 
 app.include_router(setup.router,           prefix="/api/setup",           tags=["setup"])
 app.include_router(auth.router,            prefix="/api/auth",            tags=["auth"])
@@ -163,20 +223,38 @@ app.include_router(history.router,         prefix="/api/history",         tags=[
 app.include_router(libraries.router,       prefix="/api/libraries",       tags=["libraries"])
 app.include_router(recommendations.router, prefix="/api/recommendations",  tags=["recommendations"])
 app.include_router(messages.router,        prefix="/api/messages",        tags=["messages"])
-app.include_router(memories.router,        prefix="/api/memories",        tags=["memories"])
-app.include_router(enrichment.router,      prefix="/api/enrichment",      tags=["enrichment"])
+app.include_router(enrichment.router,      prefix="/api/enrichment",      tags=["enrichment"],
+                   dependencies=_ADMIN_ONLY)
 app.include_router(tasks.router,           prefix="/api/tasks",           tags=["tasks"])
+app.include_router(process_monitor.router, prefix="/api/processes",       tags=["processes"],
+                   dependencies=_ADMIN_ONLY)
+app.include_router(music.router,           prefix="/api/music",           tags=["music"])
+app.include_router(library.router,         prefix="/api/library",         tags=["library"])
 
 # ── FRONTEND ──────────────────────────────────────────────────────────────────
 
+_FRONTEND_ROOT = Path("frontend").resolve()
+
+
 @app.get("/")
 async def serve_frontend():
-    return FileResponse("frontend/index.html")
+    return FileResponse(_FRONTEND_ROOT / "index.html")
+
 
 @app.get("/{full_path:path}")
 async def catch_all(full_path: str):
-    """Serve frontend for all non-API routes (SPA routing)."""
-    static = Path("frontend") / full_path
-    if static.exists() and static.is_file():
-        return FileResponse(static)
-    return FileResponse("frontend/index.html")
+    """Serve frontend for all non-API routes (SPA routing).
+
+    Resolves the requested path under frontend/ and verifies it stays inside
+    the frontend root — guards against ``../`` traversal attempts.
+    """
+    candidate = (_FRONTEND_ROOT / full_path).resolve()
+    try:
+        candidate.relative_to(_FRONTEND_ROOT)
+    except ValueError:
+        # Path escaped the frontend root — fall back to SPA index.
+        return FileResponse(_FRONTEND_ROOT / "index.html")
+
+    if candidate.is_file():
+        return FileResponse(candidate)
+    return FileResponse(_FRONTEND_ROOT / "index.html")

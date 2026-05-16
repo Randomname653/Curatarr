@@ -8,11 +8,10 @@ Implements Plex PIN-based OAuth flow:
   4. Exchange Plex auth token for local JWT session
 """
 
-import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
-from functools import wraps
 import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -61,7 +60,13 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     payload = _decode_jwt(auth[7:])
-    user_id = int(payload.get("sub", 0))
+    sub = payload.get("sub")
+    try:
+        user_id = int(sub) if sub is not None else 0
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token subject")
+    if user_id <= 0:
+        raise HTTPException(status_code=401, detail="Invalid token subject")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -69,37 +74,60 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    """Ensures the user is an admin by checking the database."""
-    # Always verify from database to prevent token manipulation
-    db_user = user  # Already validated by get_current_user
-    if not db_user.is_admin:
+    """Ensures the user is an admin."""
+    if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
-    return db_user
+    return user
 
 
-def rate_limit_poll(func):
-    """Decorator to rate limit polling requests."""
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        pin_id = kwargs.get('pin_id')
-        if pin_id is None:
-            return await func(*args, **kwargs)
+def _no_admin_exists(db: Session) -> bool:
+    return db.query(User).filter(User.is_admin == True).count() == 0
 
-        now = time.time()
-        if pin_id not in poll_rate_limit:
-            poll_rate_limit[pin_id] = []
 
-        poll_rate_limit[pin_id] = [
-            req_time for req_time in poll_rate_limit[pin_id]
-            if now - req_time < 60
-        ]
+def require_admin_or_first_run(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Allow access if (a) no admin exists yet (first-run / onboarding), OR
+    (b) the caller is an authenticated admin.
 
-        if len(poll_rate_limit[pin_id]) >= MAX_POLLS_PER_MINUTE:
-            raise HTTPException(status_code=429, detail="Too many requests")
+    Used by the setup wizard: any client can drive setup BEFORE the first
+    admin account is established, but post-setup the same endpoints become
+    admin-only (no SSRF or .env-overwrite by anonymous callers).
+    """
+    if _no_admin_exists(db):
+        return None
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    payload = _decode_jwt(auth[7:])
+    sub = payload.get("sub")
+    try:
+        user_id = int(sub) if sub is not None else 0
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token subject")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
-        poll_rate_limit[pin_id].append(now)
-        return await func(*args, **kwargs)
-    return wrapper
+
+def _enforce_poll_rate_limit(pin_id: int) -> None:
+    """In-process rate limiter for ``GET /plex/poll/{pin_id}``.
+
+    Sliding 60s window, ``MAX_POLLS_PER_MINUTE`` polls per ``pin_id``. Trims
+    expired entries on every call so the dict stays bounded by active PINs.
+    """
+    now = time.time()
+    bucket = [t for t in poll_rate_limit.get(pin_id, []) if now - t < 60]
+    if len(bucket) >= MAX_POLLS_PER_MINUTE:
+        poll_rate_limit[pin_id] = bucket
+        raise HTTPException(status_code=429, detail="Too many requests")
+    bucket.append(now)
+    poll_rate_limit[pin_id] = bucket
+    # GC: drop entries whose newest request is older than the window
+    for stale_id in [k for k, v in poll_rate_limit.items() if v and now - v[-1] >= 60]:
+        poll_rate_limit.pop(stale_id, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,11 +158,10 @@ async def request_plex_pin():
 
 
 @router.get("/plex/poll/{pin_id}")
-@rate_limit_poll
 async def poll_plex_pin(pin_id: int, db: Session = Depends(get_db)):
     """Step 2 – Poll until the user has authenticated; returns JWT on success."""
-    await asyncio.sleep(0.1 + (hash(str(pin_id)) % 100) / 1000)
-    
+    _enforce_poll_rate_limit(pin_id)
+
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"https://plex.tv/api/v2/pins/{pin_id}",
@@ -204,7 +231,13 @@ async def auth_status(user: User = Depends(get_current_user)):
 
 @router.post("/logout")
 async def logout(response: Response):
-    # In a real implementation, we would invalidate the token
-    # For now, we just return a success response
+    """Client-side logout signal.
+
+    JWTs are stateless and remain valid until they expire (24h). The frontend
+    is expected to drop the token from localStorage when this is called. We
+    also clear any legacy access_token cookie. A real server-side revocation
+    list is intentionally out of scope for the current threat model
+    (single-tenant home use).
+    """
     response.delete_cookie("access_token")
     return {"status": "logged_out"}

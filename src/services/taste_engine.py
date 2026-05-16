@@ -164,7 +164,12 @@ def build_item_text_dict(entry: dict, enriched: Optional[dict]) -> str:
         if em: parts.append(f"Mood: {', '.join(em[:4])}")
         if ek: parts.append(f"Tags: {', '.join(ek[:8])}")
         if es: parts.append(f"Similar to: {', '.join(es[:4])}")
-        if eo: parts.append(eo[:200])
+        # Prefer dense LLM summary over raw TMDB overview slice
+        llm_summary = enriched.get("embedding_text") or enriched.get("summary") or ""
+        if llm_summary:
+            parts.append(llm_summary[:300])
+        elif eo:
+            parts.append(eo[:200])
         if eb: parts.append(eb[:150])
     elif genres:
         parts.append(f"Genres: {genres}")
@@ -210,7 +215,11 @@ def build_item_text(entry: WatchHistoryEntry, enriched: Optional[dict]) -> str:
             parts.append(f"Tags: {', '.join(tags[:8])}")
         if similar:
             parts.append(f"Similar to: {', '.join(similar[:4])}")
-        if overview:
+        # Prefer dense LLM summary over raw TMDB overview slice
+        llm_summary = enriched.get("embedding_text") or enriched.get("summary") or ""
+        if llm_summary:
+            parts.append(llm_summary[:300])
+        elif overview:
             parts.append(overview[:200])
         if bio:
             parts.append(bio[:150])
@@ -341,13 +350,49 @@ async def compute_taste_vector_for_user(
                     genre_counter[g] += 1
 
     # ── EMBEDDING (capped, most recent + highest weight) ──────────────────────
+    # Pass 82d: pre-load Plex user music ratings — only music entries pick
+    # this up because Kometa overwrites userRating on movies/shows with
+    # aggregated platform ratings (NOT personal opinion). The factor is
+    # multiplied into ``total_w`` below so highly-rated tracks pull the
+    # taste embedding toward their profile; low-rated tracks contribute
+    # less. Rating factor anchored at 3 stars (Plex 6.0) = 1.0:
+    #   1★ → 0.33   2★ → 0.67   3★ → 1.00   4★ → 1.33   5★ → 1.67
+    # Half-stars interpolate. Unrated entries → 1.0 (no change vs old
+    # behaviour). Non-music entries → 1.0 unconditionally.
+    user_rating_by_item: dict[str, float] = {}
+    try:
+        from src.database.models import PlexRating as _PR
+        with get_db_session() as _rdb:
+            for plex_id, rating in (
+                _rdb.query(_PR.plex_item_id, _PR.rating)
+                .filter(_PR.user_id == user_id)
+                .all()
+            ):
+                if plex_id and rating is not None:
+                    user_rating_by_item[str(plex_id)] = float(rating)
+        if user_rating_by_item:
+            logger.info(
+                "[taste-vector] loaded %d Plex user ratings as weight factors",
+                len(user_rating_by_item),
+            )
+    except Exception as e:
+        logger.debug("[taste-vector] user-rating preload failed: %s", e)
+
     # Select top items by combined weight for embedding
     scored = []
     for e in entries:
         r_weight = recency_weight(e.get('viewed_at'), now)
         c_weight = completion_weight(e)
         replay = min(2.0, 1.0 + 0.1 * (title_counter.get(e.get('series_title') or e.get('title'), 1) - 1))
-        total_w = r_weight * c_weight * replay
+
+        # Pass 82d: rating factor — see preload comment above for rationale.
+        rating_factor = 1.0
+        if e.get('media_type') == 'music' and user_rating_by_item:
+            ur = user_rating_by_item.get(str(e.get('plex_item_id') or ''))
+            if ur is not None:
+                rating_factor = ur / 6.0
+
+        total_w = r_weight * c_weight * replay * rating_factor
         scored.append((total_w, e))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -360,27 +405,43 @@ async def compute_taste_vector_for_user(
     with get_db_session() as db:
         from src.database.models import EnrichmentStatus
         enrichment_ts = {}
+        enrichment_ts_by_title = {}
         for e in db.query(EnrichmentStatus).filter(
             EnrichmentStatus.enriched == True,
         ).all():
-            enrichment_ts[e.plex_rating_key] = str(e.enriched_at) if e.enriched_at else "enriched"
+            ts_val = e.enriched_at.isoformat() if e.enriched_at else "enriched"
+            enrichment_ts[e.plex_rating_key] = ts_val
+            enrichment_ts_by_title[e.title] = ts_val
 
     # Count how many need fresh embeddings
     # Only items WITH enrichment data get embedded — unenriched items use genre counters
-    enriched_pids = {e.get("plex_item_id") for _, e in top_entries
-                     if cache.get_cache(f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}")}
-    needs_embed = sum(
-        1 for pid in enriched_pids
-        if cache.get_cache(f"emb:{pid}") is None
-        or enrichment_ts.get(pid) != (cache.get_cache(f"emb_ts:{pid}") or {}).get("response")
-    )
+    def get_emb_ts(entry):
+        pid = entry.get("plex_item_id")
+        if pid in enrichment_ts:
+            return enrichment_ts[pid]
+        mt = entry.get("media_type", "")
+        t = (entry.get("series_title") if mt in ("show", "anime", "music") else None) or entry.get("title")
+        return enrichment_ts_by_title.get(t)
+
+    enriched_entries = [(w, e) for w, e in top_entries
+                        if cache.get_cache(f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}")]
+
+    # We only count needs_embed uniquely per plex_item_id
+    needs_embed = 0
+    seen_pids = set()
+    for _, e in enriched_entries:
+        pid = e.get("plex_item_id")
+        if pid not in seen_pids:
+            seen_pids.add(pid)
+            if cache.get_cache(f"emb:{pid}") is None or get_emb_ts(e) != (cache.get_cache(f"emb_ts:{pid}") or {}).get("response"):
+                needs_embed += 1
+
     logger.info("Items: %d total, %d enriched, %d need fresh embedding, %d use cache",
-                len(top_entries), len(enriched_pids),
-                needs_embed, len(enriched_pids) - needs_embed)
+                len(top_entries), len(seen_pids),
+                needs_embed, len(seen_pids) - needs_embed)
 
     # Transition to embedding phase — reset task counters so UI shows embedding progress
-    embed_total = len([e for _, e in top_entries
-                       if cache.get_cache(f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}")])
+    embed_total = len(enriched_entries)
     task_monitor.update(
         _tv_task,
         processed=0,
@@ -406,7 +467,7 @@ async def compute_taste_vector_for_user(
         if not profile:
             return None, weight
 
-        emb_ts = enrichment_ts.get(pid)
+        emb_ts = get_emb_ts(entry)
         cached_emb = cache.get_cache(f"emb:{pid}")
         cached_ts = (cache.get_cache(f"emb_ts:{pid}") or {}).get("response")
 
@@ -425,11 +486,11 @@ async def compute_taste_vector_for_user(
 
         if emb:
             cache.set_cache(f"emb:{pid}", emb, days=90)
-            cache.set_cache(f"emb_ts:{pid}", emb_ts or "none", days=90)
+            cache.set_cache(f"emb_ts:{pid}", emb_ts if emb_ts else "none", days=90)
 
         return emb, weight
 
-    tasks = [embed_entry(w, e) for w, e in top_entries]
+    tasks = [embed_entry(w, e) for w, e in enriched_entries]
 
     # Process in chunks so we can check for cancellation and send progress updates
     CHUNK = 10
@@ -458,27 +519,40 @@ async def compute_taste_vector_for_user(
             message=f"Chunk {i // CHUNK + 1}: +{chunk_hits} vectors",
         )
 
+    # Collect canonical titles that had enrichment data — needed for vector_ready tracking.
+    # Must happen before cache.close(). EnrichmentStatus has one row per title, so
+    # matching by plex_rating_key (episode/track level) only hits the one canonical key;
+    # matching by title covers the whole series/artist correctly.
+    enriched_titles_for_vr: set = set()
+    for _, e in top_entries:
+        enriched_data = cache.get_cache(
+            f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}"
+        )
+        if enriched_data:
+            mt = e.get("media_type", "")
+            t = (e.get("series_title") if mt in ("show", "anime", "music") else None) or e.get("title")
+            if t:
+                enriched_titles_for_vr.add(t)
+
     cache.close()
 
     logger.info("Got %d/%d embeddings successfully", len(embeddings_weights), len(top_entries))
 
-    # Mark successfully embedded items as vector_ready in EnrichmentStatus
-    # Use embeddings_weights to find which plex_item_ids got embeddings
-    # (we already have the entries paired with weights)
-    if embeddings_weights:
-        # Rebuild pid set from top_entries that have cached embeddings
-        # Since cache is now closed, use the embeddings_weights count as proxy
-        # and mark all EnrichmentStatus rows that have plex_rating_key in our top_entries
-        top_pids = [e.get("plex_item_id") for _, e in top_entries]
+    # Mark enriched titles as vector_ready — match by (title, media_category) so the
+    # single EnrichmentStatus row per series/artist is found regardless of which
+    # episode's plex_rating_key was stored there.
+    if embeddings_weights and enriched_titles_for_vr:
         try:
             with get_db_session() as db:
                 from src.database.models import EnrichmentStatus
                 db.query(EnrichmentStatus).filter(
-                    EnrichmentStatus.plex_rating_key.in_(top_pids),
+                    EnrichmentStatus.title.in_(enriched_titles_for_vr),
+                    EnrichmentStatus.media_category == category,
                     EnrichmentStatus.enriched == True,
                 ).update({"vector_ready": True}, synchronize_session=False)
                 db.commit()
-                logger.debug("Marked items as vector_ready")
+                logger.debug("Marked %d titles as vector_ready for %s",
+                             len(enriched_titles_for_vr), category)
         except Exception as e:
             logger.debug("vector_ready update failed: %s", e)
     task_monitor.update(_tv_task, processed=embed_total,
@@ -539,13 +613,14 @@ async def compute_taste_vector_for_user(
     }
 
 
-async def compute_all_taste_vectors(user_id: int):
+async def compute_all_taste_vectors(user_id: int, categories: list = None):
     """
-    Compute taste vectors for all categories + overall.
+    Compute taste vectors for the given categories (default: all).
     Stores in TasteVectorEntry (plain text for chat context)
     and EncryptedTasteVector (AES-256 encrypted embeddings).
     """
-    categories = ["music", "movie", "show", "anime"]
+    if not categories:
+        categories = ["music", "movie", "show", "anime"]
     all_results = {}
 
     for cat in categories:
@@ -571,6 +646,8 @@ async def compute_all_taste_vectors(user_id: int):
             top_titles=res["top_titles"][:15],
             watch_count=res["watch_count"],
             avg_completion=res["avg_completion"],
+            genre_aversion=res.get("genre_aversion", {}), 
+            dropped_titles=res.get("dropped_titles", [])[:5] 
         )
         summary_parts.append(f"[{cat.upper()}] {summary}")
 
@@ -632,13 +709,41 @@ async def compute_all_taste_vectors(user_id: int):
                     EncryptedTasteVector.media_category == cat,
                 ).first()
 
+                # --- MEMORY CARRY-OVER ---
+                old_feedback = {}
+                old_ga = {}
+                if existing_etv and existing_etv.encrypted_blob:
+                    try:
+                        old_data = json.loads(existing_etv.encrypted_blob)
+                        if old_data.get("version", 0) == 0:  # Phase A: unencrypted
+                            old_feedback["explicit_feedback"] = old_data.get("explicit_feedback", [])
+                            old_feedback["disliked_titles"] = old_data.get("disliked_titles", [])
+                            old_feedback["theme_aversion"] = old_data.get("theme_aversion", {})
+                            old_feedback["mood_aversion"] = old_data.get("mood_aversion", {})
+                            old_ga = old_data.get("genre_aversion", {})
+                    except Exception as e:
+                        logger.warning("Could not read old taste vector for carry-over: %s", e)
+
+                # Merge computed aversions (from abandonments) with manual aversions (from chat).
+                merged_ga = res.get("genre_aversion", {}).copy()
+                for k, v in old_ga.items():
+                    # Keep the strongest aversion value for each key.
+                    merged_ga[k] = max(v, merged_ga.get(k, 0.0))
+
                 # Store vector stats (embedding stored separately when PIN available)
                 blob = json.dumps({
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "embedding_items": res.get("embedding_items", 0),
                     "binges": res.get("binges", []),
+                    "genre_aversion": merged_ga,
+                    "explicit_feedback": old_feedback.get("explicit_feedback", []),
+                    "disliked_titles": old_feedback.get("disliked_titles", []),
+                    "theme_aversion": old_feedback.get("theme_aversion", {}),
+                    "mood_aversion": old_feedback.get("mood_aversion", {}),
                     "version": 0,  # 0 = unencrypted, 1 = AES-256
                 })
+                # --- ENDE NEU ---
+
                 if existing_etv:
                     existing_etv.encrypted_blob = blob
                     existing_etv.computed_at = datetime.utcnow()
