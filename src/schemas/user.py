@@ -28,11 +28,25 @@ class UserResponse(UserBase):
 
 
 class UserPinSet(BaseModel):
+    """Set or change the user's PIN.
+
+    First-time set: send only ``pin``. Subsequent changes: send both
+    ``current_pin`` and ``pin`` (the new one). Server verifies
+    ``current_pin`` against the stored PBKDF2 hash before accepting.
+    """
     pin: str
+    current_pin: Optional[str] = None
 
     @field_validator("pin")
     @classmethod
     def validate_pin(cls, v):
         if len(v) < 6:
             raise ValueError("PIN must be at least 6 characters")
+        if len(v) > 128:
+            raise ValueError("PIN must be at most 128 characters")
         return v
+
+
+class UserPinStatus(BaseModel):
+    has_pin: bool
+    set_at: Optional[datetime] = None

@@ -27,8 +27,79 @@ from src.database.models import (
 )
 from src.config import settings
 from src.services.episodic_memory import write_memory
+from src.services.llm_utils import (
+    clean_llm_text, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE,
+    detect_user_language, language_directive,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# Pass 45: pattern hints feed Stage-2 LLM composition. Each trigger kind
+# describes the INTENT of the question (what to ask, what tone), not a
+# fixed English template. The LLM fills in the language + voice using
+# the trigger data + per-user language directive.
+_PATTERN_HINTS = {
+    "dropped": (
+        "User dropped this {media_type} at {pct}%. Ask what killed it — "
+        "pacing, characters, vibe, or something else."
+    ),
+    "high_replay_episode": (
+        "User rewatched a specific episode ({ep_ref}) of this series "
+        "{plays} times. Ask what about THAT episode specifically keeps "
+        "pulling them back."
+    ),
+    "high_replay_track": (
+        "User played this song {plays} times{artist_clause}. Ask what "
+        "it's giving them — mood, memory, or just a banger they can't "
+        "get enough of."
+    ),
+    "binge": (
+        "User binged {eps} episodes of this {media_type} in a single "
+        "day. Ask if it was unputdownable, or just default-fill because "
+        "nothing else was going on."
+    ),
+    "completed_series": (
+        "User just finished this {media_type}. Ask whether the ending "
+        "landed or fell flat, and whether they'd rewatch."
+    ),
+    "repeat_movie": (
+        "User watched this movie {plays} times. Ask what it gives them "
+        "that keeps pulling them back."
+    ),
+    "conflicted_genre": (
+        "User has conflicted signals about {genre} {media_type} — "
+        "sometimes loves it, sometimes drops early. Ask what the "
+        "deciding factor is for them."
+    ),
+}
+
+
+def _format_pattern_hint(trigger: dict) -> str:
+    """Render the pattern-specific instruction line for the LLM prompt."""
+    kind = trigger.get("kind")
+    tmpl = _PATTERN_HINTS.get(kind)
+    if not tmpl:
+        return ""
+    # ``artist_clause`` is conditional on the high_replay_track template —
+    # other templates ignore the kwarg via ``str.format`` because
+    # ``format_map`` here would need a defaultdict. Keep it simple: build
+    # a sanitized dict with every placeholder filled (empty string if
+    # absent) so ``str.format`` never KeyErrors.
+    artist = trigger.get("artist")
+    fmt_args = {
+        "media_type": trigger.get("media_type") or "title",
+        "pct":        trigger.get("pct", 0),
+        "ep_ref":     trigger.get("ep_ref", ""),
+        "plays":      trigger.get("plays", 0),
+        "eps":        trigger.get("eps", 0),
+        "genre":      trigger.get("genre", ""),
+        "artist_clause": f" by {artist}" if artist else "",
+    }
+    try:
+        return tmpl.format(**fmt_args)
+    except (KeyError, IndexError):
+        return ""
 
 
 # ── QUESTION GENERATION ───────────────────────────────────────────────────────
@@ -62,6 +133,12 @@ async def generate_verification_questions(user_id: int) -> list:
                         "type": "dropped",
                         "priority": 1,
                         "title": title,
+                        # Pass 45: ``trigger`` carries the structured pattern
+                        # for Stage-2 LLM composition (in user's language).
+                        # ``question`` stays as the English worst-case
+                        # fallback if the rephrase call fails.
+                        "trigger": {"kind": "dropped", "title": title, "pct": pct,
+                                    "media_type": item.media_type},
                         "question": f"You bailed on {title!r} at {pct}% — what killed it for you? Pacing, characters, or something else?",
                         "context": {"plex_item_id": item.plex_item_id, "media_type": item.media_type},
                     })
@@ -94,6 +171,9 @@ async def generate_verification_questions(user_id: int) -> list:
                 "priority": 1,
                 "title": series,
                 "plays": row.plays,
+                "trigger": {"kind": "high_replay_episode", "title": series,
+                            "ep_ref": ep_ref, "plays": row.plays,
+                            "media_type": row.media_type},
                 "question": f"You've rewatched {series!r} {ep_ref} {row.plays} times. What's in that episode that keeps pulling you back?",
                 "context": {"media_type": row.media_type, "episode": ep_ref},
             })
@@ -119,6 +199,8 @@ async def generate_verification_questions(user_id: int) -> list:
                 "priority": 1,
                 "title": row.title,
                 "plays": row.plays,
+                "trigger": {"kind": "high_replay_track", "title": row.title,
+                            "artist": row.series_title or None, "plays": row.plays},
                 "question": f"You've played {row.title!r} by {row.series_title or '?'} {row.plays} times. What's it doing for you — mood, memories, or just a banger?",
                 "context": {"media_type": "music"},
             })
@@ -149,6 +231,8 @@ async def generate_verification_questions(user_id: int) -> list:
                 "priority": 2,
                 "title": row.series_title,
                 "plays": row.eps,
+                "trigger": {"kind": "binge", "title": row.series_title,
+                            "eps": row.eps, "media_type": row.media_type},
                 "question": f"You smashed through {row.eps} episodes of {row.series_title!r} in a single day. Was that because you couldn't stop, or because you had nothing else going on?",
                 "context": {"media_type": row.media_type},
             })
@@ -170,6 +254,8 @@ async def generate_verification_questions(user_id: int) -> list:
                     "type": "completed_series",
                     "priority": 2,
                     "title": series,
+                    "trigger": {"kind": "completed_series", "title": series,
+                                "media_type": item.media_type},
                     "question": f"You just finished {series!r}. Was the ending satisfying, or did it leave you cold? Would you rewatch it?",
                     "context": {"media_type": item.media_type},
                 })
@@ -194,6 +280,8 @@ async def generate_verification_questions(user_id: int) -> list:
                 "priority": 2,
                 "title": row.title,
                 "plays": row.plays,
+                "trigger": {"kind": "repeat_movie", "title": row.title,
+                            "plays": row.plays},
                 "question": f"You've watched {row.title!r} {row.plays} times. What does that movie give you that you keep coming back for?",
                 "context": {"media_type": "movie"},
             })
@@ -215,6 +303,8 @@ async def generate_verification_questions(user_id: int) -> list:
                         "type": "conflicted_genre",
                         "priority": 3,
                         "genre": genre,
+                        "trigger": {"kind": "conflicted_genre", "genre": genre,
+                                    "media_type": cat},
                         "question": f"You have a strange relationship with {genre} {cat} — sometimes you love it, sometimes you quit early. What's the deciding factor for you?",
                         "context": {"media_type": cat, "genre": genre},
                     })
@@ -265,13 +355,34 @@ async def start_verification_session(user_id: int) -> Optional[str]:
     if not question:
         return None
 
-    # Let the curator model rephrase it naturally
-    prompt = f"""[MODE: MESSAGE GENERATION]
-Rephrase this question naturally and conversationally, as if you just noticed something in the user's watch history. Keep it short (1-2 sentences), be direct and a little playful. Don't start with "Hey" or "Hi".
+    # Pass 45: compose the question from the structured trigger pattern in
+    # the user's detected language. The English ``question`` field stays
+    # as worst-case fallback if the LLM call fails. Pattern-Hint tells
+    # the LLM what the question is FOR, not how to phrase it — that's
+    # the LLM's job, in the right language and tone.
+    with get_db_session() as db:
+        user_lang = detect_user_language(user_id, db)
+    lang_line = language_directive(user_lang)
 
-Question to rephrase: {question['question']}"""
+    trigger = question.get("trigger") or {}
+    pattern_hint = _format_pattern_hint(trigger)
+    title_or_genre = question.get("title") or question.get("genre", "")
 
-    rephrased = question["question"]  # fallback
+    prompt = f"""[MODE: VERIFICATION QUESTION]
+{lang_line}
+
+You noticed a pattern in the user's watch history. Compose a SHORT (1-2
+sentence) question to ask them about it. Speak directly to the user (du/you).
+Be direct and a little playful — like a friend who actually pays attention.
+Don't start with "Hey" or "Hi". Don't preface with meta-commentary.
+Keep proper nouns (titles, artist names) in their original form.
+
+PATTERN: {pattern_hint}
+SUBJECT: {title_or_genre}
+
+Output ONLY the question text — no quotes, no labels, no explanation."""
+
+    rephrased = question["question"]  # English worst-case fallback
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
@@ -280,11 +391,16 @@ Question to rephrase: {question['question']}"""
                     "model": settings.SUMMARIZER_MODEL or settings.BASE_SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "options": {"temperature": 0.8, "num_predict": 100},
+                    "keep_alive": SUMMARIZER_KEEP_ALIVE,
+                    **ollama_options(temperature=0.8, num_predict=700),
                 },
             )
         if r.status_code == 200:
-            rephrased = r.json().get("message", {}).get("content", "").strip()
+            llm_text = strip_think_tags(r.json().get("message", {}).get("content", "").strip())
+            # Guard against the LLM returning an empty/whitespace-only response —
+            # that would silently overwrite the original question with nothing.
+            if llm_text:
+                rephrased = llm_text
     except Exception as e:
         logger.debug("Question rephrase failed: %s", e)
 
@@ -316,13 +432,20 @@ async def process_verification_response(
     user_id: int,
     user_message: str,
     pending_question: dict,
-) -> None:
+) -> bool:
     """
     Process a user's response to a verification question.
     Extracts sentiment and updates negative/positive vectors via memory.
+
+    Pass 46 (Bug 1): returns True iff a sentiment memory was actually
+    written. The caller in ``chat.py`` uses this to decide whether to
+    keep the atomic ``read=True`` claim or revert it so the user can
+    answer again. Returning False on ANY failure path (empty pending,
+    LLM non-200, JSON parse error, exception) ensures the response is
+    never silently lost.
     """
     if not pending_question:
-        return
+        return False
 
     prompt = f"""The user was asked: "{pending_question.get('question')}"
 They responded: "{user_message}"
@@ -343,16 +466,14 @@ Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": 
                     "model": settings.SUMMARIZER_MODEL or settings.BASE_SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 150},
+                    "keep_alive": SUMMARIZER_KEEP_ALIVE,
+                    **ollama_options(temperature=0.1, num_predict=700),
                 },
             )
         if r.status_code != 200:
-            return
+            return False
 
-        text = r.json().get("message", {}).get("content", "").strip()
-        if "```" in text:
-            text = text.split("```")[1].lstrip("json").strip()
-        result = json.loads(text)
+        result = json.loads(clean_llm_text(r.json().get("message", {}).get("content", "").strip()))
 
         title = pending_question.get("title") or pending_question.get("genre", "")
         insight = result.get("key_insight", "")
@@ -373,6 +494,8 @@ Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": 
             media_category=pending_question.get("context", {}).get("media_type"),
         )
         logger.info("Verification response processed: %s → %s", title, sentiment)
+        return True
 
     except Exception as e:
         logger.debug("Verification response processing failed: %s", e)
+        return False

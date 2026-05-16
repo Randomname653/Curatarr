@@ -1,44 +1,50 @@
 """
 Curatarr - Build Ollama Models
-Bakes system prompts into curatarr-curator and curatarr-summarizer.
-Run once: python build_models.py
+Pulls base models if not already present, then bakes system prompts
+into curatarr-curator and curatarr-summarizer.
+
+Run once after changing BASE_CURATOR_MODEL or BASE_SUMMARIZER_MODEL:
+    python build_models.py
 """
 import asyncio
 import sys
 sys.path.insert(0, ".")
 
-from src.services.setup_wizard import build_ollama_models, CURATOR_SYSTEM_PROMPT, SUMMARIZER_SYSTEM_PROMPT
+from src.services.setup_wizard import build_ollama_models
 from src.config import settings
 
 
 async def main():
-    endpoint = settings.effective_ollama
-    curator_base = settings.BASE_CURATOR_MODEL
+    endpoint        = settings.effective_ollama
+    curator_base    = settings.BASE_CURATOR_MODEL
     summarizer_base = settings.BASE_SUMMARIZER_MODEL
 
-    print(f"\nOllama endpoint: {endpoint}")
-    print(f"Building curatarr-curator   ← {curator_base}")
-    print(f"Building curatarr-summarizer ← {summarizer_base}")
-    print("\nThis may take a moment...\n")
+    print(f"\nOllama endpoint  : {endpoint}")
+    print(f"Curator base     : {curator_base}  →  curatarr-curator")
+    print(f"Summarizer base  : {summarizer_base}  →  curatarr-summarizer")
+    print("\nMissing models will be pulled automatically.\n")
+    print("─" * 60)
 
     results = await build_ollama_models(endpoint, curator_base, summarizer_base)
 
+    print("─" * 60)
     if results.get("curator"):
-        print("✅ curatarr-curator created successfully")
+        print("✅  curatarr-curator    ready")
     else:
-        print(f"❌ curatarr-curator failed — is '{curator_base}' pulled in Ollama?")
-        print(f"   Run: ollama pull {curator_base}")
+        print(f"❌  curatarr-curator    failed")
+        print(f"    Is '{curator_base}' available on Ollama Hub?")
 
     if results.get("summarizer"):
-        print("✅ curatarr-summarizer created successfully")
+        print("✅  curatarr-summarizer ready")
     else:
-        print(f"❌ curatarr-summarizer failed — is '{summarizer_base}' pulled in Ollama?")
-        print(f"   Run: ollama pull {summarizer_base}")
+        print(f"❌  curatarr-summarizer failed")
+        print(f"    Is '{summarizer_base}' available on Ollama Hub?")
 
     if all(results.values()):
-        print("\n🎬 Models ready. Restart Curatarr.")
+        print("\n🎬  Both models ready — restart Curatarr.\n")
     else:
-        print("\n⚠️  Fix the errors above and run this script again.")
+        print("\n⚠️   Fix the errors above and run this script again.\n")
+        sys.exit(1)
 
 
 asyncio.run(main())

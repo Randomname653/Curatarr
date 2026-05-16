@@ -77,9 +77,6 @@ async def detect_orphaned_sections() -> list:
 
         # Refine suggestion from sample titles
         sample_titles = list(data["titles"])[:8]
-        anime_hints = {"One Piece", "Berserk", "Dan Da Dan", "Apothecary", "Dimensional"}
-        if any(any(h in t for h in anime_hints) for t in sample_titles):
-            suggested = "anime"
 
         result.append({
             "section_id": sid,
@@ -118,10 +115,6 @@ async def apply_orphan_mapping(mappings: list) -> dict:
     # because those Library keys no longer exist in Plex.
     # Adding them would cause 404 errors on every sync.
     # We only import the history entries directly from session history.
-    with get_db_session() as db:
-        from src.database.models import User
-        admin = db.query(User).filter_by(is_admin=True).first()
-        admin_id = admin.id if admin else None
 
     # Now fetch history for each section from session history
     # (session history has librarySectionID per entry)
@@ -165,13 +158,21 @@ async def apply_orphan_mapping(mappings: list) -> dict:
             if not rating_key or not viewed_at_ts:
                 continue
 
-            viewed_at = datetime.fromtimestamp(int(viewed_at_ts))
+            viewed_at = datetime.utcfromtimestamp(int(viewed_at_ts))
             dedup = (admin_user_id, rating_key, viewed_at)
             if dedup in existing_keys:
                 continue
 
             plex_type = item.get("type", "")
             genres_list = [g.get("tag", "") for g in (item.get("Genre") or [])]
+
+            # Plex history events are typically completed plays. Honor any
+            # `viewOffset` returned (in-progress); else assume completed.
+            duration_ms = item.get("duration")
+            view_offset_ms = item.get("viewOffset") or duration_ms
+            completed = bool(duration_ms) and (
+                view_offset_ms is None or view_offset_ms >= duration_ms * 0.9
+            )
 
             db.add(WatchHistoryEntry(
                 user_id=admin_user_id,
@@ -183,9 +184,9 @@ async def apply_orphan_mapping(mappings: list) -> dict:
                 season=int(item["parentIndex"]) if item.get("parentIndex") else None,
                 episode=int(item["index"]) if item.get("index") else None,
                 viewed_at=viewed_at,
-                duration_ms=item.get("duration"),
-                view_offset_ms=item.get("duration"),  # completed
-                completed=True,
+                duration_ms=duration_ms,
+                view_offset_ms=view_offset_ms,
+                completed=completed,
                 genres=",".join(g for g in genres_list if g),
                 tmdb_id=None,
             ))

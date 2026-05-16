@@ -11,8 +11,11 @@ from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.database.models import User, WatchHistoryEntry, TasteVectorEntry
-from src.routers.auth import get_current_user
-from src.services.plex_sync import sync_plex_history, get_user_taste_context
+from src.routers.auth import get_current_user, require_admin
+from src.services.plex_sync import (
+    sync_plex_history, get_user_taste_context,
+    reattribute_watch_history, cleanup_orphan_watch_history,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -170,3 +173,33 @@ async def recompute_taste(
 async def _run_taste_bg(user_id: int):
     from src.services.taste_engine import compute_all_taste_vectors
     await compute_all_taste_vectors(user_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADMIN-ONLY MAINTENANCE ACTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/admin/re-attribute")
+async def admin_re_attribute(_admin: User = Depends(require_admin)):
+    """Re-pull Plex history and fix per-user attribution on existing rows.
+
+    Idempotent. Run once after a new user has logged in via Plex OAuth so
+    their pre-existing plays (which were parked on the admin during sync)
+    get moved over to their account. Spotify entries are skipped.
+    """
+    result = await reattribute_watch_history()
+    return result
+
+
+@router.post("/admin/cleanup-orphans")
+async def admin_cleanup_orphans(_admin: User = Depends(require_admin)):
+    """Drop watch_history rows whose Plex item no longer exists in any library.
+
+    Walks every configured library section, collects all live ratingKeys,
+    deletes WatchHistoryEntry rows whose plex_item_id is a numeric ratingKey
+    not present anymore. Spotify entries (``plex_item_id`` starts with
+    ``spotify:``) are kept untouched. Aborts cleanly if any section fetch
+    fails (so a transient network blip can't wipe history).
+    """
+    result = await cleanup_orphan_watch_history()
+    return result

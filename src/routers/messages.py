@@ -10,8 +10,8 @@ router = APIRouter()
 
 @router.get("/unread")
 async def get_unread(user: User = Depends(get_current_user)):
-    msgs = await get_unread_messages(user.id)
-    return {"messages": msgs, "count": len(msgs)}
+    result = await get_unread_messages(user.id)
+    return result
 
 
 @router.post("/{message_id}/read")

@@ -1,5 +1,5 @@
 # ==========================================
-# Curatarr - Watertight .gitignore
+# Curatarr - .gitignore
 # ==========================================
 
 # 1. Credentials & Environments (CRITICAL)
@@ -19,20 +19,25 @@ ENV/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# 3. Databases & Vector Stores
+# 3. Databases & Data Stores (NEVER track binary data blobs)
 # ==========================================
-# Lokale SQLite-Datenbanken (verhindert das Hochladen deiner User-Historie)
+# Local SQLite databases — keeps your private watch-history out of the repo.
 *.db
 *.sqlite
 *.sqlite3
 *.db-shm
 *.db-wal
 
-# ChromaDB Vektor-Speicher (oft gigantisch groß)
+# ChromaDB vector store (often gigabytes in size). Ignore the data
+# directories only — NOT the src/vector_store/ module, which is source code.
 chroma_db/
 chroma/
-vector_store/
 .chroma/
+data/chromadb/
+data/cache/
+
+# Spotify exports / personal data
+spotify_data/
 
 # 4. Python Specific
 # ==========================================
@@ -67,6 +72,7 @@ temp/
 *.bak
 *.swp
 *.tmp
+benchmark_results_*.txt
 
 # 6. OS & IDE Specific
 # ==========================================
@@ -84,20 +90,38 @@ $RECYCLE.BIN/
 .Spotlight-V100
 .Trashes
 
-# VS Code / JetBrains
+# VS Code / JetBrains / Claude Code
 .vscode/
 .idea/
 *.code-workspace
+.claude/
 
-# 7. Frontend / Node (Falls später erweitert wird)
+# 7. Frontend / Node (in case the frontend is split out later)
 # ==========================================
 node_modules/
 npm-debug.log
 yarn-error.log
+
 # 8. One-off Debug & Repair Scripts
 # ==========================================
+# Glob patterns match anywhere in the tree, so they catch any new debug
+# script regardless of where it lands. Belt-and-suspenders: scripts/dev/
+# is also ignored as a directory so the dev-only sandbox never gets tracked.
 debug_*.py
 fix_*.py
 repair_*.py
 migrate_*.py
 clean_*.py
+reset_*.py
+add_col.py
+add_*.py
+scripts/dev/
+
+# 9. Bundled SQLite tooling (keep on disk, not in repo)
+# ==========================================
+# Manually-downloaded sqlite CLI binaries kept in the repo root for
+# ad-hoc DB inspection. Useful locally, never to commit.
+sqldiff.exe
+sqlite3.exe
+sqlite3_analyzer.exe
+sqlite3_rsync.exe

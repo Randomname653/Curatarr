@@ -10,6 +10,7 @@ Falls back gracefully if services are unreachable.
 
 import asyncio
 import logging
+import re
 from typing import Optional
 
 import httpx
@@ -45,16 +46,82 @@ async def _mb_request(client: httpx.AsyncClient, url: str, params: dict) -> http
         return await client.get(url, params=params, headers=MB_HEADERS)
 
 
+# Match a Deezer artist URL → numeric ID. Deezer relations on MusicBrainz
+# look like ``https://www.deezer.com/artist/12345`` (sometimes with a
+# ``/en/`` locale segment). Anchored on the digits so a release/album
+# Deezer link can't be mistaken for an artist one.
+_DEEZER_ARTIST_URL_RE = re.compile(r"deezer\.com/(?:[a-z]{2}/)?artist/(\d+)")
+
+
+async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
+    """Resolve a MusicBrainz artist MBID to its Deezer artist ID.
+
+    Pass 52: Lidarr items carry the MusicBrainz artist MBID
+    (``foreignArtistId``). Deezer — our artist-image source — doesn't
+    speak MBIDs, so we bridge through MusicBrainz url-relationships:
+    artists commonly link their Deezer profile, and that URL embeds the
+    numeric Deezer ID. With the ID we can hit ``/artist/{id}`` directly
+    instead of a popularity-sorted ``/search/artist`` guess.
+
+    Returns the Deezer artist ID as a string, or None when the artist
+    has no linked Deezer profile. Result (including the None outcome) is
+    cached 60 days — the MB↔Deezer link is stable, and caching None
+    stops us re-querying linkless artists on every deletion batch.
+    """
+    if not mbid:
+        return None
+    cache = MetadataCache()
+    cache_key = f"mb:deezerid:{mbid}"
+    cached = cache.get_cache(cache_key)
+    if cached is not None:
+        cache.close()
+        return cached["response"]   # may legitimately be None
+
+    deezer_id = None
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await _mb_request(
+                client, f"{MB_BASE}/artist/{mbid}",
+                {"inc": "url-rels", "fmt": "json"},
+            )
+        if r.status_code == 200:
+            for rel in r.json().get("relations", []):
+                resource = (rel.get("url") or {}).get("resource", "") or ""
+                m = _DEEZER_ARTIST_URL_RE.search(resource)
+                if m:
+                    deezer_id = m.group(1)
+                    break
+    except Exception as e:
+        logger.debug("MB→Deezer resolve failed for mbid %s: %s", mbid, e)
+
+    # Cache the outcome — including a None result, so linkless artists
+    # don't trigger a fresh rate-limited MB call on every batch.
+    cache.set_cache(cache_key, deezer_id, days=60)
+    cache.close()
+    return deezer_id
+
+
 # ── MUSICBRAINZ ───────────────────────────────────────────────────────────────
 
 async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
-    """Search MusicBrainz for artist info: genres, tags, disambiguation."""
+    """Search MusicBrainz for artist info: genres, tags, disambiguation.
+
+    Pass 80: negative outcomes are cached for 7 days. Before, an artist MB
+    can't find (e.g. names with characters its Lucene parser dislikes — the
+    canonical case is "Axwell /\\ Ingrosso", whose ``/\\`` triggers nothing
+    on a query but still returns 200) hit the rate-limited MB endpoint on
+    every single retry. The script then logged a MISS and immediately
+    came back for the same row, so we burned MB's 1 req/s budget for hours
+    on one un-findable name. The shorter TTL (vs 60d for positive hits)
+    keeps the door open for MB to add the artist later, or for us to fix
+    the query escaping.
+    """
     cache = MetadataCache()
     cache_key = f"mb:artist:{artist_name[:60].lower()}"
     cached = cache.get_cache(cache_key)
     if cached:
         cache.close()
-        return cached["response"]
+        return cached["response"]   # may legitimately be None (neg-cached)
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -64,6 +131,7 @@ async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
                 {"query": f'artist:"{artist_name}"', "limit": 1, "fmt": "json"},
             )
             if r.status_code != 200 or not r.json().get("artists"):
+                cache.set_cache(cache_key, None, days=7)
                 cache.close()
                 return None
 
@@ -71,6 +139,7 @@ async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
             mbid = artist.get("id")
 
             if not mbid:
+                cache.set_cache(cache_key, None, days=7)
                 cache.close()
                 return None
 
@@ -80,6 +149,7 @@ async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
                 {"inc": "tags+genres+ratings", "fmt": "json"},
             )
             if r2.status_code != 200:
+                cache.set_cache(cache_key, None, days=7)
                 cache.close()
                 return None
 
@@ -87,6 +157,7 @@ async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
 
     except Exception as e:
         logger.debug("MusicBrainz error for %s: %s", artist_name, e)
+        # No neg-cache on exception (timeout, DNS, etc.) — transient.
         cache.close()
         return None
 
@@ -249,7 +320,7 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
     cached = cache.get_cache(cache_key)
     if cached:
         cache.close()
-        return cached["response"]
+        return cached["response"]   # may legitimately be None (neg-cached)
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -263,11 +334,17 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
                     "autocorrect": 1,
                 },
             )
+            # Pass 80: cache the "no record" outcome for 7 days. Last.fm
+            # also returns 200 with an empty body for artists it doesn't
+            # know — the old code dropped that on the floor and re-queried
+            # forever on every retry tick (same hammer-loop as MB above).
             if r.status_code != 200:
+                cache.set_cache(cache_key, None, days=7)
                 cache.close()
                 return None
             data = r.json().get("artist", {})
             if not data:
+                cache.set_cache(cache_key, None, days=7)
                 cache.close()
                 return None
 
@@ -296,7 +373,11 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
         return None
 
     tags = [t.get("name", "") for t in data.get("tags", {}).get("tag", [])]
-    bio = data.get("bio", {}).get("summary", "").split("<a href")[0].strip()
+    # Strip HTML link tail then scrub Wikipedia-style footnote citations like [4][5]
+    bio_raw = data.get("bio", {}).get("summary", "").split("<a href")[0].strip()
+    bio = re.sub(r'\[\d+\]', '', bio_raw).strip()
+    # Collapse multiple spaces/newlines left over after stripping
+    bio = re.sub(r'[ \t]{2,}', ' ', bio).strip()
 
     result = {
         "name": data.get("name", artist_name),
@@ -340,6 +421,14 @@ async def enrich_artist(artist_name: str) -> Optional[dict]:
         lfm = None
 
     if not mb and not lfm:
+        # Pass 80: cache the merged-None outcome as well. The two sub-fetches
+        # now neg-cache on their own — this layer's neg-cache is the
+        # belt-and-braces: a single ``get_cache`` lookup short-circuits the
+        # whole gather() so we don't even pay the await/dispatch cost when
+        # an artist is reliably unfindable. 7 days matches the sub-fetches.
+        cache = MetadataCache()
+        cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", None, days=7)
+        cache.close()
         return None
 
     # Merge: prefer MusicBrainz for factual data, Last.fm for tags/similar
@@ -351,6 +440,12 @@ async def enrich_artist(artist_name: str) -> Optional[dict]:
     ))[:15]
     similar = (lfm or {}).get("similar_artists", [])
 
+    # Bio comes pre-cleaned from fetch_lastfm_artist (citations stripped).
+    # Apply a second-pass strip here as well in case the profile was cached
+    # before the fix was deployed.
+    raw_bio = (lfm or {}).get("bio", "") or ""
+    clean_bio = re.sub(r'\[\d+\]', '', raw_bio).strip()
+
     profile = {
         "name": artist_name,
         "mbid": (mb or {}).get("mbid"),
@@ -359,14 +454,14 @@ async def enrich_artist(artist_name: str) -> Optional[dict]:
         "genres": genres,
         "tags": tags,
         "similar_artists": similar,
-        "bio": (lfm or {}).get("bio", ""),
+        "bio": clean_bio,
         "listeners": (lfm or {}).get("listeners"),
         "rating": (mb or {}).get("rating"),
         "embedding_text": (
             f"{artist_name} — {', '.join(genres[:6])}. "
             f"Tags: {', '.join(tags[:8])}. "
             + (f"Similar to: {', '.join(similar[:5])}. " if similar else "")
-            + ((lfm or {}).get("bio", "")[:200])
+            + (clean_bio[:200] if clean_bio else "")
         ),
     }
 
@@ -393,6 +488,24 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
         return cached["response"]
     cache.close()
 
+    # Pass 80b: helper to cache the artist-profile fallback at the *track*
+    # cache_key when Last.fm doesn't know the track. Without this, the daily
+    # scheduler warmer (`_warm_top_track_metadata`) and the chat track-
+    # discussion path (`chat.py:1516`) re-queried Last.fm on every call for
+    # any track it didn't know — same sibling bug class as the artist
+    # hammer-loop, just at lower amplitude. Caching None instead would have
+    # broken chat.py's ``if enr:`` truthy check (line 1520) — the user would
+    # silently lose the artist-profile fallback context. So we cache the
+    # actual artist fallback. 7-day TTL keeps the door open for Last.fm to
+    # add the track later. Footprint cost: a per-track copy of the artist
+    # profile (~1-5KB each), bounded by realistic top-N track counts.
+    async def _cache_artist_fallback() -> Optional[dict]:
+        fb = await enrich_artist(artist)
+        _c = MetadataCache()
+        _c.set_cache(cache_key, fb, days=7)
+        _c.close()
+        return fb
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
@@ -407,11 +520,11 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
                 },
             )
         if r.status_code != 200:
-            return await enrich_artist(artist)
+            return await _cache_artist_fallback()
 
         track = r.json().get("track", {})
         if not track:
-            return await enrich_artist(artist)
+            return await _cache_artist_fallback()
 
         tags = [t.get("name", "") for t in track.get("toptags", {}).get("tag", [])]
         result = {

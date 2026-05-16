@@ -1,17 +1,12 @@
 """Curatarr - Database Connection"""
 
-import asyncio
 from contextlib import contextmanager
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.config import settings
 from src.database.models import Base
-
-# Application-level write lock — serializes all DB writes to prevent SQLite locking
-# SQLite WAL allows concurrent reads but only one writer at a time
-_db_write_lock = asyncio.Lock()
 
 # Check if we're using in-memory SQLite and adjust pool settings accordingly
 if "sqlite:///:memory:" in settings.DATABASE_URL:
@@ -79,13 +74,190 @@ def get_db():
         db.close()
 
 
+def _migrate_columns() -> None:
+    """Add columns introduced after initial schema creation (SQLite-safe)."""
+    from sqlalchemy import text
+    new_cols = [
+        ("deletion_proposals",    "category",    "TEXT"),
+        ("deletion_proposals",    "poster_url",  "TEXT"),
+        ("deletion_proposals",    "synopsis",    "TEXT"),
+        ("deletion_proposals",    "genres",      "TEXT"),
+        ("cached_recommendations","synopsis",    "TEXT"),
+        # Music / Spotify enrichment columns
+        ("watch_history",         "spotify_uri", "TEXT"),
+        ("watch_history",         "source",      "TEXT"),
+        # Pass 3.5: per-discussion thread isolation for chat history
+        ("conversation_messages", "thread_id",   "TEXT"),
+        # Pass 16f: pre-resolved MusicBrainz artist ID for the Spotify-Backlog
+        # → Lidarr-add flow. Indexed below in the same migration so lookups
+        # by artist name stay fast.
+        ("watch_history",         "artist_mbid", "TEXT"),
+        # Pass 16n: column was added to the EnrichmentStatus model but the
+        # auto-migration was missed. Fresh DBs get it from create_all,
+        # but existing DBs were stuck running a one-off add_col.py
+        # script until this entry. SQLite ALTER TABLE is idempotent
+        # via the existing-column check below.
+        ("enrichment_status",     "vector_ready", "BOOLEAN DEFAULT 0"),
+        # Pass 17: file-level activity timestamp on each deletion proposal.
+        # NULL on existing rows — backfilled at next proposal-generation.
+        ("deletion_proposals",    "latest_activity_at", "DATETIME"),
+    ]
+    # Indexes that need to exist on top of the new columns. ALTER TABLE
+    # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
+    # definition on existing DBs, so we create them explicitly. SQLite's
+    # CREATE INDEX IF NOT EXISTS is idempotent — safe to re-run.
+    new_indexes = [
+        # Pass 16h: artist_mbid index needed for the Spotify-Backlog
+        # ``only_resolved=True`` filter and Phase 1.4's ``is_(None)`` scan
+        # over hundreds of thousands of plays.
+        ("ix_watch_history_artist_mbid", "watch_history", "artist_mbid"),
+        # Pass 17: index for the "🆕 recent activity" filter on deletion
+        # proposals. Range query on a few hundred rows, but the index keeps
+        # it cheap even when proposals are regenerated frequently.
+        ("idx_dp_latest_activity",       "deletion_proposals", "latest_activity_at"),
+    ]
+
+    import logging as _logging
+    _mig_log = _logging.getLogger(__name__)
+    with engine.connect() as conn:
+        for table, col, typ in new_cols:
+            try:
+                existing = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+            except Exception as e:
+                # Pass 43 (B3): the existing-column guard above means this
+                # branch only fires on genuinely-unexpected failures
+                # (locked DB, table missing). Log them so a stalled
+                # migration is debuggable instead of silently swallowed.
+                _mig_log.debug("[migrate] add column %s.%s failed: %s", table, col, e)
+        for idx_name, table, col in new_indexes:
+            try:
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"
+                ))
+            except Exception as e:
+                _mig_log.debug("[migrate] create index %s on %s(%s) failed: %s",
+                               idx_name, table, col, e)
+        conn.commit()
+
+
+def _migrate_deletion_proposals_autoincrement() -> None:
+    """Pass 90c: convert ``deletion_proposals.id`` to AUTOINCREMENT.
+
+    SQLAlchemy's ``Column(Integer, primary_key=True, autoincrement=True)``
+    on SQLite generates plain ``INTEGER NOT NULL PRIMARY KEY`` — which is
+    an alias for ROWID and FREES IDs on DELETE. The regenerate cycle
+    (recommendations.py / scheduler.py) used to ``DELETE FROM
+    deletion_proposals WHERE status='pending'`` then ``INSERT`` a fresh
+    batch; SQLite happily reused the just-freed ROWIDs for the new rows,
+    silently re-mapping stale frontend ``proposal_id`` values to entirely
+    different titles in the new batch. Pass 90a (title verification) and
+    Pass 90b (soft-delete instead of hard-delete) defend against this at
+    the application layer; THIS migration removes the root cause by
+    adding the ``AUTOINCREMENT`` keyword so IDs are strictly monotone.
+
+    Idempotent: the CREATE TABLE statement in ``sqlite_master`` is
+    inspected and migration is skipped when ``AUTOINCREMENT`` is already
+    present. SQLite's standard rebuild-via-rename pattern: rename the
+    existing table aside, create the new one with AUTOINCREMENT, copy
+    the rows, drop the old, then seed ``sqlite_sequence`` so the next
+    ID continues from the current max (without this seed, the first
+    INSERT after migration would get a small number and conflict with
+    existing higher ROWIDs).
+
+    No FK references to ``deletion_proposals.id`` exist anywhere else
+    in the schema (CuratorResolutionLog + ProtectedMedia store the
+    title text directly, not the FK), so the rename-and-drop is safe.
+    """
+    from sqlalchemy import text
+    import logging as _logging
+    _mig_log = _logging.getLogger(__name__)
+
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='deletion_proposals'"
+        )).first()
+        if not row:
+            return  # fresh install — table will be created by create_all with the model's flag
+        ddl = (row[0] or "").upper()
+        if "AUTOINCREMENT" in ddl:
+            return  # already migrated
+
+        _mig_log.info("[migrate] Pass 90c: converting deletion_proposals.id → AUTOINCREMENT")
+        try:
+            # Wrap in IMMEDIATE so we hold the write lock for the duration —
+            # otherwise a concurrent writer between RENAME and DROP could
+            # see the half-migrated state.
+            conn.execute(text("BEGIN IMMEDIATE"))
+            conn.execute(text("ALTER TABLE deletion_proposals RENAME TO deletion_proposals_old_pre90c"))
+            conn.execute(text("""
+                CREATE TABLE deletion_proposals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    media_id VARCHAR(64) NOT NULL,
+                    title VARCHAR(512) NOT NULL,
+                    service VARCHAR(32) NOT NULL,
+                    arr_url VARCHAR(512),
+                    reason TEXT,
+                    confidence FLOAT,
+                    storage_mb FLOAT,
+                    status VARCHAR(32),
+                    user_comment TEXT,
+                    created_at DATETIME,
+                    resolved_at DATETIME,
+                    category TEXT,
+                    poster_url TEXT,
+                    synopsis TEXT,
+                    genres TEXT,
+                    latest_activity_at DATETIME,
+                    FOREIGN KEY(user_id) REFERENCES users (id)
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO deletion_proposals
+                    (id, user_id, media_id, title, service, arr_url, reason,
+                     confidence, storage_mb, status, user_comment, created_at,
+                     resolved_at, category, poster_url, synopsis, genres,
+                     latest_activity_at)
+                SELECT id, user_id, media_id, title, service, arr_url, reason,
+                       confidence, storage_mb, status, user_comment, created_at,
+                       resolved_at, category, poster_url, synopsis, genres,
+                       latest_activity_at
+                FROM deletion_proposals_old_pre90c
+            """))
+            # Seed sqlite_sequence so AUTOINCREMENT continues from current max.
+            # Without this, the first INSERT after migration would get id=1
+            # and collide with existing rows.
+            conn.execute(text("""
+                INSERT INTO sqlite_sequence (name, seq)
+                VALUES ('deletion_proposals',
+                        COALESCE((SELECT MAX(id) FROM deletion_proposals), 0))
+            """))
+            # Recreate the Pass-17 index on the new table (the old one moved
+            # with the rename but only on the renamed-aside table).
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_dp_latest_activity "
+                "ON deletion_proposals (latest_activity_at)"
+            ))
+            conn.execute(text("DROP TABLE deletion_proposals_old_pre90c"))
+            conn.execute(text("COMMIT"))
+            _mig_log.info("[migrate] Pass 90c: AUTOINCREMENT migration complete")
+        except Exception as e:
+            try:
+                conn.execute(text("ROLLBACK"))
+            except Exception:
+                pass
+            _mig_log.error(
+                "[migrate] Pass 90c FAILED: %s — table left in pre-migration state. "
+                "Manually rollback with: DROP TABLE deletion_proposals_old_pre90c "
+                "(if it exists)", e,
+            )
+
+
 def init_db():
-    """Create all tables."""
+    """Create all tables and migrate any new columns."""
     Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        from src.database.models import User
-        if not db.execute(select(User)).first():
-            pass  # Removed print statement as requested
-    finally:
-        db.close()
+    _migrate_columns()
+    _migrate_deletion_proposals_autoincrement()
