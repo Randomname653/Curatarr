@@ -3917,8 +3917,11 @@ const ENRICH_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
 // That's how we keep the panel dense without being cryptic — the numbers
 // stay glanceable, the meaning is one hover away.
 
-const _breakdownCache = { data: null, ts: 0 };
-const BREAKDOWN_CACHE_TTL = 90 * 1000;  // 90s — short, this view is meant to feel live
+const _breakdownCache = { data: null, ts: 0, inflight: false };
+const BREAKDOWN_CACHE_TTL = 90 * 1000;     // 90s — frontend cache window
+const BREAKDOWN_MIN_REFRESH = 60 * 1000;   // 60s — minimum gap between background refreshes
+                                            // (the 8s enrichment poll respects this so the
+                                            // panel doesn't flicker during a running pipeline)
 
 const CAT_ICON = { music: '🎵', movie: '🎬', show: '📺', anime: '⛩️' };
 
@@ -4087,7 +4090,12 @@ async function loadLibraryBreakdowns(targetId, opts) {
   const el = document.getElementById(targetId);
   if (!el) return;
 
-  // Cache hit?
+  // Treat "the panel currently shows real content" as the signal not to
+  // flash a loading placeholder. A `.bd-card` exists only when a previous
+  // render already wrote one; first paint and error states don't have it.
+  const hasContent = !!el.querySelector('.bd-card');
+
+  // Cache hit — paint immediately, no network.
   if (!opts.forceRefresh
       && _breakdownCache.data
       && (Date.now() - _breakdownCache.ts < BREAKDOWN_CACHE_TTL)) {
@@ -4097,7 +4105,31 @@ async function loadLibraryBreakdowns(targetId, opts) {
     return;
   }
 
-  el.innerHTML = '<p class="loading">Loading library breakdown…</p>';
+  // Throttle background refreshes. The Enrichment Status page polls every
+  // 8 s while a pipeline is running; without this guard each poll would
+  // bust the breakdown cache and re-paint the panel, causing the visible
+  // "content → loading → content" flicker the user reported.
+  if (opts.forceRefresh
+      && hasContent
+      && _breakdownCache.ts
+      && (Date.now() - _breakdownCache.ts < BREAKDOWN_MIN_REFRESH)) {
+    return;
+  }
+
+  // Concurrency guard — a second invocation while the first is still
+  // in flight would race and could over-write the newer paint with the
+  // older response. Skip and let the in-flight one finish.
+  if (_breakdownCache.inflight) return;
+  _breakdownCache.inflight = true;
+
+  // Only swap to the loading placeholder when the panel is genuinely
+  // empty (first paint, or a previous error wiped it). Background
+  // refreshes leave the existing cards in place and replace them
+  // atomically with the new HTML once it's ready.
+  if (!hasContent) {
+    el.innerHTML = '<p class="loading">Loading library breakdown…</p>';
+  }
+
   try {
     // quick=true → use cached ARR counts (5-min TTL on the server) for the
     // initial paint; fire a full fetch in the background to refresh ARR
@@ -4120,14 +4152,24 @@ async function loadLibraryBreakdowns(targetId, opts) {
       } catch(_) { /* keep the quick render if the live one fails */ }
     }
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    // Only overwrite if we don't already have valid content on screen —
+    // a transient API hiccup shouldn't blow away the previous good paint.
+    if (!hasContent) {
+      el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    }
+  } finally {
+    _breakdownCache.inflight = false;
   }
 }
 
 async function refreshArrCounts(btn) {
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   _enrichCache.data = null; // bust cache on manual refresh
+  // Null the timestamp too — the throttle in loadLibraryBreakdowns checks
+  // ``ts``, not ``data``, so leaving ts at "30 s ago" would skip the
+  // user-initiated refresh as if it were a poll.
   _breakdownCache.data = null;
+  _breakdownCache.ts = 0;
   await api('/api/enrichment/arr-refresh', 'POST').catch(()=>{});
   await loadEnrichStatus();
   // Re-render the breakdown panel if currently visible
@@ -4214,9 +4256,15 @@ async function loadEnrichStatus(forceRefresh) {
   if (!forceRefresh && _enrichCache.data && (Date.now() - _enrichCache.ts < ENRICH_CACHE_TTL)) {
     _renderEnrichStatus(_enrichCache.data, false);
     if (_enrichCache.data.running) setTimeout(() => loadEnrichStatus(true), 8000);
-    // Pass 96c: refresh the unified breakdown panel alongside the legacy summary
+    // Pass 96c: refresh the unified breakdown panel alongside the legacy
+    // summary. Note we do NOT forward ``forceRefresh`` — the breakdown
+    // panel has its own 90 s cache + 60 s minimum-refresh throttle. The
+    // 8 s enrichment poll would otherwise repaint the panel constantly
+    // while a pipeline runs, causing the visible flicker the user
+    // reported. The panel still updates roughly once a minute, which is
+    // the right cadence for slowly-moving counts like "items tracked".
     if (document.getElementById('enrich-breakdown-panel')) {
-      loadLibraryBreakdowns('enrich-breakdown-panel', { forceRefresh });
+      loadLibraryBreakdowns('enrich-breakdown-panel');
     }
     return;
   }
@@ -4225,10 +4273,9 @@ async function loadEnrichStatus(forceRefresh) {
     // Phase 1: render DB stats immediately (no ARR API call)
     const quick = await api('/api/enrichment/status?quick=true');
     _renderEnrichStatus(quick, /* arrLoading= */ Object.keys(quick.arr || {}).length === 0);
-    // Pass 96c: kick the breakdown panel off in parallel with the full ARR
-    // fetch — both use the 5-min server cache, so the second paint is fast.
+    // Pass 96c: see the long comment above — same reasoning, omit forceRefresh.
     if (document.getElementById('enrich-breakdown-panel')) {
-      loadLibraryBreakdowns('enrich-breakdown-panel', { forceRefresh });
+      loadLibraryBreakdowns('enrich-breakdown-panel');
     }
 
     // Phase 2: fetch full data with live ARR counts in background
