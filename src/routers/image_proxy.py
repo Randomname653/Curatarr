@@ -172,10 +172,44 @@ async def proxy_image(
             ct = _CT_FOR_EXT.get(cached.suffix, "application/octet-stream")
             return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
 
-        # 4. Fetch upstream
+        # 4. Fetch upstream — disable auto-redirect so the whitelist is
+        #    enforced on every hop. With ``follow_redirects=True`` a
+        #    whitelisted host could 30x us at a non-whitelisted host and
+        #    httpx would silently make the second connection (audit
+        #    follow-up). Manual loop: max 3 hops, re-validate the host
+        #    on each. ``image.tmdb.org`` serves direct 200s in practice;
+        #    Deezer's CDN occasionally 301s within the dzcdn.net family
+        #    which is fine because the suffix-whitelist still matches.
         try:
-            async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=True) as client:
-                r = await client.get(src)
+            async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=False) as client:
+                next_url = src
+                r = None
+                for hop in range(4):   # initial + up to 3 redirects
+                    r = await client.get(next_url)
+                    if not r.is_redirect:
+                        break
+                    loc = r.headers.get("location")
+                    if not loc:
+                        break
+                    # Resolve relative redirects against the current URL.
+                    target = httpx.URL(next_url).join(loc)
+                    target_host = (target.host or "").lower()
+                    if not _host_allowed(target_host):
+                        logger.info(
+                            "[image_proxy] reject redirect %s -> %s (not whitelisted)",
+                            httpx.URL(next_url).host, target_host,
+                        )
+                        _inflight.pop(src, None)
+                        raise HTTPException(
+                            403, f"Redirect target not whitelisted: {target_host}",
+                        )
+                    next_url = str(target)
+                else:
+                    # Hit the redirect ceiling without ever landing on a 200.
+                    _inflight.pop(src, None)
+                    raise HTTPException(502, "Too many redirects")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.info("[image_proxy] upstream fetch failed for %s: %s", parsed.hostname, e)
             _inflight.pop(src, None)
