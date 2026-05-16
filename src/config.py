@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     # Override via .env as JSON: CORS_ORIGINS=["http://myserver:8000"]
     CORS_ORIGINS: list = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
+    # ── API surface hardening ────────────────────────────────────────────────
+    # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to
+    # 0.0.0.0 (see start.bat) so /api/docs is reachable from the LAN
+    # and gives a free map of every endpoint to anyone who finds the
+    # port. Set ENABLE_DOCS=true in .env when you need the interactive
+    # API explorer for development.
+    ENABLE_DOCS: bool = False
+
     # Legacy aliases from old .env files
     PLEX_BASE_URL: str = ""
     PLEX_AUTH_TOKEN: str = ""

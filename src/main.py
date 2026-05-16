@@ -186,7 +186,11 @@ app = FastAPI(
     title="Curatarr",
     description="Personal AI media curator for Plex",
     version=settings.VERSION,
-    docs_url="/api/docs",   # always enabled — useful for manual API testing
+    # Pass 97: Swagger gated behind ENABLE_DOCS (default False). The
+    # server binds to 0.0.0.0 by default, so a LAN-exposed instance
+    # was handing out a free map of every endpoint at /api/docs. Set
+    # ENABLE_DOCS=true in .env when you need the API explorer.
+    docs_url="/api/docs" if settings.ENABLE_DOCS else None,
     redoc_url=None,
     lifespan=lifespan,
 )
@@ -208,6 +212,7 @@ from src.routers import (
 from src.routers import process_monitor
 from src.routers import music
 from src.routers import library
+from src.routers import image_proxy   # Pass 97
 from src.routers.auth import require_admin
 
 # Admin-only routers: enrichment runs heavy LLM jobs that block the GPU
@@ -230,6 +235,7 @@ app.include_router(process_monitor.router, prefix="/api/processes",       tags=[
                    dependencies=_ADMIN_ONLY)
 app.include_router(music.router,           prefix="/api/music",           tags=["music"])
 app.include_router(library.router,         prefix="/api/library",         tags=["library"])
+app.include_router(image_proxy.router,     prefix="/api/image",           tags=["image"])
 
 # ── FRONTEND ──────────────────────────────────────────────────────────────────
 

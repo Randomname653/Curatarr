@@ -11,17 +11,87 @@ Handles first-run configuration:
 """
 
 import asyncio
+import ipaddress
 import logging
 import os
 import secrets
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 ENV_PATH = Path(".env")
+
+
+# ── Pass 97: endpoint privacy classifier ──────────────────────────────────────
+#
+# Curatarr trusts the user to point PLEX_URL / *arr URLs / OLLAMA_ENDPOINT
+# wherever they want. That's correct for a self-hosted tool — but a public
+# hostname here means real private data (chat prompts to Ollama, the entire
+# watch history through Plex API, ARR API keys via plain HTTP) leaves the
+# machine. Most users don't realise they typed a public URL by accident
+# (typo, copy from old config, port-forwarded for "convenience").
+#
+# This helper classifies an endpoint URL and lets the API surfaces (setup
+# wizard /test, library /test) emit a warning the UI can render as a
+# yellow banner. We do NOT block — the user might genuinely run Ollama on
+# a cloud GPU box and accept the trade-off. We just refuse to be silent
+# about it.
+
+# Hostname suffixes that look local-ish on a home / lab network. mDNS
+# (.local) is the common one; the others come up on routers + corporate
+# split-DNS setups.
+_PRIVATE_SUFFIXES = (".local", ".lan", ".home", ".internal", ".local.arpa")
+
+
+def is_private_endpoint(url: str) -> bool:
+    """Return True if ``url`` points at loopback / RFC1918 / link-local /
+    a common LAN suffix. False for public DNS names, public IPs, or
+    anything we can't parse (be safe → assume public when uncertain).
+    """
+    if not url:
+        return False
+    try:
+        host = (urlparse(url).hostname or "").lower().strip()
+    except Exception:
+        return False
+    if not host:
+        return False
+
+    # Cheap wins first
+    if host in ("localhost", "ip6-localhost", "ip6-loopback"):
+        return True
+    if any(host == suf.lstrip(".") or host.endswith(suf) for suf in _PRIVATE_SUFFIXES):
+        return True
+
+    # IP-literal path — covers RFC1918, loopback, link-local, ULA.
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        pass
+
+    return False
+
+
+def endpoint_privacy_note(url: str) -> Optional[str]:
+    """Return a user-facing warning string when ``url`` is non-private,
+    or None when the URL is local enough not to need one."""
+    if not url or is_private_endpoint(url):
+        return None
+    try:
+        host = urlparse(url).hostname or "?"
+    except Exception:
+        host = "?"
+    return (
+        f"This endpoint ({host}) does not look like a private address. "
+        "Traffic to it leaves your machine — including any private data "
+        "sent through it (chat prompts, watch history, API keys). "
+        "Confirm the URL is correct and that the network path is trusted."
+    )
 
 # ── OLLAMA MODELFILES ─────────────────────────────────────────────────────────
 
@@ -292,8 +362,9 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
                 json={"name": model_name, "stream": True},
             ) as resp:
                 if resp.status_code != 200:
-                    body = await resp.aread()
-                    logger.error("pull %s: HTTP %s — %s", model_name, resp.status_code, body.decode()[:200])
+                    # Pass 97: log status code only, never the response body.
+                    # Ollama errors should be benign here but defense in depth.
+                    logger.error("pull %s: HTTP %s", model_name, resp.status_code)
                     return False
 
                 last_status = ""

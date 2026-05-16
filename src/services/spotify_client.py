@@ -53,8 +53,12 @@ async def _get_token(client_id: str, client_secret: str) -> Optional[str]:
                 data={"grant_type": "client_credentials"},
             )
         if r.status_code != 200:
-            logger.warning("[spotify] Token fetch failed: HTTP %s — %s",
-                           r.status_code, r.text[:200])
+            # Pass 97: log status code only, never the response body.
+            # Spotify's token endpoint usually echoes nothing sensitive,
+            # but defense-in-depth — if they ever start including the
+            # request payload or any account hint in an error, we don't
+            # want it landing in the curatarr log.
+            logger.warning("[spotify] Token fetch failed: HTTP %s", r.status_code)
             return None
         data = r.json()
         _token = data["access_token"]
