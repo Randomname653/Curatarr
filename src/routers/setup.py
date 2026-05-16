@@ -22,6 +22,7 @@ from src.routers.auth import require_admin_or_first_run
 from src.services.setup_wizard import (
     test_plex, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
+    endpoint_privacy_note,   # Pass 97
 )
 
 logger = logging.getLogger(__name__)
@@ -65,20 +66,38 @@ async def test_connection(
     req: TestRequest,
     _gate=Depends(require_admin_or_first_run),
 ):
-    """Test a service connection during setup."""
+    """Test a service connection during setup.
+
+    Pass 97: when the service is one of the endpoint-style ones (plex /
+    ollama / *arr), check whether the URL points at a private address
+    and attach a ``privacy_warning`` if not. Frontend renders this as a
+    yellow banner. We never block — the user might legitimately point
+    Ollama at a cloud GPU box — but we never go silent about it either.
+    """
     if req.service == "plex":
-        return await test_plex(req.url or "", req.token or "")
-    if req.service == "ollama":
-        return await test_ollama(req.url or settings.effective_ollama)
-    if req.service in ("radarr", "sonarr", "lidarr"):
-        return await test_arr(req.url or "", req.api_key or "", req.service)
-    if req.service == "tmdb":
-        return await test_tmdb(req.api_key or "")
-    if req.service == "lastfm":
-        return await test_lastfm(req.api_key or "")
-    if req.service == "spotify":
-        return await test_spotify(req.client_id or "", req.client_secret or "")
-    raise HTTPException(status_code=400, detail=f"Unknown service: {req.service}")
+        result = await test_plex(req.url or "", req.token or "")
+    elif req.service == "ollama":
+        result = await test_ollama(req.url or settings.effective_ollama)
+    elif req.service in ("radarr", "sonarr", "lidarr"):
+        result = await test_arr(req.url or "", req.api_key or "", req.service)
+    elif req.service == "tmdb":
+        result = await test_tmdb(req.api_key or "")
+    elif req.service == "lastfm":
+        result = await test_lastfm(req.api_key or "")
+    elif req.service == "spotify":
+        result = await test_spotify(req.client_id or "", req.client_secret or "")
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown service: {req.service}")
+
+    # Only the endpoint-style services have a URL to classify. TMDB /
+    # Last.fm / Spotify go to fixed public hostnames by design — no
+    # warning makes sense there.
+    if req.service in ("plex", "ollama", "radarr", "sonarr", "lidarr"):
+        url = req.url or (settings.effective_ollama if req.service == "ollama" else "")
+        warn = endpoint_privacy_note(url)
+        if warn and isinstance(result, dict):
+            result["privacy_warning"] = warn
+    return result
 
 
 class SetupCompleteRequest(BaseModel):

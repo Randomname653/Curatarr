@@ -45,9 +45,18 @@ class ChromaDBWrapper:
         Args:
             collection_name: Name of the collection to use
         """
+        # Pass 97: explicitly disable PostHog telemetry. ChromaDB ≥0.5
+        # defaults to anonymized_telemetry=True and ships usage events
+        # (``collection_query``, ``collection_add``, OS, version, an
+        # anonymised install hash) to eu.posthog.com / app.posthog.com.
+        # No content leaves, but it violates the README's "nothing about
+        # your library leaves the machine" promise. One-flag fix.
         self.client = chromadb.PersistentClient(
             path=str(settings.CHROMADB_PATH),
-            settings=Settings(allow_reset=True)
+            settings=Settings(
+                allow_reset=True,
+                anonymized_telemetry=False,
+            ),
         )
         self.collection_name = collection_name
         self.collection = self._get_or_create_collection()

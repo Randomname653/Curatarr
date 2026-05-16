@@ -160,6 +160,13 @@ async def library_test(
             "service": req.service,
             "error": "URL or API key missing — fill in fields or save config first",
         }
+    # Pass 97: warn if the endpoint isn't loopback / RFC1918 / .local.
+    # We don't block — the user may legitimately point at a remote ARR —
+    # but the UI shows a yellow banner so a typo / accidental public URL
+    # doesn't silently leak the API key over the open internet.
+    from src.services.setup_wizard import endpoint_privacy_note
+    privacy_warning = endpoint_privacy_note(effective_url)
+
     client = _make_client(req.service, effective_url, effective_key)
     try:
         async with client:
@@ -173,13 +180,24 @@ async def library_test(
                     "service": req.service,
                     "version": version,
                     "instance_name": (status or {}).get("instanceName"),
+                    "privacy_warning": privacy_warning,
                 }
             except Exception as exc:
                 set_state(f"lib_test:{req.service}:last",
                           f"fail|{exc}|{__import__('datetime').datetime.utcnow().isoformat()}")
-                return {"ok": False, "service": req.service, "error": str(exc)}
+                return {
+                    "ok": False,
+                    "service": req.service,
+                    "error": str(exc),
+                    "privacy_warning": privacy_warning,
+                }
     except Exception as exc:
-        return {"ok": False, "service": req.service, "error": str(exc)}
+        return {
+            "ok": False,
+            "service": req.service,
+            "error": str(exc),
+            "privacy_warning": privacy_warning,
+        }
 
 
 @router.post("/configure")

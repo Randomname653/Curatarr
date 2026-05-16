@@ -4,7 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Curatarr</title>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- Pass 97: marked.js is bundled locally so the UI loads with zero
+     third-party requests. The previous ``cdn.jsdelivr.net`` reference
+     leaked our IP + User-Agent + a Referer hint to jsDelivr on every
+     page load and broke the README's "works fully offline" promise. -->
+<script src="/vendor/marked.min.js"></script>
 <style>
 :root {
   --bg: #1a1d23;
@@ -1175,9 +1179,16 @@ async function testConn(service) {
 
   try {
     const r = await api('/api/setup/test', 'POST', {service, url, token: token_, api_key: apiKey});
-    if (resultEl) resultEl.innerHTML = r.ok
+    // Pass 97: backend may attach ``privacy_warning`` when the endpoint
+    // doesn't look private (RFC1918 / loopback / .local). Render it as a
+    // yellow banner under the connection result. Doesn't block the user
+    // from continuing — informational only.
+    const warnBlock = r.privacy_warning
+      ? `<div class="test-status" style="color:var(--amber);margin-top:4px">⚠️ ${esc(r.privacy_warning)}</div>`
+      : '';
+    if (resultEl) resultEl.innerHTML = (r.ok
       ? `<div class="test-status ok">✓ Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
-      : `<div class="test-status err">✗ ${esc(r.error)}</div>`;
+      : `<div class="test-status err">✗ ${esc(r.error)}</div>`) + warnBlock;
 
     // Populate Ollama model dropdowns
     if (service==='ollama' && r.ok && r.models) {
@@ -1881,7 +1892,7 @@ function renderAddCard(svc, m, idx) {
     ? `<span style="color:var(--text3);font-size:11px;font-style:italic">already in your library</span>`
     : `<button class="btn btn-primary btn-sm" onclick="addArrItem('${svc}',${idx},this)">+ Add to ${svc}</button>`;
   const poster = m.poster
-    ? `<img src="${esc(m.poster)}" alt="" style="width:60px;height:90px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'"/>`
+    ? `<img src="${esc(proxyImg(m.poster))}" alt="" style="width:60px;height:90px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'"/>`
     : `<div style="width:60px;height:90px;background:var(--bg3);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:24px">?</div>`;
   return `
     <div style="display:flex;gap:12px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)">
@@ -2660,6 +2671,11 @@ async function testArr(svc) {
       msg.style.color = 'var(--danger)';
       msg.textContent = `✗ ${r.error || 'failed'}`;
     }
+    // Pass 97: render the privacy warning under the success/failure
+    // line so the user sees it even when the connection itself is fine.
+    if (r.privacy_warning) {
+      msg.innerHTML += `<div style="color:var(--amber);font-size:11px;margin-top:4px">⚠️ ${esc(r.privacy_warning)}</div>`;
+    }
   } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = '✗ ' + (e.message || 'failed'); }
 }
 
@@ -3091,7 +3107,7 @@ async function loadRecs(category=null, btn=null, refresh=false) {
       <div class="card" style="margin-bottom:12px">
         <div style="display:flex;align-items:flex-start;gap:12px">
           ${rec.poster_url
-            ? `<img src="${esc(rec.poster_url)}" alt="${esc(rec.title)}" style="width:56px;height:${rec.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`
+            ? `<img src="${esc(proxyImg(rec.poster_url))}" alt="${esc(rec.title)}" style="width:56px;height:${rec.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`
             : `<div style="width:56px;height:${rec.category==='music'?'56':'84'}px;background:var(--bg3);border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px">${{movie:'🎬',show:'📺',anime:'⛩️',music:'🎵'}[rec.category]||'📋'}</div>`
           }
           <div style="flex:1;min-width:0">
@@ -3162,7 +3178,7 @@ function _renderDeletionProposals(proposals) {
       return `
       <div class="card" data-del-id="${p.id}" style="margin-bottom:12px;border-color:${p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)'}">
         <div style="display:flex;align-items:flex-start;gap:12px">
-          ${p.poster_url ? `<img src="${esc(p.poster_url)}" alt="" style="width:56px;height:${p.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${p.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
+          ${p.poster_url ? `<img src="${esc(proxyImg(p.poster_url))}" alt="" style="width:56px;height:${p.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${p.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${_recentActivityBadge(p)}</div>
             <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
@@ -4933,6 +4949,44 @@ async function cancelTask(taskId, btn) {
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// Pass 97: image proxy front-end helper.
+//
+// Rewrites a raw external poster URL into /api/image/proxy?src=<encoded>
+// when the host is one of the known external CDNs we whitelist on the
+// backend (image.tmdb.org, *.dzcdn.net, etc.). Local URLs (Plex,
+// localhost, relative paths) are returned unchanged — we only want to
+// proxy *third-party* hosts so TMDB/Deezer can't track per-click
+// browsing through the UI.
+//
+// Mirrors src/routers/image_proxy.py — keep in sync. The frontend
+// list is intentionally a superset trigger ("rewrite if it matches")
+// while the backend remains the security boundary ("accept only if
+// it matches"). Mismatch = the backend returns 403; the <img>'s
+// onerror handler hides it. No data leaks either way.
+const _PROXY_HOSTS_EXACT = new Set([
+  'image.tmdb.org', 'api.deezer.com', 'coverartarchive.org',
+  'lastfm.freetls.fastly.net', 'artworks.thetvdb.com', 'assets.fanart.tv',
+]);
+const _PROXY_SUFFIXES = ['.dzcdn.net'];
+
+function proxyImg(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const u = new URL(rawUrl, window.location.origin);
+    // Only proxy http(s); skip data URIs, blob URLs, etc.
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return rawUrl;
+    // Same-origin / relative — never proxy.
+    if (u.origin === window.location.origin) return rawUrl;
+    const host = u.hostname.toLowerCase();
+    const allow = _PROXY_HOSTS_EXACT.has(host)
+               || _PROXY_SUFFIXES.some(s => host.endsWith(s));
+    if (!allow) return rawUrl;   // unknown host → leave it (no proxy = no extra round-trip)
+    return '/api/image/proxy?src=' + encodeURIComponent(rawUrl);
+  } catch (_) {
+    return rawUrl;   // unparseable → return as-is, let <img onerror> hide it
+  }
+}
 
 // HTML-attribute-safe escape: also handles " and ' (and backtick) so the
 // value can be safely interpolated into a data-* attribute or any other
