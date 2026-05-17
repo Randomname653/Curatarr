@@ -915,7 +915,25 @@ async def fetch_and_prepare_raw(
     Returns a raw dict with ``_cache_key`` / ``_plex_rating_key`` /
     ``_tmdb_id`` / ``_anilist_id`` embedded so the consumer can save
     without needing those IDs separately.
-    Returns None when the item is already fully cached or no API data exists.
+
+    Three return shapes that the caller MUST distinguish (Pass 99-fu):
+      - dict with ``_already_enriched=True`` + ``_cached_profile`` →
+        the cache already holds a fully-enriched profile for this
+        item (LLM-polished, < 7 days fresh, or both). Caller should
+        reconcile the EnrichmentStatus row with the cached profile
+        and skip — do NOT write a not_found sentinel, do NOT re-fetch.
+      - non-None dict without those keys → fresh raw API data, ready
+        for the consumer's LLM pipeline.
+      - ``None`` → no API data exists for this title. Caller writes
+        a not_found sentinel.
+
+    Pre-99-fu this function conflated "already done" and "no data" by
+    returning None for both, which made the producer write not_found
+    sentinels for items that were already fully enriched (cache hit on
+    one id-key, EnrichmentStatus row reset and re-queued, fetch sees
+    fresh cache and returns None, producer writes a misleading
+    not_found sentinel). After a bulk EnrichmentStatus reset this
+    poisoned 200 rows in 3 seconds.
     """
     cache = MetadataCache()
 
@@ -986,8 +1004,41 @@ async def fetch_and_prepare_raw(
                 # at the 999 sentinel — fine for the freshness check but
                 # worth a debug line so corruption is visible.
                 logger.debug("[enricher] cached_at parse failed: %r → %s", cached_at_str, _e)
-        if "+llm" in cached_source or cached_source == "llm" or cache_age_days < 7:
-            return None  # already fully processed
+        # Pass 99-fu: precise tri-state classification of the cached entry:
+        #
+        #   1) "+llm" in source / source == "llm"
+        #      → fully LLM-polished. Skip; reconcile the EnrichmentStatus
+        #        row to reflect that this item is done (caller signal:
+        #        ``_already_enriched=True``).
+        #
+        #   2) source == "not_found" AND cache fresh (< 3 days, which
+        #      matches the sentinel's own TTL)
+        #      → recently confirmed unfindable. Skip silently — don't
+        #        re-poll the API, but ALSO don't write yet another
+        #        sentinel on top (caller signal: ``_already_enriched=True``
+        #        with the not_found profile, so the row stays at
+        #        not_findable without log noise).
+        #
+        #   3) Anything else (rule_based, raw API data without LLM,
+        #      ``api_cached — LLM pending`` markers, etc.)
+        #      → fall through; producer fetches fresh OR consumer takes
+        #        the cached raw data for LLM polish on the next path.
+        #
+        # The pre-99-fu code returned None for the entire (1) + (2)
+        # bucket AND for "cache < 7 days regardless of source", which
+        # made the producer write a not_found sentinel even when the
+        # cache already held a perfectly-good LLM profile. That was
+        # the source of today's 100%-not_found burst right after the
+        # bulk EnrichmentStatus reset.
+        is_llm_polished = "+llm" in cached_source or cached_source == "llm"
+        is_recent_miss  = cached_source == "not_found" and cache_age_days < 3
+        if is_llm_polished or is_recent_miss:
+            return {
+                "_already_enriched": True,
+                "_cached_profile":   cached_profile,
+                "_cache_key":        cache_key,
+                "_plex_rating_key":  plex_rating_key,
+            }
 
     # Anime cross-ref ID resolution
     if is_anime and tvdb_id and not anilist_id and not anidb_id:

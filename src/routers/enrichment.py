@@ -1196,7 +1196,20 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                         plex_rating_key=pitem["plex_rating_key"],
                         sonarr_series_type=pitem.get("sonarr_series_type"),
                     )
-                    if raw is not None:
+                    if raw is not None and raw.get("_already_enriched"):
+                        # Pass 99-fu: cache hit shows the item is already
+                        # fully enriched (LLM-polished, or fresh cache).
+                        # Reconcile the EnrichmentStatus row to reflect
+                        # that — the producer's bulk reset after a bad
+                        # bulk run (or a TTL-driven re-queue) doesn't
+                        # need to re-fetch what we already have.
+                        cached_profile = raw["_cached_profile"]
+                        await _write_enrichment_db(pitem, cached_profile, pcat)
+                        processed_total += 1
+                        task_monitor.update(main_task, processed=processed_total, total=total)
+                        _rolling[pcat].append("ok")
+                        _transient_streak[pcat] = 0
+                    elif raw is not None:
                         await queue.put((pitem, raw))
                         _rolling[pcat].append("ok")
                         _transient_streak[pcat] = 0   # reset on any success
