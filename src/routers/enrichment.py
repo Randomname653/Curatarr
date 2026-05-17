@@ -1140,6 +1140,25 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
         processed_total = 0
         producer_not_found = 0
 
+        # Pass 99: sliding-window not_found ratio per category. If the
+        # producer writes >50% not_found sentinels in the last
+        # ``_RATIO_WINDOW`` items of a given category, abort the run —
+        # that's a strong signal that an upstream API is degraded (not
+        # that the user genuinely has thousands of un-findable items).
+        # The pre-99 silent-fail mode poisoned 5,837 movies in a single
+        # hour during a TMDB outage on 2026-05-16; this guard catches
+        # the next one early.
+        from collections import deque
+        from src.services.media_enricher import TMDBTransientError
+        _RATIO_WINDOW = 50
+        _RATIO_ABORT  = 0.5
+        _rolling: dict[str, deque] = {c: deque(maxlen=_RATIO_WINDOW)
+                                       for c in CATEGORIES}
+        # Per-category transient-error tally — used to back off harder
+        # when one upstream is degraded but the others are fine.
+        _transient_streak: dict[str, int] = {c: 0 for c in CATEGORIES}
+        _producer_abort_reason: dict[str, str] = {}
+
         async def _producer():
             nonlocal processed_total, producer_not_found
             for idx, pitem in enumerate(interleaved):
@@ -1160,6 +1179,11 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                     break
                 pcat = pitem["media_type"]
                 canonical = pitem.get("series_title") or pitem["title"]
+                # Pass 99: if we've already aborted this category, skip
+                # without writing anything — the row stays at
+                # enriched=False/error=NULL and the NEXT run picks it up.
+                if pcat in _producer_abort_reason:
+                    continue
                 try:
                     raw = await fetch_and_prepare_raw(
                         title=canonical,
@@ -1174,6 +1198,8 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                     )
                     if raw is not None:
                         await queue.put((pitem, raw))
+                        _rolling[pcat].append("ok")
+                        _transient_streak[pcat] = 0   # reset on any success
                     else:
                         # No API data found for this title (title mismatch, not on TMDB/AniList, etc.)
                         # Write a "not_found" sentinel so:
@@ -1194,6 +1220,63 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                         producer_not_found += 1
                         processed_total += 1
                         task_monitor.update(main_task, processed=processed_total, total=total)
+                        _rolling[pcat].append("not_found")
+
+                        # Pass 99: window-full ratio check. Abort this
+                        # category if we're poisoning more than we're
+                        # enriching — almost certainly an upstream API
+                        # is degraded, not a real findability problem.
+                        if len(_rolling[pcat]) >= _RATIO_WINDOW:
+                            nf = sum(1 for x in _rolling[pcat] if x == "not_found")
+                            ratio = nf / len(_rolling[pcat])
+                            if ratio >= _RATIO_ABORT:
+                                reason = (
+                                    f"{int(ratio*100)}% not_found in last "
+                                    f"{_RATIO_WINDOW} {pcat} items — upstream "
+                                    f"API likely degraded; aborting category"
+                                )
+                                _producer_abort_reason[pcat] = reason
+                                logger.warning(
+                                    "[enrichment][%s] PRODUCER ABORT: %s. "
+                                    "Remaining items stay at enriched=False; "
+                                    "next run will retry them.", pcat, reason,
+                                )
+                                task_monitor.log(
+                                    main_task,
+                                    f"⚠ {pcat}: {reason}",
+                                    level="warn",
+                                )
+                except TMDBTransientError as te:
+                    # Pass 99: transient API failure — sleep for the
+                    # server-suggested Retry-After window and SKIP this
+                    # item without writing any sentinel. The row stays at
+                    # enriched=False/error=NULL and the next run picks
+                    # it up clean. Five consecutive transients on the
+                    # same category triggers a category abort — at that
+                    # point the API is durably down for us.
+                    _transient_streak[pcat] += 1
+                    logger.warning(
+                        "[enrichment][%s] TMDB transient (HTTP %d) on '%s' — "
+                        "sleeping %.1fs then skipping (streak=%d). Body: %s",
+                        pcat, te.status_code, canonical, te.retry_after_s,
+                        _transient_streak[pcat], te.body_snippet[:80],
+                    )
+                    await asyncio.sleep(te.retry_after_s)
+                    if _transient_streak[pcat] >= 5:
+                        reason = (
+                            f"5 consecutive TMDB transient errors — backing "
+                            f"off this category for the rest of the run"
+                        )
+                        _producer_abort_reason[pcat] = reason
+                        logger.warning(
+                            "[enrichment][%s] PRODUCER ABORT: %s",
+                            pcat, reason,
+                        )
+                        task_monitor.log(
+                            main_task,
+                            f"⚠ {pcat}: {reason}",
+                            level="warn",
+                        )
                 except Exception as e:
                     logger.warning("Producer error [%s] '%s': %s", pcat, canonical, e)
             await queue.put(None)  # sentinel — consumer will stop

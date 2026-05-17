@@ -80,17 +80,75 @@ SUMMARIZER_MODEL = (
 
 # ── TMDB FULL FETCH ───────────────────────────────────────────────────────────
 
+class TMDBTransientError(Exception):
+    """Pass 99: raised by ``_tmdb_get`` for 429 / 5xx / network failures.
+
+    The pre-99 silent ``return {}`` on any non-200 was indistinguishable
+    from a legitimate "TMDB has no record of this title" — the caller
+    chain then collapsed to ``raw=None`` and the producer wrote a
+    ``not_found`` sentinel. A short TMDB outage during a bulk run could
+    poison thousands of rows with bogus not_found sentinels in minutes.
+
+    Raising on transient errors lets the producer (a) sleep for the
+    Retry-After window, (b) skip the item without writing a sentinel —
+    the next enrichment run picks it up cleanly when TMDB recovers.
+
+    ``retry_after_s`` carries the server's Retry-After header value when
+    present (in seconds), or a sensible default the producer can use.
+    """
+    def __init__(self, status_code: int, retry_after_s: float = 5.0,
+                 path: str = "", body_snippet: str = ""):
+        self.status_code = status_code
+        self.retry_after_s = retry_after_s
+        self.path = path
+        self.body_snippet = body_snippet
+        super().__init__(f"TMDB {path} → HTTP {status_code} (retry in {retry_after_s}s)")
+
+
 async def _tmdb_get(client: httpx.AsyncClient, path: str, params: dict = None) -> dict:
-    """Single TMDB API call with error handling."""
+    """Single TMDB API call with error handling.
+
+    Returns:
+      - ``{}`` only when TMDB_API_KEY isn't configured (caller skips TMDB entirely).
+      - ``r.json()`` on HTTP 200 (may be ``{"results": []}`` for a legitimate miss).
+
+    Raises:
+      - ``TMDBTransientError`` on 429 (rate-limit), 5xx (server error),
+        or any network-level exception. Caller should back off and retry,
+        NOT treat as "title not findable".
+      - On 4xx other than 429 (e.g. 404 for a stale movie ID): returns ``{}``.
+        That's a real "no data" answer — caller is welcome to write a
+        not_found sentinel.
+    """
     if not settings.TMDB_API_KEY:
         return {}
     p = {"api_key": settings.TMDB_API_KEY, "language": "en-US", **(params or {})}
     try:
         r = await client.get(f"https://api.themoviedb.org/3{path}", params=p)
-        if r.status_code == 200:
-            return r.json()
     except Exception as e:
-        logger.debug("TMDB %s error: %s", path, e)
+        # Network-level failure (DNS, connection reset, timeout). Always
+        # treat as transient — the next run may well succeed.
+        raise TMDBTransientError(0, retry_after_s=5.0, path=path,
+                                 body_snippet=f"network: {type(e).__name__}: {e}")
+
+    if r.status_code == 200:
+        return r.json()
+
+    if r.status_code == 429 or 500 <= r.status_code < 600:
+        # Honour Retry-After if present; else back off conservatively.
+        # TMDB usually returns it as integer seconds; sometimes HTTP-date,
+        # which we don't parse — fall back to 5s in that case.
+        ra_raw = r.headers.get("retry-after", "")
+        try:
+            ra = float(ra_raw) if ra_raw else 5.0
+        except (TypeError, ValueError):
+            ra = 5.0
+        ra = max(1.0, min(ra, 120.0))   # clamp to [1s, 2min] sane window
+        raise TMDBTransientError(r.status_code, retry_after_s=ra, path=path,
+                                 body_snippet=r.text[:120])
+
+    # 4xx other than 429 — real "not found" / "bad request". Caller can
+    # interpret an empty result as "TMDB really doesn't have this".
     return {}
 
 
