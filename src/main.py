@@ -18,6 +18,15 @@ logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
 )
+# Pass 99-fu4: silence apscheduler's per-job "Running"/"executed successfully"
+# INFO chatter. With Game-mode VRAM watcher firing every 30 s + ARR cache
+# refresh every 30 min + several daily jobs, the logs got dominated by
+# scheduling noise that drowned out real signal. The scheduler's own
+# lifecycle events (Added job, Scheduler started) live on
+# ``apscheduler.scheduler`` and stay at INFO. Per-job-fire chatter from
+# ``apscheduler.executors.default`` gets bumped to WARNING — we still
+# see failures, just not the green-path pulse.
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logger = logging.getLogger("curatarr")
 
 # ── STARTUP / SHUTDOWN ────────────────────────────────────────────────────────

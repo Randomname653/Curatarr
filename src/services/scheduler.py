@@ -479,14 +479,35 @@ async def job_arr_sync():
             logger.info("[scheduler] ARR sync: no items or no ARR configured")
             return
 
-        task_monitor.update(task, total=len(arr_items), message=f"Analysing {len(arr_items)} items")
+        # Pass 99-fu4: per-category progress ticks so the UI shows
+        # movement during the long analysis loop. Pre-fu4 the task bar
+        # sat at 0% for the entire run (10-25 minutes for a 15k-item
+        # library) because ``processed`` was never incremented —
+        # ``generate_deletion_proposals`` is opaque from the scheduler's
+        # POV, so we bump in chunks of category-size: 4 visible jumps
+        # is enough to confirm "yes, it's working".
+        task_monitor.update(task, total=len(arr_items),
+                            message=f"Analysing {len(arr_items)} items "
+                                    f"(across movie/show/anime/music)")
         all_proposals = []
+        processed = 0
         for cat in ["movie", "show", "anime", "music"]:
             cat_items = [i for i in arr_items if i.get("category") == cat]
             if not cat_items:
                 continue
+            task_monitor.update(
+                task,
+                message=f"Analysing {cat}: {len(cat_items)} candidates "
+                        f"({processed:,}/{len(arr_items):,} done so far)",
+            )
             cat_proposals = await generate_deletion_proposals(user_id, cat_items, cat)
             all_proposals.extend(cat_proposals)
+            processed += len(cat_items)
+            task_monitor.update(
+                task, processed=processed,
+                message=f"{cat} done ({len(cat_proposals)} proposals) — "
+                        f"{processed:,}/{len(arr_items):,}",
+            )
 
         if not all_proposals:
             task_monitor.done(task, "No deletion proposals generated")
