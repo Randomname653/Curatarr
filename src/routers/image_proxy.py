@@ -20,16 +20,36 @@ forever after), not the user clicking around every few seconds.
 
 Security
 --------
-- ``Depends(get_current_user)`` — authenticated users only, no open
-  proxy for anonymous LAN visitors.
 - Host whitelist (exact match + suffix match for the dzcdn.net family).
-  Rejects IP literals, file://, anything outside the list.
+  Rejects IP literals, file://, anything outside the list. THIS is the
+  security boundary — not auth.
 - Only ``http://`` and ``https://`` schemes accepted.
 - Upstream Content-Type must start with ``image/`` — no HTML / JS / etc
   smuggled through.
 - 5 MB upper bound — posters are tens of KB; cap protects disk + memory.
+- Redirects are NOT auto-followed (audit follow-up): a whitelisted host
+  cannot 30x us into a non-whitelisted host. Manual loop with re-check.
 - Cache key is SHA-256 of the canonical URL → 16-char hex prefix so cache
   files are stable across restarts and safe to enumerate on disk.
+
+No auth gate
+------------
+The endpoint is intentionally open (Pass 97 follow-up). Browsers cannot
+attach ``Authorization: Bearer …`` headers to ``<img src="…">`` requests
+— that's a built-in restriction — so any auth gate on this endpoint
+breaks every poster in the UI (which is what happened right after the
+initial Pass 97 ship).
+
+The whitelist + image-only content-type + 5 MB cap are the real boundary
+here. The worst an attacker on the same LAN can do is request whitelisted
+TMDB / Deezer / Last.fm / Fanart.tv images — content they could fetch
+directly from those CDNs anyway. They gain no new capability through the
+proxy. The disk cache can be made to grow, but each entry is bounded
+and the LAN attacker could equally fill any other writable Curatarr path.
+
+If the deployment is exposed to the public internet, the existing
+non-private-endpoint warning (Pass 97 #5) flags that as a configuration
+risk — same threat model applies here.
 """
 
 from __future__ import annotations
@@ -42,11 +62,8 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
-
-from src.database.models import User
-from src.routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -137,9 +154,14 @@ _inflight: dict[str, asyncio.Lock] = {}
 @router.get("/proxy")
 async def proxy_image(
     src: str = Query(..., min_length=8, max_length=2048),
-    _user: User = Depends(get_current_user),
 ):
-    """Proxy + cache an external image. ``src`` MUST be on the whitelist."""
+    """Proxy + cache an external image. ``src`` MUST be on the whitelist.
+
+    No auth gate — see module docstring for the rationale (browsers can't
+    attach Authorization headers to <img> tags, so auth would break every
+    poster in the UI; the whitelist + content-type + size cap are the
+    real security boundary here).
+    """
 
     # 1. Parse + scheme + host check
     try:
