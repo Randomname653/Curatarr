@@ -500,7 +500,11 @@ async def job_arr_sync():
                 message=f"Analysing {cat}: {len(cat_items)} candidates "
                         f"({processed:,}/{len(arr_items):,} done so far)",
             )
-            cat_proposals = await generate_deletion_proposals(user_id, cat_items, cat)
+            # Pass 99-fu5: thread the task through so the function can update
+            # the message at its own phase boundaries (scoring → pitch X/10).
+            cat_proposals = await generate_deletion_proposals(
+                user_id, cat_items, cat, monitor_task=task,
+            )
             all_proposals.extend(cat_proposals)
             processed += len(cat_items)
             task_monitor.update(

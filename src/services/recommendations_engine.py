@@ -522,10 +522,27 @@ async def generate_deletion_proposals(
     user_id: int,
     arr_items: list,
     category: str = "movie",
+    monitor_task=None,
 ) -> list:
+    """Surgical Deletion: Identifies trash, protects classics, respects whitelists.
+
+    Pass 99-fu5: optional ``monitor_task`` enables intra-function progress
+    reporting via task_monitor. Without it, the function ran for 1-3
+    minutes per category showing "Analysing N items" with no inner movement
+    — and ~80% of the time was actually phase B (LLM pitch generation for
+    the top 10 candidates), invisible to the user. Now the message updates
+    at phase boundaries and per-pitch so it's obvious what's happening.
     """
-    Surgical Deletion: Identifies trash, protects classics, and respects whitelists.
-    """
+    def _msg(text: str) -> None:
+        """Best-effort task_monitor message update; no-op when called outside the scheduler/API task path."""
+        if monitor_task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor as _tm
+            _tm.update(monitor_task, message=text)
+        except Exception:
+            pass
+
     # Pass 40: detect user's chat language once so each pitch can be
     # written in the same language the user chats in.
     from src.services.llm_utils import detect_user_language, language_directive
@@ -676,6 +693,7 @@ async def generate_deletion_proposals(
         except Exception as e:
             logger.warning("[deletions] artist-rating preload failed: %s", e)
 
+    _msg(f"{category}: scoring {len(arr_items):,} candidates (ChromaDB + taste vector)…")
     scored_candidates = []
     hard_protect_skipped: list[str] = []   # for the post-loop log line
     for item in arr_items:
@@ -858,10 +876,19 @@ async def generate_deletion_proposals(
     # Wrap all pitch LLM calls in a single curator session so the curator model
     # stays loaded throughout the batch and the summarizer is only evicted once.
     from src.services.llm_priority import curator_start, curator_done
+    top_pitch_set = scored_candidates[:10]
+    _msg(
+        f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
+        f"generating LLM pitches for top {len(top_pitch_set)}…"
+    )
     await curator_start()
     try:
-        for cand in scored_candidates[:10]:
+        for _pidx, cand in enumerate(top_pitch_set, start=1):
             item = cand["item"]
+            _msg(
+                f"{category}: LLM pitch {_pidx}/{len(top_pitch_set)} — "
+                f"{(item.get('title') or '?')[:50]}"
+            )
 
             # ── Metadata extraction ───────────────────────────────────────────
             overview      = item.get("overview") or item.get("description") or "No description available."
