@@ -76,9 +76,44 @@ def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DA
                      cat, id_key, e)
 
 
+# ── Pass 99-fu3: Per-service concurrency caps for the parallel producer ─────
+#
+# Sized to stay well within each service's published rate limits even with
+# the bulk producer running N workers in parallel. Anything more would risk
+# bursts that trigger 429s (which we now handle gracefully via Pass 99,
+# but better to never trigger them in the first place).
+#
+# MusicBrainz already has its own ``_MB_SEM = asyncio.Semaphore(1)`` in
+# ``src/services/music_metadata.py`` — not duplicated here.
+# Last.fm uses a 250 ms inter-call sleep in music_matcher; 4 concurrent
+# callers stay under its 5 req/sec cap with margin to spare.
+_SEM_TMDB:     "asyncio.Semaphore | None" = None  # 16 — TMDB has no published cap on free tier; 16 generous
+_SEM_OMDB:     "asyncio.Semaphore | None" = None  # 4 — OMDb 1000/day; 4 concurrent safe
+_SEM_JIKAN:    "asyncio.Semaphore | None" = None  # 2 — Jikan 3 req/sec; 2 leaves headroom
+_LOCK_ANILIST: "asyncio.Lock | None"      = None  # serialises AniList; _anilist_wait isn't reentrant-safe
+
+
+def _ensure_concurrency_primitives() -> None:
+    """Lazy-init the module-level semaphores/locks on first use.
+
+    They CAN be created at module import in modern Python, but lazy-init
+    keeps test imports + tools that import this module outside an event
+    loop safe (Semaphore() still works without a loop, but Lock() in
+    some older patches did not — defensive).
+    """
+    global _SEM_TMDB, _SEM_OMDB, _SEM_JIKAN, _LOCK_ANILIST
+    if _SEM_TMDB is None:
+        _SEM_TMDB     = asyncio.Semaphore(16)
+        _SEM_OMDB     = asyncio.Semaphore(4)
+        _SEM_JIKAN    = asyncio.Semaphore(2)
+        _LOCK_ANILIST = asyncio.Lock()
+
+
 # ── ANILIST RATE-LIMIT CIRCUIT BREAKER ────────────────────────────────────────
 # AniList allows 90 req/min. We enforce a 0.75 s floor (~80/min) and honour
 # any Retry-After header from 429 responses via a shared module-level backoff.
+# Pass 99-fu3: the wait function is now wrapped in ``_LOCK_ANILIST`` so
+# parallel producer workers serialise correctly through it.
 
 _anilist_backoff_until: float = 0.0   # monotonic timestamp; 0 = not backed off
 _anilist_last_req: float = 0.0        # monotonic timestamp of last request sent
@@ -86,19 +121,29 @@ _ANILIST_MIN_INTERVAL: float = 0.75   # seconds between requests
 
 
 async def _anilist_wait() -> None:
-    """Block until AniList is no longer backed off and the minimum interval has passed."""
-    global _anilist_last_req
-    now = time.monotonic()
-    # Honour circuit-breaker backoff first
-    backoff_wait = _anilist_backoff_until - now
-    if backoff_wait > 0:
-        logger.info("AniList circuit-breaker: sleeping %.0fs", backoff_wait)
-        await asyncio.sleep(backoff_wait)
-    # Enforce minimum per-request spacing
-    since_last = time.monotonic() - _anilist_last_req
-    if since_last < _ANILIST_MIN_INTERVAL:
-        await asyncio.sleep(_ANILIST_MIN_INTERVAL - since_last)
-    _anilist_last_req = time.monotonic()
+    """Block until AniList is no longer backed off and the minimum interval has passed.
+
+    Pass 99-fu3: held under ``_LOCK_ANILIST`` so concurrent producer
+    workers serialise through the throttle. The pre-fu3 implementation
+    read + wrote ``_anilist_last_req`` without a lock, so N parallel
+    callers could all pass the ``since_last < interval`` check at the
+    same time and burst-request — triggering the very 429s the throttle
+    was meant to avoid.
+    """
+    _ensure_concurrency_primitives()
+    async with _LOCK_ANILIST:
+        global _anilist_last_req
+        now = time.monotonic()
+        # Honour circuit-breaker backoff first
+        backoff_wait = _anilist_backoff_until - now
+        if backoff_wait > 0:
+            logger.info("AniList circuit-breaker: sleeping %.0fs", backoff_wait)
+            await asyncio.sleep(backoff_wait)
+        # Enforce minimum per-request spacing
+        since_last = time.monotonic() - _anilist_last_req
+        if since_last < _ANILIST_MIN_INTERVAL:
+            await asyncio.sleep(_ANILIST_MIN_INTERVAL - since_last)
+        _anilist_last_req = time.monotonic()
 
 
 def _anilist_set_backoff(headers) -> float:
@@ -170,14 +215,16 @@ async def _tmdb_get(client: httpx.AsyncClient, path: str, params: dict = None) -
     """
     if not settings.TMDB_API_KEY:
         return {}
+    _ensure_concurrency_primitives()
     p = {"api_key": settings.TMDB_API_KEY, "language": "en-US", **(params or {})}
-    try:
-        r = await client.get(f"https://api.themoviedb.org/3{path}", params=p)
-    except Exception as e:
-        # Network-level failure (DNS, connection reset, timeout). Always
-        # treat as transient — the next run may well succeed.
-        raise TMDBTransientError(0, retry_after_s=5.0, path=path,
-                                 body_snippet=f"network: {type(e).__name__}: {e}")
+    async with _SEM_TMDB:   # Pass 99-fu3: cap parallel TMDB calls (16 concurrent)
+        try:
+            r = await client.get(f"https://api.themoviedb.org/3{path}", params=p)
+        except Exception as e:
+            # Network-level failure (DNS, connection reset, timeout). Always
+            # treat as transient — the next run may well succeed.
+            raise TMDBTransientError(0, retry_after_s=5.0, path=path,
+                                     body_snippet=f"network: {type(e).__name__}: {e}")
 
     if r.status_code == 200:
         return r.json()
@@ -296,8 +343,9 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
     omdb_key = getattr(settings, "OMDB_API_KEY", None)
     if not omdb_key or not imdb_id:
         return None
+    _ensure_concurrency_primitives()
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with _SEM_OMDB, httpx.AsyncClient(timeout=8) as client:   # Pass 99-fu3: cap 4 concurrent
             r = await client.get("https://www.omdbapi.com/", params={
                 "apikey": omdb_key,
                 "i": imdb_id,
@@ -340,8 +388,9 @@ async def fetch_jikan_data(mal_id: int = None, title: str = None) -> Optional[di
     Fetch additional anime metadata from Jikan (MAL API proxy).
     Free, no key needed. Returns synopsis, genres, themes, demographics, score.
     """
+    _ensure_concurrency_primitives()
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:   # Pass 99-fu3: cap 2 concurrent
             if mal_id:
                 r = await client.get(f"https://api.jikan.moe/v4/anime/{mal_id}/full")
             elif title:
