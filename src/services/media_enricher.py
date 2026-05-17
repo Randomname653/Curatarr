@@ -28,6 +28,54 @@ from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_opti
 
 logger = logging.getLogger(__name__)
 
+
+# Pass 99-fu2: prompt version tag for the two-tier cache split.
+#
+# BUMP THIS WHENEVER the curator or summariser system prompts change in a
+# way that should invalidate previously-polished profiles. The next
+# enrichment run after the bump will:
+#   - skip any ``enriched:*`` cache entry whose ``prompt_version`` doesn't
+#     match (treats it as "needs re-polish")
+#   - reuse the matching ``raw:*`` cache entry (no API re-fetch) and feed
+#     it straight to the consumer's LLM polish
+#
+# A bump costs ~LLM-summarizer-throughput × library-size — i.e. for a
+# 30k-item library at ~5 s/item, roughly 40 hours of LLM compute, but
+# ZERO new API calls. The raw cache absorbs the API cost across bumps.
+#
+# Format: opaque short string. Bump format is "v{n}" for clarity but
+# anything that changes the literal counts as a bump.
+_PROMPT_VERSION = "v1"
+
+# Pass 99-fu2: tier-2 raw cache TTL. Long enough that prompt bumps don't
+# trigger API re-fetches; short enough that genuinely-changed upstream
+# metadata (a TMDB rewrite, a Last.fm artist merge) still gets refreshed.
+_RAW_CACHE_DAYS = 90
+
+
+def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DAYS) -> None:
+    """Persist a fresh API fetch under raw:{cat}:{id_key} for reuse.
+
+    Best-effort: any cache failure is logged at debug and swallowed so a
+    flaky cache write can't break the producer's hand-off to the consumer.
+    Strips underscore-prefixed transport fields before writing — those
+    are caller-instance specific (plex_rating_key, _cache_key, etc.)
+    and get re-injected on read in ``fetch_and_prepare_raw``.
+    """
+    if not id_key:
+        return
+    try:
+        c = MetadataCache()
+        try:
+            cleaned = {k: v for k, v in raw_dict.items() if not str(k).startswith("_")}
+            c.set_cache(f"raw:{cat}:{id_key}", cleaned, days=days)
+        finally:
+            c.close()
+    except Exception as e:
+        logger.debug("[enricher] raw-cache write failed for raw:%s:%s — %s",
+                     cat, id_key, e)
+
+
 # ── ANILIST RATE-LIMIT CIRCUIT BREAKER ────────────────────────────────────────
 # AniList allows 90 req/min. We enforce a 0.75 s floor (~80/min) and honour
 # any Retry-After header from 429 responses via a shared module-level backoff.
@@ -987,58 +1035,84 @@ async def fetch_and_prepare_raw(
             logger.debug("Raw prefetch cache hit for '%s' (%s)", title, plex_rating_key)
             return raw_data
 
-    cached = cache.get_cache(cache_key)
+    # Pass 99-fu2: two-tier cache read.
+    #
+    # Tier 1 (polished): ``enriched:{cat}:{id_key}`` carries the LLM-
+    # polished profile tagged with ``prompt_version``. Hit + version
+    # match → fully done; signal ``_already_enriched`` so the producer
+    # reconciles the EnrichmentStatus row without re-running the LLM.
+    #
+    # Tier 2 (raw):     ``raw:{cat}:{id_key}`` carries just the API
+    # fetch result (TMDB/AniList/MB/Last.fm response normalised). Hit
+    # → hand straight to the consumer for LLM polish; SKIP the API
+    # round-trip. This is what makes a prompt-version bump cheap: we
+    # don't re-spam TMDB just because the LLM prompt changed.
+    #
+    # Pre-99-fu2 there was only one cache (the polished one), so a
+    # version-stale entry would force a full re-fetch from the APIs —
+    # multiplying the LLM-rebake cost by API rate limits and TMDB
+    # outage risk. Splitting them keeps prompt-bumps to LLM-compute only.
+
+    from datetime import datetime as _dt
+    polished_hit = cache.get_cache(cache_key)  # tier 1
+    raw_hit_key  = f"raw:{media_type}:{id_key}"
+    raw_hit      = cache.get_cache(raw_hit_key)  # tier 2
     cache.close()
-    if cached:
-        cached_profile = cached.get("response", {})
-        cached_source = cached_profile.get("source", "")
-        from datetime import datetime as _dt
-        cached_at_str = cached.get("created_at") or cached.get("cached_at")
+
+    if polished_hit:
+        cached_profile = polished_hit.get("response", {})
+        cached_source  = cached_profile.get("source", "")
+        cached_version = cached_profile.get("prompt_version")
+        cached_at_str  = polished_hit.get("created_at") or polished_hit.get("cached_at")
         cache_age_days = 999
         if cached_at_str:
             try:
                 cached_dt = _dt.fromisoformat(str(cached_at_str))
                 cache_age_days = (_dt.utcnow() - cached_dt).days
             except Exception as _e:
-                # Pass 47 (B3-rest): malformed timestamp leaves cache_age_days
-                # at the 999 sentinel — fine for the freshness check but
-                # worth a debug line so corruption is visible.
                 logger.debug("[enricher] cached_at parse failed: %r → %s", cached_at_str, _e)
-        # Pass 99-fu: precise tri-state classification of the cached entry:
-        #
-        #   1) "+llm" in source / source == "llm"
-        #      → fully LLM-polished. Skip; reconcile the EnrichmentStatus
-        #        row to reflect that this item is done (caller signal:
-        #        ``_already_enriched=True``).
-        #
-        #   2) source == "not_found" AND cache fresh (< 3 days, which
-        #      matches the sentinel's own TTL)
-        #      → recently confirmed unfindable. Skip silently — don't
-        #        re-poll the API, but ALSO don't write yet another
-        #        sentinel on top (caller signal: ``_already_enriched=True``
-        #        with the not_found profile, so the row stays at
-        #        not_findable without log noise).
-        #
-        #   3) Anything else (rule_based, raw API data without LLM,
-        #      ``api_cached — LLM pending`` markers, etc.)
-        #      → fall through; producer fetches fresh OR consumer takes
-        #        the cached raw data for LLM polish on the next path.
-        #
-        # The pre-99-fu code returned None for the entire (1) + (2)
-        # bucket AND for "cache < 7 days regardless of source", which
-        # made the producer write a not_found sentinel even when the
-        # cache already held a perfectly-good LLM profile. That was
-        # the source of today's 100%-not_found burst right after the
-        # bulk EnrichmentStatus reset.
+
         is_llm_polished = "+llm" in cached_source or cached_source == "llm"
         is_recent_miss  = cached_source == "not_found" and cache_age_days < 3
-        if is_llm_polished or is_recent_miss:
+
+        if is_llm_polished and cached_version == _PROMPT_VERSION:
+            # Tier-1 hit, prompt version matches — terminal state.
             return {
                 "_already_enriched": True,
                 "_cached_profile":   cached_profile,
                 "_cache_key":        cache_key,
                 "_plex_rating_key":  plex_rating_key,
             }
+        if is_recent_miss:
+            # not_found sentinel still fresh — skip silently as before.
+            return {
+                "_already_enriched": True,
+                "_cached_profile":   cached_profile,
+                "_cache_key":        cache_key,
+                "_plex_rating_key":  plex_rating_key,
+            }
+        if is_llm_polished and cached_version != _PROMPT_VERSION:
+            # Polished profile from an OLDER prompt — fall through to
+            # tier-2 raw cache (and then to fresh fetch as a last
+            # resort). The consumer will re-polish with the current
+            # prompt. We don't return the stale profile.
+            logger.debug(
+                "[enricher] polished cache version mismatch (have %r, want %r) "
+                "for %s — will re-polish from raw cache or fresh fetch",
+                cached_version, _PROMPT_VERSION, cache_key,
+            )
+
+    if raw_hit:
+        # Tier-2 hit — we have the API fetch result, skip the round-trip.
+        # Embed the cache routing fields so the consumer's ``process_and_save``
+        # writes the polished cache back under the same id_key.
+        raw_data = dict(raw_hit["response"])
+        raw_data["_cache_key"]       = cache_key
+        raw_data["_plex_rating_key"] = plex_rating_key
+        raw_data["_tmdb_id"]         = tmdb_id    or raw_data.get("_tmdb_id")
+        raw_data["_anilist_id"]      = anilist_id or raw_data.get("_anilist_id")
+        raw_data["_from_raw_cache"]  = True
+        return raw_data
 
     # Anime cross-ref ID resolution
     if is_anime and tvdb_id and not anilist_id and not anidb_id:
@@ -1062,6 +1136,11 @@ async def fetch_and_prepare_raw(
         artist_raw["title"] = artist_raw.get("name", title)
         artist_raw["media_type"] = "music"
         artist_raw["source"] = "musicbrainz+lastfm"
+        # Pass 99-fu2: persist the raw fetch result to tier-2 cache so a
+        # future ``_PROMPT_VERSION`` bump can re-polish without re-hitting
+        # MB + Last.fm. Strip the underscore-prefixed transport fields —
+        # those are caller-instance specific and get re-injected on read.
+        _write_raw_cache(media_type, id_key, artist_raw)
         artist_raw["_cache_key"] = cache_key
         artist_raw["_plex_rating_key"] = plex_rating_key
         artist_raw["_tmdb_id"] = None
@@ -1152,7 +1231,14 @@ async def fetch_and_prepare_raw(
     if supplements:
         raw = _merge_raw_metadata(raw, *supplements)
 
+    # Pass 99-fu2: persist the (fresh + supplemented) API result to tier-2
+    # cache. Done BEFORE the underscore transport fields get attached so
+    # the cached blob is portable across callers. Next time the same
+    # id_key is requested, the tier-2 hit short-circuits the TMDB +
+    # AniList + OMDb + Jikan round-trip entirely.
     raw["plex_rating_key"] = plex_rating_key
+    _write_raw_cache(media_type, id_key, raw)
+
     raw["_cache_key"] = cache_key
     raw["_plex_rating_key"] = plex_rating_key
     raw["_tmdb_id"] = tmdb_id or raw.get("tmdb_id")
@@ -1182,6 +1268,9 @@ async def process_and_save(raw: dict) -> Optional[dict]:
     profile["tmdb_id"] = tmdb_id
     profile["anilist_id"] = anilist_id
     profile["plex_rating_key"] = plex_rating_key
+    # Pass 99-fu2: tag the polished profile with the current prompt
+    # version so a future bump invalidates this cache entry on read.
+    profile["prompt_version"] = _PROMPT_VERSION
 
     if cache_key:
         cache = MetadataCache()
@@ -1389,6 +1478,7 @@ async def enrich_media_item(
             return None
         profile["source"] = "musicbrainz+lastfm+llm"
         profile["plex_rating_key"] = plex_rating_key
+        profile["prompt_version"] = _PROMPT_VERSION   # Pass 99-fu2
         cache.set_cache(cache_key, profile, days=30)
         # Generate embedding and store in ChromaDB
         try:
@@ -1568,6 +1658,7 @@ async def enrich_media_item(
     profile["tmdb_id"] = tmdb_id or raw.get("tmdb_id")
     profile["anilist_id"] = anilist_id or raw.get("anilist_id")
     profile["plex_rating_key"] = plex_rating_key
+    profile["prompt_version"] = _PROMPT_VERSION   # Pass 99-fu2
 
 # 3. Cache result (30 days)
     cache.set_cache(cache_key, profile, days=30)
