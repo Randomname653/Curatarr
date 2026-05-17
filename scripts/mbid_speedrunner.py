@@ -79,19 +79,22 @@ def setup_logging(log_file: str | None) -> None:
     )
 
 
-# ── coordination flag (mutex with in-app pipeline + music_enricher) ──────────
+# ── coordination flag (mutex with other music runners only — Pass 97) ────────
 
 
 def acquire_lock() -> tuple[bool, "Optional[str]"]:
     """Try to acquire the standalone-runner mutex.
 
     Returns ``(success, blocking_flag)`` — see music_enricher.py's
-    matching helper for the rationale and Pass 89 / Pass 94 history.
+    matching helper for the full rationale and Pass 89 / 94 / 97 history.
+    Same change as there: the cross-mutex with ``enrichment_running``
+    was dropped in Pass 97. The MBID speedrunner only writes
+    ``WatchHistoryEntry.artist_mbid`` rows, and the MusicBrainz
+    1-req/s throttle makes DB contention with the in-app enrichment
+    consumer negligible.
     """
     if get_state("music_pipeline_running") == "1":
         return False, "music_pipeline_running"
-    if get_state("enrichment_running") == "1":
-        return False, "enrichment_running"
     set_state("music_pipeline_running", "1")
     return True, None
 
@@ -142,24 +145,17 @@ async def amain(argv: list[str] | None = None) -> int:
 
     ok, blocker = acquire_lock()
     if not ok:
-        # Pass 94: name the ACTUAL blocking flag (was hardcoded pre-94).
-        if blocker == "enrichment_running":
-            logger.error(
-                "enrichment_running is '1' — the in-app enrichment consumer "
-                "is active (or its flag is stale after a server crash). "
-                "Wait for it to finish, OR clear the stale flag with:\n"
-                "  python -c \"from src.services.app_state import "
-                "force_set_state; force_set_state('enrichment_running', '0')\""
-            )
-        else:
-            logger.error(
-                "%s is '1' — another music runner is active (job_music_pipeline "
-                "or music_enricher.py). Wait for it to finish, OR clear the "
-                "stale flag with:\n"
-                "  python -c \"from src.services.app_state import "
-                "force_set_state; force_set_state('%s', '0')\"",
-                blocker, blocker,
-            )
+        # Pass 97: only one possible blocker now (``music_pipeline_running``).
+        # The cross-mutex with ``enrichment_running`` was removed so this
+        # runner can coexist with the in-app movie/show/anime enrichment.
+        logger.error(
+            "%s is '1' — another music runner is active (job_music_pipeline "
+            "or music_enricher.py). Wait for it to finish, OR clear the "
+            "stale flag with:\n"
+            "  python -c \"from src.services.app_state import "
+            "force_set_state; force_set_state('%s', '0')\"",
+            blocker, blocker,
+        )
         return 2
 
     # Ctrl+C — set the AppState stop flag the resolver checks every

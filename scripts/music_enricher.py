@@ -125,7 +125,7 @@ def setup_logging(log_file: str | None) -> None:
     )
 
 
-# ── coordination flag (mutex with in-app pipeline) ───────────────────────────
+# ── coordination flag (mutex with other music runners only — Pass 97) ────────
 
 
 def acquire_lock() -> tuple[bool, Optional[str]]:
@@ -135,23 +135,32 @@ def acquire_lock() -> tuple[bool, Optional[str]]:
     of the AppState flag that prevented acquisition (when ``success`` is
     False) or ``None`` (when ``success`` is True).
 
-    Pass 89: refuses to start when EITHER ``music_pipeline_running`` OR
-    ``enrichment_running`` is ``"1"``. Both pipelines write to the same
-    ``enrichment_status`` table, and pre-89 they could race on the
-    SQLite write-lock — long-running batches in either side then
-    starved the scheduler/proactive jobs and cascaded into "database is
-    locked" errors.
-
-    Pass 94: also return WHICH flag blocked. The pre-94 acquire_lock
-    returned a bare bool and the caller's error message was hardcoded
-    to "music_pipeline_running" regardless of the real blocker —
-    misleading when ``enrichment_running`` was stale and the user spent
-    time clearing the wrong flag.
+    History:
+      - Pass 89: originally checked BOTH ``music_pipeline_running`` AND
+        ``enrichment_running``. Both pipelines wrote to
+        ``enrichment_status``, and pre-89 the Music pipeline did all
+        Spotify-genre updates in a single mega-transaction that locked
+        the SQLite write-lock for minutes and cascaded into
+        ``database is locked`` errors on the in-app side.
+      - Pass 89 ALSO introduced ``_DB_COMMIT_CHUNK = 100`` chunked
+        commits in ``enrich_music_genres_spotify``, so the write-lock
+        is released every 100 tracks. That structurally removed the
+        cascade trigger.
+      - Pass 94: returned the blocker name in the tuple so the error
+        message could identify the actual blocker.
+      - Pass 97 (now): the cross-mutex with ``enrichment_running`` was
+        defense-in-depth from when chunked commits were new. It was
+        too strict — Music-Enricher in default mode is LLM-free, writes
+        to ``media_category='music'`` rows (disjoint from in-app's
+        movie/show/anime rows), and the chunked commits prevent the
+        write-lock cascade. So we drop the cross-mutex: the standalone
+        runner now coexists with the in-app enrichment consumer.
+        We still self-check ``music_pipeline_running`` to keep two
+        music runners from colliding with each other (same rows, same
+        Spotify API quota).
     """
     if get_state("music_pipeline_running") == "1":
         return False, "music_pipeline_running"
-    if get_state("enrichment_running") == "1":
-        return False, "enrichment_running"
     set_state("music_pipeline_running", "1")
     return True, None
 
@@ -594,28 +603,18 @@ async def amain(argv: list[str] | None = None) -> int:
 
     ok, blocker = acquire_lock()
     if not ok:
-        # Pass 94: name the ACTUAL blocking flag. Pre-94 this message was
-        # hardcoded to "music_pipeline_running" even when the real
-        # blocker was the in-app ``enrichment_running`` flag — users
-        # then spent time clearing the wrong flag and got the same
-        # error on retry.
-        if blocker == "enrichment_running":
-            logger.error(
-                "enrichment_running is '1' — the in-app enrichment consumer "
-                "is active (or its flag is stale after a server crash). "
-                "Wait for it to finish, OR clear the stale flag with:\n"
-                "  python -c \"from src.services.app_state import "
-                "force_set_state; force_set_state('enrichment_running', '0')\""
-            )
-        else:
-            logger.error(
-                "%s is '1' — another music runner is active (the in-app "
-                "job_music_pipeline or another copy of this script). "
-                "Wait for it to finish, OR clear the stale flag with:\n"
-                "  python -c \"from src.services.app_state import "
-                "force_set_state; force_set_state('%s', '0')\"",
-                blocker, blocker,
-            )
+        # Pass 97: only one possible blocker now (``music_pipeline_running``).
+        # The cross-mutex with ``enrichment_running`` was removed so the
+        # standalone runner can coexist with the in-app movie/show/anime
+        # enrichment consumer — see ``acquire_lock`` for the rationale.
+        logger.error(
+            "%s is '1' — another music runner is active (the in-app "
+            "job_music_pipeline or another copy of this script). "
+            "Wait for it to finish, OR clear the stale flag with:\n"
+            "  python -c \"from src.services.app_state import "
+            "force_set_state; force_set_state('%s', '0')\"",
+            blocker, blocker,
+        )
         return 2
 
     # Signal handlers: finish current artist, then exit cleanly.
