@@ -1411,8 +1411,28 @@ async def library_breakdown(
     from sqlalchemy import case as _case
     state_buckets: dict[str, dict[str, int]] = {}
     with get_db_session() as db:
+        # Pass 98: split the old "processing_error" catch-all into two honest
+        # buckets:
+        #   - ``queued_for_retry``   : enriched=False, error IS NULL — the
+        #                              row exists in tracking but the pipeline
+        #                              hasn't (re-)processed it yet. This
+        #                              covers freshly-seeded items AND items
+        #                              an admin reset (e.g. after the
+        #                              not_findable burst caused by the
+        #                              May-16 TMDB outage poisoning 6,464
+        #                              movies in one hour).
+        #   - ``processing_error``   : enriched=False, error IS NOT NULL —
+        #                              the pipeline actually tried and
+        #                              recorded an error string.
+        # Pre-98 both collapsed into ``processing_error`` which was
+        # misleading: a freshly-reset row got the same "warning" label as
+        # a row that genuinely crashed. The two states deserve their own
+        # bucket so the user can tell the difference at a glance.
         bucket_expr = _case(
-            (_ES.enriched == False, "processing_error"),
+            (_ES.enriched == False, _case(
+                (_ES.error.is_(None), "queued_for_retry"),
+                else_="processing_error",
+            )),
             (_ES.error.is_(None), "llm_polished"),
             (_ES.error.like("rule_based%"), "rule_based"),
             (_ES.error.like("api_cached%"), "awaiting_llm"),
@@ -1631,8 +1651,10 @@ async def library_breakdown(
                              "Game-mode: API data was persisted, LLM was paused to free GPU. Next run finishes the polish."),
         "not_findable":     ("❌ Not findable",
                              "All metadata APIs (TMDB/AniList/MB/OMDb…) missed. 3-day TTL — may resolve if APIs add the title."),
+        "queued_for_retry": ("🕒 Queued for retry",
+                             "Row exists in tracking but the pipeline hasn't processed it yet — freshly seeded items, or items an admin reset (e.g. after a bad-API burst). Picked up on the next enrichment run."),
         "processing_error": ("⚠️ Processing error",
-                             "Pipeline crashed mid-item (HTTP error, parse fail, etc.). Always retried on the next run."),
+                             "Pipeline crashed mid-item AND recorded an error string. Always retried on the next run."),
         "never_processed":  ("📋 Never processed",
                              "No row in tracking — item hasn't reached the enrichment queue yet. Hit ‘Start enrichment’ to queue."),
     }
