@@ -683,7 +683,20 @@ async def _collect_arr_items(categories: list) -> list:
 
 
 _BATCH_SIZE = 10       # items per category per rotation slice
-_PREFETCH_DEPTH = 30  # max items in queue (producer blocks when full)
+# Pass 99-fu3: queue depth raised from 30 → 500 so the parallel producer
+# can stay well ahead of the LLM consumer. The consumer at ~5 s/item runs
+# at ~12 items/min; with 8 producer workers fetching in parallel the
+# producer can fill the queue inside a few seconds and then idle on
+# queue.put backpressure. A 500-deep buffer means a brief LLM stall
+# (model reload, etc.) doesn't make the producer waste time waiting.
+_PREFETCH_DEPTH = 500
+# Number of parallel producer workers. Each one independently fetches an
+# item via fetch_and_prepare_raw, which internally respects per-service
+# concurrency caps (TMDB 16, OMDb 4, AniList 1 via lock, Jikan 2, MB 1
+# via existing semaphore). 8 workers × per-service caps means no service
+# gets hammered while the slowest path (AniList sequential, MB 1 req/sec)
+# keeps the queue fed for the LLM.
+_PRODUCER_WORKERS = 8
 
 
 def _interleave_by_cat(by_cat: dict, batch_size: int = _BATCH_SIZE) -> list:
@@ -1159,139 +1172,155 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
         _transient_streak: dict[str, int] = {c: 0 for c in CATEGORIES}
         _producer_abort_reason: dict[str, str] = {}
 
-        async def _producer():
-            nonlocal processed_total, producer_not_found
-            for idx, pitem in enumerate(interleaved):
-                if main_task.status.value == "skipped":
-                    # Pass 92: log the cancel-driven break explicitly so the
-                    # server log has a clear record of WHY the producer
-                    # stopped early. Without this the only sign was the
-                    # truncated "56/3,186 processed" count in the UI,
-                    # leaving the user to wonder whether something crashed
-                    # silently. Cancels come from the admin-only
-                    # /api/tasks/{id}/cancel endpoint (UI ✕ Cancel button).
-                    logger.warning(
-                        "[enrichment] Producer aborted after %d/%d items — "
-                        "main_task was cancelled (status=skipped). Consumer "
-                        "will drain remaining queue and exit.",
-                        idx, len(interleaved),
-                    )
-                    break
-                pcat = pitem["media_type"]
-                canonical = pitem.get("series_title") or pitem["title"]
-                # Pass 99: if we've already aborted this category, skip
-                # without writing anything — the row stays at
-                # enriched=False/error=NULL and the NEXT run picks it up.
-                if pcat in _producer_abort_reason:
-                    continue
-                try:
-                    raw = await fetch_and_prepare_raw(
-                        title=canonical,
-                        media_type=pcat,
-                        tmdb_id=pitem.get("tmdb_id"),
-                        anilist_id=pitem.get("anilist_id"),
-                        anidb_id=pitem.get("anidb_id"),
-                        tvdb_id=pitem.get("tvdb_id"),
-                        imdb_id=pitem.get("imdb_id"),
-                        plex_rating_key=pitem["plex_rating_key"],
-                        sonarr_series_type=pitem.get("sonarr_series_type"),
-                    )
-                    if raw is not None and raw.get("_already_enriched"):
-                        # Pass 99-fu: cache hit shows the item is already
-                        # fully enriched (LLM-polished, or fresh cache).
-                        # Reconcile the EnrichmentStatus row to reflect
-                        # that — the producer's bulk reset after a bad
-                        # bulk run (or a TTL-driven re-queue) doesn't
-                        # need to re-fetch what we already have.
-                        cached_profile = raw["_cached_profile"]
-                        await _write_enrichment_db(pitem, cached_profile, pcat)
-                        processed_total += 1
-                        task_monitor.update(main_task, processed=processed_total, total=total)
-                        _rolling[pcat].append("ok")
-                        _transient_streak[pcat] = 0
-                    elif raw is not None:
-                        await queue.put((pitem, raw))
-                        _rolling[pcat].append("ok")
-                        _transient_streak[pcat] = 0   # reset on any success
-                    else:
-                        # No API data found for this title (title mismatch, not on TMDB/AniList, etc.)
-                        # Write a "not_found" sentinel so:
-                        # (a) the UI shows this item as processed, not permanently "pending"
-                        # (b) fetch_and_prepare_raw short-circuits this item for 3 days via cache
-                        sentinel = {
-                            "source": "not_found",
-                            "title": canonical,
-                            "genres": [], "themes": [], "mood": [],
-                            "media_type": pcat,
-                        }
-                        await _write_enrichment_db(pitem, sentinel, pcat)
-                        # Pass 93: update progress for the not_found path.
-                        # Without this the UI stayed at 0% during long
-                        # ARR batches where most items had stale TMDB IDs
-                        # (every fetch returned None → consumer counter
-                        # never advanced).
-                        producer_not_found += 1
-                        processed_total += 1
-                        task_monitor.update(main_task, processed=processed_total, total=total)
-                        _rolling[pcat].append("not_found")
+        async def _process_one(pitem: dict) -> None:
+            """Per-item logic — same shape as the pre-99-fu3 producer body.
 
-                        # Pass 99: window-full ratio check. Abort this
-                        # category if we're poisoning more than we're
-                        # enriching — almost certainly an upstream API
-                        # is degraded, not a real findability problem.
-                        if len(_rolling[pcat]) >= _RATIO_WINDOW:
-                            nf = sum(1 for x in _rolling[pcat] if x == "not_found")
-                            ratio = nf / len(_rolling[pcat])
-                            if ratio >= _RATIO_ABORT:
-                                reason = (
-                                    f"{int(ratio*100)}% not_found in last "
-                                    f"{_RATIO_WINDOW} {pcat} items — upstream "
-                                    f"API likely degraded; aborting category"
-                                )
-                                _producer_abort_reason[pcat] = reason
-                                logger.warning(
-                                    "[enrichment][%s] PRODUCER ABORT: %s. "
-                                    "Remaining items stay at enriched=False; "
-                                    "next run will retry them.", pcat, reason,
-                                )
-                                task_monitor.log(
-                                    main_task,
-                                    f"⚠ {pcat}: {reason}",
-                                    level="warn",
-                                )
-                except TMDBTransientError as te:
-                    # Pass 99: transient API failure — sleep for the
-                    # server-suggested Retry-After window and SKIP this
-                    # item without writing any sentinel. The row stays at
-                    # enriched=False/error=NULL and the next run picks
-                    # it up clean. Five consecutive transients on the
-                    # same category triggers a category abort — at that
-                    # point the API is durably down for us.
-                    _transient_streak[pcat] += 1
-                    logger.warning(
-                        "[enrichment][%s] TMDB transient (HTTP %d) on '%s' — "
-                        "sleeping %.1fs then skipping (streak=%d). Body: %s",
-                        pcat, te.status_code, canonical, te.retry_after_s,
-                        _transient_streak[pcat], te.body_snippet[:80],
+            Pass 99-fu3: factored out so a worker pool can run N copies
+            in parallel. Per-service concurrency caps inside
+            ``fetch_and_prepare_raw`` (TMDB 16, OMDb 4, AniList 1-lock,
+            Jikan 2, MB 1-semaphore) keep us within each API's rate
+            limits even with 8 workers in flight. The 50%-abort + 429-
+            respect logic is unchanged — rolling-window ratio and per-
+            category streak counters work correctly regardless of
+            processing order.
+            """
+            nonlocal processed_total, producer_not_found
+            if main_task.status.value == "skipped":
+                return
+            pcat = pitem["media_type"]
+            canonical = pitem.get("series_title") or pitem["title"]
+            if pcat in _producer_abort_reason:
+                return
+            try:
+                raw = await fetch_and_prepare_raw(
+                    title=canonical,
+                    media_type=pcat,
+                    tmdb_id=pitem.get("tmdb_id"),
+                    anilist_id=pitem.get("anilist_id"),
+                    anidb_id=pitem.get("anidb_id"),
+                    tvdb_id=pitem.get("tvdb_id"),
+                    imdb_id=pitem.get("imdb_id"),
+                    plex_rating_key=pitem["plex_rating_key"],
+                    sonarr_series_type=pitem.get("sonarr_series_type"),
+                )
+                if raw is not None and raw.get("_already_enriched"):
+                    # Pass 99-fu: cache hit shows the item is already
+                    # fully enriched (LLM-polished, or fresh cache).
+                    # Reconcile the EnrichmentStatus row to reflect
+                    # that — no re-fetch, no LLM polish needed.
+                    cached_profile = raw["_cached_profile"]
+                    await _write_enrichment_db(pitem, cached_profile, pcat)
+                    processed_total += 1
+                    task_monitor.update(main_task, processed=processed_total, total=total)
+                    _rolling[pcat].append("ok")
+                    _transient_streak[pcat] = 0
+                elif raw is not None:
+                    await queue.put((pitem, raw))
+                    _rolling[pcat].append("ok")
+                    _transient_streak[pcat] = 0   # reset on any success
+                else:
+                    # No API data found for this title (title mismatch, not on TMDB/AniList, etc.)
+                    sentinel = {
+                        "source": "not_found",
+                        "title": canonical,
+                        "genres": [], "themes": [], "mood": [],
+                        "media_type": pcat,
+                    }
+                    await _write_enrichment_db(pitem, sentinel, pcat)
+                    producer_not_found += 1
+                    processed_total += 1
+                    task_monitor.update(main_task, processed=processed_total, total=total)
+                    _rolling[pcat].append("not_found")
+
+                    if len(_rolling[pcat]) >= _RATIO_WINDOW:
+                        nf = sum(1 for x in _rolling[pcat] if x == "not_found")
+                        ratio = nf / len(_rolling[pcat])
+                        if ratio >= _RATIO_ABORT and pcat not in _producer_abort_reason:
+                            reason = (
+                                f"{int(ratio*100)}% not_found in last "
+                                f"{_RATIO_WINDOW} {pcat} items — upstream "
+                                f"API likely degraded; aborting category"
+                            )
+                            _producer_abort_reason[pcat] = reason
+                            logger.warning(
+                                "[enrichment][%s] PRODUCER ABORT: %s. "
+                                "Remaining items stay at enriched=False; "
+                                "next run will retry them.", pcat, reason,
+                            )
+                            task_monitor.log(
+                                main_task, f"⚠ {pcat}: {reason}", level="warn",
+                            )
+            except TMDBTransientError as te:
+                _transient_streak[pcat] += 1
+                logger.warning(
+                    "[enrichment][%s] TMDB transient (HTTP %d) on '%s' — "
+                    "sleeping %.1fs then skipping (streak=%d). Body: %s",
+                    pcat, te.status_code, canonical, te.retry_after_s,
+                    _transient_streak[pcat], te.body_snippet[:80],
+                )
+                await asyncio.sleep(te.retry_after_s)
+                if _transient_streak[pcat] >= 5 and pcat not in _producer_abort_reason:
+                    reason = (
+                        f"5 consecutive TMDB transient errors — backing "
+                        f"off this category for the rest of the run"
                     )
-                    await asyncio.sleep(te.retry_after_s)
-                    if _transient_streak[pcat] >= 5:
-                        reason = (
-                            f"5 consecutive TMDB transient errors — backing "
-                            f"off this category for the rest of the run"
-                        )
-                        _producer_abort_reason[pcat] = reason
-                        logger.warning(
-                            "[enrichment][%s] PRODUCER ABORT: %s",
-                            pcat, reason,
-                        )
-                        task_monitor.log(
-                            main_task,
-                            f"⚠ {pcat}: {reason}",
-                            level="warn",
-                        )
-                except Exception as e:
-                    logger.warning("Producer error [%s] '%s': %s", pcat, canonical, e)
+                    _producer_abort_reason[pcat] = reason
+                    logger.warning("[enrichment][%s] PRODUCER ABORT: %s", pcat, reason)
+                    task_monitor.log(main_task, f"⚠ {pcat}: {reason}", level="warn")
+            except Exception as e:
+                logger.warning("Producer error [%s] '%s': %s", pcat, canonical, e)
+
+        async def _producer():
+            """Pass 99-fu3: parallel worker pool around ``_process_one``.
+
+            N workers (``_PRODUCER_WORKERS``, default 8) each pull items
+            from an internal inbox queue and call ``_process_one`` until
+            the inbox is drained. The output ``queue`` (consumed by the
+            LLM polish consumer) is bounded by ``_PREFETCH_DEPTH=500`` so
+            workers throttle naturally via queue.put backpressure when
+            the consumer can't keep up.
+
+            Pre-99-fu3 the producer was a single sequential loop —
+            empirically 2 items/min (75% of which was waiting on
+            AniList sequential + MB 1-req-sec). With 8 parallel workers
+            and per-service concurrency caps the producer fills the
+            output queue inside a minute and then idles, letting the LLM
+            consumer run at its natural rate (~12 items/min).
+            """
+            inbox: asyncio.Queue = asyncio.Queue()
+            for p in interleaved:
+                inbox.put_nowait(p)
+            total_items = len(interleaved)
+            logger.info(
+                "[enrichment] Producer pool: %d workers, %d items to process, "
+                "output queue depth %d",
+                _PRODUCER_WORKERS, total_items, _PREFETCH_DEPTH,
+            )
+
+            async def _worker(worker_id: int) -> None:
+                while True:
+                    if main_task.status.value == "skipped":
+                        return
+                    try:
+                        pitem = inbox.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
+                    await _process_one(pitem)
+
+            workers = [
+                asyncio.create_task(_worker(i)) for i in range(_PRODUCER_WORKERS)
+            ]
+            await asyncio.gather(*workers, return_exceptions=True)
+
+            if main_task.status.value == "skipped":
+                remaining = inbox.qsize()
+                logger.warning(
+                    "[enrichment] Producer pool aborted with %d/%d items un-fetched — "
+                    "main_task was cancelled (status=skipped). Consumer will drain "
+                    "remaining queue and exit.",
+                    remaining, total_items,
+                )
+
             await queue.put(None)  # sentinel — consumer will stop
 
         from src.services.process_monitor import is_game_running
