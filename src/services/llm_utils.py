@@ -274,6 +274,22 @@ def detect_user_language(user_id: int, db) -> str:
     Looks at the last 20 user-role messages. If none exist or content is
     too short to judge, returns 'en'. Currently distinguishes German vs
     English; other languages fall through to 'en'.
+
+    Pass 99-fu6: density-based detection. The previous single-threshold
+    formula ``de_chars + de_words*2 >= 5`` tripped on as little as three
+    German cognates ("die", "ist", "ich") buried in 11 K of English text.
+    Real-world case: a user with one German sentence ("hier ist die liste
+    an titeln dazu") in months of English chat got German pitches on every
+    deletion proposal. New logic trips ``de`` only when ONE of:
+
+      - 2+ umlauts (very strong DE signal, hard to false-positive)
+      - 1+ umlaut AND 2+ tokens (umlaut + corroborator)
+      - 5+ distinct tokens AND density >= 1 / 1000 chars
+
+    The density floor stops a brief German line in a long English context
+    from tripping; the 5-token floor protects against random 1-2 cognate
+    hits in any-length English text. Umlauts stay the strongest signal —
+    they're nearly impossible to encounter accidentally in English.
     """
     from src.database.models import ConversationMessage
     msgs = (
@@ -296,7 +312,19 @@ def detect_user_language(user_id: int, db) -> str:
     padded = f" {text} "
     de_chars = sum(text.count(c) for c in "äöüß")
     de_words = sum(1 for w in _DE_TOKENS if f" {w} " in padded)
-    return "de" if (de_chars + de_words * 2) >= 5 else "en"
+
+    if de_chars >= 2:
+        return "de"
+    if de_chars >= 1 and de_words >= 2:
+        return "de"
+    # Density check: tokens-per-1000-chars. Catches genuinely-German users
+    # with no umlauts in their last 20 messages (rare but possible —
+    # umlautless German is a thing). Rejects long-English texts with a
+    # handful of accidental cognate hits.
+    density = (de_words * 1000.0) / max(len(text), 1)
+    if de_words >= 5 and density >= 1.0:
+        return "de"
+    return "en"
 
 
 def language_directive(code: str) -> str:
