@@ -590,11 +590,28 @@ async def audit_requeue_enrichments(
 async def _collect_arr_items(categories: list) -> list:
     """Fetch downloaded items from configured ARR services."""
     import httpx as _httpx
+    # Pass 99-fu7 (#29): reuse the diagnostic helper from library.py so an
+    # aiohttp ClientConnectorError (empty str(), non-empty repr()) doesn't
+    # surface as ``"ARR collect (radarr) failed: "`` with nothing after
+    # the colon. The pre-fu7 logs gave zero diagnostic value when all 3
+    # services failed simultaneously — could've been DNS, timeout, 401,
+    # 500, the API key not being loaded, anything. Now we get the class
+    # name at minimum.
+    from src.routers.library import _format_arr_error
     items = []
 
+    # Pass 99-fu7 (#29 follow-on): 60s timeout, not 10s. The live ARR ping
+    # that surfaced this showed radarr (6,996 movies) + lidarr (5,206
+    # artists) both ReadTimeout at 10s — the /api/v3/movie + /api/v1/artist
+    # endpoints return the FULL library with per-item metadata (15-30 MB
+    # JSON) which radarr/lidarr can't serialise inside 10s when under load.
+    # Sonarr (3,604 series) squeaked under the old limit, which is why it
+    # sometimes worked and sometimes didn't. These are background bulk
+    # fetches, so a generous timeout is correct.
+    _ARR_TIMEOUT = 60
     if "movie" in categories and settings.RADARR_URL and settings.RADARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=10) as client:
+            async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
                 r = await client.get(
                     f"{settings.effective_radarr_url}/api/v3/movie",
                     headers={"X-Api-Key": settings.RADARR_API_KEY},
@@ -615,11 +632,11 @@ async def _collect_arr_items(categories: list) -> list:
                         "service": "radarr",
                     })
         except Exception as e:
-            logger.warning("ARR collect (radarr) failed: %s", e)
+            logger.warning("ARR collect (radarr) failed: %s", _format_arr_error("radarr", e))
 
     if any(c in categories for c in ("show", "anime")) and settings.SONARR_URL and settings.SONARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=10) as client:
+            async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
                 r = await client.get(
                     f"{settings.effective_sonarr_url}/api/v3/series",
                     headers={"X-Api-Key": settings.SONARR_API_KEY},
@@ -654,11 +671,11 @@ async def _collect_arr_items(categories: list) -> list:
                         "sonarr_series_type": series_type,
                     })
         except Exception as e:
-            logger.warning("ARR collect (sonarr) failed: %s", e)
+            logger.warning("ARR collect (sonarr) failed: %s", _format_arr_error("sonarr", e))
 
     if "music" in categories and settings.LIDARR_URL and settings.LIDARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=10) as client:
+            async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
                 r = await client.get(
                     f"{settings.effective_lidarr_url}/api/v1/artist",
                     headers={"X-Api-Key": settings.LIDARR_API_KEY},
@@ -677,7 +694,7 @@ async def _collect_arr_items(categories: list) -> list:
                         "service": "lidarr",
                     })
         except Exception as e:
-            logger.warning("ARR collect (lidarr) failed: %s", e)
+            logger.warning("ARR collect (lidarr) failed: %s", _format_arr_error("lidarr", e))
 
     return items
 
