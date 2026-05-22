@@ -1153,7 +1153,19 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
         )
         task_monitor.start(main_task)
 
-        queue: asyncio.Queue = asyncio.Queue(maxsize=_PREFETCH_DEPTH)
+        # Pass 99-fu12: per-category output queues + round-robin consumer.
+        # A single FIFO queue let the music lane (instant raw-cache hits)
+        # monopolise it — movie/show/anime queued behind a huge music backlog
+        # and starved for hours, and the fast lanes' producers blocked on
+        # queue.put (so OMDb/TMDB went idle). Now each category has its own
+        # queue; the consumer pulls up to _CONSUME_BATCH per category in turn,
+        # skipping empties → every category gets a fair turn the moment it has
+        # items, and the fast producers keep fetching at full rate.
+        _CONSUME_BATCH = 10
+        cat_queues: dict[str, asyncio.Queue] = {
+            c: asyncio.Queue(maxsize=_PREFETCH_DEPTH) for c in active_cats
+        }
+        lanes_done: set = set()
 
         from src.services.media_enricher import fetch_and_prepare_raw, process_and_save
         # Pass 60: the bulk consumer now waits on the combined gate — it
@@ -1232,7 +1244,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0
                 elif raw is not None:
-                    await queue.put((pitem, raw))
+                    await cat_queues[pcat].put((pitem, raw))
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0   # reset on any success
                 else:
@@ -1348,6 +1360,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
 
                 lane_tasks = [asyncio.create_task(_worker()) for _ in range(n_workers)]
                 await asyncio.gather(*lane_tasks, return_exceptions=True)
+                lanes_done.add(cat)
 
             lanes = []
             for cat, lane_items in by_cat.items():
@@ -1369,10 +1382,10 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
             if main_task.status.value == "skipped":
                 logger.warning(
                     "[enrichment] Producer lanes aborted (status=skipped). "
-                    "Consumer will drain the remaining queue and exit.",
+                    "Consumer will drain the remaining queues and exit.",
                 )
-
-            await queue.put(None)  # sentinel — consumer stops AFTER all lanes drain
+            # No sentinel needed: the round-robin consumer stops when lanes_done
+            # covers all active categories AND every per-category queue is empty.
 
         from src.services.process_monitor import is_game_running
 
@@ -1427,12 +1440,8 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
             nonlocal processed_total
             consumed = 0
             game_skipped = 0
-            while True:
-                entry = await queue.get()
-                if entry is None:
-                    break
-                citem, raw = entry
-                ccat = citem["media_type"]
+            async def _consume_entry(citem, raw, ccat):
+                nonlocal consumed, game_skipped, processed_total
                 canonical = citem.get("series_title") or citem["title"]
                 task_monitor.update(main_task, message=f"[{ccat}] '{canonical[:50]}'")
                 try:
@@ -1462,6 +1471,30 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                     consumed += 1
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
+
+            # Round-robin (Pass 99-fu12): up to _CONSUME_BATCH items per
+            # category per cycle, skipping empty queues — every category gets a
+            # fair turn the moment it has items, instead of the music lane
+            # monopolising a single FIFO queue. Stop when all lanes finished AND
+            # all per-category queues drained (or the task was cancelled).
+            while True:
+                if main_task.status.value == "skipped":
+                    break
+                progressed = False
+                for ccat in active_cats:
+                    q = cat_queues[ccat]
+                    for _ in range(_CONSUME_BATCH):
+                        try:
+                            citem, raw = q.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        progressed = True
+                        await _consume_entry(citem, raw, ccat)
+                if not progressed:
+                    if len(lanes_done) >= len(active_cats):
+                        break
+                    await asyncio.sleep(0.25)
+
             # Pass 93: surface the producer-side not_found count in the
             # done message so the user can tell at a glance how much of
             # the total was "couldn't find this in any API" vs actual
