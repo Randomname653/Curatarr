@@ -113,7 +113,7 @@ def _ensure_concurrency_primitives() -> None:
     global _SEM_TMDB, _SEM_OMDB, _SEM_JIKAN, _LOCK_ANILIST
     if _SEM_TMDB is None:
         _SEM_TMDB     = asyncio.Semaphore(16)
-        _SEM_OMDB     = asyncio.Semaphore(4)
+        _SEM_OMDB     = asyncio.Semaphore(10)   # Pass 99-fu11: OMDb is now PRIMARY for movie/show + supporter key (100k/day) → raised from 4
         _SEM_JIKAN    = asyncio.Semaphore(2)
         _LOCK_ANILIST = asyncio.Lock()
 
@@ -376,9 +376,42 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             elif "Metacritic" in src:
                 ratings["metacritic"] = val.replace("/100", "")
 
+        # Pass 99-fu11: extract OMDb's CORE fields too, so OMDb can serve as a
+        # PRIMARY source for movie/show (not just a plot/ratings supplement) —
+        # this offloads TMDB, which 429-aborts under the parallel lanes. When
+        # OMDb is used as a supplement, _merge_raw_metadata only reads the
+        # plot/genre/awards/ratings keys, so these extra fields are inert there.
+        def _omdb_int(v):
+            try:
+                return int(str(v).replace(",", "").split()[0])
+            except (ValueError, IndexError, AttributeError):
+                return None
+        def _omdb_float(v):
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+        _na = lambda s: "" if s in ("N/A", None) else s
+        _yr = re.search(r"\d{4}", str(d.get("Year") or ""))
+        actors_str = _na(d.get("Actors", "")) or ""
+        genre_str  = _na(d.get("Genre", "")) or ""
+
         return {
             "source": "omdb",
-            "plot_full": d.get("Plot", ""),
+            # ── core fields (OMDb-as-primary) ──
+            "title": _na(d.get("Title")) or None,
+            "year": int(_yr.group()) if _yr else None,
+            "media_type": "movie" if d.get("Type") == "movie" else "tv",
+            "genres": [g.strip() for g in genre_str.split(",") if g.strip()],
+            "overview": _na(d.get("Plot", "")),
+            "director": _na(d.get("Director", "")),
+            "cast": [a.strip() for a in actors_str.split(",") if a.strip()],
+            "runtime_min": _omdb_int(d.get("Runtime")),
+            "rating": _omdb_float(d.get("imdbRating")),
+            "vote_count": _omdb_int(d.get("imdbVotes")),
+            "imdb_id": d.get("imdbID"),
+            # ── supplement fields (OMDb-as-supplement to TMDB) ──
+            "plot_full": _na(d.get("Plot", "")),
             "awards": d.get("Awards", ""),
             "ratings": ratings,
             "metacritic": d.get("Metascore"),
@@ -1207,7 +1240,22 @@ async def fetch_and_prepare_raw(
 
     # Non-music: fetch raw metadata
     raw = None
-    if anilist_id:
+    omdb_was_primary = False
+    # Pass 99-fu11: OMDb-PRIMARY for movie/show when an imdb_id is known.
+    # OMDb (esp. with a supporter key) is fast + high-limit; using it as the
+    # primary offloads TMDB, which 429-aborts under the parallel lanes. TMDB
+    # then runs only as a 429-safe supplement (keywords/tagline) below.
+    if imdb_id and not is_anime:
+        _op = await fetch_omdb_data(imdb_id)
+        if _op and _op.get("title") and _op.get("overview"):
+            raw = dict(_op)
+            raw["media_type"] = media_type
+            raw.setdefault("keywords", [])
+            omdb_was_primary = True
+
+    if raw is not None:
+        pass  # OMDb-primary already populated raw
+    elif anilist_id:
         raw = await fetch_anilist_full(anilist_id)
     elif anidb_id and is_anime:
         raw = await search_anilist_by_title(title)
@@ -1279,6 +1327,18 @@ async def fetch_and_prepare_raw(
                     tone_hints.append("Comedy is primary genre")
             if tone_hints:
                 raw["tone_hints"] = " | ".join(tone_hints)
+    elif omdb_was_primary:
+        # OMDb is the primary → TMDB supplements keywords/tagline, but a TMDB
+        # 429 must NOT abort the item: skip the supplement, keep OMDb data.
+        try:
+            endpoint = "movie" if media_type == "movie" else "tv"
+            tmdb_sup = (await fetch_tmdb_full(tmdb_id, endpoint) if tmdb_id
+                        else await _tmdb_search_and_fetch(title, endpoint, year=year))
+            if tmdb_sup:
+                supplements.append(tmdb_sup)
+        except TMDBTransientError as _te:
+            logger.info("[enricher] OMDb-primary '%s': TMDB supplement skipped (HTTP %s)",
+                        title, _te.status_code)
     else:
         imdb_id_val = raw.get("imdb_id") or imdb_id
         if imdb_id_val:

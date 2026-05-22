@@ -1313,11 +1313,19 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
             which is a separate, opt-in change.)
             """
             # Worker count per lane, sized to each API's concurrency cap.
+            # Pass 99-fu11: GENTLED. The pre-fu11 movie=8/show=4 overran TMDB
+            # (real limit ~5/s) → 429 → the 5-transient guard aborted those
+            # categories (only music survived). With OMDb-primary (fu11) the
+            # movie/show fetch goes through OMDb (supporter key), so TMDB only
+            # supplements (429-safe). anime stays AniList-primary → keep it to
+            # ONE worker so AniList's Lock(1) + rate limit can't trip the abort.
+            # The single LLM consumer (~12/min) is the ceiling anyway, so a few
+            # fetch workers per lane is plenty.
             lane_workers = {
-                "movie": _PRODUCER_WORKERS,  # TMDB Semaphore(16) — lots of room
-                "show":  4,                  # TMDB
-                "anime": 2,                  # AniList Lock(1) + Jikan Semaphore(2)
-                "music": 1,                  # MusicBrainz Semaphore(1) — hard 1/sec cap
+                "movie": 4,   # OMDb-primary (supporter key); TMDB supplement only
+                "show":  2,   # OMDb-primary
+                "anime": 1,   # AniList Lock(1) — gentle, avoids the 429-abort
+                "music": 1,   # MusicBrainz Semaphore(1) — hard 1/sec cap
             }
             by_cat: dict[str, list] = {}
             for p in interleaved:
