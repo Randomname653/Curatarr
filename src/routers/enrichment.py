@@ -1288,57 +1288,83 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                 logger.warning("Producer error [%s] '%s': %s", pcat, canonical, e)
 
         async def _producer():
-            """Pass 99-fu3: parallel worker pool around ``_process_one``.
+            """Pass 99-fu10: per-category fetch lanes (replaces the single
+            mixed worker pool).
 
-            N workers (``_PRODUCER_WORKERS``, default 8) each pull items
-            from an internal inbox queue and call ``_process_one`` until
-            the inbox is drained. The output ``queue`` (consumed by the
-            LLM polish consumer) is bounded by ``_PREFETCH_DEPTH=500`` so
-            workers throttle naturally via queue.put backpressure when
-            the consumer can't keep up.
+            The pre-fu10 pool put ALL items in one inbox and let 8 generic
+            workers pull from it. With a 66%-music library that was fatal:
+            ~6 of 8 workers grabbed music items and blocked on the
+            MusicBrainz ``Semaphore(1)`` (MB enforces ~1 req/sec) while the
+            TMDB lanes (movie/show — 16 concurrent allowed) sat idle, so
+            throughput collapsed to roughly the music rate (~4/min).
 
-            Pre-99-fu3 the producer was a single sequential loop —
-            empirically 2 items/min (75% of which was waiting on
-            AniList sequential + MB 1-req-sec). With 8 parallel workers
-            and per-service concurrency caps the producer fills the
-            output queue inside a minute and then idles, letting the LLM
-            consumer run at its natural rate (~12 items/min).
+            Now each category gets its OWN worker count, matched to its
+            upstream's concurrency cap. A slow lane (music) can no longer
+            starve a fast lane (movie/show): the lanes fetch independently
+            and all feed the single output ``queue``; the consumer drains
+            whatever is ready. ``_process_one``'s per-category abort /
+            rolling-window / transient-streak state is order-independent,
+            so it works across lanes unchanged.
+
+            NOTE: the consumer is still a single LLM coroutine (~16/min) —
+            after this change THAT, not the producer, is the throughput
+            ceiling. (We deliberately do NOT parallelise the consumer:
+            that needs OLLAMA_NUM_PARALLEL + concurrent client requests,
+            which is a separate, opt-in change.)
             """
-            inbox: asyncio.Queue = asyncio.Queue()
+            # Worker count per lane, sized to each API's concurrency cap.
+            lane_workers = {
+                "movie": _PRODUCER_WORKERS,  # TMDB Semaphore(16) — lots of room
+                "show":  4,                  # TMDB
+                "anime": 2,                  # AniList Lock(1) + Jikan Semaphore(2)
+                "music": 1,                  # MusicBrainz Semaphore(1) — hard 1/sec cap
+            }
+            by_cat: dict[str, list] = {}
             for p in interleaved:
-                inbox.put_nowait(p)
-            total_items = len(interleaved)
+                by_cat.setdefault(p["media_type"], []).append(p)
+
+            async def _lane(cat: str, lane_items: list, n_workers: int) -> None:
+                inbox: asyncio.Queue = asyncio.Queue()
+                for p in lane_items:
+                    inbox.put_nowait(p)
+
+                async def _worker() -> None:
+                    while True:
+                        if main_task.status.value == "skipped":
+                            return
+                        try:
+                            pitem = inbox.get_nowait()
+                        except asyncio.QueueEmpty:
+                            return
+                        await _process_one(pitem)
+
+                lane_tasks = [asyncio.create_task(_worker()) for _ in range(n_workers)]
+                await asyncio.gather(*lane_tasks, return_exceptions=True)
+
+            lanes = []
+            for cat, lane_items in by_cat.items():
+                if not lane_items:
+                    continue
+                n = lane_workers.get(cat, 4)
+                logger.info(
+                    "[enrichment] lane '%s': %d items, %d workers", cat, len(lane_items), n,
+                )
+                lanes.append(asyncio.create_task(_lane(cat, lane_items, n)))
+
             logger.info(
-                "[enrichment] Producer pool: %d workers, %d items to process, "
-                "output queue depth %d",
-                _PRODUCER_WORKERS, total_items, _PREFETCH_DEPTH,
+                "[enrichment] Producer lanes started (%d categories, %d items total, "
+                "output queue depth %d). Consumer is the ceiling at ~16/min.",
+                len(lanes), len(interleaved), _PREFETCH_DEPTH,
             )
-
-            async def _worker(worker_id: int) -> None:
-                while True:
-                    if main_task.status.value == "skipped":
-                        return
-                    try:
-                        pitem = inbox.get_nowait()
-                    except asyncio.QueueEmpty:
-                        return
-                    await _process_one(pitem)
-
-            workers = [
-                asyncio.create_task(_worker(i)) for i in range(_PRODUCER_WORKERS)
-            ]
-            await asyncio.gather(*workers, return_exceptions=True)
+            await asyncio.gather(*lanes, return_exceptions=True)
 
             if main_task.status.value == "skipped":
-                remaining = inbox.qsize()
                 logger.warning(
-                    "[enrichment] Producer pool aborted with %d/%d items un-fetched — "
-                    "main_task was cancelled (status=skipped). Consumer will drain "
-                    "remaining queue and exit.",
-                    remaining, total_items,
+                    "[enrichment] Producer lanes aborted (status=skipped). "
+                    "Consumer will drain the remaining queue and exit.",
                 )
 
-            await queue.put(None)  # sentinel — consumer will stop
+            await queue.put(None)  # sentinel — consumer stops AFTER all lanes drain
 
         from src.services.process_monitor import is_game_running
 
