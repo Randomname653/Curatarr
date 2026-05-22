@@ -10,6 +10,14 @@ import asyncio
 import sys
 sys.path.insert(0, ".")
 
+# Windows consoles default to cp1252, which crashes on the → / ✅ in our
+# prints. Force UTF-8 so the rebuild never dies on a status line.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 from src.services.setup_wizard import build_ollama_models
 from src.config import settings
 

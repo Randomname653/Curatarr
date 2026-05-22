@@ -182,10 +182,21 @@ explicit `_already_enriched` marker fixed that.
   `profile["prompt_version"] = _PROMPT_VERSION`. 90-day TTL.
 
 **`_PROMPT_VERSION` (in media_enricher.py)**: bump this whenever the curator
-or summariser system prompts change in a way that should invalidate cached
-profiles. Next run treats version-mismatched polished entries as "needs
-re-polish", falls through to the tier-2 raw cache (no API re-fetch), and
-re-runs only the LLM. A bump costs LLM-compute, not API quota.
+or summariser system prompts change — OR the summariser model changes — in a
+way that should invalidate cached profiles. Next run treats version-mismatched
+polished entries as "needs re-polish", falls through to the tier-2 raw cache
+(no API re-fetch), and re-runs only the LLM. A bump costs LLM-compute, not API
+quota. Currently `v2` (bumped from `v1` on the gpt-oss:20b → granite4.1:8b
+summariser swap, Pass 99-fu9).
+
+**A bump alone does NOT re-polish already-LLM-done items.** The `enrichment.py`
+Step-5 pre-filter skips rows with `EnrichmentStatus.enriched=True AND error IS
+NULL` *before* the producer ever consults the cache version. So a bump only
+re-polishes what the producer actually sees (never-enriched + rule-based/failed
+rows). To re-polish the WHOLE library after a bump, run with `force=True` (the
+"🔄 Force Re-Enrich" button) — it bypasses the pre-filter; the raw cache still
+spares the API calls. **Two independent skip layers must BOTH yield**: cache
+`prompt_version` (producer side) + `EnrichmentStatus.enriched` (pre-filter side).
 
 `id_key` = `anilist_id or anidb_id or tmdb_id or tvdb_id or title[:40]`.
 **Gotcha (historical):** `_write_enrichment_db` also writes
@@ -343,10 +354,10 @@ wall-clock catches up.
 
 Curatarr runs two Ollama model roles that compete for VRAM:
 
-- **Curator** (`curatarr-curator`, large — chat, recommendations, deletion
-  pitches)
-- **Summariser** (`curatarr-summarizer`, smaller — enrichment polish, memory
-  extraction)
+- **Curator** (`curatarr-curator`, large — `qwen3.6:27b` — chat,
+  recommendations, deletion pitches)
+- **Summariser** (`curatarr-summarizer`, small+fast — `granite4.1:8b` —
+  enrichment polish, memory extraction; backup `granite4.1:3b`)
 
 `curator_start()` marks the curator as priority → the summariser is evicted
 from VRAM → the enrichment consumer pauses. `curator_done()` releases it.
@@ -455,6 +466,31 @@ without understanding why they exist.
 - **Two LLM workloads contend** (§11): enrichment summariser vs curator
   (chat + deletion pitches). 0-throughput enrichment usually = curator busy,
   not a bug.
+- **Summariser = `granite4.1:8b`, and valid-JSON ≠ accurate** (model bench,
+  2026-05). The summariser is the enrichment-throughput bottleneck. gpt-oss:20b
+  ran ~12.6 s/item AND occasionally emitted *invalid* JSON (verbose; hit the
+  2600-token cap mid-object). granite4.1:8b: ~3.2 s/item, 97% valid JSON over
+  36 hard items, factually accurate + rich prose. **CRITICAL warning:**
+  `nemotron-3-nano:4b` is fast and reads beautifully but **hallucinates** — it
+  invented "Paul sells refugees to Hutu militias for food" for *Hotel Rwanda*
+  and movie-only characters (El Drago/Woonan) for *One Piece*, systematically
+  skewing toward "edgy/dark" to sound clever. Never choose a summariser on prose
+  vibe; fact-check the `embedding_text` against known titles. `granite4.1:3b` is
+  the fast 100%-JSON backup (accurate but drier).
+- **The summariser's `num_ctx` is pinned in the Modelfile, not the request**
+  (model bench). `build_models.py` → `setup_wizard.create_model` bakes
+  `PARAMETER num_ctx 8192` into `curatarr-summarizer`; `ollama_options` sends NO
+  num_ctx. That is why production loads lean (~7 GB) instead of at the base
+  model's native context (granite default = 131072 → ~74 GB → spills to CPU).
+  When benchmarking a candidate as a *raw base model*, you MUST pin
+  `num_ctx=8192` or the VRAM + first-item timings are meaningless artifacts.
+- **`force=True` does NOT clear LLM profiles** (latent bug; task filed). The
+  enrichment.py force-clear `DELETE … LIKE 'enriched:{cat}:%'` omits the
+  `_CACHE_VERSION` (`v2:`) key prefix that `MetadataCache.set_cache` adds, so it
+  matches zero rows. Force re-enrich therefore re-polishes only because a
+  `_PROMPT_VERSION` bump invalidates the profiles by *version*, not because the
+  clear deleted them. The emb-cache clear (`%:emb:%`, leading `%`) does work. Fix:
+  prefix the pattern with `{_CACHE_VERSION}:`.
 
 ---
 
@@ -463,9 +499,13 @@ without understanding why they exist.
 `.env` (written by setup wizard). Key knobs:
 
 - `PLEX_URL` / `PLEX_TOKEN`, `OLLAMA_ENDPOINT`
-- `BASE_CURATOR_MODEL` / `BASE_SUMMARIZER_MODEL` / `EMBEDDING_MODEL` —
-  swapping the summariser to a smaller model (e.g. dolphin3 8B) is the
-  fastest way to speed up the enrichment backlog at some quality cost.
+- `BASE_CURATOR_MODEL` (`qwen3.6:27b`) / `BASE_SUMMARIZER_MODEL`
+  (`granite4.1:8b`, backup `granite4.1:3b`) / `EMBEDDING_MODEL`. The summariser
+  is the enrichment-throughput bottleneck — it was switched gpt-oss:20b →
+  granite4.1:8b (≈3.9× faster, *more* accurate, see §15). After changing it:
+  edit `.env` → `python build_models.py` (rebakes the `curatarr-*` tags, bakes
+  `num_ctx 8192`) → bump `_PROMPT_VERSION` → restart → `force=True` re-enrich.
+  Don't pick on prose vibe — fact-check (§15 nemotron warning).
 - `RADARR_URL`/`_API_KEY`, `SONARR_*`, `LIDARR_*`
 - `TMDB_API_KEY` (required for movies/shows), `OMDB_API_KEY`,
   `LASTFM_API_KEY`, `SPOTIFY_CLIENT_ID`/`_SECRET` (all optional)

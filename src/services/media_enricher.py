@@ -45,7 +45,16 @@ logger = logging.getLogger(__name__)
 #
 # Format: opaque short string. Bump format is "v{n}" for clarity but
 # anything that changes the literal counts as a bump.
-_PROMPT_VERSION = "v1"
+#
+# CAVEAT: a bump only re-polishes items the producer actually SEES. The
+# enrichment.py Step-5 pre-filter skips items already marked
+# EnrichmentStatus.enriched=True + error IS NULL — so to re-polish the
+# ALREADY-LLM-done items after a bump, run enrichment with force=True
+# (force bypasses that pre-filter; the raw cache still spares the API calls).
+#
+# Pass 99-fu9: bumped v1 -> v2 when switching the summariser base model
+# gpt-oss:20b -> granite4.1:8b, to re-polish the whole library uniformly.
+_PROMPT_VERSION = "v2"
 
 # Pass 99-fu2: tier-2 raw cache TTL. Long enough that prompt bumps don't
 # trigger API re-fetches; short enough that genuinely-changed upstream
