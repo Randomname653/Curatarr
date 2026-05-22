@@ -576,9 +576,16 @@ def _merge_raw_metadata(primary: dict, *supplements) -> dict:
                 elif demo in ("Seinen", "Josei"):
                     tone_hints.append(f"{demo} demographic — can be mature/dark/complex")
 
-        # Tone hints from MAL content rating
+        # Tone hints from MAL content rating. Jikan puts a STRING here
+        # (e.g. "R - 17+", "Rx - Hentai"); OMDb/TMDB put a NUMERIC score in
+        # `rating`, which is NOT a content rating. Guard the type so a float
+        # can't crash the ``in`` checks below — Pass 99-fu11: once
+        # fetch_omdb_data started returning a float `rating`, this line threw
+        # ``argument of type 'float' is not iterable`` for EVERY movie/show in
+        # _merge_raw_metadata, so _process_one errored on each one and the
+        # movie/show/anime lanes produced nothing (only cached music flowed).
         mal_rating = sup.get("rating", "")
-        if mal_rating:
+        if isinstance(mal_rating, str) and mal_rating:
             extra_context.append(f"Content rating: {mal_rating}")
             if "Rx" in mal_rating or "Hentai" in mal_rating:
                 tone_hints.append("Adult/explicit sexual content — do not sanitize in summary")
