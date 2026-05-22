@@ -17,6 +17,7 @@ import asyncio
 import base64
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -31,8 +32,57 @@ _ARTISTS_URL = "https://api.spotify.com/v1/artists"
 _token: Optional[str] = None
 _token_expires_at: float = 0.0
 
-# 429 backoff state (monotonic clock)
+# 429 backoff state (monotonic clock — for SHORT transient burst limits only)
 _backoff_until: float = 0.0
+
+# Pass 99-fu8: persistent backoff for LONG (dev-mode-quota) bans.
+#
+# Why this exists — diagnosed live: a Spotify app in "Development Mode"
+# (the default for new apps since the 2025 API-policy change) has a tiny
+# request quota. A single bulk genre-resolution run blows it instantly,
+# and Spotify responds with a FLAT 24-hour ban: the /v1/tracks +
+# /v1/artists data endpoints return HTTP 429 with ``retry-after: 86400``
+# while the token endpoint still returns 200. Crucially, every fresh hit
+# during the ban can RESET the 24h window — so the pre-fu8 module-level
+# monotonic backoff (lost on every server restart) meant we re-knocked
+# every restart / daily pipeline run and the ban never cleared. "Rate
+# limited forever."
+#
+# Fix: when retry-after exceeds _PERSIST_THRESHOLD, persist
+# ``spotify_backoff_until`` (wall-clock ISO, survives restarts) to
+# AppState and skip Spotify entirely until it elapses — giving the ban a
+# chance to actually expire, and letting Last.fm carry the genre work in
+# the meantime. Short transient 429s (retry-after <= threshold) still use
+# the fast in-process monotonic backoff.
+_PERSIST_THRESHOLD = 300   # seconds; retry-after above this = a "come back much later" ban
+
+
+def _persisted_backoff_remaining() -> float:
+    """Seconds left on a persisted Spotify backoff (0 if none/expired/error)."""
+    try:
+        from src.services.app_state import get_state
+        raw = get_state("spotify_backoff_until")
+        if not raw:
+            return 0.0
+        until = datetime.fromisoformat(raw)
+        return max(0.0, (until - datetime.utcnow()).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def _persist_backoff(seconds: float) -> None:
+    """Persist a long backoff to AppState (wall-clock, survives restarts)."""
+    try:
+        from src.services.app_state import force_set_state
+        until = datetime.utcnow() + timedelta(seconds=seconds)
+        force_set_state("spotify_backoff_until", until.isoformat())
+        logger.warning(
+            "[spotify] persisted backoff until %s (%.1f h) — will not call "
+            "Spotify again until then; Last.fm handles genres meanwhile",
+            until.isoformat(timespec="seconds"), seconds / 3600,
+        )
+    except Exception as e:
+        logger.warning("[spotify] failed to persist backoff: %s", e)
 
 
 async def _get_token(client_id: str, client_secret: str) -> Optional[str]:
@@ -111,6 +161,13 @@ async def _batch_get(
             elif r.status_code == 429:
                 consecutive_429 += 1
                 retry_after = float(r.headers.get("retry-after", "30")) + 2
+                # Pass 99-fu8: a LONG retry-after is a dev-mode-quota ban,
+                # not a transient burst limit. Persist it to AppState so it
+                # survives restarts and we stop re-knocking (which can reset
+                # the 24h window). Then bail to Last.fm for the duration.
+                if retry_after > _PERSIST_THRESHOLD:
+                    _persist_backoff(retry_after)
+                    return results, True
                 _backoff_until = time.monotonic() + retry_after
                 if retry_after > 60 or consecutive_429 >= 2:
                     logger.warning(
@@ -168,6 +225,19 @@ async def resolve_track_genres(
     """
     if not track_ids or not client_id or not client_secret:
         return {}, False
+
+    # Pass 99-fu8: honour a persisted long-ban BEFORE doing anything —
+    # don't even fetch a token. Re-knocking during a dev-mode 24h ban can
+    # reset the window, so the cheapest + safest move is to stay silent
+    # until it elapses and let the caller fall through to Last.fm.
+    remaining = _persisted_backoff_remaining()
+    if remaining > 0:
+        logger.warning(
+            "[spotify] persisted backoff active — %.0f s (%.1f h) remaining; "
+            "skipping Spotify, handing to Last.fm",
+            remaining, remaining / 3600,
+        )
+        return {}, True
 
     token = await _get_token(client_id, client_secret)
     if not token:

@@ -248,6 +248,18 @@ via the standalone scripts.
 - **ext-script rows**: Spotify-seeded artists with no Plex section get
   `plex_rating_key` prefix `ext-script:`. They're excluded from per-library
   "% enriched" counts (Pass 91b) but still feed the music taste vector.
+- **Spotify dev-mode quota** (Pass 99-fu8): a Spotify app in Development
+  Mode (the default) has a tiny quota; a bulk Phase-1.5 run blows it and
+  Spotify returns a flat 24 h ban (`retry-after: 86400` on the data
+  endpoints, token endpoint still 200). `spotify_client.py` persists a
+  long retry-after to AppState (`spotify_backoff_until`, wall-clock,
+  survives restarts) and skips Spotify entirely until it elapses — re-
+  knocking during the ban can reset the 24 h window, so silence is what
+  lets it expire. Last.fm (no such quota) carries Phase-1.5/2 genre work
+  meanwhile. Short transient 429s still use an in-process monotonic
+  backoff. To actually fix the quota: apply for Spotify Extended Quota
+  Mode (slow, uncertain since the 2025 policy change) — or just rely on
+  Last.fm, which is plenty for taste-vector genres.
 
 ---
 
