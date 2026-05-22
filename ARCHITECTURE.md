@@ -146,12 +146,27 @@ over an `asyncio.Queue(maxsize=500)`:
   full `/api/v3/movie` + `/api/v1/artist` payloads are 15-30 MB and time
   out at the old 10 s under load). Failures use `_format_arr_error` so the
   log isn't an empty string.
-- **Producer** = pool of `_PRODUCER_WORKERS` (8) coroutines pulling from an
-  internal inbox queue, each calling `_process_one(pitem)`. Per-service
-  concurrency caps live in `media_enricher.py` (see §5.4).
+- **Producer** = **per-category fetch lanes** (Pass 99-fu10), one inbox +
+  worker group per category, all feeding the shared queue: `movie`
+  =`_PRODUCER_WORKERS`(8), `show`=4, `anime`=2, `music`=1. Each worker calls
+  `_process_one(pitem)`; per-service caps live in `media_enricher.py` (§5.4).
+  WHY lanes: a single mixed 8-worker pool let the **66%-music** library pile
+  ~6/8 workers onto the MusicBrainz `Semaphore(1)` (MB enforces ~1 req/sec)
+  while TMDB (movie/show, 16 concurrent) sat idle → throughput collapsed to
+  ~4/min. Lanes isolate the slow music lane so it can't starve the fast TMDB
+  lanes. `_process_one`'s per-category abort/rolling/streak state is
+  order-independent, so the lanes need no change there.
 - **Consumer** = single coroutine running the LLM summariser per item
-  (serial — the LLM is the bottleneck, parallelising it would just thrash
-  VRAM).
+  (serial). After the lane fix THIS is the throughput ceiling (~16/min =
+  granite ~3.2 s + embed + db/chroma). It is **not** a VRAM problem — granite
+  (~7 GB) + nomic (~0.6 GB) leave ~16 GB free. Parallelising it would need
+  `OLLAMA_NUM_PARALLEL` **and** a concurrent client; the app sends one request
+  at a time, which is why setting that env var alone does nothing (a past
+  attempt "failed" for exactly this reason).
+- **Two hard throughput floors** for a full re-enrich: the single consumer
+  (~16/min ⇒ ~30 h for ~28 k items) and the MusicBrainz 1-req/sec cap (~17 k
+  uncached music artists ⇒ ~12-24 h, irreducible). Lanes make music
+  non-blocking, not faster.
 
 ### 5.3 `fetch_and_prepare_raw` — the two-tier cache + tri-state return
 
