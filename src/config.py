@@ -44,13 +44,13 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "nomic-embed-text"
     # Primary models — .env is the single source of truth.
     # Defaults here are only used when .env has no entry.
-    BASE_CURATOR_MODEL: str = "qwen3.6:27b"       # chat + recommendations
-    BASE_SUMMARIZER_MODEL: str = "gpt-oss:20b"    # enrichment + memory extraction
+    BASE_CURATOR_MODEL: str = "qwen3.6:27b"        # chat + recommendations
+    BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"   # enrichment + memory extraction
     # Backup models — defined in .env for easy switching, not yet used in code.
     BACKUP_CURATOR_MODEL: str = "laguna-xs.2:q4_K_M"
-    BACKUP_SUMMARIZER_MODEL: str = "nemotron-3-nano:4b"
+    BACKUP_SUMMARIZER_MODEL: str = "granite4.1:3b"
     # When True, <think>...</think> blocks are stripped from LLM responses.
-    # Set False — current models (gpt-oss:20b, qwen3.6:27b) do not emit think blocks.
+    # Set False — current models (granite4.1:8b, qwen3.6:27b) do not emit think blocks.
     # Keep this flag so switching to a reasoning model only requires an .env change.
     LLM_THINK_TAGS: bool = False
     # Kept for .env backward-compat; no longer used — enrichment uses a single LLM worker.
