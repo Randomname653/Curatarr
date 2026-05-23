@@ -1266,10 +1266,10 @@ async def fetch_and_prepare_raw(
         # writes the polished cache back under the same id_key.
         raw_data = dict(raw_hit["response"])
         # Phase 2 #38b: cached blob carries its own tier via
-        # ``_tier_at_fetch`` (legacy cached blobs from pre-#38b don't —
+        # ``cache_tier`` (legacy cached blobs from pre-#38b don't —
         # we default them to "full" since the only writer back then was
         # the canonical full path).
-        cached_tier = raw_data.get("_tier_at_fetch", "full")
+        cached_tier = raw_data.get("cache_tier", "full")
         if cached_tier == "fast" and not fast_only:
             # Caller wants a full enrichment but cache only has fast-tier
             # data — bypass the cache so a real full fetch runs. The
@@ -1352,7 +1352,7 @@ async def fetch_and_prepare_raw(
         # can recognise a fast blob and force a re-fetch instead of
         # returning the cached fast data. Stored AT-write because a
         # subsequent full pass will overwrite the same key.
-        artist_raw["_tier_at_fetch"] = "fast" if fast_only else "full"
+        artist_raw["cache_tier"] = "fast" if fast_only else "full"
         _write_raw_cache(media_type, id_key, artist_raw)
         artist_raw["_cache_key"] = cache_key
         artist_raw["_plex_rating_key"] = plex_rating_key
@@ -1528,7 +1528,7 @@ async def fetch_and_prepare_raw(
     # #38b: stamp the tier into the cached blob (see music branch above
     # for the rationale). The tier-2-hit read path picks this up.
     raw["plex_rating_key"] = plex_rating_key
-    raw["_tier_at_fetch"] = "fast" if fast_only else "full"
+    raw["cache_tier"] = "fast" if fast_only else "full"
     _write_raw_cache(media_type, id_key, raw)
 
     raw["_cache_key"] = cache_key
@@ -1542,6 +1542,12 @@ async def fetch_and_prepare_raw(
     raw["_sources_state"] = _state
     raw["_fetch_tier"] = "fast" if fast_only else "full"
     raw["_provisional"] = fast_only
+    # #38a diagnostic — proves the fresh-fetch path is hit + the new
+    # transport fields land on raw. Logged once-per-item at DEBUG so
+    # production stays quiet; flip to INFO temporarily when verifying
+    # a fresh server start picked up the new code.
+    logger.debug("[enricher] #38a fresh-fetch returns: title=%r tier=%r sources=%s",
+                 title, raw["_fetch_tier"], list(_state.keys()))
     return raw
 
 
