@@ -58,7 +58,7 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 |---|---|---|
 | `users` | Accounts | `is_admin`, `is_active` (soft-disable, never DROP) |
 | `watch_history` | Every playback event | per Plex `accountID`. `source` = plex/spotify/manual. `plex_item_id` rewritten from `spotify:track:…` to a Plex key when Phase 1 matches. `artist_mbid` filled by Phase 1.4. `genres` filled by Phase 1.5/2. |
-| `enrichment_status` | One row per enriched item | THE pipeline state table. `plex_rating_key` is the UNIQUE key. See §5 for the six states encoded in `(enriched, error)`. |
+| `enrichment_status` | One row per enriched item | THE pipeline state table. `plex_rating_key` is the UNIQUE key. See §5 for the six states encoded in `(enriched, error)`. Phase-2 columns (Pass 99-fu13, #37): `fetch_tier` (`"fast"`/`"full"`/NULL=full-legacy), `sources_state` (JSON of per-API status + timestamp), `provisional` (denormalised "still upgradable" flag). Read-side default for NULL `fetch_tier` is "full" — back-compat with pre-fu13 rows. Index `idx_es_fetch_tier` keeps the upgrade-scheduler query (#41) cheap. |
 | `arr_enrichment_status` | ARR-side enrichment mirror | written for items that have an `arr_id`+`service` |
 | `media_identity` | Cross-ref ID store | `plex_rating_key` → tmdb/tvdb/anilist/anidb/mal/imdb. Canonical ID override for the enricher. |
 | `taste_vectors` | Per-user taste (legacy/plain) | genre/actor/director affinity JSON + `summary_text` |

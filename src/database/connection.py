@@ -101,6 +101,22 @@ def _migrate_columns() -> None:
         # Pass 17: file-level activity timestamp on each deletion proposal.
         # NULL on existing rows — backfilled at next proposal-generation.
         ("deletion_proposals",    "latest_activity_at", "DATETIME"),
+        # Pass 99-fu13 / Phase 2 #37: per-item enrichment-source tracking.
+        # ``fetch_tier`` distinguishes a provisional fast-pass enrichment
+        # ("fast" — only the cheap sources were consulted) from the
+        # canonical full pass ("full"); NULL on legacy rows is treated as
+        # "full" by the readers, so the migration is back-compat safe.
+        # ``sources_state`` holds a JSON map of per-source status +
+        # timestamps so the source-upgrade scheduler (#41) can find
+        # items where a slow source ("mb", "tmdb") is still pending.
+        # ``provisional`` is the denormalised "still upgradable" flag —
+        # True while a fast row hasn't been promoted, flipped to False
+        # once the slow source has been tried (whether it found data or
+        # not). All three are nullable / default-false; #38 onwards
+        # writes them.
+        ("enrichment_status",     "fetch_tier",    "VARCHAR(16)"),
+        ("enrichment_status",     "sources_state", "TEXT"),
+        ("enrichment_status",     "provisional",   "BOOLEAN DEFAULT 0"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
@@ -115,6 +131,10 @@ def _migrate_columns() -> None:
         # proposals. Range query on a few hundred rows, but the index keeps
         # it cheap even when proposals are regenerated frequently.
         ("idx_dp_latest_activity",       "deletion_proposals", "latest_activity_at"),
+        # Pass 99-fu13 / Phase 2 #37: keeps the source-upgrade scheduler
+        # query (#41) cheap as the table grows past 50 k rows. Typical
+        # query: ``WHERE fetch_tier = 'fast' AND provisional = 1``.
+        ("idx_es_fetch_tier",            "enrichment_status", "fetch_tier"),
     ]
 
     import logging as _logging
