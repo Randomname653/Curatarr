@@ -498,6 +498,7 @@ APScheduler. Defaults:
 | ARR pre-enrichment | 02:30 daily | **batch-capped at `ARR_PRE_ENRICH_BATCH`=80** — a trickle, NOT a backlog-drainer. To clear a big backlog you must run the manual `/api/enrichment/start` (no cap). |
 | Music match + Last.fm | daily | the in-app music pipeline |
 | Enrichment TTL refresh | daily | re-queues stale profiles, prefers un-enriched first, preserves `enriched_at` (Pass 86) |
+| Source-upgrade pass | hourly (:15) | Phase 2 #41 — promotes 30 oldest `provisional=True, fetch_tier='fast'` rows by re-enriching with `fast_only=False`. Bypasses the watch_history + ARR collect (uses `specific_plex_rating_keys` to target rows directly + `force=True` to defeat the LLM-done pre-filter). No-ops on game-mode or main-enrichment contention. Ceiling is the MB 1-req/s for music — 30/hour matches that pacing. ~22 days to drain ~16 k provisional music items. |
 | Proactive cache fill | 30 min | |
 | ARR library cache refresh | 30 min | |
 | Memory decay | weekly | |

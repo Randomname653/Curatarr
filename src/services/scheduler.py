@@ -211,6 +211,21 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=7200,
     )
+    # Phase 2 #41: hourly source-upgrade pass.
+    # Promotes a small batch of provisional (fast-tier) rows to full-tier
+    # by re-running the canonical fetch path. Sized to be gentle (30/hr,
+    # ~720/day) — the slow APIs (MB 1-req/s, Jikan 3-req/s) set the
+    # natural ceiling anyway. Cleanly no-ops on game-mode + main-run
+    # contention. Starts on the half-hour so it doesn't fight with the
+    # 02:30 ARR pre-enrich or the 03:30 TTL refresh head-to-head.
+    scheduler.add_job(
+        _tracked("source_upgrade")(job_source_upgrade),
+        CronTrigger(minute=15),     # every hour at :15
+        id="source_upgrade",
+        name="Hourly source-upgrade pass (Phase 2 #41)",
+        replace_existing=True,
+        misfire_grace_time=1800,
+    )
     scheduler.add_job(
         _tracked("music_pipeline")(job_music_pipeline),
         CronTrigger(hour=4, minute=0),
@@ -254,6 +269,7 @@ def start_scheduler():
 
     scheduler.start()
     logger.info("Scheduler started: plex_sync(24h), arr_sync(24h), arr_pre_enrich(02:30), "
+                "ttl_refresh(03:30), source_upgrade(hourly), music_pipeline(04:00), "
                 "proactive(30min), memory_decay(weekly), orphan_check(weekly), "
                 "db_vacuum(weekly), arr_cache_refresh(30min), game_watcher(30s)")
 
@@ -767,6 +783,109 @@ async def job_arr_pre_enrich():
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] ARR pre-enrichment failed: %s", e, exc_info=True)
+
+
+async def job_source_upgrade():
+    """
+    Phase 2 #41: hourly source-upgrade pass. Picks the oldest N
+    provisional + fast-tier rows from EnrichmentStatus and re-enriches
+    them with ``fast_only=False``, promoting them to ``fetch_tier='full'``
+    + ``provisional=False`` in the process.
+
+    Batch size + cadence chosen for gentleness over speed: 30 items/hour
+    means a max throughput of ~720 promotions/day, which matches the
+    natural MusicBrainz 1-req/sec cap (the music lane is the slow
+    source we're trying to upgrade). At ~16k fast-music items the
+    full library would drain in ~22 days — sanity-checked against
+    user expectations: you wanted "background upgrade", not "bang it
+    all through in a night".
+
+    Skip conditions:
+      * No active user (no admin).
+      * Game-mode active (we always defer the LLM workload to gaming).
+      * Main enrichment already running (acquire_state_lock fails).
+    Cleanly no-ops in any of these cases — the lock is held by the
+    main run + we don't want to fight over the consumer slot.
+    """
+    logger.info("[scheduler] Starting source-upgrade pass (Phase 2 #41)")
+    from src.services.task_monitor import task_monitor
+    from src.services.app_state import get_state
+    from src.services.process_monitor import is_game_running
+
+    task = task_monitor.create(name="Source Upgrade", category="enrichment")
+    task_monitor.start(task)
+
+    try:
+        if is_game_running():
+            task_monitor.skip(task, "Game-mode active — deferring upgrade pass")
+            return
+
+        from src.database.connection import get_db_session
+        from src.database.models import User, EnrichmentStatus
+
+        with get_db_session() as db:
+            admin = db.query(User).filter(User.is_active == True).first()
+            if not admin:
+                task_monitor.skip(task, "No active users — skipping upgrade pass")
+                return
+            user_id = admin.id
+
+            # Pick the oldest N provisional+fast items. enriched_at is
+            # what got stamped when the fast pass landed, so ASC =
+            # longest-waiting items go first.
+            BATCH = 30
+            rows = (
+                db.query(EnrichmentStatus.plex_rating_key)
+                .filter(
+                    EnrichmentStatus.fetch_tier == "fast",
+                    EnrichmentStatus.provisional == True,
+                    EnrichmentStatus.enriched == True,
+                )
+                .order_by(EnrichmentStatus.enriched_at.asc())
+                .limit(BATCH)
+                .all()
+            )
+            target_keys = [r.plex_rating_key for r in rows]
+
+        if not target_keys:
+            task_monitor.done(task, "No provisional rows — nothing to upgrade")
+            logger.info("[scheduler] Source-upgrade pass: 0 candidates")
+            return
+
+        # Atomic compare-and-set so a /api/enrichment/start at the same
+        # moment can't race past us. The main run holds the same lock
+        # for the duration of its pipeline.
+        from src.services.app_state import acquire_state_lock, release_state_lock
+        if not acquire_state_lock("enrichment_running"):
+            task_monitor.skip(task,
+                "Main enrichment already running — deferring upgrade pass")
+            return
+
+        try:
+            task_monitor.update(task, message=f"Upgrading {len(target_keys)} provisional rows")
+            from src.routers.enrichment import _run_enrichment
+            # force=True so the pre-filter doesn't skip these items
+            # (they're enriched=True). specific_plex_rating_keys
+            # short-circuits watch_history + ARR collect. fast_only=
+            # False is the whole point — run the canonical full path.
+            await _run_enrichment(
+                user_id=user_id,
+                categories=[],          # ignored when specific keys given
+                source="upgrade",       # ignored, just for the log
+                limit=None,
+                force=True,             # bypass the LLM-done pre-filter
+                fast_only=False,
+                specific_plex_rating_keys=target_keys,
+            )
+            task_monitor.done(task, f"Upgrade pass complete ({len(target_keys)} items)")
+            logger.info("[scheduler] Source-upgrade pass done: %d items processed",
+                        len(target_keys))
+        finally:
+            release_state_lock("enrichment_running")
+
+    except Exception as e:
+        task_monitor.error(task, str(e))
+        logger.error("[scheduler] Source-upgrade pass failed: %s", e, exc_info=True)
 
 
 async def job_enrichment_ttl_refresh():
