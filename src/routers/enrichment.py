@@ -972,11 +972,21 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             # at the same file — concurrent writers used to deadlock here.
             _mc = MetadataCache()
             try:
+                # Phase 2 #39 fix: every key in api_cache is prefixed with the
+                # ``_CACHE_VERSION`` (currently "v2:") by ``MetadataCache.set_cache``.
+                # The pre-fix LIKE 'enriched:{cat}:%' matched zero rows, so
+                # ``force=True`` silently never cleared the polished cache —
+                # users hitting "🔄 Force Re-Enrich" expected a fresh fetch but
+                # got cache-hits via the polished tier-1 path. Documented as a
+                # latent bug in ARCHITECTURE.md §15 since #38a; fixed now so
+                # force re-enrich actually does what its name promises +
+                # streaming-merge (#39) fires for every item.
+                from src.cache.metadata_cache import _CACHE_VERSION as _CV
                 for cat in categories:
                     if source in ("watch_history", "both"):
                         deleted = _mc.conn.execute(
                             "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                            (f"enriched:{cat}:%",)
+                            (f"{_CV}:enriched:{cat}:%",)
                         ).rowcount
                         logger.info("Cleared %d cache entries for %s", deleted, cat)
                     elif source == "arr":
@@ -985,7 +995,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                         for svc in ("radarr", "sonarr", "lidarr"):
                             deleted += _mc.conn.execute(
                                 "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                                (f"enriched:{cat}:{svc}:%",)
+                                (f"{_CV}:enriched:{cat}:{svc}:%",)
                             ).rowcount
                         logger.info("Cleared %d ARR cache entries for %s", deleted, cat)
 
