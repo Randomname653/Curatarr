@@ -55,7 +55,13 @@ logger = logging.getLogger(__name__)
 #
 # Pass 99-fu9: bumped v1 -> v2 when switching the summariser base model
 # gpt-oss:20b -> granite4.1:8b, to re-polish the whole library uniformly.
-_PROMPT_VERSION = "v2"
+# Phase-2 quality pass: bumped v2 -> v3 after adding the GROUNDING
+# DISCIPLINE block to SUMMARIZE_PROMPT (4 rules: source-trace, exact
+# numbers, tags-are-themes-not-character-bios, tone-hints-authoritative).
+# A/B test over 22 control+random items: 1 actual fix (Danny Phantom),
+# 0 regressions, 0 parse errors. Items re-polish naturally as the cache
+# read sees the version mismatch + falls through to fresh polish.
+_PROMPT_VERSION = "v3"
 
 # Pass 99-fu2: tier-2 raw cache TTL. Long enough that prompt bumps don't
 # trigger API re-fetches; short enough that genuinely-changed upstream
@@ -1193,6 +1199,27 @@ Output this exact JSON (no extra text, no markdown fences):
 
 SUMMARIZE_PROMPT = """[MODE: METADATA STRUCTURING]
 Produce a structured JSON profile. Be precise — this data drives semantic vector search and recommendations.
+
+GROUNDING DISCIPLINE — apply these strictly so the output stays faithful to the source:
+
+1. Source-trace every concrete claim. Character traits, plot origins, settings,
+   numbers, and proper names in your output must be visibly supported by the
+   TITLE / OVERVIEW / EXTENDED INFO / TONE HINTS / CAST fields below. If a
+   detail is not present in those fields, do not invent one.
+
+2. Numbers in the source are exact. Reproduce any quantity that appears in
+   the TITLE or OVERVIEW verbatim — do not round, paraphrase, or substitute.
+
+3. The TAGS/KEYWORDS field describes themes of the work overall. Character-
+   archetype labels (psychological-type tropes, trope names) live there as
+   genre signals — they do NOT attribute the archetype to any specific
+   character. Attribute an archetype to a named character only when the
+   OVERVIEW makes that attribution itself.
+
+4. The TONE HINTS field is calibrated by the upstream data source and is
+   authoritative. When it says a work is comedic, the work's primary register
+   is comedic — do not recast it under heavier literary frameworks based on
+   subject matter alone.
 
 TITLE: {title} ({year})
 TYPE: {media_type}
