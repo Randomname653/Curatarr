@@ -61,7 +61,48 @@ logger = logging.getLogger(__name__)
 # A/B test over 22 control+random items: 1 actual fix (Danny Phantom),
 # 0 regressions, 0 parse errors. Items re-polish naturally as the cache
 # read sees the version mismatch + falls through to fresh polish.
-_PROMPT_VERSION = "v3"
+# Bumped v3 -> v4 when the archetype-tag blacklist landed (Idea A from
+# the external review — the LLM was attention-bridging tags like
+# "tsundere" to nearby character nouns; filtering them deterministically
+# at prompt-input is more reliable than the soft v3 rule asking the LLM
+# to handle them correctly).
+_PROMPT_VERSION = "v4"
+
+
+# ── PHASE-2 QUALITY: CHARACTER-ARCHETYPE TAG BLACKLIST ──────────────────────
+# AniList/Jikan attach character-archetype labels to a work's keywords as
+# WORK-LEVEL themes ("this show contains a tsundere character"). The
+# summariser model (granite4.1:8b) treats them as attention-bridge
+# candidates and routinely misattributes the archetype to a nearby named
+# character in its output — Mamako (overprotective mom, exact opposite of
+# tsundere) gets labelled "tsundere mother Mamako" because "tsundere" is
+# in the keywords list. The v3 GROUNDING rule #3 ("tags are work-level
+# themes, not character bios") nudged the model but didn't reliably stick.
+#
+# Deterministic fix: strip these archetype labels from the keywords list
+# before injecting it into the prompt. What the model doesn't see, it
+# can't misattribute. The original keywords are still cached on the raw
+# blob + polished profile for downstream taste-vector use; only the
+# prompt-input list is filtered.
+_ARCHETYPE_TAG_BLACKLIST: set[str] = {
+    # The "-dere" personality-type family (Japanese anime character tropes)
+    "tsundere", "kuudere", "yandere", "deredere", "dandere",
+    "himedere", "kamidere", "kogudere", "shundere", "darudere",
+    # Opposite-archetype labels that misattribute identically
+    "haraguro",   # outwardly-sweet, inwardly-cruel
+}
+
+
+def _filter_archetype_tags(keywords) -> list[str]:
+    """Drop character-archetype tags from a keywords/tags list before it
+    goes into the LLM prompt. Returns a new list — does NOT mutate the
+    input. Non-string entries pass through unchanged."""
+    out: list = []
+    for k in keywords or []:
+        if isinstance(k, str) and k.strip().lower() in _ARCHETYPE_TAG_BLACKLIST:
+            continue
+        out.append(k)
+    return out
 
 # Pass 99-fu2: tier-2 raw cache TTL. Long enough that prompt bumps don't
 # trigger API re-fetches; short enough that genuinely-changed upstream
@@ -1304,12 +1345,21 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
         else:
             alt_plots_section = ""
 
+        # Filter character-archetype tags (tsundere/kuudere/yandere/...)
+        # from the prompt-input keywords list. See _filter_archetype_tags
+        # above — these tags are work-level themes but the LLM attention-
+        # bridges them to nearby character noun tokens + misattributes.
+        # The raw blob's keywords field is unchanged; only the prompt
+        # sees the filtered list.
+        _kw_for_prompt = _filter_archetype_tags(
+            raw_metadata.get("keywords") or raw_metadata.get("tags", [])
+        )[:20]
         prompt = SUMMARIZE_PROMPT.format(
             title=raw_metadata.get("title", "Unknown"),
             year=raw_metadata.get("year", "Unknown"),
             media_type=raw_metadata.get("media_type", "movie"),
             genres=", ".join(raw_metadata.get("genres", [])),
-            keywords=", ".join((raw_metadata.get("keywords") or raw_metadata.get("tags", []))[:20]),
+            keywords=", ".join(_kw_for_prompt),
             overview=(raw_metadata.get("overview_extended") or raw_metadata.get("overview", ""))[:800],
             alt_plots_section=alt_plots_section,
             extra_context=raw_metadata.get("extra_context", "N/A"),
