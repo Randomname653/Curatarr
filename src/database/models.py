@@ -304,7 +304,16 @@ class PlexRating(Base):
 
 
 class EnrichmentStatus(Base):
-    """Tracks enrichment progress per media item."""
+    """Tracks enrichment progress per media item.
+
+    Phase-2 additions (``fetch_tier`` / ``sources_state`` / ``provisional``,
+    Pass 99-fu13) record WHICH external sources were consulted for this
+    item and whether the result is the canonical "full" enrichment or a
+    provisional "fast" pass that the source-upgrade scheduler should
+    later promote. All three columns are nullable / default-false on
+    legacy rows; readers must treat NULL ``fetch_tier`` as "full" for
+    back-compat with pre-fu13 rows.
+    """
     __tablename__ = "enrichment_status"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -315,6 +324,14 @@ class EnrichmentStatus(Base):
     vector_ready = Column(Boolean, default=False)
     enriched_at = Column(DateTime, nullable=True)
     error = Column(Text, nullable=True)
+
+    # Phase 2 (#37): per-item enrichment-source tracking + fast/full tier.
+    # Written by the producer (#38), read by the source-upgrade scheduler
+    # (#41) and the breakdown UI (#40). See module docstring above for
+    # back-compat semantics on NULL ``fetch_tier``.
+    fetch_tier    = Column(String(16), nullable=True)   # "fast" | "full" | NULL(=full, legacy)
+    sources_state = Column(Text,       nullable=True)   # JSON: {"tmdb":{"status":"ok","at":"…"},…}
+    provisional   = Column(Boolean,    default=False)   # True while a "fast" row is still upgradable
 
 
 class AppState(Base):
