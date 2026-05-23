@@ -35,6 +35,13 @@ class EnrichRequest(BaseModel):
     source: str = "watch_history"  # watch_history / arr / both / (legacy: all)
     limit: Optional[int] = None    # None = no limit
     force: bool = False            # True = re-enrich even if already done (clears cache first)
+    # Phase 2 #38b: fast-only fetch mode. Skips slow sources at fetch
+    # time (MB for music, Jikan for anime, TMDB/OMDb supplements for
+    # movie/show). Items land as fetch_tier='fast' + provisional=True
+    # and the source-upgrade scheduler (#41) promotes them later.
+    # Trade-off: thinner data per item BUT massively faster bulk pass
+    # (music's MB 1-req/sec → Last.fm 5-req/sec is the headline gain).
+    fast_only: bool = False
 
 
 @router.get("/status")
@@ -394,12 +401,14 @@ async def start_enrichment(
 
     cats = req.categories if req.categories else CATEGORIES
     background_tasks.add_task(
-        _run_enrichment, user.id, cats, req.source, req.limit, req.force
+        _run_enrichment, user.id, cats, req.source, req.limit, req.force,
+        req.fast_only,   # Phase 2 #38b
     )
     return {
         "status": "started",
         "categories": cats,
         "source": req.source,
+        "fast_only": req.fast_only,
     }
 
 
@@ -901,7 +910,9 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
         _c.close()
 
 
-async def _run_enrichment(user_id: int, categories: list, source: str, limit: Optional[int], force: bool = False):
+async def _run_enrichment(user_id: int, categories: list, source: str,
+                          limit: Optional[int], force: bool = False,
+                          fast_only: bool = False):
     """Single-worker producer-consumer enrichment pipeline.
 
     Producer: fetches API metadata (TMDB/AniList/MusicBrainz) concurrently.
@@ -909,6 +920,12 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
     Items rotate across categories in batches so no category starves.
     Crash-safe: EnrichmentStatus.enriched is only set True after the LLM succeeds.
     Rule-based fallbacks leave enriched=False and cache for 1 day — retried next run.
+
+    Phase 2 #38b: ``fast_only=True`` skips slow sources at fetch time
+    (MB for music, Jikan for anime, supplements for movie/show). Each
+    item lands fetch_tier="fast" + provisional=True; the source-upgrade
+    scheduler (#41) promotes provisional rows to "full" later in the
+    background.
     """
     # Normalize legacy source value
     if source == "all":
@@ -1256,6 +1273,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                     imdb_id=pitem.get("imdb_id"),
                     plex_rating_key=pitem["plex_rating_key"],
                     sonarr_series_type=pitem.get("sonarr_series_type"),
+                    fast_only=fast_only,   # #38b
                 )
                 if raw is not None and raw.get("_already_enriched"):
                     # Pass 99-fu: cache hit shows the item is already

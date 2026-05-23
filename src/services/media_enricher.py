@@ -1092,6 +1092,7 @@ async def fetch_and_prepare_raw(
     plex_rating_key: Optional[str] = None,
     sonarr_series_type: Optional[str] = None,
     year: Optional[int] = None,    # disambiguation hint for title search
+    fast_only: bool = False,       # Phase 2 #38b: provisional fast-pass mode
 ) -> Optional[dict]:
     """Phase 1: fetch API metadata only (no LLM).
 
@@ -1217,12 +1218,25 @@ async def fetch_and_prepare_raw(
             # so default them to "full"; ``_write_enrichment_db`` will
             # stamp the DB column on every cache-hit reconcile.
             cached_profile.setdefault("fetch_tier", "full")
-            return {
-                "_already_enriched": True,
-                "_cached_profile":   cached_profile,
-                "_cache_key":        cache_key,
-                "_plex_rating_key":  plex_rating_key,
-            }
+            # #38b: tier-mismatch check. If the cached profile is "fast"
+            # but the caller wants a full enrichment, fall through past
+            # the tier-1 short-circuit so a fresh full fetch + re-polish
+            # actually runs. The #41 source-upgrade scheduler uses this
+            # by triggering an enrichment run with fast_only=False on
+            # provisional rows.
+            if cached_profile.get("fetch_tier") == "fast" and not fast_only:
+                logger.debug(
+                    "[enricher] polished cache for '%s' is fast-tier but "
+                    "caller wants full — falling through to fresh fetch",
+                    title,
+                )
+            else:
+                return {
+                    "_already_enriched": True,
+                    "_cached_profile":   cached_profile,
+                    "_cache_key":        cache_key,
+                    "_plex_rating_key":  plex_rating_key,
+                }
         if is_recent_miss:
             # not_found sentinel still fresh — skip silently as before.
             # Same back-fill as above so not_found rows also carry the
@@ -1251,19 +1265,32 @@ async def fetch_and_prepare_raw(
         # Embed the cache routing fields so the consumer's ``process_and_save``
         # writes the polished cache back under the same id_key.
         raw_data = dict(raw_hit["response"])
-        raw_data["_cache_key"]       = cache_key
-        raw_data["_plex_rating_key"] = plex_rating_key
-        raw_data["_tmdb_id"]         = tmdb_id    or raw_data.get("_tmdb_id")
-        raw_data["_anilist_id"]      = anilist_id or raw_data.get("_anilist_id")
-        raw_data["_from_raw_cache"]  = True
-        # Phase 2 #38a: the cached raw blob represents a canonical full
-        # fetch (raw cache is only written after the full fetch path).
-        # We don't have per-source breakdown here (the cached blob is
-        # the MERGED result, not the per-source outcomes), so leave
-        # _sources_state absent — the DB will see fetch_tier="full"
-        # and sources_state=NULL, which is honest about both facts.
-        raw_data["_fetch_tier"] = "full"
-        return raw_data
+        # Phase 2 #38b: cached blob carries its own tier via
+        # ``_tier_at_fetch`` (legacy cached blobs from pre-#38b don't —
+        # we default them to "full" since the only writer back then was
+        # the canonical full path).
+        cached_tier = raw_data.get("_tier_at_fetch", "full")
+        if cached_tier == "fast" and not fast_only:
+            # Caller wants a full enrichment but cache only has fast-tier
+            # data — bypass the cache so a real full fetch runs. The
+            # outer code below will overwrite the cached blob with the
+            # full result on success.
+            logger.debug("[enricher] raw cache hit for '%s' is fast-tier but caller "
+                         "wants full — bypassing cache", title)
+        else:
+            raw_data["_cache_key"]       = cache_key
+            raw_data["_plex_rating_key"] = plex_rating_key
+            raw_data["_tmdb_id"]         = tmdb_id    or raw_data.get("_tmdb_id")
+            raw_data["_anilist_id"]      = anilist_id or raw_data.get("_anilist_id")
+            raw_data["_from_raw_cache"]  = True
+            # We don't have per-source breakdown here (the cached blob is
+            # the MERGED result, not the per-source outcomes), so leave
+            # _sources_state absent — the DB will see
+            # fetch_tier=<cached_tier> and sources_state=NULL, which is
+            # honest about both facts.
+            raw_data["_fetch_tier"] = cached_tier
+            raw_data["_provisional"] = (cached_tier == "fast")
+            return raw_data
 
     # Anime cross-ref ID resolution
     if is_anime and tvdb_id and not anilist_id and not anidb_id:
@@ -1286,33 +1313,54 @@ async def fetch_and_prepare_raw(
     # Music — MusicBrainz + Last.fm
     if media_type == "music":
         from src.services.music_metadata import enrich_artist
-        artist_raw = await enrich_artist(title)
+        # #38b: in fast mode skip MB entirely. MB's 1-req/sec floor +
+        # Semaphore(1) is the music-lane killer (~66% of library × 1/s
+        # = ~4 h); Last.fm has plenty of quota (~5 req/sec) and gives
+        # us enough for an LLM-polished profile (genres, tags, bio,
+        # similar_artists). The #41 upgrade scheduler later does the
+        # MB call in the background to fill in mbid / country / type.
+        artist_raw = await enrich_artist(title, skip_mb=fast_only)
         if not artist_raw:
-            # enrich_artist is opaque about which of MB or Last.fm missed
-            # — for the canonical "full" path it tries both, so a None
-            # return means both came up empty.
-            _record_source(_state, "mb", "miss")
-            _record_source(_state, "lastfm", "miss")
+            if fast_only:
+                _record_source(_state, "mb", "skipped")
+                _record_source(_state, "lastfm", "miss")
+            else:
+                # enrich_artist is opaque about which of MB or Last.fm missed
+                # — for the canonical "full" path it tries both, so a None
+                # return means both came up empty.
+                _record_source(_state, "mb", "miss")
+                _record_source(_state, "lastfm", "miss")
             return None
-        # enrich_artist returns when EITHER MB or Last.fm has data — we
-        # can't tell from the outside which contributed, so for #38a we
-        # mark both "ok" (best effort). #38b will gate them separately.
-        _record_source(_state, "mb", "ok")
-        _record_source(_state, "lastfm", "ok")
+        # In full mode enrich_artist returns when EITHER MB or Last.fm has
+        # data — opaque, so we mark both ok. In fast mode only Last.fm
+        # ran, so mark mb=skipped + lastfm=ok.
+        if fast_only:
+            _record_source(_state, "mb", "skipped")
+            _record_source(_state, "lastfm", "ok")
+        else:
+            _record_source(_state, "mb", "ok")
+            _record_source(_state, "lastfm", "ok")
         artist_raw["title"] = artist_raw.get("name", title)
         artist_raw["media_type"] = "music"
-        artist_raw["source"] = "musicbrainz+lastfm"
+        artist_raw["source"] = "lastfm" if fast_only else "musicbrainz+lastfm"
         # Pass 99-fu2: persist the raw fetch result to tier-2 cache so a
         # future ``_PROMPT_VERSION`` bump can re-polish without re-hitting
         # MB + Last.fm. Strip the underscore-prefixed transport fields —
         # those are caller-instance specific and get re-injected on read.
+        # #38b: stamp the tier into the cached blob so the tier-2-hit read
+        # path can re-flag the row as provisional + so #41's upgrade pass
+        # can recognise a fast blob and force a re-fetch instead of
+        # returning the cached fast data. Stored AT-write because a
+        # subsequent full pass will overwrite the same key.
+        artist_raw["_tier_at_fetch"] = "fast" if fast_only else "full"
         _write_raw_cache(media_type, id_key, artist_raw)
         artist_raw["_cache_key"] = cache_key
         artist_raw["_plex_rating_key"] = plex_rating_key
         artist_raw["_tmdb_id"] = None
         artist_raw["_anilist_id"] = None
         artist_raw["_sources_state"] = _state
-        artist_raw["_fetch_tier"] = "full"
+        artist_raw["_fetch_tier"] = "fast" if fast_only else "full"
+        artist_raw["_provisional"] = fast_only   # only fast rows are upgradable
         return artist_raw
 
     # Non-music: fetch raw metadata
@@ -1400,19 +1448,26 @@ async def fetch_and_prepare_raw(
     # Supplements (Jikan for anime, OMDB for others)
     supplements = []
     if is_anime:
-        mal_id_val = mal_id or raw.get("mal_id")
-        await asyncio.sleep(0.3)
-        jikan_data = await fetch_jikan_data(
-            mal_id=mal_id_val,
-            title=None if mal_id_val else title,
-        )
-        if jikan_data:
-            _record_source(_state, "jikan", "ok")
-            supplements.append(jikan_data)
-            if jikan_data.get("mal_id") and not raw.get("mal_id"):
-                raw["mal_id"] = jikan_data["mal_id"]
-        elif not jikan_data:
-            _record_source(_state, "jikan", "miss")
+        if fast_only:
+            # #38b: skip Jikan in fast mode — saves the 0.3s sleep + the
+            # Jikan call itself. AniList is enough for an LLM profile;
+            # #41 upgrades with Jikan later for the demographics + MAL
+            # content-rating tags that AniList doesn't have.
+            _record_source(_state, "jikan", "skipped")
+        else:
+            mal_id_val = mal_id or raw.get("mal_id")
+            await asyncio.sleep(0.3)
+            jikan_data = await fetch_jikan_data(
+                mal_id=mal_id_val,
+                title=None if mal_id_val else title,
+            )
+            if jikan_data:
+                _record_source(_state, "jikan", "ok")
+                supplements.append(jikan_data)
+                if jikan_data.get("mal_id") and not raw.get("mal_id"):
+                    raw["mal_id"] = jikan_data["mal_id"]
+            elif not jikan_data:
+                _record_source(_state, "jikan", "miss")
             genres = raw.get("genres", [])
             tags = raw.get("tags", raw.get("keywords", []))
             tone_hints = []
@@ -1426,28 +1481,41 @@ async def fetch_and_prepare_raw(
     elif omdb_was_primary:
         # OMDb is the primary → TMDB supplements keywords/tagline, but a TMDB
         # 429 must NOT abort the item: skip the supplement, keep OMDb data.
-        try:
-            endpoint = "movie" if media_type == "movie" else "tv"
-            tmdb_sup = (await fetch_tmdb_full(tmdb_id, endpoint) if tmdb_id
-                        else await _tmdb_search_and_fetch(title, endpoint, year=year))
-            if tmdb_sup:
-                _record_source(_state, "tmdb", "ok")    # #38a — supplement contributed
-                supplements.append(tmdb_sup)
-            else:
-                _record_source(_state, "tmdb", "miss")
-        except TMDBTransientError as _te:
-            _record_source(_state, "tmdb", "transient")   # #38a — 429/5xx, retry-eligible
-            logger.info("[enricher] OMDb-primary '%s': TMDB supplement skipped (HTTP %s)",
-                        title, _te.status_code)
+        if fast_only:
+            # #38b: skip the TMDB supplement in fast mode. OMDb already
+            # gave us the core profile (title/year/genres/overview/
+            # director/cast/rating); TMDB only adds keywords/tagline,
+            # nice-to-have but not blocking the LLM polish. #41 upgrades.
+            _record_source(_state, "tmdb", "skipped")
+        else:
+            try:
+                endpoint = "movie" if media_type == "movie" else "tv"
+                tmdb_sup = (await fetch_tmdb_full(tmdb_id, endpoint) if tmdb_id
+                            else await _tmdb_search_and_fetch(title, endpoint, year=year))
+                if tmdb_sup:
+                    _record_source(_state, "tmdb", "ok")    # #38a — supplement contributed
+                    supplements.append(tmdb_sup)
+                else:
+                    _record_source(_state, "tmdb", "miss")
+            except TMDBTransientError as _te:
+                _record_source(_state, "tmdb", "transient")   # #38a — 429/5xx, retry-eligible
+                logger.info("[enricher] OMDb-primary '%s': TMDB supplement skipped (HTTP %s)",
+                            title, _te.status_code)
     else:
         imdb_id_val = raw.get("imdb_id") or imdb_id
         if imdb_id_val:
-            omdb_data = await fetch_omdb_data(imdb_id_val)
-            if omdb_data:
-                _record_source(_state, "omdb", "ok")    # #38a — supplement contributed
-                supplements.append(omdb_data)
+            if fast_only:
+                # #38b: skip OMDb supplement in fast mode. TMDB-primary
+                # already gave us the core profile; OMDb adds the IMDb
+                # rating field — nice but not blocking. #41 upgrades.
+                _record_source(_state, "omdb", "skipped")
             else:
-                _record_source(_state, "omdb", "miss")
+                omdb_data = await fetch_omdb_data(imdb_id_val)
+                if omdb_data:
+                    _record_source(_state, "omdb", "ok")    # #38a — supplement contributed
+                    supplements.append(omdb_data)
+                else:
+                    _record_source(_state, "omdb", "miss")
 
     if supplements:
         raw = _merge_raw_metadata(raw, *supplements)
@@ -1457,18 +1525,23 @@ async def fetch_and_prepare_raw(
     # the cached blob is portable across callers. Next time the same
     # id_key is requested, the tier-2 hit short-circuits the TMDB +
     # AniList + OMDb + Jikan round-trip entirely.
+    # #38b: stamp the tier into the cached blob (see music branch above
+    # for the rationale). The tier-2-hit read path picks this up.
     raw["plex_rating_key"] = plex_rating_key
+    raw["_tier_at_fetch"] = "fast" if fast_only else "full"
     _write_raw_cache(media_type, id_key, raw)
 
     raw["_cache_key"] = cache_key
     raw["_plex_rating_key"] = plex_rating_key
     raw["_tmdb_id"] = tmdb_id or raw.get("tmdb_id")
     raw["_anilist_id"] = anilist_id or raw.get("anilist_id")
-    # Phase 2 #38a: attach the source-state tracker. #38a always returns
-    # ``fetch_tier="full"`` since we still run the canonical path; #38b
-    # will add the fast-only branch + provisional flag.
+    # Phase 2 #38a/b: attach the source-state tracker + tier marker.
+    # fast_only=True → tier="fast" + provisional=True so #41's
+    # source-upgrade scheduler picks the row up later to fill in the
+    # supplements (and, for music, MusicBrainz).
     raw["_sources_state"] = _state
-    raw["_fetch_tier"] = "full"
+    raw["_fetch_tier"] = "fast" if fast_only else "full"
+    raw["_provisional"] = fast_only
     return raw
 
 
