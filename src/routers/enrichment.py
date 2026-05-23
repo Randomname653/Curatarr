@@ -5,6 +5,7 @@ Category-specific metadata enrichment with progress tracking.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -783,6 +784,30 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                                       else "Not found in metadata APIs" if is_not_found
                                       else "rule_based — LLM upgrade pending"
                                       if _is_rule_based(profile) else "Processing failed")
+                # Phase 2 #38a: persist per-item source-state + tier when
+                # the profile carries them. Only writes the columns when
+                # the profile actually has the keys — keeps legacy paths
+                # (not_found sentinels, rule-based fallbacks, chat-cascade
+                # raw saves) leaving the columns NULL so #41's scheduler
+                # query (``WHERE fetch_tier='fast' AND provisional=1``)
+                # still selects exactly the items we mean.
+                if profile is not None:
+                    if "fetch_tier" in profile:
+                        status.fetch_tier = profile["fetch_tier"]
+                    if "sources_state" in profile:
+                        try:
+                            status.sources_state = json.dumps(
+                                profile["sources_state"],
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            )
+                        except (TypeError, ValueError) as _je:
+                            logger.debug(
+                                "[enrichment] sources_state JSON encode failed for "
+                                "'%s': %s — skipping", canonical_title, _je,
+                            )
+                    if "provisional" in profile:
+                        status.provisional = bool(profile["provisional"])
                 db.commit()
             break
         except Exception as _e:

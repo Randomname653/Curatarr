@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Optional, Any
 
 import httpx
@@ -116,6 +117,42 @@ def _ensure_concurrency_primitives() -> None:
         _SEM_OMDB     = asyncio.Semaphore(10)   # Pass 99-fu11: OMDb is now PRIMARY for movie/show + supporter key (100k/day) → raised from 4
         _SEM_JIKAN    = asyncio.Semaphore(2)
         _LOCK_ANILIST = asyncio.Lock()
+
+
+# ── PHASE 2 #38 — PER-ITEM SOURCE-STATE TRACKING ─────────────────────────────
+# Records which external APIs were consulted for each item and how they
+# responded. The dict is built up across one call of ``fetch_and_prepare_raw``
+# and persisted to ``enrichment_status.sources_state`` by
+# ``_write_enrichment_db``. The source-upgrade scheduler (#41) reads this to
+# find items where a slow source (MusicBrainz, Jikan) is still pending and
+# should be retried in the background.
+#
+# Status values:
+#   "ok"        — API was called, returned useful data
+#   "miss"      — API was called, returned nothing usable
+#   "transient" — API was called, returned 429 / 5xx (retry later)
+#   "skipped"   — not called this pass (e.g. fast_only mode)
+#
+# Known source keys: "tmdb", "omdb", "anilist", "jikan", "mb", "lastfm".
+# The dict is sparse — only sources actually consulted (or deliberately
+# skipped) appear. ``_record_source`` overwrites the entry if the same
+# source is called twice in one pass (last call wins — matches "the
+# latest evidence we have about this source for this item").
+
+def _new_source_state() -> dict:
+    """Return an empty per-item source-state container."""
+    return {}
+
+
+def _record_source(state: dict, src: str, status: str) -> None:
+    """Record one API outcome into ``state`` with a UTC timestamp.
+
+    Caller is responsible for picking the right status (the helper does
+    not interpret return values from the API client — that varies by
+    fetcher). Timestamp is ISO-8601 + ``Z`` so the scheduler can sort
+    without timezone parsing.
+    """
+    state[src] = {"status": status, "at": datetime.utcnow().isoformat() + "Z"}
 
 
 # ── ANILIST RATE-LIMIT CIRCUIT BREAKER ────────────────────────────────────────
@@ -1175,6 +1212,11 @@ async def fetch_and_prepare_raw(
 
         if is_llm_polished and cached_version == _PROMPT_VERSION:
             # Tier-1 hit, prompt version matches — terminal state.
+            # Phase 2 #38a: legacy cached profiles (cached pre-#38a) lack
+            # ``fetch_tier``. They went through the canonical fetch path
+            # so default them to "full"; ``_write_enrichment_db`` will
+            # stamp the DB column on every cache-hit reconcile.
+            cached_profile.setdefault("fetch_tier", "full")
             return {
                 "_already_enriched": True,
                 "_cached_profile":   cached_profile,
@@ -1183,6 +1225,10 @@ async def fetch_and_prepare_raw(
             }
         if is_recent_miss:
             # not_found sentinel still fresh — skip silently as before.
+            # Same back-fill as above so not_found rows also carry the
+            # tier marker on the row (the producer wrote them via the
+            # full canonical path).
+            cached_profile.setdefault("fetch_tier", "full")
             return {
                 "_already_enriched": True,
                 "_cached_profile":   cached_profile,
@@ -1210,6 +1256,13 @@ async def fetch_and_prepare_raw(
         raw_data["_tmdb_id"]         = tmdb_id    or raw_data.get("_tmdb_id")
         raw_data["_anilist_id"]      = anilist_id or raw_data.get("_anilist_id")
         raw_data["_from_raw_cache"]  = True
+        # Phase 2 #38a: the cached raw blob represents a canonical full
+        # fetch (raw cache is only written after the full fetch path).
+        # We don't have per-source breakdown here (the cached blob is
+        # the MERGED result, not the per-source outcomes), so leave
+        # _sources_state absent — the DB will see fetch_tier="full"
+        # and sources_state=NULL, which is honest about both facts.
+        raw_data["_fetch_tier"] = "full"
         return raw_data
 
     # Anime cross-ref ID resolution
@@ -1225,12 +1278,27 @@ async def fetch_and_prepare_raw(
         except Exception as e:
             logger.debug("anime-lists lookup failed: %s", e)
 
+    # Phase 2 #38a: per-item source-state tracker. Records which APIs
+    # we hit and how they responded. Attached to the returned raw dict
+    # via ``_sources_state`` for the consumer to persist into the DB.
+    _state = _new_source_state()
+
     # Music — MusicBrainz + Last.fm
     if media_type == "music":
         from src.services.music_metadata import enrich_artist
         artist_raw = await enrich_artist(title)
         if not artist_raw:
+            # enrich_artist is opaque about which of MB or Last.fm missed
+            # — for the canonical "full" path it tries both, so a None
+            # return means both came up empty.
+            _record_source(_state, "mb", "miss")
+            _record_source(_state, "lastfm", "miss")
             return None
+        # enrich_artist returns when EITHER MB or Last.fm has data — we
+        # can't tell from the outside which contributed, so for #38a we
+        # mark both "ok" (best effort). #38b will gate them separately.
+        _record_source(_state, "mb", "ok")
+        _record_source(_state, "lastfm", "ok")
         artist_raw["title"] = artist_raw.get("name", title)
         artist_raw["media_type"] = "music"
         artist_raw["source"] = "musicbrainz+lastfm"
@@ -1243,6 +1311,8 @@ async def fetch_and_prepare_raw(
         artist_raw["_plex_rating_key"] = plex_rating_key
         artist_raw["_tmdb_id"] = None
         artist_raw["_anilist_id"] = None
+        artist_raw["_sources_state"] = _state
+        artist_raw["_fetch_tier"] = "full"
         return artist_raw
 
     # Non-music: fetch raw metadata
@@ -1259,13 +1329,18 @@ async def fetch_and_prepare_raw(
             raw["media_type"] = media_type
             raw.setdefault("keywords", [])
             omdb_was_primary = True
+            _record_source(_state, "omdb", "ok")   # #38a — OMDb-primary success
+        else:
+            _record_source(_state, "omdb", "miss")  # #38a — OMDb returned nothing usable
 
     if raw is not None:
         pass  # OMDb-primary already populated raw
     elif anilist_id:
         raw = await fetch_anilist_full(anilist_id)
+        _record_source(_state, "anilist", "ok" if raw else "miss")
     elif anidb_id and is_anime:
         raw = await search_anilist_by_title(title)
+        _record_source(_state, "anilist", "ok" if raw else "miss")
         if raw:
             raw["anidb_id"] = anidb_id
             if raw.get("id") and anidb_id:
@@ -1278,34 +1353,46 @@ async def fetch_and_prepare_raw(
                     logger.debug("[enricher] update_anilist_id(%s) failed: %s", anidb_id, _e)
     elif tmdb_id and media_type == "movie":
         raw = await fetch_tmdb_full(tmdb_id, "movie")
+        _record_source(_state, "tmdb", "ok" if raw else "miss")
     elif tmdb_id and not is_anime:
         raw = await fetch_tmdb_full(tmdb_id, "tv")
+        _record_source(_state, "tmdb", "ok" if raw else "miss")
         if raw and "Animation" in raw.get("genres", []) and _looks_like_anime(title):
             al = await search_anilist_by_title(title)
+            _record_source(_state, "anilist", "ok" if al else "miss")
             if al:
                 al["cast"] = raw.get("cast", [])
                 al["similar_titles"] = al.get("similar_titles") or raw.get("similar_titles", [])
                 raw = al
     elif is_anime:
         raw = await search_anilist_by_title(title)
+        _record_source(_state, "anilist", "ok" if raw else "miss")
         if not raw and tmdb_id:
             raw = await fetch_tmdb_full(tmdb_id, "tv")
+            _record_source(_state, "tmdb", "ok" if raw else "miss")
         if not raw:
             raw = await _tmdb_search_and_fetch(title, "tv", year=year)
+            # _tmdb_search_and_fetch may already have recorded "tmdb" — overwrite
+            # to reflect the final outcome of the title-search fallback.
+            _record_source(_state, "tmdb", "ok" if raw else "miss")
     elif imdb_id:
         raw = await _tmdb_fetch_by_external_id(imdb_id, media_type)
         if not raw:
             endpoint = "movie" if media_type == "movie" else "tv"
             raw = await _tmdb_search_and_fetch(title, endpoint, year=year)
+        _record_source(_state, "tmdb", "ok" if raw else "miss")
     elif tvdb_id:
         endpoint = "movie" if media_type == "movie" else "tv"
         raw = await _tmdb_search_and_fetch(title, endpoint, year=year)
+        _record_source(_state, "tmdb", "ok" if raw else "miss")
     else:
         endpoint = "movie" if media_type in ("movie",) else "tv"
         if is_anime:
             raw = await search_anilist_by_title(title)
+            _record_source(_state, "anilist", "ok" if raw else "miss")
         if not raw:
             raw = await _tmdb_search_and_fetch(title, endpoint, year=year)
+            _record_source(_state, "tmdb", "ok" if raw else "miss")
 
     if not raw:
         return None
@@ -1320,10 +1407,12 @@ async def fetch_and_prepare_raw(
             title=None if mal_id_val else title,
         )
         if jikan_data:
+            _record_source(_state, "jikan", "ok")
             supplements.append(jikan_data)
             if jikan_data.get("mal_id") and not raw.get("mal_id"):
                 raw["mal_id"] = jikan_data["mal_id"]
         elif not jikan_data:
+            _record_source(_state, "jikan", "miss")
             genres = raw.get("genres", [])
             tags = raw.get("tags", raw.get("keywords", []))
             tone_hints = []
@@ -1342,8 +1431,12 @@ async def fetch_and_prepare_raw(
             tmdb_sup = (await fetch_tmdb_full(tmdb_id, endpoint) if tmdb_id
                         else await _tmdb_search_and_fetch(title, endpoint, year=year))
             if tmdb_sup:
+                _record_source(_state, "tmdb", "ok")    # #38a — supplement contributed
                 supplements.append(tmdb_sup)
+            else:
+                _record_source(_state, "tmdb", "miss")
         except TMDBTransientError as _te:
+            _record_source(_state, "tmdb", "transient")   # #38a — 429/5xx, retry-eligible
             logger.info("[enricher] OMDb-primary '%s': TMDB supplement skipped (HTTP %s)",
                         title, _te.status_code)
     else:
@@ -1351,7 +1444,10 @@ async def fetch_and_prepare_raw(
         if imdb_id_val:
             omdb_data = await fetch_omdb_data(imdb_id_val)
             if omdb_data:
+                _record_source(_state, "omdb", "ok")    # #38a — supplement contributed
                 supplements.append(omdb_data)
+            else:
+                _record_source(_state, "omdb", "miss")
 
     if supplements:
         raw = _merge_raw_metadata(raw, *supplements)
@@ -1368,6 +1464,11 @@ async def fetch_and_prepare_raw(
     raw["_plex_rating_key"] = plex_rating_key
     raw["_tmdb_id"] = tmdb_id or raw.get("tmdb_id")
     raw["_anilist_id"] = anilist_id or raw.get("anilist_id")
+    # Phase 2 #38a: attach the source-state tracker. #38a always returns
+    # ``fetch_tier="full"`` since we still run the canonical path; #38b
+    # will add the fast-only branch + provisional flag.
+    raw["_sources_state"] = _state
+    raw["_fetch_tier"] = "full"
     return raw
 
 
@@ -1382,6 +1483,15 @@ async def process_and_save(raw: dict) -> Optional[dict]:
     plex_rating_key = raw.pop("_plex_rating_key", None) or raw.get("plex_rating_key")
     tmdb_id = raw.pop("_tmdb_id", None) or raw.get("tmdb_id")
     anilist_id = raw.pop("_anilist_id", None) or raw.get("anilist_id")
+    # Phase 2 #38a: pop the source-state transport fields BEFORE the LLM
+    # call so they don't end up in the LLM prompt. They get re-attached
+    # below as PUBLIC profile fields (no underscore), which means the
+    # polished cache stores them too — on the next ``_already_enriched``
+    # hit the cached profile carries the original source-state forward
+    # so ``_write_enrichment_db`` can re-stamp the DB row consistently.
+    sources_state = raw.pop("_sources_state", None)
+    fetch_tier    = raw.pop("_fetch_tier", None)
+    provisional   = raw.pop("_provisional", None)
     media_type = raw.get("media_type", "movie")
 
     profile = await summarize_with_small_llm(raw)
@@ -1396,6 +1506,17 @@ async def process_and_save(raw: dict) -> Optional[dict]:
     # Pass 99-fu2: tag the polished profile with the current prompt
     # version so a future bump invalidates this cache entry on read.
     profile["prompt_version"] = _PROMPT_VERSION
+    # Phase 2 #38a: stamp the source-state + tier onto the profile so
+    # ``_write_enrichment_db`` reads them straight off the profile dict
+    # (one place, fewer arguments). Only set when present — keeps the
+    # profile shape stable for callers that don't go through
+    # ``fetch_and_prepare_raw`` (e.g. chat-cascade fast path).
+    if sources_state is not None:
+        profile["sources_state"] = sources_state
+    if fetch_tier is not None:
+        profile["fetch_tier"] = fetch_tier
+    if provisional is not None:
+        profile["provisional"] = provisional
 
     if cache_key:
         cache = MetadataCache()
