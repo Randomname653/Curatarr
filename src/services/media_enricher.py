@@ -155,6 +155,285 @@ def _record_source(state: dict, src: str, status: str) -> None:
     state[src] = {"status": status, "at": datetime.utcnow().isoformat() + "Z"}
 
 
+# ── PHASE 2 #39 — PER-SOURCE STREAMING-MERGE HELPERS ─────────────────────────
+# These power the streaming fetch (``fetch_and_prepare_streaming``): instead
+# of running APIs sequentially and waiting for the slowest before LLM polish,
+# the producer fires every relevant source for an item IN PARALLEL. The first
+# source with sufficient data triggers an LLM polish (item lands provisional);
+# the remaining sources merge into raw + DB sources_state in the background,
+# and when ALL expected sources are back the row flips fetch_tier='full' +
+# provisional=False — the "provisorium marker rausnehmen" moment.
+
+def _expected_sources_for(media_type: str, is_anime: bool, ids: dict) -> list[str]:
+    """Which APIs should we fire IN PARALLEL for this item?
+
+    Picks the set of sources based on the category + what IDs are available
+    (an OMDb call only makes sense with an imdb_id, etc.). A source listed
+    here means the streaming runner will await it as part of the "all
+    expected sources back → mark non-provisional" gate; a source NOT listed
+    will never block the upgrade.
+
+    Music is always {mb, lastfm} (the existing pair). Movies/shows are
+    {tmdb} + {omdb} when imdb_id is present (the OMDb-primary case from
+    Pass 99-fu11). Anime is {anilist, jikan}; ``tmdb`` joins the set only
+    when AniList has no usable result + we'd be falling back to a TMDB
+    search anyway.
+    """
+    if media_type == "music":
+        return ["mb", "lastfm"]
+    if is_anime:
+        sources = ["anilist"]
+        if ids.get("mal_id") or True:  # Jikan can also title-search, so always try
+            sources.append("jikan")
+        return sources
+    # movie / show
+    sources = ["tmdb"]
+    if ids.get("imdb_id"):
+        sources.append("omdb")
+    return sources
+
+
+def _has_enough_data_for_polish(raw: dict, media_type: str) -> bool:
+    """``True`` if ``raw`` already carries enough fields for the LLM
+    summariser to produce a useful profile.
+
+    "Enough" means the prompt's required fields are non-empty. Anything
+    less and the LLM either invents data (bad) or returns a thin shell;
+    we'd rather wait for one more source.
+    """
+    if media_type == "music":
+        # SUMMARIZE_MUSIC_PROMPT needs name + (genres or bio).
+        name = raw.get("title") or raw.get("name")
+        if not name:
+            return False
+        has_substance = bool(raw.get("genres") or raw.get("tags") or raw.get("bio"))
+        return has_substance
+    # movie / show / anime — all use SUMMARIZE_PROMPT which needs title + overview.
+    title = raw.get("title") or raw.get("original_title")
+    overview = raw.get("overview") or raw.get("overview_extended") or raw.get("extra_context")
+    return bool(title and overview)
+
+
+def _merge_source_into_raw(raw: dict, source: str, data: Optional[dict],
+                           media_type: str, is_anime: bool) -> None:
+    """Merge a single per-source result into the accumulating ``raw`` dict.
+
+    Always updates ``raw["sources_state"][source]`` with status + timestamp
+    so the scheduler can see what's complete vs pending. Successful results
+    flow through the existing ``_merge_raw_metadata`` helper (which already
+    knows how to combine TMDB / OMDb / AniList / Jikan / MB-Last.fm shapes
+    sanely); a miss / transient just stamps the state and returns.
+    """
+    if not data:
+        _record_source(raw.setdefault("sources_state", {}), source, "miss")
+        return
+
+    # Each source's data has a slightly different shape — normalise the
+    # transient fields first so the merge stays clean.
+    if source == "lastfm" and media_type == "music":
+        norm = {
+            "genres":          data.get("genres", []),
+            "tags":            data.get("tags", []),
+            "similar_artists": data.get("similar_artists", []),
+            "bio":             data.get("bio", ""),
+            "listeners":       data.get("listeners"),
+        }
+    elif source == "mb" and media_type == "music":
+        norm = {
+            "mbid":    data.get("mbid"),
+            "type":    data.get("type", ""),
+            "country": data.get("country", ""),
+            "genres":  data.get("genres", []),
+            "tags":    data.get("tags", []),
+            "rating":  data.get("rating"),
+        }
+    else:
+        # OMDb / TMDB / AniList / Jikan all come out of their own fetchers
+        # already shaped for ``_merge_raw_metadata``; pass through.
+        norm = dict(data)
+
+    # Seed any keys that aren't yet on raw (setdefault preserves existing
+    # data — the first source's fields win on conflict, subsequent sources
+    # only fill gaps). Then run the canonical _merge_raw_metadata for the
+    # richer list/text fields (genres/cast/tags de-dup, alt_plot_sources
+    # population, etc.).
+    if not raw.get("title"):
+        # Some Last.fm/MB shapes use ``name`` instead of ``title``;
+        # promote it so downstream code finds the artist name.
+        if media_type == "music" and norm.get("name"):
+            raw["title"] = norm["name"]
+    for k, v in norm.items():
+        raw.setdefault(k, v)
+
+    # _merge_raw_metadata is the canonical merge (de-dup genres / cast /
+    # tags, populate alt_plot_sources, extra_context, tone_hints). It
+    # expects primary + supplements; we pass raw as primary so it keeps
+    # IDs + earlier text fields preferentially.
+    try:
+        merged = _merge_raw_metadata(raw, norm)
+        raw.clear()
+        raw.update(merged)
+    except Exception as _me:
+        # _merge_raw_metadata historically crashed on shape drift
+        # (Pass 99-fu11 float-rating bug). Don't let a merge failure
+        # take down the whole streaming run — log + keep the
+        # setdefault'd data we already have.
+        logger.debug("[stream] merge into raw failed for %s: %s", source, _me)
+
+    # Provenance label: comma-join the contributing source names.
+    existing_label = raw.get("source") or ""
+    if not existing_label:
+        raw["source"] = source
+    elif source not in existing_label.split("+"):
+        raw["source"] = f"{existing_label}+{source}"
+
+    _record_source(raw.setdefault("sources_state", {}), source, "ok")
+
+
+async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
+    """Dispatch one source-name to the right async fetcher + return its result.
+
+    ``ctx`` carries everything a fetcher might need: ``title``, ``media_type``,
+    ``tmdb_id``, ``anilist_id``, ``anidb_id``, ``imdb_id``, ``mal_id``, ``year``.
+    Returns the source-specific dict on success or ``None`` on miss / failure
+    — the streaming runner stamps the corresponding sources_state entry.
+
+    Each branch swallows its own exceptions so one source's failure can't
+    take down the whole parallel fan-out. The per-source semaphores
+    inside the underlying fetchers (TMDB / OMDb / Jikan / AniList /
+    MusicBrainz) still enforce each API's rate limit independently — we
+    fire the tasks in parallel but each task hits its own gate before
+    actually calling the API.
+    """
+    title      = ctx.get("title", "")
+    media_type = ctx.get("media_type", "")
+    try:
+        if source == "lastfm":
+            from src.services.music_metadata import fetch_lastfm_artist
+            return await fetch_lastfm_artist(title)
+        if source == "mb":
+            from src.services.music_metadata import fetch_musicbrainz_artist
+            return await fetch_musicbrainz_artist(title)
+        if source == "omdb":
+            imdb = ctx.get("imdb_id")
+            if not imdb:
+                return None
+            return await fetch_omdb_data(imdb)
+        if source == "tmdb":
+            tmdb_id = ctx.get("tmdb_id")
+            year    = ctx.get("year")
+            endpoint = "movie" if media_type == "movie" else "tv"
+            try:
+                if tmdb_id:
+                    return await fetch_tmdb_full(tmdb_id, endpoint)
+                return await _tmdb_search_and_fetch(title, endpoint, year=year)
+            except TMDBTransientError as te:
+                # Don't propagate — let the abort-streak logic in the
+                # producer's _process_one handle 429s based on the
+                # sources_state we'll stamp as "transient" upstream.
+                logger.debug("[stream] tmdb transient on %r: HTTP %s",
+                             title, te.status_code)
+                return None
+        if source == "anilist":
+            anilist_id = ctx.get("anilist_id")
+            anidb_id   = ctx.get("anidb_id")
+            if anilist_id:
+                return await fetch_anilist_full(anilist_id)
+            if anidb_id:
+                result = await search_anilist_by_title(title)
+                if result:
+                    result["anidb_id"] = anidb_id
+                return result
+            return await search_anilist_by_title(title)
+        if source == "jikan":
+            mal_id = ctx.get("mal_id")
+            return await fetch_jikan_data(
+                mal_id=mal_id,
+                title=None if mal_id else title,
+            )
+    except Exception as e:
+        logger.debug("[stream] %s fetch failed for %r: %s", source, title, e)
+    return None
+
+
+async def _streaming_fetch_runner(
+    ctx: dict,
+    expected_sources: list[str],
+) -> tuple[Optional[dict], dict[str, asyncio.Task]]:
+    """Fire ``expected_sources`` in parallel + return the first sufficient
+    raw blob plus a dict of any still-running tasks.
+
+    Behaviour:
+      1. ``asyncio.create_task`` for each expected source.
+      2. Iterate ``asyncio.as_completed`` — on every completion, merge the
+         result into a shared ``raw`` accumulator.
+      3. The moment ``_has_enough_data_for_polish(raw, media_type)`` flips
+         true, snapshot ``raw`` + return it; the still-pending tasks ride
+         along in ``remaining`` so the producer can spawn a background
+         finalizer that updates the DB once they all complete.
+      4. If we drain every source without ever hitting the polish
+         threshold → return (None, {}) so the caller writes a not_found
+         sentinel (matches the pre-streaming behaviour).
+
+    ``ctx`` is the same context dict ``_fetch_source`` uses; it must
+    contain ``media_type`` at minimum.
+    """
+    media_type = ctx.get("media_type", "")
+    # Seed raw with the always-known fields BEFORE per-source merges run.
+    # Without this seed, ``_has_enough_data_for_polish`` for music can
+    # reject an item whose Last.fm data is present but whose ``title``
+    # field was never set (Last.fm's per-source dict uses ``name``).
+    raw: dict = {
+        "title":         ctx.get("title", ""),
+        "media_type":    media_type,
+        "sources_state": _new_source_state(),
+    }
+    tasks: dict[str, asyncio.Task] = {
+        s: asyncio.create_task(_fetch_source(s, ctx)) for s in expected_sources
+    }
+    name_by_task = {t: s for s, t in tasks.items()}
+    sufficient = False
+
+    # Walk completions in arrival order. We DO NOT cancel pending tasks
+    # when sufficiency is reached — the producer wants those background
+    # results to keep flowing into the DB (the "slower API füllt langsamer
+    # parallel" half of the streaming model the user designed).
+    pending = set(tasks.values())
+    initial_raw: Optional[dict] = None
+    is_anime = ctx.get("is_anime", False)
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        # Merge every task that completed in this batch BEFORE checking
+        # sufficiency. If lastfm + mb both finish in the same wait window,
+        # we want both in sources_state, not just whichever the for-loop
+        # iteration order picked first.
+        for t in done:
+            src = name_by_task[t]
+            try:
+                data = t.result()
+            except Exception as _e:
+                data = None
+                logger.debug("[stream] %s task error: %s", src, _e)
+            _merge_source_into_raw(raw, src, data, media_type, is_anime)
+        # Now check sufficiency post-merge.
+        if not sufficient and _has_enough_data_for_polish(raw, media_type):
+            sufficient = True
+            # Snapshot for the LLM polish; deep-copy so later background
+            # merges into ``raw`` can't mutate the snapshot the caller
+            # hands to the consumer for polish.
+            from copy import deepcopy
+            initial_raw = deepcopy(raw)
+            # ``pending`` is the still-running task set — the finalizer
+            # awaits these to flip provisional=False once they all return.
+            remaining = {name_by_task[p]: p for p in pending}
+            initial_raw["_remaining_tasks"]    = remaining
+            initial_raw["_live_sources_state"] = raw["sources_state"]
+            initial_raw["_live_raw_ref"]       = raw   # finalizer updates here
+            return initial_raw, remaining
+    # All sources drained, never reached the polish threshold.
+    return None, {}
+
+
 # ── ANILIST RATE-LIMIT CIRCUIT BREAKER ────────────────────────────────────────
 # AniList allows 90 req/min. We enforce a 0.75 s floor (~80/min) and honour
 # any Retry-After header from 429 responses via a shared module-level backoff.
