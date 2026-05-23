@@ -397,28 +397,52 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
 
 # ── COMBINED ENRICHMENT ───────────────────────────────────────────────────────
 
-async def enrich_artist(artist_name: str) -> Optional[dict]:
+async def enrich_artist(artist_name: str, skip_mb: bool = False) -> Optional[dict]:
     """
     Fetch and merge artist metadata from MusicBrainz + Last.fm.
     Returns a unified profile dict.
-    """
-    cache = MetadataCache()
-    cache_key = f"artist_profile:{artist_name[:60].lower()}"
-    cached = cache.get_cache(cache_key)
-    if cached:
-        cache.close()
-        return cached["response"]
-    cache.close()
 
-    mb, lfm = await asyncio.gather(
-        fetch_musicbrainz_artist(artist_name),
-        fetch_lastfm_artist(artist_name),
-        return_exceptions=True,
-    )
-    if isinstance(mb, Exception):
+    Phase 2 #38b: ``skip_mb=True`` runs Last.fm only — bypasses the
+    MusicBrainz ``Semaphore(1)`` + 1 req/sec floor, which is the
+    music-lane throughput killer (66% of library × 1 req/s = ~4 h).
+    The returned profile has ``mbid=None`` / ``country=None`` /
+    ``type=""`` / ``rating=None`` (the MB-sourced fields). Caller is
+    expected to flag the row ``provisional=True`` so the #41 scheduler
+    later upgrades it with a real MB call. We also bypass the
+    ``artist_profile:`` MetadataCache for skip_mb fetches so a fast
+    pass cannot poison a later full pass — the full pass would
+    otherwise read the cached fast profile and short-circuit before
+    MB ever ran.
+    """
+    cache_key = f"artist_profile:{artist_name[:60].lower()}"
+
+    if not skip_mb:
+        # Full mode: regular MB+Last.fm read-through cache.
+        cache = MetadataCache()
+        cached = cache.get_cache(cache_key)
+        if cached:
+            cache.close()
+            return cached["response"]
+        cache.close()
+        mb, lfm = await asyncio.gather(
+            fetch_musicbrainz_artist(artist_name),
+            fetch_lastfm_artist(artist_name),
+            return_exceptions=True,
+        )
+        if isinstance(mb, Exception):
+            mb = None
+        if isinstance(lfm, Exception):
+            lfm = None
+    else:
+        # Fast mode: skip MB entirely + skip the artist_profile cache
+        # so a fast result can't shadow a later full fetch. The outer
+        # raw:music:{id_key} cache at fetch_and_prepare_raw level still
+        # short-circuits identical fast requests on the same item.
         mb = None
-    if isinstance(lfm, Exception):
-        lfm = None
+        try:
+            lfm = await fetch_lastfm_artist(artist_name)
+        except Exception:
+            lfm = None
 
     if not mb and not lfm:
         # Pass 80: cache the merged-None outcome as well. The two sub-fetches
@@ -426,9 +450,12 @@ async def enrich_artist(artist_name: str) -> Optional[dict]:
         # belt-and-braces: a single ``get_cache`` lookup short-circuits the
         # whole gather() so we don't even pay the await/dispatch cost when
         # an artist is reliably unfindable. 7 days matches the sub-fetches.
-        cache = MetadataCache()
-        cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", None, days=7)
-        cache.close()
+        # #38b: skip the cache write in fast mode — a fast-mode "no data"
+        # may flip to "found" once MB is consulted in the upgrade pass.
+        if not skip_mb:
+            cache = MetadataCache()
+            cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", None, days=7)
+            cache.close()
         return None
 
     # Merge: prefer MusicBrainz for factual data, Last.fm for tags/similar
@@ -465,9 +492,13 @@ async def enrich_artist(artist_name: str) -> Optional[dict]:
         ),
     }
 
-    cache = MetadataCache()
-    cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", profile, days=30)
-    cache.close()
+    # #38b: only write the artist_profile cache in full mode. A fast-mode
+    # profile is intentionally not cached here so a subsequent full pass
+    # for the same artist sees an empty profile cache + runs MB.
+    if not skip_mb:
+        cache = MetadataCache()
+        cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", profile, days=30)
+        cache.close()
     return profile
 
 

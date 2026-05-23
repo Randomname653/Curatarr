@@ -238,6 +238,31 @@ OMDb adds nothing AniList doesn't already have). Sonarr currently does
 not surface `imdb_id` in collected items — `show` therefore falls back to
 the TMDB-primary chain. Closing that gap is a Phase-2 task.
 
+**Fast vs Full tier** (Phase 2 #38b). `fetch_and_prepare_raw` accepts
+`fast_only: bool = False`. In **fast** mode the slow per-category
+upstream is bypassed: music skips MusicBrainz (uses Last.fm only —
+~5 req/s instead of MB's 1 req/s, the music-lane killer); anime skips
+the Jikan supplement; movie/show skip the OMDb-supplement and the
+TMDB-supplement (whichever primary worked is enough). Each item lands
+`fetch_tier="fast"` + `provisional=True` on the EnrichmentStatus row;
+the **source-upgrade scheduler (#41)** scans for `provisional=True`
+later and runs a full re-fetch in the background to fill in the
+missing sources. The DB column `sources_state` records every source
+consulted with status `ok` / `miss` / `transient` / `skipped` and a
+timestamp, so the scheduler can target exactly the sources still
+pending. WHY: the parallel-benchmark (§15) proved the LLM consumer
+ceiling is ~14/min — the throughput-bound is producer-side waiting on
+slow APIs. Skipping MB on bulk-pass slashes the 16 k-music lane from
+~4 h to ~1 h, getting every item to provisional "enriched temporary"
+state quickly so the user gets coverage; full quality follows in
+background. Two transport fields ride with raw across the pipeline:
+`_fetch_tier` (`"fast"` / `"full"`) and `_provisional` (`True` only
+for fast rows). The raw cache stamps `_tier_at_fetch` into the cached
+blob so a future `fast_only=False` request seeing a fast-cached blob
+bypasses the cache and re-fetches (otherwise the upgrade pass would
+just re-read the same stale fast data). The polished cache (tier 1)
+applies the same tier-mismatch check on read.
+
 ### 5.4 Two-tier cache + prompt versioning (Pass 99-fu2)
 
 - `raw:{cat}:{id_key}` — pure API fetch result (TMDB/AniList/MB/Last.fm
@@ -549,6 +574,23 @@ without understanding why they exist.
   For LLM inference on a single discrete GPU it's almost always compute,
   and the lever is a faster/smaller model or a better-utilised batch,
   never more concurrent clients.
+- **`uvicorn --reload` on this setup is lazy** — file changes are
+  detected but the process restart is deferred until a browser-side
+  signal (tab close / hard refresh) invalidates the ASGI state. As
+  long as a tab keeps the connection warm, the OLD process keeps
+  running with its original imports + background coroutines, even if
+  the .pyc has been re-compiled by an out-of-band Python import. This
+  trapped a half-day during Phase-2 #38a deployment: the new
+  instrumentation showed up on disk + worked in isolation but every
+  newly enriched DB row had NULL `fetch_tier` for hours because the
+  long-running producer coroutine had captured pre-edit function
+  references at its 09:14 startup and `--reload` never fired.
+  **Defensive rule**: when an edit must take effect on a live
+  background task, tell the user to explicitly restart (Ctrl-C +
+  start.bat), and verify the new code is live by inspecting a FRESH
+  DB row written after the restart — don't trust the `.pyc` mtime
+  alone, and don't trust the AppState `enrichment_running` flag
+  (which can be stale across reload boundaries).
 - **The consumer's real warm ceiling is ~14/min, but prod sees less** —
   the gap is producer-side, not consumer-side (parallel-bench, 2026-05).
   The same benchmark established 14.2 items/min as the *warm* steady-state
