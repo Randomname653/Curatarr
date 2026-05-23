@@ -1300,8 +1300,8 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
                 logger.warning("Producer error [%s] '%s': %s", pcat, canonical, e)
 
         async def _producer():
-            """Pass 99-fu10: per-category fetch lanes (replaces the single
-            mixed worker pool).
+            """Pass 99-fu10/fu11/fu12: per-category fetch lanes feeding
+            per-category output queues, drained by a round-robin consumer.
 
             The pre-fu10 pool put ALL items in one inbox and let 8 generic
             workers pull from it. With a 66%-music library that was fatal:
@@ -1313,10 +1313,16 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
             Now each category gets its OWN worker count, matched to its
             upstream's concurrency cap. A slow lane (music) can no longer
             starve a fast lane (movie/show): the lanes fetch independently
-            and all feed the single output ``queue``; the consumer drains
-            whatever is ready. ``_process_one``'s per-category abort /
-            rolling-window / transient-streak state is order-independent,
-            so it works across lanes unchanged.
+            and each writes into its OWN output queue (``cat_queues[cat]``
+            — Pass 99-fu12). The previous single FIFO output queue let
+            instant-cache-hit music monopolise it, blocking the other
+            lanes' producers on ``queue.put`` once it filled. Now music's
+            back-pressure stays in its own queue; movie/show/anime keep
+            fetching at full rate. The consumer rotates fairly across
+            ``cat_queues`` (round-robin, ``_CONSUME_BATCH=10`` per cat).
+            ``_process_one``'s per-category abort / rolling-window /
+            transient-streak state is order-independent, so it works
+            across lanes unchanged.
 
             NOTE: the consumer is still a single LLM coroutine (~16/min) —
             after this change THAT, not the producer, is the throughput
@@ -1374,8 +1380,9 @@ async def _run_enrichment(user_id: int, categories: list, source: str, limit: Op
 
             logger.info(
                 "[enrichment] Producer lanes started (%d categories, %d items total, "
-                "output queue depth %d). Consumer is the ceiling at ~16/min.",
-                len(lanes), len(interleaved), _PREFETCH_DEPTH,
+                "per-cat output queue depth %d, round-robin consumer batch=%d). "
+                "Consumer is the ceiling at ~16/min.",
+                len(lanes), len(interleaved), _PREFETCH_DEPTH, _CONSUME_BATCH,
             )
             await asyncio.gather(*lanes, return_exceptions=True)
 
