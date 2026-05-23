@@ -3962,13 +3962,14 @@ function _stateBarRow(stateKey, state, denominator) {
   // Inline pill with the count, percent, and a coloured progress sliver.
   // ``title`` exposes the bucket's explainer from the API on hover.
   const colors = {
-    llm_polished:     'var(--success)',
-    rule_based:       '#9cd1ff',
-    awaiting_llm:     'var(--amber)',
-    not_findable:     '#d18bff',
-    queued_for_retry: '#5bb6c8',   // muted teal — distinct from awaiting_llm (amber) and never_processed (grey)
-    processing_error: 'var(--danger)',
-    never_processed:  'var(--text3)',
+    llm_polished:         'var(--success)',
+    enriched_provisional: '#7fd9a9',   // Phase 2 #40 — mint-green: visually adjacent to llm_polished (success-green) but desaturated, signalling "good enough for now, scheduler will upgrade"
+    rule_based:           '#9cd1ff',
+    awaiting_llm:         'var(--amber)',
+    not_findable:         '#d18bff',
+    queued_for_retry:     '#5bb6c8',   // muted teal — distinct from awaiting_llm (amber) and never_processed (grey)
+    processing_error:     'var(--danger)',
+    never_processed:      'var(--text3)',
   };
   const c = colors[stateKey] || 'var(--text2)';
   const pct = state.pct || 0;
