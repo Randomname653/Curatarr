@@ -136,7 +136,7 @@ expression matching the table above.
 ### 5.2 Producer / consumer
 
 `/api/enrichment/start` builds an item list, then runs a producer + consumer
-over an `asyncio.Queue(maxsize=500)`:
+across **per-category** `asyncio.Queue`s (no longer a single shared FIFO):
 
 - **Item collection**: watch_history rows (if source includes `watch_history`)
   + ARR collect (if source includes `arr`). Dedup by lowercased title per
@@ -145,28 +145,61 @@ over an `asyncio.Queue(maxsize=500)`:
 - **ARR collect** (`_collect_arr_items`): 60 s timeout (Pass 99-fu7 — the
   full `/api/v3/movie` + `/api/v1/artist` payloads are 15-30 MB and time
   out at the old 10 s under load). Failures use `_format_arr_error` so the
-  log isn't an empty string.
-- **Producer** = **per-category fetch lanes** (Pass 99-fu10), one inbox +
-  worker group per category, all feeding the shared queue: `movie`
-  =`_PRODUCER_WORKERS`(8), `show`=4, `anime`=2, `music`=1. Each worker calls
-  `_process_one(pitem)`; per-service caps live in `media_enricher.py` (§5.4).
-  WHY lanes: a single mixed 8-worker pool let the **66%-music** library pile
-  ~6/8 workers onto the MusicBrainz `Semaphore(1)` (MB enforces ~1 req/sec)
-  while TMDB (movie/show, 16 concurrent) sat idle → throughput collapsed to
-  ~4/min. Lanes isolate the slow music lane so it can't starve the fast TMDB
-  lanes. `_process_one`'s per-category abort/rolling/streak state is
+  log isn't an empty string. Radarr items carry `imdb_id` (enables
+  OMDb-primary, §5.3); Sonarr items currently do not (known gap — shows
+  fall back to TMDB-primary).
+- **Producer** = **per-category fetch lanes** (Pass 99-fu10/fu11). One
+  worker group per category, sized to each upstream's concurrency cap:
+  `movie`=4, `show`=2, `anime`=1, `music`=1. Each worker calls
+  `_process_one(pitem)`; per-service caps live in `media_enricher.py`
+  (§5.6). WHY lanes: a single mixed 8-worker pool let the **66%-music**
+  library pile ~6/8 workers onto the MusicBrainz `Semaphore(1)` (MB enforces
+  ~1 req/sec) while TMDB (movie/show, 16 concurrent) sat idle → throughput
+  collapsed to ~4/min. WHY *gentle* sizes (fu11): the pre-fu11 `movie=8 /
+  show=4` overran TMDB's real ~5 req/sec → 429s → the 5-consecutive-transient
+  guard aborted the movie+show categories (only music survived). With
+  OMDb-primary (fu11), movie/show fetch goes through OMDb (supporter key,
+  100 k/day, semaphore 10) so TMDB only **supplements** (and a TMDB 429 no
+  longer kills the run). `anime` stays at 1 worker because AniList's
+  `Lock(1)` + rate limit would otherwise hit the same abort.
+  `_process_one`'s per-category abort/rolling/streak state is
   order-independent, so the lanes need no change there.
-- **Consumer** = single coroutine running the LLM summariser per item
-  (serial). After the lane fix THIS is the throughput ceiling (~16/min =
-  granite ~3.2 s + embed + db/chroma). It is **not** a VRAM problem — granite
-  (~7 GB) + nomic (~0.6 GB) leave ~16 GB free. Parallelising it would need
-  `OLLAMA_NUM_PARALLEL` **and** a concurrent client; the app sends one request
-  at a time, which is why setting that env var alone does nothing (a past
-  attempt "failed" for exactly this reason).
+- **Per-category output queues + round-robin consumer** (Pass 99-fu12).
+  Each lane writes into its OWN `asyncio.Queue(maxsize=_PREFETCH_DEPTH)`
+  (`cat_queues[cat]`), and a `lanes_done: set` tracks lane completion in
+  place of a sentinel. The consumer is a single LLM coroutine but rotates
+  fairly: each pass walks `active_cats`, pulls up to `_CONSUME_BATCH = 10`
+  items per category (skipping empty queues), processes them serially, then
+  rotates. It exits when all lanes are in `lanes_done` AND every queue is
+  empty; a short `asyncio.sleep(0.25)` covers the idle case while lanes are
+  still feeding. WHY round-robin: the pre-fu12 single FIFO queue meant the
+  music lane (instant raw-cache hits → puts a music item every few ms) filled
+  the queue before movie/show/anime could land an item. The consumer drained
+  in arrival order, so it saw a 10-30 minute pure-music run while the fast
+  lanes' producers eventually blocked on `queue.put` (back-pressure from a
+  full queue) and stopped fetching → all four categories starved at once.
+  Per-category queues let each lane's back-pressure stay local; round-robin
+  guarantees movie/show/anime get LLM time the moment they have anything
+  ready. Observed effect: cat mix moved from "music-only" to roughly
+  proportional within ten minutes of restart (`anime 26 / movie 17 / show 18
+  / music 15` per 10-min window at ~7.6/min).
+- **Consumer is the throughput ceiling, measured at 14.2 items/min warm**
+  (parallel-bench, 2026-05 — 100 varied raw-cache payloads, single coroutine
+  through `summarize_with_small_llm`). Mean per-item: 4.24 s = granite ~3.2 s
+  + embedding + db/chroma writes. Prod runs at ~7-13/min sustained — the
+  ~1-7/min gap is the consumer occasionally idling while the producer waits
+  on a slow API. **Don't try to parallelise** it: the same benchmark proved
+  the workload is compute-bound on a single GPU (N=2 = ×1.02 throughput
+  but ×1.94 mean latency; N=3 = ×1.15 throughput but ×2.55 mean latency).
+  See §15 "Don't parallelise the summariser consumer". **Not** a VRAM
+  problem — granite (~7 GB) + nomic (~0.6 GB) leave ~16 GB free.
 - **Two hard throughput floors** for a full re-enrich: the single consumer
-  (~16/min ⇒ ~30 h for ~28 k items) and the MusicBrainz 1-req/sec cap (~17 k
-  uncached music artists ⇒ ~12-24 h, irreducible). Lanes make music
-  non-blocking, not faster.
+  (~14/min warm ⇒ ~30-50 h for ~28 k items) and the MusicBrainz 1-req/sec
+  cap (~17 k uncached music artists ⇒ ~12-24 h, irreducible). Lanes +
+  round-robin make music non-blocking, not faster. The only way to push
+  past the ~14/min consumer floor is a *faster model* (granite4.1:3b is
+  measured 100% JSON-OK + ~1.5× faster but drier prose — Phase-2 candidate
+  as a fast-tier summariser).
 
 ### 5.3 `fetch_and_prepare_raw` — the two-tier cache + tri-state return
 
@@ -187,6 +220,23 @@ for both "already done" and "no data". After a bulk EnrichmentStatus reset,
 items whose polished cache was still valid returned `None` → producer wrote
 not_found sentinels over perfectly-good items (200 poisoned in 3 s). The
 explicit `_already_enriched` marker fixed that.
+
+**OMDb-primary for movie/show** (Pass 99-fu11). When the item has an
+`imdb_id` AND is not anime, `fetch_and_prepare_raw` tries OMDb **first**
+(`fetch_omdb_data` was extended to return the full core profile —
+`title / year / media_type / genres / overview / director / cast /
+runtime_min / rating / vote_count / imdb_id`, not just the supplement
+fields). On a successful OMDb response (`title` + `overview` present), `raw`
+is built from OMDb and `omdb_was_primary=True`. The TMDB chain is then run
+as a **429-safe supplement** under `try/except TMDBTransientError`:
+poster/keyword/credits enrichment is best-effort, but a TMDB 429 no longer
+poisons the item or aborts the category. WHY: with the supporter OMDb key
+(100 k req/day, semaphore 10) we can fetch movie/show without crowding
+TMDB's ~5/sec limit, which is what made the fu10 movie=8/show=4 lanes
+trigger the abort guard. Anime is unaffected (still AniList-primary,
+OMDb adds nothing AniList doesn't already have). Sonarr currently does
+not surface `imdb_id` in collected items — `show` therefore falls back to
+the TMDB-primary chain. Closing that gap is a Phase-2 task.
 
 ### 5.4 Two-tier cache + prompt versioning (Pass 99-fu2)
 
@@ -239,11 +289,14 @@ entries.
 Module-level in `media_enricher.py`, lazy-init via
 `_ensure_concurrency_primitives()`:
 
-- `_SEM_TMDB = 16`, `_SEM_OMDB = 4`, `_SEM_JIKAN = 2`, `_LOCK_ANILIST` (Lock,
-  serialises through the existing `_anilist_wait` throttle).
+- `_SEM_TMDB = 16`, `_SEM_OMDB = 10` (raised from 4 in Pass 99-fu11 when
+  OMDb became primary for movie/show under a supporter key — 100 k req/day
+  ≫ free-tier 1 k), `_SEM_JIKAN = 2`, `_LOCK_ANILIST` (Lock, serialises
+  through the existing `_anilist_wait` throttle).
 - MusicBrainz already has its own `_MB_SEM = Semaphore(1)` in
   `music_metadata.py` (1 req/s strict).
-- These keep 8 parallel producer workers within each API's rate limit.
+- These keep the lane workers (§5.2 — movie 4, show 2, anime 1, music 1)
+  within each API's rate limit.
 
 ---
 
@@ -481,6 +534,31 @@ without understanding why they exist.
 - **Two LLM workloads contend** (§11): enrichment summariser vs curator
   (chat + deletion pitches). 0-throughput enrichment usually = curator busy,
   not a bug.
+- **Don't parallelise the summariser consumer — it's compute-bound, not
+  I/O-bound** (parallel-bench, 2026-05). The intuitive "run 2 or 3 granite
+  slots" idea was measured end-to-end (`auto_benchmark_parallel.py`, 100
+  varied raw-cache payloads, `OLLAMA_NUM_PARALLEL` = 1 / 2 / 3 with
+  matching `asyncio.Semaphore(N)`): throughput barely moved (×1.00 / ×1.02 /
+  ×1.15) while **mean latency scaled linearly with N** (4.24 s → 8.21 s →
+  10.84 s) — the classic signature of a compute-bound workload on a single
+  GPU. The 4090's tensor cores are already saturated by one granite4.1:8b
+  inference at `num_ctx=8192`; adding slots just time-slices the same
+  cycles N ways. Memory is NOT the limit (granite ~7 GB + KV ~1.3 GB × N
+  fits in 24 GB easily); GPU compute is. **Lesson:** before reaching for
+  more parallelism, measure whether the unit is compute- or I/O-bound.
+  For LLM inference on a single discrete GPU it's almost always compute,
+  and the lever is a faster/smaller model or a better-utilised batch,
+  never more concurrent clients.
+- **The consumer's real warm ceiling is ~14/min, but prod sees less** —
+  the gap is producer-side, not consumer-side (parallel-bench, 2026-05).
+  The same benchmark established 14.2 items/min as the *warm* steady-state
+  with cache-resident raw data, no DB writes, no API fetches in the loop.
+  Prod runs at ~7-13/min sustained. The delta is the consumer occasionally
+  idling because the per-category queue is empty while the producer is
+  waiting on a slow API (MusicBrainz 1 req/s, OMDb/TMDB network RTT,
+  Last.fm). The lever to close that gap is **faster producer-side fetch**
+  (Phase 2: fast-only fetch mode, Last.fm-primary music with MB upgrade
+  in background, provisional state) — NOT more consumer concurrency.
 - **Summariser = `granite4.1:8b`, and valid-JSON ≠ accurate** (model bench,
   2026-05). The summariser is the enrichment-throughput bottleneck. gpt-oss:20b
   ran ~12.6 s/item AND occasionally emitted *invalid* JSON (verbose; hit the
@@ -506,6 +584,38 @@ without understanding why they exist.
   `_PROMPT_VERSION` bump invalidates the profiles by *version*, not because the
   clear deleted them. The emb-cache clear (`%:emb:%`, leading `%`) does work. Fix:
   prefix the pattern with `{_CACHE_VERSION}:`.
+- **A numeric `rating` field will crash `_merge_raw_metadata`** if its type
+  isn't guarded (Pass 99-fu11). The Jikan supplement put a content-rating
+  STRING into `sup["rating"]` (e.g. `"Rx — Hentai"`), and the merge did
+  `if "Rx" in mal_rating:` directly. When `fetch_omdb_data` was extended to
+  return the full core profile, it added a NUMERIC `rating` (OMDb's
+  imdbRating, a float). Suddenly `"Rx" in <float>` raised `TypeError:
+  argument of type 'float' is not iterable` — for *every* movie and show
+  going through the merge. The producer caught it in the generic `except
+  Exception` and logged a one-line "Producer error", so the symptom looked
+  like silent failure: anime/movie/show stuck at the same counts forever
+  while only pre-cached music flowed. Fix in place: `isinstance(mal_rating,
+  str)` guard before any string membership check. **Lesson:** any time a
+  fetcher's return shape grows, audit every consumer that does duck-typed
+  string ops on its fields — `"X" in field` is a silent type-incompatibility
+  trap.
+- **A single FIFO output queue lets the fastest producer starve the others**
+  (Pass 99-fu12). Cached items return from `fetch_and_prepare_raw` in single
+  digits of milliseconds. With 66 % of the library being music and most
+  music items hitting the raw cache after one warm-up pass, the music lane
+  filled a single shared `asyncio.Queue` faster than the consumer could drain
+  it. Movie/show/anime producers eventually blocked on `queue.put` (full
+  queue back-pressure) and stopped fetching entirely → the user saw "only
+  music in the activity feed" for 10-30 min stretches even though the
+  movie/show/anime lanes were healthy. Fix: per-category output queues
+  (`cat_queues[cat]`) + a round-robin consumer pulling `_CONSUME_BATCH = 10`
+  per category per pass, plus a `lanes_done: set` for termination in place
+  of a single sentinel. **Lesson:** when producers have wildly different
+  per-item latencies (cache hits vs network round-trips), a shared FIFO
+  hides which side is bottlenecked because the back-pressure couples them.
+  Per-category queues + fair scheduling decouples the lanes, and the
+  per-category cat-mix in the last 10 min becomes the at-a-glance health
+  signal ("fair mix → fine, all-one-cat → starvation").
 
 ---
 
