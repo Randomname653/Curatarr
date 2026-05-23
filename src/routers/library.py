@@ -1408,7 +1408,7 @@ async def library_breakdown(
     # One pass: group by (media_category, state_bucket) using SQL CASE.
     # Excludes Spotify ext-script seeds (Pass 91b — they aren't in any Plex
     # section so they don't belong to a library row here).
-    from sqlalchemy import case as _case
+    from sqlalchemy import case as _case, and_ as _and
     state_buckets: dict[str, dict[str, int]] = {}
     with get_db_session() as db:
         # Pass 98: split the old "processing_error" catch-all into two honest
@@ -1428,11 +1428,20 @@ async def library_breakdown(
         # misleading: a freshly-reset row got the same "warning" label as
         # a row that genuinely crashed. The two states deserve their own
         # bucket so the user can tell the difference at a glance.
+        # Phase 2 #40: split the LLM-polished bucket on ``provisional`` —
+        # provisional rows (fast-tier fetch, MB / Jikan / supplements still
+        # pending the #41 upgrade pass) get their own bucket so the user
+        # can see at a glance how many items are "enriched temporary".
+        # The provisional-True case MUST come before the generic
+        # ``error IS NULL → llm_polished`` so it wins; legacy rows have
+        # provisional=False (default 0 in the migration), and the bool
+        # coerces correctly under SQLite + SQLAlchemy.
         bucket_expr = _case(
             (_ES.enriched == False, _case(
                 (_ES.error.is_(None), "queued_for_retry"),
                 else_="processing_error",
             )),
+            (_and(_ES.error.is_(None), _ES.provisional == True), "enriched_provisional"),
             (_ES.error.is_(None), "llm_polished"),
             (_ES.error.like("rule_based%"), "rule_based"),
             (_ES.error.like("api_cached%"), "awaiting_llm"),
@@ -1644,7 +1653,9 @@ async def library_breakdown(
 
     state_definitions = {
         "llm_polished":     ("✅ LLM-polished",
-                             "enriched=True, error IS NULL — full LLM summary written. Terminal state."),
+                             "enriched=True, error IS NULL — full LLM summary written from a canonical (full-tier) fetch. Terminal state."),
+        "enriched_provisional": ("🌗 Enriched (provisional)",
+                             "enriched=True, fetch_tier='fast' — LLM-polished from a fast-only fetch (Last.fm for music, no Jikan/OMDb/TMDB supplement). The hourly source-upgrade scheduler (#41) promotes 30 of these per hour to the full canonical fetch, oldest first."),
         "rule_based":       ("🔧 Rule-based only",
                              "Heuristic fallback wrote a profile; LLM upgrade pending. 1-day cache TTL before retry."),
         "awaiting_llm":     ("⏳ Awaiting LLM polish",

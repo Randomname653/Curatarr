@@ -114,14 +114,15 @@ historical bugs.
 
 The most intricate subsystem. Read this section before touching either file.
 
-### 5.1 The six EnrichmentStatus states
+### 5.1 The seven EnrichmentStatus states
 
-`(enriched, error)` encodes a mutually-exclusive state, surfaced in the
-breakdown panel (§ recommendations UI) with explainers:
+`(enriched, error, provisional)` encodes a mutually-exclusive state,
+surfaced in the breakdown panel (§ recommendations UI) with explainers:
 
 | State | DB condition | Meaning |
 |---|---|---|
-| **LLM-polished** | `enriched=True, error IS NULL` | Full LLM profile written. Terminal. |
+| **LLM-polished** | `enriched=True, error IS NULL, (provisional=0 OR NULL)` | Full canonical fetch + LLM profile written. Terminal. |
+| **Enriched (provisional)** | `enriched=True, error IS NULL, provisional=1` | Phase-2 fast-tier (Pass 99-fu13 / #40) — only the cheap sources contributed (Last.fm for music, no Jikan/OMDb/TMDB supplement). The #41 hourly source-upgrade scheduler promotes 30 of these per hour to LLM-polished. |
 | **Rule-based** | `enriched=True, error LIKE 'rule_based%'` | Heuristic fallback, LLM upgrade pending. 1-day cache TTL. |
 | **Awaiting LLM** | `enriched=True, error LIKE 'api_cached%'` | API data persisted, LLM paused (game-mode or standalone music_enricher's default marker). |
 | **Not findable** | `enriched=True, error LIKE 'Not found%'` | All APIs missed. 3-day sentinel TTL. |
@@ -131,7 +132,10 @@ breakdown panel (§ recommendations UI) with explainers:
 
 `_write_enrichment_db()` is the single writer. The breakdown endpoint
 (`src/routers/library.py::library_breakdown`) classifies via a SQL CASE
-expression matching the table above.
+expression matching the table above. The provisional case is checked
+BEFORE the generic `error IS NULL → llm_polished` so a fast-tier row
+gets its own bucket; legacy rows have `provisional=0` (migration
+default) and fall through to LLM-polished as before.
 
 ### 5.2 Producer / consumer
 
