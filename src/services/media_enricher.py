@@ -66,7 +66,12 @@ logger = logging.getLogger(__name__)
 # "tsundere" to nearby character nouns; filtering them deterministically
 # at prompt-input is more reliable than the soft v3 rule asking the LLM
 # to handle them correctly).
-_PROMPT_VERSION = "v4"
+# Bumped v4 -> v5 when Idea C landed (title-number self-correction loop
+# — post-generation regex check that every digit-run from the title
+# appears verbatim in the polished output; one retry with override
+# directive on miss). Beats the LLM's "smoother prose" prior for
+# numbers ("4400" -> "4,000 individuals") deterministically.
+_PROMPT_VERSION = "v5"
 
 
 # ── PHASE-2 QUALITY: CHARACTER-ARCHETYPE TAG BLACKLIST ──────────────────────
@@ -103,6 +108,51 @@ def _filter_archetype_tags(keywords) -> list[str]:
             continue
         out.append(k)
     return out
+
+
+# ── PHASE-2 QUALITY: TITLE-NUMBER SELF-CORRECTION LOOP (Idea C) ──────────────
+# Digit-runs that appear in the source TITLE are facts the LLM must
+# reproduce verbatim. The v3 grounding rule #2 ("numbers in source are
+# exact, reproduce verbatim") was a soft nudge that the model overrides
+# with narrative-fluency priors — e.g. "The 4400" gets summarised as
+# "4,000 individuals" because that reads smoother in prose. Asking
+# harder in the prompt doesn't help (test_prompt_v3 confirmed).
+#
+# Deterministic fix: after the first LLM polish, regex-check that every
+# digit-run from the title appears verbatim in the plot_summary OR
+# embedding_text. If any is missing, retry the LLM call ONCE with an
+# explicit override directive listing the required numbers. Cost: zero
+# for ~98% of items (no digits in title), one extra LLM call (~3-5 s)
+# for items where the first attempt actually dropped the number.
+
+_TITLE_NUMBER_RX = re.compile(r"\d+")
+
+
+def _extract_title_numbers(title: str) -> list[str]:
+    """Digit-runs in the title that must be preserved verbatim in the
+    polished output. ``"The 4400"`` → ``["4400"]``; ``"2001: A Space
+    Odyssey"`` → ``["2001"]``; ``"Frieren"`` → ``[]``."""
+    return _TITLE_NUMBER_RX.findall(title or "")
+
+
+def _numbers_preserved_in_profile(numbers: list[str], profile: dict) -> bool:
+    """True if every number in ``numbers`` appears as a standalone token
+    in the profile's plot / embedding / why_watch text. \\b boundaries
+    enforce verbatim match — "4400" must appear as "4400", not as
+    "4,400" (with comma), "4000" (paraphrased), or substring of
+    "44000". This is exactly the strictness that catches the LLM's
+    smoother-prose paraphrasing of source numbers."""
+    if not numbers:
+        return True
+    text = " ".join([
+        (profile.get("plot_summary")    or "") if isinstance(profile.get("plot_summary"),    str) else "",
+        (profile.get("embedding_text") or "") if isinstance(profile.get("embedding_text"), str) else "",
+        (profile.get("why_watch")       or "") if isinstance(profile.get("why_watch"),       str) else "",
+    ])
+    for n in numbers:
+        if not re.search(rf"\b{re.escape(n)}\b", text):
+            return False
+    return True
 
 # Pass 99-fu2: tier-2 raw cache TTL. Long enough that prompt bumps don't
 # trigger API re-fetches; short enough that genuinely-changed upstream
@@ -1397,6 +1447,71 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
             result = json.loads(content)
             raw_source = raw_metadata.get("source", "unknown")
             result["source"] = f"{raw_source}+llm"
+
+            # Idea C: title-number self-correction loop.
+            # If any digit-run from the source TITLE is missing from the
+            # polished output, the LLM has paraphrased a fact ("4400" -->
+            # "4,000 individuals"). Retry ONCE with an explicit override
+            # listing the required numbers. Best-effort: if the retry
+            # call fails or still misses, keep the first attempt rather
+            # than fall back to rule-based (the polish is still useful,
+            # just one fact is wrong). Cost: zero for the ~98% of items
+            # whose title has no digits; one extra ~3-5 s LLM call on
+            # the ~2% that need correction.
+            _title_nums = _extract_title_numbers(raw_metadata.get("title", ""))
+            if _title_nums and not _numbers_preserved_in_profile(_title_nums, result):
+                logger.info(
+                    "[summarize] title-numbers %s missing in polish for %r — "
+                    "retrying with override directive",
+                    _title_nums, raw_metadata.get("title", "?"),
+                )
+                _override = prompt + (
+                    "\n\n[CRITICAL: Your previous attempt missed numbers from the "
+                    "title. These numbers MUST appear verbatim (as digits, no commas, "
+                    f"no paraphrase) in your plot_summary and embedding_text: "
+                    f"{', '.join(_title_nums)}. Re-emit the JSON.]"
+                )
+                try:
+                    async with httpx.AsyncClient(timeout=120) as _c2:
+                        _r2 = await _c2.post(
+                            f"{settings.effective_ollama}/api/chat",
+                            json={
+                                "model": SUMMARIZER_MODEL,
+                                "messages": [{"role": "user", "content": _override}],
+                                "stream": False,
+                                **ollama_options(temperature=0.1, num_predict=2600),
+                            },
+                        )
+                    if _r2.status_code == 200:
+                        _content2 = clean_llm_text(
+                            _r2.json().get("message", {}).get("content", "").strip()
+                        )
+                        try:
+                            _result2 = json.loads(_content2)
+                            if _numbers_preserved_in_profile(_title_nums, _result2):
+                                _result2["source"] = f"{raw_source}+llm"
+                                result = _result2
+                                logger.info(
+                                    "[summarize] number-retry FIXED %r",
+                                    raw_metadata.get("title", "?"),
+                                )
+                            else:
+                                logger.info(
+                                    "[summarize] number-retry STILL missing %s for %r — "
+                                    "keeping first attempt",
+                                    _title_nums, raw_metadata.get("title", "?"),
+                                )
+                        except json.JSONDecodeError:
+                            logger.debug(
+                                "[summarize] number-retry JSON parse fail for %r — "
+                                "keeping first attempt", raw_metadata.get("title", "?"),
+                            )
+                except Exception as _re:
+                    logger.debug(
+                        "[summarize] number-retry call failed for %r: %s — "
+                        "keeping first attempt", raw_metadata.get("title", "?"), _re,
+                    )
+
             logger.debug("Summarizer success for '%s': source=%s",
                          raw_metadata.get("title", "?"), result["source"])
             return result
