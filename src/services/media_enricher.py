@@ -1167,6 +1167,14 @@ async def fetch_and_prepare_raw(
             raw_data["_plex_rating_key"] = plex_rating_key
             raw_data["_tmdb_id"]         = tmdb_id or raw_data.get("_tmdb_id")
             raw_data["_anilist_id"]      = anilist_id or raw_data.get("_anilist_id")
+            # Phase 2 #38a/b: game-mode prefetched blobs were ALWAYS the
+            # canonical full fetch (game-mode skips only the LLM polish,
+            # not the API round-trips). Stamp tier="full" + provisional=
+            # False so the consumer's downstream write reconciles the DB
+            # row consistently with everything else.
+            cached_tier = raw_data.get("cache_tier", "full")
+            raw_data["_fetch_tier"]  = cached_tier
+            raw_data["_provisional"] = (cached_tier == "fast")
             cache.close()
             logger.debug("Raw prefetch cache hit for '%s' (%s)", title, plex_rating_key)
             return raw_data
