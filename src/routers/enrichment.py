@@ -810,21 +810,18 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                 # query (``WHERE fetch_tier='fast' AND provisional=1``)
                 # still selects exactly the items we mean.
                 #
-                # Phase 2 #39: race-safety vs the streaming finalizer.
-                # The finalizer (``_finalize_streaming_merge``) is spawned
-                # by ``_process_one`` independently of the consumer queue.
-                # When the queue is deep (LLM at ~10/min, finalizer at
-                # ~1-2 s) the finalizer can commit ``fetch_tier='full'``
-                # + ``provisional=False`` BEFORE the consumer even pulls
-                # this item. If the consumer then blindly overwrote with
-                # the initial-snapshot tier='fast' / provisional=True,
-                # the row would regress. So: when ``status.fetch_tier``
-                # is already ``"full"``, treat the finalizer's write as
-                # authoritative and leave the source-state columns
-                # alone. (enriched / enriched_at / error / vector_ready
-                # above are owned solely by the consumer and are safe
-                # to write unconditionally.)
-                if profile is not None and status.fetch_tier != "full":
+                # Phase 2 #39 step 3: the consumer is now ALWAYS the
+                # FIRST writer for streamed items — the finalizer is
+                # spawned in ``_consume_entry`` only AFTER this
+                # _write_enrichment_db commits. So the consumer writes
+                # the initial fast/provisional=True snapshot, and the
+                # finalizer's later UPDATE flips it to full/False once
+                # slow sources are back. This is what makes the UI's
+                # 🌗 provisional bucket actually light up as items
+                # pass through — the previous "race-skip if already
+                # full" guard prevented re-enrichment runs from
+                # overwriting stale rows AND hid the provisional state.
+                if profile is not None:
                     if "fetch_tier" in profile:
                         status.fetch_tier = profile["fetch_tier"]
                     if "sources_state" in profile:
@@ -1378,36 +1375,18 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0
                 elif raw is not None:
-                    # Phase 2 #39: streaming-merge — if fetch_and_prepare_raw
-                    # returned early on first-source-sufficiency, there are
-                    # background tasks still fetching slow sources. Pop the
-                    # finalizer transport fields BEFORE queueing so the
-                    # consumer's process_and_save sees a clean raw, then
-                    # spawn _finalize_streaming_merge as a fire-and-forget
-                    # asyncio task. The finalizer awaits the remaining
-                    # tasks, merges results into the raw cache + DB
-                    # sources_state, and flips fetch_tier='full' +
-                    # provisional=False once all expected sources are back.
-                    remaining = raw.pop("_remaining_tasks", None)
-                    live_ref = raw.pop("_live_raw_ref",     None)
-                    raw.pop("_live_sources_state", None)
-                    fin_media_type = raw.pop("_finalize_media_type", pcat)
-                    fin_id_key     = raw.pop("_finalize_id_key",     None)
-                    fin_is_anime   = raw.pop("_finalize_is_anime",   False)
-
+                    # Phase 2 #39: streaming-merge — leave the finalizer
+                    # transport fields ATTACHED to raw so they ride
+                    # through the queue. The consumer pops them in
+                    # _consume_entry AFTER the polish-write commits, and
+                    # spawns _finalize_streaming_merge then. This makes
+                    # the consumer's provisional=True write LAND FIRST
+                    # in the DB row, then the finalizer's
+                    # provisional=False update comes later — so the
+                    # provisional state is VISIBLE in the UI bucket as
+                    # items pass through, instead of finalizer racing
+                    # ahead and the bucket never lighting up.
                     await cat_queues[pcat].put((pitem, raw))
-
-                    if remaining and live_ref is not None:
-                        from src.services.media_enricher import _finalize_streaming_merge
-                        asyncio.create_task(_finalize_streaming_merge(
-                            pitem["plex_rating_key"],
-                            live_ref,
-                            remaining,
-                            fin_media_type,
-                            fin_id_key,
-                            fin_is_anime,
-                        ))
-
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0   # reset on any success
                 else:
@@ -1614,6 +1593,21 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                 nonlocal consumed, game_skipped, processed_total
                 canonical = citem.get("series_title") or citem["title"]
                 task_monitor.update(main_task, message=f"[{ccat}] '{canonical[:50]}'")
+                # Phase 2 #39: pop the streaming-finalizer transport fields
+                # BEFORE process_and_save (we don't want them in the LLM
+                # prompt) so we can spawn the finalizer AFTER the polish-
+                # write commits. This ordering is what makes the UI's
+                # 🌗 "Enriched (provisional)" bucket actually light up:
+                # consumer writes provisional=True first, then the
+                # finalizer flips it to provisional=False once all slow
+                # sources are back. Pre-#39-step3 the finalizer raced
+                # ahead in _process_one and the bucket was always 0.
+                remaining = raw.pop("_remaining_tasks", None)
+                live_ref  = raw.pop("_live_raw_ref",     None)
+                raw.pop("_live_sources_state", None)
+                fin_mt = raw.pop("_finalize_media_type", ccat)
+                fin_ik = raw.pop("_finalize_id_key",     None)
+                fin_ia = raw.pop("_finalize_is_anime",   False)
                 try:
                     if is_game_running():
                         # Persist raw API data to SQLite, skip LLM, mark for later
@@ -1627,6 +1621,22 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                         await wait_for_enrichment_slot()
                         profile = await process_and_save(raw)
                         await _write_enrichment_db(citem, profile, ccat)
+                        # AFTER the polish-write has committed
+                        # provisional=True (via profile["provisional"] set
+                        # by process_and_save) we can safely spawn the
+                        # finalizer. It awaits slow-source tasks, merges
+                        # results, then commits provisional=False +
+                        # fetch_tier='full' as a SECOND DB update.
+                        if remaining and live_ref is not None:
+                            from src.services.media_enricher import _finalize_streaming_merge
+                            asyncio.create_task(_finalize_streaming_merge(
+                                citem["plex_rating_key"],
+                                live_ref,
+                                remaining,
+                                fin_mt,
+                                fin_ik,
+                                fin_ia,
+                            ))
                 except Exception as e:
                     import traceback
                     logger.warning("Consumer error [%s] '%s': %s\n%s",
