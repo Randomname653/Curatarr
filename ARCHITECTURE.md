@@ -225,38 +225,119 @@ items whose polished cache was still valid returned `None` → producer wrote
 not_found sentinels over perfectly-good items (200 poisoned in 3 s). The
 explicit `_already_enriched` marker fixed that.
 
-**OMDb-primary for movie/show** (Pass 99-fu11). When the item has an
-`imdb_id` AND is not anime, `fetch_and_prepare_raw` tries OMDb **first**
-(`fetch_omdb_data` was extended to return the full core profile —
-`title / year / media_type / genres / overview / director / cast /
-runtime_min / rating / vote_count / imdb_id`, not just the supplement
-fields). On a successful OMDb response (`title` + `overview` present), `raw`
-is built from OMDb and `omdb_was_primary=True`. The TMDB chain is then run
-as a **429-safe supplement** under `try/except TMDBTransientError`:
-poster/keyword/credits enrichment is best-effort, but a TMDB 429 no longer
-poisons the item or aborts the category. WHY: with the supporter OMDb key
-(100 k req/day, semaphore 10) we can fetch movie/show without crowding
-TMDB's ~5/sec limit, which is what made the fu10 movie=8/show=4 lanes
-trigger the abort guard. Anime is unaffected (still AniList-primary,
-OMDb adds nothing AniList doesn't already have). Sonarr currently does
-not surface `imdb_id` in collected items — `show` therefore falls back to
-the TMDB-primary chain. Closing that gap is a Phase-2 task.
+**Streaming-merge: parallel per-source fetch with provisional-then-full
+upgrade** (Phase 2 #39, the current default). Pre-#39, the fetch was a
+serial waterfall: OMDb-primary first, THEN TMDB supplement, THEN merge —
+each item waited for its slowest source before the LLM polish could
+fire. With music's MusicBrainz at 1 req/sec, that meant a music item
+waited >1 sec per fetch even when Last.fm had data in 200 ms.
 
-**Fast vs Full tier** (Phase 2 #38b). `fetch_and_prepare_raw` accepts
-`fast_only: bool = False`. In **fast** mode the slow per-category
-upstream is bypassed: music skips MusicBrainz (uses Last.fm only —
-~5 req/s instead of MB's 1 req/s, the music-lane killer); anime skips
-the Jikan supplement; movie/show skip the OMDb-supplement and the
-TMDB-supplement (whichever primary worked is enough). Each item lands
-`fetch_tier="fast"` + `provisional=True` on the EnrichmentStatus row;
-the **source-upgrade scheduler (#41)** scans for `provisional=True`
-later and runs a full re-fetch in the background to fill in the
-missing sources. The DB column `sources_state` records every source
-consulted with status `ok` / `miss` / `transient` / `skipped` and a
-timestamp, so the scheduler can target exactly the sources still
-pending. WHY: the parallel-benchmark (§15) proved the LLM consumer
-ceiling is ~14/min — the throughput-bound is producer-side waiting on
-slow APIs. Skipping MB on bulk-pass slashes the 16 k-music lane from
+The new model (`_streaming_fetch_runner` in `media_enricher.py`):
+  1. `_expected_sources_for(media_type, is_anime, ids)` returns the list
+     of APIs to fire IN PARALLEL — `{mb, lastfm}` for music, `{tmdb,
+     omdb}` for movie/show with `imdb_id`, `{anilist, jikan}` for anime,
+     etc. Each source's existing semaphore (TMDB_SEM=16, OMDb_SEM=10,
+     MB_SEM=1, Jikan_SEM=2, AniList_LOCK) still enforces its own rate
+     limit inside the parallel fan-out.
+  2. `asyncio.create_task` for each source + `asyncio.wait(FIRST_COMPLETED)`
+     loop. Each completed task merges into a shared raw via
+     `_merge_source_into_raw` (delegates to the existing
+     `_merge_raw_metadata` for de-dup + alt_plot_sources population)
+     and stamps the source's status into `raw["sources_state"]`.
+  3. The MOMENT `_has_enough_data_for_polish(raw, media_type)` flips
+     true (title + overview/bio present), the runner deep-copies raw
+     as the initial snapshot + returns it with `_remaining_tasks`
+     attached. The producer queues the snapshot for LLM polish.
+  4. Remaining slow-source tasks keep running in the background; the
+     consumer's `_consume_entry` spawns `_finalize_streaming_merge`
+     AFTER its polish-write commits (see §5.3.1 — the consumer-first
+     ordering is what makes the 🌗 provisional bucket visible). The
+     finalizer awaits each remaining task, merges each result into the
+     same `live_raw_ref` the runner was mutating, and on completion
+     commits `sources_state` (full JSON) + `fetch_tier='full'` +
+     `provisional=False` as a SECOND DB update. The raw cache blob is
+     also rewritten with the merged full-tier data for future tier-2
+     hits.
+
+The OMDb-vs-TMDB primary distinction (Pass 99-fu11) is GONE: both fire
+in parallel, whichever returns first is "primary" by happenstance, the
+other's data is merged in as soon as it lands. The pre-#39 try/except
+TMDBTransientError guard is no longer needed because a transient TMDB
+fail just stamps `sources_state["tmdb"]={status:transient}` and the
+item continues with the OMDb data — no special-case fall-through.
+
+Sonarr currently does not surface `imdb_id` in collected items, so for
+shows the expected_sources list collapses to `{tmdb}` and the OMDb task
+isn't fired. Closing that gap is a known follow-up.
+
+### 5.3.1 The consumer-first finalizer ordering
+
+The streaming finalizer (`_finalize_streaming_merge`) is spawned by the
+CONSUMER (`_consume_entry` in enrichment.py) AFTER the consumer's
+`_write_enrichment_db` call commits — NOT by the producer's
+`_process_one`. This ordering matters:
+
+  - Initial design (pre-step-3): producer spawned the finalizer right
+    after queueing the item. Finalizer awaited slow sources (~1-2 s)
+    while the consumer's deep LLM queue (~3-5 s per item × deep) let
+    the finalizer ALWAYS commit first. By the time the consumer
+    pulled the item, the row already had `fetch_tier='full'` +
+    `provisional=False`. The UI's 🌗 "Enriched (provisional)" bucket
+    therefore NEVER lit up — items skipped straight from
+    queued-for-retry to LLM-polished.
+  - Current design (step 3): consumer pops the finalizer transport
+    fields (`_remaining_tasks`, `_live_raw_ref`, `_finalize_*`) off
+    raw BEFORE `process_and_save` (so they don't end up in the LLM
+    prompt), polishes, writes the initial snapshot (`fetch_tier='fast'`,
+    `provisional=True`) to DB, THEN spawns the finalizer. The
+    finalizer's later UPDATE flips the row to full/non-provisional.
+    Net effect: the row transitions enriched=0 →
+    enriched=1+fast+provisional=True → enriched=1+full+provisional=False
+    in three observable DB states. The UI bucket actually lights up.
+
+The DB column writes don't conflict: the consumer writes
+`enriched/enriched_at/error/vector_ready` (its own columns) plus
+`fetch_tier/sources_state/provisional` (initial state). The finalizer
+writes ONLY the latter three. SQLite serializes both transactions; the
+finalizer's later write is the final authoritative state.
+
+### 5.3.2 When the provisional bucket actually fills
+
+The streaming flow only fires for items that hit NONE of the three
+cache layers (raw_prefetch, tier-1 polished, tier-2 raw). Items with a
+raw cache hit (tier-2) short-circuit straight to `_fetch_tier='full'`
+without any background tasks → consumer writes full directly, no
+provisional state, no finalizer.
+
+In practice the provisional bucket is most visible for:
+  - **Truly new items** (never fetched — no raw cache yet)
+  - **`fast_only=True` runs** (Pass 99-fu13 / #38b) — items
+    intentionally STAY provisional with slow sources skipped, until
+    the source-upgrade scheduler (§13, #41) hourly cron picks them
+    up + re-runs with `fast_only=False` to fill in the missing data
+  - **TTL-refresh runs** after the 90 d raw cache TTL elapses
+
+For warm libraries the provisional state is sub-second visible during
+streaming-merge transitions (consumer write → finalizer update), so
+the bucket counter mostly oscillates near 0 during normal background
+enrichment.
+
+**Fast vs Full tier** (Phase 2 #38b — see §5.3 for how it
+integrates with the streaming runner). `fetch_and_prepare_raw` accepts
+`fast_only: bool = False`. In **fast** mode the streaming runner's
+expected-sources list is filtered to drop slow sources: music drops
+`mb`, anime drops `jikan`, movie/show drop the secondary supplement.
+Those sources never fire, never land in `_remaining_tasks`. Each item
+lands `fetch_tier="fast"` + `provisional=True` on the EnrichmentStatus
+row and the **source-upgrade scheduler (#41)** scans for
+`provisional=True` later and runs a full re-fetch in the background
+to fill in the missing sources. The DB column `sources_state` records
+every source consulted with status `ok` / `miss` / `transient` /
+`skipped` and a timestamp, so the scheduler can target exactly the
+sources still pending. WHY: the parallel-benchmark (§15) proved the
+LLM consumer ceiling is ~14/min — the throughput-bound is
+producer-side waiting on slow APIs. Skipping MB on bulk-pass slashes
+the 16 k-music lane from
 ~4 h to ~1 h, getting every item to provisional "enriched temporary"
 state quickly so the user gets coverage; full quality follows in
 background. Two transport fields ride with raw across the pipeline:
@@ -624,13 +705,18 @@ without understanding why they exist.
   model's native context (granite default = 131072 → ~74 GB → spills to CPU).
   When benchmarking a candidate as a *raw base model*, you MUST pin
   `num_ctx=8192` or the VRAM + first-item timings are meaningless artifacts.
-- **`force=True` does NOT clear LLM profiles** (latent bug; task filed). The
-  enrichment.py force-clear `DELETE … LIKE 'enriched:{cat}:%'` omits the
-  `_CACHE_VERSION` (`v2:`) key prefix that `MetadataCache.set_cache` adds, so it
-  matches zero rows. Force re-enrich therefore re-polishes only because a
-  `_PROMPT_VERSION` bump invalidates the profiles by *version*, not because the
-  clear deleted them. The emb-cache clear (`%:emb:%`, leading `%`) does work. Fix:
-  prefix the pattern with `{_CACHE_VERSION}:`.
+- **`force=True` now actually clears the polished cache** (fixed in
+  `4c5886b`). The pre-fix DELETE pattern was `LIKE 'enriched:{cat}:%'`
+  but every api_cache key is prefixed with `_CACHE_VERSION` ("v2:") by
+  `MetadataCache.set_cache` — the LIKE matched zero rows, so for months
+  `force=True` was a no-op against the polished tier-1 cache. Re-polish
+  only happened when a `_PROMPT_VERSION` bump invalidated profiles by
+  version. The fix imports `_CACHE_VERSION` + prefixes the pattern so
+  the DELETE actually nukes the rows it's supposed to. `force=True`
+  does NOT clear the raw cache (`v2:raw:{cat}:%`) — that's API fetch
+  data we already paid for; clearing it would burn quota for no quality
+  gain. Items with raw cache still hit the tier-2 short-circuit on a
+  force run; only the LLM re-polishes.
 - **A numeric `rating` field will crash `_merge_raw_metadata`** if its type
   isn't guarded (Pass 99-fu11). The Jikan supplement put a content-rating
   STRING into `sup["rating"]` (e.g. `"Rx — Hentai"`), and the merge did
@@ -663,6 +749,36 @@ without understanding why they exist.
   Per-category queues + fair scheduling decouples the lanes, and the
   per-category cat-mix in the last 10 min becomes the at-a-glance health
   signal ("fair mix → fine, all-one-cat → starvation").
+- **WHO spawns the streaming finalizer determines whether the
+  provisional UI bucket is visible** (Phase 2 #39 step 3). The first
+  cut had the PRODUCER spawn `_finalize_streaming_merge` right after
+  queueing — that ran in parallel with the deep LLM consumer queue,
+  and since the finalizer's slow-source fetch (~1-2 s) was much
+  shorter than the consumer's queue-traversal time (~30 s per item ×
+  N), the finalizer always committed first. The row went directly
+  from `enriched=0` to `enriched=1, fetch_tier='full', provisional=
+  False`. The 🌗 "Enriched (provisional)" bucket NEVER lit up —
+  the user designed for visible provisional → upgraded transitions
+  and couldn't see any. Fix: spawn the finalizer in the CONSUMER
+  (`_consume_entry`) AFTER the polish-write commits the initial
+  `fetch_tier='fast', provisional=True` snapshot. The finalizer's
+  later UPDATE then visibly flips it to full. **Lesson:** in a
+  two-writer race where one writer is "fast & happens in the
+  background" and the other is "slow & in the foreground critical
+  path", the SLOW writer (the LLM consumer) must commit FIRST or
+  the intermediate state the user designed for is invisible. The
+  spawn-point choice is the contract that enforces this ordering.
+- **`_write_raw_cache` strips underscored keys** (Phase 2 #38b, fix
+  `a2e07a6`). My initial cache-tier marker was `_tier_at_fetch` — but
+  `_write_raw_cache` strips every key starting with `_` (that's the
+  contract for transport-only fields like `_cache_key`, `_tmdb_id`).
+  So the marker was getting wiped on write + the tier-2-hit read path
+  always defaulted to "full" regardless of what was actually cached.
+  Renamed to `cache_tier` (no underscore) so it survives the strip
+  and persists across cache reads. **Lesson:** if a field needs to
+  survive disk serialization, don't make it look like a transport
+  field. Underscore prefixes are a convention; cache layers enforce
+  them.
 
 ---
 
