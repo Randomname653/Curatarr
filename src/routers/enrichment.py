@@ -809,7 +809,22 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                 # raw saves) leaving the columns NULL so #41's scheduler
                 # query (``WHERE fetch_tier='fast' AND provisional=1``)
                 # still selects exactly the items we mean.
-                if profile is not None:
+                #
+                # Phase 2 #39: race-safety vs the streaming finalizer.
+                # The finalizer (``_finalize_streaming_merge``) is spawned
+                # by ``_process_one`` independently of the consumer queue.
+                # When the queue is deep (LLM at ~10/min, finalizer at
+                # ~1-2 s) the finalizer can commit ``fetch_tier='full'``
+                # + ``provisional=False`` BEFORE the consumer even pulls
+                # this item. If the consumer then blindly overwrote with
+                # the initial-snapshot tier='fast' / provisional=True,
+                # the row would regress. So: when ``status.fetch_tier``
+                # is already ``"full"``, treat the finalizer's write as
+                # authoritative and leave the source-state columns
+                # alone. (enriched / enriched_at / error / vector_ready
+                # above are owned solely by the consumer and are safe
+                # to write unconditionally.)
+                if profile is not None and status.fetch_tier != "full":
                     if "fetch_tier" in profile:
                         status.fetch_tier = profile["fetch_tier"]
                     if "sources_state" in profile:
@@ -1353,7 +1368,36 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0
                 elif raw is not None:
+                    # Phase 2 #39: streaming-merge — if fetch_and_prepare_raw
+                    # returned early on first-source-sufficiency, there are
+                    # background tasks still fetching slow sources. Pop the
+                    # finalizer transport fields BEFORE queueing so the
+                    # consumer's process_and_save sees a clean raw, then
+                    # spawn _finalize_streaming_merge as a fire-and-forget
+                    # asyncio task. The finalizer awaits the remaining
+                    # tasks, merges results into the raw cache + DB
+                    # sources_state, and flips fetch_tier='full' +
+                    # provisional=False once all expected sources are back.
+                    remaining = raw.pop("_remaining_tasks", None)
+                    live_ref = raw.pop("_live_raw_ref",     None)
+                    raw.pop("_live_sources_state", None)
+                    fin_media_type = raw.pop("_finalize_media_type", pcat)
+                    fin_id_key     = raw.pop("_finalize_id_key",     None)
+                    fin_is_anime   = raw.pop("_finalize_is_anime",   False)
+
                     await cat_queues[pcat].put((pitem, raw))
+
+                    if remaining and live_ref is not None:
+                        from src.services.media_enricher import _finalize_streaming_merge
+                        asyncio.create_task(_finalize_streaming_merge(
+                            pitem["plex_rating_key"],
+                            live_ref,
+                            remaining,
+                            fin_media_type,
+                            fin_id_key,
+                            fin_is_anime,
+                        ))
+
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0   # reset on any success
                 else:
