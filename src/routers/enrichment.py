@@ -42,6 +42,13 @@ class EnrichRequest(BaseModel):
     # Trade-off: thinner data per item BUT massively faster bulk pass
     # (music's MB 1-req/sec → Last.fm 5-req/sec is the headline gain).
     fast_only: bool = False
+    # Phase 2 #41: explicit item targeting for the source-upgrade
+    # scheduler. When set, the producer skips watch_history + ARR
+    # collect entirely and builds pitems straight from these keys via
+    # EnrichmentStatus + MediaIdentity. ``categories`` / ``source`` /
+    # ``limit`` are ignored. Used by the hourly upgrade job to promote
+    # provisional rows; no UI surface (yet).
+    specific_plex_rating_keys: Optional[List[str]] = None
 
 
 @router.get("/status")
@@ -402,13 +409,15 @@ async def start_enrichment(
     cats = req.categories if req.categories else CATEGORIES
     background_tasks.add_task(
         _run_enrichment, user.id, cats, req.source, req.limit, req.force,
-        req.fast_only,   # Phase 2 #38b
+        req.fast_only,                       # Phase 2 #38b
+        req.specific_plex_rating_keys,       # Phase 2 #41
     )
     return {
         "status": "started",
         "categories": cats,
         "source": req.source,
         "fast_only": req.fast_only,
+        "specific_keys_count": len(req.specific_plex_rating_keys) if req.specific_plex_rating_keys else 0,
     }
 
 
@@ -912,7 +921,8 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
 
 async def _run_enrichment(user_id: int, categories: list, source: str,
                           limit: Optional[int], force: bool = False,
-                          fast_only: bool = False):
+                          fast_only: bool = False,
+                          specific_plex_rating_keys: Optional[List[str]] = None):
     """Single-worker producer-consumer enrichment pipeline.
 
     Producer: fetches API metadata (TMDB/AniList/MusicBrainz) concurrently.
@@ -926,6 +936,13 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
     item lands fetch_tier="fast" + provisional=True; the source-upgrade
     scheduler (#41) promotes provisional rows to "full" later in the
     background.
+
+    Phase 2 #41: ``specific_plex_rating_keys`` targets a fixed list of
+    rows for re-enrichment (used by the hourly source-upgrade job to
+    promote provisional items). When provided, the producer skips
+    watch_history + ARR collect and builds pitems directly from those
+    keys via EnrichmentStatus + MediaIdentity. ``categories`` / ``source``
+    / ``limit`` are then ignored.
     """
     # Normalize legacy source value
     if source == "all":
@@ -1015,120 +1032,169 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
     task_monitor.start(setup_task)
 
     try:
-        # Step 1: collect from watch history (skip when arr-only)
-        items = []
-        if source in ("watch_history", "both"):
-            with get_db_session() as db:
-                for cat in categories:
-                    for e in db.query(WatchHistoryEntry).filter(
-                        WatchHistoryEntry.user_id == user_id,
-                        WatchHistoryEntry.media_type == cat,
-                    ).all():
-                        items.append({
-                            "plex_rating_key": e.plex_item_id,
-                            "title": e.title,
-                            "series_title": e.series_title,
-                            "media_type": cat,
-                            "tmdb_id": e.tmdb_id,
-                            "tvdb_id": None,
-                            "imdb_id": None,
-                            "source": "watch_history",
-                        })
-
-        # Step 2: merge ARR items when source includes arr
-        if source in ("arr", "both"):
-            task_monitor.update(setup_task, message="Fetching ARR libraries...")
-            arr_items = await _collect_arr_items(categories)
-            watch_keys = {
-                (i.get("series_title") or i["title"]).lower().strip()
-                for i in items
-            }
-            for ai in arr_items:
-                key = (ai.get("series_title") or ai["title"]).lower().strip()
-                if key and key not in watch_keys:
-                    items.append(ai)
-                    watch_keys.add(key)
-            logger.info("After ARR merge: %d total items", len(items))
-
-        # Step 3: deduplicate
-        deduped: list = []
-        seen: set = set()
-        for item in items:
-            cat = item["media_type"]
-            if cat in ("show", "anime"):
-                st = item.get("series_title")
-                if not st:
-                    continue
-                key = f"{cat}:{st.lower().strip()}"
-                item = dict(item)
-                # Note: previously we nullified ``tmdb_id > 200000`` here
-                # as a defence against episode-level TMDB IDs leaking out
-                # of older sync paths. Current plex_sync writes series-level
-                # IDs (via grandparent_key) — and TMDB series IDs legitimately
-                # exceed 1 M, so the magnitude heuristic now corrupts good
-                # data. Removed; MediaIdentity remains the canonical override.
-            elif cat == "music":
-                st = item.get("series_title")
-                if not st:
-                    continue
-                key = f"music:{st.lower().strip()}"
-            else:
-                key = f"movie:{item['title'].lower().strip()}"
-
-            if key not in seen:
-                seen.add(key)
-                deduped.append(item)
-
-        logger.info("Deduped %d -> %d unique items across %s", len(items), len(deduped), categories)
-        items = deduped
-
-        # Step 4: enrich IDs from MediaIdentity (watch history items only)
-        wh_keys = [i["plex_rating_key"] for i in items if not str(i["plex_rating_key"]).startswith(("radarr:", "sonarr:", "lidarr:"))]
-        if wh_keys:
+        # Phase 2 #41: targeted re-enrichment for the source-upgrade job.
+        # ``specific_plex_rating_keys`` short-circuits the watch_history +
+        # ARR collect path — we look up each key directly in EnrichmentStatus
+        # (canonical title + category) and MediaIdentity (cross-ref IDs)
+        # and build pitems in one shot. ``categories`` / ``source`` /
+        # ``limit`` / ``force`` are all ignored in this mode.
+        if specific_plex_rating_keys:
             from src.database.models import MediaIdentity
+            items = []
             with get_db_session() as db:
-                id_map = {
-                    mi.plex_rating_key: {
-                        "tvdb_id": mi.tvdb_id, "imdb_id": mi.imdb_id,
-                        "anilist_id": mi.anilist_id, "tmdb_id": mi.tmdb_id,
-                    }
-                    for mi in db.query(MediaIdentity).filter(
-                        MediaIdentity.plex_rating_key.in_(wh_keys)
-                    ).all()
+                # Hydrate from EnrichmentStatus (gives us title + cat for
+                # the producer) joined with MediaIdentity (gives us tmdb /
+                # anilist / anidb / tvdb / imdb IDs the producer threads
+                # into fetch_and_prepare_raw).
+                es_rows = {
+                    es.plex_rating_key: es for es in db.query(EnrichmentStatus).filter(
+                        EnrichmentStatus.plex_rating_key.in_(specific_plex_rating_keys)
+                    )
                 }
-            for item in items:
-                ids = id_map.get(item["plex_rating_key"], {})
-                if ids.get("tvdb_id"):    item["tvdb_id"]    = ids["tvdb_id"]
-                if ids.get("imdb_id"):    item["imdb_id"]    = ids["imdb_id"]
-                if ids.get("anilist_id"): item["anilist_id"] = ids["anilist_id"]
-                # MediaIdentity is the canonical resolved-IDs table — when it
-                # has a tmdb_id, prefer it over whatever the upstream
-                # (ARR / Plex Guid) gave us. (Previously gated on a magnitude
-                # heuristic ``> 200000`` that no longer holds for real TMDB IDs.)
-                if ids.get("tmdb_id"):
-                    item["tmdb_id"] = ids["tmdb_id"]
+                mi_rows = {
+                    mi.plex_rating_key: mi for mi in db.query(MediaIdentity).filter(
+                        MediaIdentity.plex_rating_key.in_(specific_plex_rating_keys)
+                    )
+                }
+                missing = [k for k in specific_plex_rating_keys if k not in es_rows]
+                if missing:
+                    logger.warning("[upgrade] %d of %d specific keys have no EnrichmentStatus row "
+                                   "(will skip): %s", len(missing), len(specific_plex_rating_keys),
+                                   missing[:5])
+                for prk, es in es_rows.items():
+                    mi = mi_rows.get(prk)
+                    items.append({
+                        "plex_rating_key": prk,
+                        "title": es.title,
+                        # The producer uses series_title for show/anime/music
+                        # canonical dedup; setting it = title is safe for
+                        # the upgrade path since we're targeting one key.
+                        "series_title": es.title if es.media_category in ("show","anime","music") else None,
+                        "media_type": es.media_category,
+                        "tmdb_id":    mi.tmdb_id    if mi else None,
+                        "anilist_id": mi.anilist_id if mi else None,
+                        "anidb_id":   mi.anidb_id   if mi else None,
+                        "tvdb_id":    mi.tvdb_id    if mi else None,
+                        "imdb_id":    mi.imdb_id    if mi else None,
+                        "source": "upgrade",
+                    })
+            logger.info("[upgrade] Targeted re-enrichment: hydrated %d items from %d keys",
+                        len(items), len(specific_plex_rating_keys))
+        else:
+            # Step 1: collect from watch history (skip when arr-only)
+            items = []
+            if source in ("watch_history", "both"):
+                with get_db_session() as db:
+                    for cat in categories:
+                        for e in db.query(WatchHistoryEntry).filter(
+                            WatchHistoryEntry.user_id == user_id,
+                            WatchHistoryEntry.media_type == cat,
+                        ).all():
+                            items.append({
+                                "plex_rating_key": e.plex_item_id,
+                                "title": e.title,
+                                "series_title": e.series_title,
+                                "media_type": cat,
+                                "tmdb_id": e.tmdb_id,
+                                "tvdb_id": None,
+                                "imdb_id": None,
+                                "source": "watch_history",
+                            })
 
-        # Step 5: pre-filter already-enriched (single bulk DB query)
-        # Only skip items that are FULLY LLM-enriched (enriched=True AND error IS NULL).
-        # Rule-based items (enriched=True, error set) are kept for LLM upgrade retries.
-        # Items with no data (enriched=False) are always retried.
-        if not force:
-            with get_db_session() as db:
-                enriched_set = {
-                    (r.title, r.media_category)
-                    for r in db.query(EnrichmentStatus.title, EnrichmentStatus.media_category)
-                    .filter(
-                        EnrichmentStatus.enriched == True,
-                        EnrichmentStatus.error.is_(None),
-                    ).all()
+            # Step 2: merge ARR items when source includes arr
+            if source in ("arr", "both"):
+                task_monitor.update(setup_task, message="Fetching ARR libraries...")
+                arr_items = await _collect_arr_items(categories)
+                watch_keys = {
+                    (i.get("series_title") or i["title"]).lower().strip()
+                    for i in items
                 }
-            before = len(items)
-            items = [
-                i for i in items
-                if ((i.get("series_title") or i["title"]), i["media_type"]) not in enriched_set
-            ]
-            logger.info("Pre-filter: %d -> %d items (skipped %d LLM-done, kept rule-based/failed)",
-                        before, len(items), before - len(items))
+                for ai in arr_items:
+                    key = (ai.get("series_title") or ai["title"]).lower().strip()
+                    if key and key not in watch_keys:
+                        items.append(ai)
+                        watch_keys.add(key)
+                logger.info("After ARR merge: %d total items", len(items))
+
+            # Step 3: deduplicate
+            deduped: list = []
+            seen: set = set()
+            for item in items:
+                cat = item["media_type"]
+                if cat in ("show", "anime"):
+                    st = item.get("series_title")
+                    if not st:
+                        continue
+                    key = f"{cat}:{st.lower().strip()}"
+                    item = dict(item)
+                    # Note: previously we nullified ``tmdb_id > 200000`` here
+                    # as a defence against episode-level TMDB IDs leaking out
+                    # of older sync paths. Current plex_sync writes series-level
+                    # IDs (via grandparent_key) — and TMDB series IDs legitimately
+                    # exceed 1 M, so the magnitude heuristic now corrupts good
+                    # data. Removed; MediaIdentity remains the canonical override.
+                elif cat == "music":
+                    st = item.get("series_title")
+                    if not st:
+                        continue
+                    key = f"music:{st.lower().strip()}"
+                else:
+                    key = f"movie:{item['title'].lower().strip()}"
+
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(item)
+
+            logger.info("Deduped %d -> %d unique items across %s", len(items), len(deduped), categories)
+            items = deduped
+
+            # Step 4: enrich IDs from MediaIdentity (watch history items only)
+            wh_keys = [i["plex_rating_key"] for i in items if not str(i["plex_rating_key"]).startswith(("radarr:", "sonarr:", "lidarr:"))]
+            if wh_keys:
+                from src.database.models import MediaIdentity
+                with get_db_session() as db:
+                    id_map = {
+                        mi.plex_rating_key: {
+                            "tvdb_id": mi.tvdb_id, "imdb_id": mi.imdb_id,
+                            "anilist_id": mi.anilist_id, "tmdb_id": mi.tmdb_id,
+                        }
+                        for mi in db.query(MediaIdentity).filter(
+                            MediaIdentity.plex_rating_key.in_(wh_keys)
+                        ).all()
+                    }
+                for item in items:
+                    ids = id_map.get(item["plex_rating_key"], {})
+                    if ids.get("tvdb_id"):    item["tvdb_id"]    = ids["tvdb_id"]
+                    if ids.get("imdb_id"):    item["imdb_id"]    = ids["imdb_id"]
+                    if ids.get("anilist_id"): item["anilist_id"] = ids["anilist_id"]
+                    # MediaIdentity is the canonical resolved-IDs table — when it
+                    # has a tmdb_id, prefer it over whatever the upstream
+                    # (ARR / Plex Guid) gave us. (Previously gated on a magnitude
+                    # heuristic ``> 200000`` that no longer holds for real TMDB IDs.)
+                    if ids.get("tmdb_id"):
+                        item["tmdb_id"] = ids["tmdb_id"]
+
+            # Step 5: pre-filter already-enriched (single bulk DB query)
+            # Only skip items that are FULLY LLM-enriched (enriched=True AND error IS NULL).
+            # Rule-based items (enriched=True, error set) are kept for LLM upgrade retries.
+            # Items with no data (enriched=False) are always retried.
+            if not force:
+                with get_db_session() as db:
+                    enriched_set = {
+                        (r.title, r.media_category)
+                        for r in db.query(EnrichmentStatus.title, EnrichmentStatus.media_category)
+                        .filter(
+                            EnrichmentStatus.enriched == True,
+                            EnrichmentStatus.error.is_(None),
+                        ).all()
+                    }
+                before = len(items)
+                items = [
+                    i for i in items
+                    if ((i.get("series_title") or i["title"]), i["media_type"]) not in enriched_set
+                ]
+                logger.info("Pre-filter: %d -> %d items (skipped %d LLM-done, kept rule-based/failed)",
+                            before, len(items), before - len(items))
 
         # Pass 86: priority sort — fresh imports (never enriched) go to the
         # front of the queue, then TTL-refresh re-queues by oldest-first.
