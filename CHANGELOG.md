@@ -866,6 +866,74 @@ DELETE FROM protected_media WHERE title LIKE 'Crimson red Datendieb%';
 
 ---
 
+### Pass 15.2 — Model revert + NO-FILL rule: `granite4.1:3b` → `8b`, prompt v7 → v8
+
+A three-round A/B/C bench (Run 1: 32 items, Run 2: 33 items + cleaner
+GPU, Run 3: 100 items) tested 3 models × 3 prompt variants on a
+consolidated 38-item difficult-items set covering 11 distinct bug
+classes (character_name_hallucination, lore_invention, genre_override,
+mood_overdark, theme_pseudo_intellectual, archetype_misattribution,
+number_distortion, etc.). See `tournament_round2_2026-05-24_21-20.md`
+for the final run.
+
+**Key findings**
+
+- Cross-run variance ≈ ±2-6pp between identical (model, variant) pairs
+  — 1-2 item differences are within statistical noise margin.
+- `qwen3.5:4b v5.3` highest absolute pass-rate (99% R3, median 98%),
+  but 18s p50 (vs current 8s) and ±2.7pp std-dev — quality leader,
+  not stable leader.
+- `granite4.1:8b v5.2` most stable across all three runs: 98%/93.9%
+  /98.0% with 2.1pp std-dev. 14s p50. 0% cast hallucinations across
+  all 9 runs of this combination.
+- `granite4.1:3b v5.2` introduced a new bug: cast-hallucination rate
+  jumped from 0.6% (v5.1, v5.3) to 5.2% (v5.2). The NO-FILL rule
+  cross-field-interferes with cast_top3 on the smaller model.
+- Persistent bug classes that no prompt variant solved:
+  `Bunny Girl → "harem"` (6 of 9 model/variant combos fail in R3),
+  `Utena → "mecha"`, `4400 → "4,000 individuals"` / `"2,400"`.
+  Likely require deterministic post-processing layer (deferred).
+
+**Changes**
+
+- `src/services/media_enricher.py` — `SUMMARIZE_PROMPT` adds NO-FILL
+  POLICY as rule 5 (operational anti-Magnet-Halluzination: characters
+  by role if not in OVERVIEW/CAST, terms verbatim from source,
+  "OMIT don't invent" default). Targets Sarah-Connor / Aloha / Ezren
+  fabrications that grounding rules 1-4 could not catch.
+- `src/services/media_enricher.py` — `_PROMPT_VERSION` `v7 → v8`
+  forces uniform re-polish under the new model + rule combination.
+- `src/config.py` — `BASE_SUMMARIZER_MODEL` default reverts
+  `granite4.1:3b → granite4.1:8b`. BACKUP swaps to 3b (kept as speed
+  fallback for VRAM-constrained modes). Comment block explains the
+  three-bench evidence trail.
+
+**VRAM trade-off accepted**
+
+Phase A originally swapped to 3b to free ~4GB VRAM for the curator
+slot. Reverting to 8b reintroduces the constraint (curator 22GB +
+summariser 7GB > 24GB GPU). Handled by the existing `llm_priority.py`
+eviction policy — Phase A startup log confirmed clean evictions in
+under 1s (`Curator active — pausing enrichment, evicting summarizer`
+→ `Confirmed evicted from VRAM` 700ms later). Trade-off: occasional
+1-10s reload penalty on workload switch. Acceptable for the +4pp
+stability gain on hard items.
+
+**Required user actions on deployment**
+
+- Update `.env` `BASE_SUMMARIZER_MODEL=granite4.1:8b`.
+- Re-run `python build_models.py` to bake the new prompt + base model.
+- Restart server.
+- Bulk re-enrich overnight (~7000 items × ~14s / concurrency 4 ≈ 7h).
+
+**Rollback**
+
+`.env` back to `granite4.1:3b`, `build_models.py`, restart. Cache
+stays on v8 entries (which are 8b outputs) — old 3b enrichment can
+be triggered by lazy invalidation on next access.
+
+---
+
 ### Pass 15.1 — Surgical fix: `cast_top3` anti-hallucination (v6 → v7)
 
 External eye-review of v6 (Phase A) outputs flagged a hidden bug class
