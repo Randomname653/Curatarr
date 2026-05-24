@@ -88,7 +88,17 @@ logger = logging.getLogger(__name__)
 # but the regression was entirely HTTP-500 / JSON-parse errors on
 # random items, a bench-only concurrency artifact (production runs at
 # concurrency=1).
-_PROMPT_VERSION = "v7"
+# Bumped v7 -> v8 with the NO-FILL POLICY (rule #5) + model-swap back
+# to granite4.1:8b. Three benches (R1/R2/R3, 32-100 items each, 3
+# variants v5.1/v5.2/v5.3 × 3 models granite-3b/qwen-4b/granite-8b)
+# confirmed granite4.1:8b + the v5.2 "no-fill" rule as the most stable
+# Quality/Speed combination: 98% pass-rate median, 14s p50, 0% cast
+# hallucinations, lowest cross-run std-dev (2.1pp). The v5.2 NO-FILL
+# rule targets "Sarah Connor in Orphan Black" / "Aloha System in SAO"
+# / "Ezren/Lyra in Dragon Prince" - all character/lore name fabrications
+# the soft grounding rules 1-4 could not catch. See tournament_round2
+# _2026-05-24_21-20.md for the full A/B/C bench data.
+_PROMPT_VERSION = "v8"
 
 
 # ── PHASE-2 QUALITY: CHARACTER-ARCHETYPE TAG BLACKLIST ──────────────────────
@@ -1328,6 +1338,26 @@ GROUNDING DISCIPLINE — apply these strictly so the output stays faithful to th
    authoritative. When it says a work is comedic, the work's primary register
    is comedic — do not recast it under heavier literary frameworks based on
    subject matter alone.
+
+5. NO-FILL POLICY (Anti-Magnet-Halluzination). Apply to all prose fields
+   (plot_summary, why_watch, embedding_text):
+
+   a) Character names: USE ONLY names that appear verbatim in OVERVIEW
+      or CAST field. If a character is mentioned in OVERVIEW only by
+      role (e.g. "a streetwise hustler"), refer to them by that role —
+      never assign a name from your prior knowledge.
+
+   b) Specific terms (system names, location names, faction names):
+      USE ONLY terms that appear verbatim in OVERVIEW or EXTENDED INFO.
+      If unsure, describe the concept generically ("an oversight system",
+      "a faction") rather than invent a proper noun.
+
+   c) Plot mechanics: do NOT introduce plot elements not present in
+      OVERVIEW. If overview is sparse, prefer shorter prose to invented
+      detail.
+
+   When in doubt: OMIT, don't invent. A shorter accurate description
+   beats a longer fabricated one.
 
 TITLE: {title} ({year})
 TYPE: {media_type}
