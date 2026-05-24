@@ -76,7 +76,19 @@ logger = logging.getLogger(__name__)
 # 3b scored 8/8 curated vs 8b's 6/8, ≈1.7× faster, frees ~4GB VRAM).
 # Forces a uniform re-polish of every cached profile under the new model
 # so old 8b outputs do not coexist with new 3b outputs in the library.
-_PROMPT_VERSION = "v6"
+# Bumped v6 -> v7 with the cast_top3 surgical fix (Round 2-style A/B
+# bench 2026-05-24 tournament_round2_2026-05-24_16-39.md): v5 had a
+# 10.1% cast-hallucination rate (16/159) — Seiyuu-Wahnsinn + truncated
+# "(played by)" glitch + directors-as-cast — that auto-eval never caught
+# because we had no assertion comparing returned cast against source
+# CAST field. The new line forces "ACTOR-only, verbatim from CAST field,
+# empty array if none" and dropped the rate to 0.0% (0/107) at the cost
+# of ~33% fewer cast entries overall (the model now correctly emits
+# empty arrays when source is sparse). Pass-rate dipped 96.2 → 93.6
+# but the regression was entirely HTTP-500 / JSON-parse errors on
+# random items, a bench-only concurrency artifact (production runs at
+# concurrency=1).
+_PROMPT_VERSION = "v7"
 
 
 # ── PHASE-2 QUALITY: CHARACTER-ARCHETYPE TAG BLACKLIST ──────────────────────
@@ -1360,7 +1372,7 @@ Output this exact JSON (no extra text, no markdown fences):
   "themes": ["4-8 highly specific narrative tropes, story elements, or visual themes"],
   "mood": ["pick 2-3 from the MOOD REFERENCE above"],
   "keywords": ["10 precise descriptors: tone, setting, tropes, style, era, subgenre"],
-  "cast_top3": [...],
+  "cast_top3": ["Maximum 3 ACTOR names. Use ONLY names that appear verbatim in the CAST field above. If CAST is empty or 'Unknown', output an empty array []. Do NOT include directors, character names, or descriptive labels like 'various villains' or 'voice cast'."],
   "director": "...",
   "rating": ...
 }}"""

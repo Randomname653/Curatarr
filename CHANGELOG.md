@@ -866,6 +866,56 @@ DELETE FROM protected_media WHERE title LIKE 'Crimson red Datendieb%';
 
 ---
 
+### Pass 15.1 — Surgical fix: `cast_top3` anti-hallucination (v6 → v7)
+
+External eye-review of v6 (Phase A) outputs flagged a hidden bug class
+that auto-eval had missed entirely: the `cast_top3` field was a
+hallucination farm. Three sub-patterns in production:
+
+- **Seiyuu-Wahnsinn** — real Japanese names attached to wrong character
+  roles (e.g. *Death Note* output `"Chiaki J. Konaka (Light Yagami)"`;
+  Konaka is a real anime writer, but Light is voiced by Mamoru Miyano).
+- **"played by"-Glitch** — strings truncated mid-construction
+  (`"Tetsuo Tosu (played by)"` as an array element).
+- **Non-Person entries** — directors, monsters, descriptive labels
+  (`"Shinya Tsukamoto (Director)"`, `"Various monster antagonists"`).
+
+Investigation in `tournament_bench.py` added a `cast_hallucinations`
+helper that compares returned cast against the source CAST field. v6
+baseline measured **10.1 % hallucination rate (16/159 entries)** across
+80 mixed items. The v5.1 surgical fix — only the `cast_top3` JSON-
+template line changes — dropped that to **0.0 % (0/107)** while keeping
+curated pass-rate at 18/18 and shaving 27 % off p50 latency
+(see `tournament_round2_2026-05-24_16-39.md`).
+
+**Changes**
+- `src/services/media_enricher.py` — `SUMMARIZE_PROMPT` cast_top3
+  template line rewritten: explicit ACTOR-only, verbatim from CAST
+  field, empty-array path when CAST is empty, negative examples for
+  the three observed anti-patterns.
+- `src/services/media_enricher.py` — `_PROMPT_VERSION` `v6 → v7`
+  forces uniform re-polish so v6 outputs with hallucinated cast don't
+  coexist with clean v7 outputs.
+
+**Required user actions on deployment**
+- Re-run `python build_models.py` to bake the new system prompt into
+  the `curatarr-summarizer` modelfile.
+- Restart the server.
+- Optional: trigger a bulk re-enrichment overnight (~4-5 h at 6.7 s
+  p50 with concurrency 4) to clean up old hallucinated cast lists.
+  Lazy invalidation also works — old entries get re-rolled on next
+  access.
+
+**Known unrelated dip**
+The A/B bench saw v5.1 random-pool pass-rate drop 96.2 % → 93.6 %.
+Root cause: HTTP-500 errors on three movies (Hot Rod, Borderlands,
+Pacific Rim) — likely an Ollama API stability issue under bench
+concurrency=4. Production enrichment runs at concurrency=1 so this
+shouldn't reproduce. Monitored; retry-wrapper deferred until we see
+real production HTTP-500 in the logs.
+
+---
+
 ### Pass 15 — Production summariser: granite4.1:8b → granite4.1:3b
 
 Tournament-driven model swap. Three rounds of bench in
