@@ -866,6 +866,71 @@ DELETE FROM protected_media WHERE title LIKE 'Crimson red Datendieb%';
 
 ---
 
+### Pass 15 — Production summariser: granite4.1:8b → granite4.1:3b
+
+Tournament-driven model swap. Three rounds of bench in
+`tournament_bench.py` (lives at repo root above `curatarr/`, outputs
+also outside the tracked tree) picked granite4.1:3b as the new
+`BASE_SUMMARIZER_MODEL`.
+
+**Round 1 (19 of 25 candidates).** Top tier converged on llama3.1:8b,
+mistral-nemo:12b, qwen3.5:4b, phi4:14b at 100% pass on the curated
+known-difficult set; granite4.1:3b matched them at 100% but 1.8×
+faster (7.7s p50). qwen3.5:27b hung at #22 due to a VRAM conflict
+with the live curator slot (curator 22 GB + summariser candidate 16 GB
+> 24 GB); the run was Ctrl-C'd and the 19 collected data points were
+treated as sufficient signal.
+
+**Round 2 (5 finalists, v5 vs v6 A/B).** v6 added synthetic few-shot
+examples to v5's grounding rules. Result: no model improved with v6;
+two regressed by 1pp on random-pool schema validity. v5 prompt
+confirmed as production. v6 prompt discarded.
+
+**Finale (4 models × 200 items, v5).** granite4.1:3b won outright at
+8/8 curated (the only model with no curated misses), 8.6s p50, 99.5%
+JSON validity. Notably it nailed The 4400 ("4,400 people who
+disappeared years earlier") where its 8B sibling regressed to
+hallucinating "4,000 individuals" — the smaller model has a weaker
+"smoother prose" prior and follows the verbatim-numbers rule more
+faithfully. External literary review confirmed both 3B and 4B (qwen)
+write quality summaries without bland generic prose; granite is the
+"loyal chronist," qwen is the "essayist."
+
+**Blacklist-off A/B (3 models × 60 items, v5).** Dedicated test of
+whether Idea-A (`_filter_archetype_tags`) is still necessary now that
+the v5 prompt explicitly says tags are work-level themes. All three
+tested models (granite4.1:8b, granite4.1:3b, qwen3.5:4b) failed
+identically on *Rascal Does Not Dream of Bunny Girl Senpai*, all
+writing "harem" into the output when the "Female Harem" tag was no
+longer filtered. Idea A stays. Idea C (number self-correction loop)
+was not A/B-tested but kept by the same conservative principle: cheap
+defense, real bug class, no need to remove what works.
+
+**Changes**
+- `src/config.py` — `BASE_SUMMARIZER_MODEL` default `8b → 3b`,
+  `BACKUP_SUMMARIZER_MODEL` default `3b → 8b` (old prod kept as
+  safety fallback), comment explaining the decision and the date of
+  the bench report.
+- `src/services/media_enricher.py` — `_PROMPT_VERSION` `v5 → v6`.
+  Forces a uniform re-polish across every cached profile so old 8B
+  outputs do not coexist with new 3B outputs in the library.
+
+**Required user actions on deployment**
+- Update `.env` `BASE_SUMMARIZER_MODEL` value (config.py default is
+  overridden there).
+- Re-run `python build_models.py` to bake the system prompt into the
+  new `curatarr-summarizer` modelfile.
+- Restart the server. Existing enriched profiles lazy-invalidate on
+  next access; full library re-roll takes ~4-5h at 8.6s p50 with
+  concurrency 4 if triggered as a bulk operation.
+
+**Rollback procedure.** Set `.env` `BASE_SUMMARIZER_MODEL=granite4.1:8b`,
+re-run `build_models.py`, restart. Cache stays on v6 entries (3B
+outputs); they're still usable, just stale relative to the rolled-back
+model — they'll re-roll under 8B on the next access.
+
+---
+
 ### Pass 14.4 — Six bugs from real-world testing
 
 After Pass 14.3 the user ran the full test matrix and uncovered six

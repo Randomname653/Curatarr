@@ -45,12 +45,23 @@ class Settings(BaseSettings):
     # Primary models — .env is the single source of truth.
     # Defaults here are only used when .env has no entry.
     BASE_CURATOR_MODEL: str = "qwen3.6:27b"        # chat + recommendations
-    BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"   # enrichment + memory extraction
+    BASE_SUMMARIZER_MODEL: str = "granite4.1:3b"   # enrichment + memory extraction
+    # ── Why granite4.1:3b? ────────────────────────────────────────────────
+    # Tournament finale (2026-05-24, 200 items × 4 models, see
+    # tournament_finale_*.md) crowned granite4.1:3b as the strongest
+    # summariser: 8/8 known-difficult curated items passed (incl. The 4400
+    # number trap that its 8B sibling failed), 99.5% JSON validity,
+    # 8.6s p50 (≈1.7× faster than the previous 8B production). It also
+    # frees ~4GB VRAM for the curator slot. Defense-in-Depth layers
+    # (Idea-A archetype blacklist + Idea-C number self-correction loop in
+    # media_enricher.py) stay — the 2026-05-24 blacklist-off A/B proved
+    # all three tested models regress to "harem" attribution on Bunny Girl
+    # the moment the blacklist is removed.
     # Backup models — defined in .env for easy switching, not yet used in code.
     BACKUP_CURATOR_MODEL: str = "laguna-xs.2:q4_K_M"
-    BACKUP_SUMMARIZER_MODEL: str = "granite4.1:3b"
+    BACKUP_SUMMARIZER_MODEL: str = "granite4.1:8b"   # previous production, kept as safety fallback
     # When True, <think>...</think> blocks are stripped from LLM responses.
-    # Set False — current models (granite4.1:8b, qwen3.6:27b) do not emit think blocks.
+    # Set False — current models (granite4.1:3b, qwen3.6:27b) do not emit think blocks.
     # Keep this flag so switching to a reasoning model only requires an .env change.
     LLM_THINK_TAGS: bool = False
     # Kept for .env backward-compat; no longer used — enrichment uses a single LLM worker.
