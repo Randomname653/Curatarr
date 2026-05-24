@@ -71,7 +71,12 @@ logger = logging.getLogger(__name__)
 # appears verbatim in the polished output; one retry with override
 # directive on miss). Beats the LLM's "smoother prose" prior for
 # numbers ("4400" -> "4,000 individuals") deterministically.
-_PROMPT_VERSION = "v5"
+# Bumped v5 -> v6 when BASE_SUMMARIZER_MODEL switched granite4.1:8b ->
+# granite4.1:3b (Tournament finale 2026-05-24 — see tournament_finale_*.md;
+# 3b scored 8/8 curated vs 8b's 6/8, ≈1.7× faster, frees ~4GB VRAM).
+# Forces a uniform re-polish of every cached profile under the new model
+# so old 8b outputs do not coexist with new 3b outputs in the library.
+_PROMPT_VERSION = "v6"
 
 
 # ── PHASE-2 QUALITY: CHARACTER-ARCHETYPE TAG BLACKLIST ──────────────────────
