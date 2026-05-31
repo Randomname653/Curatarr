@@ -220,7 +220,7 @@ class TaskMonitor:
         self._broadcast()
 
     def get_all(self) -> list:
-        # Return running first, then recent finished
+        # Return running first, then pending, then most-recent finished.
         tasks = list(self._tasks.values())
         tasks.sort(key=lambda t: (
             0 if t.status == TaskStatus.RUNNING else
@@ -228,7 +228,13 @@ class TaskMonitor:
             2,
             -(t.started_at or 0)
         ))
-        return [t.to_dict() for t in tasks[-50:]]  # keep last 50
+        # Take the TOP 50 of the sorted list, NOT the last 50. The sort puts
+        # running/pending tasks at the FRONT, so tasks[-50:] sliced them off
+        # once the registry held >50 tasks — a long-running job (e.g. a 1h
+        # enrichment) would silently vanish from the activity view while the
+        # oldest finished jobs were shown instead. tasks[:50] keeps the
+        # running jobs + the most recent finished ones.
+        return [t.to_dict() for t in tasks[:50]]
 
     def get_running(self) -> list:
         return [t.to_dict() for t in self._tasks.values()
