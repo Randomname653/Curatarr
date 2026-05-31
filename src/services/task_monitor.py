@@ -97,12 +97,22 @@ class TaskMonitor:
     def create(self, name: str, category: str, total: int = 0, task_id: str = None) -> Task:
         tid = task_id or self._next_id(category)
 
-        # Deduplicate only when no explicit task_id — explicit IDs always create a new task
+        # Deduplicate only when no explicit task_id AND the name matches too.
+        # Matching on category alone was too broad: the manual "Enrichment: ..."
+        # run and the scheduler's "Source Upgrade" / "Enrichment TTL Refresh" /
+        # "ARR Pre-Enrichment" jobs ALL use category="enrichment". A scheduler
+        # job firing mid-run would dedupe-return the manual run's Task, then
+        # start()+done() it — so the live card flipped to "Done" (with a garbage
+        # rate from the reset started_at) while the real pipeline kept running.
+        # Requiring the same name keeps the intended "don't double-card the same
+        # operation" behaviour without letting distinct jobs hijack each other.
         if not task_id:
             for existing in self._tasks.values():
                 if (existing.category == category and
+                        existing.name == name and
                         existing.status in (TaskStatus.RUNNING, TaskStatus.PENDING)):
-                    logger.debug("Task already running for category %s, reusing %s", category, existing.id)
+                    logger.debug("Task already running (%s / %s), reusing %s",
+                                 category, name, existing.id)
                     return existing
 
         task = Task(id=tid, name=name, category=category, total=total)
