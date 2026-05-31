@@ -32,12 +32,20 @@ if errorlevel 1 (
     echo.
 )
 
-REM Check if Ollama models are built
+REM Check if Ollama models are built (curator + summarizer + embedding model).
+REM nomic-embed-text is easy to miss: it is NOT baked like the curatarr-* models,
+REM so a fresh / reinstalled Ollama without it makes every embedding call 404
+REM and leaves all items vector_ready=0. build_models.py pulls whatever
+REM EMBEDDING_MODEL is set to, so re-running it covers a custom .env value too.
 echo Checking Ollama models...
+set "_MODELS_OK=1"
 ollama show curatarr-curator >nul 2>&1
-if errorlevel 1 (
+if errorlevel 1 set "_MODELS_OK=0"
+ollama show nomic-embed-text >nul 2>&1
+if errorlevel 1 set "_MODELS_OK=0"
+if "%_MODELS_OK%"=="0" (
     echo.
-    echo  [SETUP] Ollama models not found. Building now...
+    echo  [SETUP] Ollama models missing. Building / pulling now...
     echo  This only happens once.
     echo.
     python build_models.py
