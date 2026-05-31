@@ -415,6 +415,26 @@ async def build_ollama_models(ollama_endpoint: str,
     """
     results = {}
 
+    # ── Step 0: ensure the embedding model is present ─────────────────────────
+    # nomic-embed-text (settings.EMBEDDING_MODEL) powers the enrichment vector
+    # step. Unlike the curatarr-* models it is NOT baked via /api/create — it
+    # only needs to be pulled. Nothing else provisioned it, so a fresh or
+    # reinstalled Ollama without it makes every /api/embeddings call 404 and
+    # leaves every item vector_ready=0 (silently — the failure is only a
+    # logger.warning). Pulled independently so a failure here doesn't block the
+    # chat models and vice-versa.
+    from src.config import settings as _settings
+    embed_model = (_settings.EMBEDDING_MODEL or "").strip()
+    if embed_model:
+        if await model_exists(ollama_endpoint, embed_model):
+            print(f"  ✓  {embed_model} already present — skipping pull", flush=True)
+            results["embedding"] = True
+        else:
+            results["embedding"] = await pull_ollama_model(ollama_endpoint, embed_model)
+            if not results["embedding"]:
+                print(f"  ⚠️  Pull failed for embedding model {embed_model} — "
+                      "enrichment vectors will NOT be generated", flush=True)
+
     # ── Step 1: ensure base models are present ────────────────────────────────
     for model in dict.fromkeys([base_curator, base_summarizer]):  # deduplicate
         if await model_exists(ollama_endpoint, model):

@@ -54,6 +54,17 @@ class EmbeddingGenerator:
             data = response.json()
             return data.get("embedding", [])
 
+        except httpx.HTTPStatusError as e:
+            # A 404 here almost always means the embedding model isn't pulled.
+            # raise_for_status() raises HTTPStatusError, which is NOT a subclass
+            # of httpx.RequestError — so this case used to escape the handler
+            # below and propagate as an opaque error.
+            logger.warning(
+                "Embedding generation failed: HTTP %s from %s — is the model "
+                "'%s' pulled?  (ollama pull %s)",
+                e.response.status_code, self.endpoint, self.model, self.model,
+            )
+            return []
         except httpx.RequestError as e:
             logger.warning("Embedding generation failed: %s", e)
             return []

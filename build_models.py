@@ -48,8 +48,15 @@ async def main():
         print(f"❌  curatarr-summarizer failed")
         print(f"    Is '{summarizer_base}' available on Ollama Hub?")
 
+    if results.get("embedding"):
+        print(f"✅  {settings.EMBEDDING_MODEL}  (embeddings) ready")
+    else:
+        print(f"❌  {settings.EMBEDDING_MODEL}  (embeddings) failed")
+        print(f"    Could not pull '{settings.EMBEDDING_MODEL}' — without it, enrichment")
+        print(f"    produces text but no vectors (every item stays vector_ready=0).")
+
     if all(results.values()):
-        print("\n🎬  Both models ready — restart Curatarr.\n")
+        print("\n🎬  All models ready — restart Curatarr.\n")
     else:
         print("\n⚠️   Fix the errors above and run this script again.\n")
         sys.exit(1)
