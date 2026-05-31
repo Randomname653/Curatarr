@@ -20,8 +20,11 @@ if exist venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 )
 
-REM Check / install missing deps silently
-python -c "import apscheduler" >nul 2>&1
+REM Check / install missing deps silently.
+REM Import every third-party module the app needs at runtime, not just one
+REM sentinel package -- otherwise a single pre-installed package (e.g.
+REM apscheduler) makes the check pass while others are still missing.
+python -c "import uvicorn, fastapi, multipart, sqlalchemy, jose, Crypto, httpx, aiohttp, chromadb, pydantic_settings, dotenv, numpy, pythonjsonlogger, apscheduler, psutil" >nul 2>&1
 if errorlevel 1 (
     echo  [SETUP] Installing missing dependencies...
     pip install -r requirements.txt -q

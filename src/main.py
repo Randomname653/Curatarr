@@ -33,6 +33,17 @@ logger = logging.getLogger("curatarr")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Pass 100: stop Syncthing from touching the live SQLite DB while we run.
+    # Syncing an open WAL-mode database causes "database is locked" errors and
+    # risks corruption. The guard excludes data/ from the enclosing Syncthing
+    # folder's .stignore now and restores it on clean shutdown (no-op when
+    # Syncthing isn't present). Done first, before we open the DB.
+    try:
+        from src.services.sync_guard import enable as _sync_guard_enable
+        _sync_guard_enable()
+    except Exception as e:
+        logger.debug("[sync-guard] enable failed: %s", e)
+
     Path("data/chromadb").mkdir(parents=True, exist_ok=True)
     Path("data/cache").mkdir(parents=True, exist_ok=True)
 
@@ -122,6 +133,16 @@ async def lifespan(app: FastAPI):
         set_state("music_pipeline_stop_requested", "0")
     except Exception:
         pass
+
+    # Pass 100: re-enable Syncthing for data/ now that the DB is released, so
+    # the database can sync between machines while Curatarr is stopped. Done
+    # last, after all shutdown DB writes above have completed.
+    try:
+        from src.services.sync_guard import disable as _sync_guard_disable
+        _sync_guard_disable()
+    except Exception as e:
+        logger.debug("[sync-guard] disable failed: %s", e)
+
     logger.info("Curatarr shutting down.")
 
 
