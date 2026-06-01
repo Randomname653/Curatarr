@@ -1670,6 +1670,18 @@ async def library_breakdown(
                              "No row in tracking — item hasn't reached the enrichment queue yet. Hit ‘Start enrichment’ to queue."),
     }
 
+    # Sonarr backs BOTH 'show' and 'anime', so its ``total`` is the COMBINED
+    # series count. Using it as a per-category denominator reports the other
+    # category's items as "never processed" (all anime counted as unprocessed
+    # shows and vice-versa) — that's why those bars read a bogus 33% / 74%
+    # (and their sum exceeded the real Sonarr total). Flag any service that
+    # backs more than one category; for those, the per-category Plex section
+    # count is the correct denominator instead of the shared ARR total.
+    from collections import Counter as _Counter
+    _shared_arr_services = {
+        s for s, n in _Counter(arr_for_category.values()).items() if n > 1
+    }
+
     libraries_out = []
     for row in library_rows:
         cat = row["category"]
@@ -1708,10 +1720,14 @@ async def library_breakdown(
         tracked_total = sum(cat_buckets.values())
 
         # Denominator picks the most authoritative whole-library count
-        # available. For TV/Movies/Music: ARR total wins (it's the file-
-        # level truth, includes items not yet in Plex). For libraries
-        # without an ARR (e.g. ignored Plex-only): Plex section count.
-        if arr_block and isinstance(arr_block.get("total"), int):
+        # available. For Movies/Music (1 category per ARR): ARR total wins
+        # (file-level truth, includes items not yet in Plex). For an ARR that
+        # backs several categories (Sonarr → show + anime), its total is the
+        # combined count and would over-count per category, so we use the
+        # per-category Plex section count instead. No ARR / no Plex section:
+        # fall back to the tracked count.
+        if (arr_block and isinstance(arr_block.get("total"), int)
+                and svc not in _shared_arr_services):
             denominator = arr_block["total"]
             denom_basis = (
                 f"{svc.capitalize()} total — every artist/series/movie "
@@ -1721,7 +1737,10 @@ async def library_breakdown(
             denominator = plex_block["item_count"]
             denom_basis = (
                 "Plex section item count — number of items in the matched "
-                "Plex library section."
+                "Plex library section"
+                + (f" ({svc.capitalize()} backs multiple categories, so its "
+                   f"combined total can't be a per-category denominator)."
+                   if svc in _shared_arr_services else ".")
             )
         else:
             denominator = tracked_total
