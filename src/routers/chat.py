@@ -2121,7 +2121,7 @@ FORMATTING RULES:
     # 5. Stream from Ollama
     async def generate() -> AsyncGenerator[str, None]:
         from src.services.llm_priority import (
-            curator_start, curator_done, check_curator_vram_health,
+            curator_start, curator_done, check_curator_vram_health, curator_busy,
         )
 
         # Pass 14.9: emit collected pre-stream status events so the frontend
@@ -2132,10 +2132,18 @@ FORMATTING RULES:
         for status_msg in pre_stream_status:
             yield f"data: {json.dumps({'status': status_msg})}\n\n"
 
-        # Final pre-token status: Curator is now actually working.
-        yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"
+        # If another big-model generation is already running (another user
+        # chatting, or a recs / proactive / verification job), tell the user
+        # they're queued: a single GPU serves ONE curator generation at a
+        # time, so we wait for the slot instead of thrashing it. The
+        # curator_start() call below blocks until the slot frees.
+        if curator_busy():
+            yield f"data: {json.dumps({'status': '⏳ Curatarr is busy with another request — you are next in line…'})}\n\n"
 
         await curator_start()
+
+        # Slot acquired — Curator is now actually working.
+        yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"
         full_response = ""
         think_filter = ThinkTagStreamFilter(enabled=_cfg.LLM_THINK_TAGS)
 

@@ -383,6 +383,10 @@ SUBJECT: {title_or_genre}
 Output ONLY the question text — no quotes, no labels, no explanation."""
 
     rephrased = question["question"]  # English worst-case fallback
+    # Small-model call — yield to an active chat so two generations don't
+    # share the single GPU.
+    from src.services.llm_priority import wait_for_curator
+    await wait_for_curator()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
@@ -458,6 +462,10 @@ Extract:
 
 Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": "..."}}"""
 
+    # Small-model call — yield to an active chat so two generations don't
+    # share the single GPU.
+    from src.services.llm_priority import wait_for_curator
+    await wait_for_curator()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(

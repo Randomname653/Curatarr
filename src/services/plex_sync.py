@@ -1222,6 +1222,11 @@ CRITICAL RULES (YOU MUST OBEY):
             settings.SUMMARIZER_MODEL, settings.BASE_SUMMARIZER_MODEL,
             settings.CURATOR_MODEL,    settings.BASE_CURATOR_MODEL,
         ]
+        # Yield to an active chat before generating — this can fall back to
+        # the big curator model, and even the 8B shouldn't fight a live chat
+        # for the single GPU.
+        from src.services.llm_priority import wait_for_curator
+        await wait_for_curator()
         for model in model_order:
             if not model:
                 continue

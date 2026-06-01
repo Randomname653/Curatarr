@@ -752,42 +752,47 @@ async def generate_proactive_message(
     else:
         return None
 
-    for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
-        if not model:
-            continue
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    f"{settings.effective_ollama}/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": _build_system_prompt(
-                                lang_directive or "Respond in English."
-                            )},
-                            {"role": "user", "content": prompt},
-                        ],
-                        "stream": False,
-                        "keep_alive": CURATOR_KEEP_ALIVE,
-                        **ollama_options(temperature=0.85, num_predict=800),
-                    },
-                )
-            if resp.status_code == 200:
-                content = strip_think_tags(
-                    resp.json().get("message", {}).get("content", "").strip()
-                )
-                if content:
-                    return content
-                # Empty content — try the fallback model rather than store an empty message.
-                logger.debug("Proactive message empty response from %s, trying fallback", model)
+    # Proactive messages use the big curator model — route the generation
+    # through the curator gate so a scheduled message can't collide with a
+    # user's chat on the single GPU (it queues for the slot like the rest).
+    from src.services.llm_priority import curator_priority
+    async with curator_priority():
+        for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
+            if not model:
                 continue
-            # Any non-200 (404, 500, 502, 503, …) → try the next model.
-            logger.debug("Proactive message HTTP %s from %s, trying fallback",
-                         resp.status_code, model)
-            continue
-        except Exception as e:
-            # Includes timeouts, connection errors — try the next model.
-            logger.warning("Proactive message LLM failed (%s): %s", model, e)
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(
+                        f"{settings.effective_ollama}/api/chat",
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": _build_system_prompt(
+                                    lang_directive or "Respond in English."
+                                )},
+                                {"role": "user", "content": prompt},
+                            ],
+                            "stream": False,
+                            "keep_alive": CURATOR_KEEP_ALIVE,
+                            **ollama_options(temperature=0.85, num_predict=800),
+                        },
+                    )
+                if resp.status_code == 200:
+                    content = strip_think_tags(
+                        resp.json().get("message", {}).get("content", "").strip()
+                    )
+                    if content:
+                        return content
+                    # Empty content — try the fallback model rather than store an empty message.
+                    logger.debug("Proactive message empty response from %s, trying fallback", model)
+                    continue
+                # Any non-200 (404, 500, 502, 503, …) → try the next model.
+                logger.debug("Proactive message HTTP %s from %s, trying fallback",
+                             resp.status_code, model)
+                continue
+            except Exception as e:
+                # Includes timeouts, connection errors — try the next model.
+                logger.warning("Proactive message LLM failed (%s): %s", model, e)
 
     return None
 
