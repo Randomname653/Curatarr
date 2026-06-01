@@ -444,7 +444,7 @@ async def compute_taste(
 
 # ── Pass 55: audit & requeue incomplete enrichments ─────────────────────────
 
-def _enrichment_incomplete_reason(profile: dict) -> Optional[str]:
+def _enrichment_incomplete_reason(profile: dict, category: str | None = None) -> Optional[str]:
     """Return a short reason code if a cached enrichment profile is missing
     key metadata, else None.
 
@@ -461,14 +461,22 @@ def _enrichment_incomplete_reason(profile: dict) -> Optional[str]:
         # Pass 51/52 ID-resolution work — previously-unfindable titles
         # may resolve now.
         return "not_found"
-    rating = profile.get("rating")
-    try:
-        if rating is None or float(rating) <= 0:
-            # Pass 54 context: 0 is the "no rating data" sentinel, not a
-            # 0/10 verdict. Re-enrich to try for a real score.
+    # Music is exempt from the rating check. TMDB/OMDb/AniList expose a 0-10
+    # score, but the music sources (Last.fm/Spotify/MusicBrainz) don't — a
+    # missing rating is the NORM for music, not an incompleteness signal.
+    # Flagging it requeued ~7.4k perfectly-good music profiles (92% of all
+    # "zero_rating" hits) into a pointless drop-and-re-fetch loop that never
+    # produces a rating. Only the rated domains are checked.
+    cat = category or profile.get("media_type")
+    if cat != "music":
+        rating = profile.get("rating")
+        try:
+            if rating is None or float(rating) <= 0:
+                # Pass 54 context: 0 is the "no rating data" sentinel, not a
+                # 0/10 verdict. Re-enrich to try for a real score.
+                return "zero_rating"
+        except (TypeError, ValueError):
             return "zero_rating"
-    except (TypeError, ValueError):
-        return "zero_rating"
     return None
 
 
@@ -506,17 +514,18 @@ async def _audit_enrichments(dry_run: bool) -> dict:
                 profile = _json.loads(row["response"])
             except Exception:
                 profile = None
-            reason = _enrichment_incomplete_reason(profile or {})
-            if not reason:
-                continue
-            by_reason[reason] = by_reason.get(reason, 0) + 1
             # Cache key shape: "{_CACHE_VERSION}:enriched:{category}:{id_key}"
             # — category is the 3rd colon-segment. id_key may itself
-            # contain colons, hence the maxsplit=3.
+            # contain colons, hence the maxsplit=3. Resolved BEFORE the
+            # incompleteness check so music can be exempted from zero_rating.
             parts = cache_key.split(":", 3)
             category = parts[2] if len(parts) > 2 else (
                 (profile or {}).get("media_type")
             )
+            reason = _enrichment_incomplete_reason(profile or {}, category)
+            if not reason:
+                continue
+            by_reason[reason] = by_reason.get(reason, 0) + 1
             hits.append((
                 cache_key,
                 (profile or {}).get("plex_rating_key"),
