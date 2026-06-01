@@ -83,6 +83,35 @@ def _get_pe_event() -> asyncio.Event:
     return _pe_event
 
 
+# ── CURATOR CONCURRENCY GATE ──────────────────────────────────────────────────
+# A single GPU can only generate one big-model (curator) response at a time
+# without spilling to CPU and dragging EVERY response to a crawl. The
+# priority events above make enrichment yield to the curator, but they do NOT
+# stop two curator calls from overlapping — two users chatting at once, or a
+# chat colliding with a recs / proactive / verification generation. This
+# semaphore serializes all curator-tier calls: the second caller queues until
+# the slot frees. ``MAX_CONCURRENT_CURATOR`` (default 1) can be raised if the
+# host ever gets enough VRAM to run two big generations side by side.
+_gpu_gate: asyncio.Semaphore | None = None
+
+
+def _get_gate() -> asyncio.Semaphore:
+    """Lazy global curator slot, bound to the running loop on first use."""
+    global _gpu_gate
+    if _gpu_gate is None:
+        from src.config import settings
+        n = max(1, int(getattr(settings, "MAX_CONCURRENT_CURATOR", 1) or 1))
+        _gpu_gate = asyncio.Semaphore(n)
+    return _gpu_gate
+
+
+def curator_busy() -> bool:
+    """True when every curator slot is taken — the next ``curator_start`` will
+    block. Callers (e.g. the chat stream) use this to tell a waiting user
+    they're queued instead of leaving a silent dead window."""
+    return _get_gate().locked()
+
+
 # ── MODEL INTROSPECTION ───────────────────────────────────────────────────────
 
 async def loaded_models() -> list[dict]:
@@ -235,6 +264,13 @@ async def curator_start() -> None:
     about to be evicted out from under it.
     """
     global _active, _curator_evict_task
+    # Serialize big-model generations across the whole server: block here
+    # until a curator slot is free (MAX_CONCURRENT_CURATOR, default 1). A
+    # second chatter / recs / proactive call waits instead of fighting for
+    # the GPU. Acquired BEFORE touching _active so a cancelled acquire (user
+    # disconnects while queued) leaves no state to unwind, and so the gate is
+    # released exactly once per successful acquire in curator_done().
+    await _get_gate().acquire()
     _active += 1
     is_first = (_active == 1)
 
@@ -322,7 +358,13 @@ def curator_done() -> None:
     pair under exception handling.
     """
     global _active, _curator_evict_task
-    _active = max(0, _active - 1)
+    if _active <= 0:
+        # More done() than start() (defensive, e.g. mismatched exception
+        # handling). Nothing was acquired → don't over-release the gate.
+        logger.debug("curator_done called with no active curator — ignoring")
+        return
+    _active -= 1
+    _get_gate().release()   # free the slot for the next queued curator call
     if _active == 0:
         _get_event().set()
         logger.info("All curator calls done — enrichment may resume")

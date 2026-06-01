@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     LLM_THINK_TAGS: bool = False
     # Kept for .env backward-compat; no longer used — enrichment uses a single LLM worker.
     ENRICH_PARALLEL_SLOTS: int = 0
+    # Max concurrent big-model (curator) generations across the WHOLE server.
+    # A single GPU can only run one without spilling to CPU, so the default 1
+    # serializes chat + recommendations + proactive + verification: a second
+    # user (or job) queues for the slot instead of dragging every response to
+    # a crawl. Raise only if the host has VRAM for parallel big generations.
+    MAX_CONCURRENT_CURATOR: int = 1
 
     # ── ARR Services ─────────────────────────────────────────────────────────
     RADARR_URL: Optional[str] = None
