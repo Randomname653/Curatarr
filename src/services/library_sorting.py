@@ -26,6 +26,7 @@ Read-only scan. The actual Sonarr write (PUT root/seriesType/qualityProfile +
 ``moveFiles``) lives in the router so the write path stays explicit + gated.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -246,3 +247,119 @@ async def scan_misclassified() -> dict:
             "uncertain": len(uncertain),
         },
     }
+
+
+# ── Stage 2: apply selected reclassifications (the only write path) ──────────
+
+def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
+    """Re-file one item's category inside Curatarr WITHOUT re-enriching.
+
+    Four cheap, best-effort updates that keep ``(title, category)`` aligned so
+    the next enrichment scan SKIPS the item (no TMDB re-fetch, no re-embed, no
+    LLM): the two persisted category columns, the MetadataCache profile key,
+    and the ChromaDB vector's domain/media_type quarantine metadata. Returns
+    the previous category (for the result log).
+    """
+    key = f"sonarr:{sonarr_id}"
+    old_cat = None
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import EnrichmentStatus, ArrEnrichmentStatus
+        with get_db_session() as db:
+            es = db.query(EnrichmentStatus).filter(
+                EnrichmentStatus.plex_rating_key == key).first()
+            if es:
+                old_cat = es.media_category
+                es.media_category = new_cat       # leave enriched/vector_ready/error intact
+            arr = db.query(ArrEnrichmentStatus).filter(
+                ArrEnrichmentStatus.service == "sonarr",
+                ArrEnrichmentStatus.arr_id == sonarr_id).first()
+            if arr:
+                old_cat = old_cat or arr.category
+                arr.category = new_cat
+            db.commit()
+    except Exception as e:
+        logger.warning("[lib-sort] DB recategorize failed for %s: %s", key, e)
+
+    if not old_cat or old_cat == new_cat:
+        return old_cat
+
+    # MetadataCache: copy the already-built profile to the new category key
+    # (the skip-filter and the taste/recs lookups are both category-keyed).
+    try:
+        from src.cache.metadata_cache import MetadataCache
+        mc = MetadataCache()
+        prof = mc.get_cache(f"enriched:{old_cat}:{key}")
+        if prof is not None:
+            mc.set_cache(f"enriched:{new_cat}:{key}", prof, days=90)
+    except Exception as e:
+        logger.warning("[lib-sort] cache re-key failed for %s: %s", key, e)
+
+    # ChromaDB: flip the vector's domain/media_type so gated retrieval files it
+    # under the new category. Metadata-only — the embedding itself is untouched.
+    try:
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        chroma = get_chroma_db()
+        doc = chroma.get_by_id(key)
+        if doc and doc.get("metadata"):
+            meta = dict(doc["metadata"])
+            meta["domain"] = new_cat
+            meta["media_type"] = new_cat
+            chroma.update_metadata(key, meta)
+    except Exception as e:
+        logger.warning("[lib-sort] vector re-categorize failed for %s: %s", key, e)
+    return old_cat
+
+
+async def apply_reclassify(items: list) -> dict:
+    """Execute the selected reclassifications — Sonarr write + local re-file.
+
+    Each item: ``{"sonarr_id": int, "fix": {rootFolderPath, seriesType,
+    qualityProfileId, moveFiles}}``. PUTs the series back to Sonarr (``moveFiles``
+    queues Sonarr's physical relocation when the root changes), then re-files it
+    inside Curatarr via ``_recategorize_local``. Nothing here re-fetches
+    metadata, re-embeds, or calls an LLM.
+    """
+    sonarr = settings.effective_sonarr_url
+    key = settings.SONARR_API_KEY
+    if not sonarr or not key:
+        return {"error": "Sonarr not configured"}
+    from src.services.arr_client import classify_sonarr_category
+    headers = {"X-Api-Key": key}
+    results = []
+    async with httpx.AsyncClient(timeout=45) as client:
+        for it in items or []:
+            sid = it.get("sonarr_id")
+            fix = it.get("fix") or {}
+            title = None
+            try:
+                r = await client.get(f"{sonarr}/api/v3/series/{sid}", headers=headers)
+                if r.status_code != 200:
+                    results.append({"sonarr_id": sid, "ok": False,
+                                    "error": f"Sonarr GET {r.status_code}"})
+                    continue
+                series = r.json()
+                title = series.get("title")
+                if fix.get("rootFolderPath"):   series["rootFolderPath"]   = fix["rootFolderPath"]
+                if fix.get("seriesType"):       series["seriesType"]       = fix["seriesType"]
+                if fix.get("qualityProfileId"): series["qualityProfileId"] = fix["qualityProfileId"]
+                move = bool(fix.get("moveFiles"))
+                put = await client.put(
+                    f"{sonarr}/api/v3/series/{sid}", headers=headers,
+                    params={"moveFiles": "true" if move else "false"}, json=series,
+                )
+                if put.status_code not in (200, 202):
+                    results.append({"sonarr_id": sid, "title": title, "ok": False,
+                                    "error": f"Sonarr PUT {put.status_code}: {put.text[:120]}"})
+                    continue
+                updated = put.json() if put.text else series
+                new_cat = classify_sonarr_category(updated)
+                old_cat = await asyncio.to_thread(_recategorize_local, sid, new_cat)
+                results.append({"sonarr_id": sid, "title": title, "ok": True, "moved": move,
+                                "old_category": old_cat, "new_category": new_cat})
+            except Exception as e:
+                logger.warning("[lib-sort] apply failed for %s: %s", sid, e)
+                results.append({"sonarr_id": sid, "title": title, "ok": False,
+                                "error": str(e)[:200]})
+    ok = sum(1 for r in results if r.get("ok"))
+    return {"applied": ok, "failed": len(results) - ok, "results": results}
