@@ -1538,71 +1538,93 @@ function showView(name, btn) {
   // tasks view uses live SSE, no manual load needed
 }
 
-// ── Reclassify (Manage → anime ↔ TV library sorting) ─────────────────────
+// ── Reclassify (Manage → anime ↔ TV library config audit) ────────────────
 async function loadReclassify() {
   const el = document.getElementById('reclassify-content');
   const sum = document.getElementById('reclassify-summary');
-  el.innerHTML = '<p class="loading">Scanning Sonarr (first run resolves origins, ~10s)…</p>';
+  el.innerHTML = '<p class="loading">Scanning Sonarr (first run resolves origins, ~15s)…</p>';
   if (sum) sum.textContent = '';
   let res;
   try { res = await api('/api/library/reclassify/scan'); }
   catch (e) { el.innerHTML = `<p style="color:var(--danger)">Scan failed: ${esc(e.message || 'unknown')}</p>`; return; }
   if (res.error) { el.innerHTML = `<p style="color:var(--danger)">${esc(res.error)}</p>`; return; }
   const c = res.counts || {};
-  if (sum) sum.textContent = `${c.to_tv || 0} → TV · ${c.uncertain || 0} uncertain · ${c.to_anime || 0} → Anime`;
+  if (sum) sum.textContent = `${c.to_tv||0} → TV · ${c.to_anime||0} → Anime · ${c.fix_settings||0} settings · ${c.uncertain||0} uncertain`;
   const sections = [
-    ['🎬 Western in Anime → move to TV Shows', res.western_in_anime],
-    ['❓ Uncertain — no origin found, verify before moving', res.uncertain],
-    ['🎌 Anime filed in TV → move to Anime', res.anime_in_tv],
+    ['🎬 Western cartoons in Anime → move to TV', res.to_tv, true],
+    ['🎌 Anime in the TV library → move to Anime', res.to_anime, true],
+    ['⚙️ Right library, wrong settings → fix in place', res.fix_settings, true],
+    ['❓ Uncertain — no origin found, review manually', res.uncertain, false],
   ];
   let html = '';
-  for (const [label, items] of sections) {
+  for (const [label, items, actionable] of sections) {
     if (!items || !items.length) continue;
-    html += `<h3 style="margin:20px 0 8px;font-size:14px;color:var(--text)">${label} <span style="color:var(--text3);font-weight:400">(${items.length})</span></h3>`;
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px">';
-    for (const it of items) html += reclassifyCard(it);
+    const all = actionable ? ` <label style="font-weight:400;font-size:11px;color:var(--text3)"><input type="checkbox" onchange="rcToggleSection(this)" style="vertical-align:middle"> select all</label>` : '';
+    html += `<h3 style="margin:20px 0 8px;font-size:14px;color:var(--text)">${label} <span style="color:var(--text3);font-weight:400">(${items.length})</span>${all}</h3>`;
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px">';
+    for (const it of items) html += reclassifyCard(it, actionable);
     html += '</div>';
   }
-  el.innerHTML = html || '<p style="color:var(--text3)">✓ Nothing mis-filed — both libraries look clean.</p>';
+  el.innerHTML = html || '<p style="color:var(--text3)">✓ Everything is correctly filed and configured.</p>';
   updateReclassifyCount();
 }
 
-function reclassifyCard(it) {
-  const t = it.target, cu = it.current;
+// One settings row: greyed when unchanged, struck-through → green when it's an issue.
+function _rcRow(icon, from, to, changed) {
+  if (!changed) return `<div style="font-size:11px;color:var(--text3)">${icon} ${esc(from || '—')}</div>`;
+  return `<div style="font-size:11px">${icon} <span style="color:var(--danger);text-decoration:line-through">${esc(from || '—')}</span> <span style="color:var(--text3)">→</span> <span style="color:#3fb950;font-weight:600">${esc(to || '—')}</span></div>`;
+}
+
+function reclassifyCard(it, actionable) {
+  const cu = it.current, ex = it.expected || {}, iss = it.issues || [];
   const poster = it.poster
-    ? `<img src="/api/image/proxy?src=${encodeURIComponent(it.poster)}" onerror="this.style.display='none'" style="width:52px;height:78px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
-    : `<div style="width:52px;height:78px;border-radius:4px;background:var(--bg3);flex-shrink:0"></div>`;
+    ? `<img src="/api/image/proxy?src=${encodeURIComponent(it.poster)}" onerror="this.style.display='none'" style="width:48px;height:72px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
+    : `<div style="width:48px;height:72px;border-radius:4px;background:var(--bg3);flex-shrink:0"></div>`;
   const link = it.sonarr_link
-    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" style="color:var(--amber);font-size:11px;text-decoration:none">↗ Sonarr</a>` : '';
-  return `<div style="display:flex;gap:10px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">
-    <input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-type="${escAttr(t.series_type)}" data-root="${escAttr(t.root || '')}" data-move="${t.move_files ? 1 : 0}" data-title="${escAttr(it.title)}" onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">
-    ${poster}
+    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" title="Open in Sonarr" style="color:var(--amber);font-size:11px;text-decoration:none">↗</a>` : '';
+  let body;
+  if (actionable) {
+    body = _rcRow('📁', cu.library, ex.library, iss.includes('root'))
+         + _rcRow('🏷️', cu.series_type, ex.series_type, iss.includes('type'))
+         + _rcRow('⚙️', cu.profile, ex.profile, iss.includes('profile'));
+  } else {
+    body = `<div style="font-size:11px;color:var(--text3)">📁 ${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>`
+         + `<div style="font-size:10px;color:var(--text3);margin-top:2px">origin unknown — verify in Sonarr</div>`;
+  }
+  const cb = actionable
+    ? `<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">`
+    : `<span style="width:13px;flex-shrink:0"></span>`;
+  const moveTag = (it.fix && it.fix.moveFiles)
+    ? ` <span style="font-size:9px;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:0 3px;white-space:nowrap">move files</span>` : '';
+  return `<div style="display:flex;gap:9px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">
+    ${cb}${poster}
     <div style="min-width:0;flex:1">
-      <div style="font-weight:600;font-size:13px;margin-bottom:3px">${esc(it.title)}${link}</div>
-      <div style="font-size:11px;color:var(--text3)">Now: ${esc(cu.library)} · ${esc(cu.series_type || '')}</div>
-      <div style="font-size:11px;color:var(--amber)">→ ${esc(t.library)} · ${esc(t.series_type)}${t.move_files ? ' · moveFiles' : ''}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:3px">${esc(it.reason || '')}</div>
+      <div style="font-weight:600;font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}${moveTag}</div>
+      ${body}
     </div>
   </div>`;
+}
+
+function rcToggleSection(master) {
+  const grid = master.closest('h3').nextElementSibling;
+  if (grid) grid.querySelectorAll('.rc-cb').forEach(cb => { cb.checked = master.checked; });
+  updateReclassifyCount();
 }
 
 function updateReclassifyCount() {
   const n = document.querySelectorAll('#reclassify-content .rc-cb:checked').length;
   const btn = document.getElementById('reclassify-move-btn');
-  if (btn) { btn.textContent = `Move selected (${n}) →`; btn.disabled = n === 0; }
+  if (btn) { btn.textContent = `Apply selected (${n}) →`; btn.disabled = n === 0; }
 }
 
 async function moveReclassify() {
   const cbs = [...document.querySelectorAll('#reclassify-content .rc-cb:checked')];
   if (!cbs.length) return;
-  const items = cbs.map(cb => ({
-    id: +cb.dataset.id, series_type: cb.dataset.type, root: cb.dataset.root,
-    move_files: cb.dataset.move === '1', title: cb.dataset.title,
-  }));
-  // Stage 1 = dry-run. The actual Sonarr move (PUT seriesType + rootFolder +
+  const items = cbs.map(cb => { let f = {}; try { f = JSON.parse(cb.dataset.fix || '{}'); } catch (_) {} return { id: +cb.dataset.id, title: cb.dataset.title, fix: f }; });
+  // Stage 1 = dry-run. The real Sonarr write (root/seriesType/qualityProfile +
   // moveFiles) is Stage 2 — wired once you've eyeballed this list.
-  const list = items.map(i => `• ${i.title}  →  ${i.series_type} @ ${i.root}${i.move_files ? '  (move files)' : ''}`).join('\n');
-  alert(`DRY-RUN — would move ${items.length} series:\n\n${list}\n\n(Stage 2 — the real Sonarr move with moveFiles — is the next step.)`);
+  const list = items.map(i => `• ${i.title}  →  ${i.fix.seriesType} · profile ${i.fix.qualityProfileId}${i.fix.moveFiles ? '  (move files)' : ''}`).join('\n');
+  alert(`DRY-RUN — would apply ${items.length} change(s):\n\n${list}\n\n(Stage 2 — the real Sonarr write — is the next step.)`);
 }
 
 // ── Pass 16c: Library Manager (Sonarr/Radarr/Lidarr pages) ───────────────

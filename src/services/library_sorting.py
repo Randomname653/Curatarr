@@ -1,27 +1,31 @@
 """
-Curatarr - Library sorting (anime ↔ TV reclassification).
+Curatarr - Library sorting / config audit (Sonarr anime ↔ TV).
 
-Detects Sonarr series filed in the wrong library and proposes a move:
+Checks every Sonarr series against the rules for its *true* category and
+surfaces anything mis-filed or mis-configured:
 
-  * **Western cartoons in the Anime library** → TV Shows
-    (Futurama, Rick and Morty, Avatar: TLA, the X-Men/Star Wars cartoons, …)
-  * **Asian anime in the TV library** → Anime  (the reverse, two-way)
+  True category is decided by: on the anime-lists **AniDB** mapping, OR an
+  **Asian** TMDB origin (JP/CN/KR/TW/HK) → ``anime``; a Western TMDB origin
+  → ``tv``; neither (no origin, not on AniDB) → ``uncertain`` (left for the
+  admin — usually an old JP OVA the databases just don't list).
 
-Heuristic — a series counts as *anime* when EITHER:
-  * its ``tvdbId`` is in the anime-lists AniDB mapping (``tvdb_to_anidb``), OR
-  * its TMDB origin country is Asian (JP/CN/KR/TW/HK).
+Per-category expected settings (from the owner's setup):
+  * **anime** → root ``…/AnimeShows``, ``seriesType=anime``, quality profile
+    = the one with "anime" in its name (``[Anime] Remux-1080p``). ``Any`` /
+    ``Any - 4K`` are NOT anime profiles.
+  * **tv**    → root ``…/tv``, ``seriesType`` standard (daily ok), quality
+    profile = anything that is NOT the anime profile (``Any`` / ``Any - 4K``).
 
-So a series in the Anime library that is in neither bucket — not on AniDB AND
-Western-origin — is the move-out target. The mapping alone is too noisy (it
-misses old/OVA Japanese titles), which is why the TMDB origin is the tie-break
-that keeps real anime put.
+A series with any field off its expected value becomes a candidate, grouped:
+  * ``to_tv``        — Western cartoon in the Anime library (root move)
+  * ``to_anime``     — AniDB/Asian title in the TV library (root move)
+  * ``fix_settings`` — right library, wrong seriesType and/or quality profile
+  * ``uncertain``    — couldn't determine origin (in the anime root) — review
 
-This module is **read-only** (the scan / dry-run). The actual Sonarr move
-(`PUT seriesType`, root folder, ``moveFiles=true``) lives in the router so the
-write path stays explicit and admin-gated.
+Read-only scan. The actual Sonarr write (PUT root/seriesType/qualityProfile +
+``moveFiles``) lives in the router so the write path stays explicit + gated.
 """
 
-import asyncio
 import logging
 from typing import Optional
 
@@ -37,7 +41,6 @@ ASIAN_ORIGINS = {"JP", "CN", "KR", "TW", "HK"}
 
 
 def _poster_url(series: dict) -> Optional[str]:
-    """First poster image URL from a Sonarr series object."""
     for im in series.get("images", []) or []:
         if im.get("coverType") == "poster":
             return im.get("remoteUrl") or im.get("url")
@@ -45,13 +48,8 @@ def _poster_url(series: dict) -> Optional[str]:
 
 
 def _pick_roots(series: list, rootfolders: list) -> tuple[Optional[str], Optional[str]]:
-    """Return (anime_root_path, tv_root_path).
-
-    Decided by where each ``seriesType`` actually lives: the root holding the
-    most ``anime`` series is the anime root; the most ``standard`` is the TV
-    root. A path-name hint ("anime") breaks ties so a brand-new / empty setup
-    still resolves sensibly.
-    """
+    """(anime_root, tv_root) — by where each seriesType mostly lives, with a
+    path-name hint as tie-break."""
     paths = [rf.get("path") for rf in rootfolders if rf.get("path")]
     anime_count = {p: 0 for p in paths}
     std_count = {p: 0 for p in paths}
@@ -59,11 +57,7 @@ def _pick_roots(series: list, rootfolders: list) -> tuple[Optional[str], Optiona
         p = s.get("rootFolderPath")
         if p not in anime_count:
             continue
-        if s.get("seriesType") == "anime":
-            anime_count[p] += 1
-        else:
-            std_count[p] += 1
-
+        (anime_count if s.get("seriesType") == "anime" else std_count)[p] += 1
     anime_root = max(paths, key=lambda p: (anime_count[p], "anime" in p.lower()), default=None)
     tv_candidates = [p for p in paths if p != anime_root] or paths
     tv_root = max(tv_candidates, key=lambda p: (std_count[p], "tv" in p.lower() or "show" in p.lower()),
@@ -71,9 +65,22 @@ def _pick_roots(series: list, rootfolders: list) -> tuple[Optional[str], Optiona
     return anime_root, tv_root
 
 
+def _profiles(qps: list) -> tuple[Optional[int], Optional[str], Optional[int], dict, set]:
+    """(anime_pid, anime_pname, tv_default_pid, name_by_id, anime_pids).
+
+    Anime profile = any whose name contains "anime". TV default = a profile
+    named exactly "any" if present, else the first non-anime profile."""
+    by_id = {p["id"]: p.get("name") for p in qps}
+    anime_pids = {p["id"] for p in qps if "anime" in (p.get("name") or "").lower()}
+    anime_pid = min(anime_pids) if anime_pids else None
+    tv_ids = [p["id"] for p in qps if p["id"] not in anime_pids]
+    tv_default = next((p["id"] for p in qps if (p.get("name") or "").strip().lower() == "any"),
+                      tv_ids[0] if tv_ids else None)
+    return anime_pid, by_id.get(anime_pid), tv_default, by_id, anime_pids
+
+
 async def _tmdb_origin(client: httpx.AsyncClient, tvdb_id: int) -> list:
-    """origin_country list for a tvdbId via TMDB ``/find``. Cached in app_state
-    (``tvdb_origin:<id>``) so repeat scans don't re-hit TMDB."""
+    """origin_country list for a tvdbId via TMDB /find, cached in app_state."""
     ck = f"tvdb_origin:{tvdb_id}"
     cached = get_state(ck)
     if cached is not None:
@@ -94,33 +101,7 @@ async def _tmdb_origin(client: httpx.AsyncClient, tvdb_id: int) -> list:
     return origin
 
 
-def _card(series: dict, sonarr_url: str, cur_lib: str, cur_root: str,
-          tgt_lib: str, tgt_root: str, tgt_type: str, reason: str, origin: list) -> dict:
-    slug = series.get("titleSlug")
-    cur_root = series.get("rootFolderPath") or cur_root
-    return {
-        "sonarr_id":   series.get("id"),
-        "title":       series.get("title"),
-        "title_slug":  slug,
-        "tvdb_id":     series.get("tvdbId"),
-        "poster":      _poster_url(series),
-        "sonarr_link": f"{sonarr_url.rstrip('/')}/series/{slug}" if slug else None,
-        "origin":      origin,
-        "reason":      reason,
-        "current":     {"library": cur_lib, "root": cur_root, "series_type": series.get("seriesType")},
-        "target":      {"library": tgt_lib, "root": tgt_root, "series_type": tgt_type,
-                        "move_files": (cur_root != tgt_root)},
-    }
-
-
 async def scan_misclassified() -> dict:
-    """Read-only scan. Returns both directions + the resolved root folders.
-
-    ``western_in_anime``: anime-library series that are not on AniDB and have a
-    Western TMDB origin → propose move to TV.
-    ``anime_in_tv``: TV-library series whose tvdbId IS on AniDB → propose move
-    to Anime.
-    """
     sonarr = settings.effective_sonarr_url
     key = settings.SONARR_API_KEY
     if not sonarr or not key:
@@ -132,58 +113,113 @@ async def scan_misclassified() -> dict:
         try:
             series = (await client.get(f"{sonarr}/api/v3/series", headers=headers)).json()
             rootfolders = (await client.get(f"{sonarr}/api/v3/rootfolder", headers=headers)).json()
+            qps = (await client.get(f"{sonarr}/api/v3/qualityprofile", headers=headers)).json()
         except Exception as e:
             logger.warning("[lib-sort] Sonarr fetch failed: %s", e)
             return {"error": "Sonarr unreachable"}
 
         anime_root, tv_root = _pick_roots(series, rootfolders)
+        anime_pid, anime_pname, tv_default_pid, pname, anime_pids = _profiles(qps)
 
-        western_in_anime: list = []
-        uncertain: list = []     # anime-library, not on AniDB, no TMDB origin → review
-        anime_in_tv: list = []
+        def _lib(root):
+            return "Anime" if root == anime_root else ("TV Shows" if root == tv_root else "?")
+
+        def _card(s, cat, cur_root, cur_type, cur_pid,
+                  exp_root, exp_type, exp_pid, issues, origin, on_anidb):
+            slug = s.get("titleSlug")
+            card = {
+                "sonarr_id":   s.get("id"),
+                "title":       s.get("title"),
+                "tvdb_id":     s.get("tvdbId"),
+                "poster":      _poster_url(s),
+                "sonarr_link": f"{sonarr.rstrip('/')}/series/{slug}" if slug else None,
+                "true_category": cat,
+                "origin":      origin,
+                "on_anidb":    on_anidb,
+                "current": {"library": _lib(cur_root), "root": cur_root,
+                            "series_type": cur_type, "profile": pname.get(cur_pid)},
+            }
+            if cat != "uncertain":
+                card["expected"] = {"library": _lib(exp_root), "root": exp_root,
+                                    "series_type": exp_type, "profile": pname.get(exp_pid)}
+                card["issues"] = issues
+                card["fix"] = {"rootFolderPath": exp_root, "seriesType": exp_type,
+                               "qualityProfileId": exp_pid, "moveFiles": cur_root != exp_root}
+            return card
+
+        to_tv, to_anime, fix_settings, uncertain = [], [], [], []
 
         for s in series:
             tvdb = s.get("tvdbId")
             on_anidb = bool(tvdb and tvdb in mapping.tvdb_to_anidb)
             stype = s.get("seriesType")
+            cur_root = s.get("rootFolderPath")
+            cur_pid = s.get("qualityProfileId")
 
-            if stype == "anime":
-                if on_anidb:
-                    continue  # genuine anime — keep
+            # ── true category — TMDB origin only where it can change the answer ──
+            # AniDB membership alone settles most anime (incl. anime mis-filed in
+            # the TV library). We only spend a TMDB /find when origin is the
+            # deciding factor: an anime-library title not on AniDB (Western? → TV),
+            # or a TV-library title carrying anime-ish settings (a possible
+            # mis-file). Everything else in the TV library is TV without a lookup —
+            # that's what kept the full sweep from hammering ~1000 series.
+            origin = []
+            if on_anidb:
+                cat = "anime"
+            elif cur_root == anime_root:
                 origin = await _tmdb_origin(client, tvdb) if tvdb else []
-                if origin and (set(origin) & ASIAN_ORIGINS):
-                    continue  # Asian animation missing from the mapping — keep
-                # Not on AniDB + not Asian-origin → Western cartoon mis-filed.
-                # When TMDB had no origin at all we can't be sure (often old
-                # JP OVAs missing from both DBs) — surface those separately so
-                # they don't get bulk-moved by mistake.
-                if origin:
-                    western_in_anime.append(
-                        _card(s, sonarr, "Anime", anime_root, "TV Shows", tv_root, "standard",
-                              f"Not on AniDB · TMDB origin {','.join(origin)}", origin))
-                else:
-                    uncertain.append(
-                        _card(s, sonarr, "Anime", anime_root, "TV Shows", tv_root, "standard",
-                              "Not on AniDB · no TMDB origin — verify before moving", origin))
+                cat = ("anime" if (origin and set(origin) & ASIAN_ORIGINS)
+                       else ("tv" if origin else "uncertain"))
+            elif tvdb and (stype == "anime" or cur_pid in anime_pids):
+                origin = await _tmdb_origin(client, tvdb)
+                cat = "anime" if (origin and set(origin) & ASIAN_ORIGINS) else "tv"
+            else:
+                cat = "tv"
 
-            elif stype in ("standard", "daily"):
-                if on_anidb:
-                    # An AniDB title living in the TV library → it's anime.
-                    anime_in_tv.append(
-                        _card(s, sonarr, "TV Shows", tv_root, "Anime", anime_root, "anime",
-                              "On AniDB but filed as a standard series", []))
+            if cat == "uncertain":   # only ever set for an anime-library title
+                uncertain.append(_card(s, "uncertain", cur_root, stype, cur_pid,
+                                       None, None, None, [], origin, on_anidb))
+                continue
 
-    for lst in (western_in_anime, uncertain, anime_in_tv):
-        lst.sort(key=lambda c: c["title"].lower())
+            # ── expected settings for the true category ────────────────────
+            if cat == "anime":
+                exp_root, exp_type, exp_pid = anime_root, "anime", anime_pid
+            else:
+                exp_root = tv_root
+                exp_type = stype if stype in ("standard", "daily") else "standard"
+                exp_pid = cur_pid if cur_pid not in anime_pids else tv_default_pid
+
+            issues = []
+            if anime_root and tv_root and cur_root != exp_root:
+                issues.append("root")
+            if exp_type and stype != exp_type:
+                issues.append("type")
+            if exp_pid and cur_pid != exp_pid:
+                issues.append("profile")
+            if not issues:
+                continue
+
+            card = _card(s, cat, cur_root, stype, cur_pid, exp_root, exp_type, exp_pid,
+                         issues, origin, on_anidb)
+            if "root" in issues:
+                (to_tv if cat == "tv" else to_anime).append(card)
+            else:
+                fix_settings.append(card)
+
+    for lst in (to_tv, to_anime, fix_settings, uncertain):
+        lst.sort(key=lambda c: (c["title"] or "").lower())
     return {
         "anime_root": anime_root,
         "tv_root": tv_root,
-        "western_in_anime": western_in_anime,
+        "anime_profile": anime_pname,
+        "to_tv": to_tv,
+        "to_anime": to_anime,
+        "fix_settings": fix_settings,
         "uncertain": uncertain,
-        "anime_in_tv": anime_in_tv,
         "counts": {
-            "to_tv": len(western_in_anime),
+            "to_tv": len(to_tv),
+            "to_anime": len(to_anime),
+            "fix_settings": len(fix_settings),
             "uncertain": len(uncertain),
-            "to_anime": len(anime_in_tv),
         },
     }
