@@ -1645,12 +1645,29 @@ function updateReclassifyCount() {
 
 async function moveReclassify() {
   const cbs = [...document.querySelectorAll('#reclassify-content .rc-cb:checked')];
-  if (!cbs.length) return;
-  const items = cbs.map(cb => { let f = {}; try { f = JSON.parse(cb.dataset.fix || '{}'); } catch (_) {} return { id: +cb.dataset.id, title: cb.dataset.title, fix: f }; });
-  // Stage 1 = dry-run. The real Sonarr write (root/seriesType/qualityProfile +
-  // moveFiles) is Stage 2 — wired once you've eyeballed this list.
-  const list = items.map(i => `• ${i.title}  →  ${i.fix.seriesType} · profile ${i.fix.qualityProfileId}${i.fix.moveFiles ? '  (move files)' : ''}`).join('\n');
-  alert(`DRY-RUN — would apply ${items.length} change(s):\n\n${list}\n\n(Stage 2 — the real Sonarr write — is the next step.)`);
+  const items = cbs.map(cb => { let f = {}; try { f = JSON.parse(cb.dataset.fix || '{}'); } catch (_) {} return { sonarr_id: +cb.dataset.id, title: cb.dataset.title, fix: f }; })
+                   .filter(i => i.fix && i.fix.seriesType);
+  if (!items.length) { alert('Nothing actionable selected — pick a direction on the uncertain cards.'); return; }
+  const moves = items.filter(i => i.fix.moveFiles).length;
+  const msg = `Apply ${items.length} change(s) to Sonarr?`
+    + (moves ? `\n\n${moves} will physically move files (queued in Sonarr).` : '')
+    + `\n\nNothing gets re-enriched.`;
+  if (!confirm(msg)) return;
+  const btn = document.getElementById('reclassify-move-btn');
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = `Applying ${items.length}…`;
+  try {
+    const res = await api('/api/library/reclassify/apply', 'POST',
+      { items: items.map(i => ({ sonarr_id: i.sonarr_id, fix: i.fix })) });
+    const fails = (res.results || []).filter(r => !r.ok);
+    let out = `✓ Applied ${res.applied || 0}` + (res.failed ? `, ${res.failed} failed` : '') + '.';
+    if (fails.length) out += `\n\nFailed:\n` + fails.slice(0, 12).map(f => `• ${f.title || f.sonarr_id}: ${f.error || '?'}`).join('\n');
+    alert(out);
+    loadReclassify();   // re-scan so the lists reflect the new state
+  } catch (e) {
+    alert('Apply failed: ' + (e.message || 'unknown'));
+    btn.disabled = false; btn.textContent = prev;
+  }
 }
 
 // ── Pass 16c: Library Manager (Sonarr/Radarr/Lidarr pages) ───────────────

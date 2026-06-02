@@ -1300,6 +1300,18 @@ async def reclassify_scan(_admin: User = Depends(require_admin)):
     return await scan_misclassified()
 
 
+@router.post("/reclassify/apply")
+async def reclassify_apply(body: dict, _admin: User = Depends(require_admin)):
+    """Execute selected reclassifications (Manage → Reclassify, Stage 2).
+
+    Body: ``{"items": [{"sonarr_id": int, "fix": {...}}]}``. PUTs each series
+    back to Sonarr (root/seriesType/qualityProfile; ``moveFiles`` queues the
+    physical relocation) and re-files it inside Curatarr without re-enriching.
+    """
+    from src.services.library_sorting import apply_reclassify
+    return await apply_reclassify(body.get("items") or [])
+
+
 @router.get("/breakdown")
 async def library_breakdown(
     user: User = Depends(get_current_user),
