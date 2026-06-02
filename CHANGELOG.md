@@ -25,8 +25,8 @@ the branch — every "Pass N" section maps to one or more commits.
 
 A separate run on `main` (baseline `58cb319`), prompted by moving Curatarr to a new
 machine. Got the app running again, then fixed a chain of issues surfaced by real
-multi-user use over the LAN — ending in automatic per-account history recovery for
-new users.
+multi-user use over the LAN — automatic per-account history recovery for new
+users, then an admin tool to reclassify mis-filed anime ↔ TV library content.
 
 | # | Commit | Theme |
 |---|---|---|
@@ -40,6 +40,11 @@ new users.
 | 8 | `5024ca1` | **Serialize curator generations** across the server on the single GPU (`MAX_CONCURRENT_CURATOR`, default 1). Two chats (or chat colliding with recs/proactive/verification) no longer thrash the GPU into CPU-spillover; the second queues with a "you're next" SSE frame. Wired the 3 previously-ungated big-model call sites. |
 | 9 | `69eca06` | **Auto-onboard** secondary users (no admin button) + never trap a history-less user: the library/sync onboarding now only gates the admin's first run; a non-admin lands straight in the app. |
 | 10 | `961f0a9` | `import_plex_history_for_user()`: pull a new user's *own* Plex history by account, resolve each title against `enrichment_status` (covers ARR-enriched titles the admin never watched — `sonarr:`/`radarr:` keys, the same key the taste engine looks the profile up under), insert one row per play, build taste. Wired into the login bootstrap. Validated on a real second account: **45/45 plays** recovered from old, since-removed library sections → anime (Soul Eater/InuYasha/Black Butler/Haunted Hotel) + show (Stranger Things/Squid Game/Fallout) taste vectors. |
+| 11 | `605833c` | **Manage → 🔀 Reclassify** (Stage 1, read-only): detect Sonarr series filed in the wrong library. Anime = on the anime-lists **AniDB** mapping OR Asian TMDB origin; a Western cartoon in the Anime lib → propose move to TV. Admin scan endpoint + UI cards (poster via the already-whitelisted image proxy, current→target, Sonarr deep-link, checkboxes). |
+| 12 | `e373d78` | Grew into a full **per-series config audit**: each series checked against its *true* category's expected **root + `seriesType` + quality profile** (`[Anime] Remux-1080p` for anime; `Any`/`Any-4K` = NOT anime). Four groups: `to_tv` / `to_anime` / `fix_settings` (right lib, wrong type/profile) / `uncertain`. TMDB `/find` spent only where origin can change the answer → ~15s, not a ~1000-call timeout. Live: 65/22/100/27. |
+| 13 | `b474938` | **Live-action detection**: Asian origin alone mis-flagged JP *live-action* (Bloody Monday, Kakegurui, the Spider-Man 1978 / Ultraman tokusatsu) as anime — now also require the TMDB **Animation genre (id 16)**. Uncertain cards made actionable (→ TV / → Anime / skip, each carrying a ready-made fix). |
+| 14 | `ea4ccfc` | Reclassify **Stage 2** (apply): `POST /reclassify/apply` writes to Sonarr + re-files inside Curatarr **without re-enriching**. The enrichment skip-key is `(title, category)`, so 4 cheap in-place updates keep live==persisted: `enrichment_status.media_category`, `arr_enrichment_status.category`, the MetadataCache profile key (`enriched:{cat}:{key}`), and the ChromaDB vector's `domain`/`media_type` quarantine metadata. No TMDB re-fetch, no re-embed, no LLM. New category = `classify_sonarr_category(updated)` so the 2 TVDB-"Anime"-genre edge cases stay anime (no drift). |
+| 15 | `891aa8e` | Root moves used `PUT /series/{id}`, which sets `rootFolderPath` but not the authoritative `path` → files never moved (profile/type edits *did* work). Switched to **`PUT /api/v3/series/editor`** (`{seriesIds, rootFolderPath, seriesType, qualityProfileId, moveFiles}`) which recomputes `path` and performs the physical move. Verified end-to-end. |
 
 Not committed (data / config ops): pulled `nomic-embed-text`; ran the vector backfill; ran
 the per-account import for the existing second user; set `PLEX_REDIRECT_URI` to the host's
@@ -1574,38 +1579,28 @@ Everything below has been seen, scoped, or tried; none of it is currently in pro
 | `llm_priority` resume path still not lock-guarded | The new curator semaphore (`5024ca1`) serializes generations, but the `_active`/`_event` enrichment-resume handoff is still mutated without an `asyncio.Lock` (the original Pass 7 race). Mitigated in practice by serialization; the theoretical lost-wakeup remains. |
 | Auto-onboard fires server-wide work per new login | The login bootstrap pulls `/accounts` + the user's full per-account history in the background on each new secondary login. Fine for a home server; gate/throttle if the user count ever grows. |
 
-### Reclassify non-Japanese content out of the Anime library (admin tool) — NEXT
+### Reclassify mis-filed content between Anime ↔ TV — ✅ DONE (Session `main`, commits 11–15)
 
-The Anime library has accumulated non-anime — **Donghua** (CN), **Korean** (KR),
-Taiwanese (TW). Admin section that detects them from the metadata we already
-have and **physically moves them into the regular TV Shows library** (chosen
-scope: full Sonarr file move, not just a Curatarr-side relabel).
+Built as **Manage → 🔀 Reclassify**. **Scope corrected mid-build:** Donghua (CN) and
+Korean (KR) titles *stay* — they're on AniDB and are genuine animation. The real
+offenders are **Western cartoons** in the Anime library (Futurama, American Dad, the
+X-Men / Star Wars cartoons) and **Japanese live-action** mis-filed as anime
+(tokusatsu like Spider-Man 1978 / Ultraman; dramas like Bloody Monday / Kakegurui).
+So the criterion became "**animated AND Asian** = anime" — AniDB membership OR Asian
+TMDB origin **plus** the TMDB Animation genre (id 16) — not "Japanese-origin".
 
-**Detection — verified feasible.** Per anime-classified item, resolve
-`countryOfOrigin`: `anilist_id` → AniList `Media{countryOfOrigin}` (JP/CN/KR/TW);
-else `tmdb_id` → TMDB `origin_country` / `original_language`. The enriched
-profile doesn't store origin today (`country` is empty on 400/400 sampled), but
-both IDs are cached, so it's re-queryable. Cache the resolved origin. Flag ≠ JP.
-(A 50-item AniList sample came back all-JP, so the offenders are a minority —
-needs a full scan to surface them.)
+Shipped as a full per-series **config audit** (root + `seriesType` + quality profile),
+both directions, with an actionable `uncertain` bucket (→ TV / → Anime / skip), and a
+**refetch-safe** apply so a move never triggers re-enrichment. See session table rows
+11–15 for the detail.
 
-**Move — full physical, via Sonarr:**
-1. Map flagged item → its Sonarr series (tvdbId / title / ids).
-2. `PUT /api/v3/series/{id}` with `seriesType:"standard"`, `rootFolderPath:` the
-   TV-shows root, `?moveFiles=true` → Sonarr moves the files.
-3. Drop the "Anime" genre tag so `classify_sonarr_category` agrees.
-4. Plex re-scans both sections; Curatarr's `media_category` follows on next sync.
-
-**Build staged — file moves are irreversible-ish:**
-- *Stage 1 (safe, read-only):* detection scan + admin list + **dry-run**
-  ("would move N items from `<anime root>` → `<tv root>`"). Resolve roots from
-  `/api/v3/rootfolder`, never hardcode.
-- *Stage 2:* the real `moveFiles=true` PUT, behind explicit per-item confirm,
-  with Sonarr command-status polling + error surfacing.
-
-**Open questions:** which Sonarr root folder is "TV shows"? items present in
-Plex/watch-history but not in Sonarr (nothing to move); TW/HK edge cases; what
-to do with the existing enrichment cache key after the category flips.
+**Resolved open questions:** TV root = `/storage/media/tv`, anime root =
+`/storage/media/AnimeShows`, both resolved from `/api/v3/rootfolder` (not hardcoded);
+the "Anime" genre tag is respected by deriving the new category from
+`classify_sonarr_category(updated)` (2 TVDB-"Anime"-genre edge cases stay anime, no
+drift); the enrichment cache key is **re-keyed in place** (old→new category) rather
+than re-fetched; root moves go through **`/series/editor`** (a plain `PUT /series/{id}`
+left the authoritative `path` untouched, so files never moved).
 
 ### Frontend hardening
 
