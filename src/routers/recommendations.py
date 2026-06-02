@@ -21,7 +21,7 @@ from src.database.models import (
     DeletionProposal,
     User,
 )
-from src.routers.auth import get_current_user
+from src.routers.auth import get_current_user, require_admin
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -369,7 +369,7 @@ async def get_deletion_proposals(
     # newest activity bubbles to the top.
     recent_only: bool = Query(False),
     recent_days: int = Query(7, ge=1, le=90),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),   # deletions = admin curation only
     db: Session = Depends(get_db),
 ):
     from src.services.recommendations_engine import generate_deletion_proposals
@@ -684,7 +684,7 @@ async def get_deletion_proposals(
 @router.post("/deletions/{proposal_id}/comment")
 async def update_comment(
     proposal_id: int, comment: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),   # deletions = admin curation only
     db: Session = Depends(get_db),
 ):
     p = db.query(DeletionProposal).filter(
@@ -769,7 +769,7 @@ def _latest_curator_stance_for_proposal(
 @router.post("/deletions/{proposal_id}/approve")
 async def approve_deletion(
     proposal_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),   # deletions = admin curation only
     db: Session = Depends(get_db),
 ):
     p = db.query(DeletionProposal).filter(
@@ -848,7 +848,7 @@ async def approve_deletion(
 @router.post("/deletions/{proposal_id}/reject")
 async def reject_deletion(
     proposal_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),   # deletions = admin curation only
     db: Session = Depends(get_db),
 ):
     """User clicks Keep on the deletion-proposal card.
