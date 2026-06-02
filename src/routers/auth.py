@@ -133,19 +133,22 @@ def _enforce_poll_rate_limit(pin_id: int) -> None:
 async def _bootstrap_user_data(user_id: int) -> None:
     """Auto-onboard a freshly-arrived user — no admin button required.
 
-    When a second person logs in, their pre-existing Plex plays are still
-    parked on the admin (the bulk sync attributed everything to whoever was
-    first). This moves their plays over (re-attribution) and builds their
-    taste vector, so the moment they land they get *their* data. Best-effort
-    and idempotent; each step logs and swallows its own errors so one failing
-    doesn't block the other. Runs in the background after the login response.
+    When a second person logs in, their Plex plays live under their own Plex
+    account (and, for plays in an old/removed library section, carry no
+    ratingKey at all — re-attribution can't touch them). This pulls their
+    history straight from Plex by their account, resolves each title against
+    the shared enrichment knowledge base, and writes their watch_history
+    rows, then builds their taste vector — so the moment they land they get
+    *their* data. Best-effort and idempotent; each step logs and swallows its
+    own errors so one failing doesn't block the other. Runs in the background
+    after the login response returns.
     """
     try:
-        from src.services.plex_sync import reattribute_watch_history
-        res = await reattribute_watch_history()
-        logger.info("[auto-onboard] re-attribution for user %s: %s", user_id, res)
+        from src.services.plex_sync import import_plex_history_for_user
+        res = await import_plex_history_for_user(user_id)
+        logger.info("[auto-onboard] history import for user %s: %s", user_id, res)
     except Exception as e:
-        logger.warning("[auto-onboard] re-attribution failed for user %s: %s", user_id, e)
+        logger.warning("[auto-onboard] history import failed for user %s: %s", user_id, e)
     try:
         from src.services.taste_engine import compute_all_taste_vectors
         await compute_all_taste_vectors(user_id)

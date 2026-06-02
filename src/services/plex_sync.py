@@ -846,6 +846,174 @@ async def _fetch_account_to_user_map(plex_url: str, headers: dict, users: list) 
     return out
 
 
+async def import_plex_history_for_user(user_id: int) -> dict:
+    """Pull a user's OWN Plex watch history (by their Plex account) into
+    local watch_history rows.
+
+    Unlike ``sync_plex_history`` (which walks the whole server keyed on the
+    current library) and ``reattribute_watch_history`` (which only re-labels
+    rows that already exist locally), this targets ONE user and is built for
+    auto-onboarding a freshly-arrived second account:
+
+      1. Resolve the user's Plex accountID by matching their ``plex_username``
+         against ``/accounts``.
+      2. Pull their play events from ``/status/sessions/history/all?accountID=``
+         (paginated). These events carry the title/series/season/episode but —
+         for plays in an old, since-removed library section — NO ``ratingKey``.
+      3. Resolve each title against the shared ``enrichment_status`` knowledge
+         base to get a canonical key + category. This works even for titles the
+         admin never watched (ARR-library items enriched as ``sonarr:``/
+         ``radarr:`` keys), and the key matches what the taste engine looks the
+         enrichment up under, so a taste vector can actually be built.
+      4. Insert one row per play event (real ``viewedAt``) so the taste
+         engine's per-category play-count weighting is preserved.
+
+    Idempotent: re-running skips rows it already inserted (by key + viewed_at).
+    Best-effort; returns a summary dict.
+    """
+    from collections import defaultdict
+    from src.database.models import WatchHistoryEntry, EnrichmentStatus, User
+
+    plex_url = settings.effective_plex_url
+    plex_token = settings.effective_plex_token
+    if not plex_url or not plex_token:
+        return {"error": "Plex not configured"}
+    headers = {
+        "Accept": "application/json",
+        "X-Plex-Token": plex_token,
+        "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
+    }
+
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"error": "user not found"}
+        username = (user.plex_username or "").strip()
+        is_admin = bool(user.is_admin)
+    # The admin (server owner) is the data source; their plays are synced the
+    # normal way. Don't import "their" account history on top of it.
+    if is_admin or not username:
+        return {"imported": 0, "reason": "admin or no username"}
+
+    # 1. Resolve accountID from /accounts by username (case-insensitive).
+    account_id = None
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{plex_url}/accounts", headers=headers)
+        accounts = r.json().get("MediaContainer", {}).get("Account") or []
+        if isinstance(accounts, dict):
+            accounts = [accounts]
+        for a in accounts:
+            nm = (a.get("name") or a.get("title") or "").strip()
+            if nm and nm.lower() == username.lower():
+                account_id = str(a.get("id"))
+                break
+    except Exception as e:
+        logger.warning("[history-import] /accounts failed for user %s: %s", user_id, e)
+        return {"error": "accounts fetch failed"}
+    if not account_id:
+        logger.info("[history-import] no Plex account matches %r — nothing to import", username)
+        return {"imported": 0, "reason": "no matching plex account"}
+
+    # 2. Pull the user's play events (paginated, filtered to their account).
+    events: list = []
+    start = 0
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            while True:
+                ph = {**headers, "X-Plex-Container-Start": str(start),
+                      "X-Plex-Container-Size": "1000"}
+                r = await client.get(
+                    f"{plex_url}/status/sessions/history/all",
+                    headers=ph, params={"accountID": account_id},
+                )
+                items = r.json().get("MediaContainer", {}).get("Metadata") or []
+                if not items:
+                    break
+                events.extend(items)
+                if len(items) < 1000:
+                    break
+                start += 1000
+                if start > 200_000:
+                    break
+    except Exception as e:
+        logger.warning("[history-import] history fetch failed for user %s: %s", user_id, e)
+        return {"error": "history fetch failed"}
+    if not events:
+        return {"imported": 0, "reason": "no plex history events", "account_id": account_id}
+
+    def _canon(m: dict) -> tuple:
+        is_ep = m.get("type") == "episode"
+        t = ((m.get("grandparentTitle") if is_ep else m.get("title")) or "").strip()
+        return t, is_ep
+
+    # 3. Resolve each distinct title -> (key, category) via enrichment_status.
+    #    Prefer a row that already has a vector and whose category matches the
+    #    play kind (episode -> anime/show, movie -> movie).
+    resolved: dict = {}
+    unresolved: list = []
+    with get_db_session() as db:
+        titles = {}
+        for m in events:
+            t, is_ep = _canon(m)
+            if t:
+                titles[t] = is_ep
+        for t, is_ep in titles.items():
+            rows = db.query(EnrichmentStatus).filter(EnrichmentStatus.title == t).all()
+            cands = [r for r in rows if (r.vector_ready or r.enriched) and r.plex_rating_key]
+            if not cands:
+                unresolved.append(t)
+                continue
+            want = ("anime", "show") if is_ep else ("movie",)
+            pick = next((r for r in cands if r.media_category in want), cands[0])
+            resolved[t] = (pick.plex_rating_key, pick.media_category)
+
+    # 4. Insert one row per play event (real viewedAt). Dedupe on re-run.
+    imported = 0
+    by_cat: dict = defaultdict(int)
+    with get_db_session() as db:
+        existing = {
+            (w.plex_item_id, w.viewed_at)
+            for w in db.query(WatchHistoryEntry.plex_item_id, WatchHistoryEntry.viewed_at)
+                       .filter(WatchHistoryEntry.user_id == user_id).all()
+        }
+        for m in events:
+            t, is_ep = _canon(m)
+            if t not in resolved:
+                continue
+            key, cat = resolved[t]
+            va = m.get("viewedAt")
+            vt = datetime.utcfromtimestamp(int(va)) if va else None
+            if (key, vt) in existing:
+                continue
+            db.add(WatchHistoryEntry(
+                user_id=user_id,
+                plex_user_id=account_id,
+                plex_item_id=key,
+                title=(m.get("title") or t),
+                media_type=cat,
+                series_title=t if is_ep else None,
+                season=m.get("parentIndex"),
+                episode=m.get("index"),
+                viewed_at=vt,
+                completed=1,
+                source=None,
+            ))
+            existing.add((key, vt))
+            imported += 1
+            by_cat[cat] += 1
+        db.commit()
+
+    logger.info("[history-import] user %s (acct %s): imported %d rows %s, %d titles unresolved",
+                user_id, account_id, imported, dict(by_cat), len(unresolved))
+    return {
+        "imported": imported,
+        "by_category": dict(by_cat),
+        "unresolved": unresolved,
+        "account_id": account_id,
+    }
+
+
 async def reattribute_watch_history() -> dict:
     """Admin action: re-pull Plex history and fix user attribution on existing rows.
 
