@@ -327,33 +327,39 @@ async def apply_reclassify(items: list) -> dict:
     from src.services.arr_client import classify_sonarr_category
     headers = {"X-Api-Key": key}
     results = []
-    async with httpx.AsyncClient(timeout=45) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         for it in items or []:
             sid = it.get("sonarr_id")
             fix = it.get("fix") or {}
             title = None
             try:
+                # Title + genres for the result log and classify (genres feed
+                # classify_sonarr_category alongside the new seriesType).
                 r = await client.get(f"{sonarr}/api/v3/series/{sid}", headers=headers)
-                if r.status_code != 200:
-                    results.append({"sonarr_id": sid, "ok": False,
-                                    "error": f"Sonarr GET {r.status_code}"})
-                    continue
-                series = r.json()
+                series = r.json() if r.status_code == 200 else {}
                 title = series.get("title")
-                if fix.get("rootFolderPath"):   series["rootFolderPath"]   = fix["rootFolderPath"]
-                if fix.get("seriesType"):       series["seriesType"]       = fix["seriesType"]
-                if fix.get("qualityProfileId"): series["qualityProfileId"] = fix["qualityProfileId"]
                 move = bool(fix.get("moveFiles"))
-                put = await client.put(
-                    f"{sonarr}/api/v3/series/{sid}", headers=headers,
-                    params={"moveFiles": "true" if move else "false"}, json=series,
-                )
+                # Use the series-EDITOR endpoint, not PUT /series/{id}. A plain
+                # PUT updates ``rootFolderPath`` but leaves ``path`` (the
+                # authoritative on-disk location) untouched, so files never move.
+                # The editor recomputes ``path`` from the new root and performs
+                # the physical relocation when ``moveFiles`` is set.
+                payload = {"seriesIds": [sid], "moveFiles": move}
+                if move and fix.get("rootFolderPath"):
+                    payload["rootFolderPath"] = fix["rootFolderPath"]
+                if fix.get("seriesType"):       payload["seriesType"]       = fix["seriesType"]
+                if fix.get("qualityProfileId"): payload["qualityProfileId"] = fix["qualityProfileId"]
+                put = await client.put(f"{sonarr}/api/v3/series/editor",
+                                       headers=headers, json=payload)
                 if put.status_code not in (200, 202):
                     results.append({"sonarr_id": sid, "title": title, "ok": False,
-                                    "error": f"Sonarr PUT {put.status_code}: {put.text[:120]}"})
+                                    "error": f"Sonarr editor {put.status_code}: {put.text[:140]}"})
                     continue
-                updated = put.json() if put.text else series
-                new_cat = classify_sonarr_category(updated)
+                # New category = new seriesType + the (unchanged) genres.
+                sim = dict(series)
+                sim["seriesType"] = fix.get("seriesType", series.get("seriesType"))
+                new_cat = classify_sonarr_category(sim) if series else (
+                    "anime" if fix.get("seriesType") == "anime" else "show")
                 old_cat = await asyncio.to_thread(_recategorize_local, sid, new_cat)
                 results.append({"sonarr_id": sid, "title": title, "ok": True, "moved": move,
                                 "old_category": old_cat, "new_category": new_cat})
