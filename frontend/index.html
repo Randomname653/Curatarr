@@ -411,7 +411,7 @@ select option { background: var(--bg2); }
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         Recommendations
       </div>
-      <div class="sb-item" id="sb-deletions" onclick="showView('deletions',this)">
+      <div class="sb-item admin-only" id="sb-deletions" onclick="showView('deletions',this)" style="display:none">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         Deletions
         <span id="sb-deletions-pulse" class="sb-pulse-dot" style="display:none" title="Deletion analysis running…"></span>
@@ -447,7 +447,7 @@ select option { background: var(--bg2); }
         Activity
         <span id="tasks-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none">0</span>
       </div>
-      <div class="sb-item" onclick="showView('libraries',this)">
+      <div class="sb-item admin-only" onclick="showView('libraries',this)" style="display:none">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         Libraries
       </div>
@@ -1514,6 +1514,10 @@ async function api(path, method='GET', body=null) {
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 function showView(name, btn) {
+  // Admin-only views — defense-in-depth on top of the hidden nav items + the
+  // require_admin endpoints: never render the shell for a non-admin, even via a
+  // stray programmatic call. (Library config + orphaned + deletions = curation.)
+  if (!currentUser?.is_admin && ['deletions','libraries','admin','reclassify'].includes(name)) return;
   document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   // Clear all views — remove active class AND reset any inline display styles

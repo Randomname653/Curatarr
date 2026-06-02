@@ -236,7 +236,7 @@ async def get_library_config(
 # ── ORPHAN REPAIR ─────────────────────────────────────────────────────────────
 
 @router.get("/orphaned")
-async def get_orphaned_sections(user: User = Depends(get_current_user)):
+async def get_orphaned_sections(_admin: User = Depends(require_admin)):
     """Detect history entries from unknown library sections."""
     from src.services.orphan_repair import detect_orphaned_sections
     sections = await detect_orphaned_sections()
