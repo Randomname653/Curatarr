@@ -431,6 +431,10 @@ select option { background: var(--bg2); }
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
         Music
       </div>
+      <div class="sb-item admin-only" onclick="showView('reclassify',this)" style="display:none">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+        Reclassify
+      </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">System</div>
@@ -773,6 +777,22 @@ select option { background: var(--bg2); }
         <div class="arr-tab-content" id="arr-content-lidarr">
           <p style="color:var(--text3);font-size:13px;padding:20px 0">Loading…</p>
         </div>
+      </div>
+    </div>
+
+    <!-- RECLASSIFY (anime ↔ TV library sorting) -->
+    <div class="view" id="reclassify-view">
+      <div class="view-header">
+        <h1>🔀 Reclassify <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">anime ↔ TV</span></h1>
+        <p>Series filed in the wrong Sonarr library. Review and move — nothing happens until you confirm.</p>
+      </div>
+      <div class="view-body">
+        <div style="margin-bottom:14px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+          <button class="btn btn-secondary" onclick="loadReclassify()">🔄 Re-scan</button>
+          <button class="btn btn-primary" id="reclassify-move-btn" onclick="moveReclassify()" disabled>Move selected (0) →</button>
+          <span id="reclassify-summary" style="color:var(--text3);font-size:13px"></span>
+        </div>
+        <div id="reclassify-content"><p class="loading">Scanning Sonarr…</p></div>
       </div>
     </div>
 
@@ -1514,7 +1534,75 @@ function showView(name, btn) {
   if (name==='arr-sonarr') loadArrPage('sonarr');
   if (name==='arr-radarr') loadArrPage('radarr');
   if (name==='arr-lidarr') loadArrPage('lidarr');
+  if (name==='reclassify') loadReclassify();
   // tasks view uses live SSE, no manual load needed
+}
+
+// ── Reclassify (Manage → anime ↔ TV library sorting) ─────────────────────
+async function loadReclassify() {
+  const el = document.getElementById('reclassify-content');
+  const sum = document.getElementById('reclassify-summary');
+  el.innerHTML = '<p class="loading">Scanning Sonarr (first run resolves origins, ~10s)…</p>';
+  if (sum) sum.textContent = '';
+  let res;
+  try { res = await api('/api/library/reclassify/scan'); }
+  catch (e) { el.innerHTML = `<p style="color:var(--danger)">Scan failed: ${esc(e.message || 'unknown')}</p>`; return; }
+  if (res.error) { el.innerHTML = `<p style="color:var(--danger)">${esc(res.error)}</p>`; return; }
+  const c = res.counts || {};
+  if (sum) sum.textContent = `${c.to_tv || 0} → TV · ${c.uncertain || 0} uncertain · ${c.to_anime || 0} → Anime`;
+  const sections = [
+    ['🎬 Western in Anime → move to TV Shows', res.western_in_anime],
+    ['❓ Uncertain — no origin found, verify before moving', res.uncertain],
+    ['🎌 Anime filed in TV → move to Anime', res.anime_in_tv],
+  ];
+  let html = '';
+  for (const [label, items] of sections) {
+    if (!items || !items.length) continue;
+    html += `<h3 style="margin:20px 0 8px;font-size:14px;color:var(--text)">${label} <span style="color:var(--text3);font-weight:400">(${items.length})</span></h3>`;
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px">';
+    for (const it of items) html += reclassifyCard(it);
+    html += '</div>';
+  }
+  el.innerHTML = html || '<p style="color:var(--text3)">✓ Nothing mis-filed — both libraries look clean.</p>';
+  updateReclassifyCount();
+}
+
+function reclassifyCard(it) {
+  const t = it.target, cu = it.current;
+  const poster = it.poster
+    ? `<img src="/api/image/proxy?src=${encodeURIComponent(it.poster)}" onerror="this.style.display='none'" style="width:52px;height:78px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
+    : `<div style="width:52px;height:78px;border-radius:4px;background:var(--bg3);flex-shrink:0"></div>`;
+  const link = it.sonarr_link
+    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" style="color:var(--amber);font-size:11px;text-decoration:none">↗ Sonarr</a>` : '';
+  return `<div style="display:flex;gap:10px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">
+    <input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-type="${escAttr(t.series_type)}" data-root="${escAttr(t.root || '')}" data-move="${t.move_files ? 1 : 0}" data-title="${escAttr(it.title)}" onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">
+    ${poster}
+    <div style="min-width:0;flex:1">
+      <div style="font-weight:600;font-size:13px;margin-bottom:3px">${esc(it.title)}${link}</div>
+      <div style="font-size:11px;color:var(--text3)">Now: ${esc(cu.library)} · ${esc(cu.series_type || '')}</div>
+      <div style="font-size:11px;color:var(--amber)">→ ${esc(t.library)} · ${esc(t.series_type)}${t.move_files ? ' · moveFiles' : ''}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:3px">${esc(it.reason || '')}</div>
+    </div>
+  </div>`;
+}
+
+function updateReclassifyCount() {
+  const n = document.querySelectorAll('#reclassify-content .rc-cb:checked').length;
+  const btn = document.getElementById('reclassify-move-btn');
+  if (btn) { btn.textContent = `Move selected (${n}) →`; btn.disabled = n === 0; }
+}
+
+async function moveReclassify() {
+  const cbs = [...document.querySelectorAll('#reclassify-content .rc-cb:checked')];
+  if (!cbs.length) return;
+  const items = cbs.map(cb => ({
+    id: +cb.dataset.id, series_type: cb.dataset.type, root: cb.dataset.root,
+    move_files: cb.dataset.move === '1', title: cb.dataset.title,
+  }));
+  // Stage 1 = dry-run. The actual Sonarr move (PUT seriesType + rootFolder +
+  // moveFiles) is Stage 2 — wired once you've eyeballed this list.
+  const list = items.map(i => `• ${i.title}  →  ${i.series_type} @ ${i.root}${i.move_files ? '  (move files)' : ''}`).join('\n');
+  alert(`DRY-RUN — would move ${items.length} series:\n\n${list}\n\n(Stage 2 — the real Sonarr move with moveFiles — is the next step.)`);
 }
 
 // ── Pass 16c: Library Manager (Sonarr/Radarr/Lidarr pages) ───────────────

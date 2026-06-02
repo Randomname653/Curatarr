@@ -1287,6 +1287,19 @@ async def spotify_backlog(
 #   - never_processed  : NO EnrichmentStatus row at all
 #                        (calculated as ``denominator - sum(other states)``)
 
+@router.get("/reclassify/scan")
+async def reclassify_scan(_admin: User = Depends(require_admin)):
+    """Admin dry-run for the Manage → Reclassify tool.
+
+    Read-only scan of Sonarr for series filed in the wrong library:
+    Western cartoons sitting in Anime (→ TV), and AniDB anime sitting in the
+    TV library (→ Anime). Returns proposed moves with posters + Sonarr
+    deep-links; the actual move is a separate, explicit POST.
+    """
+    from src.services.library_sorting import scan_misclassified
+    return await scan_misclassified()
+
+
 @router.get("/breakdown")
 async def library_breakdown(
     user: User = Depends(get_current_user),
