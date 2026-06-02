@@ -21,6 +21,32 @@ the branch — every "Pass N" section maps to one or more commits.
 
 ---
 
+## Session — `main` (2026-06): new environment, embeddings, concurrency, multi-user recovery
+
+A separate run on `main` (baseline `58cb319`), prompted by moving Curatarr to a new
+machine. Got the app running again, then fixed a chain of issues surfaced by real
+multi-user use over the LAN — ending in automatic per-account history recovery for
+new users.
+
+| # | Commit | Theme |
+|---|---|---|
+| 1 | `4787a3e` | Restore `requirements.txt` (a stray `pip freeze` had dropped uvicorn/chromadb/python-multipart/dotenv/json-logger and pinned the broken py2 `jose`); add `aiohttp`/`psutil`. **Syncthing guard** (`services/sync_guard.py`): exclude `data/` from the enclosing Syncthing `.stignore` while running so the live WAL SQLite DB isn't synced (lock + corruption risk), restored on clean shutdown. `start.bat` dep-check now verifies *all* runtime modules, not just `apscheduler`. |
+| 2 | `7a38006` | Activity view: `task_monitor.get_all()` sorted running tasks to the front, then sliced `tasks[-50:]` (the *oldest finished*) — so a long job vanished once >50 tasks existed. → `tasks[:50]`. |
+| 3 | `2eac8b0` | Provision the **embedding model** (`nomic-embed-text`) like the chat models — `build_models.py`/`start.bat` only built curator/summarizer, so a fresh Ollama 404'd every `/api/embeddings` and left every item `vector_ready=0`. `embedding_generator` now catches the 404 (`HTTPStatusError`, not `RequestError`) with an actionable message. |
+| 4 | `3f6ffad` | `scripts/revectorize_backfill.py` — re-embed items text-enriched while the model was missing (reuses the cached `embedding_text`). Recovered 4,764 (`vector_ready` 1,486 → 6,250). |
+| 5 | `ef5ecf8` | `task_monitor.create()` deduped on category alone; the manual run + scheduler jobs (`Source Upgrade`, `Enrichment TTL Refresh`, `ARR Pre-Enrichment`) all use `category="enrichment"`, so one firing mid-run hijacked the manual run's card (flipped it to "Done" with a 23000/s rate). Dedup now also requires the same name. |
+| 6 | `f371cb7` | audit-requeue exempts **music** from the zero-rating check — Last.fm/Spotify don't expose a 0-10 score, so it was flagging ~7.4k good music profiles (92% of all `zero_rating` hits) for a pointless re-fetch loop. 8,188 → ~802 real hits. |
+| 7 | `d1623de` | Per-library breakdown denominator: Sonarr backs **both** `show` and `anime`, but its combined total was used as the per-category denominator → bogus "never processed" (anime + shows summed past the whole Sonarr library). Services backing >1 category now use the per-category Plex section count. |
+| 8 | `5024ca1` | **Serialize curator generations** across the server on the single GPU (`MAX_CONCURRENT_CURATOR`, default 1). Two chats (or chat colliding with recs/proactive/verification) no longer thrash the GPU into CPU-spillover; the second queues with a "you're next" SSE frame. Wired the 3 previously-ungated big-model call sites. |
+| 9 | `69eca06` | **Auto-onboard** secondary users (no admin button) + never trap a history-less user: the library/sync onboarding now only gates the admin's first run; a non-admin lands straight in the app. |
+| 10 | `961f0a9` | `import_plex_history_for_user()`: pull a new user's *own* Plex history by account, resolve each title against `enrichment_status` (covers ARR-enriched titles the admin never watched — `sonarr:`/`radarr:` keys, the same key the taste engine looks the profile up under), insert one row per play, build taste. Wired into the login bootstrap. Validated on a real second account: **45/45 plays** recovered from old, since-removed library sections → anime (Soul Eater/InuYasha/Black Butler/Haunted Hotel) + show (Stranger Things/Squid Game/Fallout) taste vectors. |
+
+Not committed (data / config ops): pulled `nomic-embed-text`; ran the vector backfill; ran
+the per-account import for the existing second user; set `PLEX_REDIRECT_URI` to the host's
+LAN IP in `.env` for partner login.
+
+---
+
 ## Completed work
 
 | # | Commit | Pass | Theme | LOC |
@@ -1536,7 +1562,17 @@ Everything below has been seen, scoped, or tried; none of it is currently in pro
 |---|---|
 | Music-pipeline AppState keys still global | `music_pipeline_running`, `music_pipeline_stop_requested`, `music_pipeline_progress` all single-key. With multiple users, A's pipeline blocks B's start and B's stop interrupts A's run. Namespace as `music_pipeline_running:user_id=<id>` etc. |
 | `spotify_client` token cache global | `services/spotify_client.py:30-35` | Module-level `_token` shared across all client_id/secret pairs. With per-user Spotify configs, first caller's token wins. Key on `client_id`. |
-| Re-attribute on user-login hook | Currently the admin must run re-attribute manually. Could trigger automatically (or offer a banner) the first time a non-admin user logs in. |
+| ~~Re-attribute on user-login hook~~ ✅ **Done** (`961f0a9`, `69eca06`) | Went further than a banner: a secondary user's *own* Plex history is now imported automatically by account on login (`import_plex_history_for_user`) — titles resolved against `enrichment_status`, then taste built, no admin action. Re-attribution stays as the admin button for the legacy "plays already local, parked on admin" case. |
+
+### Surfaced this session (`main`, 2026-06)
+
+| Item | Detail |
+|---|---|
+| History-import: unresolved titles dropped | `import_plex_history_for_user` silently skips a play whose title isn't in `enrichment_status` (something only this user watched, never enriched — e.g. `Assassination Classroom` anime, not yet enriched). Could queue those titles for a targeted enrichment, then recompute taste, so a new user's *non-shared* watches also count. |
+| Curator slot held for a whole recs batch | With `MAX_CONCURRENT_CURATOR=1`, `recommendations_engine` wraps a whole batch in one `curator_start/done`, so a chat started mid-batch queues behind the *entire* batch. Consider acquiring per-item so an interactive chat can slip in. |
+| Orphaned / old-library watch_history | Plays from removed Plex sections carry no current ratingKey and don't match the current library; recovery only works via title→`enrichment_status`. A cleanup/remap pass could fold old-section plays into the current sections. |
+| `llm_priority` resume path still not lock-guarded | The new curator semaphore (`5024ca1`) serializes generations, but the `_active`/`_event` enrichment-resume handoff is still mutated without an `asyncio.Lock` (the original Pass 7 race). Mitigated in practice by serialization; the theoretical lost-wakeup remains. |
+| Auto-onboard fires server-wide work per new login | The login bootstrap pulls `/accounts` + the user's full per-account history in the background on each new secondary login. Fine for a home server; gate/throttle if the user count ever grows. |
 
 ### Frontend hardening
 
