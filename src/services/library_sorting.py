@@ -178,12 +178,17 @@ async def scan_misclassified() -> dict:
                 cat = "anime"                       # AniDB is anime-only → trust it
             elif cur_root == anime_root:
                 origin, animated = (await _tmdb_meta(client, tvdb)) if tvdb else ([], False)
+                genres = s.get("genres") or []
                 if origin and (set(origin) & ASIAN_ORIGINS) and animated:
                     cat = "anime"                   # Asian + animated → real anime, keep
                 elif origin:
                     cat = "tv"                      # Western, or Asian live-action → TV
+                elif "Anime" in genres:
+                    cat = "anime"                   # no TMDB origin, but TVDB tags it Anime → trust it
+                elif "Animation" not in genres:
+                    cat = "tv"                      # not animated at all → live-action mis-file → TV
                 else:
-                    cat = "uncertain"
+                    cat = "uncertain"               # animated but origin unknown → JP-anime vs Western, admin decides
             elif tvdb and (stype == "anime" or cur_pid in anime_pids):
                 origin, animated = await _tmdb_meta(client, tvdb)
                 cat = ("anime" if (origin and (set(origin) & ASIAN_ORIGINS) and animated)
