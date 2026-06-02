@@ -1272,24 +1272,34 @@ function setUser(u) {
 async function showApp() {
   document.getElementById('auth-overlay').classList.add('hidden');
 
-  // Check if onboarding is needed
-  const cfg = await api('/api/libraries/config').catch(()=>({configured:false, libraries:[]}));
-  if (!cfg.configured || !cfg.libraries?.length) {
-    showOnboarding('libraries');
-    return;
-  }
+  // Library + sync onboarding is the ADMIN's first-run setup. A secondary
+  // (non-admin) user must never get trapped there: their data is set up
+  // automatically on login (re-attribution + taste vector in the background),
+  // and a brand-new user with no watch history yet — e.g. nothing of theirs
+  // survives in Plex's retention window — should still land straight in the
+  // app. Their taste profile builds as they watch and chat.
+  if (currentUser?.is_admin) {
+    // Check if onboarding is needed
+    const cfg = await api('/api/libraries/config').catch(()=>({configured:false, libraries:[]}));
+    if (!cfg.configured || !cfg.libraries?.length) {
+      showOnboarding('libraries');
+      return;
+    }
 
-  // Check if initial sync has happened
-  const hist = await api('/api/history/status').catch(()=>({watch_history_entries:0}));
-  if (hist.watch_history_entries === 0) {
-    showOnboarding('sync');
-    return;
+    // Check if initial sync has happened
+    const hist = await api('/api/history/status').catch(()=>({watch_history_entries:0}));
+    if (hist.watch_history_entries === 0) {
+      showOnboarding('sync');
+      return;
+    }
   }
 
   loadLibraryConfig();
   loadHistoryStatus();
   startTaskStream();
-  startProcessMonitor();
+  // Process monitor polls the admin-only /api/processes router — only start it
+  // for admins so a normal user doesn't spam 403s in the background.
+  if (currentUser?.is_admin) startProcessMonitor();
 }
 
 // ── ONBOARDING ────────────────────────────────────────────────────────────────

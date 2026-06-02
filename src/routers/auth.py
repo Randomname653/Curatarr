@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
@@ -130,6 +130,30 @@ def _enforce_poll_rate_limit(pin_id: int) -> None:
         poll_rate_limit.pop(stale_id, None)
 
 
+async def _bootstrap_user_data(user_id: int) -> None:
+    """Auto-onboard a freshly-arrived user — no admin button required.
+
+    When a second person logs in, their pre-existing Plex plays are still
+    parked on the admin (the bulk sync attributed everything to whoever was
+    first). This moves their plays over (re-attribution) and builds their
+    taste vector, so the moment they land they get *their* data. Best-effort
+    and idempotent; each step logs and swallows its own errors so one failing
+    doesn't block the other. Runs in the background after the login response.
+    """
+    try:
+        from src.services.plex_sync import reattribute_watch_history
+        res = await reattribute_watch_history()
+        logger.info("[auto-onboard] re-attribution for user %s: %s", user_id, res)
+    except Exception as e:
+        logger.warning("[auto-onboard] re-attribution failed for user %s: %s", user_id, e)
+    try:
+        from src.services.taste_engine import compute_all_taste_vectors
+        await compute_all_taste_vectors(user_id)
+        logger.info("[auto-onboard] taste vectors built for user %s", user_id)
+    except Exception as e:
+        logger.warning("[auto-onboard] taste compute failed for user %s: %s", user_id, e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PLEX PIN OAUTH
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,7 +182,7 @@ async def request_plex_pin():
 
 
 @router.get("/plex/poll/{pin_id}")
-async def poll_plex_pin(pin_id: int, db: Session = Depends(get_db)):
+async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Step 2 – Poll until the user has authenticated; returns JWT on success."""
     _enforce_poll_rate_limit(pin_id)
 
@@ -205,6 +229,12 @@ async def poll_plex_pin(pin_id: int, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
         logger.info("New user: %s (admin=%s)", plex_username, first_ever)
+        # A secondary user just arrived → set up their data automatically:
+        # re-attribute their Plex plays off the admin + build their taste
+        # vector in the background. No admin button, no manual step. (The
+        # first-ever user is the admin / data source, so they're skipped.)
+        if not first_ever:
+            background_tasks.add_task(_bootstrap_user_data, user.id)
     else:
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account deactivated")
