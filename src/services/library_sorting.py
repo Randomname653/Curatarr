@@ -79,13 +79,21 @@ def _profiles(qps: list) -> tuple[Optional[int], Optional[str], Optional[int], d
     return anime_pid, by_id.get(anime_pid), tv_default, by_id, anime_pids
 
 
-async def _tmdb_origin(client: httpx.AsyncClient, tvdb_id: int) -> list:
-    """origin_country list for a tvdbId via TMDB /find, cached in app_state."""
-    ck = f"tvdb_origin:{tvdb_id}"
+async def _tmdb_meta(client: httpx.AsyncClient, tvdb_id: int) -> tuple[list, bool]:
+    """(origin_country list, is_animated) for a tvdbId via TMDB /find.
+
+    ``is_animated`` = TMDB carries the Animation genre (id 16). That flag is
+    what separates real anime from Japanese **live-action** (dramas,
+    live-action adaptations): both are Asian-origin, but only animation
+    belongs in the anime library. Cached together in app_state.
+    """
+    ck = f"tvdb_meta:{tvdb_id}"
     cached = get_state(ck)
     if cached is not None:
-        return [c for c in cached.split(",") if c]
+        o, _, a = cached.partition("#")
+        return [c for c in o.split(",") if c], a == "1"
     origin: list = []
+    animated = False
     try:
         r = await client.get(
             f"https://api.themoviedb.org/3/find/{tvdb_id}",
@@ -95,10 +103,11 @@ async def _tmdb_origin(client: httpx.AsyncClient, tvdb_id: int) -> list:
             res = r.json().get("tv_results") or []
             if res:
                 origin = res[0].get("origin_country") or []
+                animated = 16 in (res[0].get("genre_ids") or [])
     except Exception as e:
-        logger.debug("[lib-sort] TMDB origin lookup failed for tvdb %s: %s", tvdb_id, e)
-    set_state(ck, ",".join(origin))
-    return origin
+        logger.debug("[lib-sort] TMDB meta lookup failed for tvdb %s: %s", tvdb_id, e)
+    set_state(ck, f"{','.join(origin)}#{'1' if animated else '0'}")
+    return origin, animated
 
 
 async def scan_misclassified() -> dict:
@@ -163,22 +172,36 @@ async def scan_misclassified() -> dict:
             # or a TV-library title carrying anime-ish settings (a possible
             # mis-file). Everything else in the TV library is TV without a lookup —
             # that's what kept the full sweep from hammering ~1000 series.
-            origin = []
+            origin, animated = [], False
             if on_anidb:
-                cat = "anime"
+                cat = "anime"                       # AniDB is anime-only → trust it
             elif cur_root == anime_root:
-                origin = await _tmdb_origin(client, tvdb) if tvdb else []
-                cat = ("anime" if (origin and set(origin) & ASIAN_ORIGINS)
-                       else ("tv" if origin else "uncertain"))
+                origin, animated = (await _tmdb_meta(client, tvdb)) if tvdb else ([], False)
+                if origin and (set(origin) & ASIAN_ORIGINS) and animated:
+                    cat = "anime"                   # Asian + animated → real anime, keep
+                elif origin:
+                    cat = "tv"                      # Western, or Asian live-action → TV
+                else:
+                    cat = "uncertain"
             elif tvdb and (stype == "anime" or cur_pid in anime_pids):
-                origin = await _tmdb_origin(client, tvdb)
-                cat = "anime" if (origin and set(origin) & ASIAN_ORIGINS) else "tv"
+                origin, animated = await _tmdb_meta(client, tvdb)
+                cat = ("anime" if (origin and (set(origin) & ASIAN_ORIGINS) and animated)
+                       else "tv")                   # Asian live-action stays TV (fix profile)
             else:
                 cat = "tv"
 
             if cat == "uncertain":   # only ever set for an anime-library title
-                uncertain.append(_card(s, "uncertain", cur_root, stype, cur_pid,
-                                       None, None, None, [], origin, on_anidb))
+                card = _card(s, "uncertain", cur_root, stype, cur_pid,
+                             None, None, None, [], origin, on_anidb)
+                # No confident origin → let the admin pick the direction. Attach
+                # both ready-made fixes so the UI can apply either with one click.
+                card["fix_to_anime"] = {"rootFolderPath": anime_root, "seriesType": "anime",
+                                        "qualityProfileId": anime_pid,
+                                        "moveFiles": cur_root != anime_root}
+                card["fix_to_tv"] = {"rootFolderPath": tv_root, "seriesType": "standard",
+                                     "qualityProfileId": tv_default_pid,
+                                     "moveFiles": cur_root != tv_root}
+                uncertain.append(card)
                 continue
 
             # ── expected settings for the true category ────────────────────

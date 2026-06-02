@@ -1551,18 +1551,18 @@ async function loadReclassify() {
   const c = res.counts || {};
   if (sum) sum.textContent = `${c.to_tv||0} → TV · ${c.to_anime||0} → Anime · ${c.fix_settings||0} settings · ${c.uncertain||0} uncertain`;
   const sections = [
-    ['🎬 Western cartoons in Anime → move to TV', res.to_tv, true],
-    ['🎌 Anime in the TV library → move to Anime', res.to_anime, true],
-    ['⚙️ Right library, wrong settings → fix in place', res.fix_settings, true],
-    ['❓ Uncertain — no origin found, review manually', res.uncertain, false],
+    ['🎬 Western cartoons in Anime → move to TV', res.to_tv, 'fix'],
+    ['🎌 Anime in the TV library → move to Anime', res.to_anime, 'fix'],
+    ['⚙️ Right library, wrong settings → fix in place', res.fix_settings, 'fix'],
+    ['❓ Uncertain — pick a direction, or leave it', res.uncertain, 'uncertain'],
   ];
   let html = '';
-  for (const [label, items, actionable] of sections) {
+  for (const [label, items, mode] of sections) {
     if (!items || !items.length) continue;
-    const all = actionable ? ` <label style="font-weight:400;font-size:11px;color:var(--text3)"><input type="checkbox" onchange="rcToggleSection(this)" style="vertical-align:middle"> select all</label>` : '';
+    const all = mode === 'fix' ? ` <label style="font-weight:400;font-size:11px;color:var(--text3)"><input type="checkbox" onchange="rcToggleSection(this)" style="vertical-align:middle"> select all</label>` : '';
     html += `<h3 style="margin:20px 0 8px;font-size:14px;color:var(--text)">${label} <span style="color:var(--text3);font-weight:400">(${items.length})</span>${all}</h3>`;
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px">';
-    for (const it of items) html += reclassifyCard(it, actionable);
+    for (const it of items) html += reclassifyCard(it, mode);
     html += '</div>';
   }
   el.innerHTML = html || '<p style="color:var(--text3)">✓ Everything is correctly filed and configured.</p>';
@@ -1575,39 +1575,65 @@ function _rcRow(icon, from, to, changed) {
   return `<div style="font-size:11px">${icon} <span style="color:var(--danger);text-decoration:line-through">${esc(from || '—')}</span> <span style="color:var(--text3)">→</span> <span style="color:#3fb950;font-weight:600">${esc(to || '—')}</span></div>`;
 }
 
-function reclassifyCard(it, actionable) {
+function reclassifyCard(it, mode) {
   const cu = it.current, ex = it.expected || {}, iss = it.issues || [];
   const poster = it.poster
     ? `<img src="/api/image/proxy?src=${encodeURIComponent(it.poster)}" onerror="this.style.display='none'" style="width:48px;height:72px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
     : `<div style="width:48px;height:72px;border-radius:4px;background:var(--bg3);flex-shrink:0"></div>`;
   const link = it.sonarr_link
     ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" title="Open in Sonarr" style="color:var(--amber);font-size:11px;text-decoration:none">↗</a>` : '';
-  let body;
-  if (actionable) {
-    body = _rcRow('📁', cu.library, ex.library, iss.includes('root'))
-         + _rcRow('🏷️', cu.series_type, ex.series_type, iss.includes('type'))
-         + _rcRow('⚙️', cu.profile, ex.profile, iss.includes('profile'));
-  } else {
-    body = `<div style="font-size:11px;color:var(--text3)">📁 ${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>`
-         + `<div style="font-size:10px;color:var(--text3);margin-top:2px">origin unknown — verify in Sonarr</div>`;
+  const card = (inner) => `<div class="rc-card" style="display:flex;gap:9px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">${inner}</div>`;
+
+  if (mode === 'uncertain') {
+    // No confident origin — the admin chooses. Hidden checkbox carries both
+    // candidate fixes; the direction buttons select one.
+    const fa = escAttr(JSON.stringify(it.fix_to_anime || {}));
+    const ft = escAttr(JSON.stringify(it.fix_to_tv || {}));
+    const dirBtn = (dir, txt) => `<button type="button" class="rc-dir" onclick="rcPickUncertain(this,'${dir}')" style="font-size:10px;padding:2px 8px;border:1px solid var(--border2);border-radius:4px;background:transparent;color:var(--text3);cursor:pointer">${txt}</button>`;
+    return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix="" data-fa='${fa}' data-ft='${ft}' style="display:none">
+      ${poster}
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:600;font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}</div>
+        <div style="font-size:11px;color:var(--text3)">📁 ${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>
+        <div style="margin-top:6px;display:flex;gap:5px">${dirBtn('tv', '→ TV')}${dirBtn('anime', '→ Anime')}${dirBtn('skip', 'skip')}</div>
+      </div>`);
   }
-  const cb = actionable
-    ? `<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">`
-    : `<span style="width:13px;flex-shrink:0"></span>`;
+
+  const body = _rcRow('📁', cu.library, ex.library, iss.includes('root'))
+             + _rcRow('🏷️', cu.series_type, ex.series_type, iss.includes('type'))
+             + _rcRow('⚙️', cu.profile, ex.profile, iss.includes('profile'));
   const moveTag = (it.fix && it.fix.moveFiles)
     ? ` <span style="font-size:9px;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:0 3px;white-space:nowrap">move files</span>` : '';
-  return `<div style="display:flex;gap:9px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">
-    ${cb}${poster}
+  return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">
+    ${poster}
     <div style="min-width:0;flex:1">
       <div style="font-weight:600;font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}${moveTag}</div>
       ${body}
-    </div>
-  </div>`;
+    </div>`);
 }
 
 function rcToggleSection(master) {
   const grid = master.closest('h3').nextElementSibling;
   if (grid) grid.querySelectorAll('.rc-cb').forEach(cb => { cb.checked = master.checked; });
+  updateReclassifyCount();
+}
+
+// Uncertain card: admin picks the direction. Copies the chosen pre-built fix
+// (→ Anime / → TV) onto the hidden checkbox, or clears it on "skip".
+function rcPickUncertain(btn, dir) {
+  const card = btn.closest('.rc-card');
+  if (!card) return;
+  const cb = card.querySelector('.rc-cb');
+  card.querySelectorAll('.rc-dir').forEach(b => { b.style.borderColor = 'var(--border2)'; b.style.color = 'var(--text3)'; });
+  if (dir === 'skip') {
+    cb.checked = false;
+    cb.dataset.fix = '';
+  } else {
+    btn.style.borderColor = 'var(--amber)';
+    btn.style.color = 'var(--amber)';
+    cb.dataset.fix = (dir === 'anime') ? cb.dataset.fa : cb.dataset.ft;
+    cb.checked = true;
+  }
   updateReclassifyCount();
 }
 
