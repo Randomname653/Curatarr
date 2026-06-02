@@ -1574,6 +1574,39 @@ Everything below has been seen, scoped, or tried; none of it is currently in pro
 | `llm_priority` resume path still not lock-guarded | The new curator semaphore (`5024ca1`) serializes generations, but the `_active`/`_event` enrichment-resume handoff is still mutated without an `asyncio.Lock` (the original Pass 7 race). Mitigated in practice by serialization; the theoretical lost-wakeup remains. |
 | Auto-onboard fires server-wide work per new login | The login bootstrap pulls `/accounts` + the user's full per-account history in the background on each new secondary login. Fine for a home server; gate/throttle if the user count ever grows. |
 
+### Reclassify non-Japanese content out of the Anime library (admin tool) — NEXT
+
+The Anime library has accumulated non-anime — **Donghua** (CN), **Korean** (KR),
+Taiwanese (TW). Admin section that detects them from the metadata we already
+have and **physically moves them into the regular TV Shows library** (chosen
+scope: full Sonarr file move, not just a Curatarr-side relabel).
+
+**Detection — verified feasible.** Per anime-classified item, resolve
+`countryOfOrigin`: `anilist_id` → AniList `Media{countryOfOrigin}` (JP/CN/KR/TW);
+else `tmdb_id` → TMDB `origin_country` / `original_language`. The enriched
+profile doesn't store origin today (`country` is empty on 400/400 sampled), but
+both IDs are cached, so it's re-queryable. Cache the resolved origin. Flag ≠ JP.
+(A 50-item AniList sample came back all-JP, so the offenders are a minority —
+needs a full scan to surface them.)
+
+**Move — full physical, via Sonarr:**
+1. Map flagged item → its Sonarr series (tvdbId / title / ids).
+2. `PUT /api/v3/series/{id}` with `seriesType:"standard"`, `rootFolderPath:` the
+   TV-shows root, `?moveFiles=true` → Sonarr moves the files.
+3. Drop the "Anime" genre tag so `classify_sonarr_category` agrees.
+4. Plex re-scans both sections; Curatarr's `media_category` follows on next sync.
+
+**Build staged — file moves are irreversible-ish:**
+- *Stage 1 (safe, read-only):* detection scan + admin list + **dry-run**
+  ("would move N items from `<anime root>` → `<tv root>`"). Resolve roots from
+  `/api/v3/rootfolder`, never hardcode.
+- *Stage 2:* the real `moveFiles=true` PUT, behind explicit per-item confirm,
+  with Sonarr command-status polling + error surfacing.
+
+**Open questions:** which Sonarr root folder is "TV shows"? items present in
+Plex/watch-history but not in Sonarr (nothing to move); TW/HK edge cases; what
+to do with the existing enrichment cache key after the category flips.
+
 ### Frontend hardening
 
 | Bug | File:Line | Detail |
