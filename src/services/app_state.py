@@ -22,14 +22,26 @@ def get_state(key: str) -> Optional[str]:
 
 
 def set_state(key: str, value: str) -> None:
-    with get_db_session() as db:
-        row = db.query(AppState).filter(AppState.key == key).first()
-        if row:
-            row.value = value
-            row.updated_at = datetime.utcnow()
+    from sqlalchemy.exc import OperationalError
+    try:
+        with get_db_session() as db:
+            row = db.query(AppState).filter(AppState.key == key).first()
+            if row:
+                row.value = value
+                row.updated_at = datetime.utcnow()
+            else:
+                db.add(AppState(key=key, value=value, updated_at=datetime.utcnow()))
+            db.commit()
+    except OperationalError as e:
+        # The pooled-engine write lost the 60s busy_timeout race during a
+        # transient write-lock storm. Every scheduler heartbeat, /api progress
+        # write and the music pipeline funnels through here, so a hard failure
+        # crashes background jobs and 500s endpoints. Fall back to a fresh
+        # direct-sqlite write with its own busy-wait instead of propagating.
+        if "database is locked" in str(e).lower():
+            force_set_state(key, value)
         else:
-            db.add(AppState(key=key, value=value, updated_at=datetime.utcnow()))
-        db.commit()
+            raise
 
 
 def get_datetime(key: str) -> Optional[datetime]:

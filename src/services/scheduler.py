@@ -1189,21 +1189,28 @@ async def _cache_recommendations(user_id: int):
                 if not recs:
                     continue
 
-                # Store in cache table
+                # Fetch posters/synopses BEFORE opening the write transaction.
+                # _fetch_tmdb is a network call; the .delete() below takes
+                # SQLite's single write lock. Awaiting network I/O while holding
+                # that lock starved every other writer (enrichment consumer,
+                # set_state heartbeats, the music pipeline) past the 60s
+                # busy_timeout → the "database is locked" cascade. Keep the
+                # session to just the delete + inserts (milliseconds).
+                from src.routers.recommendations import _fetch_tmdb
+                for rec in recs:
+                    try:
+                        rec["poster_url"], rec["synopsis"] = await _fetch_tmdb(rec.get("title", ""), cat)
+                    except Exception:
+                        rec["poster_url"] = None
+                        rec["synopsis"] = None
+
+                # Store in cache table — short, await-free transaction.
                 with get_db_session() as db:
                     db.query(CachedRecommendation).filter(
                         CachedRecommendation.user_id == user_id,
                         CachedRecommendation.category == cat,
                     ).delete()
-
                     for rec in recs:
-                        try:
-                            from src.routers.recommendations import _fetch_tmdb
-                            rec["poster_url"], rec["synopsis"] = await _fetch_tmdb(rec.get("title",""), cat)
-                        except Exception:
-                            rec["poster_url"] = None
-                            rec["synopsis"] = None
-
                         db.add(CachedRecommendation(
                             user_id=user_id,
                             category=cat,
@@ -1216,8 +1223,8 @@ async def _cache_recommendations(user_id: int):
                             cached_at=datetime.utcnow(),
                         ))
                     db.commit()
-                    total += len(recs)
-                    logger.info("[scheduler] Cached %d recs for %s", len(recs), cat)
+                total += len(recs)
+                logger.info("[scheduler] Cached %d recs for %s", len(recs), cat)
 
             except Exception as e:
                 logger.warning("[scheduler] Rec cache failed for %s: %s", cat, e)
