@@ -109,6 +109,26 @@ def _locate() -> Optional[Tuple[Path, str]]:
     return froot / ".stignore", "/" + rel
 
 
+def _write_preserving(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` even when it is Hidden/System.
+
+    Syncthing creates ``.stignore`` with the Windows **Hidden** attribute.
+    ``Path.write_text`` opens 'w' → ``CREATE_ALWAYS``, which the Win32 layer
+    refuses on a hidden file ("[Errno 13] Permission denied") unless you re-
+    specify the attribute. Opening the *existing* file 'r+' uses
+    ``OPEN_EXISTING`` instead, which works regardless of Hidden/System, so we
+    truncate-and-rewrite in place. Falls back to a plain create when the file
+    doesn't exist yet.
+    """
+    if path.exists():
+        with open(path, "r+", encoding="utf-8") as f:
+            f.seek(0)
+            f.write(content)
+            f.truncate()
+    else:
+        path.write_text(content, encoding="utf-8")
+
+
 def _strip_block(lines: list[str]) -> list[str]:
     """Drop any existing managed BEGIN..END block (inclusive)."""
     out: list[str] = []
@@ -146,7 +166,7 @@ def enable() -> None:
             lines.append("")  # blank separator from user's own patterns
         lines.extend(block)
 
-        stignore.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        _write_preserving(stignore, "\n".join(lines) + "\n")
         _active_stignore = stignore
         logger.info("[sync-guard] Excluded '%s' from Syncthing while running (%s)", pattern, stignore)
     except Exception as e:
@@ -169,7 +189,7 @@ def disable() -> None:
         while lines and not lines[-1].strip():
             lines.pop()
 
-        stignore.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+        _write_preserving(stignore, ("\n".join(lines) + "\n") if lines else "")
         logger.info("[sync-guard] Restored Syncthing sync for the data dir (%s)", stignore)
     except Exception as e:
         logger.warning("[sync-guard] could not restore .stignore (continuing): %s", e)
