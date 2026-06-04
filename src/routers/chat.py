@@ -1619,6 +1619,18 @@ async def _build_discuss_context_block(
                 anchor_title = a
                 anchor_category = "music"
 
+        # Series-progress framing for the follow-up conversation. If the
+        # proactive message was about a series, tell the curator where the user
+        # actually is — so a discussion that started as "did the ending land?"
+        # doesn't assume an ending they never reached (and the curator can speak
+        # to season 1 vs the whole run correctly).
+        prog_phrase = tdata.get("progress_phrase")
+        if prog_phrase:
+            block += (
+                f"\nThe user's progress in this series: {prog_phrase}. "
+                f"Do NOT assume they finished the series unless that explicitly says so.\n"
+            )
+
         # Warm the in-memory thread anchor — THE fix for the lost-anchor
         # spiral. Follow-up turns don't re-send discuss_context; without this
         # the next turn falls through to unanchored free chat.
