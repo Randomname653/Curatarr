@@ -35,6 +35,13 @@ from src.database.models import (
 )
 from src.config import settings
 from src.services.llm_utils import strip_think_tags, ollama_options, CURATOR_KEEP_ALIVE
+from src.services.series_progress import (
+    compute_watch_progress,
+    get_series_progress,
+    progress_milestone,
+    should_reengage_series,
+    normalize_title,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +88,7 @@ def _to_dicts(entries) -> list[dict]:
             "duration_ms": e.duration_ms,
             "view_offset_ms": e.view_offset_ms,
             "completed": e.completed,
+            "season": getattr(e, "season", None),
             "episode": getattr(e, "episode", None),
             "genres": e.genres,
             # rating: not yet in WatchHistoryEntry schema — will be non-None once
@@ -99,7 +107,46 @@ def _completion_rate(e: dict) -> float:
 
 # ── TRIGGER DETECTION ─────────────────────────────────────────────────────────
 
-def detect_binge(entries: list[dict], now: datetime) -> Optional[dict]:
+def _series_recently_covered(
+    series_key: str, entries: list[dict], asked_subjects: dict | None,
+) -> bool:
+    """True when we've already sent a proactive message about this series AND
+    the user hasn't progressed enough since to warrant asking again.
+
+    This is the "don't ask me the same thing twice" guard the user asked for:
+    once the curator has asked how the season-1 ending landed, it stays quiet on
+    that series until they reach a new season / finish it (see
+    ``series_progress.should_reengage_series``). Legacy messages stored before
+    progress milestones existed carry ``None`` — we allow ONE more ask there so a
+    real milestone gets captured, then future runs gate properly.
+    """
+    if not asked_subjects:
+        return False
+    asked = asked_subjects.get("series") or {}
+    key = normalize_title(series_key)
+    if key not in asked:
+        return False
+    last = asked[key]
+    if last is None:
+        return False
+    cur = compute_watch_progress(entries, series_key)
+    if not cur:
+        return True
+    return not should_reengage_series(cur, last)
+
+
+def _titled_recently_covered(title: str, asked_subjects: dict | None) -> bool:
+    """True when we've already sent a proactive message about this titled item
+    (a movie, or a deep-history reflection). Unlike a series there's no progress
+    to advance — once the curator has asked about it, a growing play count is not
+    a new question, so it's one-and-done."""
+    if not asked_subjects:
+        return False
+    return normalize_title(title) in (asked_subjects.get("titles") or set())
+
+
+def detect_binge(entries: list[dict], now: datetime,
+                 asked_subjects: dict | None = None) -> Optional[dict]:
     cutoff = now - timedelta(hours=settings.BINGE_SESSION_HOURS)
     recent = [e for e in entries
               if e["media_type"] in ("show", "anime")
@@ -110,6 +157,8 @@ def detect_binge(entries: list[dict], now: datetime) -> Optional[dict]:
         by_series.setdefault(key, []).append(e)
     for series, eps in by_series.items():
         if len(eps) >= settings.BINGE_EPISODE_THRESHOLD:
+            if _series_recently_covered(series, entries, asked_subjects):
+                continue
             return {
                 "type": "binge_episode",
                 "series": series,
@@ -134,7 +183,8 @@ def detect_music_marathon(entries: list[dict], now: datetime) -> Optional[dict]:
     return None
 
 
-def detect_series_completion(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_series_completion(entries: list[dict], now: datetime,
+                             asked_subjects: dict | None = None) -> Optional[dict]:
     cutoff = now - timedelta(hours=48)
     recent = [e for e in entries
               if e["media_type"] in ("show", "anime") and e["viewed_at"] and e["viewed_at"] >= cutoff]
@@ -144,45 +194,101 @@ def detect_series_completion(entries: list[dict], now: datetime) -> Optional[dic
         by_series.setdefault(key, set()).add(e.get("episode"))
     for series, eps in by_series.items():
         if len(eps) >= 8:
+            if _series_recently_covered(series, entries, asked_subjects):
+                continue
             return {"type": "series_completion", "series": series, "episodes_watched": len(eps)}
     return None
 
 
-def detect_rewatch(entries: list[dict]) -> Optional[dict]:
-    """Item watched 3+ times across all history.
+def detect_rewatch(entries: list[dict],
+                   asked_subjects: dict | None = None) -> Optional[dict]:
+    """A title the user genuinely RE-watched — the basis for a "why do you keep
+    coming back?" nudge.
 
-    Pass 57: music is excluded here. It was keyed on ``series_title``
-    (= the artist for music rows), so "137 plays of Deftones" collapsed
-    every Deftones song into one count and hid which TRACK was actually
-    on repeat. Song-level music replays are now handled by
-    ``detect_track_obsession`` instead.
+    Pass 57: music is excluded here (song-level replays are
+    ``detect_track_obsession``'s job).
+
+    Series-awareness fix: the old code counted every episode of a show as a
+    "rewatch" — 12 distinct episodes of Frieren collapsed to "watched 12 times",
+    which made the curator ask about "the ending" of a series the user was still
+    working through. Now:
+      * MOVIES keep the simple rule — the same film played 3+ times is a rewatch;
+      * a SERIES only counts when episodes were actually RE-viewed, i.e. plays
+        beyond the first pass (``total_plays - distinct_episodes >= 3``) — not
+        merely watching many distinct episodes once.
+    Subjects already asked about are skipped so the question doesn't repeat.
     """
-    counter: Counter = Counter()
+    # Movies (and any non-series, non-music titled item).
+    movie_counter: Counter = Counter()
     for e in entries:
-        if e["media_type"] == "music":
+        if e["media_type"] in ("music", "show", "anime"):
             continue
         key = e["series_title"] or e["title"]
-        counter[key] += 1
-    for title, count in counter.most_common(5):
-        if count >= 3:
-            # Pick the most-rewatched item — explicitly non-music so a
-            # same-named artist can't shadow the real show/movie row.
-            sample = next(
-                e for e in entries
-                if e["media_type"] != "music"
-                and (e["series_title"] or e["title"]) == title
-            )
-            return {
-                "type": "rewatch",
-                "title": title,
-                "count": count,
-                "media_type": sample["media_type"],
-                "genres": sample.get("genres", ""),
-            }
-    return None
+        movie_counter[key] += 1
+
+    # Distinct series present, newest-first order preserved.
+    series_keys: list[str] = []
+    seen: set = set()
+    for e in entries:
+        if e["media_type"] not in ("show", "anime"):
+            continue
+        key = e["series_title"] or e["title"]
+        if key not in seen:
+            seen.add(key)
+            series_keys.append(key)
+
+    # Collect eligible candidates from both pools; pick the strongest one. The
+    # score is the rewatch intensity (play count for movies, episode-replays for
+    # series) so the most-rewatched thing wins regardless of media type.
+    candidates: list[tuple[int, dict]] = []
+
+    for title, count in movie_counter.most_common(10):
+        if count < 3 or _titled_recently_covered(title, asked_subjects):
+            continue
+        sample = next(
+            e for e in entries
+            if e["media_type"] not in ("music", "show", "anime")
+            and (e["series_title"] or e["title"]) == title
+        )
+        candidates.append((count, {
+            "type": "rewatch",
+            "title": title,
+            "count": count,
+            "media_type": sample["media_type"],
+            "genres": sample.get("genres", ""),
+            "is_series": False,
+        }))
+
+    for key in series_keys:
+        prog = compute_watch_progress(entries, key)
+        if not prog:
+            continue
+        replays = prog["total_plays"] - prog["distinct_episodes"]
+        if replays < 3 or _series_recently_covered(key, entries, asked_subjects):
+            continue
+        sample = next(
+            e for e in entries
+            if e["media_type"] in ("show", "anime")
+            and (e["series_title"] or e["title"]) == key
+        )
+        candidates.append((replays, {
+            "type": "rewatch",
+            "title": key,
+            "count": prog["total_plays"],
+            "replays": replays,
+            "media_type": sample["media_type"],
+            "genres": sample.get("genres", ""),
+            "is_series": True,
+        }))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    return candidates[0][1]
 
 
-def detect_track_obsession(user_id: int) -> Optional[dict]:
+def detect_track_obsession(user_id: int,
+                           asked_tracks: set | None = None) -> Optional[dict]:
     """A single SONG played far more than the rest — surfaced at song
     granularity, not collapsed to the artist.
 
@@ -192,13 +298,20 @@ def detect_track_obsession(user_id: int) -> Optional[dict]:
     favourite played hundreds of times over years would be undercounted
     (or invisible) in the windowed view.
 
+    Rotation: once the curator has asked "why this song on repeat?", the answer
+    doesn't change because the play count climbed higher — so we never re-ask the
+    same track. ``asked_tracks`` holds the songs already surfaced; we pull the
+    top obsessions and return the first one NOT yet asked about, rotating to the
+    next-most-played fresh track each time the trigger fires.
+
     Returns a hybrid payload: the obsession track + its play count, AND
     the artist's total across all their songs — so the message can pivot
     between "this song specifically" and "this artist generally".
     """
+    asked = asked_tracks or set()
     from sqlalchemy import func as _func
     with get_db_session() as db:
-        row = (
+        rows = (
             db.query(
                 WatchHistoryEntry.title,
                 WatchHistoryEntry.series_title,
@@ -212,9 +325,16 @@ def detect_track_obsession(user_id: int) -> Optional[dict]:
             .group_by(WatchHistoryEntry.title, WatchHistoryEntry.series_title)
             .having(_func.count(WatchHistoryEntry.id) >= _TRACK_OBSESSION_THRESHOLD)
             .order_by(_func.count(WatchHistoryEntry.id).desc())
-            .first()
+            .limit(25)
+            .all()
         )
-        if not row:
+        if not rows:
+            return None
+        # First track we haven't already asked about — rotate past the ones we
+        # have. If every top obsession has been covered, fire nothing (another
+        # trigger gets its turn).
+        row = next((r for r in rows if normalize_title(r.title) not in asked), None)
+        if row is None:
             return None
         # Artist total across ALL their tracks — the hybrid context that
         # lets the message say "you play this artist a lot, but THIS song
@@ -305,8 +425,17 @@ def detect_low_completion(entries: list[dict], now: datetime) -> Optional[dict]:
     return None
 
 
-def detect_history_deep_dive(entries: list[dict], now: datetime) -> Optional[dict]:
-    """Pick a random memorable item from history older than 60 days."""
+def detect_history_deep_dive(entries: list[dict], now: datetime,
+                             asked_subjects: dict | None = None) -> Optional[dict]:
+    """Pick a random memorable item from history older than 60 days.
+
+    Skips subjects already reflected on (series gated by progress, movies/music
+    one-and-done) so the curator rotates to fresh memories instead of dredging
+    up the same title. NOTE: ``completed`` here is per-row (a single finished
+    episode), so for a series this means "an episode they finished long ago", NOT
+    "they finished the series" — the progress phrase attached at send time keeps
+    the LLM from assuming an ending.
+    """
     old = [e for e in entries
            if e["viewed_at"] and e["viewed_at"] < now - timedelta(days=60)]
     if not old:
@@ -315,6 +444,14 @@ def detect_history_deep_dive(entries: list[dict], now: datetime) -> Optional[dic
     # Prefer highly rewatched or completed items
     completed = [e for e in old if e.get("completed") or _completion_rate(e) >= 0.9]
     pool = completed if completed else old
+
+    def _covered(e: dict) -> bool:
+        key = e["series_title"] or e["title"]
+        if e["media_type"] in ("show", "anime"):
+            return _series_recently_covered(key, entries, asked_subjects)
+        return _titled_recently_covered(key, asked_subjects)
+
+    pool = [e for e in pool if not _covered(e)]
     if not pool:
         return None
 
@@ -422,7 +559,8 @@ def detect_attention_deficit(entries: list[dict], now: datetime) -> Optional[dic
     return None
 
 
-def detect_procrastinator(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_procrastinator(entries: list[dict], now: datetime,
+                          asked_subjects: dict | None = None) -> Optional[dict]:
     """Series actively watched within the last 7 days but started 90+ days ago, <20 episodes total."""
     by_series: dict = {}
     for e in entries:
@@ -442,6 +580,8 @@ def detect_procrastinator(entries: list[dict], now: datetime) -> Optional[dict]:
         still_active  = last_watch  >= now - timedelta(days=7)
         started_long  = first_watch <= now - timedelta(days=90)
         if still_active and started_long and len(eps) < 20:
+            if _series_recently_covered(series, entries, asked_subjects):
+                continue
             return {
                 "type": "procrastinator",
                 "series": series,
@@ -537,7 +677,8 @@ def set_disabled_triggers(user_id: int, disabled: set[str]) -> None:
 
 def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
                       recently_fired: set[str],
-                      disabled: set[str] | None = None) -> Optional[dict]:
+                      disabled: set[str] | None = None,
+                      asked_subjects: dict | None = None) -> Optional[dict]:
     """
     Try each trigger in priority order, skip types that fired recently
     or that the user has disabled in their notification preferences.
@@ -545,23 +686,28 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
     Pass 57: ``user_id`` is now threaded through because
     ``detect_track_obsession`` runs its own SQL aggregate over the full
     history rather than the shared ``entries`` window.
+
+    ``asked_subjects`` (tracks / titles / series we've already messaged about)
+    is threaded into the subject-bearing detectors so they rotate to fresh
+    subjects instead of repeating a song / series the user already answered on.
     """
     disabled = disabled or set()
+    _tracks = (asked_subjects or {}).get("tracks")
     candidates = [
-        ("rewatch",           lambda: detect_rewatch(entries)),
-        ("track_obsession",   lambda: detect_track_obsession(user_id)),
-        ("binge_episode",     lambda: detect_binge(entries, now)),
+        ("rewatch",           lambda: detect_rewatch(entries, asked_subjects)),
+        ("track_obsession",   lambda: detect_track_obsession(user_id, _tracks)),
+        ("binge_episode",     lambda: detect_binge(entries, now, asked_subjects)),
         ("music_marathon",    lambda: detect_music_marathon(entries, now)),
-        ("series_completion", lambda: detect_series_completion(entries, now)),
+        ("series_completion", lambda: detect_series_completion(entries, now, asked_subjects)),
         ("attention_deficit", lambda: detect_attention_deficit(entries, now)),
-        ("procrastinator",    lambda: detect_procrastinator(entries, now)),
+        ("procrastinator",    lambda: detect_procrastinator(entries, now, asked_subjects)),
         ("genre_rut",         lambda: detect_genre_rut(entries, now)),
         ("guilty_pleasure",   lambda: detect_guilty_pleasure(entries, now)),
         ("genre_absence",     lambda: detect_genre_absence(entries, now)),
         ("low_completion",    lambda: detect_low_completion(entries, now)),
         ("new_genre",         lambda: detect_new_genre(entries, now)),
         ("night_owl",         lambda: detect_night_owl(entries, now)),
-        ("history_deep_dive", lambda: detect_history_deep_dive(entries, now)),
+        ("history_deep_dive", lambda: detect_history_deep_dive(entries, now, asked_subjects)),
     ]
     for ttype, fn in candidates:
         if ttype in recently_fired or ttype in disabled:
@@ -570,6 +716,256 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
         if result:
             return result
     return None
+
+
+# ── SUBJECT MEMORY (don't repeat the same question) ───────────────────────────
+
+# Subject-bearing trigger types and where their subject title lives in the
+# trigger payload. Used to index what we've already asked about.
+_SERIES_TRIGGER_TYPES = {"binge_episode", "series_completion", "procrastinator"}
+
+
+def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
+    """Index WHAT the curator has already asked this user about, from the
+    proactive-message history, so generation rotates to fresh subjects.
+
+      tracks  — normalized song titles (track_obsession): never re-ask a song.
+      titles  — normalized movie / deep-dive titles: never re-ask (no progress).
+      series  — normalized series key -> the progress ``milestone`` we asked at
+                (or None for pre-milestone messages); re-ask only once advanced.
+
+    Most-recent message wins (``setdefault`` over a newest-first scan), so the
+    stored milestone reflects the last position we asked about.
+    """
+    tracks: set = set()
+    titles: set = set()
+    series: dict = {}
+    with get_db_session() as db:
+        rows = (
+            db.query(ProactiveMessage.trigger_type, ProactiveMessage.trigger_data)
+            .filter(ProactiveMessage.user_id == user_id)
+            .order_by(ProactiveMessage.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+    for ttype, tdata_raw in rows:
+        try:
+            td = json.loads(tdata_raw) if tdata_raw else {}
+        except (ValueError, TypeError):
+            td = {}
+        if not isinstance(td, dict):
+            continue
+        if ttype == "track_obsession":
+            if td.get("track"):
+                tracks.add(normalize_title(td["track"]))
+        elif ttype in ("rewatch", "history_deep_dive"):
+            title = td.get("title")
+            if not title:
+                continue
+            if td.get("is_series") or td.get("media_type") in ("show", "anime"):
+                series.setdefault(normalize_title(title), td.get("milestone"))
+            else:
+                titles.add(normalize_title(title))
+        elif ttype in _SERIES_TRIGGER_TYPES:
+            if td.get("series"):
+                series.setdefault(normalize_title(td["series"]), td.get("milestone"))
+    return {"tracks": tracks, "titles": titles, "series": series}
+
+
+def _series_key_of(trigger: dict) -> Optional[str]:
+    """The series title a trigger is about, or None if it isn't a series subject."""
+    if trigger["type"] in _SERIES_TRIGGER_TYPES:
+        return trigger.get("series")
+    if trigger["type"] in ("rewatch", "history_deep_dive"):
+        if trigger.get("is_series") or trigger.get("media_type") in ("show", "anime"):
+            return trigger.get("title")
+    return None
+
+
+# Sonarr season-statistics index, fetched once per generation run and cached
+# briefly so a multi-user scheduler sweep reuses it.
+_SONARR_INDEX_TTL_S = 300.0
+_sonarr_index_cache: dict = {"at": None, "data": None}
+
+
+def _sonarr_series_stats(s: dict) -> Optional[dict]:
+    """Reduce a Sonarr series object to the per-season AIRED episode counts we
+    need. Season 0 (specials) is excluded. Returns None if nothing usable."""
+    per_season: dict = {}
+    for se in (s.get("seasons") or []):
+        num = se.get("seasonNumber")
+        if num is None or num < 1:
+            continue
+        st = se.get("statistics") or {}
+        aired = st.get("episodeCount")
+        if aired is None:
+            aired = st.get("totalEpisodeCount") or 0
+        per_season[int(num)] = int(aired or 0)
+    if not per_season:
+        return None
+    return {
+        "title": s.get("title"),
+        "tvdb_id": s.get("tvdbId"),
+        "series_type": s.get("seriesType"),
+        "status": s.get("status"),
+        "total_seasons": sum(1 for v in per_season.values() if v > 0),
+        "total_episodes": sum(per_season.values()),
+        "per_season": per_season,
+    }
+
+
+async def _get_sonarr_index() -> dict:
+    """Build (and briefly cache) an index of Sonarr season statistics, keyed by
+    tvdbId and by normalized title, for marrying with the Plex watch history.
+
+    Returns ``{"by_tvdb": {id: stats}, "by_title": {norm: [stats]}}``. Empty on
+    any failure (Sonarr down / unconfigured) — series progress then degrades to
+    watch-data-only framing."""
+    now_ts = datetime.utcnow()
+    cached = _sonarr_index_cache
+    if (cached["data"] is not None and cached["at"] is not None
+            and (now_ts - cached["at"]).total_seconds() < _SONARR_INDEX_TTL_S):
+        return cached["data"]
+
+    index: dict = {"by_tvdb": {}, "by_title": {}}
+    try:
+        from src.services.arr_client import SonarrClient
+        url, key = settings.SONARR_URL, settings.SONARR_API_KEY
+        if url and key:
+            client = SonarrClient(url, key)
+            async with client:
+                series = await client.get_series()
+            for s in (series or []):
+                stats = _sonarr_series_stats(s)
+                if not stats:
+                    continue
+                tv = s.get("tvdbId")
+                if tv:
+                    index["by_tvdb"][int(tv)] = stats
+                nt = normalize_title(s.get("title"))
+                if nt:
+                    index["by_title"].setdefault(nt, []).append(stats)
+            logger.debug("[proactive] Sonarr index: %d series by tvdb",
+                         len(index["by_tvdb"]))
+    except Exception as e:
+        logger.debug("[proactive] Sonarr index build failed: %s", e)
+    _sonarr_index_cache.update(at=now_ts, data=index)
+    return index
+
+
+def _resolve_sonarr_stats(sonarr_index: dict | None, tvdb_id,
+                          series_title: str, media_type: str) -> Optional[dict]:
+    """Match a watched series to its Sonarr stats.
+
+    Title-first: Plex and Sonarr both name series from TVDB metadata, so titles
+    align in practice — whereas ``MediaIdentity.tvdb_id`` has proven NOT to be
+    Sonarr's ``tvdbId`` (different id namespace), so using it as the primary key
+    silently mismatched. Collisions on a normalized title (Death Note 2006 anime
+    vs the 2015 live-action) are disambiguated by anime-vs-show. tvdbId is kept
+    only as a last-resort fallback for genuinely renamed / translated titles."""
+    if not sonarr_index:
+        return None
+    cands = (sonarr_index.get("by_title") or {}).get(normalize_title(series_title)) or []
+    if len(cands) == 1:
+        return cands[0]
+    if len(cands) > 1:
+        for st in cands:
+            cat = "anime" if st.get("series_type") == "anime" else "show"
+            if cat == media_type:
+                return st
+        return cands[0]
+    # No title match — fall back to tvdbId (renamed/translated titles only).
+    if tvdb_id:
+        try:
+            return (sonarr_index.get("by_tvdb") or {}).get(int(tvdb_id))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _attach_series_progress(trigger: dict, user_id: int,
+                            sonarr_index: dict | None = None) -> None:
+    """For series-bearing triggers, resolve full progress and stamp the trigger
+    with a human ``phrase``, the ``milestone`` (persisted in trigger_data for
+    future de-dup) and ``finished`` — so the prompt frames to the user's actual
+    position instead of assuming an ending.
+
+    Progress is computed from the user's COMPLETE history for this series via a
+    single targeted query — NOT the in-memory 5000-row window. For a music-heavy
+    user that window is dominated by Spotify plays and holds only the latest
+    episode or two of any series, which would mislabel "finished season 1, now in
+    season 2" as "only watched one episode". Season/episode totals come from the
+    Sonarr index (matched by tvdbId via MediaIdentity, title fallback)."""
+    series_key = _series_key_of(trigger)
+    if not series_key:
+        return
+    mt = trigger.get("media_type") or "show"
+    try:
+        from sqlalchemy import or_ as _or, and_ as _and
+        from src.database.models import MediaIdentity
+        tvdb_id = None
+        with get_db_session() as db:
+            rows = (
+                db.query(WatchHistoryEntry)
+                .filter(
+                    WatchHistoryEntry.user_id == user_id,
+                    WatchHistoryEntry.media_type.in_(("show", "anime")),
+                    _or(
+                        WatchHistoryEntry.series_title == series_key,
+                        _and(
+                            WatchHistoryEntry.series_title.is_(None),
+                            WatchHistoryEntry.title == series_key,
+                        ),
+                    ),
+                )
+                .all()
+            )
+            # Materialise to plain dicts WHILE the session is open — the rows are
+            # detached once the `with` closes.
+            full = _to_dicts(rows)
+            mi = (
+                db.query(MediaIdentity.tvdb_id)
+                .filter(
+                    MediaIdentity.title == series_key,
+                    MediaIdentity.media_type == mt,
+                )
+                .first()
+            )
+            if mi:
+                tvdb_id = mi[0]
+        sonarr_stats = _resolve_sonarr_stats(sonarr_index, tvdb_id, series_key, mt)
+        prog = get_series_progress(
+            full, series_key, mt, sonarr=sonarr_stats, now=datetime.utcnow(),
+        )
+    except Exception as e:
+        logger.debug("[proactive] progress attach failed for %r: %s", series_key, e)
+        return
+    if not prog:
+        return
+    trigger["progress_phrase"] = prog["phrase"]
+    trigger["milestone"] = progress_milestone(prog)
+    trigger["finished"] = prog["finished"]
+    if prog.get("total_episodes"):
+        trigger["episodes_total"] = prog["total_episodes"]
+    if prog.get("furthest_season") is not None:
+        trigger["furthest_season"] = prog["furthest_season"]
+    if prog.get("furthest_episode") is not None:
+        trigger["furthest_episode"] = prog["furthest_episode"]
+
+
+def _mark_asked(asked_subjects: dict, trigger: dict) -> None:
+    """Record a just-generated subject in the in-memory index so the NEXT slot in
+    the same generation run doesn't pick it again."""
+    t = trigger["type"]
+    if t == "track_obsession":
+        if trigger.get("track"):
+            asked_subjects["tracks"].add(normalize_title(trigger["track"]))
+        return
+    series_key = _series_key_of(trigger)
+    if series_key:
+        asked_subjects["series"][normalize_title(series_key)] = trigger.get("milestone")
+    elif t in ("rewatch", "history_deep_dive") and trigger.get("title"):
+        asked_subjects["titles"].add(normalize_title(trigger["title"]))
 
 
 # ── MESSAGE GENERATION ────────────────────────────────────────────────────────
@@ -595,11 +991,21 @@ async def generate_proactive_message(
     t = trigger["type"]
     taste = f"\nUSER TASTE CONTEXT:\n{taste_blurb[:400]}" if taste_blurb else ""
 
+    # Series-progress framing. When the trigger carries a progress phrase
+    # (attached by ``_attach_series_progress``), hand it to the LLM so it asks
+    # about the user's ACTUAL position instead of assuming they reached the end.
+    prog_phrase = trigger.get("progress_phrase")
+    prog_line = (
+        f"\nIMPORTANT — where the user actually is in this series: {prog_phrase}. "
+        f"Only ask about the ending, their final verdict, or a rewatch if they have "
+        f"FINISHED it; otherwise ask about their current point, never the ending.\n"
+    ) if prog_phrase else ""
+
     if t == "binge_episode":
         prompt = (
             f"You are Curatarr, an opinionated personal curator. "
             f"The user just watched {trigger['count']} episodes of \"{trigger['series']}\" "
-            f"in {trigger['hours']} hours straight.{taste}\n\n"
+            f"in {trigger['hours']} hours straight.{taste}{prog_line}\n\n"
             f"Write a single short message (max 2 sentences): curious, slightly teasing, maybe provocative. "
             f"Ask something specific about the show or their reaction. Reference their taste if relevant."
             + random.choice(_PROVOCATIVE_SUFFIXES)
@@ -616,21 +1022,35 @@ async def generate_proactive_message(
     elif t == "series_completion":
         prompt = (
             f"The user just powered through {trigger['episodes_watched']} episodes of "
-            f"\"{trigger['series']}\" in record time.{taste}\n\n"
+            f"\"{trigger['series']}\" in record time.{taste}{prog_line}\n\n"
             f"Write a short, provocative message. Ask if they finally finished it, or if they just lost "
             f"control of their life this weekend. Be direct and slightly teasing. Max 2 sentences."
             + random.choice(_PROVOCATIVE_SUFFIXES)
         )
 
     elif t == "rewatch":
-        prompt = (
-            f"The user has watched \"{trigger['title']}\" {trigger['count']} times total. "
-            f"It's a {trigger['media_type']}.{taste}\n\n"
-            f"Write one provocative question about WHY they keep coming back. "
-            f"Is it comfort? A specific character? Nostalgia? Fan service? "
-            f"Be direct, maybe a little cheeky. Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
-        )
+        if trigger.get("is_series"):
+            # Series: count is play count, not "times watched". Frame on the
+            # genuine episode-replays so we never say "watched it 31 times".
+            replays = trigger.get("replays", "several")
+            prompt = (
+                f"The user keeps going back to RE-watch episodes of "
+                f"\"{trigger['title']}\" (a {trigger['media_type']}) — "
+                f"{replays} episode-replays beyond a first watch.{taste}{prog_line}\n\n"
+                f"Write one provocative question about WHY this one specifically pulls "
+                f"them back for repeat viewings — comfort, a character, a particular "
+                f"scene or episode? Be direct, a little cheeky. Max 2 sentences."
+                + random.choice(_PROVOCATIVE_SUFFIXES)
+            )
+        else:
+            prompt = (
+                f"The user has watched \"{trigger['title']}\" {trigger['count']} times total. "
+                f"It's a {trigger['media_type']}.{taste}\n\n"
+                f"Write one provocative question about WHY they keep coming back. "
+                f"Is it comfort? A specific character? Nostalgia? Fan service? "
+                f"Be direct, maybe a little cheeky. Max 2 sentences."
+                + random.choice(_PROVOCATIVE_SUFFIXES)
+            )
 
     elif t == "track_obsession":
         # Pass 57: hybrid framing — lead with the SONG, but hand the LLM
@@ -686,7 +1106,7 @@ async def generate_proactive_message(
                 pass
         prompt = (
             f"Looking back at the user's watch history, they watched \"{trigger['title']}\" "
-            f"({trigger['media_type']}, genres: {trigger['genres'] or 'unknown'}){ago}.{taste}\n\n"
+            f"({trigger['media_type']}, genres: {trigger['genres'] or 'unknown'}){ago}.{taste}{prog_line}\n\n"
             f"Write one short, curious message asking if they still think about it, "
             f"or how their opinion has changed. Make it feel like genuine curiosity, "
             f"not a questionnaire. Max 2 sentences."
@@ -733,7 +1153,7 @@ async def generate_proactive_message(
         prompt = (
             f"The user has been dragging out watching \"{trigger['series']}\". "
             f"They started it {trigger['days']} days ago but have only managed to watch "
-            f"{trigger['episodes']} episodes.{taste}\n\n"
+            f"{trigger['episodes']} episodes.{taste}{prog_line}\n\n"
             f"Write a short, teasing message. Why are they forcing themselves to finish it? "
             f"If it was actually good, they would have binged it by now. "
             f"Tell them it's okay to drop it. Max 2 sentences."
@@ -855,6 +1275,15 @@ async def check_and_generate_messages(user_id: int) -> int:
         logger.debug("[proactive] User %d has %d trigger(s) disabled: %s",
                      user_id, len(disabled_triggers), sorted(disabled_triggers))
 
+    # What have we already asked about? Index it so the generator rotates to
+    # fresh subjects instead of repeating a song / series already answered.
+    asked_subjects = _load_asked_subjects(user_id)
+
+    # Sonarr season/episode totals, fetched once per run (TTL-cached across the
+    # scheduler sweep) and married with the Plex watch history for "season X of
+    # Y" framing. Empty on any failure -> watch-data-only framing.
+    sonarr_index = await _get_sonarr_index()
+
     slots = min(_CACHE_TARGET - unread_count, _MAX_PER_RUN)
     generated = 0
 
@@ -863,9 +1292,14 @@ async def check_and_generate_messages(user_id: int) -> int:
             entries, now, user_id,
             recently_fired=recent_triggers,
             disabled=disabled_triggers,
+            asked_subjects=asked_subjects,
         )
         if not trigger:
             break
+
+        # Frame series triggers to the user's actual position and stamp the
+        # progress milestone (persisted in trigger_data for future de-dup).
+        _attach_series_progress(trigger, user_id, sonarr_index=sonarr_index)
 
         logger.info("[proactive] Trigger '%s' for user %d", trigger["type"], user_id)
         # Pass 40: detect the user's chat language so the proactive nudge
@@ -892,6 +1326,7 @@ async def check_and_generate_messages(user_id: int) -> int:
             db.commit()
 
         recent_triggers.add(trigger["type"])
+        _mark_asked(asked_subjects, trigger)
         generated += 1
 
     if generated:
