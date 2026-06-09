@@ -254,7 +254,14 @@ def build_verified_data(
     if owns:
         cache = MetadataCache()
     try:
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
+        # plex_rating_key here is the arr doc-id ("sonarr:3176" / "radarr:107")
+        # for library items — and the enrichment pipeline keys EVERY library
+        # item's profile under exactly that ("enriched:anime:sonarr:3176"). It's
+        # the most reliable id we have (an anime may be cached under its
+        # anilist_id but NOT its tvdb/tmdb), so include it as a lookup key, not
+        # just for the raw_prefetch. Ordered after the hard external ids but
+        # before the weak title[:40] fallback.
+        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
@@ -440,6 +447,37 @@ async def ensure_verified_data(
         anilist_id=anilist_id, anidb_id=anidb_id,
         plex_rating_key=plex_rating_key, cache=cache,
     )
+    # R6 — nothing cached at all: the curator would otherwise cold-read from a
+    # thin synopsis stub (the "live cache miss → PARTIAL" trap that produced the
+    # King & Conqueror nonsense — invented execution verdicts, rating-as-proof).
+    # Do a FAST enrich (raw API fetch, NO LLM polish, ~2-5 s) so it reasons from
+    # the real plot / creator / rating instead. Best-effort + time-boxed so a
+    # slow API can't hang the request path; on timeout/failure we just fall back
+    # to whatever the caller had (the stub), i.e. no worse than before.
+    if not data:
+        try:
+            fresh = await asyncio.wait_for(
+                enrich_media_item(
+                    title=title, media_type=media_type, tmdb_id=tmdb_id,
+                    tvdb_id=tvdb_id, anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, skip_llm_summary=True,
+                ),
+                timeout=8.0,
+            )
+            if fresh:
+                # Re-read through the resolved IDs: enrich_media_item writes the
+                # raw cache under whatever id_key it resolved (often a tmdb_id we
+                # weren't given), so a title-only re-read would miss it.
+                data = build_verified_data(
+                    title, media_type,
+                    tmdb_id=fresh.get("tmdb_id") or tmdb_id,
+                    tvdb_id=fresh.get("tvdb_id") or tvdb_id,
+                    anilist_id=fresh.get("anilist_id") or anilist_id,
+                    anidb_id=fresh.get("anidb_id") or anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] fast-enrich on cache-miss failed for %r: %s", title, e)
     # Already OMDb-checked, already has the fields, or no imdb_id → done.
     if (not data or data.get("omdb_checked") or data.get("writer")
             or data.get("extra_context") or not data.get("imdb_id")):

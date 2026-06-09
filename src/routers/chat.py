@@ -1454,7 +1454,14 @@ async def _build_discuss_context_block(
         # FACTS instead of a synopsis stub or the model's own training memory.
         # Falls back to the proposal-row snapshot when nothing is cached.
         from src.services.media_enricher import ensure_verified_data, format_verified_block
-        verified_payload = await ensure_verified_data(proposal.title, proposal.category or "movie")
+        # Pass the arr doc-id ("sonarr:3176") as the lookup key — the enrichment
+        # pipeline keys every library item's profile under it, so this reaches
+        # cached anime/show data a title-only lookup silently missed (the same
+        # gap that left the delete pitch cold-reading anime).
+        _doc_key = (f"{proposal.service}:{proposal.media_id}"
+                    if proposal.service and proposal.media_id else None)
+        verified_payload = await ensure_verified_data(
+            proposal.title, proposal.category or "movie", plex_rating_key=_doc_key)
         verified_block = format_verified_block(verified_payload)
         if verified_block:
             block += "\n" + verified_block + "\n"
