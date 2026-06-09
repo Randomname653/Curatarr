@@ -149,6 +149,28 @@ def _get_vocab_guideline(category: str, genres_str: str) -> str:
     return _VOCAB_GUIDELINES["movie"]
 
 
+def _taste_section(summary_text: str, category: str) -> str:
+    """Pick the taste-summary section matching this deletion category.
+
+    The taste summary is authored as ``[MOVIE] … [SHOW] … [ANIME] …`` blocks.
+    The old code took ``summary_text[:400]``, which ALWAYS returned the [MOVIE]
+    block — so anime and show deletion pitches were judged against the user's
+    FILM taste ("cerebral tension", "psychological thrillers"), not their actual
+    anime/show taste (the Skate-Leading pitch critiquing it for lacking
+    "cerebral dissonance" — a film yardstick). Music has no section at all (only
+    movie/show/anime are summarised), so it returned the film blurb too; we
+    return "" there rather than anchor the pitch on the wrong domain.
+    """
+    import re
+    s = summary_text or ""
+    if not s:
+        return ""
+    tag = {"movie": "MOVIE", "show": "SHOW", "anime": "ANIME",
+           "music": "MUSIC"}.get(category, (category or "").upper())
+    m = re.search(rf"\[{tag}\]\s*(.*?)(?=\n\s*\[[A-Z]+\]|\Z)", s, re.S)
+    return m.group(1).strip()[:600] if m else ""
+
+
 # ── Enrichment cache lookup for rating context ────────────────────────────────
 
 def _get_cached_rating(item: dict, category: str) -> tuple:
@@ -615,7 +637,10 @@ async def generate_deletion_proposals(
         user_vector = None
         taste_blurb = ""
         if tv:
-            taste_blurb = (tv.summary_text or "")[:400]
+            # Use the taste section that matches THIS category — not a blind
+            # [:400] that always returned the [MOVIE] block (which judged anime/
+            # show/music pitches by the user's film taste).
+            taste_blurb = _taste_section(tv.summary_text, category)
             encrypted = db.query(EncryptedTasteVector).filter(
                 EncryptedTasteVector.user_id == user_id,
                 EncryptedTasteVector.media_category == category
