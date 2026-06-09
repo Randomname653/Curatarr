@@ -393,6 +393,53 @@ async def start_arr_pre_enrich(
     return {"status": "started", "batch": batch, "source": "arr"}
 
 
+# In-memory run guard for the OMDb backfill. Deliberately NOT an app_state
+# (DB) lock: a uvicorn --reload mid-run kills the background task without its
+# finally clause firing, which would leave a DB lock stuck "running" forever
+# (next start → 409). A module-level flag resets to False on every reload, so
+# it self-heals. Single-worker app, so in-process is sufficient.
+_omdb_backfill_running = False
+
+
+async def _run_omdb_backfill_bg() -> None:
+    """Background runner for the OMDb bulk backfill — opens a task_monitor task,
+    runs the scan + top-up, always clears the run-flag."""
+    global _omdb_backfill_running
+    from src.services.task_monitor import task_monitor
+    from src.services.media_enricher import run_omdb_backfill
+    task = task_monitor.create(name="OMDb backfill", category="enrichment")
+    task_monitor.start(task)
+    try:
+        res = await run_omdb_backfill(task=task)
+        task_monitor.done(
+            task,
+            f"OMDb backfill done — {res['enriched']}/{res['candidates']} titles enriched",
+        )
+    except Exception as e:
+        logger.error("[omdb-backfill] failed: %s", e)
+        task_monitor.done(task, f"OMDb backfill failed: {e}")
+    finally:
+        _omdb_backfill_running = False
+
+
+@router.post("/omdb-backfill")
+async def start_omdb_backfill(
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+):
+    """Bulk-backfill OMDb (writer, awards, extended plot) for every cached item
+    that has an imdb_id but never got OMDb — OMDb needs an imdb_id and was long
+    rate-limited, so only ~1/3 of the library has those fields. Idempotent: each
+    title is stamped ``omdb_checked`` once and never re-queried. Fast over the
+    supporter key (100k/day). Runs in the background — watch the task monitor."""
+    global _omdb_backfill_running
+    if _omdb_backfill_running:
+        raise HTTPException(status_code=409, detail="OMDb backfill already running")
+    _omdb_backfill_running = True
+    background_tasks.add_task(_run_omdb_backfill_bg)
+    return {"status": "started"}
+
+
 @router.post("/start")
 async def start_enrichment(
     req: EnrichRequest,

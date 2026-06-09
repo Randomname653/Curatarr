@@ -417,10 +417,29 @@ async def generate_recommendations(
             if not unwatched:
                 continue
 
-            items_text = "\n".join(
-                f"- {i['title']} ({i.get('year', '?')}) — {i.get('genres', '')}"
-                for i in unwatched[:30]
-            )
+            # Ground the candidate list with cached verified context (themes +
+            # a short plot) — NO LLM, cache-only — so the curator selects AND
+            # pitches from real data instead of just title+genres. These are the
+            # user's own library items, so they're already enriched; this is just
+            # fast cache reads, and the pitch the user sees is now grounded.
+            from src.services.media_enricher import build_verified_data
+
+            def _cand_line(i):
+                line = f"- {i['title']} ({i.get('year', '?')}) — {i.get('genres', '')}"
+                try:
+                    vd = build_verified_data(i["title"], cat, tmdb_id=i.get("tmdb_id"))
+                except Exception:
+                    vd = None
+                if vd:
+                    th = vd.get("themes") or []
+                    if th:
+                        line += " | themes: " + ", ".join(str(t) for t in th[:3])
+                    plot = vd.get("plot")
+                    if plot:
+                        line += " | " + str(plot)[:90]
+                return line
+
+            items_text = "\n".join(_cand_line(i) for i in unwatched[:30])
 
             prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.
@@ -516,6 +535,44 @@ Output format:
             db.commit()
 
     return all_recs
+
+
+# ── Taste-mismatch (semantic distance) helpers ────────────────────────────────
+
+def _normalize_vec(vec):
+    """Unit-normalise a vector for cosine math. Returns an np array, or None if
+    empty/zero. The taste vector is already ~unit, but the ChromaDB item
+    embeddings are stored RAW (norm ~13) — both sides must be normalised or the
+    dot product lands far outside [-1, 1] and the mismatch signal collapses."""
+    if vec is None:
+        return None
+    a = np.asarray(vec, dtype=float)
+    n = np.linalg.norm(a)
+    return a / n if n else None
+
+
+def _cosine_anchors(cos_vals: list) -> tuple:
+    """p10/p90 of a batch of cosines — the stretch anchors that map the model's
+    anisotropic, narrow cosine band (movies cluster ~0.6-0.74) onto a full
+    [0, 1] mismatch range. Falls back to sensible defaults when too few
+    embeddings are present, and guarantees hi > lo."""
+    if len(cos_vals) >= 20:
+        lo = float(np.percentile(cos_vals, 10))
+        hi = float(np.percentile(cos_vals, 90))
+    else:
+        lo, hi = 0.61, 0.72
+    if hi - lo < 1e-3:
+        hi = lo + 1e-3
+    return lo, hi
+
+
+def _cosine_to_mismatch(cosine, lo: float, hi: float) -> float:
+    """Map a cosine onto a 0-1 taste-mismatch: cos >= hi (best-fit) -> 0,
+    cos <= lo (worst-fit) -> 1, linear between. No embedding -> neutral 0.5
+    (the historical default for un-enriched items)."""
+    if cosine is None:
+        return 0.5
+    return max(0.0, min(1.0, (hi - cosine) / (hi - lo)))
 
 
 async def generate_deletion_proposals(
@@ -695,7 +752,9 @@ async def generate_deletion_proposals(
 
     _msg(f"{category}: scoring {len(arr_items):,} candidates (ChromaDB + taste vector)…")
     scored_candidates = []
+    prelim: list[dict] = []                # all candidates, pre-calibration
     hard_protect_skipped: list[str] = []   # for the post-loop log line
+    user_vector_n = _normalize_vec(user_vector)   # unit vector for cosine math
     for item in arr_items:
         title = item.get("title")
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
@@ -772,70 +831,38 @@ async def generate_deletion_proposals(
 
         size_gb = (item.get("size_mb", 0) or 0) / 1024
 
+        # ── Semantic taste-mismatch: proper cosine (user taste vector vs the
+        # item's ChromaDB embedding). The lookup id is the enrichment-pipeline
+        # key "{service}:{arr_id}", carried on the candidate as plex_rating_key
+        # (Pass 64). Both vectors MUST be normalised: the stored embeddings are
+        # raw (norm ~13), so a bare np.dot against the unit taste vector landed
+        # at ≈ 8-14 — far outside [-1, 1] — which the old ``1 - dist`` clamp
+        # pinned to 0, silently killing the dominant deletion signal. The cosine
+        # is mapped to a 0-1 mismatch AFTER the loop, calibrated against this
+        # batch's own (anisotropic, narrow) cosine distribution.
         doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or title)
         item_vector_res = chroma_db.get_by_id(doc_id)
-
-        distance_penalty = 0.5
-        # Pass 74: ChromaDB returns embeddings as numpy arrays — bool(array)
-        # on a multi-element array raises ValueError, so the embedding must be
-        # checked with ``is not None``, never truthiness. The old
-        # ``if ... item_vector_res.get("embedding") ...`` raised on the
-        # condition itself (outside the try/except below) → 500 on every
-        # deletion-proposal refresh that hit an enriched item.
         item_vec = item_vector_res.get("embedding") if item_vector_res else None
-        if item_vec is not None and user_vector:
+        cosine = None
+        if item_vec is not None and user_vector_n is not None:
             try:
-                dist = np.dot(user_vector, item_vec)
-                distance_penalty = max(0.0, min(1.0, 1.0 - float(dist)))
+                iv = np.asarray(item_vec, dtype=float)
+                ivn = np.linalg.norm(iv)
+                if ivn:
+                    cosine = float(np.dot(user_vector_n, iv) / ivn)
             except Exception:
-                distance_penalty = 0.5
+                cosine = None
 
-        # ── Score components, recalibrated for realistic confidence range ────
-        # Goal: a clear deletion candidate (high mismatch, mediocre rating, big
-        # file) lands at 70-90% confidence rather than the previous ceiling of
-        # ~50%. Realistic max ~110 → divided by 100 + clamp at 0.99 means
-        # truly-bad-fits saturate the bar; mediocre fits score 30-60%.
-
-        # Vector mismatch is still the dominant signal (0-80 instead of 0-100
-        # so it leaves room for size + rating swing).
-        mismatch_pts = distance_penalty * 80
-
-        # Size: logarithmic so huge series don't dominate. log1p(5) ≈ 9 pts,
-        # log1p(50) ≈ 20 pts. Keep coefficient at 5.
-        size_pts = math.log1p(size_gb) * 5
-
-        # Rating swing — protective when above neutral (5/10), penalising when
-        # below. Neutral at 5/10 → 0 pts swing. 8/10 → -12 pts (protection).
-        # 3/10 → +8 pts (penalty). Coefficient lowered from 5 → 4 so a typical
-        # 7/10 protects 8 pts (was 35), letting clear bad fits cross 50%.
-        rating_swing = (effective_rating - 5.0) * 4
-
-        # Pass 82c: USER rating swing — coefficient 6 (vs 4 for the external
-        # aggregate) because the user's own star rating is the most direct
-        # taste signal we have. Hard-protect at ≥ 4 stars (Plex 8.0) skipped
-        # this candidate above, so the active range here is 0 < rating < 8
-        # (0.5 to 3.5 stars). A 3★ rating (Plex 6) gives +6 swing → mild push
-        # toward keep. A 1★ rating (Plex 2) gives -18 swing → strong push
-        # toward delete. Stacks additively with the external rating_swing —
-        # both pull in the same direction when user agrees with consensus,
-        # opposite when the user's opinion diverges. Only set for music
-        # category (only path that loads user_rating).
-        user_rating_swing = 0.0
-        if user_rating is not None:
-            user_rating_swing = (user_rating - 5.0) * 6
-
-        del_score = mismatch_pts + size_pts - rating_swing - user_rating_swing
-
-        if del_score > 30:
-            scored_candidates.append({
-                "item": item,
-                "score": del_score,
-                "mismatch": distance_penalty,
-                "rating_breakdown": rating_breakdown,
-                "rating": effective_rating,
-                "arr_rating": arr_rating,
-                "cached_rating": cached_rating,
-            })
+        prelim.append({
+            "item": item,
+            "cosine": cosine,
+            "size_gb": size_gb,
+            "rating": effective_rating,
+            "rating_breakdown": rating_breakdown,
+            "arr_rating": arr_rating,
+            "cached_rating": cached_rating,
+            "user_rating": user_rating,
+        })
 
     # Pass 82c: audit trail — log which artists were hard-protected by the
     # user's ≥ 4-star Plex rating. Helps explain "why isn't <artist> in the
@@ -847,6 +874,43 @@ async def generate_deletion_proposals(
             "[deletions] hard-protected by ≥ 4-star user rating: %d artist(s) — %s%s",
             len(hard_protect_skipped), preview, more,
         )
+
+    # ── Calibrate taste-mismatch against THIS batch's cosine distribution ────
+    # Embedding cosines are anisotropic — they cluster in a narrow band, so a
+    # raw (1 - cosine) hardly varies. Stretch the batch's p10..p90 band onto
+    # [0, 1] so the mismatch — and the resulting confidence — spreads across the
+    # full range and reflects real RELATIVE taste-fit. Items with no embedding
+    # get a neutral 0.5. Scoring (size + rating swings) is unchanged from here.
+    _cos_vals = [p["cosine"] for p in prelim if p["cosine"] is not None]
+    _lo, _hi = _cosine_anchors(_cos_vals)
+    logger.info(
+        "[deletions] %s: %d/%d candidates have embeddings; cosine anchors p10=%.3f p90=%.3f",
+        category, len(_cos_vals), len(prelim), _lo, _hi,
+    )
+    for p in prelim:
+        mismatch = _cosine_to_mismatch(p["cosine"], _lo, _hi)
+        # Vector mismatch is the dominant signal (0-80). Size is logarithmic so
+        # huge files don't dominate; rating swing is protective above 5/10 and
+        # penalising below. USER rating swing (music only) weights the user's own
+        # star rating heaviest. Same coefficients as before — only the mismatch
+        # input is now a real, calibrated cosine instead of a flat constant.
+        size_pts = math.log1p(p["size_gb"]) * 5
+        rating_swing = (p["rating"] - 5.0) * 4
+        user_rating_swing = (
+            (p["user_rating"] - 5.0) * 6 if p["user_rating"] is not None else 0.0
+        )
+        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing
+        if del_score > 30:
+            scored_candidates.append({
+                "item": p["item"],
+                "score": del_score,
+                "mismatch": mismatch,
+                "rating_breakdown": p["rating_breakdown"],
+                "rating": p["rating"],
+                "arr_rating": p["arr_rating"],
+                "cached_rating": p["cached_rating"],
+                "user_rating": p["user_rating"],   # Plex stars (music) for the pitch
+            })
 
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
     final_proposals = []
@@ -866,6 +930,17 @@ async def generate_deletion_proposals(
         ("PREMISE & WORLDBUILDING", "trope reliance, broken internal logic, gimmickry, lazy lore"),
         ("THEMATIC EMPTINESS",      "no satire, no critique, no point — entertainment as wallpaper"),
         ("CULTURAL DATEDNESS",      "era-stuck assumptions, aged-poorly tropes, requires niche cultural memory"),
+    ]
+    # Music needs its OWN axes — film angles like "character agency" or
+    # "premise & worldbuilding" are nonsense for an artist and were leaking
+    # plot/film framing into music pitches.
+    _PITCH_AXES_MUSIC = [
+        ("SONIC PALETTE",      "timbre, texture, production sheen vs grit"),
+        ("RHYTHMIC DRIVE",     "tempo, groove, energy vs inertia and filler"),
+        ("GENRE FIT",          "how their genre/scene sits against the user's core sound"),
+        ("PRODUCTION",         "mix quality, dynamics, polish vs muddiness"),
+        ("EMOTIONAL REGISTER", "mood and intensity vs the user's preferred register"),
+        ("DEPTH VS NOVELTY",   "a one-note / novelty act vs a substantive catalogue"),
     ]
 
     # Load relevant memories — scoped to this category so only domain-relevant
@@ -939,6 +1014,26 @@ async def generate_deletion_proposals(
                     "focus only on relevance fit."
                 )
 
+            # Music override: TMDB/IMDb/RT are FILM ratings and do not apply to
+            # an artist — surfacing them produced "3.0 TMDB score" hallucinations.
+            # Use the user's OWN Plex star rating when present (the real personal
+            # signal); otherwise judge on taste-fit alone.
+            if category == "music":
+                _ur = cand.get("user_rating")
+                if _ur and _ur > 0:
+                    rating_block = (
+                        f"USER RATING: {_ur / 2.0:.1f}/5 stars — the user's OWN "
+                        f"rating of this artist (a strong personal signal; a low "
+                        f"score means they don't care for them)."
+                    )
+                else:
+                    rating_block = (
+                        "RATING: none — the user hasn't rated this artist and no "
+                        "objective music score applies. Judge ONLY on how their "
+                        "sound fits the user's taste; do NOT invent or cite any "
+                        "rating (no TMDB/IMDb — those are for films)."
+                    )
+
             # ── Domain vocabulary guideline ───────────────────────────────────
             vocab_guideline = _get_vocab_guideline(category, genres_str)
 
@@ -949,18 +1044,72 @@ async def generate_deletion_proposals(
             # with replacement — over 10 pitches the axes distribute
             # probabilistically without the "best axis already used up"
             # problem a deterministic rotation would have.
-            axis_label, axis_hint = _rand.choice(_PITCH_AXES)
+            axis_label, axis_hint = _rand.choice(
+                _PITCH_AXES_MUSIC if category == "music" else _PITCH_AXES
+            )
 
-            prompt = f"""[MODE: SURGICAL DELETION PITCH]
+            # Feed the FULL verified dataset we already cached (creator/writer,
+            # extended plot, themes, keywords, awards) — assembled with NO LLM,
+            # cache-only — so the 27B curator reasons from FACTS instead of a
+            # thin synopsis stub or its own training memory (the root of the
+            # "Steppenwolf is a Dean Koontz film" hallucinations). Empty string
+            # when nothing is cached → falls back to the thin item fields.
+            from src.services.media_enricher import ensure_verified_data, format_verified_block
+            verified_block = format_verified_block(
+                await ensure_verified_data(item.get("title") or "", category,
+                                           tmdb_id=item.get("tmdb_id"))
+            )
+            if verified_block:
+                item_details = verified_block
+            else:
+                item_details = (
+                    "ITEM DETAILS:\n"
+                    f"- Title: {item.get('title')} ({year})\n"
+                    f"- Genres: {genres_str or 'Unknown'}\n"
+                    f"- Synopsis: {overview_short}"
+                )
+
+            if category == "music":
+                # Music-specific pitch: artist framing, no synopsis, no film
+                # ratings, and hard anti-hallucination rules (a band sharing a
+                # name with a film is NOT that film — the Steppenwolf trap).
+                prompt = f"""[MODE: SURGICAL DELETION PITCH — MUSIC]
+You are Curatarr, an uncompromising, elite MUSIC curator. Pitch the deletion of this MUSIC ARTIST from the user's library.
+
+{lang_directive_str}
+
+ARTIST: {item.get('title')}
+GENRES / STYLE: {genres_str or 'Unknown'}
+{rating_block}
+{verified_block}
+
+REASON FOR DELETION CONSIDERATION: their sound is a mismatch with the user's music taste.
+{f'USER MUSIC TASTE: {taste_blurb}' if taste_blurb else ''}
+{f'KNOWN EXCEPTIONS & MEMORIES: {memory_context}' if memory_context else ''}
+
+{vocab_guideline}
+{_FORBIDDEN_CROSS_DOMAIN}
+
+PRIMARY CRITIQUE ANGLE for this pitch: {axis_label} ({axis_hint}).
+If this angle genuinely doesn't fit, pick a different one — but do NOT default to the blacklisted crutch phrases.
+
+CRITICAL RULES AND GUARDRAILS:
+1. MAX 2 SENTENCES. Concise, highly opinionated, ruthless.
+2. THIS IS A MUSIC ARTIST — never a film, show, book, episode, or a single "track". Call them an artist / act / band. There is NO plot and NO synopsis. NEVER invent a biography, a film or novel of the same name, an album, a song, a release year, or a rating you were not given. A same-named movie is NOT this artist — do not describe it.
+3. CRITIQUE THE SOUND: their genre, production, rhythm and timbre, and how it clashes with the user's music taste. Use the music vocabulary above.
+4. SYNTHESIZE, DON'T QUOTE: use the USER MUSIC TASTE to understand what they value, then critique in YOUR OWN words — don't lift phrasings.
+{_blacklist_rule(5)}
+6. NO ANCHORING: do not name specific artists from the user's taste summary.
+7. NO ECHOING: never start with "Given your…" or "Since you like…". State why this artist fails to earn its space.
+8. NO TECH TALK: no file sizes, gigabytes, or vector distances; and NO film ratings (TMDB / IMDb / Rotten Tomatoes do not apply to music)."""
+            else:
+                prompt = f"""[MODE: SURGICAL DELETION PITCH]
 You are Curatarr, an uncompromising, elite media curator. Pitch the deletion of this item.
 
 {lang_directive_str}
 
-ITEM DETAILS:
-- Title: {item.get('title')} ({year})
-- {rating_block}
-- Genres: {genres_str or 'Unknown'}
-- Synopsis: {overview_short}
+{item_details}
+{rating_block}
 
 REASON FOR DELETION CONSIDERATION: Mismatch with user taste profile.
 {f'USER TASTE SUMMARY: {taste_blurb}' if taste_blurb else ''}

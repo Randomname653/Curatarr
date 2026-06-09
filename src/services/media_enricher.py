@@ -210,6 +210,343 @@ def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DA
                      cat, id_key, e)
 
 
+# ── Verified-data assembly (NO LLM) ───────────────────────────────────────────
+#
+# The curator's pitches / discussions / re-evaluations were data-starved: the
+# delete pitch got only a thin ARR overview, and the Level-2 re-eval got NOTHING
+# from cache (it was told to "use your training memory"). Meanwhile the pipeline
+# already fetched a rich dataset. ``build_verified_data`` assembles it from the
+# two caches we already keep — the polished ``enriched:*`` profile (themes,
+# keywords, mood, plot_summary, director, cast) merged with the ``raw:*`` API
+# cache (extended plot, writer/creator, awards, country) — with NO LLM call.
+# ``format_verified_block`` renders it for a prompt. Feed this wherever the
+# curator REASONS about a title (delete pitch, discussion, re-eval, recs) so a
+# capable model reasons from facts instead of a synopsis stub or its own memory.
+
+def _vd_first(cache, keys: list):
+    """First non-empty cached profile dict among ``keys`` (cache-only)."""
+    for k in keys:
+        try:
+            hit = cache.get_cache(k)
+        except Exception:
+            hit = None
+        if hit:
+            resp = hit.get("response")
+            if isinstance(resp, dict) and resp:
+                return resp
+    return None
+
+
+def build_verified_data(
+    title: str,
+    media_type: str,
+    *,
+    tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
+    plex_rating_key=None,
+    cache=None,
+) -> Optional[dict]:
+    """Assemble the full VERIFIED dataset for a title from cache — NO LLM, no
+    live fetch. Merges the polished ``enriched:*`` profile (themes, keywords,
+    mood, plot_summary, director, cast) with the ``raw:*`` API cache (extended
+    plot, writer, awards/extra_context, country). Returns None when nothing is
+    cached. ``cache`` may be injected so a batch caller opens one handle."""
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
+        t40 = (title or "")[:40]
+        if t40:
+            id_keys.append(t40)
+        enriched = _vd_first(cache, [f"enriched:{media_type}:{k}" for k in id_keys]) or {}
+        raw_keys = []
+        if plex_rating_key:
+            raw_keys.append(f"raw_prefetch:{plex_rating_key}")
+        raw_keys += [f"raw:{media_type}:{k}" for k in id_keys]
+        raw = _vd_first(cache, raw_keys) or {}
+        if not enriched and not raw:
+            return None
+
+        def pick(*vals):
+            for v in vals:
+                if v not in (None, "", [], 0):
+                    return v
+            return None
+
+        return {
+            "media_type":     media_type,
+            "title":          pick(enriched.get("title"), raw.get("title"), title),
+            "year":           pick(enriched.get("year"), raw.get("year")),
+            "genres":         pick(enriched.get("genres"), raw.get("genres")),
+            # Prefer the fuller OMDb plot, then the LLM plot_summary, then the
+            # short TMDB overview.
+            "plot":           pick(raw.get("overview_extended"), enriched.get("plot_summary"), raw.get("overview")),
+            # Alias so the dict is also consumable by chat._build_hidden_context
+            # (which reads plot_summary/overview) when cached as a thread anchor.
+            "plot_summary":   pick(raw.get("overview_extended"), enriched.get("plot_summary"), raw.get("overview")),
+            "themes":         enriched.get("themes"),
+            "keywords":       pick(enriched.get("keywords"), raw.get("keywords")),
+            "mood":           enriched.get("mood"),
+            "director":       pick(enriched.get("director"), raw.get("director")),
+            "writer":         raw.get("writer"),
+            "cast":           pick(enriched.get("cast_top3"), raw.get("cast")),
+            "rating":         pick(enriched.get("rating"), raw.get("rating")),
+            "country":        raw.get("country"),
+            "seasons":        raw.get("seasons"),
+            "episodes_total": raw.get("episodes_total"),
+            "extra_context":  raw.get("extra_context"),
+            "source":         pick(enriched.get("source"), raw.get("source")),
+            # imdb_id drives the dynamic OMDb top-up (ensure_verified_data);
+            # omdb_checked stops it (and the bulk backfill) re-querying.
+            "imdb_id":        pick(raw.get("imdb_id"), enriched.get("imdb_id")),
+            "omdb_checked":   bool(raw.get("omdb_checked")),
+        }
+    finally:
+        if owns:
+            cache.close()
+
+
+def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
+    """Render the verified dataset as a curator-facing prompt block. Empty fields
+    are omitted; the header forbids invention beyond what's listed. "" if no data."""
+    if not data:
+        return ""
+    lines = [header or (
+        "[VERIFIED DATA — reason ONLY from the facts below; do NOT add plot "
+        "points, people, awards, year, or franchise context not listed here]"
+    )]
+
+    def add(label, val, cap=None):
+        if val in (None, "", [], 0):
+            return
+        if isinstance(val, list):
+            val = ", ".join(str(v) for v in val if v)
+        val = str(val)
+        if cap and len(val) > cap:
+            val = val[:cap].rsplit(" ", 1)[0] + "…"
+        lines.append(f"  {label}: {val}")
+
+    _type_label = {
+        "show": "TV series", "anime": "Anime (TV series)",
+        "movie": "Film", "music": "Music artist",
+    }.get(data.get("media_type"))
+    add("Type", _type_label)
+    add("Title", data.get("title"))
+    add("Year", data.get("year"))
+    add("Genres", data.get("genres"))
+    add("Creator/Writer", data.get("writer"))
+    add("Director", data.get("director"))
+    cast = data.get("cast")
+    add("Cast", cast[:4] if isinstance(cast, list) else cast)
+    add("Themes", data.get("themes"))
+    add("Keywords", data.get("keywords"))
+    add("Mood", data.get("mood"))
+    add("Country", data.get("country"))
+    add("Notable", data.get("extra_context"))
+    if data.get("rating"):
+        add("Rating", f"{data['rating']}/10")
+    add("Plot", data.get("plot"), cap=700)
+    return "\n".join(lines)
+
+
+async def topup_omdb(
+    title: str,
+    media_type: str,
+    *,
+    imdb_id: str,
+    tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
+    cache=None,
+) -> bool:
+    """Fetch OMDb for a title that's cached but missing the OMDb-only rich fields
+    (writer, awards/extra_context, extended plot) and merge them into its raw:*
+    cache entry. NO LLM. Returns True if anything was added.
+
+    Why this exists: ``build_verified_data`` is cache-only, and the rich OMDb
+    fields only exist for the ~1/3 of items that got OMDb at enrichment time
+    (OMDb needs an imdb_id and was long rate-limited). This is the shared
+    primitive behind the dynamic just-in-time top-up (``ensure_verified_data``)
+    AND the admin bulk-backfill — both just call it with the supporter key's
+    100k/day headroom."""
+    if not imdb_id:
+        return False
+    omdb = await fetch_omdb_data(imdb_id)
+    if not omdb:
+        return False
+
+    plot   = omdb.get("plot_full") or omdb.get("overview")
+    awards = omdb.get("awards")
+    writer = omdb.get("writer")
+    country = omdb.get("country")
+    _bad = ("", "N/A", None)
+
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
+        t40 = (title or "")[:40]
+        if t40:
+            id_keys.append(t40)
+        added = False
+        for k in id_keys:
+            key = f"raw:{media_type}:{k}"
+            hit = cache.get_cache(key)
+            if not hit:
+                continue
+            raw = hit.get("response")
+            if not isinstance(raw, dict):
+                continue
+            changed = False
+            if plot not in _bad and not (raw.get("overview_extended") or "").strip():
+                raw["overview_extended"] = plot; changed = added = True
+            if awards not in _bad and "Awards:" not in (raw.get("extra_context") or ""):
+                ec = (raw.get("extra_context") or "").strip()
+                raw["extra_context"] = (ec + " | " if ec else "") + f"Awards: {awards}"; changed = added = True
+            if writer not in _bad and not (raw.get("writer") or "").strip():
+                raw["writer"] = writer; changed = added = True
+            if country not in _bad and not (raw.get("country") or "").strip():
+                raw["country"] = country; changed = True
+            # Idempotency marker: OMDb was consulted for this title. Set even
+            # when OMDb had no writer/awards — many titles legitimately don't —
+            # so neither the bulk backfill nor the dynamic top-up ever re-query
+            # it. Without this, awardless films stayed "candidates" forever and
+            # every backfill re-fetched the exact same set.
+            if not raw.get("omdb_checked"):
+                raw["omdb_checked"] = True
+                changed = True
+            if changed:
+                cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+        return added
+    finally:
+        if owns:
+            cache.close()
+
+
+async def ensure_verified_data(
+    title: str,
+    media_type: str,
+    *,
+    tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
+    plex_rating_key=None,
+    cache=None,
+) -> Optional[dict]:
+    """``build_verified_data`` + a dynamic, just-in-time OMDb top-up. Use this
+    (async) wherever the curator is ABOUT to reason about a title — delete pitch,
+    discussion, re-eval — so a cached-but-OMDb-starved item gets its writer /
+    awards / extended plot filled in right before processing (then cached, so at
+    most one OMDb call per item, ever)."""
+    data = build_verified_data(
+        title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+        anilist_id=anilist_id, anidb_id=anidb_id,
+        plex_rating_key=plex_rating_key, cache=cache,
+    )
+    # Already OMDb-checked, already has the fields, or no imdb_id → done.
+    if (not data or data.get("omdb_checked") or data.get("writer")
+            or data.get("extra_context") or not data.get("imdb_id")):
+        return data
+    try:
+        if await topup_omdb(
+            title, media_type, imdb_id=data["imdb_id"],
+            tmdb_id=tmdb_id, tvdb_id=tvdb_id, anilist_id=anilist_id,
+            anidb_id=anidb_id, cache=cache,
+        ):
+            data = build_verified_data(
+                title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                anilist_id=anilist_id, anidb_id=anidb_id,
+                plex_rating_key=plex_rating_key, cache=cache,
+            )
+    except Exception as e:
+        logger.debug("[verified] OMDb top-up failed for %r: %s", title, e)
+    return data
+
+
+async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
+    """Admin bulk backfill: scan the raw:* cache for video items that have an
+    imdb_id but are missing OMDb-only fields (writer / awards), and top each up
+    via OMDb. Throttled by the OMDb semaphore; fast over the supporter key
+    (100k/day). ``task`` is an optional task_monitor handle for progress.
+    Returns ``{"candidates": N, "enriched": M}``."""
+    import json as _json
+
+    # 1. Gather candidates from the raw cache, deduped by (media_type, imdb_id)
+    #    so we hit OMDb once per title even though it's cached under several keys.
+    mc = MetadataCache()
+    try:
+        cur = mc.conn.cursor()
+        cur.execute(
+            "SELECT cache_key, response FROM api_cache WHERE "
+            "cache_key LIKE '%raw:movie:%' OR cache_key LIKE '%raw:show:%' "
+            "OR cache_key LIKE '%raw:anime:%'"
+        )
+        rows = cur.fetchall()
+    finally:
+        mc.close()
+
+    candidates: dict = {}
+    for k, resp in rows:
+        try:
+            b = _json.loads(resp)
+        except Exception:
+            continue
+        if not isinstance(b, dict):
+            continue
+        imdb = b.get("imdb_id")
+        if not imdb or imdb in ("", "N/A"):
+            continue
+        if b.get("omdb_checked"):
+            continue   # already OMDb-checked once — idempotent, never re-query
+        if (b.get("writer") or "").strip() or (b.get("overview_extended") or "").strip():
+            continue   # OMDb-derived data already present from a prior run —
+            #            skip the re-fetch (the marker just wasn't stamped yet)
+        try:
+            cat = k.split("raw:", 1)[1].split(":", 1)[0]
+        except Exception:
+            continue
+        candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb, b.get("tmdb_id")))
+
+    cand_list = list(candidates.values())
+    if limit:
+        cand_list = cand_list[:limit]
+    total = len(cand_list)
+    logger.info("[omdb-backfill] %d candidate titles (imdb_id present, OMDb missing)", total)
+
+    def _tick(msg, **kw):
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            task_monitor.update(task, message=msg, **kw)
+        except Exception:
+            pass
+
+    _tick(f"OMDb backfill: {total} candidates", total=total)
+
+    state = {"updated": 0, "done": 0}
+    cache = MetadataCache()
+    try:
+        async def _one(title, cat, imdb, tmdb):
+            try:
+                if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb, cache=cache):
+                    state["updated"] += 1
+            except Exception as e:
+                logger.debug("[omdb-backfill] %r failed: %s", title, e)
+            state["done"] += 1
+            if state["done"] % 100 == 0:
+                _tick(f"OMDb backfill: {state['done']}/{total} "
+                      f"({state['updated']} enriched)", processed=state["done"])
+
+        # Fire in chunks (OMDb concurrency is capped inside fetch_omdb_data, but
+        # we don't want 15k coroutines alive at once).
+        CHUNK = 200
+        for i in range(0, total, CHUNK):
+            await asyncio.gather(*[_one(*c) for c in cand_list[i:i + CHUNK]])
+    finally:
+        cache.close()
+
+    logger.info("[omdb-backfill] done — %d/%d titles enriched", state["updated"], total)
+    return {"candidates": total, "enriched": state["updated"]}
+
+
 # ── Pass 99-fu3: Per-service concurrency caps for the parallel producer ─────
 #
 # Sized to stay well within each service's published rate limits even with

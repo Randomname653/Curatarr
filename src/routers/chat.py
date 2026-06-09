@@ -835,6 +835,37 @@ def _fmt_field(value, fallback: str = "(not in our database)") -> str:
     return str(value)
 
 
+def _verified_extras_block(title: str, domain: str) -> str:
+    """Extra VERIFIED fields the per-domain blocks above don't natively show —
+    creator/writer (the Level-2 'pedigree' signal), the LLM-derived themes &
+    keywords, and awards. Pulled from the cache with NO LLM (general chat's
+    cascade already ran a full enrich incl. OMDb, so the cache is warm). Returns
+    "" when nothing extra is available; video domains only."""
+    if domain not in ("movie", "show", "tv", "anime"):
+        return ""
+    try:
+        from src.services.media_enricher import build_verified_data
+        d = build_verified_data(title, "show" if domain == "tv" else domain)
+    except Exception:
+        return ""
+    if not d:
+        return ""
+    out = []
+
+    def _add(label, val):
+        if val in (None, "", []):
+            return
+        if isinstance(val, list):
+            val = ", ".join(str(v) for v in val if v)
+        out.append(f"- {label}: {val}")
+
+    _add("Creator/Writer", d.get("writer"))
+    _add("Themes", d.get("themes"))
+    _add("Keywords", d.get("keywords"))
+    _add("Notable", d.get("extra_context"))
+    return ("\n" + "\n".join(out)) if out else ""
+
+
 def _build_hidden_context(
     title: str, data: dict, domain: str = "movie",
     year_hint: int | None = None,
@@ -934,7 +965,7 @@ Item: '{title}' ({year}, anime){year_mismatch_note}
 - Source material: {source_mat}
 - Genres: {genres}
 - Rating: {rating}
-- Synopsis: {synopsis}
+- Synopsis: {synopsis}{_verified_extras_block(title, domain)}
 """
 
     # Default: movie/tv
@@ -961,7 +992,7 @@ Item: '{title}' ({year}){year_mismatch_note}
 - Runtime: {runtime}
 - Genres: {genres}
 - Rating: {rating}{series_block}
-- Synopsis: {synopsis}
+- Synopsis: {synopsis}{_verified_extras_block(title, domain)}
 """
 
 
@@ -1328,36 +1359,26 @@ def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
 _LEVEL_2_REEVAL_FRAMING = """
 
 [LEVEL 2 RE-EVALUATION REQUESTED BY USER]
-The user has flagged the deletion verdict above as potentially built only
-from surface-level metadata — genre tags, synopsis, premise. Their library
-is built on 'Trojan Horse' narratives that use these exact generic tropes
-as a performative mask to deconstruct the genre. They are asking you to
-bypass the synopsis and use what you actually know about this title from
-your training corpus — that IS your knowledge base for this scan.
+The user is asking you to double-check your OWN deletion verdict above against
+the VERIFIED DATA for this title shown in the context. This is a self-check, not
+a fresh pitch: re-read your initial reasoning and the verified facts side by
+side, then judge honestly whether the verdict still holds.
 
-DO NOT open with a meta-disclaimer about 'not having access to external
-sources' or 'only being able to analyze the data given'. If you can name
-the director, studio, or comparable works in your reply, you have enough
-to scan. If you genuinely lack signal on one specific axis, say so INSIDE
-that axis's analysis — never as a global preface. Stay in curator voice;
-no first-person 'I cannot' / 'I do not have access'.
+Work through it from the data provided:
+1. Creator / writer / director — does the named talent's body of work change
+   the read (a track record of subversion or deconstruction vs. straight-genre
+   output)?
+2. Themes, keywords and the full plot — do they reveal substance the short
+   pitch missed (genuine satire, political allegory, psychological or structural
+   depth), or do they confirm it is exactly what the surface suggested?
+3. Taste fit — given the full picture, does it fit the user's profile better or
+   worse than your first take implied?
 
-Check each axis:
-1. Creator Pedigree — name the writer / director / studio and assess
-   whether they're known for subversive, dark, or psychologically
-   deconstructive work, or for straight-genre output.
-2. Thematic Subversion — does the narrative play its tropes straight,
-   or weaponize them as satire, political allegory, or structural
-   critique of the genre it inhabits?
-3. Psychological Function — is the surface register (slapstick, action,
-   romance, heroism, cuteness) actually a coping mechanism for trauma, a
-   critique of systemic rot, or an identity-fragmentation device?
-
-Do not hallucinate. If there is no verifiable subversive layer, CONFIRM
-the original deletion and say plainly why the Trojan Horse is empty. But
-if there is a real layer of identity fragmentation, moral ambiguity, or
-structural deconstruction hiding beneath this generic facade, REVERSE the
-verdict and detail what the surface synopsis missed.
+Reason ONLY from the VERIFIED DATA above. Do NOT invent facts, awards, people,
+release years, or plot points that are not listed — if a field is absent, you
+simply don't know it. No bias toward confirming or reversing: follow the facts.
+If they support your original verdict, CONFIRM it and say briefly why. If they
+show you got it wrong, REVISE it and name exactly what you missed.
 """
 
 
@@ -1427,28 +1448,16 @@ async def _build_discuss_context_block(
             "The user is now responding to that suggestion.\n"
         )
 
-        # Try to attach enrichment metadata if it's already cached. Use
-        # ``skip_llm_summary`` so a cache-miss returns the raw API profile
-        # in 1-2 s instead of running the full 5-10 s LLM-polish pipeline,
-        # making the 2.5 s budget actually achievable on a warm cache.
-        enrichment_data = None
-        try:
-            enrichment_data = await asyncio.wait_for(
-                enrich_media_item(
-                    title=proposal.title,
-                    media_type=proposal.category or "movie",
-                    skip_llm_summary=True,
-                ),
-                timeout=2.5,
-            )
-        except (asyncio.TimeoutError, Exception):
-            enrichment_data = None
-
-        if enrichment_data:
-            block += _build_hidden_context(
-                proposal.title, enrichment_data,
-                domain=proposal.category or "movie",
-            )
+        # Attach the FULL verified dataset (creator/writer, extended plot,
+        # themes, keywords, awards) — assembled cache-only with NO LLM and no
+        # live fetch — so a Level-2 self-check and any discussion reason from
+        # FACTS instead of a synopsis stub or the model's own training memory.
+        # Falls back to the proposal-row snapshot when nothing is cached.
+        from src.services.media_enricher import ensure_verified_data, format_verified_block
+        verified_payload = await ensure_verified_data(proposal.title, proposal.category or "movie")
+        verified_block = format_verified_block(verified_payload)
+        if verified_block:
+            block += "\n" + verified_block + "\n"
         elif proposal.synopsis or proposal.genres:
             # Pass 21: fall back to the synopsis + genres stored on the
             # proposal row. They were captured at proposal-generation time
@@ -1499,7 +1508,7 @@ async def _build_discuss_context_block(
         # follow-up turn's cascade either re-fails for niche titles
         # (NO METADATA mode kicks in and overwrites the proposal context)
         # or hallucinates on top of empty results.
-        anchor_payload = enrichment_data
+        anchor_payload = verified_payload
         if not anchor_payload and (proposal.synopsis or proposal.genres):
             anchor_payload = {
                 "title":     proposal.title,
