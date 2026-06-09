@@ -1250,7 +1250,15 @@ async def _fetch_arr_candidates(category: str = None) -> list:
             candidates.extend(hit["items"])
         else:
             try:
-                async with httpx.AsyncClient(timeout=15) as client:
+                # Lidarr's /api/v1/artist computes per-artist statistics across
+                # the whole library; on a large collection (measured: 5,211
+                # artists, 62 MB, ~124 s) it blows far past the 15 s the other
+                # ARRs need. The old flat 15 s timed out EVERY cycle, so music
+                # deletion proposals never appeared. Generous read timeout, but
+                # a short connect timeout so a genuinely-down Lidarr still fails
+                # fast (→ stale-cache fallback below) instead of hanging.
+                _lidarr_timeout = httpx.Timeout(240.0, connect=10.0)
+                async with httpx.AsyncClient(timeout=_lidarr_timeout) as client:
                     r = await client.get(f"{settings.LIDARR_URL.rstrip('/')}/api/v1/artist",
                         headers={"X-Api-Key": settings.LIDARR_API_KEY})
                 if r.status_code == 200:
@@ -1283,7 +1291,11 @@ async def _fetch_arr_candidates(category: str = None) -> list:
                             size_zero += 1
                         items.append({
                             "title": a.get("artistName", ""), "year": None,
-                            "genres": ", ".join(a.get("genres", [])[:4]),
+                            # null-safe: Lidarr can send "genres": null (present
+                            # but null), where .get("genres", []) returns None
+                            # and None[:4] would crash the whole fetch — the same
+                            # trap as the statistics field above.
+                            "genres": ", ".join((a.get("genres") or [])[:4]),
                             "size_mb": size / (1024 * 1024),
                             "service": "lidarr", "arr_id": a.get("id"),
                             # Pass 64: see the radarr branch — ChromaDB lookup
@@ -1312,7 +1324,11 @@ async def _fetch_arr_candidates(category: str = None) -> list:
                         r.status_code,
                     )
             except Exception as e:
-                logger.warning("Lidarr fetch failed: %s", e)
+                # Include the exception class — httpx.ReadTimeout str()s to ""
+                # so the old message logged just "Lidarr fetch failed: " with
+                # nothing after it, hiding the real (timeout) cause.
+                logger.warning("Lidarr fetch failed: %s: %s",
+                               type(e).__name__, e or "(no message — likely timeout)")
                 if hit:
                     logger.warning("Lidarr: falling back to stale cache (%.0fs old)", age)
                     candidates.extend(hit["items"])
