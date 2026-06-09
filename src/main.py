@@ -27,6 +27,16 @@ logging.basicConfig(
 # ``apscheduler.executors.default`` gets bumped to WARNING — we still
 # see failures, just not the green-path pulse.
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+# Quiet the firehose: httpx logs one INFO line per HTTP call (Ollama / TMDB /
+# OMDb / embeddings — hundreds per minute during enrichment and the OMDb
+# backfill), and watchfiles logs every detected file change. Both buried the
+# real signal. WARNING keeps genuine errors visible. (watchfiles' reloader runs
+# in the parent process — the start.bat ``--reload-dir src`` is what stops it
+# watching the data/cache dir in the first place; this is the belt-and-braces.)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("watchfiles").setLevel(logging.WARNING)
+logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 logger = logging.getLogger("curatarr")
 
 # ── STARTUP / SHUTDOWN ────────────────────────────────────────────────────────

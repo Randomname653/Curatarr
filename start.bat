@@ -71,6 +71,12 @@ start "" /B cmd /c "timeout /t 3 /nobreak > nul && start http://localhost:8000"
 echo  Running at http://localhost:8000  ^|  Press Ctrl+C to stop
 echo.
 
-python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+REM --reload-dir src: only watch the source tree. By default --reload watches
+REM the whole project, including data/ where the app constantly writes the
+REM metadata cache + SQLite DBs — that spammed "watchfiles: N changes detected"
+REM and risked reload churn. Scoping to src/ keeps hot-reload for code while the
+REM data writes go unwatched. (The frontend is served statically — no app
+REM reload needed for index.html edits; just refresh the browser.)
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src
 
 pause
