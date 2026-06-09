@@ -87,11 +87,13 @@ _VOCAB_GUIDELINES: dict[str, str] = {
         "'journalistic rigour', 'expository pacing'."
     ),
     "music": (
-        "DOMAIN VOCABULARY — Music: Focus on rotation frequency, sonic texture, "
-        "production sheen, emotional resonance, and long-term replay value. "
-        "Critique whether it still earns shelf space or has gone stale in the rotation. "
-        "Use terms like 'timbral range', 'melodic economy', 'production cohesion', "
-        "'dynamic range', 'thematic through-line'."
+        "DOMAIN VOCABULARY — Music: You have the artist's GENRE, scene, themes and "
+        "mood tags — NOT the audio. Do NOT judge timbre, mix, production, dynamics, "
+        "compression or 'sheen': you cannot hear them, so any such claim is invented. "
+        "Critique instead from what the tags tell you — genre/scene fit against the "
+        "user's core sound, emotional register, cultural/era placement, catalogue "
+        "depth vs novelty, replay value, and whether the library already covers this "
+        "lane — and whether they still earn shelf space."
     ),
     "anime": (
         "DOMAIN VOCABULARY — Anime: Focus on worldbuilding coherence, animation fluidity "
@@ -934,13 +936,18 @@ async def generate_deletion_proposals(
     # Music needs its OWN axes — film angles like "character agency" or
     # "premise & worldbuilding" are nonsense for an artist and were leaking
     # plot/film framing into music pitches.
+    # Every axis must be answerable from the metadata we actually have (genre,
+    # scene, themes, mood tags). The old SONIC PALETTE / PRODUCTION axes asked
+    # the curator to judge timbre, mix and "production sheen" it has never
+    # heard, so it dutifully invented them — the root of the audio-hallucination
+    # pitches. These angles critique fit, not fabricated sound.
     _PITCH_AXES_MUSIC = [
-        ("SONIC PALETTE",      "timbre, texture, production sheen vs grit"),
-        ("RHYTHMIC DRIVE",     "tempo, groove, energy vs inertia and filler"),
-        ("GENRE FIT",          "how their genre/scene sits against the user's core sound"),
-        ("PRODUCTION",         "mix quality, dynamics, polish vs muddiness"),
-        ("EMOTIONAL REGISTER", "mood and intensity vs the user's preferred register"),
-        ("DEPTH VS NOVELTY",   "a one-note / novelty act vs a substantive catalogue"),
+        ("GENRE & SCENE FIT",  "how their genre/scene sits against the user's core sound"),
+        ("EMOTIONAL REGISTER", "the mood/intensity their music trades in vs the user's preferred register"),
+        ("CULTURAL PLACEMENT", "era/scene baggage — dated, niche or novelty for this listener"),
+        ("THEMATIC SUBSTANCE", "the themes their catalogue centres vs what the user values"),
+        ("CATALOGUE DEPTH",    "a one-note / novelty act vs a substantive body of work"),
+        ("LIBRARY REDUNDANCY", "whether the user's library already owns this lane, done better"),
     ]
 
     # Load relevant memories — scoped to this category so only domain-relevant
@@ -1109,7 +1116,7 @@ If this angle genuinely doesn't fit, pick a different one — but do NOT default
 CRITICAL RULES AND GUARDRAILS:
 1. MAX 2 SENTENCES. Concise, highly opinionated, ruthless.
 2. THIS IS A MUSIC ARTIST — never a film, show, book, episode, or a single "track". Call them an artist / act / band. There is NO plot and NO synopsis. NEVER invent a biography, a film or novel of the same name, an album, a song, a release year, or a rating you were not given. A same-named movie is NOT this artist — do not describe it.
-3. CRITIQUE THE SOUND: their genre, production, rhythm and timbre, and how it clashes with the user's music taste. Use the music vocabulary above.
+3. CRITIQUE FROM METADATA — YOU HAVE NOT HEARD THEM: you have their genre, scene, themes and mood tags, NOT the audio. Critique how their genre/scene and emotional register clash with the user's sound, using the music vocabulary above. Do NOT invent production, mix, compression, dynamics, timbre or "polish/sheen" qualities you cannot hear, and never cite a rating as proof of how they sound.
 4. SYNTHESIZE, DON'T QUOTE: use the USER MUSIC TASTE to understand what they value, then critique in YOUR OWN words — don't lift phrasings.
 {_blacklist_rule(5)}
 6. NO ANCHORING: do not name specific artists from the user's taste summary.
