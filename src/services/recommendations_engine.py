@@ -1055,9 +1055,22 @@ async def generate_deletion_proposals(
             # "Steppenwolf is a Dean Koontz film" hallucinations). Empty string
             # when nothing is cached → falls back to the thin item fields.
             from src.services.media_enricher import ensure_verified_data, format_verified_block
+            # Pass EVERY id the candidate carries, not just tmdb_id. The
+            # enrichment cache keys anime by anilist_id / tvdb_id and shows by
+            # tvdb_id — so a tmdb-only lookup silently MISSED all ~5.3k cached
+            # anime profiles, dumping the curator onto the thin synopsis stub →
+            # cold-read / plot-inversion (the Skate-Leading bug). tvdb_id alone
+            # reaches the cached anime/show data; plex_rating_key adds the
+            # prefetch overview.
             verified_block = format_verified_block(
-                await ensure_verified_data(item.get("title") or "", category,
-                                           tmdb_id=item.get("tmdb_id"))
+                await ensure_verified_data(
+                    item.get("title") or "", category,
+                    tmdb_id=item.get("tmdb_id"),
+                    tvdb_id=item.get("tvdb_id"),
+                    anilist_id=item.get("anilist_id"),
+                    anidb_id=item.get("anidb_id"),
+                    plex_rating_key=item.get("plex_rating_key"),
+                )
             )
             if verified_block:
                 item_details = verified_block
@@ -1129,7 +1142,8 @@ CRITICAL RULES AND GUARDRAILS:
 {_blacklist_rule(5)}
 6. NO ANCHORING: Do not explicitly name titles from the User Taste Summary.
 7. NO ECHOING: Never start with "Given your…" or "Since you like…". State why the item fails to earn its space.
-8. NO TECH TALK: Do not mention file sizes, gigabytes, or vector distances."""
+8. NO TECH TALK: Do not mention file sizes, gigabytes, or vector distances.
+9. PREMISE & FIT — NOT A REVIEW: You have this item's premise, themes and metadata, NOT a screening of it. Argue why its premise / genre / themes CLASH with the user's taste. Do NOT pass verdicts on execution you cannot know — no "static", "hollow", "melodramatic stalemate", "flat", "lands/doesn't land", no claims about pacing, acting or direction — unless that judgement is explicitly in the data above. For fact-based works (history, true events, documentary) a known outcome is NOT a flaw: never call it "predictable"."""
 
             pitch = await _call_llm(prompt, skip_priority=True)
             # Pass 51: empty-pitch guard. ``_call_llm`` returns None on an
