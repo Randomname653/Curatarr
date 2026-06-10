@@ -940,6 +940,53 @@ async def generate_deletion_proposals(
             })
 
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
+
+    # ── Learned considerations (the "three pillars" and beyond) ───────────────
+    # Let the user's standing "keep / value" preferences — kept franchises,
+    # partner favourites, cultural value, and ANY other keep-feedback they've
+    # given — pull a candidate DOWN the deletion list. Retrieved PER ITEM so a
+    # principle the user stated about ONE title generalises to new, never-
+    # discussed ones (the whole point: the curator should learn from feedback,
+    # not just remember it). SOFT and capped: a strong taste mismatch still
+    # surfaces; this never hard-protects. Only the top slice is scored (the only
+    # items anywhere near being pitched), to bound the per-item embedding calls.
+    from src.services.episodic_memory import retrieve_considerations
+    _CONSIDER_CAP = 45.0
+    _consider_slice = scored_candidates[:30]
+    for cand in _consider_slice:
+        it = cand["item"]
+        g = it.get("genres") or it.get("genre") or ""
+        if isinstance(g, list):
+            g = ", ".join(str(x) for x in g)
+        profile = " — ".join(p for p in (
+            str(it.get("title") or ""),
+            str(g),
+            (it.get("overview") or it.get("synopsis") or "")[:200],
+        ) if p.strip())
+        try:
+            cons = await retrieve_considerations(
+                user_id, profile, media_category=category, top_k=3)
+        except Exception as e:
+            logger.debug("[deletions] considerations lookup failed for %r: %s",
+                         it.get("title"), e)
+            cons = []
+        keep_pts = round(min(_CONSIDER_CAP, sum(c["strength"] for c in cons) * 30.0), 1)
+        cand["considerations"] = cons
+        cand["keep_value_pts"] = keep_pts
+        cand["score"] = cand["score"] - keep_pts
+    if any(c.get("keep_value_pts") for c in _consider_slice):
+        scored_candidates.sort(key=lambda x: x["score"], reverse=True)
+        _before = len(scored_candidates)
+        scored_candidates = [c for c in scored_candidates if c["score"] > 30]
+        _dropped = _before - len(scored_candidates)
+        _protected = [(c["item"].get("title"), c["keep_value_pts"])
+                      for c in _consider_slice if c.get("keep_value_pts")]
+        logger.info(
+            "[deletions] learned considerations nudged %d item(s); %d fell below "
+            "the bar (soft-kept). Protected: %s",
+            len(_protected), _dropped, _protected[:8],
+        )
+
     final_proposals = []
 
     # Pass 39: random axis seed per pitch. Single-line nudge in the prompt
@@ -1114,6 +1161,14 @@ async def generate_deletion_proposals(
                     f"- Synopsis: {overview_short}"
                 )
 
+            # Learned considerations stashed during scoring — the user's standing
+            # keep/value preferences that plausibly apply to THIS item. The curator
+            # must WEIGH them (acknowledge the tension), not blindly obey. Empty
+            # string for the vast majority of items.
+            from src.services.episodic_memory import format_considerations_for_pitch
+            considerations_block = format_considerations_for_pitch(
+                cand.get("considerations") or [])
+
             if category == "music":
                 # Music-specific pitch: artist framing, no synopsis, no film
                 # ratings, and hard anti-hallucination rules (a band sharing a
@@ -1131,6 +1186,7 @@ GENRES / STYLE: {genres_str or 'Unknown'}
 REASON FOR DELETION CONSIDERATION: their sound is a mismatch with the user's music taste.
 {f'USER MUSIC TASTE: {taste_blurb}' if taste_blurb else ''}
 {f'KNOWN EXCEPTIONS & MEMORIES: {memory_context}' if memory_context else ''}
+{considerations_block}
 
 {vocab_guideline}
 {_FORBIDDEN_CROSS_DOMAIN}
@@ -1159,6 +1215,7 @@ You are Curatarr, an uncompromising, elite media curator. Pitch the deletion of 
 REASON FOR DELETION CONSIDERATION: Mismatch with user taste profile.
 {f'USER TASTE SUMMARY: {taste_blurb}' if taste_blurb else ''}
 {f'KNOWN EXCEPTIONS & MEMORIES: {memory_context}' if memory_context else ''}
+{considerations_block}
 
 {vocab_guideline}
 {_FORBIDDEN_CROSS_DOMAIN}
