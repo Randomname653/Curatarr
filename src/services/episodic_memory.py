@@ -232,18 +232,19 @@ async def resolve_memory_conflicts(user_id: int, new_memory_id: int, new_content
 
         for old_mem in target_memories:
             prompt = f"""[MODE: MEMORY CONFLICT RESOLUTION]
-Analyze if the NEW memory contradicts the OLD memory regarding the title '{title}'.
+Analyze how the NEW memory relates to the OLD memory regarding the title '{title}'.
 
 OLD MEMORY: "{old_mem.content}"
 NEW MEMORY: "{new_content}"
 
 Evaluate the relationship:
 - "CONTRADICTION": They are exact opposites (e.g., hating vs. loving). One must be false.
-- "NUANCE": Two different aspects that can coexist, or a slight shift in opinion that doesn't completely invalidate the old one.
+- "REAFFIRMATION": The NEW repeats, restates, or strengthens the SAME point or sentiment as the OLD — the user is reinforcing a standing preference, not changing it.
+- "NUANCE": A DIFFERENT but compatible aspect, or a genuine partial shift in opinion that doesn't completely invalidate the old one.
 - "UNRELATED": They talk about completely different things.
 
 Output ONLY a JSON block:
-{{"status": "CONTRADICTION" | "NUANCE" | "UNRELATED", "reason": "brief explanation"}}"""
+{{"status": "CONTRADICTION" | "REAFFIRMATION" | "NUANCE" | "UNRELATED", "reason": "brief explanation"}}"""
 
             try:
                 async with httpx.AsyncClient(timeout=20) as client:
@@ -267,10 +268,35 @@ Output ONLY a JSON block:
                         logger.info(f"🧹 [MEMORY RESOLUTION] Contradiction found! Deleting old memory ID {old_mem.id}.")
                         db.delete(old_mem)
                         db.commit()
-                        
+
+                    elif status == "REAFFIRMATION":
+                        # The user is RESTATING a standing preference — reinforce
+                        # it, don't decay it. The old code had no such branch, so
+                        # restatements fell through to NUANCE and lost 0.4 each
+                        # time: the principles the user repeated MOST (their
+                        # "pillars") decayed to the 0.1 floor and vanished from
+                        # retrieval. Reinforce the old memory and drop the fresh
+                        # duplicate so the signal consolidates instead of
+                        # fragmenting into ever-weaker near-copies.
+                        old_mem.importance = min(1.0, (old_mem.importance or 0.5) + 0.2)
+                        old_mem.last_accessed = datetime.utcnow()
+                        old_mem.access_count = (old_mem.access_count or 0) + 1
+                        db.commit()
+                        logger.info(f"💪 [MEMORY RESOLUTION] Reaffirmation — boosting old memory ID {old_mem.id} to importance {old_mem.importance:.2f}.")
+                        new_mem = db.query(EpisodicMemory).filter(EpisodicMemory.id == new_memory_id).first()
+                        if new_mem:
+                            db.delete(new_mem)
+                            db.commit()
+                        return  # consolidated into the reinforced old memory
+
                     elif status == "NUANCE":
-                        old_mem.importance = max(0.1, old_mem.importance - 0.4)
-                        logger.info(f"⚖️ [MEMORY RESOLUTION] Nuance shift detected. Lowering importance of old memory ID {old_mem.id}.")
+                        # A genuine partial shift slightly ages the old memory, but
+                        # never below a still-retrievable floor. The old -0.4 to a
+                        # 0.1 floor was a sledgehammer that made memories invisible
+                        # (retrieval drops anything scoring < 0.1, and importance is
+                        # a direct multiplier).
+                        old_mem.importance = max(0.3, (old_mem.importance or 0.5) - 0.1)
+                        logger.info(f"⚖️ [MEMORY RESOLUTION] Nuance shift — easing old memory ID {old_mem.id} to importance {old_mem.importance:.2f}.")
                         db.commit()
 
             except Exception as e:
