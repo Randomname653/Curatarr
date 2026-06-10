@@ -307,6 +307,10 @@ def build_verified_data(
             # omdb_checked stops it (and the bulk backfill) re-querying.
             "imdb_id":        pick(raw.get("imdb_id"), enriched.get("imdb_id")),
             "omdb_checked":   bool(raw.get("omdb_checked")),
+            # Wikipedia-sourced cultural/historical significance (archive pillar);
+            # significance_checked stops the just-in-time top-up re-querying.
+            "significance":         raw.get("significance"),
+            "significance_checked": bool(raw.get("significance_checked")),
         }
     finally:
         if owns:
@@ -352,8 +356,98 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Notable", data.get("extra_context"))
     if data.get("rating"):
         add("Rating", f"{data['rating']}/10")
+    add("Significance", data.get("significance"), cap=600)
     add("Plot", data.get("plot"), cap=700)
     return "\n".join(lines)
+
+
+async def fetch_significance(
+    title: str, media_type: str = "movie", year: Optional[int] = None,
+) -> Optional[str]:
+    """Fetch a title's CULTURAL / HISTORICAL significance from Wikipedia and
+    distil it by SUMMARISING the fetched text — never from model memory.
+
+    This is the "archive pillar" knowledge the curator lacks: it reasons only
+    from thin synopsis metadata, so it dismissed Cat's Eye (a phantom-thief
+    landmark) as "mainstream nostalgia", and when asked directly it confidently
+    INVENTED a wrong creator. Grounding the significance in a real, fetched
+    source — exactly like the plot grounding — gives it the facts without the
+    hallucination. Returns a short significance string, or None when no page is
+    found / nothing notable is documented.
+    """
+    hint = {"anime": "anime", "movie": "film", "show": "television series",
+            "music": "band musician"}.get(media_type, "")
+    query = f"{title} {hint}".strip()
+    try:
+        # Wikipedia's API rejects generic / browser-spoofing User-Agents with a
+        # 403 — it requires a descriptive UA that includes a contact/URL.
+        async with httpx.AsyncClient(timeout=20, headers={
+            "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
+                          "personal media curator) python-httpx"
+        }) as client:
+            sr = await client.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": query,
+                "format": "json", "srlimit": 3,
+            })
+            hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
+            if not hits:
+                return None
+            page = hits[0]["title"]
+            ex = await client.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "prop": "extracts", "explaintext": 1,
+                "redirects": 1, "titles": page, "format": "json",
+            })
+            pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
+            extract = ""
+            for _pid, pdata in pages.items():
+                extract = pdata.get("extract") or ""
+                break
+            if not extract or len(extract) < 120:
+                return None
+            extract = extract[:7000]
+    except Exception as e:
+        logger.debug("[significance] Wikipedia fetch failed for %r: %s", title, e)
+        return None
+
+    prompt = f"""[MODE: SIGNIFICANCE EXTRACTION]
+Explain why the work "{title}" matters historically or culturally, using ONLY the encyclopedia text below.
+
+Significance EVIDENCE includes ANY of: being an early, first, or defining example of a genre or style; commercial success (best-selling, copies/tickets sold, high ratings); longevity, a long run, or multiple adaptations; a notable or influential creator/studio; awards or critical acclaim; documented influence on later works; landmark or pioneering status.
+
+Write 1-3 PLAIN SENTENCES of prose (NOT JSON, no bullet lists, no headings) stating that evidence — e.g. creator, year, what it pioneered, how it sold or was received, what it influenced — drawn ONLY from the text. Do NOT add anything that is not in the text, and do NOT recount the plot.
+
+If the text contains NO notability evidence whatsoever (it is purely a plot summary), output exactly: NONE
+
+TEXT:
+{extract}"""
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(f"{settings.effective_ollama}/api/chat", json={
+                "model": SUMMARIZER_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                **ollama_options(temperature=0.1, num_predict=400),
+            })
+        if r.status_code != 200:
+            return None
+        out = clean_llm_text(strip_think_tags(
+            r.json().get("message", {}).get("content", "") or ""
+        )).strip()
+        # The 8B summariser sometimes ignores "prose only" and appends a markdown
+        # "Key points" / bullet block or a leading bold header — keep just the
+        # leading prose paragraph(s).
+        import re as _re
+        out = _re.sub(r"^\s*\*\*[^\n]*\*\*\s*\n+", "", out)
+        out = _re.split(
+            r"\n\s*(?:[-*•]\s|\*\*|Key\s[Pp]oints|Key\s[Ee]vidence|Conclusion\b)",
+            out, maxsplit=1)[0]
+        out = out.replace("**", "").strip()
+    except Exception as e:
+        logger.debug("[significance] distillation failed for %r: %s", title, e)
+        return None
+    if not out or out.upper().startswith("NONE") or len(out) < 20:
+        return None
+    return out
 
 
 async def topup_omdb(
@@ -429,6 +523,58 @@ async def topup_omdb(
             cache.close()
 
 
+async def topup_significance(
+    title: str,
+    media_type: str,
+    *,
+    tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
+    plex_rating_key=None, year: Optional[int] = None,
+    cache=None,
+) -> bool:
+    """Fetch the Wikipedia-sourced cultural/historical significance for a title
+    (see ``fetch_significance``) and store it on its raw:* cache entry, idempotent
+    via a ``significance_checked`` marker. NO model memory. Returns True if a
+    significance string was actually added.
+
+    Mirrors ``topup_omdb``: the just-in-time companion to the cache-only
+    ``build_verified_data`` so the curator gets the archive-pillar facts right
+    before it reasons about a title — then cached, so at most one Wikipedia +
+    summariser round per item, ever."""
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+        t40 = (title or "")[:40]
+        if t40:
+            id_keys.append(t40)
+        targets = []
+        for k in id_keys:
+            hit = cache.get_cache(f"raw:{media_type}:{k}")
+            if not hit or not isinstance(hit.get("response"), dict):
+                continue
+            raw = hit["response"]
+            if raw.get("significance_checked"):
+                return False  # already done for this title
+            targets.append((f"raw:{media_type}:{k}", raw))
+        if not targets:
+            return False  # nothing cached to attach to (rare after the R6 enrich)
+        sig = await fetch_significance(title, media_type, year=year)
+        added = False
+        for key, raw in targets:
+            # Set even when no page is found, so we never re-query a title with
+            # no documented significance.
+            raw["significance_checked"] = True
+            if sig:
+                raw["significance"] = sig
+                added = True
+            cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+        return added
+    finally:
+        if owns:
+            cache.close()
+
+
 async def ensure_verified_data(
     title: str,
     media_type: str,
@@ -478,6 +624,27 @@ async def ensure_verified_data(
                 )
         except Exception as e:
             logger.debug("[verified] fast-enrich on cache-miss failed for %r: %s", title, e)
+
+    # Archive-pillar grounding: fetch the title's cultural/historical significance
+    # from Wikipedia (once, cached) so the curator can judge "is this a defining
+    # title?" from REAL facts instead of dismissing landmarks it knows nothing
+    # about (the Cat's Eye case). Time-boxed + best-effort + idempotent. Runs
+    # regardless of OMDb state — the OMDb early-return below must not skip it.
+    if data and not data.get("significance") and not data.get("significance_checked"):
+        try:
+            if await asyncio.wait_for(topup_significance(
+                title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                anilist_id=anilist_id, anidb_id=anidb_id,
+                plex_rating_key=plex_rating_key, year=data.get("year"), cache=cache,
+            ), timeout=14.0):
+                data = build_verified_data(
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] significance top-up failed for %r: %s", title, e)
+
     # Already OMDb-checked, already has the fields, or no imdb_id → done.
     if (not data or data.get("omdb_checked") or data.get("writer")
             or data.get("extra_context") or not data.get("imdb_id")):
