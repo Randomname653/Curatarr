@@ -382,6 +382,159 @@ async def retrieve_memories(
         ]
 
 
+# ── PER-ITEM "KEEP / VALUE" CONSIDERATIONS ────────────────────────────────────
+
+# A memory leans "keep / value" if it carries one of these and none of the
+# negatives. Kept deliberately broad so it generalises to ANY feedback the user
+# gives (not just the franchise/partner/cultural pillars), which is the whole
+# point — the curator should learn from all of it.
+_CONSIDERATION_POSITIVE = (
+    "keep", "retain", "value", "valu", "enjoy", "love", "favorite", "favourite",
+    "franchise", "collection", "saga", "partner", "together", "representation",
+    "lgbtq", "queer", "nostalg", "rewatch", "comfort", "protect", "cherish",
+    "classic", "masterpiece", "historical", "completion", "complete the",
+)
+_CONSIDERATION_NEGATIVE = (
+    "agreed to delete", "decided to delete", "deleted via", "wants to delete",
+    "sounds bad", "hate", "dislike", "boring", "not interested", "superficial",
+)
+
+# Generic words that carry no matching signal — stripped before the lexical
+# distinctive-token overlap test (which catches explicit shared concepts like
+# "LGBTQ"/"franchise"/"partner" that the anisotropic embedding misses).
+_CONSIDERATION_STOP = {
+    "the", "and", "for", "with", "user", "users", "their", "they", "them", "that",
+    "this", "its", "are", "was", "movie", "movies", "film", "films", "show", "shows",
+    "anime", "title", "titles", "series", "season", "episode", "prefers", "prefer",
+    "values", "value", "valued", "valuing", "wants", "want", "keep", "keeps", "likes",
+    "like", "liked", "enjoy", "enjoys", "enjoyed", "watch", "watches", "early",
+    "portions", "featured", "original", "considers", "comprehensive", "part", "still",
+}
+
+
+def _consideration_tokens(text: str) -> set:
+    import re
+    return {
+        w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(w) > 2 and w not in _CONSIDERATION_STOP
+    }
+
+
+async def retrieve_considerations(
+    user_id: int,
+    item_profile: str,
+    media_category: str = None,
+    top_k: int = 3,
+) -> list:
+    """Per-item retrieval of the user's standing 'keep / value' preferences that
+    plausibly apply to THIS candidate.
+
+    This is the bridge that lets feedback the user gave about ONE title generalise
+    to new, never-discussed items: the candidate's profile (title + genres +
+    overview) is embedded and matched against the user's memories, then filtered
+    to the keep/value-leaning ones (a kept franchise, a partner favourite,
+    cultural value) and away from "agreed to delete X". Returns up to ``top_k``
+    {content, importance, score, strength} dicts, strongest first. ``strength``
+    (≈[0,1]) folds in semantic match × importance × recency and drives a SOFT
+    del_score reduction at the call site — it never hard-protects.
+
+    Uses a RELATIVE standout test, not an absolute cosine threshold: the
+    embedding similarities here are anisotropic (everything clusters around the
+    same value), so a memory counts only when it matches THIS item clearly above
+    the baseline of all the user's memories. That keeps the franchise memory for
+    a franchise item while rejecting an unrelated high-importance memory that
+    merely shares the cluster — importance must not masquerade as relevance.
+    """
+    if not item_profile or not item_profile.strip():
+        return []
+    item_emb = await _embed(item_profile)
+    if not item_emb:
+        return []
+    with get_db_session() as db:
+        q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
+        if media_category:
+            q = q.filter(
+                (EpisodicMemory.media_category == media_category) |
+                (EpisodicMemory.media_category.is_(None))
+            )
+        # Pull plain fields out before the session closes — the ORM instances
+        # would otherwise raise DetachedInstanceError on attribute access below.
+        rows = [
+            (m.id, m.content, m.importance, m.embedding_json, m.media_category)
+            for m in q.all()
+        ]
+
+    sims = []
+    for mid, content, importance, emb_json, mcat in rows:
+        if not emb_json:
+            continue
+        try:
+            sem = _cosine_similarity(item_emb, json.loads(emb_json))
+        except Exception:
+            continue
+        sims.append((sem, mid, content, importance, mcat))
+    if len(sims) < 3:
+        return []
+
+    vals = [s[0] for s in sims]
+    mean = sum(vals) / len(vals)
+    std = math.sqrt(sum((s - mean) ** 2 for s in vals) / len(vals))
+    # An embedding match must sit clearly above the cluster to count.
+    threshold = mean + max(0.08, std)
+    item_tokens = _consideration_tokens(item_profile)
+
+    out = []
+    for sem, mid, content, importance, mcat in sims:
+        c = (content or "").lower()
+        if any(w in c for w in _CONSIDERATION_NEGATIVE):
+            continue
+        if not any(w in c for w in _CONSIDERATION_POSITIVE):
+            continue
+        overlap = item_tokens & _consideration_tokens(content)
+        embed_standout = sem >= threshold
+        # lexical path: a shared distinctive concept (LGBTQ, a franchise name,
+        # "partner") is a reliable signal the embedding misses — but require the
+        # topics to be at least cluster-average close so a coincidental shared
+        # word on unrelated items doesn't fire.
+        lexical_hit = len(overlap) >= 1 and sem >= mean
+        if not (embed_standout or lexical_hit):
+            continue
+        # relevance = the stronger of the two signals; importance only modulates.
+        margin_z = (sem - mean) / max(std, 0.04)
+        embed_rel = max(0.0, min(1.0, (margin_z - 1.0) / 2.0))
+        lex_rel = min(1.0, 0.35 + 0.2 * len(overlap)) if lexical_hit else 0.0
+        relevance = max(embed_rel, lex_rel)
+        strength = round(relevance * (0.6 + 0.4 * (importance or 0.5)), 3)
+        if strength <= 0.0:
+            continue
+        out.append({
+            "id": mid,
+            "content": content,
+            "importance": importance,
+            "sem": round(sem, 3),
+            "overlap": sorted(overlap),
+            "strength": strength,
+            "media_category": mcat,
+        })
+    out.sort(key=lambda x: x["strength"], reverse=True)
+    return out[:top_k]
+
+
+def format_considerations_for_pitch(considerations: list) -> str:
+    """Render per-item considerations as a block the curator must WEIGH (not
+    obey). Empty string when there are none."""
+    if not considerations:
+        return ""
+    lines = [
+        "WHAT YOU'VE TOLD ME THAT MAY APPLY HERE (weigh these honestly — they are "
+        "NOT a veto; if this specific item still doesn't earn its space despite "
+        "them, say so, but acknowledge the tension instead of ignoring it):"
+    ]
+    for c in considerations:
+        lines.append(f"- {c['content']}")
+    return "\n".join(lines)
+
+
 # ── FORMAT FOR CONTEXT ────────────────────────────────────────────────────────
 
 def format_memories_for_context(memories: list) -> str:
