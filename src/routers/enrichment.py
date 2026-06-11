@@ -703,6 +703,7 @@ async def _collect_arr_items(categories: list) -> list:
                         "tmdb_id": m.get("tmdbId"),
                         "tvdb_id": None,
                         "imdb_id": m.get("imdbId"),
+                        "year": m.get("year"),          # disambiguate same-name films
                         "arr_id": m["id"],
                         "service": "radarr",
                     })
@@ -741,6 +742,7 @@ async def _collect_arr_items(categories: list) -> list:
                         "tmdb_id": s.get("tmdbId"),
                         "tvdb_id": s.get("tvdbId"),
                         "imdb_id": None,
+                        "year": s.get("year"),          # disambiguate franchise entries
                         "arr_id": s["id"],
                         "service": "sonarr",
                         "sonarr_series_type": series_type,
@@ -765,6 +767,11 @@ async def _collect_arr_items(categories: list) -> list:
                         "tmdb_id": None,
                         "tvdb_id": None,
                         "imdb_id": None,
+                        # Lidarr's foreignArtistId IS the MusicBrainz artist id —
+                        # the only reliable disambiguator for name-colliding bands
+                        # (five different "Solstice"s). Name-only lookup picked the
+                        # wrong artist (doom metal vs the hardstyle act).
+                        "mbid": a.get("foreignArtistId"),
                         "arr_id": a["id"],
                         "service": "lidarr",
                     })
@@ -1417,6 +1424,8 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     imdb_id=pitem.get("imdb_id"),
                     plex_rating_key=pitem["plex_rating_key"],
                     sonarr_series_type=pitem.get("sonarr_series_type"),
+                    year=pitem.get("year"),     # disambiguate same-name title search
+                    mbid=pitem.get("mbid"),     # MusicBrainz id for name-colliding artists
                     fast_only=fast_only,   # #38b
                 )
                 if raw is not None and raw.get("_already_enriched"):
