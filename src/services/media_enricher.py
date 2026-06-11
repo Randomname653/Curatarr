@@ -979,7 +979,7 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
             return await fetch_lastfm_artist(title)
         if source == "mb":
             from src.services.music_metadata import fetch_musicbrainz_artist
-            return await fetch_musicbrainz_artist(title)
+            return await fetch_musicbrainz_artist(title, mbid=ctx.get("mbid"))
         if source == "omdb":
             imdb = ctx.get("imdb_id")
             if not imdb:
@@ -2486,6 +2486,7 @@ async def fetch_and_prepare_raw(
         "tvdb_id":     tvdb_id,
         "imdb_id":     imdb_id,
         "mal_id":      mal_id,
+        "mbid":        mbid,
         "year":        year,
     }
     expected = _expected_sources_for(media_type, is_anime, ctx)
@@ -2510,6 +2511,20 @@ async def fetch_and_prepare_raw(
     if initial_raw is None:
         # No source had enough data for a polish — let the caller write
         # a not_found sentinel (same as the pre-#39 ``if not raw: return None``).
+        return None
+    # Entity-resolution safety net (Fix A, bulk path): the arr gave a year but the
+    # resolved entry's year is wildly off (>5y) → a different same-named work.
+    # Enrich nothing rather than feed the curator confidently-wrong metadata.
+    try:
+        _ry, _ty = int(initial_raw.get("year") or 0), int(year or 0)
+    except (TypeError, ValueError):
+        _ry = _ty = 0
+    if _ty and _ry and abs(_ry - _ty) > 5:
+        logger.warning(
+            "[enricher] resolution YEAR MISMATCH (bulk) for %r: arr=%s resolved=%s "
+            "(%r) — rejecting wrong-entity match",
+            title, _ty, _ry, initial_raw.get("title"),
+        )
         return None
 
     # Stamp skipped-source statuses into both the snapshot and the
@@ -2678,6 +2693,7 @@ async def enrich_media_item(
     tvdb_id: Optional[int] = None,
     imdb_id: Optional[str] = None,
     mal_id: Optional[int] = None,
+    mbid: Optional[str] = None,                 # MusicBrainz artist id (Lidarr) — disambiguates name collisions
     plex_rating_key: Optional[str] = None,
     sonarr_series_type: Optional[str] = None,  # "anime"/"standard"/"daily" from Sonarr
     year: Optional[int] = None,                 # disambiguation hint for title search
@@ -2920,6 +2936,25 @@ async def enrich_media_item(
             raw = await _tmdb_search_and_fetch(title, endpoint, year=year)
 
     if not raw:
+        cache.close()
+        return None
+
+    # Entity-resolution safety net (Fix A): the arr gave a year, but the resolved
+    # entry's year is wildly off (>5y) → we matched a DIFFERENT same-named work
+    # (Lupin III → the 2012 spin-off; or a stale/wrong arr tmdb_id pointing at the
+    # wrong film). Enrich NOTHING rather than feed the curator confidently-wrong
+    # metadata — it falls back to the arr synopsis. Small gaps (release vs
+    # first-air year) are tolerated.
+    try:
+        _ry, _ty = int(raw.get("year") or 0), int(year or 0)
+    except (TypeError, ValueError):
+        _ry = _ty = 0
+    if _ty and _ry and abs(_ry - _ty) > 5:
+        logger.warning(
+            "[enricher] resolution YEAR MISMATCH for %r: arr=%s resolved=%s (%r) "
+            "— rejecting wrong-entity match",
+            title, _ty, _ry, raw.get("title"),
+        )
         cache.close()
         return None
 
