@@ -432,13 +432,17 @@ async def fetch_significance(
         return None
 
     prompt = f"""[MODE: SIGNIFICANCE EXTRACTION]
-Explain why the work "{title}" matters historically or culturally, using ONLY the encyclopedia text below.
+State the documented historical / cultural significance of "{title}" using ONLY the encyclopedia text below.
 
-Significance EVIDENCE includes ANY of: being an early, first, or defining example of a genre or style; commercial success (best-selling, copies/tickets sold, high ratings); longevity, a long run, or multiple adaptations; a notable or influential creator/studio; awards or critical acclaim; documented influence on later works; landmark or pioneering status.
+Significance means the text EXPLICITLY documents at least one of: awards or nominations; being a genuine first / landmark / genre-defining work; documented influence on later works; a major commercial milestone (best-selling, record-breaking, a very long run, many adaptations); or canonical / "classic" status.
 
-Write 1-3 PLAIN SENTENCES of prose (NOT JSON, no bullet lists, no headings) stating that evidence — e.g. creator, year, what it pioneered, how it sold or was received, what it influenced — drawn ONLY from the text. Do NOT add anything that is not in the text, and do NOT recount the plot.
+These are NOT significance — if the text has only these, there is none: cast or crew names; filming location, production company or funding body; premiere date or platform; a creator's debut; being called "high-profile"; or the plot.
 
-If the text contains NO notability evidence whatsoever (it is purely a plot summary), output exactly: NONE
+STRICT RULES:
+- Use ONLY facts in the text. Do NOT add evaluative words like "pioneering", "landmark", "acclaimed", "influential", "seminal" unless the text itself uses that word about THIS work.
+- Do NOT editorialise or extrapolate (no "part of a surge", "signifies investment", "marks a shift", etc.).
+- 1-3 plain sentences, prose only, no lists or headings.
+- If the text documents no real significance (only production facts, cast, or plot), output exactly: NONE
 
 TEXT:
 {extract}"""
@@ -459,11 +463,17 @@ TEXT:
         # "Key points" / bullet block or a leading bold header — keep just the
         # leading prose paragraph(s).
         import re as _re
-        out = _re.sub(r"^\s*\*\*[^\n]*\*\*\s*\n+", "", out)
-        out = _re.split(
-            r"\n\s*(?:[-*•]\s|\*\*|Key\s[Pp]oints|Key\s[Ee]vidence|Conclusion\b)",
-            out, maxsplit=1)[0]
-        out = out.replace("**", "").strip()
+        # The 8B summariser ignores "prose only" and emits headers, a meta
+        # preamble, numbered/bulleted lists, or a trailing echoed "NONE". Clean
+        # all of those down to the leading prose.
+        out = _re.sub(r"^\s*\*\*[^\n]*\*\*\s*\n+", "", out)                       # leading **header**
+        out = _re.sub(r"^\s*(?:the text|this (?:text|article|entry)|here(?:'s| is))"
+                      r"[^\n:]{0,90}:\s*\n*", "", out, flags=_re.I)               # meta preamble
+        out = _re.split(r"\n\s*(?:\*\*|Key\s[Pp]oints|Key\s[Ee]vidence|Conclusion\b)",
+                        out, maxsplit=1)[0]                                       # drop trailing block
+        out = _re.sub(r"(?:^|\n)\s*(?:\d+[.)]|[-*•])\s*", " ", out)              # flatten list items (incl. leading)
+        out = _re.sub(r"\s*\bNONE\b.*$", "", out, flags=_re.I | _re.S)           # trailing echoed NONE
+        out = _re.sub(r"\s{2,}", " ", out.replace("**", "")).strip()
     except Exception as e:
         logger.debug("[significance] distillation failed for %r: %s", title, e)
         return None
