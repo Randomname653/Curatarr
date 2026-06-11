@@ -768,24 +768,33 @@ async def library_reenrich(
     client = _make_client(req.service, url, api_key)
     try:
         async with client:
+            re_year = re_tvdb = re_mbid = None
             if req.service == "sonarr":
                 series = await client.get_series_details(req.arr_id)
                 tmdb_id = series.get("tmdbId")
                 title = series.get("title", "")
-                media_type = "show"
-                ext_id = tmdb_id
+                # Was hardcoded "show" — anime then resolved via the wrong
+                # (TMDB) path. Use the shared classifier so anime re-enriches
+                # through AniList like the bulk run does.
+                from src.services.arr_client import classify_sonarr_category
+                media_type = classify_sonarr_category(series)
+                re_year = series.get("year")
+                re_tvdb = series.get("tvdbId")
+                ext_id = tmdb_id or re_tvdb     # anime often has no tmdbId
             elif req.service == "radarr":
                 movie = await client.get_movie(req.arr_id)
                 tmdb_id = movie.get("tmdbId")
                 title = movie.get("title", "")
                 media_type = "movie"
                 ext_id = tmdb_id
+                re_year = movie.get("year")
             else:
                 artist = await client.get_artist_details(req.arr_id)
                 title = artist.get("artistName", "")
-                ext_id = artist.get("foreignArtistId")
+                ext_id = artist.get("foreignArtistId")   # the MusicBrainz id
                 media_type = "music"
                 tmdb_id = None
+                re_mbid = ext_id
     except Exception as e:
         raise HTTPException(502, f"{req.service} unreachable: {e}")
 
@@ -799,12 +808,19 @@ async def library_reenrich(
     try:
         if req.mode in ("metadata", "both"):
             cache_key = f"enriched:{media_type}:{ext_id}"
+            doc_id = f"{req.service}:{req.arr_id}"
             try:
                 # Direct DELETE — no helper for this; safe even if row absent.
                 # Pass 16h: use _CACHE_VERSION instead of hardcoded "v2:" so a
                 # version bump doesn't silently break re-enrich invalidation.
                 cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?",
                                    (f"{_CACHE_VERSION}:{cache_key}",))
+                # Also bust EVERY doc-id-keyed entry (enriched / raw /
+                # raw_prefetch under e.g. "sonarr:3568") — those are what the
+                # deletion discussion + pitch actually read, and a wrong-entity
+                # resolution (Lupin III → Fujiko Mine) poisoned exactly those.
+                cache.conn.execute("DELETE FROM api_cache WHERE cache_key LIKE ?",
+                                   (f"%:{doc_id}",))
 
                 # Pass 46 (Bug 4 / B7): bust the per-item embedding cache too.
                 # The taste-vector recompute decides whether to re-embed by
@@ -853,12 +869,21 @@ async def library_reenrich(
 
     async def _run():
         try:
-            kwargs = {"title": title, "media_type": media_type}
+            kwargs = {
+                "title": title,
+                "media_type": media_type,
+                "year": re_year,     # disambiguates same-name title search
+                # Write the corrected profile under the doc-id the discussion +
+                # pitch read from — not only the resolved-id key.
+                "plex_rating_key": f"{req.service}:{req.arr_id}",
+            }
             if req.service == "sonarr":
-                kwargs["tmdb_id"] = ext_id
+                kwargs["tmdb_id"] = tmdb_id
+                kwargs["tvdb_id"] = re_tvdb
             elif req.service == "radarr":
-                kwargs["tmdb_id"] = ext_id
-            # Lidarr: no native MBID arg yet — pipeline will look up by name
+                kwargs["tmdb_id"] = tmdb_id
+            else:  # lidarr — pin MusicBrainz to the exact artist
+                kwargs["mbid"] = re_mbid
             #
             # Pass 60: wrap in priority_enrichment() so this user-triggered
             # re-enrich jumps ahead of an already-running bulk enrichment.
