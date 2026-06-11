@@ -790,56 +790,10 @@ async def _enrich_with_cascade(
     return None, None
 
 
-def _watched_lookup(user_id: int, titles: list) -> dict:
-    """Map each title → the user's Plex watch status from watch_history:
-    {count, completed, last}. Absent from the result = never played. One query.
-
-    The curator knows what's in the library (RAG) but not whether the user has
-    actually SEEN it — yet that's exactly the signal that decides "delete unseen
-    clutter" vs "they watched this 3× — keep it". This surfaces it."""
-    titles = [t for t in titles if t]
-    if not user_id or not titles:
-        return {}
-    tset = set(titles)
-    from src.database.connection import get_db_session
-    from src.database.models import WatchHistoryEntry
-    from sqlalchemy import or_
-    agg: dict = {}
-    try:
-        with get_db_session() as db:
-            rows = db.query(
-                WatchHistoryEntry.title, WatchHistoryEntry.series_title,
-                WatchHistoryEntry.completed, WatchHistoryEntry.viewed_at,
-            ).filter(
-                WatchHistoryEntry.user_id == user_id,
-                or_(WatchHistoryEntry.title.in_(titles),
-                    WatchHistoryEntry.series_title.in_(titles)),
-            ).all()
-    except Exception as e:
-        logger.debug("[watch] lookup failed: %s", e)
-        return {}
-    for r in rows:
-        key = r.title if r.title in tset else (
-            r.series_title if r.series_title in tset else None)
-        if not key:
-            continue
-        a = agg.setdefault(key, {"count": 0, "completed": False, "last": None})
-        a["count"] += 1
-        a["completed"] = a["completed"] or bool(r.completed)
-        if r.viewed_at and (a["last"] is None or r.viewed_at > a["last"]):
-            a["last"] = r.viewed_at
-    return agg
-
-
-def _watch_tag(status: dict) -> str:
-    """One-line watch tag for a status dict (or None → never watched)."""
-    if not status:
-        return "NOT watched"
-    n = status["count"]
-    base = f"watched{f' {n}×' if n > 1 else ''}" if status["completed"] else "started, not finished"
-    if status.get("last"):
-        base += f", last {status['last'].strftime('%b %Y')}"
-    return base
+from src.services.watch_status import (
+    watched_lookup as _watched_lookup,
+    watch_tag as _watch_tag,
+)
 
 
 async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,

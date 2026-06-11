@@ -616,6 +616,34 @@ def _cosine_to_mismatch(cosine, lo: float, hi: float) -> float:
     return max(0.0, min(1.0, (hi - cosine) / (hi - lo)))
 
 
+def _watch_pitch_line(status: dict) -> str:
+    """One framed line on the candidate's own Plex watch status for the pitch.
+
+    Deliberately NEUTRAL — watch status cuts BOTH ways and must not become an
+    automatic verdict (that's why it nudges no score, only the reasoning):
+      • unwatched   → untested clutter OR a deliberate to-watch pick
+      • watched 1×  → got the value and done (deletable) OR a one-off they loved
+      • watched n×  → re-watches = real attachment (leans keep)
+      • abandoned   → a bounce (supports deletion) OR merely on-hold
+    The curator weighs which; the line just hands it the fact it was missing."""
+    if not status:
+        return ("WATCH STATUS: the user has NOT watched this yet — weigh whether it's "
+                "untested clutter or a deliberate to-watch pick; 'unwatched' alone "
+                "proves neither, so don't treat it as automatic justification.")
+    n = status.get("count", 0)
+    if status.get("completed"):
+        when = f", last seen {status['last'].strftime('%b %Y')}" if status.get("last") else ""
+        if n > 1:
+            return (f"WATCH STATUS: the user has watched this {n}×{when} — repeat views "
+                    f"signal real attachment; a deletion pitch needs a genuine case, not "
+                    f"just taste-distance.")
+        return (f"WATCH STATUS: the user watched this once{when} — they may have got the "
+                f"value and be done (fine to delete), or it may be a one-off they loved. "
+                f"Weigh which before pitching.")
+    return ("WATCH STATUS: the user STARTED but never finished this — possibly a bounce "
+            "(supports deletion), possibly just on-hold. Weigh, don't assume.")
+
+
 async def generate_deletion_proposals(
     user_id: int,
     arr_items: list,
@@ -1048,6 +1076,14 @@ async def generate_deletion_proposals(
     # stays loaded throughout the batch and the summarizer is only evicted once.
     from src.services.llm_priority import curator_start, curator_done
     top_pitch_set = scored_candidates[:10]
+    # Watch status for exactly the items we're about to pitch — ONE query.
+    # The pitch otherwise knows the user OWNS the item but not whether they've
+    # SEEN it, the signal that separates "untested clutter" from "watched and
+    # done" / "re-watched and loved". Injected as neutral context (no score
+    # nudge — see _watch_pitch_line), so the curator weighs it like a memory.
+    from src.services.watch_status import watched_lookup as _watched_lookup
+    watch_status_map = _watched_lookup(
+        user_id, [c["item"].get("title") for c in top_pitch_set])
     _msg(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
         f"generating LLM pitches for top {len(top_pitch_set)}…"
@@ -1186,6 +1222,9 @@ async def generate_deletion_proposals(
             considerations_block = format_considerations_for_pitch(
                 cand.get("considerations") or [])
 
+            # Candidate's own watch status — neutral context the curator weighs.
+            watch_block = _watch_pitch_line(watch_status_map.get(item.get("title")))
+
             if category == "music":
                 # Music-specific pitch: artist framing, no synopsis, no film
                 # ratings, and hard anti-hallucination rules (a band sharing a
@@ -1233,6 +1272,7 @@ REASON FOR DELETION CONSIDERATION: Mismatch with user taste profile.
 {f'USER TASTE SUMMARY: {taste_blurb}' if taste_blurb else ''}
 {f'KNOWN EXCEPTIONS & MEMORIES: {memory_context}' if memory_context else ''}
 {considerations_block}
+{watch_block}
 
 {vocab_guideline}
 {_FORBIDDEN_CROSS_DOMAIN}
