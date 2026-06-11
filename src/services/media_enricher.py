@@ -266,11 +266,33 @@ def build_verified_data(
         if t40:
             id_keys.append(t40)
         enriched = _vd_first(cache, [f"enriched:{media_type}:{k}" for k in id_keys]) or {}
+        # The enriched profile embeds the resolved external ids it was built from.
+        # The OMDb-only fields (writer / awards / extended plot) and the Wikipedia
+        # significance live on the ID-keyed raw entry (e.g. raw:anime:239214) — a
+        # doc-id-only lookup (raw:anime:sonarr:2908) misses them, so a deletion-
+        # pitch DISCUSSION got a thin profile with no significance/writer even
+        # though the data existed. Fold the embedded ids into the raw lookup.
+        raw_id_keys = list(id_keys)
+        for _f in ("anilist_id", "tmdb_id", "tvdb_id", "anidb_id", "_anilist_id", "_tmdb_id"):
+            _v = enriched.get(_f)
+            if _v and _v not in raw_id_keys:
+                raw_id_keys.append(_v)
         raw_keys = []
         if plex_rating_key:
             raw_keys.append(f"raw_prefetch:{plex_rating_key}")
-        raw_keys += [f"raw:{media_type}:{k}" for k in id_keys]
-        raw = _vd_first(cache, raw_keys) or {}
+        raw_keys += [f"raw:{media_type}:{k}" for k in raw_id_keys]
+        # Field-level MERGE, not first-hit: the data is fragmented across keys, so
+        # take each field from the highest-priority entry that actually has it
+        # (doc-id / prefetch win for overview etc.; the id-keyed raw fills in
+        # significance + OMDb).
+        raw = {}
+        for _k in raw_keys:
+            _hit = cache.get_cache(_k)
+            _resp = _hit.get("response") if _hit else None
+            if isinstance(_resp, dict):
+                for _fk, _fv in _resp.items():
+                    if _fv not in (None, "", [], 0) and raw.get(_fk) in (None, "", [], 0):
+                        raw[_fk] = _fv
         if not enriched and not raw:
             return None
 
