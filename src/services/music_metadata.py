@@ -103,8 +103,13 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
 
 # ── MUSICBRAINZ ───────────────────────────────────────────────────────────────
 
-async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
+async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None) -> Optional[dict]:
     """Search MusicBrainz for artist info: genres, tags, disambiguation.
+
+    When ``mbid`` is given (Lidarr's foreignArtistId) we fetch THAT artist
+    directly and skip the name search — the only reliable way to disambiguate the
+    many name-colliding artists (the five "Solstice"s: 90s doom metal vs the
+    euphoric-hardstyle act). The name search takes the first hit and got it wrong.
 
     Pass 80: negative outcomes are cached for 7 days. Before, an artist MB
     can't find (e.g. names with characters its Lucene parser dislikes — the
@@ -117,7 +122,7 @@ async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
     the query escaping.
     """
     cache = MetadataCache()
-    cache_key = f"mb:artist:{artist_name[:60].lower()}"
+    cache_key = f"mb:artist:{mbid}" if mbid else f"mb:artist:{artist_name[:60].lower()}"
     cached = cache.get_cache(cache_key)
     if cached:
         cache.close()
@@ -125,23 +130,23 @@ async def fetch_musicbrainz_artist(artist_name: str) -> Optional[dict]:
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            # Search — rate limited
-            r = await _mb_request(
-                client, f"{MB_BASE}/artist",
-                {"query": f'artist:"{artist_name}"', "limit": 1, "fmt": "json"},
-            )
-            if r.status_code != 200 or not r.json().get("artists"):
-                cache.set_cache(cache_key, None, days=7)
-                cache.close()
-                return None
-
-            artist = r.json()["artists"][0]
-            mbid = artist.get("id")
-
             if not mbid:
-                cache.set_cache(cache_key, None, days=7)
-                cache.close()
-                return None
+                # No id from the arr — fall back to a name search (ambiguous:
+                # takes the first hit, which is the name-collision risk).
+                r = await _mb_request(
+                    client, f"{MB_BASE}/artist",
+                    {"query": f'artist:"{artist_name}"', "limit": 1, "fmt": "json"},
+                )
+                if r.status_code != 200 or not r.json().get("artists"):
+                    cache.set_cache(cache_key, None, days=7)
+                    cache.close()
+                    return None
+
+                mbid = r.json()["artists"][0].get("id")
+                if not mbid:
+                    cache.set_cache(cache_key, None, days=7)
+                    cache.close()
+                    return None
 
             # Fetch full artist details with tags — rate limited
             r2 = await _mb_request(
@@ -397,10 +402,14 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
 
 # ── COMBINED ENRICHMENT ───────────────────────────────────────────────────────
 
-async def enrich_artist(artist_name: str, skip_mb: bool = False) -> Optional[dict]:
+async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[str] = None) -> Optional[dict]:
     """
     Fetch and merge artist metadata from MusicBrainz + Last.fm.
     Returns a unified profile dict.
+
+    ``mbid`` (Lidarr's foreignArtistId) pins MusicBrainz to the EXACT artist
+    instead of a name search — without it, name-colliding artists resolve to the
+    wrong act (the "Solstice" doom-metal-vs-hardstyle bug).
 
     Phase 2 #38b: ``skip_mb=True`` runs Last.fm only — bypasses the
     MusicBrainz ``Semaphore(1)`` + 1 req/sec floor, which is the
@@ -414,7 +423,7 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False) -> Optional[dic
     otherwise read the cached fast profile and short-circuit before
     MB ever ran.
     """
-    cache_key = f"artist_profile:{artist_name[:60].lower()}"
+    cache_key = f"artist_profile:{mbid}" if mbid else f"artist_profile:{artist_name[:60].lower()}"
 
     if not skip_mb:
         # Full mode: regular MB+Last.fm read-through cache.
@@ -425,7 +434,7 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False) -> Optional[dic
             return cached["response"]
         cache.close()
         mb, lfm = await asyncio.gather(
-            fetch_musicbrainz_artist(artist_name),
+            fetch_musicbrainz_artist(artist_name, mbid=mbid),
             fetch_lastfm_artist(artist_name),
             return_exceptions=True,
         )

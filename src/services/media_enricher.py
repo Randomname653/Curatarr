@@ -1006,11 +1006,11 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
             if anilist_id:
                 return await fetch_anilist_full(anilist_id)
             if anidb_id:
-                result = await search_anilist_by_title(title)
+                result = await search_anilist_by_title(title, year=ctx.get("year"))
                 if result:
                     result["anidb_id"] = anidb_id
                 return result
-            return await search_anilist_by_title(title)
+            return await search_anilist_by_title(title, year=ctx.get("year"))
         if source == "jikan":
             mal_id = ctx.get("mal_id")
             return await fetch_jikan_data(
@@ -2230,6 +2230,7 @@ async def fetch_and_prepare_raw(
     tvdb_id: Optional[int] = None,
     imdb_id: Optional[str] = None,
     mal_id: Optional[int] = None,
+    mbid: Optional[str] = None,    # MusicBrainz artist id (Lidarr) — disambiguates name collisions
     plex_rating_key: Optional[str] = None,
     sonarr_series_type: Optional[str] = None,
     year: Optional[int] = None,    # disambiguation hint for title search
@@ -2780,7 +2781,7 @@ async def enrich_media_item(
     # ── MUSIC: fetch via MusicBrainz + Last.fm, then LLM-summarize ──────────
     if media_type == "music":
         from src.services.music_metadata import enrich_artist
-        artist_raw = await enrich_artist(title)
+        artist_raw = await enrich_artist(title, mbid=mbid)
         if not artist_raw:
             cache.close()
             return None
@@ -2868,7 +2869,7 @@ async def enrich_media_item(
         raw = await fetch_anilist_full(anilist_id)
     elif anidb_id and is_anime:
         # AniDB ID available — search AniList by title (no direct AniDB→AniList API)
-        raw = await search_anilist_by_title(title)
+        raw = await search_anilist_by_title(title, year=year)
         if raw:
             raw["anidb_id"] = anidb_id
             # Store discovered AniList ID back to mapping for future lookups
@@ -2888,14 +2889,14 @@ async def enrich_media_item(
         raw = await fetch_tmdb_full(tmdb_id, "tv")
         # Check if it's actually anime (Sonarr may mis-classify)
         if raw and "Animation" in raw.get("genres", []) and _looks_like_anime(title):
-            al = await search_anilist_by_title(title)
+            al = await search_anilist_by_title(title, year=year)
             if al:
                 al["cast"] = raw.get("cast", [])
                 al["similar_titles"] = al.get("similar_titles") or raw.get("similar_titles", [])
                 raw = al
     elif is_anime:
         # Anime without direct ID — AniList title search
-        raw = await search_anilist_by_title(title)
+        raw = await search_anilist_by_title(title, year=year)
         if not raw and tmdb_id:
             raw = await fetch_tmdb_full(tmdb_id, "tv")
         if not raw:
@@ -2914,7 +2915,7 @@ async def enrich_media_item(
         # Last resort: title search
         endpoint = "movie" if media_type in ("movie",) else "tv"
         if is_anime:
-            raw = await search_anilist_by_title(title)
+            raw = await search_anilist_by_title(title, year=year)
         if not raw:
             raw = await _tmdb_search_and_fetch(title, endpoint, year=year)
 
@@ -3229,8 +3230,10 @@ query ($search: String) {
 """
 
 
-async def search_anilist_by_title(title: str) -> Optional[dict]:
-    """Search AniList by title, iterate up to 5 candidates, return first close match or None."""
+async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Optional[dict]:
+    """Search AniList by title, iterate up to 5 candidates, return first close
+    match (or, when a ``year`` hint is given, the closest-year close match) or
+    None."""
     try:
         await _anilist_wait()
         async with httpx.AsyncClient(timeout=15) as client:
@@ -3256,8 +3259,11 @@ async def search_anilist_by_title(title: str) -> Optional[dict]:
     # a single Media result means we don't blindly accept the top-ranked hit
     # when it doesn't actually match (e.g. 'Futurama' → random mouse anime,
     # or 'Golden Boy' → 'Golden Kamuy').
-    media = None
-    found_title = title
+    # Collect ALL close-enough candidates, then — when we have a year hint —
+    # prefer the one whose start year matches. Without this, the FIRST close
+    # title won: "Lupin III" matched "…The Woman Called Fujiko Mine" (2012)
+    # instead of the franchise entry the arr actually holds. Year breaks the tie.
+    close = []
     for candidate in media_list:
         # Pass 56: ``or {}`` — a present-but-null "title" would otherwise
         # slip past the .get default and crash on ct.get(...) below.
@@ -3268,9 +3274,22 @@ async def search_anilist_by_title(title: str) -> Optional[dict]:
             ct.get("native") or "",
         ] + (candidate.get("synonyms") or [])
         if _titles_close_enough(title, candidate_titles):
-            media = candidate
-            found_title = ct.get("english") or ct.get("romaji") or title
-            break
+            close.append(candidate)
+
+    media = None
+    if close:
+        if year:
+            best = min(close, key=lambda c: abs(
+                ((c.get("startDate") or {}).get("year") or 9999) - year))
+            by = (best.get("startDate") or {}).get("year")
+            if by and abs(by - year) <= 2:
+                media = best
+        if media is None:
+            media = close[0]   # no year hint / no year-match → first close title
+    found_title = title
+    if media:
+        ct = media.get("title") or {}
+        found_title = ct.get("english") or ct.get("romaji") or title
 
     if not media:
         logger.debug(
