@@ -98,7 +98,16 @@ logger = logging.getLogger(__name__)
 # / "Ezren/Lyra in Dragon Prince" - all character/lore name fabrications
 # the soft grounding rules 1-4 could not catch. See tournament_round2
 # _2026-05-24_21-20.md for the full A/B/C bench data.
-_PROMPT_VERSION = "v8"
+# Bumped v8 -> v9 with GROUNDING rule #6 (DESCRIBE, DON'T EDITORIALIZE /
+# anti-over-labeling) + descriptive-not-interpretive themes/keywords hints.
+# Targets the summariser projecting loaded fandom labels ("siscon dynamics")
+# and critical-theory frames ("heteronormative expectations", "subverts",
+# "deconstructs") onto premises that are, on their face, simpler — a class of
+# error rules 1-5 don't catch because nothing is factually fabricated, only
+# the *reading* is imposed. Additive guidance only (no model/format change),
+# same precedent as the v2->v3 GROUNDING bump. Existing v8 profiles re-polish
+# lazily / under force=True; raw cache spares all API calls.
+_PROMPT_VERSION = "v9"
 
 
 # ── PHASE-2 QUALITY: CHARACTER-ARCHETYPE TAG BLACKLIST ──────────────────────
@@ -1933,6 +1942,21 @@ GROUNDING DISCIPLINE — apply these strictly so the output stays faithful to th
    When in doubt: OMIT, don't invent. A shorter accurate description
    beats a longer fabricated one.
 
+6. DESCRIBE, DON'T EDITORIALIZE (Anti-Over-Labeling). themes / keywords /
+   why_watch / embedding_text must DESCRIBE what the work plainly contains —
+   never impose a critical, academic, or ideological READING the source itself
+   does not state. Do NOT project:
+     • loaded fandom labels ("siscon", "incest-coded", "problematic", "edgy"),
+     • critical-theory frames ("heteronormative", "the male gaze", "subverts",
+       "deconstructs", "interrogates", "late-capitalist"),
+     • or psychoanalytic / thesis-style readings,
+   onto a premise that is, on its face, simpler. A supportive sibling is NOT
+   "siscon dynamics"; a sincere romance is NOT "a critique of heteronormative
+   expectations"; a straightforward comedy is NOT "subversive". Reach for the
+   plain genre/content vocabulary a knowledgeable video-store clerk would use,
+   not a thesis committee. If the OVERVIEW doesn't frame the work in those
+   terms, neither do you — a tag you cannot point to in the source is invented.
+
 TITLE: {title} ({year})
 TYPE: {media_type}
 GENRES: {genres}
@@ -1973,9 +1997,9 @@ Output this exact JSON (no extra text, no markdown fences):
   "why_watch": "1 sentence. The main hook or specific appeal of the show.",
   "embedding_text": "A dense, objective 3-4 sentence paragraph for semantic vector search. CRITICAL RULE: Do NOT write a review, critique, or use marketing filler. Instead, densely pack the plot premise, core character dynamics, specific tropes, visual style, and emotional tone into a cohesive summary.",
   "genres": [...],
-  "themes": ["4-8 highly specific narrative tropes, story elements, or visual themes"],
+  "themes": ["4-8 concrete narrative tropes / story elements / visual themes actually present in the source — descriptive, not interpretive (see rule 6: no critical, ideological, or loaded-fandom labels)"],
   "mood": ["pick 2-3 from the MOOD REFERENCE above"],
-  "keywords": ["10 precise descriptors: tone, setting, tropes, style, era, subgenre"],
+  "keywords": ["10 plain descriptors: tone, setting, tropes, style, era, subgenre — what the work IS, not a critical reading of it (rule 6)"],
   "cast_top3": ["Maximum 3 ACTOR names. Use ONLY names that appear verbatim in the CAST field above. If CAST is empty or 'Unknown', output an empty array []. Do NOT include directors, character names, or descriptive labels like 'various villains' or 'voice cast'."],
   "director": "...",
   "rating": ...
