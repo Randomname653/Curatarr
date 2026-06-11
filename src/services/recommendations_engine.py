@@ -446,24 +446,41 @@ async def generate_recommendations(
             # pitches from real data instead of just title+genres. These are the
             # user's own library items, so they're already enriched; this is just
             # fast cache reads, and the pitch the user sees is now grounded.
-            from src.services.media_enricher import build_verified_data
+            # Honour the verified-data DEMAND here too (not just deletion): use
+            # ensure_verified_data so each candidate gets its on-demand OMDb +
+            # Wikipedia significance fetched right before the curator pitches it.
+            # Concurrent + per-item time-boxed (inside ensure) + cached after the
+            # first run, so a recommendation pass warms the library's significance
+            # over time instead of pitching from a thin profile.
+            from src.services.media_enricher import ensure_verified_data
+            import asyncio as _asyncio
 
-            def _cand_line(i):
+            async def _cand_line(i):
                 line = f"- {i['title']} ({i.get('year', '?')}) — {i.get('genres', '')}"
                 try:
-                    vd = build_verified_data(i["title"], cat, tmdb_id=i.get("tmdb_id"))
+                    vd = await ensure_verified_data(
+                        i["title"], cat,
+                        tmdb_id=i.get("tmdb_id"), tvdb_id=i.get("tvdb_id"),
+                        anilist_id=i.get("anilist_id"),
+                        plex_rating_key=i.get("plex_rating_key"),
+                    )
                 except Exception:
                     vd = None
                 if vd:
                     th = vd.get("themes") or []
                     if th:
                         line += " | themes: " + ", ".join(str(t) for t in th[:3])
+                    sig = vd.get("significance")
+                    if sig:
+                        line += " | significance: " + str(sig)[:160]
                     plot = vd.get("plot")
                     if plot:
                         line += " | " + str(plot)[:90]
                 return line
 
-            items_text = "\n".join(_cand_line(i) for i in unwatched[:30])
+            items_text = "\n".join(
+                await _asyncio.gather(*[_cand_line(i) for i in unwatched[:30]])
+            )
 
             prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.

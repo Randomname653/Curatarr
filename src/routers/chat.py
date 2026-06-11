@@ -863,6 +863,7 @@ def _verified_extras_block(title: str, domain: str) -> str:
     _add("Themes", d.get("themes"))
     _add("Keywords", d.get("keywords"))
     _add("Notable", d.get("extra_context"))
+    _add("Significance", d.get("significance"))
     return ("\n" + "\n".join(out)) if out else ""
 
 
@@ -1899,6 +1900,20 @@ async def send_message(
 
                     if enrichment_data:
                         active_title = enrichment_data.get("title") or detected_title
+                        # Honour the verified-data DEMAND for general chat too: the
+                        # cascade enriches but does NOT fetch the on-demand OMDb /
+                        # Wikipedia significance — warm them now (cached, time-boxed)
+                        # so the context block below carries them.
+                        try:
+                            from src.services.media_enricher import ensure_verified_data
+                            await ensure_verified_data(
+                                active_title, matched_domain or "movie",
+                                tmdb_id=enrichment_data.get("tmdb_id"),
+                                tvdb_id=enrichment_data.get("tvdb_id"),
+                                anilist_id=enrichment_data.get("anilist_id"),
+                            )
+                        except Exception as _e:
+                            logger.debug("[chat] significance pre-warm failed: %s", _e)
                         hidden_metadata_context = _build_hidden_context(
                             active_title, enrichment_data,
                             domain=matched_domain or "movie",
