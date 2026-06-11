@@ -619,6 +619,49 @@ slow right after restart" cause.
 Things that are non-obvious and have caused real bugs. Don't undo these
 without understanding why they exist.
 
+- **Enrichment resolves the WRONG same-named work without a disambiguator**
+  (Fix A, `4789046`+). The pipeline searches by title STRING and takes the first
+  hit — *Lupin III* resolved to the 2012 *Fujiko Mine* spin-off, *Blown Away
+  1994* to the 1992 film, the hardstyle *Solstice* to a doom-metal band. The
+  curator then reasons (impeccably) about the WRONG entity. Feed the arr's own
+  disambiguators end to end: `year` (Radarr/Sonarr) + `mbid`=`foreignArtistId`
+  (Lidarr). `search_anilist_by_title(year=)` / `_tmdb_search_and_fetch(year=)`
+  prefer the year match; `fetch_musicbrainz_artist(mbid=)` pins the exact artist.
+  A **>5y year delta-check** in `fetch_and_prepare_raw` rejects a wrong match
+  (enrich nothing > enrich garbage). "🔍 Audit metadata" re-detects & requeues
+  existing wrong-entity rows (`_entity_divergence_reason`).
+- **Verified data is fragmented across cache keys; the READ must MERGE**
+  (`3bf84ad`). The enriched profile (themes) sits under the doc-id key, but OMDb
+  fields + Wikipedia significance live on the ID-keyed raw entry
+  (`raw:anime:239214`). A doc-id-only lookup misses them → a deletion DISCUSSION
+  got a thin profile. `build_verified_data` reads the enriched profile's
+  *embedded* ids and merges the raw entries field-by-field.
+- **Anime/show verified data is keyed by anilist_id / arr-doc-id, not tmdb_id**
+  (`321ef8b`). A tmdb-only lookup silently misses ~5.3k cached anime profiles →
+  the curator cold-reads / inverts the plot (Skate-Leading narrated as *Yuri on
+  Ice*). Pass every id the candidate carries, incl. `plex_rating_key`
+  (`"sonarr:3176"`).
+- **`ensure_verified_data` (async, fetches on demand) vs `build_verified_data`
+  (cache-only)**. The OMDb/Wikipedia top-up only fires via `ensure_*`. Every path
+  where the curator REASONS about a title — delete, discussion, reevaluate/
+  Level-2, recommend, general chat — must use `ensure_*`, else it pitches from a
+  stale, significance-less profile.
+- **Significance is SUMMARISED from a fetched source, never recalled, and never
+  inflated** (`2221afb`, `daa3334`). The 27B confidently invents creators/legacy
+  for niche titles, so `fetch_significance` distils the Wikipedia extract (UA
+  must include a URL — generic UAs get 403). A new title with only production
+  facts (cast/location/funding/premiere/debut) → output NONE; don't dress those
+  up as "pioneering cultural significance".
+- **Title-less memories must NOT match each other by empty title** (`0b6f44c`).
+  `resolve_memory_conflicts` matched by `metadata.title`; general preferences
+  have none, so `"" == ""` made one save run a NUANCE check against EVERY other
+  title-less memory and mass-decay dozens — including the keep/value pillars — on
+  every save. Title-less memories now find conflicts by embedding similarity
+  (≥0.80): a restatement reinforces its twin, unrelated prefs untouched.
+- **Watch status comes from `watch_history` (Plex sync), NOT Tautulli** — the
+  owner doesn't run Tautulli. `completed` + `viewed_at` per playback row;
+  `chat._watched_lookup` surfaces it so the curator tells an unseen-but-curious
+  title from proven dead weight.
 - **`deletion_proposals.id` must stay AUTOINCREMENT** (Pass 90c). Without it,
   SQLite reuses ROWIDs after delete; a stale frontend cache holding an old
   proposal_id then resolves to the WRONG title on a follow-up request (the
@@ -636,6 +679,22 @@ without understanding why they exist.
   endpoints return 15-30 MB; 10 s times out under load and silently drops
   the entire ARR item set.
 - **numpy embeddings**: `is not None`, never truthiness (Pass 74).
+- **Syncthing `.stignore` is Hidden on Windows** (`fc5b5ce`). `sync_guard`
+  excludes `data/` from Syncthing while the app runs so the live WAL DB isn't
+  hashed (→ `database is locked`, and worse, a half-synced WAL can corrupt the
+  DB). Syncthing creates `.stignore` with the **Hidden** attribute, and
+  `Path.write_text` (open `'w'` → `CREATE_ALWAYS`) raises `[Errno 13]
+  Permission denied` on a hidden/system file. Always write that file in place
+  with `r+` (`OPEN_EXISTING`) — see `sync_guard._write_preserving`. A silent
+  failure here re-enables the DB-lock storm; the main DB's `busy_timeout=60s`
+  means any lock outlasting 60 s is an *external* holder (Syncthing), not
+  internal contention.
+- **Moving a Sonarr series between root folders needs `/series/editor`, not
+  `PUT /series/{id}`** (`891aa8e`). A series has an authoritative `path` field
+  separate from `rootFolderPath`; a plain PUT updates the latter but leaves
+  `path`, so `moveFiles` relocates nothing (profile/type edits still apply).
+  `PUT /api/v3/series/editor` recomputes `path` and performs the move
+  (`moveFiles` is a body field there, not a query param).
 - **`force_set_state` for flag cleanup** (Pass 89b): the normal `set_state`
   fails in a write-lock cascade — exactly when releasing a flag matters most.
 - **Language-detection keyword lists are intentional** (§9): don't translate
@@ -817,3 +876,55 @@ without understanding why they exist.
 - Setup wizard warns on non-private (public) endpoint URLs.
 - `.gitignore` excludes `.env*`, `*.db*`, `chroma_db/`, `data/cache/`,
   `scripts/dev/`, `.claude/`, sqlite CLI binaries.
+- **Admin-curation boundary** (`efd11bf`). The first Plex user is the admin;
+  shared-library curation is admin-only. Deletions
+  (`/recommendations/deletions*`), library config + orphaned recovery
+  (`/libraries/orphaned`, `repair-orphans`, `cleanup-orphans`), and reclassify
+  (`/library/reclassify/*`) all `require_admin`. Defence in depth: hidden nav
+  items + a `showView()` guard for `deletions`/`libraries`/`admin`/`reclassify`
+  + the endpoint checks — the **endpoint check is the real boundary**, the UI
+  gates are convenience. Non-admins keep their own taste / recs / chat.
+
+---
+
+## 18. Library reclassification (`src/services/library_sorting.py`, Manage → Reclassify)
+
+Admin tool that audits Sonarr for series filed in the wrong library and moves
+them. Two phases; read-only scan, explicit write.
+
+**Detection (`scan_misclassified`, read-only).** A series' *true* category:
+- on the anime-lists **AniDB** mapping (`tvdb_to_anidb`) → anime;
+- else a TMDB `/find` lookup (cached in `app_state` under `tvdb_meta:<tvdbId>`)
+  yields `(origin_country, is_animated)`. **Asian origin AND the Animation
+  genre (id 16) → anime.** Asian-origin-but-not-animated is Japanese
+  *live-action* (tokusatsu, dramas) and belongs in TV — the Animation-genre
+  check is what stops Spider-Man (1978) / Ultraman / Bloody Monday landing in
+  anime.
+- no origin at all → fall back to the Sonarr `genres`: `"Anime"` ⇒ anime; no
+  animation genre at all ⇒ live-action ⇒ TV; only a generic `"Animation"` ⇒
+  `uncertain` (the admin picks → TV / → Anime per card).
+
+TMDB is queried only where origin can change the answer (anime-lib non-AniDB,
+or TV-lib titles with anime-ish settings), so the full ~3.6k-series sweep is
+~15 s, not a 1000-call timeout. Results group into `to_tv` / `to_anime` /
+`fix_settings` (right library, wrong `seriesType`/quality profile) /
+`uncertain`. Roots + profiles are resolved live, never hardcoded (anime
+profile = the one with "anime" in its name; TV = the rest).
+
+**Apply (`apply_reclassify`, the only write path).** Per item:
+1. `PUT /api/v3/series/editor` with `seriesType` + `qualityProfileId`, plus
+   `rootFolderPath` + `moveFiles` when the root changes (see §15 on why the
+   editor endpoint, not `PUT /series/{id}`).
+2. **Re-file inside Curatarr without re-enriching.** The enrichment skip-key
+   is `(title, media_category)` (§5), so a category change would otherwise
+   mismatch → full re-fetch + re-embed + LLM. Instead, four cheap in-place
+   updates keep the live `classify_sonarr_category(updated)` == the persisted
+   category: `enrichment_status.media_category`, `arr_enrichment_status.
+   category`, the MetadataCache profile key `enriched:{cat}:{key}` (copied
+   old→new), and the ChromaDB vector's `domain`/`media_type` quarantine
+   metadata (metadata-only, no re-embed). The new category is
+   `classify_sonarr_category(updated)` (which honours `seriesType` OR the
+   `"Anime"` genre), so the rare TVDB-"Anime"-genre-on-a-Western-title edge
+   case stays internally consistent — no drift, still no re-fetch.
+
+Nothing in the apply path re-fetches metadata, re-embeds, or calls an LLM.

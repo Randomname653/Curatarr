@@ -45,10 +45,47 @@ users, then an admin tool to reclassify mis-filed anime ↔ TV library content.
 | 13 | `b474938` | **Live-action detection**: Asian origin alone mis-flagged JP *live-action* (Bloody Monday, Kakegurui, the Spider-Man 1978 / Ultraman tokusatsu) as anime — now also require the TMDB **Animation genre (id 16)**. Uncertain cards made actionable (→ TV / → Anime / skip, each carrying a ready-made fix). |
 | 14 | `ea4ccfc` | Reclassify **Stage 2** (apply): `POST /reclassify/apply` writes to Sonarr + re-files inside Curatarr **without re-enriching**. The enrichment skip-key is `(title, category)`, so 4 cheap in-place updates keep live==persisted: `enrichment_status.media_category`, `arr_enrichment_status.category`, the MetadataCache profile key (`enriched:{cat}:{key}`), and the ChromaDB vector's `domain`/`media_type` quarantine metadata. No TMDB re-fetch, no re-embed, no LLM. New category = `classify_sonarr_category(updated)` so the 2 TVDB-"Anime"-genre edge cases stay anime (no drift). |
 | 15 | `891aa8e` | Root moves used `PUT /series/{id}`, which sets `rootFolderPath` but not the authoritative `path` → files never moved (profile/type edits *did* work). Switched to **`PUT /api/v3/series/editor`** (`{seriesIds, rootFolderPath, seriesType, qualityProfileId, moveFiles}`) which recomputes `path` and performs the physical move. Verified end-to-end. |
+| 16 | `fb0e4ed` | Reclassify: TVDB `genres` as the tiebreak when TMDB has no origin — an "Anime" genre ⇒ keep as anime; no animation genre at all ⇒ live-action mis-file ⇒ TV; only a generic "Animation" stays `uncertain`. Cut the no-origin pile 27 → 13 and surfaced 3 mis-tagged anime (Cardcaptor/Kimagure/R.O.D as type-fixes) + The Sneaker Boom (a documentary) as a TV move. |
+| 17 | `efd11bf` | **Multi-user access control** — deletions + the Library Configuration page (category mapping + orphaned) are admin curation only. Nav items `admin-only`, a `showView()` guard, and `require_admin` on `GET/POST /recommendations/deletions*` + `GET /libraries/orphaned`. Non-admins only consume. |
+| 18 | `fc5b5ce` | **sync_guard Windows fix** — the Syncthing `.stignore` is **Hidden**; `Path.write_text` (CREATE_ALWAYS) failed on it with Permission denied, so `data/` was never excluded, Syncthing synced the live WAL DB, and the app drowned in `database is locked` (main DB has `busy_timeout=60s`, so a >60s lock = an external holder). Now writes in-place `r+` (OPEN_EXISTING), which works on hidden files + keeps the attribute. |
 
 Not committed (data / config ops): pulled `nomic-embed-text`; ran the vector backfill; ran
 the per-account import for the existing second user; set `PLEX_REDIRECT_URI` to the host's
 LAN IP in `.env` for partner login.
+
+---
+
+## Session — `main` (2026-06): curator hardening — grounding, learning, data integrity
+
+A long run sparked by the owner stress-testing the deletion curator with real
+discussions. The model itself reasons brilliantly — the failures were almost
+always **DATA**: it was fed thin / wrong / inflated facts, or never told what the
+user had actually watched. Each conversation surfaced a distinct root cause. The
+through-line: make the curator reason from the FULL, CORRECT verified data on
+every path (delete, reevaluate, recommend, chat), and let it *learn* from
+feedback instead of just remembering it.
+
+| # | Commit | Theme |
+|---|---|---|
+| 1 | `28c80ef` | **Proactive messages** — series-progress awareness (stop asking about the "ending" of an unfinished show) + state-aware topic rotation (don't re-ask why a song was played 450×). |
+| 2 | `c57bf2a` | **Verified-data grounding** — deletion pitch/discussion get the full cached profile (creator, extended plot, themes, awards), assembled cache-only, so the 27B reasons from FACTS not a synopsis stub or training memory (the "Steppenwolf is a Dean Koontz film" class). Calibrated cosine deletion scoring; music-aware pitch branch. |
+| 3 | `6ed5a7b` | Lidarr fetch 240s (was 15s-timing-out → zero music deletion proposals). |
+| 4 | `3323662` | Quiet console: httpx/watchfiles → WARNING; `--reload-dir src` so the reloader stops watching `data/` writes. |
+| 5 | `321ef8b` | **Anime/show data reach + premise rule** — the pitch passed only tmdb_id, but the cache keys anime by anilist_id / arr-doc-id, so ~5.3k anime profiles were silently missed → cold-read / plot-inversion (Skate-Leading narrated as *Yuri on Ice*). Pass every id incl. the doc-id. R1: critique premise & taste-fit, not invented execution verdicts (a known historical outcome isn't "predictable"). |
+| 6 | `419439f` | **Music R4** — three prompt sources told the curator to judge audio it can't hear ("production sheen", "timbral range"); it invented mix/compression details + cited a rating as sonic proof. Reframed vocab + axes + rule to metadata-only (genre/scene/register fit). |
+| 7 | `04a9a12` | **Taste section per category** — `summary_text[:400]` always returned the [MOVIE] block, so anime/show were judged by FILM taste. `_taste_section` extracts the matching block. |
+| 8 | `59b73e1` | **Memory reaffirmation** — restating a preference fell to NUANCE (−0.4, floor 0.1) → the principles repeated MOST decayed to invisible. A REAFFIRMATION branch now boosts + consolidates. |
+| 9 | `8e4ebf0` | **Learned considerations (three pillars)** — `retrieve_considerations` pulls per-item keep/value memories (hybrid embedding-standout + lexical) so feedback about one title generalises to NEW ones; a soft capped del_score reduction + the pitch weighs it ("don't obey, acknowledge the tension"). |
+| 10 | `2221afb` | **Archive-pillar significance** — the 27B's internal anime history is unreliable (it invented a wrong Cat's Eye creator), so ground it: `fetch_significance` searches Wikipedia → distils by SUMMARISING the fetched text → "Significance:" in the verified block. Cat's Eye verdict flipped "clutter" → "archive-worthy". |
+| 11–15 | `4789046` `4724075` `304bc05` `c4e1f02` `3bf84ad` | **Entity-resolution (Fix A)** — the pipeline resolved by title STRING + took the first same-named hit (Lupin III → the 2012 Fujiko Mine spin-off; Blown Away 1994 → the 1992 film; Solstice hardstyle → a doom band). Plumb the arr's own disambiguators: `year` (Radarr/Sonarr) + `mbid`=foreignArtistId (Lidarr) → year-aware AniList/TMDB search + MusicBrainz-by-id; a >5y year delta-check rejects wrong matches; the single-item re-enrich AND the "🔍 Audit metadata" button now detect & requeue wrong-entity profiles. Plus a verified-data **fragment-merge** — significance/OMDb live on the id-keyed raw while the discussion read only the doc-id (thin) → now reunited via the enriched profile's embedded ids. |
+| 16 | `2f54bb0` | **Demand honoured everywhere** — recommendations + general chat used cache-only `build_verified_data`; switched to `ensure_verified_data` (fetches OMDb/Wikipedia on demand), so significance reaches pitch, discussion, **reevaluate/Level-2**, recs, and chat alike. |
+| 17 | `daa3334` | **Significance anti-inflation** — for new titles with no real legacy the summariser dressed production facts up as "pioneering cultural significance"; tightened so cast/location/funding/premiere/debut → NONE, no invented adjectives. |
+| 18 | `0b6f44c` | **Memory mass-decay fix** — title-less general prefs all matched by `""==""`, so one new statement ran a NUANCE check vs EVERY other and mass-decayed dozens (incl. the pillars) on every save. Title-less memories now match conflicts by embedding similarity (≥0.80). 20 decayed memories restored. |
+| 19 | `8402aa3` | **Watch-status** — the curator knew the library but not what the user had SEEN. `_watched_lookup` (from `watch_history`: completed + viewed_at) tags RAG neighbours "[watched 3×, last Jan 2025]" / "[NOT watched]" and states the deletion candidate's own status. |
+
+Not committed (data ops): repaired 20 mass-decayed memories + restored the
+decayed keep/value pillars to 0.7 in the live DB; the significance cache fills on
+demand (stays on-demand by design, not bulk).
 
 ---
 
@@ -1579,7 +1616,7 @@ Everything below has been seen, scoped, or tried; none of it is currently in pro
 | `llm_priority` resume path still not lock-guarded | The new curator semaphore (`5024ca1`) serializes generations, but the `_active`/`_event` enrichment-resume handoff is still mutated without an `asyncio.Lock` (the original Pass 7 race). Mitigated in practice by serialization; the theoretical lost-wakeup remains. |
 | Auto-onboard fires server-wide work per new login | The login bootstrap pulls `/accounts` + the user's full per-account history in the background on each new secondary login. Fine for a home server; gate/throttle if the user count ever grows. |
 
-### Reclassify mis-filed content between Anime ↔ TV — ✅ DONE (Session `main`, commits 11–15)
+### Reclassify mis-filed content between Anime ↔ TV — ✅ DONE (Session `main`, commits 11–16)
 
 Built as **Manage → 🔀 Reclassify**. **Scope corrected mid-build:** Donghua (CN) and
 Korean (KR) titles *stay* — they're on AniDB and are genuine animation. The real
@@ -1591,8 +1628,9 @@ TMDB origin **plus** the TMDB Animation genre (id 16) — not "Japanese-origin".
 
 Shipped as a full per-series **config audit** (root + `seriesType` + quality profile),
 both directions, with an actionable `uncertain` bucket (→ TV / → Anime / skip), and a
-**refetch-safe** apply so a move never triggers re-enrichment. See session table rows
-11–15 for the detail.
+**refetch-safe** apply so a move never triggers re-enrichment. A later pass (commit 16)
+adds the TVDB `genres` as the tiebreak when TMDB has no origin, shrinking the no-origin
+`uncertain` pile from 27 to 13. See session table rows 11–16 for the detail.
 
 **Resolved open questions:** TV root = `/storage/media/tv`, anime root =
 `/storage/media/AnimeShows`, both resolved from `/api/v3/rootfolder` (not hardcoded);
@@ -1601,6 +1639,29 @@ the "Anime" genre tag is respected by deriving the new category from
 drift); the enrichment cache key is **re-keyed in place** (old→new category) rather
 than re-fetched; root moves go through **`/series/editor`** (a plain `PUT /series/{id}`
 left the authoritative `path` untouched, so files never moved).
+
+### Multi-user access control — ✅ DONE (Session `main`, commit `efd11bf`)
+
+The admin curates the shared library; everyone else only consumes. **Deletions** and the
+**Library Configuration** page (category mapping + orphaned-section recovery) are now
+admin-only, gated three ways: the sidebar items get the `admin-only` class, `showView()`
+refuses to render `deletions`/`libraries`/`admin`/`reclassify` for a non-admin, and the
+endpoints require admin — `GET /recommendations/deletions` + the comment/approve/reject
+POSTs, and `GET /libraries/orphaned` (`repair-orphans` + `cleanup-orphans` were already
+admin). The category mapping is a shared system config, so hiding the whole page (not just
+the orphaned section) is the correct boundary.
+
+### sync_guard: write the Hidden `.stignore` in place — ✅ DONE (Session `main`, commit `fc5b5ce`)
+
+On Windows the Syncthing `.stignore` carries the **Hidden** attribute, and
+`Path.write_text` opens `'w'` (`CREATE_ALWAYS`), which Win32 rejects on a hidden/system
+file with `[Errno 13] Permission denied`. So `sync_guard.enable()` silently never wrote
+the `data/` exclusion, Syncthing kept hashing the live WAL SQLite DB, and the app drowned
+in `sqlite3.OperationalError: database is locked` — the main DB already sets
+`busy_timeout=60s`, so a lock outlasting that can only be an external holder. Fix:
+`_write_preserving()` opens the existing file `r+` (`OPEN_EXISTING`), which works on
+hidden/system files and preserves the attribute; both `enable()` and `disable()` use it.
+(This is the Windows-hidden-file sibling of the earlier `data/`-in-Syncthing DB-lock work.)
 
 ### Frontend hardening
 

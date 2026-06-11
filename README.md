@@ -40,6 +40,17 @@ SQLite + ChromaDB.
   pitches, deletion reasoning) and a *summariser* model (for metadata
   enrichment + memory extraction). The setup wizard bakes both system
   prompts into local model tags so daily use is a single `ollama` pull.
+- **A grounded, learning curator.** Every deletion pitch, discussion,
+  reevaluation, recommendation and chat reasons from *verified* data — real
+  creator / plot / themes, OMDb writer + awards, and a Wikipedia-sourced
+  cultural **significance** for the "is this archive-worthy?" question — never
+  the model's own (often wrong) memory. It **learns your keep-feedback**: tell it
+  once that you value a franchise, a partner favourite, or a documentary, and
+  that *consideration* softly protects similar titles in future proposals. It
+  resolves the **right same-named work** (year + MusicBrainz id disambiguation,
+  so *Lupin III* isn't judged as a spin-off), and it knows what you've actually
+  **watched** (from Plex history) — so an unseen title you're curious about isn't
+  treated like proven dead weight.
 - **Multi-user attribution.** Plex `accountID` is tracked on every play.
   Each Plex user gets their own taste vector, their own recommendations,
   their own deletion proposals, their own chat thread.
@@ -62,6 +73,16 @@ SQLite + ChromaDB.
 - **Standalone runners** for the heavy music phases so a multi-day
   backlog can be cleared from a separate process while the in-app
   enrichment keeps running.
+- **Library reclassification** (Manage → 🔀 Reclassify, admin). Audits every
+  Sonarr series against the rules for its *true* category — anime = on AniDB
+  **or** Asian-origin **and** animated — and moves the mis-filed ones: Western
+  cartoons + Japanese live-action (tokusatsu, dramas) out of the Anime
+  library, real anime back in. Moves go through the Sonarr editor API and
+  re-file each item inside Curatarr **without re-enriching** it.
+- **Admin-vs-user roles.** The first Plex user is the admin and curates the
+  shared library (deletions, library mapping, orphaned recovery, reclassify);
+  every other user gets their own taste / recs / chat but no access to the
+  shared-curation surfaces.
 
 ---
 
@@ -278,6 +299,12 @@ Sequenced phases, all idempotent and resumable:
   isolates that conversation from free chat. Approve / reject / discuss
   all write to `CuratorResolutionLog` (audit trail) and any decision
   feeds back into the taste vector.
+- Each pitch + discussion is grounded in **verified data** — real creator /
+  plot / themes, OMDb writer + awards, and an on-demand Wikipedia **significance**
+  — and shows the candidate's **watch status** (from Plex history). Your stored
+  keep-feedback (kept franchises, partner favourites, cultural/archive value)
+  softly pulls similar titles off the list: the curator *applies* your standing
+  preferences to NEW proposals, never as a hard veto.
 
 ### 7. Proactive messages (`src/services/proactive_messages.py`)
 - The curator polls for triggers (new season for a binged anime, idle
@@ -291,6 +318,11 @@ Sequenced phases, all idempotent and resumable:
   romance"), and protection intents ("keep this even if the score
   drops"). Memories are scored, deduped, and injected into every
   curator prompt as a `[MEMORIES]` block.
+- A **standing preference** with no specific title (e.g. "I value historical
+  documentaries") finds conflicts by *semantic similarity*, so restating it
+  reinforces it instead of quietly decaying unrelated memories. Keep/value
+  memories drive the deletion **considerations** that protect similar titles in
+  future proposals — feedback the curator *learns from*, not just stores.
 
 ### 9. Scheduler (`src/services/scheduler.py`)
 Default daily/weekly cadence:
@@ -312,7 +344,8 @@ Default daily/weekly cadence:
 | Recompute taste vectors | Knowledge Base → "Recompute taste vectors" |
 | Audit + requeue stale enrichments | Knowledge Base → "🔍 Audit metadata" |
 | Browse / add via ARR | Sidebar → 🎬 Movies / 📺 TV / 🎵 Music |
-| Review proposals | Sidebar → "Proposals" |
+| Review deletions (admin) | Sidebar → "Deletions" |
+| Reclassify anime ↔ TV (admin) | Sidebar → Manage → "🔀 Reclassify" |
 | View live tasks | Sidebar → "Activity" |
 | Per-library breakdown | Library Configuration page (or Enrichment Status page) |
 | Spotify backlog (artists not in Lidarr) | 🎵 Music → "Spotify Backlog" tab |
@@ -454,6 +487,15 @@ bundled sqlite CLI, every `debug_*.py` / `fix_*.py` / `repair_*.py` /
 - **Anime taste vector showing 0 enriched** — fixed in Pass 95; if you
   had pre-`_CACHE_VERSION=v2` cache entries, the read path now falls
   back to the un-versioned key once.
+
+- **`database is locked` flood (Windows + Syncthing)** — if `data/` lives
+  inside a Syncthing folder, Syncthing hashing the live WAL SQLite DB causes
+  lock storms (the main DB sets `busy_timeout=60s`, so a lock that outlasts
+  that is an external holder). `sync_guard` auto-excludes `data/` via the
+  folder's `.stignore` while the app runs. Syncthing creates that file
+  **Hidden**; pre-`fc5b5ce` builds failed to write it ("Permission denied")
+  so the exclusion never applied — fixed by writing the hidden file in place.
+  If you still see locks, confirm `data/` is excluded in Syncthing.
 
 - **Long debugging hunt** — check `CHANGELOG.md`. It documents every
   Pass with rationale, what broke, what fixed it, and the commit hash.
