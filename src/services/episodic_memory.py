@@ -219,13 +219,41 @@ async def resolve_memory_conflicts(user_id: int, new_memory_id: int, new_content
         ).all()
         
         target_memories = []
-        for m in old_memories:
+        if title:
+            # Title-bearing memory: a conflict is another memory about the SAME
+            # title (a changed opinion on that one title).
+            for m in old_memories:
+                try:
+                    if (json.loads(m.metadata_json) or {}).get("title") == title:
+                        target_memories.append(m)
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    pass
+        else:
+            # Title-less GENERAL preference. The old code matched by title, so
+            # "" == "" made EVERY general preference a "conflict" of every other:
+            # one new statement (e.g. valuing a WWII doc) ran a NUANCE check
+            # against dozens of unrelated memories (D&D, franchise-keep,
+            # partner-keep…) and mass-decayed them — eroding the very pillars.
+            # Compare only near-DUPLICATE memories by embedding similarity, so a
+            # restatement reinforces its twin and unrelated preferences are never
+            # touched.
+            new_mem = db.query(EpisodicMemory).filter(
+                EpisodicMemory.id == new_memory_id).first()
             try:
-                m_meta = json.loads(m.metadata_json)
-                if m_meta.get("title") == title:
-                    target_memories.append(m)
-            except (json.JSONDecodeError, TypeError, AttributeError):
-                pass
+                new_emb = json.loads(new_mem.embedding_json) if (
+                    new_mem and new_mem.embedding_json) else None
+            except Exception:
+                new_emb = None
+            if not new_emb:
+                return
+            for m in old_memories:
+                if not m.embedding_json:
+                    continue
+                try:
+                    if _cosine_similarity(new_emb, json.loads(m.embedding_json)) >= 0.80:
+                        target_memories.append(m)
+                except Exception:
+                    pass
 
         if not target_memories:
             return
