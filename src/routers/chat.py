@@ -790,7 +790,60 @@ async def _enrich_with_cascade(
     return None, None
 
 
-async def _get_rag_context(query: str, n_results: int = 5, domain: str = None) -> str:
+def _watched_lookup(user_id: int, titles: list) -> dict:
+    """Map each title → the user's Plex watch status from watch_history:
+    {count, completed, last}. Absent from the result = never played. One query.
+
+    The curator knows what's in the library (RAG) but not whether the user has
+    actually SEEN it — yet that's exactly the signal that decides "delete unseen
+    clutter" vs "they watched this 3× — keep it". This surfaces it."""
+    titles = [t for t in titles if t]
+    if not user_id or not titles:
+        return {}
+    tset = set(titles)
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry
+    from sqlalchemy import or_
+    agg: dict = {}
+    try:
+        with get_db_session() as db:
+            rows = db.query(
+                WatchHistoryEntry.title, WatchHistoryEntry.series_title,
+                WatchHistoryEntry.completed, WatchHistoryEntry.viewed_at,
+            ).filter(
+                WatchHistoryEntry.user_id == user_id,
+                or_(WatchHistoryEntry.title.in_(titles),
+                    WatchHistoryEntry.series_title.in_(titles)),
+            ).all()
+    except Exception as e:
+        logger.debug("[watch] lookup failed: %s", e)
+        return {}
+    for r in rows:
+        key = r.title if r.title in tset else (
+            r.series_title if r.series_title in tset else None)
+        if not key:
+            continue
+        a = agg.setdefault(key, {"count": 0, "completed": False, "last": None})
+        a["count"] += 1
+        a["completed"] = a["completed"] or bool(r.completed)
+        if r.viewed_at and (a["last"] is None or r.viewed_at > a["last"]):
+            a["last"] = r.viewed_at
+    return agg
+
+
+def _watch_tag(status: dict) -> str:
+    """One-line watch tag for a status dict (or None → never watched)."""
+    if not status:
+        return "NOT watched"
+    n = status["count"]
+    base = f"watched{f' {n}×' if n > 1 else ''}" if status["completed"] else "started, not finished"
+    if status.get("last"):
+        base += f", last {status['last'].strftime('%b %Y')}"
+    return base
+
+
+async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,
+                           user_id: int = None) -> str:
     """
     Semantic search over the ChromaDB vector store.
     When *domain* is given, only vectors tagged with that domain are considered,
@@ -809,12 +862,14 @@ async def _get_rag_context(query: str, n_results: int = 5, domain: str = None) -
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
         await gen.close()
+        watched = _watched_lookup(user_id, [m.get("title", "") for m in metas])
         lines = []
         for doc, meta in zip(docs, metas):
             title = meta.get("title", "Unknown")
             genres = meta.get("genres", "")
             themes = meta.get("themes", "")
-            lines.append(f"- {title} ({genres}{', '+themes if themes else ''}): {doc[:200]}")
+            tag = _watch_tag(watched.get(title))
+            lines.append(f"- {title} [{tag}] ({genres}{', '+themes if themes else ''}): {doc[:200]}")
         return "\n".join(lines)
     except Exception as e:
         logger.debug("RAG failed: %s", e)
@@ -1464,6 +1519,12 @@ async def _build_discuss_context_block(
         verified_payload = await ensure_verified_data(
             proposal.title, proposal.category or "movie", plex_rating_key=_doc_key)
         verified_block = format_verified_block(verified_payload)
+        # The curator knows the title is in the library but not whether the USER
+        # has actually SEEN it — the signal that separates "delete unwatched
+        # clutter" from "they watched this, it earned its place". Surface it.
+        _ws = _watch_tag(
+            _watched_lookup(proposal.user_id, [proposal.title]).get(proposal.title))
+        block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
         if verified_block:
             block += "\n" + verified_block + "\n"
         elif proposal.synopsis or proposal.genres:
@@ -1984,7 +2045,7 @@ async def send_message(
     retrieval_query = (
         f"{active_title}: {message.message}" if active_title else message.message
     )
-    rag_context = await _get_rag_context(retrieval_query, domain=domain)
+    rag_context = await _get_rag_context(retrieval_query, domain=domain, user_id=user.id)
 
     conversation = _load_conversation(
         user.id, db, thread_id=thread_id, topic_changed=topic_changed,
