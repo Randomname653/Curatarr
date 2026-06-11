@@ -4683,9 +4683,14 @@ async function computeTaste() {
 async function auditRequeueEnrichments(btn) {
   const el = document.getElementById('enrich-progress-area');
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
-  el.innerHTML = '<p class="loading">🔍 Scanning enrichment cache for missing metadata…</p>';
+  el.innerHTML = '<p class="loading">🔍 Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
 
-  const _reasonLabel = { zero_rating: 'missing/zero rating', not_found: 'not found in any API', malformed: 'corrupt cache entry' };
+  const _reasonLabel = {
+    zero_rating: 'missing/zero rating', not_found: 'not found in any API', malformed: 'corrupt cache entry',
+    'wrong_entity:title': 'wrong entity (title mismatch)',
+    'wrong_entity:year': 'wrong entity (year mismatch)',
+    'wrong_entity:mbid': 'wrong entity (artist mismatch)',
+  };
   const _fmtBreakdown = (by) => Object.entries(by || {})
     .map(([k, n]) => `${n}× ${_reasonLabel[k] || k}`).join(', ');
 
@@ -4701,13 +4706,13 @@ async function auditRequeueEnrichments(btn) {
     const breakdown = _fmtBreakdown(scan.by_reason);
     const proceed = confirm(
       `Scanned ${scan.scanned} enrichment profiles.\n\n` +
-      `${scan.incomplete} have missing metadata:\n  ${breakdown}\n\n` +
+      `${scan.incomplete} need re-enrichment (incomplete or wrong-entity):\n  ${breakdown}\n\n` +
       `Requeue these ${scan.incomplete} for re-enrichment?\n` +
       `(Drops their cached profiles + marks them pending. The next ` +
       `enrichment run re-fetches them — this won't start a run itself.)`
     );
     if (!proceed) {
-      el.innerHTML = `<p style="color:var(--text3);font-size:13px">Audit cancelled — ${scan.incomplete} incomplete profiles left untouched.</p>`;
+      el.innerHTML = `<p style="color:var(--text3);font-size:13px">Audit cancelled — ${scan.incomplete} flagged profiles left untouched.</p>`;
       return;
     }
 
@@ -4716,7 +4721,7 @@ async function auditRequeueEnrichments(btn) {
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
     el.innerHTML =
       `<p style="color:var(--success);font-size:13px">✅ Requeued ${r.requeued} ` +
-      `of ${r.incomplete} incomplete profiles (${_fmtBreakdown(r.by_reason)}). ` +
+      `of ${r.incomplete} flagged profiles (${_fmtBreakdown(r.by_reason)}). ` +
       `Run "Start Enrichment" to re-fetch them.</p>`;
     setTimeout(() => loadEnrichStatus(true), 2000);
   } catch (e) {

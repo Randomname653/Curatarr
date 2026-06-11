@@ -527,9 +527,46 @@ def _enrichment_incomplete_reason(profile: dict, category: str | None = None) ->
     return None
 
 
+def _audit_norm(s: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _entity_divergence_reason(profile: dict, category: str, arr: dict) -> Optional[str]:
+    """Flag a cached profile that resolved to the WRONG same-named work — its
+    title / year / MusicBrainz id diverge from the arr's ground truth (Lupin III
+    → the 2012 spin-off, Blown Away → the wrong year's film, Solstice → the doom
+    band not the hardstyle act). Requeuing re-enriches it through the now
+    year/MBID-aware resolution + delta-check. Best-effort: returns None when the
+    fields needed for a confident call are absent."""
+    from difflib import SequenceMatcher
+    if category == "music":
+        a_mbid = (arr.get("mbid") or "").strip()
+        p_mbid = (profile.get("mbid") or "").strip()
+        if a_mbid and p_mbid and a_mbid != p_mbid:
+            return "wrong_entity:mbid"
+        return None
+    a_title, p_title = arr.get("title") or "", profile.get("title") or ""
+    if a_title and p_title and SequenceMatcher(
+        None, _audit_norm(a_title), _audit_norm(p_title)
+    ).ratio() < 0.5:
+        return "wrong_entity:title"
+    try:
+        ay, py = int(arr.get("year") or 0), int(profile.get("year") or 0)
+    except (TypeError, ValueError):
+        ay = py = 0
+    # >1 (not >5 like the resolution-time reject): the audit only REQUEUES, which
+    # re-resolves to the same/correct entity anyway, so a stray re-enrich of a
+    # legit release-vs-air-year gap is harmless — worth catching Blown Away
+    # (1994 vs the mis-resolved 1992).
+    if ay and py and abs(ay - py) > 1:
+        return "wrong_entity:year"
+    return None
+
+
 async def _audit_enrichments(dry_run: bool) -> dict:
-    """Scan the enrichment cache for incomplete profiles and (unless
-    dry_run) requeue them.
+    """Scan the enrichment cache for incomplete OR wrong-entity profiles and
+    (unless dry_run) requeue them.
 
     Requeue = delete the stale ``api_cache`` row AND flip the matching
     ``EnrichmentStatus`` / ``ArrEnrichmentStatus`` rows back to
@@ -547,6 +584,17 @@ async def _audit_enrichments(dry_run: bool) -> dict:
     by_reason: dict[str, int] = {}
     # each hit: (cache_key, plex_rating_key, title, category, reason)
     hits: list[tuple] = []
+
+    # Arr ground-truth (doc-id → item) for the wrong-entity check. Best-effort:
+    # if the arr is unreachable we skip that check and still audit completeness.
+    truth: dict = {}
+    try:
+        for _it in await _collect_arr_items(["movie", "show", "anime", "music"]):
+            prk = _it.get("plex_rating_key")
+            if prk:
+                truth[prk] = _it
+    except Exception as e:
+        logger.warning("[audit] arr ground-truth fetch failed — skipping entity check: %s", e)
 
     mc = MetadataCache()
     try:
@@ -570,6 +618,10 @@ async def _audit_enrichments(dry_run: bool) -> dict:
                 (profile or {}).get("media_type")
             )
             reason = _enrichment_incomplete_reason(profile or {}, category)
+            if not reason and truth:
+                _arr = truth.get((profile or {}).get("plex_rating_key"))
+                if _arr:
+                    reason = _entity_divergence_reason(profile or {}, category, _arr)
             if not reason:
                 continue
             by_reason[reason] = by_reason.get(reason, 0) + 1
