@@ -152,14 +152,17 @@ def _get_vocab_guideline(category: str, genres_str: str) -> str:
 def _taste_section(summary_text: str, category: str) -> str:
     """Pick the taste-summary section matching this deletion category.
 
-    The taste summary is authored as ``[MOVIE] … [SHOW] … [ANIME] …`` blocks.
-    The old code took ``summary_text[:400]``, which ALWAYS returned the [MOVIE]
-    block — so anime and show deletion pitches were judged against the user's
-    FILM taste ("cerebral tension", "psychological thrillers"), not their actual
-    anime/show taste (the Skate-Leading pitch critiquing it for lacking
-    "cerebral dissonance" — a film yardstick). Music has no section at all (only
-    movie/show/anime are summarised), so it returned the film blurb too; we
-    return "" there rather than anchor the pitch on the wrong domain.
+    The taste summary is authored as ``[MOVIE] … [SHOW] … [ANIME] … [MUSIC] …``
+    blocks (compute_all_taste_vectors summarises all four when each has >=5
+    entries — music included, e.g. "electro-house and hardstyle, German rap's
+    incisive lyricism"). The old code took ``summary_text[:400]``, which ALWAYS
+    returned the [MOVIE] block — so anime/show/music pitches were judged against
+    the user's FILM taste ("cerebral tension", "psychological thrillers"), not
+    their actual taste in the medium (the Skate-Leading pitch critiquing it for
+    lacking "cerebral dissonance" — a film yardstick). This returns the block
+    matching THIS category. If it's genuinely absent (a user with <5 music plays,
+    or one who hasn't recomputed since music was added), we return "" — never the
+    film blurb — so the pitch falls back to taste-free framing, not a wrong domain.
     """
     import re
     s = summary_text or ""
