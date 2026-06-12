@@ -453,6 +453,7 @@ async def generate_recommendations(
             # first run, so a recommendation pass warms the library's significance
             # over time instead of pitching from a thin profile.
             from src.services.media_enricher import ensure_verified_data
+            from src.services.episodic_memory import retrieve_considerations
             import asyncio as _asyncio
 
             async def _cand_line(i):
@@ -476,6 +477,43 @@ async def generate_recommendations(
                     plot = vd.get("plot")
                     if plot:
                         line += " | " + str(plot)[:90]
+                # Learned value-considerations — the SAME bridge that protects
+                # items on the deletion side, applied with the opposite sign here:
+                # does the user have standing keep/value feedback (a treasured
+                # franchise, a partner favourite, cultural weight) that plausibly
+                # applies to THIS candidate? If so surface it so the curator can
+                # give taste-fitting, user-valued items clear preference. Profile
+                # built from the verified themes/plot when present (richer match)
+                # else title+genres. Embeds one short string — marginal next to
+                # the verified-data fetch already happening in this gather.
+                prof_parts = [str(i.get("title") or ""), str(i.get("genres") or "")]
+                if vd:
+                    _th = vd.get("themes") or []
+                    if _th:
+                        prof_parts.append(", ".join(str(t) for t in _th[:5]))
+                    _pl = vd.get("plot") or ""
+                    if _pl:
+                        prof_parts.append(str(_pl)[:200])
+                prof = " — ".join(p for p in prof_parts if p.strip())
+                try:
+                    cons = await retrieve_considerations(
+                        user_id, prof, media_category=cat, top_k=2)
+                except Exception:
+                    cons = []
+                # Precision guard for the VISIBLE ⭐ surfacing (stricter than the
+                # deletion side's silent, capped score nudge — a wrong tag the
+                # user reads is worse than a missed one). retrieve_considerations
+                # is recall-leaning and anisotropic embeddings let a strong, broad
+                # NULL-category memory match cross-domain on pure embedding alone
+                # (e.g. a music memory firing on "The Pianist"). Such bleed has an
+                # EMPTY lexical overlap; genuine generalisations keep a lexical
+                # anchor ("franchise", "anime", a title token) or an exact-category
+                # match. Require one of those before showing the user a ⭐.
+                cons = [c for c in cons
+                        if c.get("overlap") or c.get("media_category") == cat]
+                if cons:
+                    line += " | ⭐ USER VALUES: " + "; ".join(
+                        str(c.get("content") or "")[:80] for c in cons[:2])
                 return line
 
             items_text = "\n".join(
@@ -500,7 +538,8 @@ CRITICAL RULES AND GUARDRAILS:
 2. SYNTHESIZE, DON'T QUOTE: Read the Taste Profile to UNDERSTAND the user, then describe the recommended item in YOUR OWN vocabulary. The profile is reference material for you, not a phrasebook to echo back at them.
 {_blacklist_rule(3)}
 4. NO LAZY ANCHORING: DO NOT explicitly name titles from the Taste Profile (e.g., "If you liked [Title], you'll love this"). The pitch must stand on its own merits.
-5. JSON ONLY: Output as a strictly valid JSON array.
+5. STANDING USER VALUES: An item tagged "⭐ USER VALUES: …" carries a preference the user has TAUGHT you over time — a treasured franchise, a partner's favourite, cultural/archival weight. When such an item ALSO fits the taste profile, give it clear preference; reflecting what they value is part of the job. But the value is a booster and tie-breaker, NOT an override — do not recommend an item that plainly clashes with the taste profile just because it's flagged.
+6. JSON ONLY: Output as a strictly valid JSON array.
 
 Output format:
 [{{"title": "Exact Title", "reason": "Your elite 1-sentence pitch.", "confidence": 0.0-1.0}}]"""
