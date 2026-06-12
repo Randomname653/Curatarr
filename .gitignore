@@ -117,6 +117,14 @@ add_col.py
 add_*.py
 scripts/dev/
 
+# Benchmark / tournament scaffolding & artifacts (local-only dev tooling).
+# The harness scripts, fixtures, and ESPECIALLY the timestamped result dumps
+# (tournament_*.md ran to ~48k lines each) are local experiments, never the
+# product — a stray `git add -A` once swept ~191k lines of them into a commit.
+# Keep them on disk, out of the repo. Force-add a specific script with
+# `git add -f tests/benchmarks/<file>` if one ever earns a place in the repo.
+tests/benchmarks/
+
 # 9. Bundled SQLite tooling (keep on disk, not in repo)
 # ==========================================
 # Manually-downloaded sqlite CLI binaries kept in the repo root for
