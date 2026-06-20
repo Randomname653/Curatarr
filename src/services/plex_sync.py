@@ -1691,10 +1691,31 @@ def _parse_guids(item: dict) -> dict:
 
 def _parse_media(item: dict) -> dict:
     """Extract size / duration / resolution / codec / HDR / langs from a Plex
-    item's Media[0]/Part[0]/Stream[] tree. Best-effort; missing → None/0."""
-    media = (item.get("Media") or [{}])[0] or {}
-    part = (media.get("Part") or [{}])[0] or {}
-    streams = part.get("Stream") or media.get("Stream") or []
+    item's Media[]/Part[]/Stream[] tree. Reads ALL Media entries (a title kept in
+    several qualities — 4K Remux + 1080p Bluray — has multiple Media): total size
+    sums every version (real footprint), but resolution/codec/HDR and the
+    bitrate basis come from the PRIMARY (largest) version, so a duplicate doesn't
+    masquerade as bitrate bloat. ``versions`` = how many copies, ``primary_bytes``
+    = the main copy's size (for mb_per_min). Best-effort; missing → None/0."""
+    medias = item.get("Media") or []
+    duration_ms = item.get("duration") or 0
+    if not medias:
+        return {"size_bytes": 0, "primary_bytes": 0, "duration_ms": duration_ms,
+                "resolution": None, "codec": None, "hdr": False,
+                "audio": set(), "subs": set(), "versions": 0}
+    total_size = 0
+    primary = medias[0]
+    primary_size = 0
+    for media in medias:
+        part = (media.get("Part") or [{}])[0] or {}
+        sz = part.get("size") or 0
+        total_size += sz
+        duration_ms = max(duration_ms, media.get("duration") or 0)
+        if sz >= primary_size:
+            primary_size, primary = sz, media
+
+    ppart = (primary.get("Part") or [{}])[0] or {}
+    streams = ppart.get("Stream") or primary.get("Stream") or []
     hdr = False
     audio, subs = set(), set()
     for s in streams:
@@ -1710,15 +1731,15 @@ def _parse_media(item: dict) -> dict:
             audio.add(s["languageCode"])
         elif st == 3 and s.get("languageCode"):
             subs.add(s["languageCode"])
-    vdr = (media.get("videoDynamicRange") or "").lower()
+    vdr = (primary.get("videoDynamicRange") or "").lower()
     if vdr and vdr != "sdr":
         hdr = True
     return {
-        "size_bytes": part.get("size") or 0,
-        "duration_ms": media.get("duration") or item.get("duration") or 0,
-        "resolution": _res_bucket(media.get("videoResolution")),
-        "codec": (media.get("videoCodec") or "").lower() or None,
-        "hdr": hdr, "audio": audio, "subs": subs,
+        "size_bytes": total_size, "primary_bytes": primary_size,
+        "duration_ms": duration_ms,
+        "resolution": _res_bucket(primary.get("videoResolution")),
+        "codec": (primary.get("videoCodec") or "").lower() or None,
+        "hdr": hdr, "audio": audio, "subs": subs, "versions": len(medias),
     }
 
 
@@ -1755,7 +1776,12 @@ def _persist_tech_profiles(agg: dict) -> int:
         for ck, a in agg.items():
             dur_min = round((a["duration_ms"] or 0) / 60000.0, 2)
             size_mb = round((a["size_bytes"] or 0) / (1024 * 1024), 2)
-            mb_per_min = round(size_mb / dur_min, 2) if dur_min >= 1 else None
+            primary_mb = round((a.get("primary_bytes", 0) or 0) / (1024 * 1024), 2)
+            redundant_mb = round((a.get("redundant_bytes", 0) or 0) / (1024 * 1024), 2)
+            # bitrate from the PRIMARY (largest) version so a kept duplicate copy
+            # doesn't inflate mb_per_min into a false "bloated" reading.
+            mb_per_min = (round(primary_mb / dur_min, 2)
+                          if dur_min >= 1 and primary_mb else None)
             res = a["res"].most_common(1)[0][0] if a["res"] else None
             codec = a["codec"].most_common(1)[0][0] if a["codec"] else None
             row = db.query(MediaTechProfile).filter(
@@ -1776,6 +1802,8 @@ def _persist_tech_profiles(agg: dict) -> int:
             row.audio_langs = (",".join(sorted(a["audio"]))[:200]) or None
             row.sub_langs = (",".join(sorted(a["subs"]))[:200]) or None
             row.item_count = a["count"]
+            row.versions = a.get("versions", 1)
+            row.redundant_mb = redundant_mb
             row.updated_at = datetime.utcnow()
             written += 1
         db.commit()
@@ -1834,11 +1862,15 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                 a = agg.setdefault(ck, {
                     "rating_key": ck, "media_type": category, "title": title,
                     "tmdb_id": ids["tmdb_id"], "tvdb_id": ids["tvdb_id"],
-                    "size_bytes": 0, "duration_ms": 0, "res": Counter(),
-                    "codec": Counter(), "hdr": False, "audio": set(),
-                    "subs": set(), "count": 0})
+                    "size_bytes": 0, "primary_bytes": 0, "redundant_bytes": 0,
+                    "duration_ms": 0, "res": Counter(), "codec": Counter(),
+                    "hdr": False, "audio": set(), "subs": set(),
+                    "count": 0, "versions": 1})
                 m = _parse_media(it)
-                a["size_bytes"] += m["size_bytes"] or 0
+                a["size_bytes"] += m["size_bytes"] or 0           # total footprint
+                a["primary_bytes"] += m["primary_bytes"] or 0     # bitrate basis
+                a["redundant_bytes"] += (m["size_bytes"] or 0) - (m["primary_bytes"] or 0)
+                a["versions"] = max(a["versions"], m["versions"])
                 a["duration_ms"] += m["duration_ms"] or 0
                 if m["resolution"]:
                     a["res"][m["resolution"]] += 1
