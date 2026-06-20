@@ -137,7 +137,10 @@ async def enrichment_status(
             "enriched": enriched,
             "not_enriched": max(0, total_unique - enriched),
             "vector_ready": vector_ready,
-            "pct": round(100 * enriched / max(total_unique, 1)),
+            # Clamp: a reclassified title (EnrichmentStatus.media_category moved
+            # to anime while WatchHistoryEntry.media_type stays show) can put the
+            # enriched count above this category's watch-history denominator.
+            "pct": min(100, round(100 * enriched / max(total_unique, 1))),
             "unit": "series" if cat in ("show","anime") else "artists" if cat=="music" else "items",
         }
 
@@ -237,7 +240,11 @@ async def _get_arr_counts() -> dict:
                     "monitored": sum(1 for m in movies if m.get("monitored")),
                     "enriched": enriched,
                     "vector_count": _count_vectors("radarr"),
-                    "pct": round(100 * enriched / max(downloaded, 1)),
+                    # Clamp: enriched counts ALL tracked rows (incl. monitored-
+                    # but-not-downloaded + stale rows for items since removed),
+                    # while downloaded only counts items with files → the raw
+                    # ratio can exceed 100% (the "103%" the UI showed).
+                    "pct": min(100, round(100 * enriched / max(downloaded, 1))),
                     "stale": False,
                 }
             else:
@@ -271,7 +278,11 @@ async def _get_arr_counts() -> dict:
                     "monitored": sum(1 for s in series if s.get("monitored")),
                     "enriched": enriched,
                     "vector_count": _count_vectors("sonarr"),
-                    "pct": round(100 * enriched / max(downloaded, 1)),
+                    # Clamp: enriched counts ALL tracked rows (incl. monitored-
+                    # but-not-downloaded + stale rows for items since removed),
+                    # while downloaded only counts items with files → the raw
+                    # ratio can exceed 100% (the "103%" the UI showed).
+                    "pct": min(100, round(100 * enriched / max(downloaded, 1))),
                     "stale": False,
                 }
             else:
@@ -335,7 +346,7 @@ async def _get_arr_counts() -> dict:
                     "enriched": enriched_artists,
                     "enriched_albums": enriched_albums,
                     "vector_count": _count_vectors("lidarr"),
-                    "pct": round(100 * enriched_artists / max(len(artists), 1)),
+                    "pct": min(100, round(100 * enriched_artists / max(len(artists), 1))),
                     "stale": False,
                 }
             else:
