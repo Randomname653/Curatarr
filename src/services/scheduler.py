@@ -590,6 +590,8 @@ async def job_arr_sync():
                         poster_url=p.get("poster_url"),
                         synopsis=p.get("synopsis"),
                         genres=p.get("genres"),
+                        tvdb_id=p.get("tvdb_id"),
+                        tmdb_id=p.get("tmdb_id"),
                     ))
                     added += 1
             db.commit()

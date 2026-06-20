@@ -101,6 +101,12 @@ def _migrate_columns() -> None:
         # Pass 17: file-level activity timestamp on each deletion proposal.
         # NULL on existing rows — backfilled at next proposal-generation.
         ("deletion_proposals",    "latest_activity_at", "DATETIME"),
+        # Resolving IDs so the discussion path can on-demand fast-enrich an
+        # un-enriched title instead of cold-reading (the Fringe case). NULL on
+        # legacy rows → those fall through to the no-verified-data hedge; new
+        # rows carry the id and self-heal on first discussion.
+        ("deletion_proposals",    "tvdb_id", "INTEGER"),
+        ("deletion_proposals",    "tmdb_id", "INTEGER"),
         # Pass 99-fu13 / Phase 2 #37: per-item enrichment-source tracking.
         # ``fetch_tier`` distinguishes a provisional fast-pass enrichment
         # ("fast" — only the cheap sources were consulted) from the

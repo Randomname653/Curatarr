@@ -1471,7 +1471,9 @@ async def _build_discuss_context_block(
         _doc_key = (f"{proposal.service}:{proposal.media_id}"
                     if proposal.service and proposal.media_id else None)
         verified_payload = await ensure_verified_data(
-            proposal.title, proposal.category or "movie", plex_rating_key=_doc_key)
+            proposal.title, proposal.category or "movie",
+            tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,
+            plex_rating_key=_doc_key)
         verified_block = format_verified_block(verified_payload)
         # The curator knows the title is in the library but not whether the USER
         # has actually SEEN it — the signal that separates "delete unwatched
@@ -1524,6 +1526,14 @@ async def _build_discuss_context_block(
             # external IDs).
             block += _build_no_metadata_anchor(proposal.title)
             logger.warning("⚠️ [NO METADATA] Discuss anchor for: '%s'", proposal.title)
+
+        # No verified block at all (PARTIAL or NO-METADATA above) → the labels
+        # there forbid inventing FACTS, but the curator still confabulated
+        # confident execution VERDICTS and dismissed the user's rating as "noise"
+        # (the Fringe case). This hedge forbids that + keeps it honest/low-confidence.
+        if not verified_block:
+            from src.services.recommendations_engine import NO_VERIFIED_DATA_HEDGE
+            block += "\n" + NO_VERIFIED_DATA_HEDGE + "\n"
 
         # Pass 21: warm the in-memory thread anchor so the user's NEXT
         # turn (which won't carry discuss_context in the payload) reuses

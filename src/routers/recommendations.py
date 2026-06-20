@@ -626,6 +626,8 @@ async def get_deletion_proposals(
                 poster_url=p.get("poster_url"),
                 synopsis=p.get("synopsis"),
                 genres=p.get("genres"),
+                tvdb_id=p.get("tvdb_id"),
+                tmdb_id=p.get("tmdb_id"),
                 latest_activity_at=la_dt,
             )
             dbs.add(row)
