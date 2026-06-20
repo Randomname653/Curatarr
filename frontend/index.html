@@ -4402,13 +4402,16 @@ function _renderEnrichStatus(s, arrLoading) {
     const vectorBadge = a.vector_count != null
       ? `<span style="font-size:10px;color:var(--text3);margin-left:6px" title="Items indexed in vector store">🧮 ${(a.vector_count||0)} vectors</span>`
       : '';
+    const orphanTag = a.orphaned
+      ? `<span style="font-size:10px;color:var(--amber);margin-left:6px" title="Enriched metadata for items no longer in ${key} (removed/replaced) — stale, safe to purge">⚠ ${a.orphaned} orphaned</span>`
+      : '';
     return `<tr>
       <td>${icon} ${key.charAt(0).toUpperCase()+key.slice(1)}${staleTag}</td>
       <td>${(a.total||0).toLocaleString()}<br><span style="font-size:11px;color:var(--text3)">${(a.downloaded||0).toLocaleString()} downloaded</span></td>
       <td>${(a.monitored||0).toLocaleString()}</td>
       <td>
-        <div class="progress-bar" style="margin-bottom:2px"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <div class="progress-label"><span style="color:var(--success)">${a.enriched||0} enriched${vectorBadge}</span><span>${pct}%</span></div>
+        <div class="progress-bar" style="margin-bottom:2px"><div class="progress-fill" style="width:${Math.min(pct,100)}%"></div></div>
+        <div class="progress-label"><span style="color:var(--success)">${a.enriched||0} enriched${vectorBadge}${orphanTag}</span><span>${pct}%</span></div>
         ${albumRow}
       </td>
     </tr>`;
