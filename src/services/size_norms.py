@@ -38,7 +38,9 @@ def _class_keys(media_type: str, resolution, codec) -> list:
     keys = [f"{media_type}|{res}|{cod}", f"{media_type}|{res}|*"]
     if res != "*":
         keys.append(f"*|{res}|*")          # resolution across all types
-    keys.append(f"{media_type}|*|*")        # last resort: type, any resolution
+    # NB: deliberately NO `type|*|*` fallback. Mixing resolutions makes a bloat
+    # verdict meaningless (a 4K item vs a 1080p-dominated norm reads as 5× bloat).
+    # An item whose resolution has no norm gets None → no verdict (safe).
     return keys
 
 
@@ -110,7 +112,8 @@ def size_outlier(media_type: str, resolution, codec, mb_per_min) -> dict:
     """Compare an item's mb_per_min against its class norm. Returns a verdict dict
     or None when there's no profile/norm to compare against (caller falls back to
     today's blanket behaviour)."""
-    if not mb_per_min or mb_per_min <= 0 or not media_type:
+    # No resolution → no reliable class (bloat is resolution-relative); don't judge.
+    if not mb_per_min or mb_per_min <= 0 or not media_type or not resolution:
         return None
     norms = _load_norms()
     chosen = None
