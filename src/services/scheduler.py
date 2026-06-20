@@ -464,6 +464,19 @@ async def job_plex_sync():
     except Exception as e:
         logger.error("[scheduler] Plex sync failed: %s", e)
 
+    # Size-outlier intelligence: refresh per-item tech profiles (resolution /
+    # codec / size / runtime) for the whole library, then recompute the
+    # MB-per-minute class norms. Rate-limited (12h) inside sync_tech_profiles.
+    try:
+        from src.services.plex_sync import sync_tech_profiles
+        from src.services.size_norms import compute_size_norms
+        tech = await sync_tech_profiles(force=False)
+        if not tech.get("skipped"):
+            compute_size_norms()
+            logger.info("[scheduler] tech profiles: %s → size norms recomputed", tech)
+    except Exception as e:
+        logger.error("[scheduler] tech sync / norms failed: %s", e)
+
 
 async def job_arr_sync():
     """Daily ARR sync — refreshes deletion proposal candidates."""

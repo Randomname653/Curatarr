@@ -167,6 +167,32 @@ def tech_profile_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> dic
         }
 
 
+def load_tech_index() -> dict:
+    """Build an in-memory {('tmdb', id): profile, ('tvdb', id): profile} map for
+    fast batch lookup in the deletion-scoring loop — avoids a DB query per
+    candidate. Profiles carry only what the outlier check + size_pts need."""
+    idx = {}
+    with get_db_session() as db:
+        rows = db.query(
+            MediaTechProfile.tmdb_id, MediaTechProfile.tvdb_id,
+            MediaTechProfile.media_type, MediaTechProfile.resolution,
+            MediaTechProfile.codec, MediaTechProfile.mb_per_min,
+            MediaTechProfile.size_mb, MediaTechProfile.item_count,
+        ).filter(MediaTechProfile.mb_per_min.isnot(None)).all()
+    for tmdb_id, tvdb_id, mt, res, cod, mpm, smb, cnt in rows:
+        prof = {"media_type": mt, "resolution": res, "codec": cod,
+                "mb_per_min": mpm, "size_mb": smb, "item_count": cnt}
+        # Index by both int and str so the ARR item dict matches regardless of
+        # how its id is typed upstream.
+        if tmdb_id:
+            idx[("tmdb", tmdb_id)] = prof
+            idx[("tmdb", str(tmdb_id))] = prof
+        if tvdb_id:
+            idx[("tvdb", tvdb_id)] = prof
+            idx[("tvdb", str(tvdb_id))] = prof
+    return idx
+
+
 def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> str:
     """One-line SIZE CONTEXT string for the curator (pitch / discussion), or "".
 
@@ -182,6 +208,11 @@ def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> str
     if not o:
         return ""
     gb = (prof["size_mb"] or 0) / 1024
+    # Only surface when it's actionable: an outlier (bloated/lean), or a NORMAL
+    # item big enough to plausibly draw a blanket size complaint we want to
+    # pre-empt. A small normal item needs no size note.
+    if o["verdict"] == "normal" and gb < 15:
+        return ""
     res = (prof["resolution"] or "?").upper()
     codec = (prof["codec"] or "?")
     eps = (f", {prof['item_count']} episodes" if prof.get("item_count", 1) > 1 else "")

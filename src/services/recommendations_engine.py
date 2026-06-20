@@ -1022,6 +1022,11 @@ async def generate_deletion_proposals(
         "[deletions] %s: %d/%d candidates have embeddings; cosine anchors p10=%.3f p90=%.3f",
         category, len(_cos_vals), len(prelim), _lo, _hi,
     )
+    # Tech-profile index for outlier-based size scoring — loaded once (a DB query
+    # per candidate would be thousands). Empty when the tech sync hasn't run yet,
+    # in which case size_pts falls back to today's blanket log1p below.
+    from src.services.size_norms import load_tech_index, size_outlier
+    _tech_idx = load_tech_index()
     for p in prelim:
         mismatch = _cosine_to_mismatch(p["cosine"], _lo, _hi)
         # Vector mismatch is the dominant signal (0-80). Size is logarithmic so
@@ -1029,7 +1034,21 @@ async def generate_deletion_proposals(
         # penalising below. USER rating swing (music only) weights the user's own
         # star rating heaviest. Same coefficients as before — only the mismatch
         # input is now a real, calibrated cosine instead of a flat constant.
-        size_pts = math.log1p(p["size_gb"]) * 5
+        # Size penalty — OUTLIER-based, not blanket. A 4K film or a many-specials
+        # series that is normal-per-minute for its class gets ~0; only genuine
+        # bitrate-bloat is penalised (capped at 25 so it never dominates the taste
+        # mismatch). Falls back to the old log1p blanket when no tech profile
+        # exists (tech sync not run / item not in Plex), so nothing regresses.
+        _it = p["item"]
+        _tp = (_tech_idx.get(("tmdb", _it.get("tmdb_id")))
+               or _tech_idx.get(("tvdb", _it.get("tvdb_id"))))
+        _so = size_outlier(_tp["media_type"], _tp["resolution"], _tp["codec"],
+                           _tp["mb_per_min"]) if _tp else None
+        if _so:
+            size_pts = (min(25.0, (_so["ratio"] - 1.0) * 12.0)
+                        if _so["verdict"] == "bloated" else 0.0)
+        else:
+            size_pts = math.log1p(p["size_gb"]) * 5
         rating_swing = (p["rating"] - 5.0) * 4
         user_rating_swing = (
             (p["user_rating"] - 5.0) * 6 if p["user_rating"] is not None else 0.0
@@ -1292,6 +1311,14 @@ async def generate_deletion_proposals(
             # Candidate's own watch status — neutral context the curator weighs.
             watch_block = _watch_pitch_line(watch_status_map.get(item.get("title")))
 
+            # Size-outlier context (non-music): is this item's GB normal for its
+            # resolution/codec class (don't flag) or genuine bitrate bloat (size
+            # is a fair argument)? Stops the blanket "70 GB is too big" complaint.
+            from src.services.size_norms import size_context_for
+            size_ctx_block = "" if category == "music" else size_context_for(
+                tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
+                plex_rating_key=item.get("plex_rating_key"))
+
             if category == "music":
                 # Music-specific pitch: artist framing, no synopsis, no film
                 # ratings, and hard anti-hallucination rules (a band sharing a
@@ -1342,6 +1369,7 @@ REASON FOR DELETION CONSIDERATION: Mismatch with user taste profile.
 {considerations_block}
 {watch_block}
 {data_poor_block}
+{size_ctx_block}
 
 {vocab_guideline}
 {_FORBIDDEN_CROSS_DOMAIN}
@@ -1357,7 +1385,7 @@ CRITICAL RULES AND GUARDRAILS:
 {_blacklist_rule(5)}
 6. NO ANCHORING: Do not explicitly name titles from the User Taste Summary.
 7. NO ECHOING: Never start with "Given your…" or "Since you like…". State why the item fails to earn its space.
-8. NO TECH TALK: Do not mention file sizes, gigabytes, or vector distances.
+8. SIZE TALK — OUTLIERS ONLY: Do not mention file sizes, gigabytes, or vector distances by default. EXCEPTION: if a SIZE CONTEXT line above flags this item as genuinely oversized for its class (bloated), its disproportionate size IS a fair, specific argument you may use. Never raise size when SIZE CONTEXT says it is normal — a big 4K film or a many-episode series is not bloat.
 9. PREMISE & FIT — NOT A REVIEW: You have this item's premise, themes and metadata, NOT a screening of it. Argue why its premise / genre / themes CLASH with the user's taste. Do NOT pass verdicts on execution you cannot know — no "static", "hollow", "melodramatic stalemate", "flat", "lands/doesn't land", no claims about pacing, acting or direction — unless that judgement is explicitly in the data above. For fact-based works (history, true events, documentary) a known outcome is NOT a flaw: never call it "predictable"."""
 
             pitch = await _call_llm(prompt, skip_priority=True)
