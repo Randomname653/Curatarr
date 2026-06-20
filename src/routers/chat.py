@@ -1458,6 +1458,17 @@ async def _build_discuss_context_block(
             "The user is now responding to that suggestion.\n"
         )
 
+        # Size-outlier context: is this item's GB normal for its resolution/codec
+        # class (don't treat as a flaw) or genuine bitrate bloat? Lets the curator
+        # answer a "70 GB for THIS?!" the way the data warrants instead of blanket.
+        try:
+            from src.services.size_norms import size_context_for
+            _size_ctx = size_context_for(tmdb_id=proposal.tmdb_id, tvdb_id=proposal.tvdb_id)
+            if _size_ctx:
+                block += _size_ctx + "\n"
+        except Exception as _e:
+            logger.debug("[chat] size context failed: %s", _e)
+
         # Attach the FULL verified dataset (creator/writer, extended plot,
         # themes, keywords, awards) — assembled cache-only with NO LLM and no
         # live fetch — so a Level-2 self-check and any discussion reason from
