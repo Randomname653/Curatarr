@@ -1814,7 +1814,7 @@ async def library_breakdown(
                 count = cat_buckets.get(key, 0)
             states_out[key] = {
                 "count":     count,
-                "pct":       round(100 * count / max(denominator, 1), 1),
+                "pct":       min(100.0, round(100 * count / max(denominator, 1), 1)),
                 "label":     label,
                 "explainer": explainer,
             }
@@ -1879,7 +1879,7 @@ async def library_breakdown(
             "vector_store": {
                 "indexed":     vector_indexed,
                 "denominator": denominator,
-                "pct":         round(100 * vector_indexed / max(denominator, 1), 1),
+                "pct":         min(100.0, round(100 * vector_indexed / max(denominator, 1), 1)),
                 "basis":       vector_basis,
             },
 
