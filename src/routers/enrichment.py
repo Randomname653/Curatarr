@@ -229,16 +229,25 @@ async def _get_arr_counts() -> dict:
                 movies = r.json()
                 total = len(movies)
                 downloaded = sum(1 for m in movies if m.get("hasFile"))
+                live_ids = {m.get("id") for m in movies}
                 with get_db_session() as db:
-                    enriched = db.query(ArrEnrichmentStatus).filter(
+                    enriched_ids = {aid for (aid,) in db.query(
+                        ArrEnrichmentStatus.arr_id).filter(
                         ArrEnrichmentStatus.service == "radarr",
                         ArrEnrichmentStatus.enriched == True,
-                    ).count()
+                    ).all()}
+                # Split enriched rows into still-present vs ORPHANED (enriched but
+                # the movie is gone from Radarr). Orphans inflated the old count
+                # past 100%; surfacing them separately keeps the % honest and
+                # shows what's cleanable.
+                enriched = len(enriched_ids & live_ids)
+                orphaned = len(enriched_ids - live_ids)
                 counts["radarr"] = {
                     "total": total,
                     "downloaded": downloaded,
                     "monitored": sum(1 for m in movies if m.get("monitored")),
                     "enriched": enriched,
+                    "orphaned": orphaned,
                     "vector_count": _count_vectors("radarr"),
                     # Clamp: enriched counts ALL tracked rows (incl. monitored-
                     # but-not-downloaded + stale rows for items since removed),
@@ -267,16 +276,23 @@ async def _get_arr_counts() -> dict:
                 series = r.json()
                 downloaded = sum(1 for s in series
                                  if s.get("statistics", {}).get("episodeFileCount", 0) > 0)
+                live_ids = {s.get("id") for s in series}
                 with get_db_session() as db:
-                    enriched = db.query(ArrEnrichmentStatus).filter(
+                    enriched_ids = {aid for (aid,) in db.query(
+                        ArrEnrichmentStatus.arr_id).filter(
                         ArrEnrichmentStatus.service == "sonarr",
                         ArrEnrichmentStatus.enriched == True,
-                    ).count()
+                    ).all()}
+                # Still-present vs ORPHANED (enriched but the series is gone from
+                # Sonarr) — orphans were the main source of the >100% sonarr bar.
+                enriched = len(enriched_ids & live_ids)
+                orphaned = len(enriched_ids - live_ids)
                 counts["sonarr"] = {
                     "total": len(series),
                     "downloaded": downloaded,
                     "monitored": sum(1 for s in series if s.get("monitored")),
                     "enriched": enriched,
+                    "orphaned": orphaned,
                     "vector_count": _count_vectors("sonarr"),
                     # Clamp: enriched counts ALL tracked rows (incl. monitored-
                     # but-not-downloaded + stale rows for items since removed),
