@@ -1641,3 +1641,226 @@ async def sync_arr_new_items() -> dict:
     if radarr_ok and sonarr_ok:
         set_datetime("last_arr_sync_at", datetime.utcnow())
     return {"new_items": new_items, "total": len(new_items)}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  TECHNICAL METADATA SYNC (size-outlier intelligence)
+# ════════════════════════════════════════════════════════════════════════════
+# Collect per-item resolution / codec / HDR / size / runtime from Plex so the
+# size-norm engine can learn "normal MB-per-minute" per class and the curator
+# can flag genuine bloat instead of blanket file size. Distinct from the watch
+# sync above: covers the WHOLE library (no viewCount filter) and reads the
+# Media/Part/Stream tree the watch sync ignores. Movies = one row each; shows =
+# episodes (Plex type 4) aggregated per series incl. specials, with series ids
+# merged from the show items (type 2); music = tracks (type 10) per artist.
+
+_PLEX_TECH_TYPE = {"movie": "1", "show": "4", "anime": "4", "music": "10"}
+
+
+def _res_bucket(res: str) -> Optional[str]:
+    """Normalise Plex videoResolution → a coarse bucket for class grouping."""
+    r = (res or "").lower().strip()
+    if not r:
+        return None
+    if r in ("4k", "2160", "2160p"):
+        return "4k"
+    if r.startswith("1080"):
+        return "1080"
+    if r.startswith("720"):
+        return "720"
+    if r in ("sd", "480", "480p", "576", "576p", "240", "360"):
+        return "sd"
+    return r
+
+
+def _parse_guids(item: dict) -> dict:
+    """Pull tmdb_id / tvdb_id ints out of a Plex item's Guid[] array."""
+    out = {"tmdb_id": None, "tvdb_id": None}
+    for g in (item.get("Guid") or []):
+        gid = (g.get("id") or "")
+        if gid.startswith("tmdb://"):
+            v = gid[7:].split("?")[0]
+            if v.isdigit():
+                out["tmdb_id"] = int(v)
+        elif gid.startswith("tvdb://"):
+            v = gid[7:].split("?")[0]
+            if v.isdigit():
+                out["tvdb_id"] = int(v)
+    return out
+
+
+def _parse_media(item: dict) -> dict:
+    """Extract size / duration / resolution / codec / HDR / langs from a Plex
+    item's Media[0]/Part[0]/Stream[] tree. Best-effort; missing → None/0."""
+    media = (item.get("Media") or [{}])[0] or {}
+    part = (media.get("Part") or [{}])[0] or {}
+    streams = part.get("Stream") or media.get("Stream") or []
+    hdr = False
+    audio, subs = set(), set()
+    for s in streams:
+        st = s.get("streamType")
+        if st == 1:  # video
+            trc = (s.get("colorTrc") or "").lower()
+            disp = ((s.get("displayTitle") or "") + " "
+                    + (s.get("extendedDisplayTitle") or "")).lower()
+            if (s.get("DOVIPresent") or trc in ("smpte2084", "arib-std-b67")
+                    or "hdr" in disp or "dolby vision" in disp):
+                hdr = True
+        elif st == 2 and s.get("languageCode"):
+            audio.add(s["languageCode"])
+        elif st == 3 and s.get("languageCode"):
+            subs.add(s["languageCode"])
+    vdr = (media.get("videoDynamicRange") or "").lower()
+    if vdr and vdr != "sdr":
+        hdr = True
+    return {
+        "size_bytes": part.get("size") or 0,
+        "duration_ms": media.get("duration") or item.get("duration") or 0,
+        "resolution": _res_bucket(media.get("videoResolution")),
+        "codec": (media.get("videoCodec") or "").lower() or None,
+        "hdr": hdr, "audio": audio, "subs": subs,
+    }
+
+
+async def _fetch_section_all(client, plex_url, headers, sec_key, type_num) -> list:
+    """Paginated fetch of every item of a Plex type in a section (no view filter)."""
+    PAGE = 400
+    out, start = [], 0
+    while True:
+        try:
+            r = await client.get(
+                f"{plex_url}/library/sections/{sec_key}/all",
+                headers={**headers, "X-Plex-Container-Start": str(start),
+                         "X-Plex-Container-Size": str(PAGE)},
+                params={"type": type_num, "includeGuids": "1"},
+            )
+        except Exception as e:
+            logger.warning("[tech] fetch %s/%s failed: %s", sec_key, type_num, e)
+            break
+        if r.status_code != 200:
+            break
+        items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
+        out.extend(items)
+        if len(items) < PAGE:
+            break
+        start += len(items)
+    return out
+
+
+def _persist_tech_profiles(agg: dict) -> int:
+    """Upsert MediaTechProfile rows from the accumulator (by plex_rating_key)."""
+    from src.database.models import MediaTechProfile
+    written = 0
+    with get_db_session() as db:
+        for ck, a in agg.items():
+            dur_min = round((a["duration_ms"] or 0) / 60000.0, 2)
+            size_mb = round((a["size_bytes"] or 0) / (1024 * 1024), 2)
+            mb_per_min = round(size_mb / dur_min, 2) if dur_min >= 1 else None
+            res = a["res"].most_common(1)[0][0] if a["res"] else None
+            codec = a["codec"].most_common(1)[0][0] if a["codec"] else None
+            row = db.query(MediaTechProfile).filter(
+                MediaTechProfile.plex_rating_key == ck).first()
+            if not row:
+                row = MediaTechProfile(plex_rating_key=ck)
+                db.add(row)
+            row.media_type = a["media_type"]
+            row.title = (a["title"] or "")[:512] or None
+            row.tmdb_id = a["tmdb_id"]
+            row.tvdb_id = a["tvdb_id"]
+            row.size_mb = size_mb
+            row.duration_min = dur_min
+            row.mb_per_min = mb_per_min
+            row.resolution = res
+            row.codec = codec
+            row.hdr = bool(a["hdr"])
+            row.audio_langs = (",".join(sorted(a["audio"]))[:200]) or None
+            row.sub_langs = (",".join(sorted(a["subs"]))[:200]) or None
+            row.item_count = a["count"]
+            row.updated_at = datetime.utcnow()
+            written += 1
+        db.commit()
+    return written
+
+
+async def sync_tech_profiles(force: bool = False, include_music: bool = False) -> dict:
+    """Whole-library technical-metadata sync → MediaTechProfile rows.
+
+    Music is OFF by default: a large library is hundreds of thousands of tracks
+    (≈one fetch page per 400), and the size pain the curator hits is video
+    (4K/specials). The norms + scoring + curator context all work per media_type,
+    so music can be switched on later via include_music without other changes."""
+    from collections import Counter
+    plex_url = settings.effective_plex_url
+    plex_token = settings.effective_plex_token
+    if not plex_url or not plex_token:
+        return {"error": "PLEX_URL / PLEX_TOKEN not configured"}
+
+    last = get_datetime("last_tech_sync_at")
+    if not force and last and (datetime.utcnow() - last).total_seconds() < 12 * 3600:
+        return {"skipped": True, "last": last.isoformat()}
+
+    headers = {"Accept": "application/json", "X-Plex-Token": plex_token,
+               "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID}
+    from src.database.models import LibraryConfig
+    with get_db_session() as db:
+        lib_configs = {c.plex_section_key: (c.media_category, c.plex_section_title)
+                       for c in db.query(LibraryConfig).all()}
+
+    _task = task_monitor.create(name="Tech-metadata sync", category="sync")
+    task_monitor.start(_task)
+    agg: dict = {}
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        for sec_key, (category, sec_title) in lib_configs.items():
+            type_num = _PLEX_TECH_TYPE.get(category)
+            if not type_num:
+                continue
+            if category == "music" and not include_music:
+                continue
+            items = await _fetch_section_all(client, plex_url, headers, sec_key, type_num)
+            task_monitor.log(_task, f"{sec_title}: {len(items)} parts")
+            for it in items:
+                if category == "movie":
+                    ck = str(it.get("ratingKey"))
+                    title = it.get("title")
+                    ids = _parse_guids(it)
+                else:
+                    ck = str(it.get("grandparentRatingKey")
+                             or it.get("parentRatingKey") or it.get("ratingKey"))
+                    title = it.get("grandparentTitle") or it.get("title")
+                    ids = {"tmdb_id": None, "tvdb_id": None}
+                if not ck or ck == "None":
+                    continue
+                a = agg.setdefault(ck, {
+                    "rating_key": ck, "media_type": category, "title": title,
+                    "tmdb_id": ids["tmdb_id"], "tvdb_id": ids["tvdb_id"],
+                    "size_bytes": 0, "duration_ms": 0, "res": Counter(),
+                    "codec": Counter(), "hdr": False, "audio": set(),
+                    "subs": set(), "count": 0})
+                m = _parse_media(it)
+                a["size_bytes"] += m["size_bytes"] or 0
+                a["duration_ms"] += m["duration_ms"] or 0
+                if m["resolution"]:
+                    a["res"][m["resolution"]] += 1
+                if m["codec"]:
+                    a["codec"][m["codec"]] += 1
+                a["hdr"] = a["hdr"] or m["hdr"]
+                a["audio"] |= m["audio"]
+                a["subs"] |= m["subs"]
+                a["count"] += 1
+
+            # Shows: merge series ids/title from the show items (type 2).
+            if category in ("show", "anime"):
+                for sh in await _fetch_section_all(client, plex_url, headers, sec_key, "2"):
+                    rk = str(sh.get("ratingKey"))
+                    if rk in agg:
+                        gids = _parse_guids(sh)
+                        agg[rk]["tmdb_id"] = agg[rk]["tmdb_id"] or gids["tmdb_id"]
+                        agg[rk]["tvdb_id"] = agg[rk]["tvdb_id"] or gids["tvdb_id"]
+                        agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
+
+    written = _persist_tech_profiles(agg)
+    set_datetime("last_tech_sync_at", datetime.utcnow())
+    task_monitor.done(_task, f"{written} tech profiles")
+    logger.info("[tech] wrote %d MediaTechProfile rows across %d items", written, len(agg))
+    return {"profiles": written, "items": len(agg)}

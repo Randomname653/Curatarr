@@ -491,3 +491,49 @@ class ArrEnrichmentStatus(Base):
     __table_args__ = (
         Index("ix_arr_enrich_service_id", "service", "arr_id", unique=True),
     )
+
+
+class MediaTechProfile(Base):
+    """Per-item technical profile collected from Plex (Media/Part/Stream):
+    resolution, codec, HDR, bitrate, total size + runtime. Drives the
+    MB-per-minute size norms + outlier detection so the curator flags genuine
+    bloat, not blanket file size. One canonical row per library item; for series
+    the episode files are aggregated (size + runtime summed, incl. specials),
+    for music the artist's tracks are aggregated."""
+    __tablename__ = "media_tech_profiles"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    plex_rating_key = Column(String(64), unique=True, nullable=False, index=True)
+    media_type      = Column(String(20), nullable=False)   # movie / show / anime / music
+    title           = Column(String(512), nullable=True)
+    tmdb_id         = Column(Integer, nullable=True, index=True)  # for ARR-side lookup
+    tvdb_id         = Column(Integer, nullable=True, index=True)
+    size_mb         = Column(Float, default=0.0)           # total (series = sum of episode files)
+    duration_min    = Column(Float, default=0.0)           # total runtime incl. specials
+    mb_per_min      = Column(Float, nullable=True)         # size_mb / duration_min — the norm key
+    resolution      = Column(String(16), nullable=True)    # 4k / 1080 / 720 / sd
+    codec           = Column(String(16), nullable=True)    # hevc / h264 / av1 / …
+    hdr             = Column(Boolean, default=False)
+    audio_langs     = Column(String(200), nullable=True)   # comma-separated
+    sub_langs       = Column(String(200), nullable=True)
+    item_count      = Column(Integer, default=1)           # episodes / tracks aggregated
+    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MediaSizeNorm(Base):
+    """Learned MB-per-minute distribution for a media class, recomputed after each
+    tech sync. ``class_key`` encodes the grouping granularity with ``*`` wildcards
+    (e.g. ``movie|4k|hevc|hdr`` … ``movie|4k|*|*`` … ``movie|*|*|*``) so the outlier
+    detector can try the finest class that has enough samples, then fall back."""
+    __tablename__ = "media_size_norms"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    class_key    = Column(String(80), unique=True, nullable=False, index=True)
+    media_type   = Column(String(20), nullable=False)
+    median       = Column(Float, nullable=False)          # mb_per_min p50
+    p25          = Column(Float, nullable=True)
+    p75          = Column(Float, nullable=True)
+    p90          = Column(Float, nullable=True)
+    std          = Column(Float, nullable=True)
+    sample_count = Column(Integer, default=0)
+    computed_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
