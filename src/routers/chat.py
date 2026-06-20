@@ -817,13 +817,19 @@ async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,
         metas = results.get("metadatas", [[]])[0]
         await gen.close()
         watched = _watched_lookup(user_id, [m.get("title", "") for m in metas])
+        from src.services.size_norms import short_size_tag
         lines = []
         for doc, meta in zip(docs, metas):
             title = meta.get("title", "Unknown")
             genres = meta.get("genres", "")
             themes = meta.get("themes", "")
             tag = _watch_tag(watched.get(title))
-            lines.append(f"- {title} [{tag}] ({genres}{', '+themes if themes else ''}): {doc[:200]}")
+            stag = short_size_tag(tmdb_id=meta.get("tmdb_id"),
+                                  tvdb_id=meta.get("tvdb_id"),
+                                  plex_rating_key=meta.get("plex_rating_key"),
+                                  title=title)
+            lines.append(f"- {title} [{tag}]{(' ' + stag) if stag else ''} "
+                         f"({genres}{', '+themes if themes else ''}): {doc[:200]}")
         return "\n".join(lines)
     except Exception as e:
         logger.debug("RAG failed: %s", e)
@@ -2182,6 +2188,7 @@ CRITICAL BEHAVIOR RULES:
 {no_library_actions_rule}
 {no_monologue_rule}
 {analytical_integrity_rule}
+SIZE SENSE: Judge file size by MB-PER-MINUTE for its resolution/codec class, never raw GiB. A 4K film or a series with many episodes/specials is large in total GB but usually NORMAL per minute — do NOT call that bloat, hoarding, or "an affront to efficiency". Keeping a high-fidelity copy of content the user VALUES is not waste. Genuine bloat is a disproportionate bitrate for the resolution (e.g. a 1080p file carrying 4K-level MB/min), or redundant duplicate versions of one title. When a "[size: …]" tag appears next to a library item, trust it over your own size intuition.
 
 FORMATTING RULES:
 - Separate paragraphs with a single blank line. Do not create walls of text.
@@ -2262,7 +2269,12 @@ FORMATTING RULES:
                         "messages": messages,
                         "stream": True,
                         "keep_alive": CURATOR_KEEP_ALIVE,
-                        **ollama_options(temperature=0.7, num_predict=2048),
+                        # 2048 cut long, in-flight monologues off mid-sentence
+                        # (the "hoarding" critique stopped at "...The Godfather").
+                        # 4096 lets a full argument land; stays within the baked
+                        # num_ctx=8192 budget (input + output) for typical free
+                        # chat without paying the VRAM cost of a bigger context.
+                        **ollama_options(temperature=0.7, num_predict=4096),
                     },
                 ) as resp:
                     async for line in resp.aiter_lines():

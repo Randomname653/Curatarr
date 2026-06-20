@@ -517,6 +517,12 @@ class MediaTechProfile(Base):
     audio_langs     = Column(String(200), nullable=True)   # comma-separated
     sub_langs       = Column(String(200), nullable=True)
     item_count      = Column(Integer, default=1)           # episodes / tracks aggregated
+    # Redundant-version (hoarding) signal: how many quality versions of THIS title
+    # the library keeps (4K Remux + 1080p Bluray = 2), and the disk those extra
+    # copies waste. mb_per_min is computed from the PRIMARY (largest) version so a
+    # duplicate doesn't masquerade as bitrate bloat.
+    versions        = Column(Integer, default=1)
+    redundant_mb    = Column(Float, default=0.0)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

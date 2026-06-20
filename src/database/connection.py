@@ -107,6 +107,9 @@ def _migrate_columns() -> None:
         # rows carry the id and self-heal on first discussion.
         ("deletion_proposals",    "tvdb_id", "INTEGER"),
         ("deletion_proposals",    "tmdb_id", "INTEGER"),
+        # Redundant-version (duplicate) tracking on the tech profile.
+        ("media_tech_profiles",   "versions", "INTEGER DEFAULT 1"),
+        ("media_tech_profiles",   "redundant_mb", "FLOAT DEFAULT 0"),
         # Pass 99-fu13 / Phase 2 #37: per-item enrichment-source tracking.
         # ``fetch_tier`` distinguishes a provisional fast-pass enrichment
         # ("fast" — only the cheap sources were consulted) from the
