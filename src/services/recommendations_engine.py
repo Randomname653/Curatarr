@@ -123,6 +123,27 @@ _FORBIDDEN_CROSS_DOMAIN = (
     "mise-en-scène, frame composition) when critiquing music or anime."
 )
 
+# Injected into a pitch / discussion ONLY when there is no verified-data block
+# (the item isn't enriched and the on-demand fast-enrich couldn't resolve it —
+# the curator has nothing but a one-line synopsis). Without this the curator
+# confabulates confident execution verdicts on zero data and dismisses the
+# user's own signals as "noise" (the Fringe case: trashed an 8.4 show with
+# invented "procedural fatigue / case-of-the-week" critique it could not know).
+NO_VERIFIED_DATA_HEDGE = (
+    "⚠️ NO VERIFIED DATA FOR THIS TITLE — you have ONLY a bare synopsis. No "
+    "verified themes, year, significance, cast or production facts (it isn't "
+    "enriched). This is a DATA-POOR judgment, so you MUST:\n"
+    "- Open by naming the blind spot ('I only have a one-line synopsis here').\n"
+    "- NOT invent execution verdicts (pacing, 'case of the week', 'formulaic', "
+    "'bloated', 'dated', 'procedural fatigue', collapse of vision) — you cannot "
+    "know any of that from a synopsis.\n"
+    "- NOT dismiss the user's external signals (an IMDb/TMDB rating, their own "
+    "knowledge) as 'noise' or 'irrelevant'. With no data of your own, THEIR "
+    "signal outweighs your inference — engage it honestly.\n"
+    "- Stay explicitly LOW-confidence and lean toward KEEPING / deferring until "
+    "the title is properly enriched, rather than pressing for deletion."
+)
+
 
 def _get_vocab_guideline(category: str, genres_str: str) -> str:
     """
@@ -1255,6 +1276,10 @@ async def generate_deletion_proposals(
                     f"- Genres: {genres_str or 'Unknown'}\n"
                     f"- Synopsis: {overview_short}"
                 )
+            # No verified block → the curator has only a thin synopsis. Inject the
+            # hedge so it acknowledges the blind spot instead of confabulating
+            # confident execution verdicts (the Fringe case).
+            data_poor_block = NO_VERIFIED_DATA_HEDGE if not verified_block else ""
 
             # Learned considerations stashed during scoring — the user's standing
             # keep/value preferences that plausibly apply to THIS item. The curator
@@ -1285,6 +1310,7 @@ REASON FOR DELETION CONSIDERATION: their sound is a mismatch with the user's mus
 {f'USER MUSIC TASTE: {taste_blurb}' if taste_blurb else ''}
 {f'KNOWN EXCEPTIONS & MEMORIES: {memory_context}' if memory_context else ''}
 {considerations_block}
+{data_poor_block}
 
 {vocab_guideline}
 {_FORBIDDEN_CROSS_DOMAIN}
@@ -1315,6 +1341,7 @@ REASON FOR DELETION CONSIDERATION: Mismatch with user taste profile.
 {f'KNOWN EXCEPTIONS & MEMORIES: {memory_context}' if memory_context else ''}
 {considerations_block}
 {watch_block}
+{data_poor_block}
 
 {vocab_guideline}
 {_FORBIDDEN_CROSS_DOMAIN}
@@ -1372,6 +1399,10 @@ CRITICAL RULES AND GUARDRAILS:
                 "arr_id": item.get("arr_id"),
                 "service": item.get("service", ""),
                 "arr_url": item.get("arr_url", ""),
+                # Resolving IDs persisted on the proposal so the discussion path
+                # can on-demand fast-enrich + cache an un-enriched title later.
+                "tvdb_id": item.get("tvdb_id"),
+                "tmdb_id": item.get("tmdb_id"),
                 # Pass 17: forward the latest file-import timestamp so the
                 # caller can persist it on the DeletionProposal row. NULL
                 # when /history fetch failed or the item has no recent

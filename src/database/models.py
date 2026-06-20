@@ -182,6 +182,14 @@ class DeletionProposal(Base):
     poster_url = Column(String(512), nullable=True)
     synopsis   = Column(Text, nullable=True)
     genres     = Column(String(300), nullable=True)
+    # Resolving IDs captured from the ARR item at proposal-generation time, so
+    # the DISCUSSION path can pass them to ensure_verified_data and on-demand
+    # fast-enrich + cache an un-enriched title (themes / year / significance)
+    # instead of cold-reading a thin synopsis. Without these the discussion only
+    # had the Sonarr/Radarr id, which can't resolve a show by title alone (the
+    # Fringe case — confident confabulation on zero verified data).
+    tvdb_id = Column(Integer, nullable=True)
+    tmdb_id = Column(Integer, nullable=True)
     # Pass 17: most recent file-level activity timestamp (latest episode
     # file imported / movie file added / track file added). Distinct from
     # ``created_at`` (when this proposal row was generated) and from
