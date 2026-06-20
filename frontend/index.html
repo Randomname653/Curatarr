@@ -4520,7 +4520,7 @@ function _renderMusicStatus(s) {
     const phase   = prog.phase || '';
     const queried = prog.tracks_queried ?? 0;
     const total   = prog.total_unique   ?? 0;
-    const pct     = prog.pct            ?? (total ? Math.round(100 * queried / total) : 0);
+    const pct     = Math.min(100, prog.pct ?? (total ? Math.round(100 * queried / total) : 0));
 
     if (phase === 'plex_match') {
       progLabel.textContent = `Phase 1: Matching plays to Plex…`;
@@ -4785,7 +4785,7 @@ async function loadLibraryConfig() {
     el.innerHTML = discoverSections.map(s => {
       const cat = cfgMap[s.key] || s.suggested_category;
       const enrichPct = s.plex_item_count > 0
-        ? Math.round(100 * s.enriched_count / Math.max(s.plex_item_count, 1)) : 0;
+        ? Math.min(100, Math.round(100 * s.enriched_count / Math.max(s.plex_item_count, 1))) : 0;
       const paths = (s.locations||[]).join('<br>');
       return `
       <div class="card" style="margin-bottom:14px">
