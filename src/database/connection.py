@@ -83,6 +83,9 @@ def _migrate_columns() -> None:
         ("deletion_proposals",    "synopsis",    "TEXT"),
         ("deletion_proposals",    "genres",      "TEXT"),
         ("cached_recommendations","synopsis",    "TEXT"),
+        # Two-lane recommendations: "library" (owned, unwatched) vs "discovery"
+        # (not owned, taste-fit). Existing rows backfill to "discovery".
+        ("cached_recommendations","lane",        "VARCHAR(20) DEFAULT 'discovery'"),
         # Music / Spotify enrichment columns
         ("watch_history",         "spotify_uri", "TEXT"),
         ("watch_history",         "source",      "TEXT"),

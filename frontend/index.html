@@ -531,11 +531,12 @@ select option { background: var(--bg2); }
         </div>
         <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
-            <button id="src-cache-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecSource('library',this)">📚 My Library</button>
-            <button id="src-ext-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecSource('external',this)">🌐 Discover</button>
+            <button id="lane-all-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecLane('all',this)">Alle</button>
+            <button id="lane-lib-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('library',this)">📚 In Library</button>
+            <button id="lane-disc-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('discovery',this)">✨ Neu entdecken</button>
           </div>
-          <button class="btn btn-secondary" onclick="loadRecs(currentRecsCategory,null,true)">🔄 Regenerate</button>
-          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">Showing picks from your downloaded library</span>
+          <button class="btn btn-secondary" onclick="regenerateRecs()">🔄 Regenerate</button>
+          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">📚 besitzt du, ungesehen · ✨ nicht in der Library, zum Anschaffen</span>
         </div>
         <div id="recs-content"><p class="loading">Click "Get recommendations" to load…</p></div>
       </div>
@@ -3201,16 +3202,45 @@ function renderRecent(entries, category) {
     </tbody></table></div>`;
 }
 
-let currentRecsSource = 'library';
+// Two recommendation lanes: 'library' (owned, unwatched) and 'discovery' (not
+// owned, taste-fit). 'all' stacks both. The lane is a client-side view filter
+// over the cached recs — the scheduler always caches BOTH lanes.
+let currentRecsLane = 'all';
 
-function setRecSource(src, btn) {
-  currentRecsSource = src;
-  document.getElementById('src-cache-btn').className = 'btn btn-' + (src==='library' ? 'primary' : 'secondary') + ' btn-sm';
-  document.getElementById('src-ext-btn').className = 'btn btn-' + (src==='external' ? 'primary' : 'secondary') + ' btn-sm';
-  document.getElementById('recs-source-hint').textContent = src === 'external'
-    ? 'Discovering new titles outside your library'
-    : 'Showing picks from your downloaded library';
+function setRecLane(lane, btn) {
+  currentRecsLane = lane;
+  for (const [id, val] of [['lane-all-btn','all'], ['lane-lib-btn','library'], ['lane-disc-btn','discovery']]) {
+    const b = document.getElementById(id);
+    if (b) b.className = 'btn btn-' + (lane === val ? 'primary' : 'secondary') + ' btn-sm';
+  }
   loadRecs(currentRecsCategory);
+}
+
+// Force a full regeneration of BOTH lanes (the scheduler job), then reload once
+// the new cache lands — detected via a changed cached_at timestamp (the cache
+// is never empty after the first run, so we can't just poll for presence).
+async function regenerateRecs() {
+  _stopRecsPoll();
+  const cat = currentRecsCategory;
+  let prevStamp = null;
+  try {
+    const cur = await api('/api/recommendations/?source=cache' + (cat ? `&category=${cat}` : ''));
+    prevStamp = cur.cached_at || null;
+  } catch {}
+  const el = document.getElementById('recs-content');
+  el.innerHTML = `<div style="text-align:center;padding:32px">
+    <p style="color:var(--text2);margin-bottom:12px">Regenerating both lanes…</p>
+    <p style="font-size:12px;color:var(--text3)">Library picks + fresh discoveries across every category — ~2-4 min (both lanes × 4 categories). The view updates automatically.</p>
+  </div>`;
+  api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
+  _recsPollTimer = setInterval(async () => {
+    if (currentRecsCategory !== cat) { _stopRecsPoll(); return; }
+    try {
+      const r2 = await api('/api/recommendations/?source=cache' + (cat ? `&category=${cat}` : ''));
+      if (r2.cached_at && r2.cached_at !== prevStamp) { _stopRecsPoll(); loadRecs(cat, null, false); }
+    } catch {}
+  }, 15000);
+  _recsPollKillswitch = setTimeout(_stopRecsPoll, 300000);
 }
 
 // ── RECOMMENDATIONS ───────────────────────────────────────────────────────────
@@ -3221,6 +3251,49 @@ let _recsPollKillswitch = null;
 function _stopRecsPoll() {
   if (_recsPollTimer) { clearInterval(_recsPollTimer); _recsPollTimer = null; }
   if (_recsPollKillswitch) { clearTimeout(_recsPollKillswitch); _recsPollKillswitch = null; }
+}
+
+// Lane presentation metadata for the two recommendation sections.
+const _LANE_META = {
+  library:   { icon: '📚', title: 'Aus deiner Library', sub: 'besitzt du · noch ungesehen' },
+  discovery: { icon: '✨', title: 'Neu entdecken',        sub: 'nicht in der Library · zum Anschaffen' },
+};
+
+function _recCard(rec) {
+  const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
+    .map(g=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:3px;font-size:10px;padding:1px 6px;color:var(--text2);white-space:nowrap">${esc(g)}</span>`).join('');
+  const isLib = rec.lane === 'library';
+  const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In deiner Library — noch ungesehen' : 'Nicht in der Library — zum Anschaffen'}">${isLib ? '📚' : '✨'}</span>`;
+  return `
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      ${rec.poster_url
+        ? `<img src="${esc(proxyImg(rec.poster_url))}" alt="${esc(rec.title)}" style="width:56px;height:${rec.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`
+        : `<div style="width:56px;height:${rec.category==='music'?'56':'84'}px;background:var(--bg3);border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px">${{movie:'🎬',show:'📺',anime:'⛩️',music:'🎵'}[rec.category]||'📋'}</div>`
+      }
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:14px">${esc(rec.title)}</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(rec.category_label||'')}</div>
+        ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${genreTags}</div>` : ''}
+        ${rec.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(rec.synopsis)}</div>` : ''}
+        <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6">${esc(rec.reason||rec.pitch||'')}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+        ${laneBadge}
+        <span class="badge amber">${Math.round((rec.confidence||0.7)*100)}%</span>
+        <button class="btn btn-secondary btn-sm" onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">💬 Discuss</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function _recSection(lane, recs) {
+  if (!recs || !recs.length) return '';
+  const m = _LANE_META[lane] || { icon:'', title:lane, sub:'' };
+  return `<div style="margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)">
+      <span style="font-size:14px;font-weight:700;color:var(--text)">${m.icon} ${esc(m.title)}</span>
+      <span style="font-size:12px;font-weight:400;color:var(--text3)"> · ${esc(m.sub)} · ${recs.length}</span>
+    </div>` + recs.map(_recCard).join('');
 }
 
 async function loadRecs(category=null, btn=null, refresh=false) {
@@ -3235,66 +3308,45 @@ async function loadRecs(category=null, btn=null, refresh=false) {
   el.innerHTML = '<p class="loading">Loading…</p>';
   // Snapshot the category so a stale tab change can't clobber the active view.
   const requestedCategory = category;
-  const requestedSource   = currentRecsSource || 'library';
+  // Both lanes are always cached; currentRecsLane just filters the view.
+  const laneFilter = currentRecsLane || 'all';
+  const laneParam = (laneFilter === 'library' || laneFilter === 'discovery') ? `&lane=${laneFilter}` : '';
   try {
-    const url = '/api/recommendations/?' + (category ? `category=${category}&` : '') + `limit=8&refresh=${refresh}&source=${requestedSource}`;
+    const url = '/api/recommendations/?' + (category ? `category=${category}&` : '') + `limit=8&refresh=${refresh}&source=cache` + laneParam;
     const r = await api(url);
     // If the user clicked another tab while we were fetching, abandon — the
     // newer call already cleared the poll timer and is rendering now.
     if (currentRecsCategory !== requestedCategory) return;
     if (!r.recommendations?.length) {
-      // No cache — auto-generate in background and show loading state
+      // No cache yet — kick off a background build of BOTH lanes and poll.
       el.innerHTML = `<div style="text-align:center;padding:32px">
         <p style="color:var(--text2);margin-bottom:12px">Generating personalised recommendations…</p>
-        <p style="font-size:12px;color:var(--text3)">This takes ~30s the first time. The tab will update automatically.</p>
+        <p style="font-size:12px;color:var(--text3)">Building both lanes — your library picks and fresh discoveries. ~2-4 min the first time (both lanes × 4 categories); the tab updates automatically.</p>
       </div>`;
-      // Trigger background generation
       api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
-      // Poll every 15s until results appear
       _recsPollTimer = setInterval(async () => {
-        // Stop chasing if the user navigated away from this category.
         if (currentRecsCategory !== requestedCategory) { _stopRecsPoll(); return; }
         try {
-          const r2 = await api('/api/recommendations/?limit=8' + (category ? `&category=${category}` : '') + `&source=${requestedSource}`);
+          const r2 = await api('/api/recommendations/?limit=8' + (category ? `&category=${category}` : '') + `&source=cache` + laneParam);
           if (r2.recommendations?.length) {
             _stopRecsPoll();
-            // Render straight away so we don't recurse into another loadRecs
-            // (which would cancel itself again via _stopRecsPoll on entry).
             loadRecs(category, btn, false);
           }
         } catch {}
       }, 15000);
-      // Stop polling after 5 minutes regardless
       _recsPollKillswitch = setTimeout(_stopRecsPoll, 300000);
       return;
     }
-    const cacheNote = r.from_cache && r.cached_at
-      ? `<div style="font-size:11px;color:var(--text3);margin-bottom:12px">Cached ${new Date(r.cached_at).toLocaleString()} · <a href="#" onclick="loadRecs(currentRecsCategory,null,true);return false" style="color:var(--amber)">Refresh now</a></div>`
+    const cacheNote = r.cached_at
+      ? `<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Cached ${new Date(r.cached_at).toLocaleString()} · <a href="#" onclick="regenerateRecs();return false" style="color:var(--amber)">Regenerate now</a></div>`
       : '';
-    el.innerHTML = cacheNote + r.recommendations.map(rec => {
-      const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
-        .map(g=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:3px;font-size:10px;padding:1px 6px;color:var(--text2);white-space:nowrap">${esc(g)}</span>`).join('');
-      return `
-      <div class="card" style="margin-bottom:12px">
-        <div style="display:flex;align-items:flex-start;gap:12px">
-          ${rec.poster_url
-            ? `<img src="${esc(proxyImg(rec.poster_url))}" alt="${esc(rec.title)}" style="width:56px;height:${rec.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`
-            : `<div style="width:56px;height:${rec.category==='music'?'56':'84'}px;background:var(--bg3);border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px">${{movie:'🎬',show:'📺',anime:'⛩️',music:'🎵'}[rec.category]||'📋'}</div>`
-          }
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:14px">${esc(rec.title)}</div>
-            <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(rec.category_label||'')}</div>
-            ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${genreTags}</div>` : ''}
-            ${rec.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(rec.synopsis)}</div>` : ''}
-            <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6">${esc(rec.reason||rec.pitch||'')}</div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
-            <span class="badge amber">${Math.round((rec.confidence||0.7)*100)}%</span>
-            <button class="btn btn-secondary btn-sm" onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">💬 Discuss</button>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
+    const library   = r.recommendations.filter(x => x.lane === 'library');
+    const discovery = r.recommendations.filter(x => x.lane !== 'library');
+    let body = '';
+    if (laneFilter === 'all' || laneFilter === 'library')   body += _recSection('library', library);
+    if (laneFilter === 'all' || laneFilter === 'discovery') body += _recSection('discovery', discovery);
+    if (!body) body = '<p class="loading">Nothing in this lane yet — use Regenerate, or switch lane above.</p>';
+    el.innerHTML = cacheNote + body;
   } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
 }
 

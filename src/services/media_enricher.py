@@ -448,6 +448,7 @@ Significance means the text EXPLICITLY documents at least one of: awards or nomi
 These are NOT significance — if the text has only these, there is none: cast or crew names; filming location, production company or funding body; premiere date or platform; a creator's debut; being called "high-profile"; or the plot.
 
 STRICT RULES:
+- Output ONLY the significant facts themselves, as plain prose. NEVER explain your reasoning, mention "the rules" / "qualifying" / "documented milestone", say what does or does not count, or narrate your own filtering (NO "but these are not listed as…", "thus the only qualifying significance is…", "per the rules…"). Just state the facts, or NONE.
 - Use ONLY facts in the text. Do NOT add evaluative words like "pioneering", "landmark", "acclaimed", "influential", "seminal" unless the text itself uses that word about THIS work.
 - Do NOT editorialise or extrapolate (no "part of a surge", "signifies investment", "marks a shift", etc.).
 - 1-3 plain sentences, prose only, no lists or headings.
