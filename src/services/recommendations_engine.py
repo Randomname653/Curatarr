@@ -20,11 +20,10 @@ import numpy as np
 
 from src.config import settings
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, CURATOR_KEEP_ALIVE
-from src.services.app_state import get_datetime
 from src.database.connection import get_db_session
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.database.models import (
-    TasteVectorEntry, WatchHistoryEntry, User, CachedRecommendation,
+    TasteVectorEntry, User,
     EncryptedTasteVector, ProtectedMedia, EpisodicMemory
 )
 from src.vector_store.chromadb_wrapper import chroma_db
@@ -60,21 +59,6 @@ def _blacklist_rule(rule_number: int) -> str:
         f"any of these crutch phrases: {joined}."
     )
 
-
-def _cache_is_fresh(cached_items: list) -> bool:
-    """Recs cache is fresh while neither watch-state sync nor enrichment has
-    delivered new data since the cache was written.
-
-    Both ``recs_invalidate_at`` (set by sync/enrichment when they actually
-    added rows) and the row-level ``cached_at`` are naive UTC datetimes.
-    """
-    if not cached_items:
-        return False
-    invalidate_at = get_datetime("recs_invalidate_at")
-    if invalidate_at is None:
-        return True
-    oldest = min(c.cached_at for c in cached_items if c.cached_at)
-    return oldest >= invalidate_at
 
 # ── Anti-tunneling: domain-specific vocabulary guidelines ─────────────────────
 
@@ -125,23 +109,31 @@ _FORBIDDEN_CROSS_DOMAIN = (
 
 # Injected into a pitch / discussion ONLY when there is no verified-data block
 # (the item isn't enriched and the on-demand fast-enrich couldn't resolve it —
-# the curator has nothing but a one-line synopsis). Without this the curator
-# confabulates confident execution verdicts on zero data and dismisses the
-# user's own signals as "noise" (the Fringe case: trashed an 8.4 show with
+# the curator has the synopsis but no verified enrichment). Without this the
+# curator confabulates confident execution verdicts on zero data and dismisses
+# the user's own signals as "noise" (the Fringe case: trashed an 8.4 show with
 # invented "procedural fatigue / case-of-the-week" critique it could not know).
+# It must hedge INTERNALLY (caution + lean-keep) — NOT narrate a data-gap excuse
+# at the user. The old version scripted "I only have a one-line synopsis here"
+# as the opener; it fired on every un-enriched title and was usually FALSE (the
+# full synopsis is right there in the prompt — only the OMDb/Wikipedia
+# enrichment is missing), so it read as a constant, inaccurate excuse.
 NO_VERIFIED_DATA_HEDGE = (
-    "⚠️ NO VERIFIED DATA FOR THIS TITLE — you have ONLY a bare synopsis. No "
-    "verified themes, year, significance, cast or production facts (it isn't "
-    "enriched). This is a DATA-POOR judgment, so you MUST:\n"
-    "- Open by naming the blind spot ('I only have a one-line synopsis here').\n"
-    "- NOT invent execution verdicts (pacing, 'case of the week', 'formulaic', "
-    "'bloated', 'dated', 'procedural fatigue', collapse of vision) — you cannot "
-    "know any of that from a synopsis.\n"
-    "- NOT dismiss the user's external signals (an IMDb/TMDB rating, their own "
-    "knowledge) as 'noise' or 'irrelevant'. With no data of your own, THEIR "
-    "signal outweighs your inference — engage it honestly.\n"
-    "- Stay explicitly LOW-confidence and lean toward KEEPING / deferring until "
-    "the title is properly enriched, rather than pressing for deletion."
+    "⚠️ LIMITED DATA: you have the SYNOPSIS but no *verified* enrichment for this "
+    "title (no confirmed themes, significance, critical reception, cast or "
+    "production facts — it isn't enriched yet). Therefore:\n"
+    "- Judge ONLY what the synopsis actually shows: premise, genre, and taste "
+    "fit. Do NOT invent execution verdicts you cannot know from a synopsis — "
+    "pacing, 'case of the week', 'formulaic', 'dated', 'procedural fatigue', "
+    "collapse of vision, or how well it is made.\n"
+    "- Do NOT dismiss the user's external signals (an IMDb/TMDB rating, their own "
+    "knowledge) as 'noise' or 'irrelevant'. Without verified data of your own, "
+    "THEIR signal outweighs your inference — engage it honestly.\n"
+    "- Stay genuinely low-confidence and lean toward KEEPING / deferring rather "
+    "than pressing for deletion.\n"
+    "- Do NOT open with or pad the pitch with a disclaimer about your data gap "
+    "('I only have a one-line synopsis…'). The user does not need it — let the "
+    "uncertainty show in measured wording, not an excuse."
 )
 
 
@@ -378,50 +370,40 @@ async def generate_recommendations(
     category: str = None,
     limit: int = 10,
     arr_library: list = None,  # list of {title, genres, year, ...} from ARR
-    force_refresh: bool = False  # Allows bypassing the cache
 ) -> list:
     """
-    Generate recommendations with LLM pitch.
-    If arr_library is provided, recommend from those items.
-    Otherwise ask the LLM to suggest based on taste alone.
+    Generate recommendations with an LLM pitch. Pure generator — caching is the
+    caller's job (the scheduler / router own the CachedRecommendation table).
+
+    Two lanes, derived from ``arr_library``:
+      * LIBRARY  (arr_library given): pick the best owned-but-unwatched items;
+        already-watched ones are filtered by stable id + normalised title.
+      * DISCOVERY (no arr_library): suggest taste-fit titles the user does NOT
+        own and has NOT seen. The model's output is HARD-filtered through
+        library_memory.partition(), so an owned/watched title (the "Ex Machina"
+        bug) can never survive — soft prompt lines alone never sufficed.
     """
 
-    # Pass 40: detect the user's language once so each pitch can be
-    # generated in the same language they chat in. The directive line
-    # is later injected into every prompt below. One cheap SELECT per
-    # call — only the cache-miss path actually uses the result.
+    # Detect the user's language once so each pitch is written in the language
+    # they chat in. One cheap SELECT; the directive is injected into every
+    # prompt below.
     from src.services.llm_utils import detect_user_language, language_directive
     with get_db_session() as _ld_db:
         _lang_code = detect_user_language(user_id, _ld_db)
     lang_directive_str = language_directive(_lang_code)
 
-    # 1. Open the DB session for the cache check
+    # LANE: "library" when the caller hands us an owned pool to pick from,
+    # "discovery" when we suggest new-to-acquire titles from taste alone.
+    lane = "library" if arr_library is not None else "discovery"
+
+    # Shared memory layer for the watched/owned filters below.
+    from src.services.library_memory import (
+        seen_index, owned_index, is_seen, partition,
+    )
+
+    # Taste context. No cache read here — this function always generates fresh;
+    # the scheduler/router persist results to CachedRecommendation.
     with get_db_session() as db:
-        if not force_refresh:
-            cache_q = db.query(CachedRecommendation).filter(
-                CachedRecommendation.user_id == user_id
-            )
-            if category:
-                cache_q = cache_q.filter(CachedRecommendation.category == category)
-
-            cached_items = cache_q.all()
-            if cached_items and _cache_is_fresh(cached_items):
-                logger.info("Loading recommendations from cache for user %d", user_id)
-                return [
-                    {
-                        "title": c.title,
-                        "reason": c.reason,
-                        "confidence": c.confidence,
-                        "genres": c.genres,
-                        "category": c.category,
-                        "category_label": CATEGORY_LABELS.get(c.category, c.category)
-                    } for c in cached_items
-                ]
-            elif cached_items:
-                logger.info("Recs cache stale for user %d (sync/enrichment changed) — regenerating",
-                            user_id)
-
-        # 2. Kein Cache vorhanden oder Refresh erzwungen: Taste Context sammeln
         tv = db.query(TasteVectorEntry).filter(
             TasteVectorEntry.user_id == user_id
         ).first()
@@ -431,14 +413,7 @@ async def generate_recommendations(
         type_data = json.loads(tv.genre_affinity or "{}")
         summary_text = tv.summary_text or ""
 
-        watched_q = db.query(WatchHistoryEntry.series_title, WatchHistoryEntry.title).filter(
-            WatchHistoryEntry.user_id == user_id
-        )
-        if category:
-            watched_q = watched_q.filter(WatchHistoryEntry.media_type == category)
-        watched = {r.series_title or r.title for r in watched_q.all()}
-
-    # --- Generierungs-Logik ---
+    # --- Generation ---
     cats = [category] if category else list(type_data.keys())
     all_recs = []
 
@@ -456,10 +431,15 @@ async def generate_recommendations(
         match = re.search(rf'\[{cat.upper()}\]([^\[]*)', summary_text)
         cat_summary = match.group(1).strip() if match else ""
 
+        # Both lanes need the user's FULL seen-set for this category (no [:15]
+        # cap; matched by stable id + normalised title).
+        seen = seen_index(user_id, cat)
+
         if arr_library:
+            # LIBRARY LANE: owned items with already-watched dropped robustly.
             unwatched = [
                 item for item in arr_library
-                if item.get("title") not in watched
+                if not is_seen(item, seen)
             ][:50]
 
             if not unwatched:
@@ -558,7 +538,7 @@ AVAILABLE {cat.upper()} LIBRARY (unwatched):
 MISSION: Select the best {min(limit, 5)} recommendations from the library above.
 
 CRITICAL RULES AND GUARDRAILS:
-1. THE PITCH: For each item, write exactly ONE sentence explaining specifically why it fits the user.
+1. THE PITCH: For each item, write 2-3 vivid sentences on specifically why it fits the user — the hook, then the texture/tone, then who it lands for. No filler, no plot-summary padding.
 2. SYNTHESIZE, DON'T QUOTE: Read the Taste Profile to UNDERSTAND the user, then describe the recommended item in YOUR OWN vocabulary. The profile is reference material for you, not a phrasebook to echo back at them.
 {_blacklist_rule(3)}
 4. NO LAZY ANCHORING: DO NOT explicitly name titles from the Taste Profile (e.g., "If you liked [Title], you'll love this"). The pitch must stand on its own merits.
@@ -566,10 +546,16 @@ CRITICAL RULES AND GUARDRAILS:
 6. JSON ONLY: Output as a strictly valid JSON array.
 
 Output format:
-[{{"title": "Exact Title", "reason": "Your elite 1-sentence pitch.", "confidence": 0.0-1.0}}]"""
+[{{"title": "Exact Title", "reason": "Your elite 2-3 sentence pitch.", "confidence": 0.0-1.0}}]"""
 
         else:
+            owned = await owned_index(cat)
             noun = "tracks/artists" if cat == "music" else "titles"
+            # Soft nudge: the user's prominent taste anchors are the titles the
+            # model is most tempted to echo straight back. Naming them helps —
+            # but the HARD guarantee is partition() after parsing, which strips
+            # anything owned or seen no matter what the model returns.
+            avoid_hint = ", ".join(top_titles[:8]) or "—"
             prompt = f"""[MODE: ELITE EXTERNAL DISCOVERY]
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.
 
@@ -578,29 +564,26 @@ You are Curatarr, a highly analytical and slightly opinionated personal media cu
 USER'S {cat.upper()} TASTE PROFILE:
 {cat_summary or f"Top genres: {', '.join(top_genres)}. Often watches: {', '.join(top_titles[:5])}."}
 
-ALREADY WATCHED/LISTENED TO (DO NOT RECOMMEND THESE):
-{', '.join(list(watched)[:15])}
+DO NOT suggest these (the user already knows them well) — and do NOT suggest anything they already OWN or have already SEEN. Owned/seen titles are stripped automatically, so any such pick is a wasted slot. Spend every pick on something genuinely NEW to them:
+{avoid_hint}
 
-MISSION: Suggest {limit} {cat} {noun} they haven't seen/heard yet.
+MISSION: Suggest {limit} {cat} {noun} that are NEW to the user — not owned, not already seen/heard.
 
 CRITICAL RULES AND GUARDRAILS:
-1. THE PITCH: Each suggestion needs a specific 1-sentence pitch. Be direct and opinionated.
+1. THE PITCH: Each suggestion needs a rich 2-3 sentence pitch — the hook, the texture/tone, and why it lands for THIS user. Direct and opinionated, no filler.
 2. SYNTHESIZE, DON'T QUOTE: Use the Taste Profile to UNDERSTAND what fits, then describe each suggestion in YOUR OWN vocabulary. Don't narrate the profile back at the user — they wrote those signals, they don't need them echoed.
 {_blacklist_rule(3)}
 4. NO LAZY ANCHORING: DO NOT explicitly name titles from the Taste Profile to draw comparisons.
 5. JSON ONLY: Output as a strictly valid JSON array.
 
 Output format:
-[{{"title": "...", "reason": "Your elite 1-sentence pitch.", "confidence": 0.0-1.0, "genres": "..."}}]"""
+[{{"title": "...", "reason": "Your elite 2-3 sentence pitch.", "confidence": 0.0-1.0, "genres": "..."}}]"""
 
-        # Pass 42 (A7): bumped from 600 → 1500. Five JSON items with
-        # ~50-token sentence pitches each ≈ 300 tokens of content; the
-        # remaining 300 used to be eaten by JSON structure overhead +
-        # leading whitespace + occasional model preamble, leaving the
-        # response truncated mid-string and json.loads silently failing.
-        # 1500 keeps the model honest (still concise) but leaves enough
-        # headroom that legitimate full responses survive intact.
-        response = await _call_llm(prompt, max_tokens=1500)
+        # Richer 2-3 sentence pitches need more headroom than the old
+        # 1-sentence form: ~5 items × 3 sentences ≈ 600-700 tokens of content
+        # plus JSON overhead. 2600 keeps full responses from truncating
+        # mid-string (which made json.loads silently fail → empty lane).
+        response = await _call_llm(prompt, max_tokens=2600)
         if not response:
             continue
 
@@ -608,35 +591,26 @@ Output format:
             recs = json.loads(clean_llm_text(response))
             if not isinstance(recs, list):
                 continue
+            recs = [r for r in recs if isinstance(r, dict) and r.get("title")]
+            # DISCOVERY: hard-drop anything the user owns or has already seen.
+            # The model ignores soft "don't suggest" lines, so this — matching
+            # on stable id + normalised title — is the real guarantee that a
+            # watched/owned title (the "Ex Machina" bug) never surfaces here.
+            if lane == "discovery":
+                kept = partition(recs, seen, owned)["new"]
+                if len(kept) != len(recs):
+                    logger.info(
+                        "[recs] discovery/%s: dropped %d owned/seen of %d LLM suggestions",
+                        cat, len(recs) - len(kept), len(recs),
+                    )
+                recs = kept
             for rec in recs:
                 rec["category"] = cat
                 rec["category_label"] = CATEGORY_LABELS.get(cat, cat)
+                rec["lane"] = lane
                 all_recs.append(rec)
         except Exception as e:
             logger.debug("Recommendation parse error: %s", e)
-
-    # 3. Persist the results to the cache
-    if all_recs:
-        with get_db_session() as db:
-            # Drop the old cache for this selection
-            del_q = db.query(CachedRecommendation).filter(
-                CachedRecommendation.user_id == user_id
-            )
-            if category:
-                del_q = del_q.filter(CachedRecommendation.category == category)
-            del_q.delete()
-
-            # Insert the new entries
-            for r in all_recs:
-                db.add(CachedRecommendation(
-                    user_id=user_id,
-                    category=r.get("category"),
-                    title=r.get("title"),
-                    reason=r.get("reason"),
-                    confidence=r.get("confidence", 0.7),
-                    genres=r.get("genres", "")
-                ))
-            db.commit()
 
     return all_recs
 
@@ -1385,8 +1359,9 @@ CRITICAL RULES AND GUARDRAILS:
 {_blacklist_rule(5)}
 6. NO ANCHORING: Do not explicitly name titles from the User Taste Summary.
 7. NO ECHOING: Never start with "Given your…" or "Since you like…". State why the item fails to earn its space.
-8. SIZE TALK — OUTLIERS ONLY: Do not mention file sizes, gigabytes, or vector distances by default. EXCEPTION: if a SIZE CONTEXT line above flags this item as genuinely oversized for its class (bloated), its disproportionate size IS a fair, specific argument you may use. Never raise size when SIZE CONTEXT says it is normal — a big 4K film or a many-episode series is not bloat.
-9. PREMISE & FIT — NOT A REVIEW: You have this item's premise, themes and metadata, NOT a screening of it. Argue why its premise / genre / themes CLASH with the user's taste. Do NOT pass verdicts on execution you cannot know — no "static", "hollow", "melodramatic stalemate", "flat", "lands/doesn't land", no claims about pacing, acting or direction — unless that judgement is explicitly in the data above. For fact-based works (history, true events, documentary) a known outcome is NOT a flaw: never call it "predictable"."""
+8. SIZE — SECONDARY & ONLY IF FLAGGED: Mention file size / bitrate ONLY if a SIZE CONTEXT line is present above (it now appears solely for genuine bloat outliers + duplicates). If there is NO SIZE CONTEXT line, do NOT mention size, gigabytes, bitrate or vector distance AT ALL. When it IS present: make it a brief SECONDARY point AFTER your taste/premise critique — never the opener, never the centerpiece — cite the concrete ratio from the line ("≈3.7× the typical 1080p bitrate"), not a vague genre framing (the issue is bitrate-for-its-resolution, not the genre). Vary the wording. NEVER call a small / low-bitrate file "wasted storage" — a small file wastes nothing.
+9. PREMISE & FIT — NOT A REVIEW: You have this item's premise, themes and metadata, NOT a screening of it. Argue why its premise / genre / themes CLASH with the user's taste. Do NOT pass verdicts on execution you cannot know — no "static", "hollow", "melodramatic stalemate", "flat", "lands/doesn't land", no claims about pacing, acting or direction — unless that judgement is explicitly in the data above. For fact-based works (history, true events, documentary) a known outcome is NOT a flaw: never call it "predictable".
+10. RESPECT ACCLAIM — TASTE-FIT, NOT QUALITY: If the data shows strong acclaim (high RT / Metacritic, major awards, a documented milestone), you MUST acknowledge it, and the deletion is a pure TASTE-FIT call — never a quality verdict. Frame it honestly: "acclaimed / well-made, but not your lane — it's X, you want Y." NEVER label a highly-rated or award-winning title "narrative wallpaper", "flaccid", "worthless", or low-effort: calling a 97%-rated, multi-award film garbage is a factual error that wrecks your credibility. A work can be excellent AND a poor fit for THIS user — say exactly that."""
 
             pitch = await _call_llm(prompt, skip_priority=True)
             # Pass 51: empty-pitch guard. ``_call_llm`` returns None on an

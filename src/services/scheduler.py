@@ -244,6 +244,17 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=14400,
     )
+    # Daily consistent DB backup (SQLite online backup API) + rotation, at
+    # 02:00 — before the nightly enrich/sync churn, so it captures a stable
+    # snapshot. The restore point that didn't exist when a corrupt -wal hit.
+    scheduler.add_job(
+        _tracked("db_backup")(job_db_backup),
+        CronTrigger(hour=2, minute=0),
+        id="db_backup",
+        name="Daily DB backup",
+        replace_existing=True,
+        misfire_grace_time=7200,
+    )
     # Pass 16o: keep Library Manager arr cache warm. Catches recovery
     # windows for a flaky Lidarr without the user having to click.
     scheduler.add_job(
@@ -339,6 +350,10 @@ async def _startup_check():
             ("enrichment_ttl_refresh", 24.0, job_enrichment_ttl_refresh),
             ("music_pipeline",        24.0,  job_music_pipeline),
             ("db_vacuum",             168.0, job_db_vacuum),
+            # Backup is overdue-on-startup too: if no snapshot in the last 24h,
+            # take one shortly after launch (catch-up tracks the last run, so a
+            # --reload restart inside the window won't re-backup).
+            ("db_backup",             24.0,  job_db_backup),
             # proactive_messages NOT included — 30min interval, catch-up
             # would be noise.
         ]
@@ -1183,10 +1198,98 @@ async def job_db_vacuum():
     task_monitor.done(task, " | ".join(summary_lines))
 
 
-async def _cache_recommendations(user_id: int):
-    """Pre-generate and store recommendations for all categories."""
+async def job_db_backup():
+    """
+    Daily consistent SQLite backup of the main app DB.
+
+    Uses SQLite's online backup API — safe on a live WAL-mode DB: it copies a
+    transactionally-consistent snapshot while the app keeps running, with none
+    of the half-synced-WAL corruption a raw file copy (or Syncthing) invites.
+    The snapshot is integrity-checked before it is kept, and the last N backups
+    are rotated. Backups live in data/backups/ (Syncthing-excluded with the
+    rest of data/) — a real restore point against a corrupt live DB, the gap
+    that turned a corrupt ``-wal`` into a scare with no fallback.
+    """
+    import os
+    import glob
+    import sqlite3
+    from datetime import datetime
+    from src.services.task_monitor import task_monitor
+    from src.config import settings as _s
+
+    KEEP = 7
+
+    logger.info("[scheduler] Starting daily DB backup")
+    task = task_monitor.create(name="Daily DB backup", category="maintenance")
+    task_monitor.start(task)
+
+    db_path = getattr(_s, "DATABASE_URL", "").replace("sqlite:///", "")
+    if not db_path or not os.path.exists(db_path):
+        task_monitor.skip(task, "No SQLite DB found to back up")
+        return
+
+    bdir = os.path.join(os.path.dirname(db_path), "backups")
+    os.makedirs(bdir, exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    dest = os.path.join(bdir, f"curatarr_{stamp}.db")
+
     try:
-        from src.services.recommendations_engine import generate_recommendations
+        # Online backup: page-by-page snapshot of the live DB (handles WAL).
+        src = sqlite3.connect(db_path, timeout=60)
+        dst = sqlite3.connect(dest)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+
+        # A backup that fails integrity_check is worse than none — verify it.
+        chk = sqlite3.connect(dest)
+        try:
+            ok = (chk.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
+        finally:
+            chk.close()
+        if not ok:
+            os.remove(dest)
+            task_monitor.error(task, "snapshot failed integrity check — discarded")
+            logger.warning("[backup] snapshot failed integrity check — discarded")
+            return
+
+        # Rotate: keep the newest KEEP snapshots, drop older ones.
+        snaps = sorted(glob.glob(os.path.join(bdir, "curatarr_*.db")))
+        dropped = 0
+        for old in snaps[:-KEEP]:
+            try:
+                os.remove(old)
+                dropped += 1
+            except OSError:
+                pass
+
+        size_mb = os.path.getsize(dest) / (1024 * 1024)
+        summary = f"{os.path.basename(dest)} ({size_mb:.1f}MB) · kept {min(len(snaps), KEEP)} · dropped {dropped}"
+        task_monitor.done(task, summary)
+        logger.info("[scheduler] DB backup OK: %s", summary)
+    except Exception as e:
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)   # never leave a half-written snapshot behind
+        except OSError:
+            pass
+        task_monitor.error(task, f"{type(e).__name__}: {e}")
+        logger.error("[backup] DB backup failed: %s: %s", type(e).__name__, e)
+
+
+async def _cache_recommendations(user_id: int):
+    """Pre-generate and store BOTH recommendation lanes for every category:
+    'library' (owned but unwatched — watch from your shelf) and 'discovery'
+    (not owned, taste-fit — worth acquiring). Each lane is cached independently,
+    so refreshing or emptying one never wipes the other."""
+    try:
+        from src.services.recommendations_engine import (
+            generate_recommendations, score_arr_items,
+        )
+        from src.routers.recommendations import _fetch_arr_unwatched, _fetch_tmdb
         from src.database.connection import get_db_session
         from src.database.models import CachedRecommendation
         from src.services.app_state import set_state
@@ -1195,54 +1298,63 @@ async def _cache_recommendations(user_id: int):
         total = 0
 
         for cat in categories:
+            # DISCOVERY runs on taste alone (no pool). LIBRARY needs an
+            # owned-but-unwatched, taste-scored candidate pool — build it once.
+            lane_inputs = [("discovery", None)]
             try:
-                recs = await generate_recommendations(
-                    user_id=user_id,
-                    category=cat,
-                    limit=10,
-                )
-                if not recs:
-                    continue
-
-                # Fetch posters/synopses BEFORE opening the write transaction.
-                # _fetch_tmdb is a network call; the .delete() below takes
-                # SQLite's single write lock. Awaiting network I/O while holding
-                # that lock starved every other writer (enrichment consumer,
-                # set_state heartbeats, the music pipeline) past the 60s
-                # busy_timeout → the "database is locked" cascade. Keep the
-                # session to just the delete + inserts (milliseconds).
-                from src.routers.recommendations import _fetch_tmdb
-                for rec in recs:
-                    try:
-                        rec["poster_url"], rec["synopsis"] = await _fetch_tmdb(rec.get("title", ""), cat)
-                    except Exception:
-                        rec["poster_url"] = None
-                        rec["synopsis"] = None
-
-                # Store in cache table — short, await-free transaction.
-                with get_db_session() as db:
-                    db.query(CachedRecommendation).filter(
-                        CachedRecommendation.user_id == user_id,
-                        CachedRecommendation.category == cat,
-                    ).delete()
-                    for rec in recs:
-                        db.add(CachedRecommendation(
-                            user_id=user_id,
-                            category=cat,
-                            title=rec.get("title", ""),
-                            reason=rec.get("reason") or rec.get("pitch", ""),
-                            confidence=rec.get("confidence", 0.7),
-                            genres=rec.get("genres", ""),
-                            poster_url=rec.get("poster_url"),
-                            synopsis=rec.get("synopsis"),
-                            cached_at=datetime.utcnow(),
-                        ))
-                    db.commit()
-                total += len(recs)
-                logger.info("[scheduler] Cached %d recs for %s", len(recs), cat)
-
+                unwatched = await _fetch_arr_unwatched(user_id, cat)
+                if unwatched:
+                    scored = await score_arr_items(user_id, cat, unwatched, top_n=50)
+                    lane_inputs.append(("library", scored))
             except Exception as e:
-                logger.warning("[scheduler] Rec cache failed for %s: %s", cat, e)
+                logger.warning("[scheduler] %s library-pool build failed: %s", cat, e)
+
+            for lane, arr_lib in lane_inputs:
+                try:
+                    recs = await generate_recommendations(
+                        user_id=user_id, category=cat, limit=10, arr_library=arr_lib,
+                    )
+                    if not recs:
+                        continue
+
+                    # Posters/synopses are network calls — do them BEFORE opening
+                    # the write transaction. _fetch_tmdb awaited while holding
+                    # SQLite's single write lock starved every other writer past
+                    # the 60s busy_timeout → the "database is locked" cascade.
+                    for rec in recs:
+                        try:
+                            rec["poster_url"], rec["synopsis"] = await _fetch_tmdb(
+                                rec.get("title", ""), cat)
+                        except Exception:
+                            rec["poster_url"] = None
+                            rec["synopsis"] = None
+
+                    # Lane-scoped write — short, await-free transaction.
+                    with get_db_session() as db:
+                        db.query(CachedRecommendation).filter(
+                            CachedRecommendation.user_id == user_id,
+                            CachedRecommendation.category == cat,
+                            CachedRecommendation.lane == lane,
+                        ).delete()
+                        for rec in recs:
+                            db.add(CachedRecommendation(
+                                user_id=user_id,
+                                category=cat,
+                                lane=lane,
+                                title=rec.get("title", ""),
+                                reason=rec.get("reason") or rec.get("pitch", ""),
+                                confidence=rec.get("confidence", 0.7),
+                                genres=rec.get("genres", ""),
+                                poster_url=rec.get("poster_url"),
+                                synopsis=rec.get("synopsis"),
+                                cached_at=datetime.utcnow(),
+                            ))
+                        db.commit()
+                    total += len(recs)
+                    logger.info("[scheduler] Cached %d recs for %s/%s", len(recs), cat, lane)
+
+                except Exception as e:
+                    logger.warning("[scheduler] Rec cache failed for %s/%s: %s", cat, lane, e)
 
         set_state("recs_cached_at", datetime.utcnow().isoformat())
         logger.info("[scheduler] Recommendations cached: %d total", total)

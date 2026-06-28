@@ -337,21 +337,32 @@ def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> str
     if not o:
         # No class norm yet, but a redundant duplicate is still worth flagging.
         return f"SIZE CONTEXT: {gb:.0f} GB.{dup}" if dup else ""
-    # Surface only when actionable: an outlier, a duplicate, or a NORMAL item big
-    # enough to pre-empt a blanket size complaint. Small normals stay silent.
-    if o["verdict"] == "normal" and gb < 15 and not dup:
+    # Surface size to the curator ONLY when it is genuinely actionable as a
+    # deletion argument: a BLOATED outlier (a real storage win) or a redundant
+    # duplicate. NORMAL is not a flaw, and LEAN (a small / low-bitrate file)
+    # wastes NO storage — surfacing those two turned size into a crutch the
+    # curator name-dropped in nearly every pitch, and it kept misreading
+    # "unusually small" as "inefficient waste of storage" (a 1.7 GB film is not
+    # a storage problem). So normal + lean stay SILENT unless a duplicate exists.
+    if o["verdict"] != "bloated" and not dup:
         return ""
-    res = (prof["resolution"] or "?").upper()
-    codec = (prof["codec"] or "?")
-    eps = (f", {prof['item_count']} episodes" if prof.get("item_count", 1) > 1 else "")
-    base = (f"SIZE CONTEXT: {gb:.0f} GB — {res} {codec}{eps}, "
-            f"{o['mb_per_min']:.0f} MB/min vs class median {o['median']:.0f} "
-            f"({o['ratio']:.1f}×).")
-    if o["verdict"] == "normal":
-        base += " This is NORMAL for its class — do NOT treat the size as a flaw."
-    elif o["verdict"] == "bloated":
-        base += (" This is GENUINELY oversized for its class — size IS a "
-                 "legitimate deletion argument here.")
-    else:
-        base += " This is unusually SMALL for its class (possible low-quality rip)."
-    return base + dup
+    # Absolute-waste gate: a high bitrate RATIO on a SMALL file reclaims almost
+    # nothing — a 2 GB SD film at 1.7× the SD norm wastes <1 GB. Surfacing that
+    # as a "storage waste" is what made no sense (spotted on a 1.66 GB film).
+    # Treat bloat as a storage argument ONLY when re-encoding to the class norm
+    # would free MEANINGFUL space; otherwise stay silent (the taste/premise
+    # mismatch carries the pitch). A real duplicate always counts.
+    ratio = o["ratio"] or 1.0
+    waste_gb = gb * (1.0 - 1.0 / ratio) if ratio > 0 else 0.0
+    if o["verdict"] == "bloated" and waste_gb >= 4.0:
+        res = (prof["resolution"] or "?").upper()
+        codec = (prof["codec"] or "?")
+        eps = (f", {prof['item_count']} episodes" if prof.get("item_count", 1) > 1 else "")
+        return (f"SIZE CONTEXT: {gb:.0f} GB — {res} {codec}{eps}, "
+                f"{o['mb_per_min']:.0f} MB/min vs class median {o['median']:.0f} "
+                f"({ratio:.1f}×, ~{waste_gb:.0f} GB reclaimable above the class norm) "
+                f"— GENUINELY oversized for its class. Size is a fair SECONDARY "
+                f"argument here (cite the figure), never the lead.{dup}")
+    # Trivial waste, or normal/lean → flag ONLY a duplicate if present; never a
+    # size verdict the curator could misframe as "waste" on a small file.
+    return f"SIZE CONTEXT: {gb:.0f} GB.{dup}" if dup else ""

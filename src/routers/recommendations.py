@@ -50,6 +50,7 @@ async def get_recommendations(
     limit: int = Query(8),
     refresh: bool = Query(False),
     source: str = Query("cache"),  # cache / library / external
+    lane: Optional[str] = Query(None),  # filter cache to "library" / "discovery"
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -82,17 +83,25 @@ async def get_recommendations(
             all_recs.extend(recs)
         return {"recommendations": all_recs, "category": category, "source": "library", "from_cache": False}
 
-    # Serve from cache unless refresh/external requested
+    # Serve from cache unless refresh/external requested. BOTH lanes
+    # ("library" + "discovery") live here; each rec carries its lane so the UI
+    # can split them into the two sections. Optional ?lane= narrows to one.
     if not refresh and source != "external":
         q = db.query(CachedRecommendation).filter(CachedRecommendation.user_id == user.id)
         if category and category in CATEGORIES:
             q = q.filter(CachedRecommendation.category == category)
-        cached = q.order_by(CachedRecommendation.confidence.desc()).limit(
-            limit * (1 if category else 4)).all()
+        if lane in ("library", "discovery"):
+            q = q.filter(CachedRecommendation.lane == lane)
+        # Generous cap: up to two lanes × ~10 each per category, so neither
+        # lane gets truncated. Ordered by lane then confidence (best-first).
+        cap = limit * (4 if category else 16)
+        cached = q.order_by(CachedRecommendation.lane.asc(),
+                            CachedRecommendation.confidence.desc()).limit(cap).all()
         if cached:
             recs = [{"title": r.title, "reason": r.reason, "confidence": r.confidence,
                      "genres": r.genres, "category": r.category,
                      "category_label": CAT_LABEL.get(r.category, r.category),
+                     "lane": r.lane or "discovery",
                      "poster_url": r.poster_url, "synopsis": r.synopsis,
                      "cached_at": r.cached_at.isoformat() if r.cached_at else None}
                     for r in cached]
@@ -1345,32 +1354,23 @@ async def _fetch_arr_candidates(category: str = None) -> list:
 
 async def _fetch_arr_unwatched(user_id: int, category: str = None) -> list:
     """
-    Fetch ARR items that are downloaded but not yet watched.
-    Used for library-based recommendations.
-    """
-    from src.database.connection import get_db_session
-    from src.database.models import WatchHistoryEntry
+    Fetch ARR items that are downloaded but not yet watched — the candidate pool
+    for the LIBRARY recommendation lane.
 
+    Watched-matching goes through library_memory (stable id + normalised title,
+    scoped to THIS category) instead of a raw exact-title set spanning every
+    category. The old version matched across all media types, so a listened
+    track named "Brazil" would wrongly hide the film "Brazil" from the movie lane.
+    """
     all_items = await _fetch_arr_candidates(category)
     if not all_items:
         return []
 
-    # Get watched titles
-    with get_db_session() as db:
-        watched = {
-            r.series_title or r.title
-            for r in db.query(
-                WatchHistoryEntry.series_title,
-                WatchHistoryEntry.title,
-            ).filter(WatchHistoryEntry.user_id == user_id).all()
-        }
-
-    # Return only unwatched
-    unwatched = [
-        item for item in all_items
-        if item["title"] not in watched
-    ]
-    logger.info("ARR unwatched: %d/%d items", len(unwatched), len(all_items))
+    from src.services.library_memory import seen_index, is_seen
+    seen = seen_index(user_id, category)
+    unwatched = [item for item in all_items if not is_seen(item, seen)]
+    logger.info("ARR unwatched: %d/%d items (cat=%s)",
+                len(unwatched), len(all_items), category or "all")
     return unwatched
 
 

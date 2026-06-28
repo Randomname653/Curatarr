@@ -408,6 +408,10 @@ class CachedRecommendation(Base):
     id          = Column(Integer, primary_key=True, autoincrement=True)
     user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
     category    = Column(String(20), nullable=False)
+    # Which lane this rec belongs to: "library" (owned but unwatched — watch
+    # from your shelf) or "discovery" (not owned, taste-fit — worth acquiring).
+    # Old rows predate lanes and were all taste-discovery → default "discovery".
+    lane        = Column(String(20), default="discovery")
     title       = Column(String(500), nullable=False)
     reason      = Column(Text)
     confidence  = Column(Float, default=0.7)

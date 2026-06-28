@@ -2183,6 +2183,7 @@ RELEVANT LIBRARY ITEMS:
 CRITICAL BEHAVIOR RULES:
 {lang_rule}
 2. TONE: Be direct, concise, and highly opinionated. NEVER use generic AI apologies or corporate bot phrases. Talk to the user like a brutally honest friend.
+TRANSPARENCY: If the user asks for the raw metadata, show them exactly what you were given above — don't refuse or deflect.
 {topic_lock_rule}
 {no_invention_rule}
 {no_library_actions_rule}
