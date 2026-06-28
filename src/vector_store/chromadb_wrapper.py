@@ -131,12 +131,20 @@ class ChromaDBWrapper:
         Returns:
             Results dict with documents, distances, and metadata
         """
-        results = self.collection.query(
-            query_embeddings=query_embeddings,
-            n_results=n_results,
-            where=where
-        )
-        
+        try:
+            results = self.collection.query(
+                query_embeddings=query_embeddings,
+                n_results=n_results,
+                where=where
+            )
+        except Exception as e:
+            # Same resilience as get_by_id: a corrupt/inconsistent index segment
+            # must not 500 callers (chat RAG, scoring). Return an empty result
+            # in ChromaDB's nested shape so callers just see "no neighbours".
+            logger.debug("[chroma] query failed: %s", e)
+            return {"ids": [[]], "distances": [[]], "documents": [[]],
+                    "metadatas": [[]], "embeddings": [[]]}
+
         return results
     
     def get_by_id(self, doc_id: str) -> Optional[Dict]:
@@ -151,10 +159,19 @@ class ChromaDBWrapper:
         flat 0.5 distance penalty. The doc was found, the embedding
         wasn't returned.
         """
-        result = self.collection.get(
-            ids=[doc_id],
-            include=["embeddings", "documents", "metadatas"],
-        )
+        try:
+            result = self.collection.get(
+                ids=[doc_id],
+                include=["embeddings", "documents", "metadatas"],
+            )
+        except Exception as e:
+            # A corrupt/inconsistent HNSW index segment (or any backend
+            # InternalError) must NOT crash the caller: deletion scoring loops
+            # over thousands of ids, and one failed lookup shouldn't 500 the
+            # whole analysis. Treat it as a missing embedding — callers already
+            # fall back to a neutral taste-mismatch score for that item.
+            logger.debug("[chroma] get_by_id(%s) failed: %s", doc_id, e)
+            return None
         if result and result['ids']:
             embeddings = result.get('embeddings')
             documents = result.get('documents')
