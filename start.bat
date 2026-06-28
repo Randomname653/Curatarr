@@ -1,17 +1,20 @@
 @echo off
+REM This console's PATH is missing System32 (bare "timeout" gave "not
+REM recognized", and "chcp" lives there too). Prepend the standard Windows dirs
+REM so the built-in tools resolve; %SystemRoot% is always defined.
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%PATH%"
 title Curatarr
 color 0E
 
+REM Plain-ASCII banner on purpose. A Unicode / box-drawing banner only renders
+REM when the console codepage matches the file encoding, and forcing it with
+REM "chcp 65001" makes cmd mis-read this UTF-8 .bat on a double-click launch
+REM (the window then fails to start). ASCII renders the same in every codepage.
 echo.
-echo  ██████╗██╗   ██╗██████╗  █████╗ ████████╗ █████╗ ██████╗ ██████╗
-echo ██╔════╝██║   ██║██╔══██╗██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗
-echo ██║     ██║   ██║██████╔╝███████║   ██║   ███████║██████╔╝██████╔╝
-echo ██║     ██║   ██║██╔══██╗██╔══██║   ██║   ██╔══██║██╔══██╗██╔══██╗
-echo ╚██████╗╚██████╔╝██║  ██║██║  ██║   ██║   ██║  ██║██║  ██║██║  ██║
-echo  ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
-echo.
-echo  Personal AI Media Curator for Plex
-echo  ─────────────────────────────────────────────────────────────────────
+echo   ================================================================
+echo                          C U R A T A R R
+echo                Personal AI Media Curator for Plex
+echo   ================================================================
 echo.
 
 if exist venv\Scripts\activate.bat (
@@ -65,17 +68,19 @@ if not exist .env (
     echo.
 )
 
-REM Open browser after 3s
-start "" /B cmd /c "timeout /t 3 /nobreak > nul && start http://localhost:8000"
+REM Open browser after 3s. Full path to timeout.exe - the console PATH here is
+REM missing System32 (bare "timeout" gave "not recognized"); %SystemRoot% is
+REM always defined, so this works regardless of a truncated PATH.
+start "" /B cmd /c "%SystemRoot%\System32\timeout.exe /t 3 /nobreak >nul && start http://localhost:8000"
 
 echo  Running at http://localhost:8000  ^|  Press Ctrl+C to stop
 echo.
 
 REM --reload-dir src: only watch the source tree. By default --reload watches
 REM the whole project, including data/ where the app constantly writes the
-REM metadata cache + SQLite DBs — that spammed "watchfiles: N changes detected"
+REM metadata cache + SQLite DBs - that spammed "watchfiles: N changes detected"
 REM and risked reload churn. Scoping to src/ keeps hot-reload for code while the
-REM data writes go unwatched. (The frontend is served statically — no app
+REM data writes go unwatched. (The frontend is served statically - no app
 REM reload needed for index.html edits; just refresh the browser.)
 python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src
 
