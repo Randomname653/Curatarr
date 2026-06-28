@@ -10,10 +10,14 @@ risks *corrupting* the database: Syncthing never copies ``.db`` / ``-wal``
 / ``-shm`` as one consistent snapshot, so a partially-synced WAL can
 destroy the file.
 
-This module adds an ignore entry for the data directory to the enclosing
-Syncthing folder's ``.stignore`` at startup, and removes it again on clean
-shutdown — so the database can still sync between machines while Curatarr
-is *stopped*, but never while it's running.
+This module adds a PERMANENT ignore entry for the data directory to the
+enclosing Syncthing folder's ``.stignore`` at startup. It is deliberately NOT
+removed on shutdown: a live SQLite/ChromaDB store can never be file-synced
+safely — not even while Curatarr is *stopped* — because Syncthing copies the
+``.db`` / ``-wal`` / ``-shm`` sidecars independently and a half-synced WAL
+destroys the database. (That is exactly what bit us: a corrupt ``-wal`` AND a
+corrupt ChromaDB index segment in the same incident.) To mirror the DB to
+another machine, take a *consistent backup* — never raw file-sync.
 
 Design notes:
   * The correct ``.stignore`` lives at the *root* of the Syncthing folder
@@ -39,8 +43,12 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_BEGIN = "// BEGIN Curatarr auto-ignore (managed while running - do not edit by hand)"
-_END = "// END Curatarr auto-ignore"
+# Stable prefixes so _strip_block recognises blocks written by ANY past marker
+# text too (keeps enable() idempotent across upgrades — no duplicate blocks).
+_BEGIN_PREFIX = "// BEGIN Curatarr auto-ignore"
+_END_PREFIX = "// END Curatarr auto-ignore"
+_BEGIN = _BEGIN_PREFIX + " (live DB - NEVER sync; managed automatically)"
+_END = _END_PREFIX
 
 # Remembered between enable()/disable() so shutdown reverts the exact file.
 _active_stignore: Optional[Path] = None
@@ -135,11 +143,11 @@ def _strip_block(lines: list[str]) -> list[str]:
     skipping = False
     for line in lines:
         stripped = line.strip()
-        if stripped == _BEGIN:
+        if stripped.startswith(_BEGIN_PREFIX):
             skipping = True
             continue
         if skipping:
-            if stripped == _END:
+            if stripped.startswith(_END_PREFIX):
                 skipping = False
             continue
         out.append(line)
@@ -161,7 +169,9 @@ def enable() -> None:
             lines = stignore.read_text(encoding="utf-8").splitlines()
         lines = _strip_block(lines)  # idempotent: remove any stale block first
 
-        block = [_BEGIN, pattern, _END]
+        # Exclude the directory AND everything beneath it (robust across
+        # Syncthing ignore-match versions). PERMANENT — see disable().
+        block = [_BEGIN, pattern, pattern.rstrip("/") + "/**", _END]
         if lines and lines[-1].strip():
             lines.append("")  # blank separator from user's own patterns
         lines.extend(block)
@@ -174,24 +184,17 @@ def enable() -> None:
 
 
 def disable() -> None:
-    """Restore Syncthing sync for the data dir (clean shutdown)."""
+    """No-op by design — the data-dir exclusion is PERMANENT.
+
+    A live SQLite DB (+ ``-wal`` / ``-shm``) and the ChromaDB store can never
+    be file-synced safely, not even while Curatarr is stopped: Syncthing copies
+    the sidecar files independently and a half-synced WAL corrupts the DB
+    (observed: a destroyed ``-wal`` AND a corrupt ChromaDB index segment). So on
+    shutdown we deliberately LEAVE the ignore entry in place; enable() keeps it
+    present + idempotent on the next start. To move the DB to another machine,
+    take a consistent backup — never raw file-sync.
+    """
     global _active_stignore
-    try:
-        stignore = _active_stignore
-        if stignore is None:
-            located = _locate()
-            stignore = located[0] if located else None
-        if stignore is None or not stignore.exists():
-            return
-
-        lines = stignore.read_text(encoding="utf-8").splitlines()
-        lines = _strip_block(lines)
-        while lines and not lines[-1].strip():
-            lines.pop()
-
-        _write_preserving(stignore, ("\n".join(lines) + "\n") if lines else "")
-        logger.info("[sync-guard] Restored Syncthing sync for the data dir (%s)", stignore)
-    except Exception as e:
-        logger.warning("[sync-guard] could not restore .stignore (continuing): %s", e)
-    finally:
-        _active_stignore = None
+    _active_stignore = None
+    logger.info("[sync-guard] data dir stays permanently excluded from Syncthing "
+                "(live DB/ChromaDB are never safe to file-sync)")
