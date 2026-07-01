@@ -359,7 +359,7 @@ def _proposal_dict(p: DeletionProposal) -> dict:
         "confidence": p.confidence, "service": p.service,
         "arr_url": p.arr_url, "size_gb": round(p.storage_mb / 1024, 2),
         "status": p.status, "user_comment": p.user_comment,
-        "category": p.category,
+        "category": p.category, "stagnant": bool(p.stagnant),
         "poster_url": p.poster_url, "synopsis": p.synopsis, "genres": p.genres,
         # Pass 17: file-level activity timestamp powers the "🆕 Just-arrived"
         # filter in the UI. ISO string (or None) so the frontend can show
@@ -689,6 +689,7 @@ async def get_deletion_proposals(
                 tvdb_id=p.get("tvdb_id"),
                 tmdb_id=p.get("tmdb_id"),
                 latest_activity_at=la_dt,
+                stagnant=p.get("stagnant", False),
             )
             dbs.add(row)
             saved.append((p, row))

@@ -620,6 +620,7 @@ async def job_arr_sync():
                         genres=p.get("genres"),
                         tvdb_id=p.get("tvdb_id"),
                         tmdb_id=p.get("tmdb_id"),
+                        stagnant=p.get("stagnant", False),
                     ))
                     added += 1
             db.commit()

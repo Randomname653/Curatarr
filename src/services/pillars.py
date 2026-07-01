@@ -1,7 +1,7 @@
 """
 Curatarr — Pillars: the curation court.
 
-This module is the SINGLE SOURCE OF TRUTH for the 3-pillar deletion model:
+This module is the SINGLE SOURCE OF TRUTH for the 4-pillar deletion model:
 
   * PILLAR_CONSTITUTION  — the law (system prompt). The pillars live here as
     philosophy, NOT as Python thresholds. We do not hard-code "Metacritic >= 85";
@@ -22,9 +22,10 @@ separate creative monologue) is the NEXT step — gated on the warm-GPU latency
 test. It is intentionally NOT wired here yet.
 
 Pillars (priority high -> low), enforced in the prompt:
-    III HOUSEHOLD  — another household user genuinely engaged with it -> protect
+    III HOUSEHOLD  — another household user engaged with it -> protect its existence
     II  CUSTODIAN  — objective masterwork / rare work -> preserve despite taste
-    I   EGO        — the owner's elite taste filter -> cut mediocrity
+    I   RESONANCE  — sublime/meditative work that passes the Intent/Awe/Rigor litmus
+    0   EGO        — the owner's elite edge; must ACTIVELY stimulate or it is cut
 """
 from __future__ import annotations
 
@@ -34,28 +35,39 @@ logger = logging.getLogger(__name__)
 
 
 # ── THE LAW ───────────────────────────────────────────────────────────────────
-# The three pillars, shared VERBATIM by the deletion judge (PILLAR_CONSTITUTION)
-# and the chat / Level-2 discussion (PILLAR_FRAMEWORK) so the pitch and the talk
-# reason from the SAME law — no more "pitch via pillars, discussion via taste +
-# bloated bitrate". First draft, validated against curatarr-curator (100%
-# schema-valid, correct verdict on Tokyo Story). Iterate on THIS text.
-_PILLARS_BODY = """PILLAR III — HOUSEHOLD (highest). The server serves every household user, not only the owner. If the facts show ANOTHER user (not the owner) genuinely engaged with this title — watched it, above all completed it — it is protected for them no matter the owner's taste, and its bitrate is never questioned (household media is sacred). A title another user merely sampled and abandoned (e.g. 2 of 12 episodes, no rating) does NOT trigger this pillar.
+# The FOUR pillars (the RESONANCE reframe Curatarr designed itself), shared
+# VERBATIM by the deletion judge (PILLAR_CONSTITUTION) and the chat / Level-2
+# discussion (PILLAR_FRAMEWORK) so the pitch and the talk reason from the SAME
+# law. Validated prototype-first (tests/resonance_proto.py) against
+# curatarr-curator: correct verdicts on 7 edge titles incl. the Resonance-litmus
+# discriminator (Tokyo Story passes / America's National Parks fails), the Ego
+# execution-guard (Butterfly Effect → CUT), Quality-Floor downscale, and STAGNANT.
+_PILLARS_BODY = """PILLAR III — HOUSEHOLD (highest, Sacred). If the facts show ANOTHER household user (not the owner) genuinely engaged with — above all COMPLETED — this title, it is protected for them regardless of the owner's taste. QUALITY FLOOR: this protects the title's EXISTENCE, not its fidelity — if such a household title is objectively mediocre, KEEP it but flag it for downscaling (don't hoard 4K space on mediocrity someone merely watched). A title another user only sampled and abandoned (e.g. 2 of 12 episodes, no rating) does NOT trigger this pillar.
 
-PILLAR II — CUSTODIAN. The server is also an archive of film history. A title of genuine objective stature — a landmark or masterwork of its form, or a rare/obscure work at real risk of being lost — is preserved EVEN IF it clashes with the owner's taste. High critical acclaim (Rotten Tomatoes / Metacritic) and major awards are your evidence; use judgment, not a fixed number. Mere competence or popularity is not enough.
+PILLAR II — CUSTODIAN (Archive). A title of genuine OBJECTIVE stature — a landmark or masterwork of its form, or a rare work at real risk of being lost — is preserved even against the owner's taste. High critical acclaim (Rotten Tomatoes / Metacritic) and major awards are your evidence; use judgment, not a fixed number. Mere competence, popularity, or being a "precursor / foundational to a style" is NOT objective stature.
 
-PILLAR I — EGO (lowest). For everything else — titles that exist only for the owner's own taste — apply the owner's elite, uncompromising profile: psychological friction, taboo-breaking, calculating "polite-monster" intelligence, stylistic brilliance. Lazy fan-service, sanitized kitsch, and mediocrity are CUT.
+PILLAR I — RESONANCE (Expansion). This protects the QUIET intellect — sublime observation, meditative depth, patient exploration: works that hum rather than scream, offering awe and a mental reset rather than adrenaline. BUT to keep this from becoming a backdoor for boredom, a slow / low-friction title must PASS a 3-part LITMUS or it is Generic Filler:
+  1. INTENT — Observation, not Tourism: does it capture the essence/weight of its subject and invite contemplation, rather than treat it as a pleasant checklist of attractions?
+  2. AWE, not Comfort: does it evoke awe (fear + respect + wonder; feeling small in a stimulating way), rather than mere soothing comfort / the absence of tension?
+  3. RIGOR — Mastery, not Competence: is its slowness intentional and masterful (pacing, craft, insight), rather than a generic formula any studio could produce?
+A title that FAILS the litmus is filler and drops to Pillar 0.
 
-BITRATE is a SEPARATE axis from retention. A kept title may be FLAGGED if its file is a clear bitrate outlier for its visual complexity — but bitrate alone never deletes a title, and never touches a Pillar III title."""
+PILLAR 0 — EGO (lowest, the Edge). The owner's elite, uncompromising taste: psychological friction, calculating "polite-monster" intelligence, taboo-breaking, stylistic/kinetic brilliance. OFFENSIVE, not defensive: a title must ACTIVELY provide intellectual or stylistic stimulation to survive here — not merely "not be bad". Beware PREMISE vs EXECUTION: a work whose premise CLAIMS depth (dark themes, high-concept) but whose EXECUTION is populist, manipulative, or generic does NOT pass — darkness is not depth. Lazy fan-service, sanitized kitsch, and crass novelty are CUT.
 
-PILLAR_CONSTITUTION = f"""You are the curation court for Curatarr, deciding whether ONE title stays on a shared 105 TB home server. Judge it against THREE pillars in STRICT priority — a higher pillar's protection can NEVER be overruled by a lower one. Base every word ONLY on the FACTS given; never invent data.
+BITRATE is a SEPARATE axis from retention: a kept title that is a clear bitrate outlier may be flagged for downscaling; bitrate alone never deletes."""
+
+PILLAR_CONSTITUTION = f"""You are the curation court for Curatarr, deciding whether ONE title stays on a shared 105 TB home server. Judge it against FOUR pillars in STRICT priority — a higher pillar's protection can NEVER be overruled by a lower one. Base every word ONLY on the FACTS given; never invent data. Default to demanding EXCELLENCE: a title EARNS its place; it is never kept merely for "not being bad".
 
 {_PILLARS_BODY}
 
 VERDICTS:
-- HARD_KEEP — protected by Pillar III; or a Pillar II case at sane bitrate; or a strong Pillar I taste-match.
-- KEEP_WITH_FLAG — kept under Pillar II or I, but a clear bitrate outlier worth downscaling.
-- CUT — no pillar protects it.
+- HARD_KEEP — protected by III (sacred) / II (masterwork) / I (passes the Resonance litmus) at sane bitrate, or a strong Pillar-0 Edge match.
+- KEEP_WITH_FLAG — kept, but a clear bitrate outlier worth downscaling (includes the Household Quality Floor).
+- CUT — no pillar protects it: fails the Ego edge, fails the Resonance litmus, no stature, no household claim.
+- STAGNANT — the gray zone: not bad enough to cut, but merely "fine" — it neither champions the owner's edge nor passes the Resonance litmus. Queue for the owner's review instead of silently keeping it.
 - EVALUATE — the facts are genuinely insufficient to decide.
+
+Set protecting_pillar to the HIGHEST pillar that actually protects this title (HOUSEHOLD / CUSTODIAN / RESONANCE / EGO), or NONE for a CUT / STAGNANT / EVALUATE title.
 
 Keep each pillar analysis to ONE or TWO sentences. Fill every field."""
 
@@ -63,26 +75,32 @@ Keep each pillar analysis to ONE or TWO sentences. Fill every field."""
 # Level-2 deletion talk (routers/chat.py) so it reasons from pillars, with
 # bitrate as a downscale-only note, instead of raw taste-mismatch + "bloated
 # bitrate". Same _PILLARS_BODY, so the law can never drift between the two.
-PILLAR_FRAMEWORK = f"""CURATION FRAMEWORK — judge this title's fate within Curatarr's three pillars, in STRICT priority (a higher pillar overrides a lower); reason ONLY from the FACTS, never invent:
+PILLAR_FRAMEWORK = f"""CURATION FRAMEWORK — judge this title's fate within Curatarr's four pillars, in STRICT priority (a higher pillar overrides a lower); reason ONLY from the FACTS, never invent, and default to demanding excellence (a title EARNS its place):
 
 {_PILLARS_BODY}
 
-So: a household-claimed title or an objective masterwork STAYS even against the owner's taste; a clear bitrate outlier is a DOWNSCALE note, never a reason to delete. Argue from the specific facts of THIS title, in fresh words."""
+So: a household-claimed title or an objective masterwork STAYS even against the owner's taste; a quiet / meditative title stays only if it passes the Resonance litmus (Intent, Awe, Rigor); a clear bitrate outlier is a DOWNSCALE note, never a reason to delete. Argue from the specific facts of THIS title, in fresh words."""
 
-# The structured Chain-of-Thought shape. Forcing all three pillar fields BEFORE
+# The structured Chain-of-Thought shape. Forcing all FOUR pillar fields BEFORE
 # the verdict is what stops the model tunnel-visioning on taste and ignoring
-# acclaim (the Tokyo Story "the void" bug).
+# acclaim (the Tokyo Story "the void" bug). protecting_pillar names the highest
+# pillar that keeps it — the persist-logic protects only III/II/I keeps, never a
+# bare Ego(0) taste-match (the over-protection fix).
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
         "pillar_3_household": {"type": "string"},
-        "pillar_2_archive":   {"type": "string"},
-        "pillar_1_ego":       {"type": "string"},
+        "pillar_2_custodian": {"type": "string"},
+        "pillar_1_resonance": {"type": "string"},
+        "pillar_0_ego":       {"type": "string"},
         "bitrate_note":       {"type": "string"},
+        "protecting_pillar":  {"type": "string",
+                               "enum": ["HOUSEHOLD", "CUSTODIAN", "RESONANCE", "EGO", "NONE"]},
         "verdict": {"type": "string",
-                    "enum": ["HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "EVALUATE"]},
+                    "enum": ["HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"]},
     },
-    "required": ["pillar_3_household", "pillar_2_archive", "pillar_1_ego", "verdict"],
+    "required": ["pillar_3_household", "pillar_2_custodian", "pillar_1_resonance",
+                 "pillar_0_ego", "protecting_pillar", "verdict"],
 }
 
 
@@ -301,7 +319,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
 # now we default to settings.CURATOR_MODEL, swappable via the `model` arg.
 
 _JUDGE_TIMEOUT = 300.0   # s; a cold 31B load is slow — generous on purpose
-_VALID_VERDICTS = {"HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "EVALUATE"}
+_VALID_VERDICTS = {"HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"}
 
 
 async def adjudicate(evidence_facts: str, *, model: str = None,
@@ -353,8 +371,9 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         return data
     except Exception as e:
         logger.warning("[pillars] adjudicate failed (%s) — defaulting to EVALUATE", e)
-        return {"pillar_3_household": "", "pillar_2_archive": "", "pillar_1_ego": "",
-                "bitrate_note": "", "verdict": "EVALUATE", "_error": str(e)}
+        return {"pillar_3_household": "", "pillar_2_custodian": "", "pillar_1_resonance": "",
+                "pillar_0_ego": "", "bitrate_note": "", "protecting_pillar": "NONE",
+                "verdict": "EVALUATE", "_error": str(e)}
 
 
 def _lean_facts(facts: str) -> str:
@@ -369,14 +388,24 @@ def _lean_facts(facts: str) -> str:
     )
 
 
+_PILLAR_FIELD = {
+    "HOUSEHOLD": "pillar_3_household",
+    "CUSTODIAN": "pillar_2_custodian",
+    "RESONANCE": "pillar_1_resonance",
+    "EGO":       "pillar_0_ego",
+}
+
+
 def _governing(verdict: dict) -> str:
     """The pillar finding that DROVE the verdict — the seed the monologue expands
     (so the prose stays specific to this title instead of re-deriving a generic
-    taste-mismatch)."""
-    if verdict.get("verdict") in ("HARD_KEEP", "KEEP_WITH_FLAG"):
-        return (verdict.get("pillar_2_archive") or verdict.get("pillar_3_household")
-                or verdict.get("pillar_1_ego") or "")
-    return verdict.get("pillar_1_ego") or verdict.get("pillar_3_household") or ""
+    taste-mismatch). Anchored on protecting_pillar for a keep; on the Ego /
+    Resonance reading otherwise (why it failed to earn its place)."""
+    field = _PILLAR_FIELD.get(verdict.get("protecting_pillar") or "")
+    if field and verdict.get(field):
+        return verdict[field]
+    return (verdict.get("pillar_0_ego") or verdict.get("pillar_1_resonance")
+            or verdict.get("pillar_3_household") or "")
 
 
 # Per-verdict stance — frames the pitch WITHOUT making the model announce the
@@ -387,6 +416,9 @@ _MONOLOGUE_STANCE = {
     "KEEP_WITH_FLAG": "This title earns its place for its stature, but its file is a "
                       "bitrate outlier — make the case for keeping it AND that it "
                       "should be downscaled to reclaim space",
+    "STAGNANT": "This title is merely 'fine' — it neither sharpens the owner's edge "
+                "nor earns the quiet-resonance exception; make the honest case that it "
+                "is stagnant and worth a second look before it keeps its slot",
     "EVALUATE": "Assess this title from what little is known",
 }
 
