@@ -279,23 +279,29 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
             verdict = "NEW"
         text = c["principle"].strip()
         emb = await _embed(text)
+        # Shadow by default; once the owner trusts the loop (PRINCIPLE_AUTO_ACTIVATE)
+        # NEW/REFINEMENT go straight to active — a CONTRADICTION always waits.
+        status = "shadow"
+        if verdict != "CONTRADICTION" and getattr(settings, "PRINCIPLE_AUTO_ACTIVATE", False):
+            status = "active"
         try:
             with get_db_session() as db:
                 row = CuratorPrinciple(
                     user_id=user_id, text=text, basis=c.get("basis"),
-                    category=category, status="shadow", novelty=verdict.lower(),
+                    category=category, status=status, novelty=verdict.lower(),
                     related=(r.get("related") or None), origin_thread_id=thread_id,
                     origin_summary=(r.get("reason") or None),
                     embedding_json=json.dumps(emb) if emb else None,
                     created_at=datetime.utcnow(),
+                    activated_at=datetime.utcnow() if status == "active" else None,
                 )
                 db.add(row)
                 db.commit()
                 db.refresh(row)
                 stored.append({"id": row.id, "text": text, "novelty": verdict.lower(),
-                               "basis": c.get("basis")})
-                logger.info("🧭 [PRINCIPLE %s] shadow #%d: %s",
-                            verdict, row.id, text[:80])
+                               "basis": c.get("basis"), "status": status})
+                logger.info("🧭 [PRINCIPLE %s] %s #%d: %s",
+                            verdict, status, row.id, text[:80])
         except Exception as e:
             logger.warning("[principles] store failed: %s", e)
     return stored

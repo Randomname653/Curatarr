@@ -419,6 +419,92 @@ async def delete_judge_protection(
     return {"status": "deleted", "title": title}
 
 
+# ── Learned curation principles (the self-learning layer) ────────────────────
+
+@router.get("/principles")
+async def list_principles(
+    user: User = Depends(require_admin),   # curation = admin only
+    db: Session = Depends(get_db),
+):
+    """Admin view of what the curator has TAUGHT ITSELF from past debates —
+    shadow (captured, not yet affecting judgments), active (injected into the
+    judge), rejected. The one place the owner curates the self-learning; a
+    'contradiction' novelty is the flagged human touch-point."""
+    from src.database.models import CuratorPrinciple
+    rows = (
+        db.query(CuratorPrinciple)
+        .filter(CuratorPrinciple.user_id == user.id)
+        .order_by(CuratorPrinciple.created_at.desc())
+        .all()
+    )
+    return {
+        "principles": [
+            {
+                "id": p.id,
+                "text": p.text,
+                "basis": p.basis,
+                "category": p.category,
+                "status": p.status,
+                "novelty": p.novelty,
+                "related": p.related,
+                "times_reinforced": p.times_reinforced or 0,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in rows
+        ]
+    }
+
+
+@router.post("/principles/{principle_id}/{action}")
+async def update_principle(
+    principle_id: int,
+    action: str,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Promote a shadow principle to 'active' (inject it into the judge from now
+    on), send it back to 'shadow', or 'reject' it (never inject). The owner's one
+    lever over the autonomous learning."""
+    from src.database.models import CuratorPrinciple
+    if action not in ("activate", "reject", "shadow"):
+        raise HTTPException(status_code=400, detail="action must be activate/reject/shadow")
+    row = (
+        db.query(CuratorPrinciple)
+        .filter(CuratorPrinciple.id == principle_id, CuratorPrinciple.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Principle not found")
+    if action == "activate":
+        row.status, row.activated_at = "active", datetime.utcnow()
+    elif action == "reject":
+        row.status = "rejected"
+    else:
+        row.status, row.activated_at = "shadow", None
+    db.commit()
+    return {"status": "ok", "id": row.id, "new_status": row.status}
+
+
+@router.delete("/principles/{principle_id}")
+async def delete_principle(
+    principle_id: int,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Delete a learned principle outright (vs 'reject', which keeps the row)."""
+    from src.database.models import CuratorPrinciple
+    row = (
+        db.query(CuratorPrinciple)
+        .filter(CuratorPrinciple.id == principle_id, CuratorPrinciple.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Principle not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": principle_id}
+
+
 @router.get("/deletions")
 async def get_deletion_proposals(
     category: Optional[str] = Query(None),

@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # principle stays 'shadow' (surfaced, not affecting judgments) until the
     # owner promotes it. See src/services/curator_principles.py.
     PRINCIPLES_ENABLED: bool = False
+    # Once you trust the shadow captures, flip this on to let NEW / REFINEMENT
+    # principles activate AUTOMATICALLY (a CONTRADICTION always waits for you).
+    # Off by default — the supervised shadow rollout comes first.
+    PRINCIPLE_AUTO_ACTIVATE: bool = False
     # Primary models — .env is the single source of truth.
     # Defaults here are only used when .env has no entry.
     BASE_CURATOR_MODEL: str = "qwen3.6:27b"        # chat + recommendations

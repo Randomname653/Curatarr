@@ -1177,7 +1177,8 @@ async def generate_deletion_proposals(
                 try:
                     with get_db_session() as _jdb:
                         ev = await build_evidence(item, user_id, category, _jdb)
-                    verdict = await adjudicate(ev["facts"], skip_priority=True)
+                    verdict = await adjudicate(ev["facts"], skip_priority=True,
+                                               law_extra=ev.get("law_extra", ""))
                 except Exception as e:
                     logger.warning("[deletions] pillar judge failed for %r: %s",
                                    item.get("title"), e)
