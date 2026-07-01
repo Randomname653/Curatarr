@@ -575,6 +575,13 @@ select option { background: var(--bg2); }
           <span style="font-size:12px;color:var(--text3)">Nothing is deleted without your explicit approval.</span>
         </div>
         <div id="del-content"></div>
+
+        <!-- Judge protections: what the 3-pillar judge auto-saved, and why -->
+        <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
+          <button class="btn btn-secondary" onclick="loadJudgeProtections()">🛡️ Judge-protected titles</button>
+          <span style="font-size:12px;color:var(--text3);margin-left:8px">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
+          <div id="protections-content" style="margin-top:12px"></div>
+        </div>
       </div>
     </div>
 
@@ -3460,6 +3467,47 @@ let _delAnalyseStartedAt = 0;
 function _setAnalysePulse(on) {
   const dot = document.getElementById('sb-deletions-pulse');
   if (dot) dot.style.display = on ? '' : 'none';
+}
+
+// ── Judge protections (admin debug: what the 3-pillar judge auto-saved) ──────
+async function loadJudgeProtections() {
+  const el = document.getElementById('protections-content');
+  if (!el) return;
+  el.innerHTML = '<p class="loading">Loading judge-protected titles…</p>';
+  try {
+    const r = await api('/api/recommendations/protections');
+    const rows = r.protections || [];
+    if (!rows.length) {
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">Nothing auto-protected by the judge yet — titles appear here after a pillar-judged analysis.</p>';
+      return;
+    }
+    el.innerHTML = rows.map(p => {
+      const badge = p.verdict === 'KEEP_WITH_FLAG'
+        ? '<span class="badge amber">KEEP · downscale</span>'
+        : '<span class="badge muted">HARD_KEEP</span>';
+      const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      return `<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div><strong>${esc(p.title || '—')}</strong> ${badge}
+            <span style="color:var(--text3);font-size:12px">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
+          <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Schutz aufheben</button>
+        </div>
+        <div style="color:var(--text2);font-size:12px;white-space:pre-line;margin-top:8px">${esc(p.reason || '')}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load protections')}</p>`;
+  }
+}
+
+async function liftProtection(id) {
+  if (!confirm('Lift this protection? The title will be re-judged on the next analysis.')) return;
+  try {
+    await api('/api/recommendations/protections/' + id, 'DELETE');
+    loadJudgeProtections();
+  } catch(e) {
+    alert('Failed: ' + (e.message || e));
+  }
 }
 
 async function loadDeletions(category=null, btn=null, refresh=false) {

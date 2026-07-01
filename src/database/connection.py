@@ -129,6 +129,14 @@ def _migrate_columns() -> None:
         ("enrichment_status",     "fetch_tier",    "VARCHAR(16)"),
         ("enrichment_status",     "sources_state", "TEXT"),
         ("enrichment_status",     "provisional",   "BOOLEAN DEFAULT 0"),
+        # Pillar judge: ProtectedMedia also stores AUTOMATIC protections the
+        # 3-pillar judge grants. ``source`` splits "manual" (user whitelist)
+        # from "judge" (auto); ``verdict`` records HARD_KEEP / KEEP_WITH_FLAG
+        # (the latter also feeds the downscale list). Pillar reasoning reuses
+        # the existing ``reason`` Text column. Legacy rows backfill to "manual".
+        ("protected_media",       "source",  "VARCHAR(16) DEFAULT 'manual'"),
+        ("protected_media",       "verdict", "VARCHAR(20)"),
+        ("protected_media",       "title",   "VARCHAR(512)"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
