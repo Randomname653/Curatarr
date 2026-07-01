@@ -197,6 +197,10 @@ class DeletionProposal(Base):
     # arrived" filter — items that came alive recently regardless of
     # when the parent entity was first added to the arr.
     latest_activity_at = Column(DateTime, nullable=True)
+    # RESONANCE 4-pillar judge: a "merely fine" title is verdict STAGNANT —
+    # surfaced as a proposal but flagged in the UI as a soft "your call" review,
+    # not a hard cut. Legacy taste-mismatch proposals are never stagnant.
+    stagnant = Column(Boolean, default=False)
 
     __table_args__ = (
         Index("idx_dp_user_status", "user_id", "status"),

@@ -687,10 +687,12 @@ def _format_pillar_reason(v: dict) -> str:
     parts = []
     if v.get("pillar_3_household"):
         parts.append(f"III Household — {v['pillar_3_household']}")
-    if v.get("pillar_2_archive"):
-        parts.append(f"II Custodian — {v['pillar_2_archive']}")
-    if v.get("pillar_1_ego"):
-        parts.append(f"I Ego — {v['pillar_1_ego']}")
+    if v.get("pillar_2_custodian"):
+        parts.append(f"II Custodian — {v['pillar_2_custodian']}")
+    if v.get("pillar_1_resonance"):
+        parts.append(f"I Resonance — {v['pillar_1_resonance']}")
+    if v.get("pillar_0_ego"):
+        parts.append(f"0 Ego — {v['pillar_0_ego']}")
     if v.get("bitrate_note"):
         parts.append(f"Bitrate — {v['bitrate_note']}")
     return "\n".join(parts)
@@ -1140,13 +1142,18 @@ async def generate_deletion_proposals(
 
     final_proposals = []
 
-    # ── 3-PILLAR JUDGE PATH (PILLARS_ENABLED) ─────────────────────────────────
+    # ── 4-PILLAR JUDGE PATH (PILLARS_ENABLED) ─────────────────────────────────
     # The LLM is the judge; the del_score above only PRE-RANKS who gets looked
     # at. Walk the ranking and rule on each candidate:
-    #   CUT            → a deletion proposal (lazy monologue as the pitch)
-    #   HARD_KEEP /    → persisted to ProtectedMedia(source='judge'); phase A
-    #   KEEP_WITH_FLAG    already excludes ALL ProtectedMedia, so it drops out of
-    #                     every future scan — the funnel self-leans over time
+    #   CUT / STAGNANT → a deletion proposal (lazy monologue as the pitch);
+    #                    STAGNANT carries stagnant=True so the card flags it as a
+    #                    "your call" review rather than a hard cut
+    #   HARD_KEEP /    → persisted to ProtectedMedia(source='judge') ONLY when a
+    #   KEEP_WITH_FLAG    higher pillar (Household / Custodian / Resonance) keeps
+    #                     it; a bare Ego(0) taste-match is NOT persisted (the
+    #                     owner's own edge — re-judged each scan, never buried).
+    #                     Persisted titles drop out of every future scan (phase A
+    #                     excludes ALL ProtectedMedia) — the funnel self-leans.
     #   EVALUATE       → left alone, re-judged next scan
     # Keep judging DOWN the ranking until TARGET_CUTS proposals exist OR
     # JUDGE_CAP candidates are judged (a latency bound for a clean library).
@@ -1165,7 +1172,7 @@ async def generate_deletion_proposals(
                 item = cand["item"]
                 judged += 1
                 _msg(f"{category}: pillar-judging {judged} "
-                     f"({len(final_proposals)}/{TARGET_CUTS} cut) — "
+                     f"({len(final_proposals)}/{TARGET_CUTS} flagged) — "
                      f"{(item.get('title') or '?')[:50]}")
                 try:
                     with get_db_session() as _jdb:
@@ -1176,13 +1183,13 @@ async def generate_deletion_proposals(
                                    item.get("title"), e)
                     continue
                 v = (verdict or {}).get("verdict")
-                if v == "CUT":
+                if v in ("CUT", "STAGNANT"):
                     pitch = await write_monologue(
                         ev["facts"], verdict,
                         lang_directive=lang_directive_str, skip_priority=True)
                     if not pitch or not pitch.strip():
-                        pitch = ("Flagged by the pillar judge as a taste cut — the "
-                                 "model returned no monologue; review manually.")
+                        pitch = ("Flagged by the pillar judge — the model returned no "
+                                 "monologue; review manually.")
                     _smb = item.get("size_mb") or 0
                     final_proposals.append({
                         "title": item.get("title"),
@@ -1196,13 +1203,20 @@ async def generate_deletion_proposals(
                         "tvdb_id": item.get("tvdb_id"),
                         "tmdb_id": item.get("tmdb_id"),
                         "latest_activity_at": item.get("latest_activity_at"),
+                        "stagnant": (v == "STAGNANT"),
                     })
                 elif v in ("HARD_KEEP", "KEEP_WITH_FLAG"):
-                    _persist_judge_protection(user_id, item, category, v, verdict)
-                # EVALUATE / None → neither propose nor protect; re-judged next scan.
+                    # Over-protection fix: persist ONLY when a higher pillar
+                    # (Household / Custodian / Resonance) is what keeps it. A bare
+                    # Ego(0) taste-match is the owner's own edge — re-judged each
+                    # scan, never persisted (persisting it would bury their picks).
+                    if (verdict.get("protecting_pillar") or "").upper() in (
+                            "HOUSEHOLD", "CUSTODIAN", "RESONANCE"):
+                        _persist_judge_protection(user_id, item, category, v, verdict)
+                # EVALUATE / bare-Ego keep / None → neither propose nor protect.
         finally:
             curator_done()
-        _msg(f"{category}: pillar judging done — {len(final_proposals)} cut of "
+        _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged.")
         return final_proposals
 

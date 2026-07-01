@@ -3406,11 +3406,11 @@ function _renderDeletionProposals(proposals) {
           ? "e.g. 'Keep — haven\\'t watched it yet' or 'Delete — awful film'"
           : "e.g. 'Keep — still watching this' or 'Delete — dropped after 2 eps'";
       return `
-      <div class="card" data-del-id="${p.id}" style="margin-bottom:12px;border-color:${p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)'}">
+      <div class="card" data-del-id="${p.id}" style="margin-bottom:12px;border-color:${p.stagnant?'rgba(229,160,13,.35)':(p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)')}">
         <div style="display:flex;align-items:flex-start;gap:12px">
           ${p.poster_url ? `<img src="${esc(proxyImg(p.poster_url))}" alt="" style="width:56px;height:${p.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${p.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
           <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${_recentActivityBadge(p)}</div>
+            <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${p.stagnant?` <span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">⚖ Stagnant</span>`:''}${_recentActivityBadge(p)}</div>
             <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
             ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
