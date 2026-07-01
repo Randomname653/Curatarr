@@ -280,8 +280,23 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             flags["acclaim_present"] = True
         meta_block = verified_text
     else:
-        ov = (item.get("overview") or "").strip()
-        meta_block = f"no verified enrichment — thin synopsis only: {ov[:300] or 'n/a'}"
+        # P5: data-starved candidate — ensure_verified_data returned nothing (no
+        # cache + fast-enrich missed). Rather than let the judge guess from a thin
+        # synopsis stub, fall back to the title's Wikipedia article (the same
+        # entity-match-guarded source the discussion uses). Bounded: only the rare
+        # thin candidate reaches here — the well-enriched majority already carry
+        # cached Wikipedia significance from ensure_verified_data.
+        wiki = ""
+        try:
+            from src.services.media_enricher import fetch_wikipedia_summary
+            wiki = await fetch_wikipedia_summary(title, media_type, max_chars=2000) or ""
+        except Exception as e:
+            logger.debug("[pillars] wiki fallback failed for %r: %s", title, e)
+        if wiki:
+            meta_block = f"WIKIPEDIA (no structured enrichment on file):\n{wiki}"
+        else:
+            ov = (item.get("overview") or "").strip()
+            meta_block = f"no verified enrichment — thin synopsis only: {ov[:300] or 'n/a'}"
 
     # ── OWNER taste (category-scoped) ──
     taste = ""
