@@ -232,6 +232,47 @@ class ProtectedMedia(Base):
     )
 
 
+class CuratorPrinciple(Base):
+    """A generalizable curation PRINCIPLE the curator learned from a debate with
+    the owner — the autonomous self-learning layer.
+
+    Distinct from EpisodicMemory (title-scoped, decays) and ProtectedMedia (a
+    per-title whitelist): a principle is a lasting, title-agnostic RULE the owner
+    established or endorsed in conversation, injected into the judge's
+    constitution so the curator's taste sharpens over time instead of staying
+    sharp-but-amnesiac (brilliant per-chat, forgetful across threads).
+
+    Lifecycle:
+      status 'shadow'   — captured + surfaced to the owner, NOT yet affecting
+                          judgments (the trust-building rollout).
+      status 'active'   — promoted; injected into the judge + chat framework.
+      status 'rejected' — the owner dismissed it.
+    novelty 'contradiction' is the one human touch-point: it conflicts with an
+    existing active principle, so it always waits for the owner regardless of
+    rollout state (the self-correction / anti-gaming guard).
+    """
+    __tablename__ = "curator_principles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    text = Column(Text, nullable=False)               # the principle — ONE sentence
+    basis = Column(String(32), nullable=True)         # user_established / user_endorsed_curator / converged
+    category = Column(String(32), nullable=True)      # movie/show/anime/music, or NULL = global
+    status = Column(String(16), default="shadow")     # shadow / active / rejected
+    novelty = Column(String(16), nullable=True)       # new / refinement / contradiction
+    related = Column(Text, nullable=True)             # the existing rule it refines / contradicts
+    origin_thread_id = Column(String(128), nullable=True)
+    origin_summary = Column(Text, nullable=True)      # short note on the debate it came from
+    embedding_json = Column(Text, nullable=True)      # for novelty-check + per-title retrieval
+    times_reinforced = Column(Integer, default=0)     # recurrence = confidence booster, not a gate
+    created_at = Column(DateTime, default=datetime.utcnow)
+    activated_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_cp_user_status", "user_id", "status"),
+    )
+
+
 class CuratorResolutionLog(Base):
     """Append-only history of how each keep/delete debate resolved.
 

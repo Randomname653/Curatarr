@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # (src/services/pillars.py) instead of the legacy taste-mismatch pitch.
     # Off by default — the legacy path stays the fallback until flipped.
     PILLARS_ENABLED: bool = False
+    # Autonomous self-learning: capture generalizable curation principles from
+    # the owner's DEBATES with the curator (shadow), novelty-check them, and
+    # inject the ACTIVE ones into the judge. Off by default — a captured
+    # principle stays 'shadow' (surfaced, not affecting judgments) until the
+    # owner promotes it. See src/services/curator_principles.py.
+    PRINCIPLES_ENABLED: bool = False
     # Primary models — .env is the single source of truth.
     # Defaults here are only used when .env has no entry.
     BASE_CURATOR_MODEL: str = "qwen3.6:27b"        # chat + recommendations
