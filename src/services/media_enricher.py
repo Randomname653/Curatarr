@@ -392,6 +392,31 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     return "\n".join(lines)
 
 
+def _wiki_hit_matches(query_title: str, hit_title: str, media_type: str) -> bool:
+    """True when a Wikipedia search hit is plausibly the SAME work as the queried
+    title. Guards against same-name collisions — Wikipedia ranks the most POPULAR
+    same-name entity first, so a blind ``hits[0]`` resolved "Momoiro Sisters"
+    (obscure anime) to the J-pop act "Momoiro Clover Z", and "White Album anime"
+    to the video game. Requires the hit's base title (sans the "(…)"
+    disambiguator) to equal the queried title, and rejects a cross-medium
+    disambiguator ("(album)" for a film, "(film)" for music, …)."""
+    import re as _re
+    def _norm(s: str) -> str:
+        s = _re.sub(r"\s*\([^)]*\)\s*$", "", s or "")          # drop trailing (disambiguator)
+        return _re.sub(r"[^a-z0-9]+", "", s.lower())
+    if not _norm(query_title) or _norm(query_title) != _norm(hit_title):
+        return False
+    m = _re.search(r"\(([^)]*)\)\s*$", hit_title or "")
+    disambig = (m.group(1).lower() if m else "")
+    cross = {
+        "movie": ("album", "song", "single", "band", "musician", "singer", "video game"),
+        "anime": ("album", "song", "single", "band", "musician", "singer", "video game"),
+        "show":  ("album", "song", "single", "band", "musician", "singer", "video game", "film"),
+        "music": ("film", "television series", "tv series", "video game", "anime", "manga", "novel"),
+    }.get(media_type, ())
+    return not any(w in disambig for w in cross)
+
+
 async def fetch_significance(
     title: str, media_type: str = "movie", year: Optional[int] = None,
 ) -> Optional[str]:
@@ -418,12 +443,19 @@ async def fetch_significance(
         }) as client:
             sr = await client.get("https://en.wikipedia.org/w/api.php", params={
                 "action": "query", "list": "search", "srsearch": query,
-                "format": "json", "srlimit": 3,
+                "format": "json", "srlimit": 5,
             })
             hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
-            if not hits:
+            # Pick the first hit whose article title actually MATCHES this title —
+            # NOT a blind hits[0], which resolves same-name collisions to whatever
+            # entity Wikipedia ranks most popular (a J-pop act for an anime, a
+            # video game for a series). A wrong page poisons the significance.
+            page = next((h["title"] for h in hits
+                         if _wiki_hit_matches(title, h["title"], media_type)), None)
+            if not page:
+                logger.debug("[significance] no Wikipedia hit matched %r (%s) — hits: %s",
+                             title, media_type, [h.get("title") for h in hits])
                 return None
-            page = hits[0]["title"]
             ex = await client.get("https://en.wikipedia.org/w/api.php", params={
                 "action": "query", "prop": "extracts", "explaintext": 1,
                 "redirects": 1, "titles": page, "format": "json",
@@ -490,6 +522,50 @@ TEXT:
     if not out or out.upper().startswith("NONE") or len(out) < 20:
         return None
     return out
+
+
+async def fetch_wikipedia_summary(
+    title: str, media_type: str = "movie", *, max_chars: int = 6000,
+) -> Optional[str]:
+    """Fetch the readable text of a title's Wikipedia article (lead + the first
+    sections — plot, reception, themes — up to ``max_chars``) as RAW grounding,
+    no LLM distillation. Uses the same entity-match collision guard as
+    ``fetch_significance`` (so "Momoiro Sisters" never returns the J-pop act).
+
+    This is for the deletion DISCUSSION, where the curator reasons far more
+    precisely from the real article than from a thin synopsis, and the cost (one
+    title, interactive) is affordable — the batch scan keeps the cheap distilled
+    significance instead. Returns None when no matching article is found."""
+    hint = {"anime": "anime", "movie": "film", "show": "television series",
+            "music": "band musician"}.get(media_type, "")
+    query = f"{title} {hint}".strip()
+    try:
+        async with httpx.AsyncClient(timeout=20, headers={
+            "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
+                          "personal media curator) python-httpx"
+        }) as client:
+            sr = await client.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": query,
+                "format": "json", "srlimit": 5,
+            })
+            hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
+            page = next((h["title"] for h in hits
+                         if _wiki_hit_matches(title, h["title"], media_type)), None)
+            if not page:
+                return None
+            ex = await client.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "prop": "extracts",
+                "explaintext": 1, "redirects": 1, "titles": page, "format": "json",
+            })
+            pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
+            for _pid, pdata in pages.items():
+                extract = (pdata.get("extract") or "").strip()
+                if len(extract) >= 120:
+                    return extract[:max_chars]
+            return None
+    except Exception as e:
+        logger.debug("[wiki-summary] fetch failed for %r: %s", title, e)
+        return None
 
 
 async def topup_omdb(
