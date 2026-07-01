@@ -582,6 +582,13 @@ select option { background: var(--bg2); }
           <span style="font-size:12px;color:var(--text3);margin-left:8px">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
           <div id="protections-content" style="margin-top:12px"></div>
         </div>
+
+        <!-- Learned principles: what the curator taught itself from your debates -->
+        <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
+          <button class="btn btn-secondary" onclick="loadPrinciples()">🧠 Learned principles</button>
+          <span style="font-size:12px;color:var(--text3);margin-left:8px">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. ⚠ contradiction = your call.</span>
+          <div id="principles-content" style="margin-top:12px"></div>
+        </div>
       </div>
     </div>
 
@@ -3505,6 +3512,60 @@ async function liftProtection(id) {
   try {
     await api('/api/recommendations/protections/' + id, 'DELETE');
     loadJudgeProtections();
+  } catch(e) {
+    alert('Failed: ' + (e.message || e));
+  }
+}
+
+async function loadPrinciples() {
+  const el = document.getElementById('principles-content');
+  if (!el) return;
+  el.innerHTML = '<p class="loading">Loading learned principles…</p>';
+  try {
+    const r = await api('/api/recommendations/principles');
+    const rows = r.principles || [];
+    if (!rows.length) {
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">Nothing learned yet — principles are captured from your deletion debates once PRINCIPLES_ENABLED is on.</p>';
+      return;
+    }
+    el.innerHTML = rows.map(p => {
+      const st = p.status === 'active'
+        ? '<span class="badge success">active</span>'
+        : p.status === 'rejected'
+          ? '<span class="badge muted">rejected</span>'
+          : '<span class="badge amber">shadow</span>';
+      const nov = p.novelty === 'contradiction'
+        ? ' <span class="badge danger" title="Conflicts with an existing principle — your call">⚠ contradiction</span>'
+        : (p.novelty ? ` <span class="badge muted">${esc(p.novelty)}</span>` : '');
+      const reinf = (p.times_reinforced || 0) > 0 ? ` <span style="color:var(--text3);font-size:11px">×${p.times_reinforced} reinforced</span>` : '';
+      const meta = [p.basis, p.category].filter(Boolean).map(esc).join(' · ');
+      const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      const actions = p.status === 'active'
+        ? `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'shadow')">Deactivate</button>`
+        : `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'activate')">Activate</button>`;
+      return `<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div>${st}${nov}${reinf}</div>
+            <div style="color:var(--text);font-size:13px;margin-top:6px">${esc(p.text || '')}</div>
+            <div style="color:var(--text3);font-size:11px;margin-top:4px">${meta}${when ? ' · ' + when : ''}${p.related ? ' · vs: ' + esc(p.related) : ''}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${actions}
+            <button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'reject')">Reject</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load principles')}</p>`;
+  }
+}
+
+async function setPrinciple(id, action) {
+  try {
+    await api('/api/recommendations/principles/' + id + '/' + action, 'POST');
+    loadPrinciples();
   } catch(e) {
     alert('Failed: ' + (e.message || e));
   }

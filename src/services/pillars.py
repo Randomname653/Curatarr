@@ -294,6 +294,12 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     except Exception as e:
         logger.debug("[pillars] taste failed for %r: %s", title, e)
 
+    # Item profile (title + genres + short synopsis) — the anchor for BOTH the
+    # per-item owner signals (P2) and the learned-principles retrieval (P4).
+    prof_parts = [title, "" if genres_str == "Unknown" else genres_str,
+                  (item.get("overview") or "")[:300]]
+    item_profile = " — ".join(p for p in prof_parts if p and p.strip())
+
     # ── OWNER SIGNALS (P2: the judge is no longer memory-blind) ──
     # What the owner has previously told me that plausibly applies to THIS title
     # (a kept franchise, a partner favourite, a values case) — the same per-item
@@ -302,9 +308,6 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     owner_signals = ""
     try:
         from src.services.episodic_memory import retrieve_considerations
-        prof_parts = [title, "" if genres_str == "Unknown" else genres_str,
-                      (item.get("overview") or "")[:300]]
-        item_profile = " — ".join(p for p in prof_parts if p and p.strip())
         cons = await retrieve_considerations(user_id, item_profile,
                                              media_category=category, top_k=3)
         # Precision guard (mirrors the visible ⭐ path in recommendations_engine):
@@ -320,6 +323,22 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             owner_signals = "".join(f"OWNER SIGNAL: {c['content']}\n" for c in cons)
     except Exception as e:
         logger.debug("[pillars] owner-signals failed for %r: %s", title, e)
+
+    # ── LEARNED PRINCIPLES (P4: the judge applies rules the owner taught it) ──
+    # The ACTIVE principles relevant to this title, appended to the constitution
+    # (returned as law_extra). Empty until the owner promotes shadow principles,
+    # so this is a no-op during the shadow rollout.
+    law_extra = ""
+    try:
+        from src.config import settings as _settings
+        if getattr(_settings, "PRINCIPLES_ENABLED", False):
+            from src.services.curator_principles import (
+                retrieve_principles, format_principles_block)
+            law_extra = format_principles_block(
+                await retrieve_principles(user_id, category=category,
+                                          item_profile=item_profile, top_k=6))
+    except Exception as e:
+        logger.debug("[pillars] principles retrieval failed for %r: %s", title, e)
 
     # ── TECH / bitrate axis ──
     try:
@@ -338,7 +357,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         + owner_signals
         + (f"TECH: {tech_line}\n" if tech_line else "TECH: no technical profile on record.\n")
     )
-    return {"title": title, "facts": facts.strip(), "flags": flags}
+    return {"title": title, "facts": facts.strip(), "flags": flags,
+            "law_extra": law_extra}
 
 
 # ── THE JUDGE ─────────────────────────────────────────────────────────────────
@@ -353,7 +373,7 @@ _VALID_VERDICTS = {"HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"}
 
 
 async def adjudicate(evidence_facts: str, *, model: str = None,
-                     skip_priority: bool = False) -> dict:
+                     skip_priority: bool = False, law_extra: str = "") -> dict:
     """STAGE 1 — the structured verdict. Constitution + evidence + forced schema.
 
     temperature 0 (determinism by construction, not luck); the JSON shape is
@@ -370,7 +390,8 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": PILLAR_CONSTITUTION},
+            {"role": "system",
+             "content": PILLAR_CONSTITUTION + (f"\n\n{law_extra}" if law_extra else "")},
             {"role": "user", "content": "FACTS:\n" + evidence_facts},
         ],
         "format": VERDICT_SCHEMA,
@@ -528,7 +549,8 @@ async def judge(item: dict, user_id: int, category: str, db, *,
     The verdict dict carries the structured pillar CoT — log it to
     curator_resolution_log for an audit trail of WHY each title was kept/cut."""
     ev = await build_evidence(item, user_id, category, db)
-    verdict = await adjudicate(ev["facts"], skip_priority=skip_priority)
+    verdict = await adjudicate(ev["facts"], skip_priority=skip_priority,
+                               law_extra=ev.get("law_extra", ""))
     out = {**ev, "verdict": verdict}
     if with_monologue:
         out["monologue"] = await write_monologue(
