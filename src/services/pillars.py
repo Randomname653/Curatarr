@@ -69,6 +69,8 @@ VERDICTS:
 
 Set protecting_pillar to the HIGHEST pillar that actually protects this title (HOUSEHOLD / CUSTODIAN / RESONANCE / EGO), or NONE for a CUT / STAGNANT / EVALUATE title.
 
+Any OWNER SIGNAL lines are things the owner told me before that may bear on this title — weigh them honestly. They never force a KEEP on their own, but a GENUINELY applicable owner signal pulling toward a title you would otherwise CUT should downgrade that verdict to STAGNANT (surface it for the owner's call) rather than silently discard something they value. A signal that does not actually fit this title is ignored.
+
 Keep each pillar analysis to ONE or TWO sentences. Fill every field."""
 
 # Discussion-framed version of the SAME pillars — injected into the chat /
@@ -225,7 +227,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     media_type = item.get("media_type") or category
 
     flags = {"owner_watched": False, "other_user_engaged": False,
-             "bitrate_outlier": False, "acclaim_present": False}
+             "bitrate_outlier": False, "acclaim_present": False, "owner_signal": False}
 
     # ── OWNER watch ──
     try:
@@ -292,6 +294,33 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     except Exception as e:
         logger.debug("[pillars] taste failed for %r: %s", title, e)
 
+    # ── OWNER SIGNALS (P2: the judge is no longer memory-blind) ──
+    # What the owner has previously told me that plausibly applies to THIS title
+    # (a kept franchise, a partner favourite, a values case) — the same per-item
+    # considerations bridge the pitch path uses, now fed to the JUDGE so a title
+    # the owner has explicitly valued can't be silently trashed on taste alone.
+    owner_signals = ""
+    try:
+        from src.services.episodic_memory import retrieve_considerations
+        prof_parts = [title, "" if genres_str == "Unknown" else genres_str,
+                      (item.get("overview") or "")[:300]]
+        item_profile = " — ".join(p for p in prof_parts if p and p.strip())
+        cons = await retrieve_considerations(user_id, item_profile,
+                                             media_category=category, top_k=3)
+        # Precision guard (mirrors the visible ⭐ path in recommendations_engine):
+        # retrieve_considerations is recall-leaning, and anisotropic embeddings
+        # let a broad memory bleed cross-domain on pure embedding alone (a Fast &
+        # Furious car-scenes memory fired on Stranger Things in testing). A false
+        # signal the JUDGE reasons about is worse than a missed one — require a
+        # lexical anchor or an exact-category match before feeding it in.
+        cons = [c for c in cons
+                if c.get("overlap") or c.get("media_category") == category]
+        if cons:
+            flags["owner_signal"] = True
+            owner_signals = "".join(f"OWNER SIGNAL: {c['content']}\n" for c in cons)
+    except Exception as e:
+        logger.debug("[pillars] owner-signals failed for %r: %s", title, e)
+
     # ── TECH / bitrate axis ──
     try:
         tech_line, outlier = _tech_facts(item, media_type)
@@ -306,6 +335,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         f"OTHER HOUSEHOLD USERS:\n{other_block}\n"
         f"ACCLAIM & METADATA:\n{meta_block}\n"
         + (f"OWNER TASTE: {taste}\n" if taste else "")
+        + owner_signals
         + (f"TECH: {tech_line}\n" if tech_line else "TECH: no technical profile on record.\n")
     )
     return {"title": title, "facts": facts.strip(), "flags": flags}
@@ -377,14 +407,15 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
 
 
 def _lean_facts(facts: str) -> str:
-    """Strip the two parrot/bloat sources before the prose pass: the OWNER TASTE
-    blob (the model lifts its words verbatim → every pitch sounds identical) and
-    the TECH line (a CUT shouldn't be padded with file-size). Keeps the title,
+    """Strip the parrot/bloat sources before the prose pass: the OWNER TASTE blob
+    and the OWNER SIGNAL lines (the model lifts their words verbatim → every pitch
+    sounds identical) and the TECH line (a CUT shouldn't be padded with file-size).
+    Keeps the title,
     watch status, and the ACCLAIM & METADATA block (themes / plot / significance)
     — the title's OWN specifics, which is exactly what we want it to argue from."""
     return "\n".join(
         ln for ln in facts.splitlines()
-        if not ln.lstrip().startswith(("OWNER TASTE:", "TECH:"))
+        if not ln.lstrip().startswith(("OWNER TASTE:", "TECH:", "OWNER SIGNAL:"))
     )
 
 
