@@ -893,6 +893,19 @@ JSON:"""
     # dropping it.
     set_state(cursor_key, str(max_id))
 
+    # Autonomous self-learning (P3): mine this thread's DEBATE for lasting
+    # curation principles. Gated to deletion discussions — that's where the
+    # owner and curator actually argue taste into rules, and it bounds the extra
+    # curator call. Best-effort: a failure never affects the memory extraction
+    # above. Runs on the SAME debounce/flush triggers as memory extraction.
+    try:
+        if getattr(settings, "PRINCIPLES_ENABLED", False) and \
+                (thread_id or "").startswith("deletion_proposal:"):
+            from src.services.curator_principles import capture_principles_from_thread
+            await capture_principles_from_thread(user_id, thread_id, media_category)
+    except Exception as e:
+        logger.debug("[principles] thread capture failed for %s: %s", thread_id, e)
+
 
 async def _debounced_thread_extract(
     user_id: int, thread_id: str, media_category: str = None
