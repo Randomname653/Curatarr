@@ -1498,6 +1498,20 @@ async def _build_discuss_context_block(
         _ws = _watch_tag(
             _watched_lookup(proposal.user_id, [proposal.title]).get(proposal.title))
         block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
+        # Richer grounding for the discussion: the actual Wikipedia LEAD (entity-
+        # matched, collision-guarded). The curator reasons far more precisely from
+        # the real article than a thin synopsis — and a discussion is one title +
+        # interactive, so the live fetch is affordable here. Best-effort: never
+        # let a Wikipedia hiccup break the discussion context.
+        try:
+            from src.services.media_enricher import fetch_wikipedia_summary
+            _wiki = await fetch_wikipedia_summary(
+                proposal.title, proposal.category or "movie")
+            if _wiki:
+                block += ("\nWIKIPEDIA (article excerpt — verified grounding; reason "
+                          "from this and don't contradict it):\n" + _wiki + "\n")
+        except Exception:
+            pass
         if verified_block:
             block += "\n" + verified_block + "\n"
         elif proposal.synopsis or proposal.genres:
@@ -2167,6 +2181,12 @@ async def send_message(
     user_lang  = detect_user_language(user.id, db)
     lang_rule  = f"1. {language_directive(user_lang)}"
 
+    # When discussing a specific title's fate, give the chat the SAME three-pillar
+    # law the deletion judge uses — so the Level-2 talk reasons from pillars
+    # (bitrate = downscale-only) instead of raw taste-mismatch + "bloated bitrate".
+    from src.services.pillars import PILLAR_FRAMEWORK
+    pillar_framework = PILLAR_FRAMEWORK if active_title else ""
+
     system_prompt = f"""You are Curatarr, an uncompromising, elite personal media curator.
 
 {taste_context if taste_context else "No taste profile yet."}
@@ -2178,6 +2198,7 @@ RELEVANT LIBRARY ITEMS:
 
 {discuss_block}
 {f"CURRENT FOCUS: You are strictly discussing the title '{active_title}'." if active_title else ""}
+{pillar_framework}
 {hidden_metadata_context}
 
 CRITICAL BEHAVIOR RULES:
