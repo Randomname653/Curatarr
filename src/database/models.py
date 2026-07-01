@@ -213,7 +213,14 @@ class ProtectedMedia(Base):
     # Stores either the external ID (TMDB / AniList) or the exact title.
     identifier = Column(String(255), nullable=False, index=True)
     category = Column(String(32), nullable=True)  # movie, show, anime
-    reason = Column(Text, nullable=True)          # e.g. "Roommate", "Collector's item"
+    reason = Column(Text, nullable=True)          # manual: short note; judge: pillar reasoning (Begründung)
+    # Pillar judge: this table now also holds AUTOMATIC protections the 3-pillar
+    # curation judge grants, not just the manual whitelist. ``source`` tells them
+    # apart; ``verdict`` records which call protected it (KEEP_WITH_FLAG items also
+    # feed the separate "downscale to reclaim space" list).
+    source = Column(String(16), default="manual")  # "manual" (user whitelist) | "judge" (auto)
+    verdict = Column(String(20), nullable=True)     # judge: HARD_KEEP | KEEP_WITH_FLAG
+    title = Column(String(512), nullable=True)      # human-readable name for the admin debug view
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

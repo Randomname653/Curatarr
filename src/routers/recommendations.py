@@ -368,6 +368,57 @@ def _proposal_dict(p: DeletionProposal) -> dict:
     }
 
 
+@router.get("/protections")
+async def list_judge_protections(
+    user: User = Depends(require_admin),   # curation = admin only
+    db: Session = Depends(get_db),
+):
+    """Admin debug view: every title the 3-pillar judge auto-protected, with the
+    pillar Begründung — so the admin can see WHY a title was saved and lift it."""
+    from src.database.models import ProtectedMedia
+    rows = (
+        db.query(ProtectedMedia)
+        .filter(ProtectedMedia.user_id == user.id, ProtectedMedia.source == "judge")
+        .order_by(ProtectedMedia.created_at.desc())
+        .all()
+    )
+    return {
+        "protections": [
+            {
+                "id": p.id,
+                "title": p.title or p.identifier,
+                "category": p.category,
+                "verdict": p.verdict,
+                "reason": p.reason,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in rows
+        ]
+    }
+
+
+@router.delete("/protections/{protection_id}")
+async def delete_judge_protection(
+    protection_id: int,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Lift a judge protection. The title re-enters the candidate pool on the
+    next scan, where the judge may re-protect it or now cut it."""
+    from src.database.models import ProtectedMedia
+    row = (
+        db.query(ProtectedMedia)
+        .filter(ProtectedMedia.id == protection_id, ProtectedMedia.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Protection not found")
+    title = row.title or row.identifier
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "title": title}
+
+
 @router.get("/deletions")
 async def get_deletion_proposals(
     category: Optional[str] = Query(None),

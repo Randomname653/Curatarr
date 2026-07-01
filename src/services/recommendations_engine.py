@@ -681,6 +681,56 @@ def _watch_pitch_line(status: dict) -> str:
             "(supports deletion), possibly just on-hold. Weigh, don't assume.")
 
 
+def _format_pillar_reason(v: dict) -> str:
+    """Human-readable Begründung from a pillar verdict — stored on the protection
+    row so the admin debug view can show WHY the judge saved a title."""
+    parts = []
+    if v.get("pillar_3_household"):
+        parts.append(f"III Household — {v['pillar_3_household']}")
+    if v.get("pillar_2_archive"):
+        parts.append(f"II Custodian — {v['pillar_2_archive']}")
+    if v.get("pillar_1_ego"):
+        parts.append(f"I Ego — {v['pillar_1_ego']}")
+    if v.get("bitrate_note"):
+        parts.append(f"Bitrate — {v['bitrate_note']}")
+    return "\n".join(parts)
+
+
+def _persist_judge_protection(user_id: int, item: dict, category: str,
+                              verdict_str: str, verdict_obj: dict) -> None:
+    """Upsert a judge-granted protection into ProtectedMedia(source='judge').
+
+    The identifier matches the deletion-exclusion check at the top of the
+    scoring loop (``str(tmdb_id)`` or title), so the title drops out of EVERY
+    future scan until the admin lifts it in the debug UI. A manual whitelist
+    entry is never clobbered (the user outranks the judge)."""
+    tmdb_id = item.get("tmdb_id")
+    identifier = str(tmdb_id) if tmdb_id is not None else (item.get("title") or "")
+    if not identifier:
+        return
+    reason = _format_pillar_reason(verdict_obj)
+    try:
+        with get_db_session() as db:
+            row = (db.query(ProtectedMedia)
+                     .filter(ProtectedMedia.user_id == user_id,
+                             ProtectedMedia.identifier == identifier)
+                     .first())
+            if row:
+                if (row.source or "manual") != "manual":
+                    row.source, row.verdict = "judge", verdict_str
+                    row.reason, row.category = reason, category
+                    row.title = item.get("title")
+            else:
+                db.add(ProtectedMedia(
+                    user_id=user_id, identifier=identifier, category=category,
+                    source="judge", verdict=verdict_str, reason=reason,
+                    title=item.get("title")))
+            db.commit()
+    except Exception as e:
+        logger.warning("[deletions] persist judge protection failed for %r: %s",
+                       item.get("title"), e)
+
+
 async def generate_deletion_proposals(
     user_id: int,
     arr_items: list,
@@ -1090,6 +1140,73 @@ async def generate_deletion_proposals(
 
     final_proposals = []
 
+    # ── 3-PILLAR JUDGE PATH (PILLARS_ENABLED) ─────────────────────────────────
+    # The LLM is the judge; the del_score above only PRE-RANKS who gets looked
+    # at. Walk the ranking and rule on each candidate:
+    #   CUT            → a deletion proposal (lazy monologue as the pitch)
+    #   HARD_KEEP /    → persisted to ProtectedMedia(source='judge'); phase A
+    #   KEEP_WITH_FLAG    already excludes ALL ProtectedMedia, so it drops out of
+    #                     every future scan — the funnel self-leans over time
+    #   EVALUATE       → left alone, re-judged next scan
+    # Keep judging DOWN the ranking until TARGET_CUTS proposals exist OR
+    # JUDGE_CAP candidates are judged (a latency bound for a clean library).
+    if getattr(settings, "PILLARS_ENABLED", False):
+        from src.services.pillars import build_evidence, adjudicate, write_monologue
+        from src.services.llm_priority import curator_start, curator_done
+        TARGET_CUTS, JUDGE_CAP = 10, 60
+        judged = 0
+        _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
+             f"— pillar-judging the ranking…")
+        await curator_start()
+        try:
+            for cand in scored_candidates:
+                if len(final_proposals) >= TARGET_CUTS or judged >= JUDGE_CAP:
+                    break
+                item = cand["item"]
+                judged += 1
+                _msg(f"{category}: pillar-judging {judged} "
+                     f"({len(final_proposals)}/{TARGET_CUTS} cut) — "
+                     f"{(item.get('title') or '?')[:50]}")
+                try:
+                    with get_db_session() as _jdb:
+                        ev = await build_evidence(item, user_id, category, _jdb)
+                    verdict = await adjudicate(ev["facts"], skip_priority=True)
+                except Exception as e:
+                    logger.warning("[deletions] pillar judge failed for %r: %s",
+                                   item.get("title"), e)
+                    continue
+                v = (verdict or {}).get("verdict")
+                if v == "CUT":
+                    pitch = await write_monologue(
+                        ev["facts"], verdict,
+                        lang_directive=lang_directive_str, skip_priority=True)
+                    if not pitch or not pitch.strip():
+                        pitch = ("Flagged by the pillar judge as a taste cut — the "
+                                 "model returned no monologue; review manually.")
+                    _smb = item.get("size_mb") or 0
+                    final_proposals.append({
+                        "title": item.get("title"),
+                        "pitch": pitch,
+                        "confidence": min(0.99, max(0.10, cand["score"] / 100)),
+                        "size_mb": _smb,
+                        "size_gb": round(_smb / 1024, 1),
+                        "arr_id": item.get("arr_id"),
+                        "service": item.get("service", ""),
+                        "arr_url": item.get("arr_url", ""),
+                        "tvdb_id": item.get("tvdb_id"),
+                        "tmdb_id": item.get("tmdb_id"),
+                        "latest_activity_at": item.get("latest_activity_at"),
+                    })
+                elif v in ("HARD_KEEP", "KEEP_WITH_FLAG"):
+                    _persist_judge_protection(user_id, item, category, v, verdict)
+                # EVALUATE / None → neither propose nor protect; re-judged next scan.
+        finally:
+            curator_done()
+        _msg(f"{category}: pillar judging done — {len(final_proposals)} cut of "
+             f"{judged} judged.")
+        return final_proposals
+
+    # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────
     # Pass 39: random axis seed per pitch. Single-line nudge in the prompt
     # below — no batch-state tracking, no allocation problem (sampling
     # with replacement). Over 10 pitches the axes naturally distribute,
