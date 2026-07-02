@@ -10,6 +10,26 @@
      page load and broke the README's "works fully offline" promise. -->
 <script src="/vendor/marked.min.js"></script>
 <style>
+/* ══ DESIGN LANGUAGE ══════════════════════════════════════════════════════════
+   One visual grammar across every view. When adding/altering UI, follow these
+   rules instead of inventing inline styles:
+
+   COLOR — amber (--amber) is THE accent: active states, focus, primary
+   actions, key numbers, section kickers. Danger red = destructive only.
+   Success green = confirmations only. Everything else stays in the neutral
+   bg/bg2/bg3 + text/text2/text3 ladder (surface: bg < bg2 panels < bg3
+   controls; text: primary > secondary > hints). Never hardcode hex/rgba in
+   markup — use the tokens or an existing class.
+
+   SHAPE — --radius for controls (buttons, inputs, badges-ish), --radius-lg
+   for containers (cards, panels, banners). Borders are 1px --border, hover
+   raises to --border2 (or amber for interactive emphasis).
+
+   COMPONENTS — reuse before inventing: .card / .panel-item (+ -head, -sub,
+   -meta, .panel-actions), .badge (amber|danger|success|muted), .btn
+   (-primary|-secondary|-danger, -sm), .tbl/.tbl-wrap, .stat-box, .cat-tabs.
+   New prompt-visible UI labels additionally go through app_context.py.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #1a1d23;
   --bg2: #21252e;
@@ -27,9 +47,15 @@
   --success: #3ddc97;
   --success-dim: rgba(61,220,151,.1);
   --info: #5b8dee;
-  --radius: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
   --sidebar-w: 220px;
 }
+/* Slim dark scrollbars — the stock ones break the dark surface on Windows */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 5px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--border2); }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
 
@@ -59,7 +85,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .sb-item svg { flex-shrink: 0; opacity: .7; }
 .sb-item.active svg { opacity: 1; }
 /* Pass 25: pulse-dot shown when a background analysis is running for this entry */
-.sb-pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); margin-left: auto; flex-shrink: 0; animation: sb-pulse 1.2s ease-in-out infinite; box-shadow: 0 0 6px rgba(255, 165, 0, .55); }
+.sb-pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); margin-left: auto; flex-shrink: 0; animation: sb-pulse 1.2s ease-in-out infinite; box-shadow: 0 0 6px rgba(229,160,13,.55); }
 @keyframes sb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(.75); } }
 .sb-footer { margin-top: auto; padding: 12px; border-top: 1px solid var(--border); }
 .sb-footer button { width: 100%; background: none; border: 1px solid var(--border); color: var(--text2); padding: 7px; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
@@ -70,8 +96,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
 .view.active { display: flex; }
 .view-header { padding: 20px 24px 0; flex-shrink: 0; }
-.view-header h1 { font-size: 18px; font-weight: 600; color: var(--text); }
-.view-header p { color: var(--text2); margin-top: 4px; font-size: 13px; }
+/* The amber kicker bar in front of every view title — the one signature that
+   makes all pages read as the same product. */
+.view-header h1 { font-size: 18px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 10px; }
+.view-header h1::before { content: ''; width: 4px; height: 17px; background: var(--amber); border-radius: 2px; flex-shrink: 0; }
+.view-header p { color: var(--text2); margin-top: 6px; font-size: 13px; padding-left: 14px; }
 .view-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
 
 /* ── ARR TABS (Pass 16c — Library Manager pages) ── */
@@ -175,10 +204,21 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .badge.muted { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
 
 /* ── CARDS ── */
-.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; transition: border-color .12s; }
+.card:hover { border-color: var(--border2); }
 .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .card p { font-size: 12px; color: var(--text2); line-height: 1.5; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+
+/* ── ADMIN SUB-PANELS (Deletions: protections / downscale / principles) ── */
+.panel-section { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 16px; }
+.panel-hint { font-size: 12px; color: var(--text3); margin-left: 8px; }
+.panel-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; transition: border-color .12s; }
+.panel-item:hover { border-color: var(--border2); }
+.panel-item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-item-sub { color: var(--text2); font-size: 12px; margin-top: 8px; line-height: 1.5; }
+.panel-item-meta { color: var(--text3); font-size: 12px; }
+.panel-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .stat-row { display: flex; gap: 12px; margin-bottom: 20px; }
 .stat-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .stat-box .num { font-size: 24px; font-weight: 700; color: var(--amber); }
@@ -189,7 +229,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .btn-primary { background: var(--amber); color: #000; }
 .btn-primary:hover { background: var(--amber2); }
 .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
-.btn-secondary:hover { border-color: var(--border2); }
+.btn-secondary:hover { border-color: var(--amber); }
 .btn-danger { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(229,83,83,.25); }
 .btn-danger:hover { background: rgba(229,83,83,.2); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
@@ -198,6 +238,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; font-weight: 500; }
 .form-group input, .form-group select { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: var(--radius); font-size: 13px; font-family: inherit; }
+/* Amber focus everywhere — one interaction language for every input */
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--amber); }
 .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--amber); }
 .form-group .hint { font-size: 11px; color: var(--text3); margin-top: 4px; line-height: 1.5; }
 .form-group .used-for { font-size: 11px; color: var(--amber); margin-top: 3px; }
@@ -474,11 +516,11 @@ select option { background: var(--bg2); }
            straight from the discussion thread — no bounce back to the
            Deletions view. Hidden by default; _setDiscussBanner reveals it
            only for kind === 'deletion_proposal'. -->
-      <div id="discuss-banner" style="display:none;background:rgba(255,165,0,.12);border-bottom:1px solid rgba(255,165,0,.3);padding:8px 16px;font-size:12px;color:var(--text2);align-items:center;gap:10px">
+      <div id="discuss-banner" style="display:none;background:var(--amber-dim);border-bottom:1px solid rgba(229,160,13,.3);padding:8px 16px;font-size:12px;color:var(--text2);align-items:center;gap:10px">
         <span style="font-size:14px">🔴</span>
         <span id="discuss-banner-text" style="flex:1"></span>
         <button id="discuss-delete-btn" onclick="deleteFromDiscussion()" style="display:none;background:rgba(229,83,83,.15);border:1px solid rgba(229,83,83,.5);color:var(--danger);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">🗑 Delete &amp; exit</button>
-        <button onclick="exitDiscussion()" style="background:transparent;border:1px solid rgba(255,165,0,.4);color:var(--amber);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Exit discussion</button>
+        <button onclick="exitDiscussion()" style="background:transparent;border:1px solid rgba(229,160,13,.4);color:var(--amber);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Exit discussion</button>
       </div>
       <div id="messages">
         <div class="msg assistant">
@@ -576,24 +618,24 @@ select option { background: var(--bg2); }
         </div>
         <div id="del-content"></div>
 
-        <!-- Judge protections: what the 3-pillar judge auto-saved, and why -->
-        <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
+        <!-- Judge protections: what the 4-pillar judge auto-saved, and why -->
+        <div class="panel-section">
           <button class="btn btn-secondary" onclick="loadJudgeProtections()">🛡️ Judge-protected titles</button>
-          <span style="font-size:12px;color:var(--text3);margin-left:8px">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
+          <span class="panel-hint">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
           <div id="protections-content" style="margin-top:12px"></div>
         </div>
 
         <!-- Downscale candidates: kept titles flagged as bitrate outliers -->
-        <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
+        <div class="panel-section">
           <button class="btn btn-secondary" onclick="loadDownscale()">📉 Downscale-Kandidaten</button>
-          <span style="font-size:12px;color:var(--text3);margin-left:8px">Behalten, aber Bitrate-Ausreißer — Speicher zurückgewinnen ohne zu löschen. Nach dem Transcode „Erledigt" klicken.</span>
+          <span class="panel-hint">Behalten, aber Bitrate-Ausreißer — Speicher zurückgewinnen ohne zu löschen. Nach dem Transcode „Erledigt" klicken.</span>
           <div id="downscale-content" style="margin-top:12px"></div>
         </div>
 
         <!-- Learned principles: what the curator taught itself from your debates -->
-        <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
+        <div class="panel-section">
           <button class="btn btn-secondary" onclick="loadPrinciples()">🧠 Learned principles</button>
-          <span style="font-size:12px;color:var(--text3);margin-left:8px">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. ⚠ contradiction = your call.</span>
+          <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. ⚠ contradiction = your call.</span>
           <div id="principles-content" style="margin-top:12px"></div>
         </div>
       </div>
@@ -3396,7 +3438,7 @@ function _recentActivityBadge(p) {
               :                 `${Math.floor(ageDays / 7)}w ago`;
   // Recent activity = orange-ish "🆕" tag. Small enough not to compete
   // with the confidence pill, distinct enough to spot at a glance.
-  return ` <span class="badge" style="background:rgba(255,165,0,.15);color:var(--amber);border:1px solid rgba(255,165,0,.3);font-size:10px"
+  return ` <span class="badge amber" style="font-size:10px"
                 title="Latest episode/movie/track file imported ${ageDays}d ago — fresh activity may indicate this proposal is more relevant to review.">🆕 ${label}</span>`;
 }
 
@@ -3500,16 +3542,16 @@ async function loadJudgeProtections() {
         ? '<span class="badge amber">KEEP · downscale</span>'
         : '<span class="badge muted">HARD_KEEP</span>';
       const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
-      return `<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:12px 14px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      return `<div class="panel-item">
+        <div class="panel-item-head">
           <div><strong>${esc(p.title || '—')}</strong> ${badge}
-            <span style="color:var(--text3);font-size:12px">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
+          <div class="panel-actions">
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
             <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Schutz aufheben</button>
           </div>
         </div>
-        <div style="color:var(--text2);font-size:12px;white-space:pre-line;margin-top:8px">${esc(p.reason || '')}</div>
+        <div class="panel-item-sub" style="white-space:pre-line">${esc(p.reason || '')}</div>
       </div>`;
     }).join('');
   } catch(e) {
@@ -3553,14 +3595,14 @@ async function loadPrinciples() {
       const actions = p.status === 'active'
         ? `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'shadow')">Deactivate</button>`
         : `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'activate')">Activate</button>`;
-      return `<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:12px 14px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      return `<div class="panel-item">
+        <div class="panel-item-head" style="align-items:flex-start">
           <div style="flex:1;min-width:200px">
             <div>${st}${nov}${reinf}</div>
             <div style="color:var(--text);font-size:13px;margin-top:6px">${esc(p.text || '')}</div>
-            <div style="color:var(--text3);font-size:11px;margin-top:4px">${meta}${when ? ' · ' + when : ''}${p.related ? ' · vs: ' + esc(p.related) : ''}</div>
+            <div class="panel-item-meta" style="font-size:11px;margin-top:4px">${meta}${when ? ' · ' + when : ''}${p.related ? ' · vs: ' + esc(p.related) : ''}</div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <div class="panel-actions">
             ${actions}
             <button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'reject')">Reject</button>
           </div>
@@ -3602,16 +3644,16 @@ async function loadDownscale() {
         ? `<span class="badge muted">${esc(p.tech.resolution || '?')} ${esc(p.tech.codec || '')} · ${p.tech.size_gb} GB${p.tech.mb_per_min ? ` · ${p.tech.mb_per_min} MB/min` : ''}</span>`
         : '<span class="badge muted">kein Tech-Profil</span>';
       const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
-      return `<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:12px 14px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      return `<div class="panel-item">
+        <div class="panel-item-head">
           <div><strong>${esc(p.title || '—')}</strong> ${tech}
-            <span style="color:var(--text3);font-size:12px">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
+          <div class="panel-actions">
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
             <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">✓ Erledigt</button>
           </div>
         </div>
-        ${p.bitrate_note ? `<div style="color:var(--text2);font-size:12px;margin-top:8px">${esc(p.bitrate_note)}</div>` : ''}
+        ${p.bitrate_note ? `<div class="panel-item-sub">${esc(p.bitrate_note)}</div>` : ''}
       </div>`;
     }).join('');
   } catch(e) {
