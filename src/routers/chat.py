@@ -1057,6 +1057,8 @@ def _thread_id_for(ctx) -> str:
         return f"deletion_proposal:{ctx.proposal_id}"
     if kind == "proactive_message" and ctx.message_id:
         return f"proactive_message:{ctx.message_id}"
+    if kind == "principle" and getattr(ctx, "principle_id", None):
+        return f"principle:{ctx.principle_id}"
     return "general"
 
 
@@ -1722,6 +1724,53 @@ async def _build_discuss_context_block(
             ))
 
         return block, anchor_title, anchor_category
+
+    # ── Learned-principle review (kind="principle") ──────────────────────────
+    # The bell notification opens a chat where the owner and the curator settle
+    # a shadow principle together: the block hands the curator BOTH sides — the
+    # freshly learned rule and the active rule-set / taste profile it may
+    # collide with. The settled decision (adopt / reject / refined wording) is
+    # applied post-turn by detect_and_apply_principle_verdict.
+    if kind == "principle" and getattr(ctx, "principle_id", None):
+        from src.database.models import CuratorPrinciple
+        from src.services.app_context import PRINCIPLE_REVIEW_BLOCK
+        prin = db.query(CuratorPrinciple).filter(
+            CuratorPrinciple.id == ctx.principle_id,
+            CuratorPrinciple.user_id == user_id,
+        ).first()
+        if not prin:
+            logger.info("Discuss context: principle id=%s not found / not owned by user %d",
+                        ctx.principle_id, user_id)
+            return "", "", domain
+
+        block = (
+            "[CURRENT DISCUSSION CONTEXT]\n"
+            "A learned curation principle is under review.\n"
+            f"NEW PRINCIPLE (status: {prin.status}, novelty: {prin.novelty or 'new'}"
+            + (f", basis: {prin.basis}" if prin.basis else "") + "):\n"
+            f"  \"{prin.text}\"\n"
+        )
+        if prin.related and prin.related.strip() not in ("-", "—", ""):
+            block += (f"It was flagged against this existing knowledge: "
+                      f"\"{prin.related}\"\n")
+        try:
+            actives = (db.query(CuratorPrinciple)
+                       .filter(CuratorPrinciple.user_id == user_id,
+                               CuratorPrinciple.status == "active")
+                       .order_by(CuratorPrinciple.created_at.asc())
+                       .all())
+            if actives:
+                block += "CURRENT ACTIVE PRINCIPLES (the rule-set it would join):\n" + "".join(
+                    f"  - {a.text}\n" for a in actives[:8])
+            else:
+                block += ("CURRENT ACTIVE PRINCIPLES: none yet — any collision is "
+                          "with the owner's taste profile shown above.\n")
+        except Exception as e:
+            logger.debug("[chat] active-principles fetch failed: %s", e)
+        block += PRINCIPLE_REVIEW_BLOCK
+        logger.info("💉 [PRINCIPLE REVIEW CONTEXT] #%d (%s) injected",
+                    prin.id, prin.novelty or "new")
+        return block, "", domain
 
     # ── No usable kind+id → silently ignore (no fake-assistant pollution) ───
     return "", "", domain
@@ -2442,15 +2491,32 @@ FORMATTING RULES:
                 anchor = _thread_active_title.get(thread_id)
                 anchor_title = anchor[0] if anchor else None
                 anchor_category = anchor[2] if anchor and len(anchor) > 2 else None
-                track_task(
-                    _check_protection_intent_bg(
-                        user.id, message.message, full_response,
-                        anchor_title=anchor_title,
-                        anchor_category=anchor_category,
-                        thread_id=thread_id,
-                    ),
-                    name="check_protection_intent_bg",
-                )
+                if thread_id.startswith("principle:"):
+                    # Principle-review thread: parse the settled decision
+                    # (adopt / reject / refined wording) and apply it — a
+                    # media-protection scan makes no sense here.
+                    try:
+                        _pid = int(thread_id.split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        _pid = 0
+                    if _pid:
+                        from src.services.curator_principles import (
+                            detect_and_apply_principle_verdict)
+                        track_task(
+                            detect_and_apply_principle_verdict(
+                                user.id, _pid, message.message, full_response),
+                            name="principle_verdict_bg",
+                        )
+                else:
+                    track_task(
+                        _check_protection_intent_bg(
+                            user.id, message.message, full_response,
+                            anchor_title=anchor_title,
+                            anchor_category=anchor_category,
+                            thread_id=thread_id,
+                        ),
+                        name="check_protection_intent_bg",
+                    )
 
                 # Check if this might be answering a verification question.
                 # Pass 71: thread_id gates it — only a turn inside the

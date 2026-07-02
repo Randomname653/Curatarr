@@ -11,9 +11,10 @@ class DiscussContext(BaseModel):
     action) are kept Optional for short-term frontend backward compat but
     ignored when ``kind`` + the matching ID are present.
     """
-    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message"
+    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle"
     proposal_id: Optional[int] = None  # FK → DeletionProposal.id
     message_id: Optional[int] = None   # FK → ProactiveMessage.id
+    principle_id: Optional[int] = None # FK → CuratorPrinciple.id (learned-principle review)
 
     # Pass 81d: ONE-SHOT flag set by the frontend 🔍 Reevaluate button. The
     # frontend sends a short user-visible message ("Run a Level 2 thematic
