@@ -132,7 +132,7 @@ def _migrate_columns() -> None:
         ("enrichment_status",     "sources_state", "TEXT"),
         ("enrichment_status",     "provisional",   "BOOLEAN DEFAULT 0"),
         # Pillar judge: ProtectedMedia also stores AUTOMATIC protections the
-        # 3-pillar judge grants. ``source`` splits "manual" (user whitelist)
+        # 4-pillar judge grants. ``source`` splits "manual" (user whitelist)
         # from "judge" (auto); ``verdict`` records HARD_KEEP / KEEP_WITH_FLAG
         # (the latter also feeds the downscale list). Pillar reasoning reuses
         # the existing ``reason`` Text column. Legacy rows backfill to "manual".

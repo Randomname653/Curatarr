@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     CURATOR_MODEL: str = "curatarr-curator"
     SUMMARIZER_MODEL: str = "curatarr-summarizer"
     EMBEDDING_MODEL: str = "nomic-embed-text"
-    # Route deletion proposals through the 3-pillar LLM judge
+    # Route deletion proposals through the 4-pillar LLM judge
     # (src/services/pillars.py) instead of the legacy taste-mismatch pitch.
     # Off by default — the legacy path stays the fallback until flipped.
     PILLARS_ENABLED: bool = False

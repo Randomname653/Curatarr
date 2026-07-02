@@ -774,6 +774,9 @@ async def _run_memory_extraction(
 _THREAD_EXTRACT_DEBOUNCE_S = 90.0
 # keyed by f"{user_id}:{thread_id}" → the pending asyncio debounce task
 _pending_thread_extracts: dict[str, asyncio.Task] = {}
+# strong refs to in-flight principle-capture tasks (fire-and-forget would
+# otherwise be garbage-collectable mid-run)
+_running_captures: set = set()
 
 
 def _extract_key(user_id: int, thread_id: str) -> str:
@@ -896,13 +899,22 @@ JSON:"""
     # Autonomous self-learning (P3): mine this thread's DEBATE for lasting
     # curation principles. Gated to deletion discussions — that's where the
     # owner and curator actually argue taste into rules, and it bounds the extra
-    # curator call. Best-effort: a failure never affects the memory extraction
-    # above. Runs on the SAME debounce/flush triggers as memory extraction.
+    # curator call. Fire-and-forget on purpose: this function ALSO runs inside
+    # the synchronous "New chat" flush (chat.py) and the app-shutdown flush
+    # (main.py) — awaiting two 31B curator calls there would hang the user's
+    # request / the shutdown for 30-60s+. Capture has no cursor (it re-reads the
+    # whole thread), so a run lost to a shutdown is self-healing: the next
+    # extraction on that thread mines it again, and the novelty check turns
+    # re-captures into reinforcement instead of duplicates.
     try:
         if getattr(settings, "PRINCIPLES_ENABLED", False) and \
                 (thread_id or "").startswith("deletion_proposal:"):
             from src.services.curator_principles import capture_principles_from_thread
-            await capture_principles_from_thread(user_id, thread_id, media_category)
+            task = asyncio.create_task(
+                capture_principles_from_thread(user_id, thread_id, media_category))
+            # keep a reference — a bare create_task can be garbage-collected
+            _running_captures.add(task)
+            task.add_done_callback(_running_captures.discard)
     except Exception as e:
         logger.debug("[principles] thread capture failed for %s: %s", thread_id, e)
 
