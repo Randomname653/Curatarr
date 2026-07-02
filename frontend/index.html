@@ -583,6 +583,13 @@ select option { background: var(--bg2); }
           <div id="protections-content" style="margin-top:12px"></div>
         </div>
 
+        <!-- Downscale candidates: kept titles flagged as bitrate outliers -->
+        <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
+          <button class="btn btn-secondary" onclick="loadDownscale()">📉 Downscale-Kandidaten</button>
+          <span style="font-size:12px;color:var(--text3);margin-left:8px">Behalten, aber Bitrate-Ausreißer — Speicher zurückgewinnen ohne zu löschen. Nach dem Transcode „Erledigt" klicken.</span>
+          <div id="downscale-content" style="margin-top:12px"></div>
+        </div>
+
         <!-- Learned principles: what the curator taught itself from your debates -->
         <div style="margin-top:28px;border-top:1px solid var(--border);padding-top:16px">
           <button class="btn btn-secondary" onclick="loadPrinciples()">🧠 Learned principles</button>
@@ -3566,6 +3573,46 @@ async function setPrinciple(id, action) {
   try {
     await api('/api/recommendations/principles/' + id + '/' + action, 'POST');
     loadPrinciples();
+  } catch(e) {
+    alert('Failed: ' + (e.message || e));
+  }
+}
+
+async function loadDownscale() {
+  const el = document.getElementById('downscale-content');
+  if (!el) return;
+  el.innerHTML = '<p class="loading">Loading downscale candidates…</p>';
+  try {
+    const r = await api('/api/recommendations/downscale');
+    const rows = r.candidates || [];
+    if (!rows.length) {
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">Keine Downscale-Kandidaten — KEEP_WITH_FLAG-Urteile aus dem nächsten Scan landen hier.</p>';
+      return;
+    }
+    const head = `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">${rows.length} Titel${r.total_gb ? ` · ${r.total_gb} GB gebunden (Ist-Größe der Dateien)` : ''}</div>`;
+    el.innerHTML = head + rows.map(p => {
+      const tech = p.tech
+        ? `<span class="badge muted">${esc(p.tech.resolution || '?')} ${esc(p.tech.codec || '')} · ${p.tech.size_gb} GB${p.tech.mb_per_min ? ` · ${p.tech.mb_per_min} MB/min` : ''}</span>`
+        : '<span class="badge muted">kein Tech-Profil</span>';
+      const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      return `<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div><strong>${esc(p.title || '—')}</strong> ${tech}
+            <span style="color:var(--text3);font-size:12px">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
+          <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">✓ Erledigt</button>
+        </div>
+        ${p.bitrate_note ? `<div style="color:var(--text2);font-size:12px;margin-top:8px">${esc(p.bitrate_note)}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load downscale candidates')}</p>`;
+  }
+}
+
+async function downscaleDone(id) {
+  try {
+    await api('/api/recommendations/downscale/' + id + '/done', 'POST');
+    loadDownscale();
   } catch(e) {
     alert('Failed: ' + (e.message || e));
   }
