@@ -1907,7 +1907,7 @@ async def send_message(
         )
         if discuss_block:
             logger.info("💉 [DISCUSS CONTEXT INJECTED]: %s (thread=%s)",
-                        active_title or "(proactive message)", thread_id)
+                        active_title or "(no title anchor)", thread_id)
             pre_stream_status.append(
                 f"✓ Loaded discussion context: {active_title or '(proactive message)'}"
             )

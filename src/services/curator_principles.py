@@ -161,17 +161,22 @@ def _thread_text(user_id: int, thread_id: str) -> tuple[str, int]:
 
 # ── EXISTING CONTEXT for the novelty check ───────────────────────────────────
 
-def _existing_context(user_id: int) -> tuple[list[str], str]:
+def _existing_context(user_id: int) -> tuple[list[str], str, list[str]]:
     """The rule-set the candidate is judged against: the current principles
-    (active + shadow, so we don't re-capture a shadow duplicate) and the owner's
-    taste-profile summary."""
+    (active + shadow, so we don't re-capture a shadow duplicate), the owner's
+    taste-profile summary, and the REJECTED principles — the owner's explicit
+    "no" is knowledge too. Without the rejected list, the next debate touching
+    the same theme re-derived the same rule as NEW and rang the bell again
+    (the comfort-food principle would have resurrected forever)."""
     texts: list[str] = []
+    rejected: list[str] = []
     with get_db_session() as db:
-        rows = (db.query(CuratorPrinciple.text)
+        rows = (db.query(CuratorPrinciple.text, CuratorPrinciple.status)
                   .filter(CuratorPrinciple.user_id == user_id,
-                          CuratorPrinciple.status.in_(("active", "shadow")))
+                          CuratorPrinciple.status.in_(("active", "shadow", "rejected")))
                   .all())
-        texts = [r[0] for r in rows if r[0]]
+        texts = [r[0] for r in rows if r[0] and r[1] in ("active", "shadow")]
+        rejected = [r[0] for r in rows if r[0] and r[1] == "rejected"]
     taste = ""
     try:
         from src.database.models import TasteVectorEntry
@@ -182,15 +187,21 @@ def _existing_context(user_id: int) -> tuple[list[str], str]:
                 taste = tv.summary_text[:3500]
     except Exception as e:
         logger.debug("[principles] taste fetch failed: %s", e)
-    return texts, taste
+    return texts, taste, rejected
 
 
-def _build_novelty_user(candidates: list[str], existing: list[str], taste: str) -> str:
+def _build_novelty_user(candidates: list[str], existing: list[str], taste: str,
+                        rejected: list[str] | None = None) -> str:
     parts = []
     if taste:
         parts.append("TASTE PROFILE (existing knowledge):\n" + taste)
     parts.append("EXISTING PRINCIPLES:\n" + (
         "\n".join(f"- {t}" for t in existing) if existing else "(none yet)"))
+    if rejected:
+        parts.append(
+            "PREVIOUSLY REJECTED BY THE OWNER (they explicitly dismissed these "
+            "rules — a candidate that restates one is DUPLICATE, not NEW):\n"
+            + "\n".join(f"- {t}" for t in rejected))
     parts.append("CANDIDATES:\n" + "\n".join(
         f"{i}. {c}" for i, c in enumerate(candidates, 1)))
     return "\n\n".join(parts)
@@ -214,14 +225,21 @@ def _reinforce_duplicate(user_id: int, related: str) -> None:
     key = related.strip().lower()[:40]
     try:
         with get_db_session() as db:
+            # Rejected rows included: a duplicate of a rule the owner dismissed
+            # is DROPPED either way, but bumping its counter records that the
+            # theme keeps resurfacing — if it climbs, that's a signal to bring
+            # it up with the owner again rather than silently suppress forever.
             rows = (db.query(CuratorPrinciple)
                       .filter(CuratorPrinciple.user_id == user_id,
-                              CuratorPrinciple.status.in_(("active", "shadow"))).all())
+                              CuratorPrinciple.status.in_(
+                                  ("active", "shadow", "rejected"))).all())
             for row in rows:
                 if key and key in (row.text or "").lower():
                     row.times_reinforced = (row.times_reinforced or 0) + 1
                     db.commit()
-                    logger.info("[principles] reinforced #%d (×%d): %s",
+                    logger.info("[principles] %s #%d (×%d): %s",
+                                "recurrence on REJECTED" if row.status == "rejected"
+                                else "reinforced",
                                 row.id, row.times_reinforced, (row.text or "")[:60])
                     return
     except Exception as e:
@@ -255,11 +273,11 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
         return []
 
     # 2 — novelty-check against the existing rule-set (decide-only)
-    existing, taste = _existing_context(user_id)
+    existing, taste, rejected = _existing_context(user_id)
     cand_texts = [c["principle"].strip() for c in candidates]
     try:
         nv = await _curator_json(
-            _NOVELTY_SYS, _build_novelty_user(cand_texts, existing, taste),
+            _NOVELTY_SYS, _build_novelty_user(cand_texts, existing, taste, rejected),
             _NOVELTY_SCHEMA, 900)
         by_n = {int(r["n"]): r for r in (nv.get("results") or [])
                 if isinstance(r, dict) and r.get("n") is not None}
