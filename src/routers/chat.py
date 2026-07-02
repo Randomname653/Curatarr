@@ -2334,8 +2334,14 @@ FORMATTING RULES:
 
         await curator_start("chat")
 
-        # Slot acquired — Curator is now actually working.
-        yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"
+        # Slot acquired — Curator is now actually working. From here on EVERY
+        # yield/await must live inside the try below: a client disconnect
+        # cancels this generator at the next yield, and a cancel landing in
+        # the gap between the acquire and the try (exactly the "💭 thinking"
+        # yield) skipped the finally — curator_done() never ran, the gate
+        # stayed held forever by a dead "chat" stream, and every later request
+        # queued behind it with an idle GPU (the Little Singles hang: the user
+        # aborted while queued, the retry then waited on the leaked slot).
         full_response = ""
         think_filter = ThinkTagStreamFilter(enabled=_cfg.LLM_THINK_TAGS)
 
@@ -2350,7 +2356,7 @@ FORMATTING RULES:
             await asyncio.sleep(2.0)
             return await check_curator_vram_health(curator_model)
 
-        health_task = asyncio.create_task(_delayed_vram_probe())
+        health_task = None
         health_warned = False
 
         # Pass 46 (Bug 2): track whether the client cut us off mid-stream.
@@ -2363,6 +2369,8 @@ FORMATTING RULES:
         client_disconnected = False
 
         try:
+            yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"
+            health_task = asyncio.create_task(_delayed_vram_probe())
             # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
             # the response can take 5-10 minutes. We'd rather wait it out
             # than 504 the user mid-stream when their model has spilled.
@@ -2442,8 +2450,9 @@ FORMATTING RULES:
         finally:
             curator_done()
             # Cancel the VRAM probe if it's still pending (e.g. very fast
-            # response that finished before the 2 s probe even fired).
-            if not health_task.done():
+            # response that finished before the 2 s probe even fired, or a
+            # cancel before the probe task was even created).
+            if health_task and not health_task.done():
                 health_task.cancel()
             # Strip think blocks from the full collected response before persisting
             full_response = strip_think_tags(full_response).strip()
