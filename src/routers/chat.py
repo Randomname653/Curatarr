@@ -1464,6 +1464,17 @@ async def _build_discuss_context_block(
             f"  Status: {proposal.status}\n"
             "The user is now responding to that suggestion.\n"
         )
+        # STAGNANT proposals carry a visible ⚖ badge and mean "gray zone — the
+        # owner decides", NOT a hard cut. Without this line the discussion
+        # doesn't know the verdict class exists (it improvised when the user
+        # asked about "the stagnant flag") and defaults to pushing deletion.
+        if getattr(proposal, "stagnant", False):
+            block += (
+                "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
+                "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
+                "⚖ Stagnant badge for the OWNER to decide. Weigh keep vs delete "
+                "honestly on their terms instead of pushing for deletion.\n"
+            )
 
         # Size-outlier context: is this item's GB normal for its resolution/codec
         # class (don't treat as a flaw) or genuine bitrate bloat? Lets the curator
