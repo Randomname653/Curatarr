@@ -1127,25 +1127,57 @@ async def handle_protection_intent(
                 # detector actually classified the keep — synthetic callers
                 # (analyze_deletion_comment) omit RESOLUTION and get no row.
                 if resolution_type:
-                    db.add(CuratorResolutionLog(
-                        user_id=user_id,
-                        title=title,
-                        category=category,
-                        outcome="kept",
-                        resolution_type=resolution_type,
-                        curator_stance=curator_stance or None,
-                        override_reason=(
-                            (override_reason or None)
-                            if resolution_type == "override" else None
-                        ),
-                    ))
-                    logger.info(
-                        "📒 [RESOLUTION LOG] user=%d '%s' kept (%s)%s",
-                        user_id, title, resolution_type,
-                        f" — reason={override_reason}" if (
-                            resolution_type == "override" and override_reason
-                        ) else "",
+                    # One debate = one history row. The detector fires on EVERY
+                    # turn of a keep-discussion, so a two-turn debate logged the
+                    # same keep twice (Agatha All Along: turn 1 "Sentimental/
+                    # Partner", turn 2 "Comfort"). A re-affirmation within 24h
+                    # UPDATES the existing row instead — the later turn's
+                    # classification is the settled one and should win.
+                    recent = (
+                        db.query(CuratorResolutionLog)
+                        .filter(
+                            CuratorResolutionLog.user_id == user_id,
+                            CuratorResolutionLog.title == title,
+                            CuratorResolutionLog.outcome == "kept",
+                            CuratorResolutionLog.created_at
+                            >= datetime.utcnow() - timedelta(hours=24),
+                        )
+                        .order_by(CuratorResolutionLog.created_at.desc())
+                        .first()
                     )
+                    if recent:
+                        recent.resolution_type = resolution_type
+                        if curator_stance:
+                            recent.curator_stance = curator_stance
+                        recent.override_reason = (
+                            (override_reason or recent.override_reason)
+                            if resolution_type == "override" else None
+                        )
+                        logger.info(
+                            "📒 [RESOLUTION LOG] user=%d '%s' kept (%s) — refreshed "
+                            "same-debate row instead of double-counting",
+                            user_id, title, resolution_type,
+                        )
+                    else:
+                        db.add(CuratorResolutionLog(
+                            user_id=user_id,
+                            title=title,
+                            category=category,
+                            outcome="kept",
+                            resolution_type=resolution_type,
+                            curator_stance=curator_stance or None,
+                            override_reason=(
+                                (override_reason or None)
+                                if resolution_type == "override" else None
+                            ),
+                        ))
+                        logger.info(
+                            "📒 [RESOLUTION LOG] user=%d '%s' kept (%s)%s",
+                            user_id, title, resolution_type,
+                            f" — reason={override_reason}" if (
+                                resolution_type == "override" and override_reason
+                            ) else "",
+                        )
                 
                 protected_titles.append(title)
             
