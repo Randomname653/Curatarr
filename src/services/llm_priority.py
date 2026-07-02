@@ -112,6 +112,25 @@ def curator_busy() -> bool:
     return _get_gate().locked()
 
 
+# Who currently holds the gate (debug label, e.g. "deletion scan: anime") and
+# how many callers are queued behind it. The waiter count lets a long-running
+# batch (the judge funnel) YIELD between items when someone is waiting — an
+# interactive chat gets the GPU within one verdict instead of after the whole
+# category.
+_gate_owner: str = ""
+_gate_waiters: int = 0
+
+
+def gate_owner() -> str:
+    """Label of the current gate holder ('' when free) — for busy messages."""
+    return _gate_owner if curator_busy() else ""
+
+
+def gate_contested() -> bool:
+    """True when at least one caller is queued on the curator gate."""
+    return _gate_waiters > 0
+
+
 # ── MODEL INTROSPECTION ───────────────────────────────────────────────────────
 
 async def loaded_models() -> list[dict]:
@@ -240,9 +259,10 @@ async def check_curator_vram_health(curator_model: str) -> dict:
 
 # ── CURATOR LIFECYCLE ─────────────────────────────────────────────────────────
 
-async def curator_start() -> None:
+async def curator_start(owner: str = "curator request") -> None:
     """
     Signal that a curator (chat / recommendations) call is starting.
+    ``owner`` is a debug label shown to queued callers ("deletion scan: anime").
 
     On the *first* active call:
       - Clears the priority event → enrichment workers pause after their
@@ -263,14 +283,19 @@ async def curator_start() -> None:
     enrichment worker could fire an LLM call against the model that's
     about to be evicted out from under it.
     """
-    global _active, _curator_evict_task
+    global _active, _curator_evict_task, _gate_owner, _gate_waiters
     # Serialize big-model generations across the whole server: block here
     # until a curator slot is free (MAX_CONCURRENT_CURATOR, default 1). A
     # second chatter / recs / proactive call waits instead of fighting for
     # the GPU. Acquired BEFORE touching _active so a cancelled acquire (user
     # disconnects while queued) leaves no state to unwind, and so the gate is
     # released exactly once per successful acquire in curator_done().
-    await _get_gate().acquire()
+    _gate_waiters += 1
+    try:
+        await _get_gate().acquire()
+    finally:
+        _gate_waiters -= 1
+    _gate_owner = owner
     _active += 1
     is_first = (_active == 1)
 
@@ -357,13 +382,14 @@ def curator_done() -> None:
     at zero) — defensive in case future call sites end up with a mismatched
     pair under exception handling.
     """
-    global _active, _curator_evict_task
+    global _active, _curator_evict_task, _gate_owner
     if _active <= 0:
         # More done() than start() (defensive, e.g. mismatched exception
         # handling). Nothing was acquired → don't over-release the gate.
         logger.debug("curator_done called with no active curator — ignoring")
         return
     _active -= 1
+    _gate_owner = ""
     _get_gate().release()   # free the slot for the next queued curator call
     if _active == 0:
         _get_event().set()
@@ -383,7 +409,7 @@ def curator_done() -> None:
 
 
 @asynccontextmanager
-async def curator_priority():
+async def curator_priority(owner: str = "curator request"):
     """Async context manager — guarantees ``curator_done`` even on exceptions.
 
     Preferred over manually pairing ``curator_start`` / ``curator_done``::
@@ -392,7 +418,7 @@ async def curator_priority():
             await ollama_call(...)
             ...
     """
-    await curator_start()
+    await curator_start(owner)
     try:
         yield
     finally:

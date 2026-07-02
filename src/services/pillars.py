@@ -266,11 +266,18 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     verified_text = ""
     try:
         from src.services.media_enricher import ensure_verified_data, format_verified_block
+        # allow_summarizer=False: build_evidence runs inside the judge funnel,
+        # which HOLDS the curator GPU gate — a summarizer distillation here
+        # evicts the resident curator and every next verdict pays a 60-120s
+        # reload (GPU-idle churn that also stalls chats queued on the gate).
+        # Cached significance still flows in; a data-starved candidate gets the
+        # raw Wikipedia-article fallback below (no LLM) instead.
         vd = await ensure_verified_data(
             title, category,
             tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
             anilist_id=item.get("anilist_id"), anidb_id=item.get("anidb_id"),
             plex_rating_key=item.get("plex_rating_key"),
+            allow_summarizer=False,
         )
         verified_text = format_verified_block(vd) or ""
     except Exception as e:
@@ -428,7 +435,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         if skip_priority:
             r = await _post()
         else:
-            async with curator_priority():
+            async with curator_priority("pillar verdict"):
                 r = await _post()
         content = (r.json().get("message") or {}).get("content", "") or ""
         data = parse_llm_json(content)
@@ -547,7 +554,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         if skip_priority:
             r = await _post()
         else:
-            async with curator_priority():
+            async with curator_priority("pillar monologue"):
                 r = await _post()
         return clean_llm_text((r.json().get("message") or {}).get("content", "") or "")
     except Exception as e:

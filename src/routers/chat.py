@@ -2248,6 +2248,7 @@ FORMATTING RULES:
     async def generate() -> AsyncGenerator[str, None]:
         from src.services.llm_priority import (
             curator_start, curator_done, check_curator_vram_health, curator_busy,
+            gate_owner,
         )
 
         # Pass 14.9: emit collected pre-stream status events so the frontend
@@ -2264,9 +2265,13 @@ FORMATTING RULES:
         # time, so we wait for the slot instead of thrashing it. The
         # curator_start() call below blocks until the slot frees.
         if curator_busy():
-            yield f"data: {json.dumps({'status': '⏳ Curatarr is busy with another request — you are next in line…'})}\n\n"
+            _holder = gate_owner()
+            _busy = (f"⏳ Curatarr is busy ({_holder}) — you are next in line…"
+                     if _holder else
+                     "⏳ Curatarr is busy with another request — you are next in line…")
+            yield f"data: {json.dumps({'status': _busy})}\n\n"
 
-        await curator_start()
+        await curator_start("chat")
 
         # Slot acquired — Curator is now actually working.
         yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"

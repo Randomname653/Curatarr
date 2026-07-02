@@ -1176,7 +1176,7 @@ async def generate_proactive_message(
     # through the curator gate so a scheduled message can't collide with a
     # user's chat on the single GPU (it queues for the slot like the rest).
     from src.services.llm_priority import curator_priority
-    async with curator_priority():
+    async with curator_priority("proactive message"):
         for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
             if not model:
                 continue

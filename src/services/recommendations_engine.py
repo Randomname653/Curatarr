@@ -329,7 +329,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
     """
     from src.services.llm_priority import curator_start, curator_done
     if not skip_priority:
-        await curator_start()
+        await curator_start("recommendations")
     try:
         for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
             if not model:
@@ -463,11 +463,14 @@ async def generate_recommendations(
             async def _cand_line(i):
                 line = f"- {i['title']} ({i.get('year', '?')}) — {i.get('genres', '')}"
                 try:
+                    # Batch path — never distill via the summarizer here (VRAM
+                    # churn against the curator; see ensure_verified_data).
                     vd = await ensure_verified_data(
                         i["title"], cat,
                         tmdb_id=i.get("tmdb_id"), tvdb_id=i.get("tvdb_id"),
                         anilist_id=i.get("anilist_id"),
                         plex_rating_key=i.get("plex_rating_key"),
+                        allow_summarizer=False,
                     )
                 except Exception:
                     vd = None
@@ -1205,16 +1208,26 @@ async def generate_deletion_proposals(
     # JUDGE_CAP candidates are judged (a latency bound for a clean library).
     if getattr(settings, "PILLARS_ENABLED", False):
         from src.services.pillars import build_evidence, adjudicate, write_monologue
-        from src.services.llm_priority import curator_start, curator_done
+        from src.services.llm_priority import curator_start, curator_done, gate_contested
         TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
-        await curator_start()
+        _gate_label = f"deletion scan: {category}"
+        await curator_start(_gate_label)
         try:
             for cand in scored_candidates:
                 if len(final_proposals) >= TARGET_CUTS or judged >= JUDGE_CAP:
                     break
+                # YIELD between verdicts: a funnel run holds the gate for many
+                # minutes; an interactive chat queued behind it should get the
+                # GPU within ONE verdict, not after the whole category. The
+                # semaphore wakes waiters FIFO, so release→re-acquire puts us
+                # behind the waiting chat and we resume when it finishes.
+                if gate_contested():
+                    _msg(f"{category}: yielding GPU to a waiting request…")
+                    curator_done()
+                    await curator_start(_gate_label)
                 item = cand["item"]
                 judged += 1
                 _msg(f"{category}: pillar-judging {judged} "
@@ -1329,7 +1342,7 @@ async def generate_deletion_proposals(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
         f"generating LLM pitches for top {len(top_pitch_set)}…"
     )
-    await curator_start()
+    await curator_start(f"deletion pitches: {category}")
     try:
         for _pidx, cand in enumerate(top_pitch_set, start=1):
             item = cand["item"]
@@ -1436,6 +1449,8 @@ async def generate_deletion_proposals(
             # reaches the cached anime/show data; plex_rating_key adds the
             # prefetch overview.
             verified_block = format_verified_block(
+                # Legacy pitch loop holds the curator gate — no summarizer here
+                # (VRAM churn; see ensure_verified_data docstring).
                 await ensure_verified_data(
                     item.get("title") or "", category,
                     tmdb_id=item.get("tmdb_id"),
@@ -1443,6 +1458,7 @@ async def generate_deletion_proposals(
                     anilist_id=item.get("anilist_id"),
                     anidb_id=item.get("anidb_id"),
                     plex_rating_key=item.get("plex_rating_key"),
+                    allow_summarizer=False,
                 )
             )
             if verified_block:
