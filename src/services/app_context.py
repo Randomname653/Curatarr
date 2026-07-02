@@ -38,6 +38,20 @@ STAGNANT_VERDICT_BLOCK = (
     "honestly on their terms instead of pushing for deletion.\n"
 )
 
+# ── Learned-principle review (chat anchored on a shadow principle) ───────────
+
+PRINCIPLE_REVIEW_BLOCK = (
+    "This is a PRINCIPLE REVIEW: you and the owner are deciding whether a rule "
+    "you extracted from a past debate should govern future curation. Moderate "
+    "honestly — lay out what adopting it changes, where it collides with the "
+    "existing rules or taste profile shown above, and take a clear position, "
+    "but the OWNER decides. When they settle it, confirm the outcome in plain "
+    "words (adopt / reject / adopt with their refined wording); the decision "
+    "is applied automatically after the conversation, and the "
+    "'🧠 Learned principles' panel in the Deletions view remains the manual "
+    "fallback.\n"
+)
+
 # ── General chat: the compact app map ("where do I find …?") ─────────────────
 
 APP_MAP_BLOCK = (

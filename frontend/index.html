@@ -312,6 +312,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 #msg-panel { position: fixed; right: 16px; top: 60px; width: 360px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 50; display: none; }
 #msg-panel.open { display: block; }
 #msg-panel .mp-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+#msg-panel .mp-section { padding: 10px 16px 2px; font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; }
+#msg-panel .mp-more { font-size: 11px; color: var(--text3); padding: 8px 16px; text-align: center; border-top: 1px solid var(--border); }
 .msg-item { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .12s; }
 .msg-item:hover { background: var(--bg3); }
 .msg-item:last-child { border-bottom: none; }
@@ -402,10 +404,10 @@ select option { background: var(--bg2); }
 <!-- PROACTIVE MESSAGES PANEL -->
 <div id="msg-panel">
   <div class="mp-header">
-    <span>🤖 Curator Messages</span>
+    <span>🔔 Notifications</span>
     <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px" onclick="toggleMsgPanel()">×</button>
   </div>
-  <div id="msg-list"><div id="msg-empty">No new messages</div></div>
+  <div id="msg-list"><div id="msg-empty">No new notifications</div></div>
 </div>
 
 <!-- ONBOARDING OVERLAY -->
@@ -2388,18 +2390,42 @@ async function addBacklogArtist(svc, idx, btn) {
   }
 }
 
-// ── PROACTIVE MESSAGES ────────────────────────────────────────────────────────
+// ── NOTIFICATION CENTER (bell: proactive messages + system notifications) ────
 async function loadUnreadMessages() {
   try {
     const r = await api('/api/messages/unread');
+    // System notifications: learned principles awaiting review (admin only —
+    // the endpoint is admin-gated anyway, this just avoids a guaranteed 403).
+    let principles = [];
+    if (currentUser?.is_admin) {
+      try {
+        const pr = await api('/api/recommendations/principles');
+        principles = (pr.principles || []).filter(p => p.status === 'shadow');
+      } catch {}
+    }
     const badge = document.getElementById('msg-badge');
-    badge.textContent = r.total;
-    badge.classList.toggle('show', r.total > 0);
+    const total = (r.total || 0) + principles.length;
+    badge.textContent = total;
+    badge.classList.toggle('show', total > 0);
     const list = document.getElementById('msg-list');
-    if (!r.message) { list.innerHTML='<div id="msg-empty">No new messages</div>'; return; }
-    const m = r.message;
-    const more = r.total > 1 ? `<div style="font-size:11px;color:var(--text3);padding:8px 16px;text-align:center;border-top:1px solid var(--border)">${r.total - 1} more waiting</div>` : '';
-    list.innerHTML = `
+
+    let html = '';
+    if (principles.length) {
+      html += `<div class="mp-section">🧭 Learned principles awaiting review</div>`;
+      html += principles.slice(0, 3).map(p => `
+        <div class="msg-item" style="cursor:default">
+          <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="badge danger" style="font-size:10px;margin-right:4px">⚠ contradiction</span>' : ''}${esc(p.text)}</div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn btn-primary btn-sm" style="flex:1" data-pid="${p.id}" data-ptext="${escAttr(p.text)}" onclick="discussPrinciple(+this.dataset.pid, this.dataset.ptext)">💬 Review together</button>
+          </div>
+        </div>`).join('');
+      if (principles.length > 3) {
+        html += `<div class="mp-more">${principles.length - 3} more in the 🧠 Learned principles panel</div>`;
+      }
+    }
+    if (r.message) {
+      const m = r.message;
+      html += `<div class="mp-section">🤖 Curator messages</div>
       <div class="msg-item" style="cursor:default">
         <div class="mi-text">${esc(m.message)}</div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
@@ -2410,9 +2436,25 @@ async function loadUnreadMessages() {
           <button class="btn btn-primary btn-sm" style="flex:1" data-mid="${m.id}" data-msg="${esc(m.message).replace(/"/g,'&quot;')}" data-ttype="${esc(m.trigger_type)}" onclick="respondToMessage(+this.dataset.mid, this.dataset.msg, this.dataset.ttype)">↵ Respond</button>
           <button class="btn btn-secondary btn-sm" onclick="skipMessage(${m.id},this)" title="Skip — may come back later">↷ Skip</button>
         </div>
-      </div>
-      ${more}`;
+      </div>`;
+      if (r.total > 1) html += `<div class="mp-more">${r.total - 1} more waiting</div>`;
+    }
+    list.innerHTML = html || '<div id="msg-empty">No new notifications</div>';
   } catch {}
+}
+
+// Bell → chat: review a learned principle WITH the curator. The backend gets
+// both sides (the new rule + the active rule-set) via discuss_context; the
+// settled decision is applied automatically post-turn.
+async function discussPrinciple(id, text) {
+  toggleMsgPanel();
+  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+  addMsg(`I've learned a new rule from our debates and want to settle it with you: "${text}"`, 'assistant');
+  pendingDiscussContext = { kind: 'principle', principle_id: id };
+  _setDiscussBanner('Reviewing a learned principle');
+  const input = document.getElementById('chat-input');
+  if (input) { input.value = "Let's review this learned principle together."; }
+  sendMessage();
 }
 
 async function respondToMessage(id, msgText, triggerType) {

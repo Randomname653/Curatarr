@@ -307,6 +307,87 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     return stored
 
 
+# ── PRINCIPLE REVIEW (bell → chat → settled decision applied) ────────────────
+
+_REVIEW_SYS = """You read ONE exchange from a review conversation in which the OWNER of a media library and their curator debate whether a LEARNED RULE should be adopted into the curation rule-set. Decide what the OWNER settled in THIS exchange.
+
+decision:
+- adopt         — the owner clearly accepts the rule with its current wording.
+- adopt_revised — the owner accepts the rule but the exchange settled on DIFFERENT wording (their own, or the curator's refinement they explicitly endorsed). Put that final wording in revised_text: ONE sentence, faithful to what was actually agreed — never invent.
+- reject        — the owner clearly dismisses the rule.
+- none          — still discussing, undecided, or off-topic.
+
+Be conservative: questions, musings and partial agreement are none. revised_text stays "" unless decision is adopt_revised."""
+
+_REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string",
+                     "enum": ["adopt", "adopt_revised", "reject", "none"]},
+        "revised_text": {"type": "string"},
+    },
+    "required": ["decision", "revised_text"],
+}
+
+
+async def detect_and_apply_principle_verdict(user_id: int, principle_id: int,
+                                             user_message: str,
+                                             assistant_response: str) -> None:
+    """Post-turn hook for principle-review threads: classify whether the OWNER
+    settled the principle's fate this exchange and apply it — adopt → active,
+    reject → rejected, adopt_revised → the user-sanctioned wording replaces the
+    text (this is the ONE place a rewrite is allowed: the owner endorsed it
+    explicitly, which is the opposite of autonomous drift) and it activates.
+    Best-effort: any failure leaves the principle in shadow for the panel."""
+    try:
+        with get_db_session() as db:
+            row = (db.query(CuratorPrinciple)
+                   .filter(CuratorPrinciple.id == principle_id,
+                           CuratorPrinciple.user_id == user_id).first())
+            if not row:
+                return
+            rule_text = row.text
+        convo = (f"RULE UNDER REVIEW:\n\"{rule_text}\"\n\n"
+                 f"OWNER: {(user_message or '').strip()[:1200]}\n\n"
+                 f"CURATOR: {(assistant_response or '').strip()[:1500]}")
+        v = await _curator_json(_REVIEW_SYS, convo, _REVIEW_SCHEMA, 300)
+        decision = (v.get("decision") or "none").lower()
+        revised = (v.get("revised_text") or "").strip()
+        if decision == "none":
+            return
+        with get_db_session() as db:
+            row = (db.query(CuratorPrinciple)
+                   .filter(CuratorPrinciple.id == principle_id,
+                           CuratorPrinciple.user_id == user_id).first())
+            if not row:
+                return
+            if decision == "reject":
+                row.status = "rejected"
+                logger.info("🧭 [PRINCIPLE REVIEW] #%d rejected by the owner in chat",
+                            row.id)
+            elif decision in ("adopt", "adopt_revised"):
+                if decision == "adopt_revised" and len(revised) >= 15:
+                    logger.info("🧭 [PRINCIPLE REVIEW] #%d wording refined in review: %s",
+                                row.id, revised[:90])
+                    row.text = revised
+                    row.origin_summary = ((row.origin_summary or "")
+                                          + " | wording refined in owner review").strip(" |")
+                    try:
+                        emb = await _embed(revised)
+                        if emb:
+                            row.embedding_json = json.dumps(emb)
+                    except Exception:
+                        pass
+                row.status = "active"
+                row.activated_at = datetime.utcnow()
+                logger.info("🧭 [PRINCIPLE REVIEW] #%d ADOPTED (%s) — now active",
+                            row.id, decision)
+            db.commit()
+    except Exception as e:
+        logger.warning("[principles] review verdict failed for #%s: %s",
+                       principle_id, e)
+
+
 # ── RETRIEVE (for P4 injection) ──────────────────────────────────────────────
 
 async def retrieve_principles(user_id: int, category: str | None = None,
