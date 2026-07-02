@@ -1205,6 +1205,12 @@ async def generate_deletion_proposals(
                         "tmdb_id": item.get("tmdb_id"),
                         "latest_activity_at": item.get("latest_activity_at"),
                         "stagnant": (v == "STAGNANT"),
+                        # The scheduler groups proposals by this key before
+                        # writing rows; without it every nightly-scan proposal
+                        # fell into the "movie" bucket (wrong tab + wrong
+                        # supersede scope). The router path re-derives it from
+                        # item_map, so only the scheduler ever noticed.
+                        "category": category,
                     })
                 elif v in ("HARD_KEEP", "KEEP_WITH_FLAG"):
                     # Over-protection fix: persist ONLY when a higher pillar
@@ -1543,6 +1549,8 @@ CRITICAL RULES AND GUARDRAILS:
                 # when /history fetch failed or the item has no recent
                 # imports — filter falls through cleanly in either case.
                 "latest_activity_at": item.get("latest_activity_at"),
+                # See the pillar-path note: the scheduler groups by this key.
+                "category": category,
             })
     finally:
         curator_done()

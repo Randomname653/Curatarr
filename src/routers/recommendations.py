@@ -373,7 +373,7 @@ async def list_judge_protections(
     user: User = Depends(require_admin),   # curation = admin only
     db: Session = Depends(get_db),
 ):
-    """Admin debug view: every title the 3-pillar judge auto-protected, with the
+    """Admin debug view: every title the 4-pillar judge auto-protected, with the
     pillar Begründung — so the admin can see WHY a title was saved and lift it."""
     from src.database.models import ProtectedMedia
     rows = (

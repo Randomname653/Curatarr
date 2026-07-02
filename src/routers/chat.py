@@ -2181,11 +2181,27 @@ async def send_message(
     user_lang  = detect_user_language(user.id, db)
     lang_rule  = f"1. {language_directive(user_lang)}"
 
-    # When discussing a specific title's fate, give the chat the SAME three-pillar
+    # When discussing a specific title's fate, give the chat the SAME four-pillar
     # law the deletion judge uses — so the Level-2 talk reasons from pillars
     # (bitrate = downscale-only) instead of raw taste-mismatch + "bloated bitrate".
     from src.services.pillars import PILLAR_FRAMEWORK
     pillar_framework = PILLAR_FRAMEWORK if active_title else ""
+    # The ACTIVE learned principles join the framework here too — the judge
+    # already applies them (pillars.build_evidence), and a discussion that has
+    # never heard of the rule the verdict rests on can't defend or debate it.
+    if pillar_framework:
+        try:
+            from src.config import settings as _settings
+            if getattr(_settings, "PRINCIPLES_ENABLED", False):
+                from src.services.curator_principles import (
+                    retrieve_principles, format_principles_block)
+                _prins = await retrieve_principles(
+                    user.id, category=discuss_domain,
+                    item_profile=active_title, top_k=6)
+                if _prins:
+                    pillar_framework += "\n\n" + format_principles_block(_prins)
+        except Exception as _pe:
+            logger.debug("[chat] learned-principles injection failed: %s", _pe)
 
     system_prompt = f"""You are Curatarr, an uncompromising, elite personal media curator.
 

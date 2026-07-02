@@ -218,7 +218,7 @@ class ProtectedMedia(Base):
     identifier = Column(String(255), nullable=False, index=True)
     category = Column(String(32), nullable=True)  # movie, show, anime
     reason = Column(Text, nullable=True)          # manual: short note; judge: pillar reasoning (Begründung)
-    # Pillar judge: this table now also holds AUTOMATIC protections the 3-pillar
+    # Pillar judge: this table now also holds AUTOMATIC protections the 4-pillar
     # curation judge grants, not just the manual whitelist. ``source`` tells them
     # apart; ``verdict`` records which call protected it (KEEP_WITH_FLAG items also
     # feed the separate "downscale to reclaim space" list).
