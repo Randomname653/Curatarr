@@ -3504,7 +3504,10 @@ async function loadJudgeProtections() {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
           <div><strong>${esc(p.title || '—')}</strong> ${badge}
             <span style="color:var(--text3);font-size:12px">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
-          <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Schutz aufheben</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
+            <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Schutz aufheben</button>
+          </div>
         </div>
         <div style="color:var(--text2);font-size:12px;white-space:pre-line;margin-top:8px">${esc(p.reason || '')}</div>
       </div>`;
@@ -3578,6 +3581,10 @@ async function setPrinciple(id, action) {
   }
 }
 
+function _arrLabel(category) {
+  return category === 'movie' ? 'radarr' : category === 'music' ? 'lidarr' : 'sonarr';
+}
+
 async function loadDownscale() {
   const el = document.getElementById('downscale-content');
   if (!el) return;
@@ -3599,7 +3606,10 @@ async function loadDownscale() {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
           <div><strong>${esc(p.title || '—')}</strong> ${tech}
             <span style="color:var(--text3);font-size:12px">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
-          <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">✓ Erledigt</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
+            <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">✓ Erledigt</button>
+          </div>
         </div>
         ${p.bitrate_note ? `<div style="color:var(--text2);font-size:12px;margin-top:8px">${esc(p.bitrate_note)}</div>` : ''}
       </div>`;

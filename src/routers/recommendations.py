@@ -390,6 +390,7 @@ async def list_judge_protections(
                 "category": p.category,
                 "verdict": p.verdict,
                 "reason": p.reason,
+                "arr_url": p.arr_url,
                 "created_at": p.created_at.isoformat() if p.created_at else None,
             }
             for p in rows
@@ -552,7 +553,7 @@ async def list_downscale_candidates(
         out.append({
             "id": p.id, "title": p.title or p.identifier, "category": p.category,
             "bitrate_note": bitrate_note, "reason": p.reason,
-            "tech": tech,
+            "tech": tech, "arr_url": p.arr_url,
             "created_at": p.created_at.isoformat() if p.created_at else None,
         })
     return {"candidates": out, "total_gb": round(total_gb, 1)}

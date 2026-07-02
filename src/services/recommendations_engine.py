@@ -722,11 +722,12 @@ def _persist_judge_protection(user_id: int, item: dict, category: str,
                     row.source, row.verdict = "judge", verdict_str
                     row.reason, row.category = reason, category
                     row.title = item.get("title")
+                    row.arr_url = item.get("arr_url") or row.arr_url
             else:
                 db.add(ProtectedMedia(
                     user_id=user_id, identifier=identifier, category=category,
                     source="judge", verdict=verdict_str, reason=reason,
-                    title=item.get("title")))
+                    title=item.get("title"), arr_url=item.get("arr_url")))
             db.commit()
     except Exception as e:
         logger.warning("[deletions] persist judge protection failed for %r: %s",
