@@ -1221,6 +1221,9 @@ async def spotify_backlog(
                     WatchHistoryEntry.user_id      == user.id,
                     WatchHistoryEntry.series_title == r.series_title,
                     WatchHistoryEntry.title.isnot(None),
+                    # An artist sharing a name with a TV series would otherwise
+                    # count that series' episodes as "top tracks".
+                    WatchHistoryEntry.media_type == "music",
                 )
                 .group_by(WatchHistoryEntry.title)
                 .order_by(func.count(WatchHistoryEntry.id).desc())

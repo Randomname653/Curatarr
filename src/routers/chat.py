@@ -816,7 +816,8 @@ async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
         await gen.close()
-        watched = _watched_lookup(user_id, [m.get("title", "") for m in metas])
+        watched = _watched_lookup(user_id, [m.get("title", "") for m in metas],
+                                  category=domain)
         from src.services.size_norms import short_size_tag
         lines = []
         for doc, meta in zip(docs, metas):
@@ -1496,7 +1497,8 @@ async def _build_discuss_context_block(
         # has actually SEEN it — the signal that separates "delete unwatched
         # clutter" from "they watched this, it earned its place". Surface it.
         _ws = _watch_tag(
-            _watched_lookup(proposal.user_id, [proposal.title]).get(proposal.title))
+            _watched_lookup(proposal.user_id, [proposal.title],
+                            category=proposal.category).get(proposal.title))
         block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
         # Richer grounding for the discussion: the actual Wikipedia LEAD (entity-
         # matched, collision-guarded). The curator reasons far more precisely from

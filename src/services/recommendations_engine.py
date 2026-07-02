@@ -846,6 +846,14 @@ async def generate_deletion_proposals(
                 .filter(
                     WatchHistoryEntry.user_id == user_id,
                     WatchHistoryEntry.viewed_at >= watched_cutoff,
+                    # Media-family guard: without it the owner's ≈350k music
+                    # rows flooded this veto set with song/artist names, and any
+                    # VIDEO candidate sharing a name with a recently played
+                    # track ("American Pie", "Gold", …) was silently vetoed as
+                    # "recently watched" — an invisible false protection.
+                    (WatchHistoryEntry.media_type == "music"
+                     if category == "music"
+                     else WatchHistoryEntry.media_type != "music"),
                 )
                 .all()
             )
@@ -1277,7 +1285,8 @@ async def generate_deletion_proposals(
     # nudge — see _watch_pitch_line), so the curator weighs it like a memory.
     from src.services.watch_status import watched_lookup as _watched_lookup
     watch_status_map = _watched_lookup(
-        user_id, [c["item"].get("title") for c in top_pitch_set])
+        user_id, [c["item"].get("title") for c in top_pitch_set],
+        category=category)
     _msg(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
         f"generating LLM pitches for top {len(top_pitch_set)}…"

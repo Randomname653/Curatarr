@@ -12,9 +12,16 @@ import logging
 logger = logging.getLogger("curatarr")
 
 
-def watched_lookup(user_id: int, titles: list) -> dict:
+def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
     """Map each title → {count, completed, last} from watch_history, in ONE query.
-    Absent from the result = the user never played it."""
+    Absent from the result = the user never played it.
+
+    ``category`` adds the MEDIA-FAMILY guard (same rule as pillars._watch_filters):
+    a video title must match a non-music row, a music title a music row. Without
+    it, a title-only match against the owner's ≈350k Spotify rows turned Don
+    McLean's song into "you watched American Pie 17×" and a STRLGHT track into
+    "you sampled Blindspot" — poisoning the discussion watch-status, the RAG
+    watch-tags and the legacy pitch. ``None`` skips the guard (unknown context)."""
     titles = [t for t in titles if t]
     if not user_id or not titles:
         return {}
@@ -25,14 +32,19 @@ def watched_lookup(user_id: int, titles: list) -> dict:
     agg: dict = {}
     try:
         with get_db_session() as db:
-            rows = db.query(
+            q = db.query(
                 WatchHistoryEntry.title, WatchHistoryEntry.series_title,
                 WatchHistoryEntry.completed, WatchHistoryEntry.viewed_at,
             ).filter(
                 WatchHistoryEntry.user_id == user_id,
                 or_(WatchHistoryEntry.title.in_(titles),
                     WatchHistoryEntry.series_title.in_(titles)),
-            ).all()
+            )
+            if category:
+                q = q.filter(WatchHistoryEntry.media_type == "music"
+                             if category == "music"
+                             else WatchHistoryEntry.media_type != "music")
+            rows = q.all()
     except Exception as e:
         logger.debug("[watch] lookup failed: %s", e)
         return {}
