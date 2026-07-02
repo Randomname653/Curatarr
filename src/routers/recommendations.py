@@ -505,6 +505,82 @@ async def delete_principle(
     return {"status": "deleted", "id": principle_id}
 
 
+# ── Downscale candidates (KEEP_WITH_FLAG — kept, but bloated) ────────────────
+
+@router.get("/downscale")
+async def list_downscale_candidates(
+    user: User = Depends(require_admin),   # curation = admin only
+    db: Session = Depends(get_db),
+):
+    """The 'reclaim space' work list: every judge-kept title flagged as a bitrate
+    outlier (KEEP_WITH_FLAG — incl. the Household Quality-Floor). Enriched
+    best-effort with the tech profile so the admin sees what a transcode would
+    touch. The actual downscaling happens outside Curatarr; 'done' moves the
+    protection to HARD_KEEP so the row leaves this list but keeps its shield."""
+    from src.database.models import ProtectedMedia, MediaTechProfile
+    rows = (
+        db.query(ProtectedMedia)
+        .filter(ProtectedMedia.user_id == user.id,
+                ProtectedMedia.source == "judge",
+                ProtectedMedia.verdict == "KEEP_WITH_FLAG")
+        .order_by(ProtectedMedia.created_at.desc())
+        .all()
+    )
+    out, total_gb = [], 0.0
+    for p in rows:
+        tech = None
+        try:
+            q = db.query(MediaTechProfile)
+            tmdb = int(p.identifier) if (p.identifier or "").isdigit() else None
+            prof = (q.filter(MediaTechProfile.tmdb_id == tmdb).first() if tmdb
+                    else None) or (
+                db.query(MediaTechProfile)
+                .filter(MediaTechProfile.title == (p.title or p.identifier)).first())
+            if prof and prof.size_mb:
+                total_gb += (prof.size_mb or 0) / 1024.0
+                tech = {
+                    "resolution": prof.resolution, "codec": prof.codec,
+                    "size_gb": round((prof.size_mb or 0) / 1024.0, 1),
+                    "mb_per_min": round(prof.mb_per_min, 0) if prof.mb_per_min else None,
+                }
+        except Exception:
+            tech = None
+        # the Bitrate line of the pillar reasoning is the one this list is about
+        bitrate_note = next(
+            (ln.strip() for ln in (p.reason or "").splitlines()
+             if ln.strip().lower().startswith("bitrate")), "")
+        out.append({
+            "id": p.id, "title": p.title or p.identifier, "category": p.category,
+            "bitrate_note": bitrate_note, "reason": p.reason,
+            "tech": tech,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    return {"candidates": out, "total_gb": round(total_gb, 1)}
+
+
+@router.post("/downscale/{protection_id}/done")
+async def downscale_done(
+    protection_id: int,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Mark a downscale as done: the file is no longer bloated, so the protection
+    graduates to HARD_KEEP (leaves the downscale list, keeps the shield)."""
+    from src.database.models import ProtectedMedia
+    row = (
+        db.query(ProtectedMedia)
+        .filter(ProtectedMedia.id == protection_id,
+                ProtectedMedia.user_id == user.id,
+                ProtectedMedia.verdict == "KEEP_WITH_FLAG")
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Downscale candidate not found")
+    row.verdict = "HARD_KEEP"
+    db.commit()
+    return {"status": "ok", "id": row.id, "title": row.title or row.identifier}
+
+
 @router.get("/deletions")
 async def get_deletion_proposals(
     category: Optional[str] = Query(None),

@@ -787,6 +787,39 @@ async def generate_deletion_proposals(
             p.identifier for p in db.query(ProtectedMedia).filter(ProtectedMedia.user_id == user_id).all()
         }
 
+        # 2b. KEEP-COOLDOWN: titles the user explicitly kept (clicked "Keep" →
+        # proposal status 'rejected') stay out of the pool for a while. A bare
+        # Keep previously left NO trace — the very next scan could re-pitch the
+        # same title (and a STAGNANT card the user dismissed came right back).
+        # This is deliberately a COOLDOWN, not a protection: after it lapses the
+        # judge looks again — taste and principles evolve. Category-scoped so a
+        # kept movie can't shield a same-named show/album (NULL = legacy rows).
+        _REJECT_COOLDOWN_DAYS = 90
+        rejected_recent: set[str] = set()
+        try:
+            from src.database.models import DeletionProposal as _DP
+            from datetime import datetime as _rcdt, timedelta as _rctd
+            _rc_cutoff = _rcdt.utcnow() - _rctd(days=_REJECT_COOLDOWN_DAYS)
+            _rc_rows = (
+                db.query(_DP.title, _DP.tmdb_id)
+                .filter(_DP.user_id == user_id,
+                        _DP.status == "rejected",
+                        _DP.resolved_at >= _rc_cutoff,
+                        (_DP.category == category) | (_DP.category.is_(None)))
+                .all()
+            )
+            for _r in _rc_rows:
+                if _r.title:
+                    rejected_recent.add(_r.title)
+                if _r.tmdb_id is not None:
+                    rejected_recent.add(str(_r.tmdb_id))
+            if rejected_recent:
+                logger.info("[deletions] %s: keep-cooldown active for %d recently "
+                            "rejected title(s) (%dd)", category,
+                            len(_rc_rows), _REJECT_COOLDOWN_DAYS)
+        except Exception as e:
+            logger.debug("[deletions] keep-cooldown load failed: %s", e)
+
         # 3. Pass 37: pre-compute the set of candidate titles the curator
         # has positioned on in recent chat. The cold-metadata pitch path
         # doesn't know about prior discussions, so it would happily
@@ -929,6 +962,10 @@ async def generate_deletion_proposals(
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
 
         if title in protected or tmdb_id in protected:
+            continue
+
+        # Keep-cooldown (see 2b): the user said "Keep" recently — honor it.
+        if title in rejected_recent or tmdb_id in rejected_recent:
             continue
 
         # Pass 37: skip auto-pitches for titles the curator has discussed
