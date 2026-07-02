@@ -1463,6 +1463,10 @@ async def _build_discuss_context_block(
             f"  Storage to free: {size_gb:.1f} GB\n"
             f"  Status: {proposal.status}\n"
             "The user is now responding to that suggestion.\n"
+            "UI: this discussion has a '🗑 Delete & exit' button (top right) that "
+            "executes the deletion right here in Curatarr, plus 'Exit discussion'. "
+            "When the user decides to delete, point them to that button — never "
+            "send them to Sonarr/Radarr/Lidarr to remove it manually.\n"
         )
         # STAGNANT proposals carry a visible ⚖ badge and mean "gray zone — the
         # owner decides", NOT a hard cut. Without this line the discussion
