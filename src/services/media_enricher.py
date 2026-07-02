@@ -700,12 +700,22 @@ async def ensure_verified_data(
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None,
     cache=None,
+    allow_summarizer: bool = True,
 ) -> Optional[dict]:
     """``build_verified_data`` + a dynamic, just-in-time OMDb top-up. Use this
     (async) wherever the curator is ABOUT to reason about a title — delete pitch,
     discussion, re-eval — so a cached-but-OMDb-starved item gets its writer /
     awards / extended plot filled in right before processing (then cached, so at
-    most one OMDb call per item, ever)."""
+    most one OMDb call per item, ever).
+
+    ``allow_summarizer=False`` skips the Wikipedia-significance top-up (the one
+    step that needs the SUMMARIZER model). Callers that hold the curator GPU
+    gate (the judge funnel, the legacy pitch loop) MUST pass False: on a
+     24 GB card the summarizer load evicts the resident 20 GB curator and the
+    next verdict pays a 60-120 s reload — GPU-idle churn that also stalls every
+    chat queued on the gate. The wait_for timebox does NOT prevent it (the
+    request is already queued inside Ollama when the app-side wait gives up).
+    Raw API top-ups (fast-enrich, OMDb) carry no model and always run."""
     data = build_verified_data(
         title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
         anilist_id=anilist_id, anidb_id=anidb_id,
@@ -748,7 +758,8 @@ async def ensure_verified_data(
     # title?" from REAL facts instead of dismissing landmarks it knows nothing
     # about (the Cat's Eye case). Time-boxed + best-effort + idempotent. Runs
     # regardless of OMDb state — the OMDb early-return below must not skip it.
-    if data and not data.get("significance") and not data.get("significance_checked"):
+    if (allow_summarizer and data and not data.get("significance")
+            and not data.get("significance_checked")):
         try:
             if await asyncio.wait_for(topup_significance(
                 title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
