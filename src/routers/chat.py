@@ -1463,22 +1463,14 @@ async def _build_discuss_context_block(
             f"  Storage to free: {size_gb:.1f} GB\n"
             f"  Status: {proposal.status}\n"
             "The user is now responding to that suggestion.\n"
-            "UI: this discussion has a '🗑 Delete & exit' button (top right) that "
-            "executes the deletion right here in Curatarr, plus 'Exit discussion'. "
-            "When the user decides to delete, point them to that button — never "
-            "send them to Sonarr/Radarr/Lidarr to remove it manually.\n"
         )
-        # STAGNANT proposals carry a visible ⚖ badge and mean "gray zone — the
-        # owner decides", NOT a hard cut. Without this line the discussion
-        # doesn't know the verdict class exists (it improvised when the user
-        # asked about "the stagnant flag") and defaults to pushing deletion.
+        # App knowledge (in-view buttons, verdict classes) lives in
+        # app_context.py — the single source of truth, drift-tested against
+        # frontend/index.html. Never inline UI prose here again.
+        from src.services.app_context import DISCUSSION_UI_BLOCK, STAGNANT_VERDICT_BLOCK
+        block += DISCUSSION_UI_BLOCK
         if getattr(proposal, "stagnant", False):
-            block += (
-                "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
-                "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
-                "⚖ Stagnant badge for the OWNER to decide. Weigh keep vs delete "
-                "honestly on their terms instead of pushing for deletion.\n"
-            )
+            block += STAGNANT_VERDICT_BLOCK
 
         # Size-outlier context: is this item's GB normal for its resolution/codec
         # class (don't treat as a flaw) or genuine bitrate bloat? Lets the curator
@@ -2220,8 +2212,13 @@ async def send_message(
         except Exception as _pe:
             logger.debug("[chat] learned-principles injection failed: %s", _pe)
 
+    # App map from app_context.py (SSOT, drift-tested) — lets the curator
+    # answer "where do I find …?" about its own UI instead of improvising.
+    from src.services.app_context import APP_MAP_BLOCK
+
     system_prompt = f"""You are Curatarr, an uncompromising, elite personal media curator.
 
+{APP_MAP_BLOCK}
 {taste_context if taste_context else "No taste profile yet."}
 
 {memory_context if memory_context else ""}
