@@ -225,6 +225,7 @@ class ProtectedMedia(Base):
     source = Column(String(16), default="manual")  # "manual" (user whitelist) | "judge" (auto)
     verdict = Column(String(20), nullable=True)     # judge: HARD_KEEP | KEEP_WITH_FLAG
     title = Column(String(512), nullable=True)      # human-readable name for the admin debug view
+    arr_url = Column(String(512), nullable=True)    # jump link into Radarr/Sonarr/Lidarr (downscale work list)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

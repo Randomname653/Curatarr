@@ -139,6 +139,7 @@ def _migrate_columns() -> None:
         ("protected_media",       "source",  "VARCHAR(16) DEFAULT 'manual'"),
         ("protected_media",       "verdict", "VARCHAR(20)"),
         ("protected_media",       "title",   "VARCHAR(512)"),
+        ("protected_media",       "arr_url", "VARCHAR(512)"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
