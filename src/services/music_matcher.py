@@ -78,12 +78,28 @@ async def match_spotify_to_plex(user_id: int) -> dict:
 
     Returns {"matched": N, "unmatched": M, "skipped": K}
     skipped = Spotify plays that already have a Plex ratingKey (re-run safe).
+
+    INCREMENTAL: each play gets exactly ONE match attempt. The per-user cursor
+    (app_state ``music_match_cursor:<uid>``) marks how far we got; only plays
+    NEWER than it are attempted, and with zero new plays the function returns
+    before even fetching the Plex index. Without this, every nightly pipeline
+    re-scanned the full ~200k historic Spotify plays that will never exist in
+    Plex (matched=0 forever) — ~60 s of pure event-loop starvation that froze
+    the entire app. Newly added Plex music does NOT retro-match old plays;
+    delete the cursor row to force a one-off full re-match.
     """
     plex_url   = settings.effective_plex_url
     plex_token = settings.effective_plex_token
 
     if not plex_url or not plex_token:
         return {"error": "Plex not configured"}
+
+    from src.services.app_state import get_state, set_state
+    cursor_key = f"music_match_cursor:{user_id}"
+    try:
+        since_id = int(get_state(cursor_key) or 0)
+    except (TypeError, ValueError):
+        since_id = 0
 
     # ── 1. Find configured music library sections ─────────────────────────────
     with get_db_session() as db:
@@ -93,6 +109,24 @@ async def match_spotify_to_plex(user_id: int) -> dict:
             .filter(LibraryConfig.media_category == "music")
             .all()
         ]
+
+        # Early-out BEFORE the Plex fetch: nothing new since the cursor means
+        # no work — skip the section download + index build entirely.
+        new_plays = (
+            db.query(WatchHistoryEntry.id)
+            .filter(
+                WatchHistoryEntry.user_id    == user_id,
+                WatchHistoryEntry.source     == "spotify",
+                WatchHistoryEntry.media_type == "music",
+                WatchHistoryEntry.plex_item_id.like("spotify%"),
+                WatchHistoryEntry.id > since_id,
+            )
+            .count()
+        )
+    if new_plays == 0:
+        logger.info("[music_matcher] No new Spotify plays since cursor %d — "
+                    "match phase up to date", since_id)
+        return {"matched": 0, "unmatched": 0, "skipped": 0, "up_to_date": True}
 
     if not music_sections:
         logger.warning("[music_matcher] No music library sections configured")
@@ -154,6 +188,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     skipped   = 0
     buffer    = []   # (play_id, rating_key, genres_str | None)
 
+    completed = False
     with get_db_session() as db:
         spotify_plays = (
             db.query(WatchHistoryEntry)
@@ -163,11 +198,15 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                 WatchHistoryEntry.media_type == "music",
                 # Unmatched plays still have the truncated spotify URI here
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
+                # Incremental: one match attempt per play, ever (see docstring)
+                WatchHistoryEntry.id > since_id,
             )
+            .order_by(WatchHistoryEntry.id.asc())
             .all()
         )
         total_plays = len(spotify_plays)
-        logger.info("[music_matcher] %d Spotify plays to match", total_plays)
+        logger.info("[music_matcher] %d Spotify plays to match (cursor %d)",
+                    total_plays, since_id)
 
         for i, play in enumerate(spotify_plays):
             if _stop_requested():
@@ -188,10 +227,22 @@ async def match_spotify_to_plex(user_id: int) -> dict:
             # Flush every MATCH_FLUSH items so progress is persistent
             if (i + 1) % _MATCH_FLUSH == 0:
                 db.flush()
+                # This loop has no natural await — without yielding here it
+                # starves the event loop for the whole run and the entire app
+                # (every HTTP request) freezes until it finishes.
+                await asyncio.sleep(0)
                 logger.info("[music_matcher] … %d/%d plays processed (matched=%d)",
                             i + 1, total_plays, matched)
+        else:
+            completed = True
 
         db.commit()
+
+        # Advance the cursor only after a COMPLETE, un-interrupted pass — a
+        # stop-requested break re-tries the same window next run.
+        if completed and spotify_plays:
+            set_state(cursor_key, str(spotify_plays[-1].id))
+            logger.info("[music_matcher] cursor advanced to %d", spotify_plays[-1].id)
 
     logger.info("[music_matcher] Match complete — matched=%d unmatched=%d skipped=%d",
                 matched, unmatched, skipped)
