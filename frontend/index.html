@@ -1357,6 +1357,12 @@ function setUser(u) {
   }
   document.getElementById('auth-overlay').classList.add('hidden');
   loadUnreadMessages();
+  // Notifications arrive while the app is open (principles are captured in the
+  // background AFTER a debate ends) — without a poll the bell stayed frozen at
+  // its boot-time state and new shadow principles never surfaced for review.
+  if (!window._notifPollTimer) {
+    window._notifPollTimer = setInterval(loadUnreadMessages, 60_000);
+  }
 }
 
 async function showApp() {
@@ -2491,7 +2497,12 @@ async function skipMessage(id, btn) {
 }
 
 function toggleMsgPanel() {
-  document.getElementById('msg-panel').classList.toggle('open');
+  const p = document.getElementById('msg-panel');
+  const opening = !p.classList.contains('open');
+  p.classList.toggle('open');
+  // Refresh on open so the list is never the boot-time snapshot — shadow
+  // principles land in the background long after the page loaded.
+  if (opening) loadUnreadMessages();
 }
 
 // ── CHAT ──────────────────────────────────────────────────────────────────────
