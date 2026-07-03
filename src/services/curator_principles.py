@@ -55,7 +55,7 @@ _EXTRACT_SYS = """You extract GENERALIZABLE CURATION PRINCIPLES from a DEBATE be
 RULES:
 - Extract PRINCIPLES, never title verdicts. ("The user values slow films only when they show technical mastery" = YES. "Keep America's National Parks" = NO.)
 - A principle counts ONLY if the USER established it OR endorsed / conceded to it — NEVER the curator's own un-endorsed self-justifications, and never a point the user got rhetorically cornered on but did not actually concede.
-- Generalizable, title-agnostic, ONE sentence each.
+- Generalizable, title-agnostic, ONE sentence each, ALWAYS in ENGLISH regardless of the conversation's language (the rule-set is stored in English).
 - Be CONSERVATIVE: most conversations settle NO lasting principle. If nothing was genuinely established or endorsed by the user, return an empty list. Do NOT invent principles to fill space.
 
 For each principle set basis to how it was reached: user_established, user_endorsed_curator, converged, or unresolved."""
@@ -335,7 +335,7 @@ decision:
 - reject        — the owner clearly dismisses the rule.
 - none          — still discussing, undecided, or off-topic.
 
-Be conservative: questions, musings and partial agreement are none. revised_text stays "" unless decision is adopt_revised."""
+Be conservative: questions, musings and partial agreement are none. revised_text stays "" unless decision is adopt_revised — and it is ALWAYS written in ENGLISH (translate faithfully if the conversation was held in another language; the rule-set is stored in English)."""
 
 _REVIEW_SCHEMA = {
     "type": "object",
