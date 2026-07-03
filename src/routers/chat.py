@@ -2236,7 +2236,8 @@ async def send_message(
     # frequently ignored, defaulting back to English. Use the same
     # ``detect_user_language`` heuristic as Proactive / Recs / Verification
     # so the four surfaces stay in sync.
-    user_lang  = detect_user_language(user.id, db)
+    user_lang  = detect_user_language(user.id, db, thread_id=thread_id,
+                                      current_message=message.message)
     lang_rule  = f"1. {language_directive(user_lang)}"
 
     # When discussing a specific title's fate, give the chat the SAME four-pillar

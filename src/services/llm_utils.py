@@ -268,12 +268,16 @@ _DE_TOKENS = (
 ).split()
 
 
-def detect_user_language(user_id: int, db) -> str:
+def detect_user_language(user_id: int, db, thread_id: str = None,
+                         current_message: str = None) -> str:
     """Return ISO-639-1 code based on the user's recent chat content.
 
-    Looks at the last 20 user-role messages. If none exist or content is
-    too short to judge, returns 'en'. Currently distinguishes German vs
-    English; other languages fall through to 'en'.
+    Precedence: the CURRENT message (when substantial) > this thread's own
+    user messages > the user's last 20 messages across all threads. A user
+    whose app history is German but who is holding THIS conversation in
+    English gets English — the live conversation outranks the average.
+    If nothing is classifiable, returns 'en'. Currently distinguishes German
+    vs English; other languages fall through to 'en'.
 
     Pass 99-fu6: density-based detection. The previous single-threshold
     formula ``de_chars + de_words*2 >= 5`` tripped on as little as three
@@ -292,6 +296,61 @@ def detect_user_language(user_id: int, db) -> str:
     they're nearly impossible to encounter accidentally in English.
     """
     from src.database.models import ConversationMessage
+
+    def _classify(text: str):
+        """'de' / 'en' for a text, or None when it's too thin to judge."""
+        text = (text or "").lower()
+        if len(text) < 20:
+            return None
+        # German signals: umlauts/ß characters + common whole-word tokens.
+        # Whole-word matching avoids matching "der" inside "wonder", etc.
+        padded = f" {text} "
+        de_chars = sum(text.count(c) for c in "äöüß")
+        de_words = sum(1 for w in _DE_TOKENS if f" {w} " in padded)
+        if de_chars >= 2:
+            return "de"
+        if de_chars >= 1 and de_words >= 2:
+            return "de"
+        # Density check: tokens-per-1000-chars. Catches genuinely-German users
+        # with no umlauts in their last 20 messages (rare but possible —
+        # umlautless German is a thing). Rejects long-English texts with a
+        # handful of accidental cognate hits.
+        density = (de_words * 1000.0) / max(len(text), 1)
+        if de_words >= 5 and density >= 1.0:
+            return "de"
+        return "en"
+
+    # 1. The CURRENT message wins when it's substantial enough to judge. The
+    # global history said "de" for a user whose whole app history is German —
+    # and the curator then insisted on German through an all-English
+    # conversation ("Deine Sprache ist irrelevant") because the directive it
+    # quoted really did say German. The person typing RIGHT NOW outranks
+    # their historical average.
+    if current_message:
+        lang = _classify(current_message)
+        if lang:
+            return lang
+
+    # 2. This thread's own user messages — a conversation held in English
+    # stays English even when the rest of the app history is German.
+    if thread_id:
+        t_msgs = (
+            db.query(ConversationMessage.content)
+            .filter(
+                ConversationMessage.user_id == user_id,
+                ConversationMessage.role == "user",
+                ConversationMessage.thread_id == thread_id,
+            )
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        lang = _classify(" ".join((m.content or "") for m in t_msgs))
+        if lang:
+            return lang
+
+    # 3. Fallback: the user's recent messages across all threads (legacy
+    # behaviour — used by surfaces with no live message, e.g. proactive).
     msgs = (
         db.query(ConversationMessage.content)
         .filter(
@@ -304,27 +363,7 @@ def detect_user_language(user_id: int, db) -> str:
     )
     if not msgs:
         return "en"
-    text = " ".join((m.content or "") for m in msgs).lower()
-    if len(text) < 20:
-        return "en"
-    # German signals: umlauts/ß characters + common whole-word tokens.
-    # Whole-word matching avoids matching "der" inside "wonder", etc.
-    padded = f" {text} "
-    de_chars = sum(text.count(c) for c in "äöüß")
-    de_words = sum(1 for w in _DE_TOKENS if f" {w} " in padded)
-
-    if de_chars >= 2:
-        return "de"
-    if de_chars >= 1 and de_words >= 2:
-        return "de"
-    # Density check: tokens-per-1000-chars. Catches genuinely-German users
-    # with no umlauts in their last 20 messages (rare but possible —
-    # umlautless German is a thing). Rejects long-English texts with a
-    # handful of accidental cognate hits.
-    density = (de_words * 1000.0) / max(len(text), 1)
-    if de_words >= 5 and density >= 1.0:
-        return "de"
-    return "en"
+    return _classify(" ".join((m.content or "") for m in msgs)) or "en"
 
 
 def language_directive(code: str) -> str:
@@ -336,6 +375,8 @@ def language_directive(code: str) -> str:
     """
     name = _LANGUAGE_NAMES.get(code, "English")
     return (
-        f"LANGUAGE: Respond in {name}. "
+        f"LANGUAGE: Respond in {name} — but if the user writes in a different "
+        f"language, follow THEIR language instead of this default; never argue "
+        f"about language. "
         f"Keep proper nouns, ratings, tags, and identifiers in their original form."
     )
