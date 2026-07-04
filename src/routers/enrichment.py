@@ -61,6 +61,28 @@ async def enrichment_overview(user: User = Depends(get_current_user)):
     return await build_overview()
 
 
+@router.get("/custodian")
+async def custodian_status_endpoint(user: User = Depends(get_current_user)):
+    """Debt-based maintenance state: last tick report + per-task due list."""
+    from src.services.data_custodian import custodian_status
+    return custodian_status()
+
+
+@router.post("/custodian/run")
+async def custodian_run(
+    background_tasks: BackgroundTasks,
+    deep: bool = True,
+    user: User = Depends(get_current_user),
+):
+    """Force a full maintenance cycle NOW (ignores cadences; deep = catch-up
+    budgets). The one button that replaced the old zoo of specialized ones."""
+    from src.services.data_custodian import custodian_tick, _tick_lock
+    if _tick_lock.locked():
+        return {"status": "already_running"}
+    background_tasks.add_task(custodian_tick, False, True, deep)
+    return {"status": "started", "deep": deep}
+
+
 @router.get("/status")
 async def enrichment_status(
     user: User = Depends(get_current_user),

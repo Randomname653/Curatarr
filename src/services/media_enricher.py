@@ -794,6 +794,73 @@ async def ensure_verified_data(
     return data
 
 
+async def run_significance_backfill(limit: int = 150) -> dict:
+    """Custodian walker: fetch Wikipedia significance for LIVE raw:* entries
+    that were never significance-checked. Until now this only happened
+    just-in-time for titles the user happened to discuss — the archive pillar
+    was blind for everything else. Summarizer-tier work: yields to any active
+    curator and stops when a game grabs the GPU.
+
+    Returns {"checked": n, "added": n, "remaining": n} — remaining>0 means the
+    custodian should keep the task due and continue next tick."""
+    import json as _json
+    from src.services.llm_priority import wait_for_curator
+
+    def _gaming() -> bool:
+        try:
+            from src.services.app_state import get_state
+            return get_state("game_active") == "1"
+        except Exception:
+            return False
+
+    cache = MetadataCache()
+    try:
+        cur = cache.conn.cursor()
+        cur.execute(
+            """
+            SELECT cache_key, response FROM api_cache
+            WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
+              AND expires_at > ?
+              AND response NOT LIKE '%"significance_checked"%'
+              AND response NOT LIKE '%"significance"%'
+            """,
+            (datetime.now().isoformat(),),
+        )
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        cache.close()
+
+    total = len(rows)
+    checked = added = 0
+    for row in rows[:limit]:
+        if _gaming():
+            logger.info("[significance-backfill] game active — stopping early "
+                        "(%d/%d this pass)", checked, min(limit, total))
+            break
+        key = row["cache_key"]
+        key = key.split(":", 1)[1] if key.startswith("v2:") else key   # drop version
+        try:
+            _, cat, id_key = key.split(":", 2)                          # raw:{cat}:{id}
+            resp = _json.loads(row["response"]) if isinstance(row["response"], str) else row["response"]
+            title = (resp or {}).get("title") or id_key
+            year = (resp or {}).get("year")
+        except Exception:
+            continue
+        await wait_for_curator()
+        try:
+            if await asyncio.wait_for(
+                topup_significance(title, cat, plex_rating_key=id_key, year=year),
+                timeout=45.0,
+            ):
+                added += 1
+        except Exception as e:
+            logger.debug("[significance-backfill] %r failed: %s", title, e)
+        checked += 1
+    return {"checked": checked, "added": added,
+            "remaining": max(0, total - checked)}
+
+
 async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     """Admin bulk backfill: scan the raw:* cache for video items that have an
     imdb_id but are missing OMDb-only fields (writer / awards), and top each up

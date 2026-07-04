@@ -618,9 +618,12 @@ select option { background: var(--bg2); }
         <p>Fetch metadata from TMDB, AniList, and MusicBrainz, then compute real embedding-based taste vectors.</p>
       </div>
       <div class="view-body">
+        <div id="custodian-bar" style="margin-bottom:14px"></div>
         <div id="enrich-overview" style="margin-bottom:20px"></div>
 
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+        <details style="margin-bottom:16px">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);padding:4px 0">Advanced — manual enrichment controls</summary>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:10px 0 16px">
           <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Enrich by category</h3>
           <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
@@ -657,14 +660,16 @@ select option { background: var(--bg2); }
             </button>
           </div>
         </div>
+        </details>
 
         <div id="enrich-progress-area"></div>
         <div id="enrich-live-section" style="display:none"></div>
 
-        <hr class="divider" style="margin:24px 0">
-
-        <!-- SPOTIFY / MUSIC PIPELINE -->
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+        <details style="margin:0 0 16px">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);padding:4px 0">Advanced — Spotify pipeline controls</summary>
+        <!-- SPOTIFY / MUSIC PIPELINE (phases run automatically via the custodian;
+             these controls remain for manual runs and the emergency stop) -->
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:10px 0 16px">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
             <h3 style="font-size:13px;font-weight:600">Spotify Import Pipeline</h3>
             <span id="music-running-badge" style="display:none;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);border-radius:10px;font-size:11px;padding:2px 8px">Running…</span>
@@ -692,6 +697,7 @@ select option { background: var(--bg2); }
           </div>
           <div id="music-result-area" style="margin-top:10px;font-size:12px"></div>
         </div>
+        </details>
 
         <hr class="divider" style="margin:24px 0">
 
@@ -4444,16 +4450,58 @@ function _renderKbOverview(o, running, lastRun) {
 
 async function loadEnrichStatus(forceRefresh) {
   try {
-    const [ov, st] = await Promise.all([
+    const [ov, st, cust] = await Promise.all([
       api('/api/enrichment/overview'),
       api('/api/enrichment/status?quick=true').catch(() => ({})),
+      api('/api/enrichment/custodian').catch(() => null),
     ]);
     _renderKbOverview(ov, !!st.running, st.last_run);
-    if (st.running) setTimeout(() => loadEnrichStatus(true), 8000);
+    if (cust) _renderCustodianBar(cust);
+    if (st.running || (cust && cust.ticking)) setTimeout(() => loadEnrichStatus(true), 8000);
   } catch (e) {
     const el = document.getElementById('enrich-overview');
     if (el) el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
   }
+}
+
+// ── DATA CUSTODIAN (debt-based maintenance — replaces the button zoo) ────────
+function _renderCustodianBar(c) {
+  const el = document.getElementById('custodian-bar');
+  if (!el) return;
+  const due = (c.tasks || []).filter(t => t.due).length;
+  let line;
+  if (c.ticking) {
+    line = 'Maintenance running in the background…';
+  } else if (c.report && c.report.ts) {
+    const ago = Math.max(0, Math.round((Date.now() - new Date(c.report.ts + 'Z').getTime()) / 60000));
+    const acts = (c.report.actions || []);
+    const summary = acts.length
+      ? acts.map(a => `${a.task.replace('custodian_', '')}: ${a.result}`).join(' · ')
+      : 'nothing was due';
+    line = `Last run ${ago} min ago (${c.report.duration_s}s) — ${summary}`;
+  } else {
+    line = 'No maintenance run yet this session — first tick fires a few minutes after start.';
+  }
+  el.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="font-size:12px;color:var(--text2);min-width:200px;flex:1">
+        <span style="font-weight:600;color:var(--text)">Data custodian</span>
+        <span title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups."> · ${esc(line)}</span>
+        ${due ? ` <span class="badge amber" style="font-size:10px">${due} task${due > 1 ? 's' : ''} due</span>` : ' <span class="badge muted" style="font-size:10px">all caught up</span>'}
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="runMaintenance(this)" ${c.ticking ? 'disabled' : ''}>Run maintenance now</button>
+    </div>`;
+}
+
+async function runMaintenance(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'starting…'; }
+  try {
+    const r = await api('/api/enrichment/custodian/run', 'POST');
+    if (btn) btn.textContent = r.status === 'started' ? 'running…' : 'already running';
+  } catch (e) {
+    if (btn) btn.textContent = 'failed';
+  }
+  setTimeout(() => loadEnrichStatus(true), 4000);
 }
 
 // ── MUSIC PIPELINE ────────────────────────────────────────────────────────────
