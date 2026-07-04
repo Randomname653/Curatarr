@@ -771,7 +771,13 @@ async def _run_memory_extraction(
 # end-of-conversation signals (New chat, Exit discussion, Delete & exit) and
 # app shutdown flush the pending task immediately.
 
-_THREAD_EXTRACT_DEBOUNCE_S = 90.0
+# 300s, was 90: in a slow-paced debate (user reading reviews, composing long
+# replies) 90s elapsed BETWEEN turns, so extraction fired mid-conversation and
+# latched intermediate stances — the Bomber debate wrote two defensive
+# memories before the user flipped to "delete it". Five minutes matches human
+# deliberation pace; explicit exits (New chat / Exit / Delete & exit) still
+# flush immediately, and the custodian's catch-up covers killed debounces.
+_THREAD_EXTRACT_DEBOUNCE_S = 300.0
 # keyed by f"{user_id}:{thread_id}" → the pending asyncio debounce task
 _pending_thread_extracts: dict[str, asyncio.Task] = {}
 # strong refs to in-flight principle-capture tasks (fire-and-forget would
@@ -838,9 +844,39 @@ async def extract_memories_from_thread(
         thread_id, user_id, len(user_msgs), since_id,
     )
 
+    # Thread ANCHOR line. The user-only view is deliberate (assistant replies
+    # hallucinate), but it made short conversational answers contextless:
+    # "the rest of the discography is triggering the same" carries ZERO
+    # extractable meaning without knowing the conversation was about Dr.
+    # Peacock's 'Muzika' — the extractor returned [] and the user's
+    # "most-listened artist of all time" statement was lost. The anchor names
+    # WHAT the thread is about (from trusted DB rows, not assistant prose)
+    # without exposing any assistant claims.
+    anchor_line = ""
+    try:
+        if thread_id.startswith("proactive_message:"):
+            from src.database.models import ProactiveMessage
+            with get_db_session() as db:
+                pm = db.query(ProactiveMessage).filter(
+                    ProactiveMessage.id == int(thread_id.split(":", 1)[1])).first()
+            if pm and pm.message:
+                anchor_line = ("CONVERSATION SUBJECT (the assistant's opening that the "
+                               "user is replying to — context ONLY, extract nothing "
+                               f"from it): {pm.message[:300]}\n\n")
+        elif thread_id.startswith("deletion_proposal:"):
+            from src.database.models import DeletionProposal
+            with get_db_session() as db:
+                dp = db.query(DeletionProposal).filter(
+                    DeletionProposal.id == int(thread_id.split(":", 1)[1])).first()
+            if dp and dp.title:
+                anchor_line = (f"CONVERSATION SUBJECT: the deletion of "
+                               f"'{dp.title}' ({dp.category or 'title'}).\n\n")
+    except Exception as e:
+        logger.debug("[memory] anchor line failed for %s: %s", thread_id, e)
+
     numbered = "\n".join(f"{i}. {m[:600]}" for i, m in enumerate(user_msgs, 1))
     prompt = f"""[MODE: LONG-TERM MEMORY EXTRACTION]
-Below is the sequence of the USER's messages from one conversation, oldest first.
+{anchor_line}Below is the sequence of the USER's messages from one conversation, oldest first.
 The assistant's replies are intentionally NOT shown — the assistant sometimes
 hallucinates facts (wrong director, wrong year, invented plots) and we don't
 want those polluting long-term memory.
@@ -910,13 +946,18 @@ JSON:"""
         if getattr(settings, "PRINCIPLES_ENABLED", False) and \
                 (thread_id or "").startswith("deletion_proposal:"):
             from src.services.curator_principles import capture_principles_from_thread
-            task = asyncio.create_task(
-                capture_principles_from_thread(user_id, thread_id, media_category))
-            # keep a reference — a bare create_task can be garbage-collected
-            _running_captures.add(task)
-            task.add_done_callback(_running_captures.discard)
+            # track_task instead of a silent set: the Bomber debate's capture
+            # died without a trace (done-callbacks swallow exceptions, and the
+            # internal failures logged at debug) — the thread's principle only
+            # surfaced when re-run manually. track_task logs any exception.
+            from src.services.bg_tasks import track_task
+            track_task(
+                capture_principles_from_thread(user_id, thread_id, media_category),
+                name=f"principle_capture:{thread_id}",
+            )
     except Exception as e:
-        logger.debug("[principles] thread capture failed for %s: %s", thread_id, e)
+        logger.warning("[principles] thread capture scheduling failed for %s: %s",
+                       thread_id, e)
 
 
 async def _debounced_thread_extract(
@@ -976,6 +1017,43 @@ async def flush_thread_extraction(user_id: int, thread_id: str) -> None:
         await extract_memories_from_thread(user_id, thread_id)
     except Exception as e:
         logger.error("💥 [MEMORY EXTRACTION] flush failed for thread %s: %s", thread_id, e)
+
+
+async def extract_catchup(min_quiet_minutes: int = 15) -> dict:
+    """Custodian task: finish extraction for threads whose debounce task died
+    (app restart, crash, killed console). The debounce lives only in RAM — a
+    thread whose USER messages are newer than its persisted cursor and that
+    has been quiet for a while is unfinished business. Cheap when there is
+    nothing to do (one grouped query)."""
+    from src.services.app_state import get_state
+    from src.database.models import ConversationMessage
+    from sqlalchemy import func
+    cutoff = datetime.utcnow() - timedelta(minutes=min_quiet_minutes)
+    with get_db_session() as db:
+        rows = (db.query(ConversationMessage.user_id, ConversationMessage.thread_id,
+                         func.max(ConversationMessage.id).label("max_uid"),
+                         func.max(ConversationMessage.created_at).label("last"))
+                .filter(ConversationMessage.role == "user",
+                        ConversationMessage.thread_id.isnot(None))
+                .group_by(ConversationMessage.user_id, ConversationMessage.thread_id)
+                .all())
+    done = 0
+    for uid, tid, max_uid, last in rows:
+        if last and last > cutoff:
+            continue   # recent activity — the live debounce owns this thread
+        try:
+            cur = int(get_state(f"mem_extract_cursor:{uid}:{tid}") or 0)
+        except (TypeError, ValueError):
+            cur = 0
+        if max_uid and max_uid > cur:
+            logger.info("[memory] catch-up: %s has unextracted messages "
+                        "(cursor %d < %d)", tid, cur, max_uid)
+            try:
+                await extract_memories_from_thread(uid, tid)
+                done += 1
+            except Exception as e:
+                logger.warning("[memory] catch-up failed for %s: %s", tid, e)
+    return {"threads_caught_up": done}
 
 
 async def flush_all_pending_extractions() -> None:

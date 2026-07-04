@@ -1703,6 +1703,18 @@ async def _build_discuss_context_block(
                 anchor_title = a
                 anchor_category = "music"
 
+        # No resolvable entity → say so instead of improvising. The "whimsical
+        # escapism" message had no anchor; asked "what exactly are we talking
+        # about?", the curator doubled down on vague mood-talk because nothing
+        # told it that IT didn't know the subject either.
+        if not anchor_title:
+            block += (
+                "\nNOTE: no specific title could be resolved for this message. "
+                "If the user asks what it refers to, say plainly that you can't "
+                "pin down the exact title and ask what they watched recently — "
+                "do NOT improvise a vague mood analysis.\n"
+            )
+
         # Series-progress framing for the follow-up conversation. If the
         # proactive message was about a series, tell the curator where the user
         # actually is — so a discussion that started as "did the ending land?"

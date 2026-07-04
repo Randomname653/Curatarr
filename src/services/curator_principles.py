@@ -263,7 +263,7 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     try:
         ex = await _curator_json(_EXTRACT_SYS, "DEBATE:\n" + convo, _EXTRACT_SCHEMA, 700)
     except Exception as e:
-        logger.debug("[principles] extract failed for %s: %s", thread_id, e)
+        logger.warning("[principles] extract failed for %s: %s", thread_id, e)
         return []
     candidates = [c for c in (ex.get("principles") or [])
                   if isinstance(c, dict) and (c.get("principle") or "").strip()
@@ -282,7 +282,7 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
         by_n = {int(r["n"]): r for r in (nv.get("results") or [])
                 if isinstance(r, dict) and r.get("n") is not None}
     except Exception as e:
-        logger.debug("[principles] novelty check failed for %s: %s", thread_id, e)
+        logger.warning("[principles] novelty check failed for %s: %s", thread_id, e)
         by_n = {}
 
     # 3 — store per verdict (DUPLICATE dropped+reinforced; the rest → shadow)

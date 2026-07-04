@@ -134,6 +134,15 @@ async def _run_taste_if_due(deep: bool = False) -> bool:
     return True
 
 
+async def _run_memory_catchup(deep: bool = False) -> bool:
+    from src.services.episodic_memory import extract_catchup
+    r = await extract_catchup()
+    n = r.get("threads_caught_up", 0)
+    if n:
+        logger.info("[custodian] memory catch-up: %d thread(s) finished", n)
+    return True
+
+
 async def _run_audit(deep: bool = False) -> bool:
     from src.routers.enrichment import _audit_enrichments
     r = await _audit_enrichments(dry_run=False)
@@ -161,6 +170,8 @@ def _registry() -> list[Task]:
         Task("arr_sync",         "ARR sync + deletion candidates", 24.0,
              sched.job_arr_sync, needs_llm=True),
         Task("arr_pre_enrich",   "ARR metadata prefetch", 24.0, sched.job_arr_pre_enrich),
+        Task("memory_catchup",   "Memory-extraction catch-up", 0.4,
+             _run_memory_catchup, needs_llm=True, takes_deep=True),
         Task("custodian_enrich", "Enrichment cycle",     24.0,  _run_enrichment_cycle,
              needs_llm=True, takes_deep=True),
         Task("custodian_omdb",   "OMDb top-up",          24.0,  _run_omdb,
