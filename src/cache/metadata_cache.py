@@ -191,6 +191,25 @@ class MetadataCache:
         cur.close()
         return out
 
+    def count_raw_with_marker(self, category: str, marker: str) -> int:
+        """Count LIVE raw:{category}:* rows whose response contains ``marker``
+        (e.g. '"significance"' / '"omdb_checked"') — powers the KB overview's
+        Wikipedia/OMDb coverage columns with ONE scan instead of N reads."""
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM api_cache
+            WHERE (cache_key LIKE ? OR cache_key LIKE ?)
+              AND expires_at > ?
+              AND response LIKE ?
+            """,
+            (f"{_CACHE_VERSION}:raw:{category}:%", f"raw:{category}:%",
+             datetime.now().isoformat(), f"%{marker}%"),
+        )
+        n = cur.fetchone()[0]
+        cur.close()
+        return int(n or 0)
+
     def set_cache(self, cache_key: str, response: Dict[str, Any], days: int = 7):
         """
         Cache API response.
