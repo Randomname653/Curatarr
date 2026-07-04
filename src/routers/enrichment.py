@@ -1031,11 +1031,29 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
         from src.cache.metadata_cache import MetadataCache as _MC
         is_not_found = profile.get("source") == "not_found"
         _c = _MC()
+        # Change-based invalidation anchor: remember which raw payload this
+        # polish was built from. Profiles no longer age out by TIME — the
+        # pre-filter re-enriches when a future raw refresh changes this hash
+        # (metadata actually changed) or when the cache entry is dead.
+        try:
+            _sh = _raw_source_hash(_c, cat, [
+                item.get("plex_rating_key"), item.get("tmdb_id"),
+                item.get("tvdb_id"), item.get("anilist_id"),
+                (item.get("series_title") or item.get("title") or "")[:40],
+            ])
+            if _sh:
+                profile["_source_hash"] = _sh
+        except Exception:
+            pass
         # not_found sentinel: 3-day TTL — enough to block hammering, short enough
         #   for a title that may appear on the API after a new release.
         # Rule-based fallbacks: 1-day TTL so they are retried next run.
-        # LLM-enriched profiles: 90 days (stable data).
-        cache_days = 3 if is_not_found else (1 if _is_rule_based(profile) else 90)
+        # LLM-enriched profiles: effectively no time expiry (10y) — the profile
+        #   is OUR product, invalidated by _source_hash / prompt_version, not
+        #   by a calendar. The old 90d expiry silently killed entries while
+        #   enrichment_status kept saying "enriched", so runs skipped exactly
+        #   the items whose cache had rotted (The Simpsons class).
+        cache_days = 3 if is_not_found else (1 if _is_rule_based(profile) else 3650)
         _c.set_cache(f"enriched:{cat}:{item['plex_rating_key']}", profile, days=cache_days)
         if cat in ("show", "anime") and item.get("series_title"):
             with get_db_session() as _db:
@@ -1071,6 +1089,29 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                 if rpid != item["plex_rating_key"]:
                     _c.set_cache(f"enriched:music:{rpid}", profile, days=cache_days)
         _c.close()
+
+
+def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
+    """Stable hash of the first LIVE raw:* payload for this item — the anchor
+    for change-based profile invalidation: polish stores it as _source_hash;
+    the pre-filter re-enriches when the current raw hash differs (metadata
+    genuinely changed). None when no live raw entry exists (no verdict)."""
+    import hashlib
+    for k in keys:
+        if not k:
+            continue
+        try:
+            row = cache.get_cache(f"raw:{cat}:{k}")
+        except Exception:
+            continue
+        resp = (row or {}).get("response")
+        if isinstance(resp, dict) and resp:
+            try:
+                blob = json.dumps(resp, sort_keys=True, default=str)
+                return hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()
+            except Exception:
+                return None
+    return None
 
 
 async def _run_enrichment(user_id: int, categories: list, source: str,
@@ -1352,13 +1393,66 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                             EnrichmentStatus.error.is_(None),
                         ).all()
                     }
-                before = len(items)
-                items = [
-                    i for i in items
-                    if ((i.get("series_title") or i["title"]), i["media_type"]) not in enriched_set
-                ]
-                logger.info("Pre-filter: %d -> %d items (skipped %d LLM-done, kept rule-based/failed)",
-                            before, len(items), before - len(items))
+                # The enriched flag alone is NOT enough to skip: for months the
+                # 90d cache TTL silently killed enriched:* entries while the
+                # flag stayed True, so every run skipped exactly the items
+                # whose profile had rotted (The Simpsons class — "no synopsis"
+                # at "100% enriched"). Skip only when a LIVE cache entry exists
+                # under ANY historic key shape AND its source metadata hasn't
+                # changed since the polish (_source_hash, user decision:
+                # change-based invalidation instead of time-based).
+                from src.cache.metadata_cache import MetadataCache as _PMC
+                _pc = _PMC()
+                try:
+                    _live = _pc.live_key_set("enriched:")
+
+                    def _live_enriched_key(it):
+                        mt = it["media_type"]
+                        mts = ("show", "anime") if mt in ("show", "anime") else (mt,)
+                        cands = [
+                            it.get("plex_rating_key"), it.get("tmdb_id"),
+                            it.get("tvdb_id"), it.get("anilist_id"),
+                            (it.get("series_title") or it.get("title") or "")[:40],
+                            (it.get("title") or "")[:40],
+                        ]
+                        for m in mts:
+                            for k in cands:
+                                if k and f"enriched:{m}:{k}" in _live:
+                                    return f"enriched:{m}:{k}"
+                        return None
+
+                    before = len(items)
+                    kept, n_dead, n_changed, n_skipped = [], 0, 0, 0
+                    for i in items:
+                        fkey = ((i.get("series_title") or i["title"]), i["media_type"])
+                        if fkey not in enriched_set:
+                            kept.append(i)
+                            continue
+                        lk = _live_enriched_key(i)
+                        if lk is None:
+                            n_dead += 1          # flag says enriched, cache is gone
+                            kept.append(i)
+                            continue
+                        try:
+                            prof = (_pc.get_cache(lk) or {}).get("response") or {}
+                            sh = prof.get("_source_hash")
+                            if sh:
+                                _, _cat, _key = lk.split(":", 2)
+                                cur = _raw_source_hash(_pc, _cat, [_key])
+                                if cur and cur != sh:
+                                    n_changed += 1   # source metadata changed
+                                    kept.append(i)
+                                    continue
+                        except Exception:
+                            pass
+                        n_skipped += 1
+                    items = kept
+                finally:
+                    _pc.close()
+                logger.info(
+                    "Pre-filter: %d -> %d items (skipped %d live-enriched; revived "
+                    "%d dead-cache + %d metadata-changed; kept rule-based/failed)",
+                    before, len(items), n_skipped, n_dead, n_changed)
 
         # Pass 86: priority sort — fresh imports (never enriched) go to the
         # front of the queue, then TTL-refresh re-queues by oldest-first.

@@ -296,7 +296,12 @@ def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
         mc = MetadataCache()
         prof = mc.get_cache(f"enriched:{old_cat}:{key}")
         if prof is not None:
-            mc.set_cache(f"enriched:{new_cat}:{key}", prof, days=90)
+            # get_cache returns the row wrapper — unwrap to the profile itself,
+            # otherwise the new key stores {response: {...}} double-nested and
+            # every reader misses plot_summary/themes at the top level.
+            payload = prof.get("response") if isinstance(prof, dict) and "response" in prof else prof
+            # No time expiry — change-based invalidation (see enrichment.py).
+            mc.set_cache(f"enriched:{new_cat}:{key}", payload, days=3650)
     except Exception as e:
         logger.warning("[lib-sort] cache re-key failed for %s: %s", key, e)
 
