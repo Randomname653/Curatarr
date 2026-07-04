@@ -1172,6 +1172,16 @@ async def generate_proactive_message(
     else:
         return None
 
+    # NAME THE SUBJECT — appended to every trigger prompt. A message that only
+    # gestures at a mood ("a bit of whimsical escapism?") is unanswerable: the
+    # user asked "what exactly are we talking about?" and the follow-up chat
+    # couldn't say either. The concrete entity is what makes the ping useful.
+    prompt += (
+        "\nIMPORTANT: NAME the specific title/artist/track this message is "
+        "about, verbatim, inside the message itself — never allude to it "
+        "only as a mood or category."
+    )
+
     # Proactive messages use the big curator model — route the generation
     # through the curator gate so a scheduled message can't collide with a
     # user's chat on the single GPU (it queues for the slot like the rest).
