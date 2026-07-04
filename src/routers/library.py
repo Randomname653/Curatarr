@@ -423,31 +423,50 @@ def _enrichment_lookup(svc: str, item: dict, cache) -> dict | None:
         100% cache miss in the music browser. Fix: drop the .lower().
     """
     try:
+        # ALL the key shapes the writers have used over the app's history —
+        # the browser previously checked only tmdb/tvdb and missed everything
+        # keyed by arr doc-id ("sonarr:3176", the ARR enrichment run), by
+        # plex rating-key / title[:40] (the watch-history path), which is why
+        # The Simpsons / Stranger Things showed "no synopsis" at 100% enriched.
         if svc == "sonarr":
-            tmdb = item.get("tmdbId")
-            tvdb = item.get("tvdbId")
-            # Try the right media_type first based on Sonarr's classification,
-            # then fall back to the other (anime classification can lag chat
-            # cascade's classification, and vice versa).
-            keys = ("anime", "show") if (item.get("seriesType") == "anime") else ("show", "anime")
-            for mt in keys:
-                for ext in (tmdb, tvdb):
-                    if not ext: continue
-                    row = cache.get_cache(f"enriched:{mt}:{ext}")
-                    if row: return row.get("response")
+            mts = ("anime", "show") if (item.get("seriesType") == "anime") else ("show", "anime")
+            id_keys = [item.get("tmdbId"), item.get("tvdbId"),
+                       f"sonarr:{item.get('id')}" if item.get("id") else None,
+                       (item.get("title") or "")[:40] or None]
         elif svc == "radarr":
-            tmdb = item.get("tmdbId")
-            if tmdb:
-                row = cache.get_cache(f"enriched:movie:{tmdb}")
-                if row: return row.get("response")
+            mts = ("movie",)
+            id_keys = [item.get("tmdbId"),
+                       f"radarr:{item.get('id')}" if item.get("id") else None,
+                       (item.get("title") or "")[:40] or None]
         else:  # lidarr
-            # Note: enrich_media_item stores music as enriched:music:<title[:40]>
-            # — there is no MBID-keyed cache entry to look up. We keep the name
-            # branch only, with the original case as the writer used it.
+            mts = ("music",)
             name = item.get("artistName") or ""
-            if name:
-                row = cache.get_cache(f"enriched:music:{name[:40]}")
-                if row: return row.get("response")
+            id_keys = [name[:40] or None,
+                       f"lidarr:{item.get('id')}" if item.get("id") else None,
+                       item.get("foreignArtistId")]
+        id_keys = [k for k in id_keys if k]
+
+        for mt in mts:
+            for ext in id_keys:
+                row = cache.get_cache(f"enriched:{mt}:{ext}")
+                if row:
+                    return row.get("response")
+        # No live enriched profile — fall back to the raw API cache so the
+        # browser can at least show the real synopsis instead of "no synopsis
+        # on file" while the item waits for its (re-)polish.
+        for mt in mts:
+            for ext in id_keys:
+                row = cache.get_cache(f"raw:{mt}:{ext}")
+                resp = (row or {}).get("response")
+                if isinstance(resp, dict) and (resp.get("overview")
+                                               or resp.get("overview_extended")
+                                               or resp.get("bio")):
+                    return {
+                        "plot_summary": resp.get("overview_extended") or resp.get("overview"),
+                        "bio": resp.get("bio"),
+                        "source": "raw metadata (awaiting polish)",
+                        "_cached_at": row.get("created_at"),
+                    }
     except Exception:
         pass
     return None
@@ -657,6 +676,7 @@ async def library_items(
     needs_enrichment: bool = False,
     root_filter: str | None = None,   # substring match on root path (for TV/Anime split)
     curatarr_only: bool = False,       # filter to items with the 'curatarr' tag
+    search: str | None = None,         # case-insensitive title substring
     limit: int = 200,
     refresh: bool = False,             # Pass 16i: bypass cache (force live fetch)
     _user: User = Depends(get_current_user),
@@ -700,6 +720,9 @@ async def library_items(
     # Apply filters
     if needs_enrichment:
         items = [i for i in items if not i["has_enrichment"]]
+    if search and search.strip():
+        s = search.strip().lower()
+        items = [i for i in items if s in (i.get("title") or "").lower()]
     if root_filter:
         rf = root_filter.lower()
         items = [i for i in items if (i.get("root_folder") or "").lower().find(rf) >= 0]

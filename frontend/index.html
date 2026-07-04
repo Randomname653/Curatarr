@@ -1879,12 +1879,14 @@ async function renderSynopsisBrowser(svc, tabId, opts = {}) {
   const state = _arrBrowserState[svc + ':' + tabId] || {
     sort: 'size_desc',
     needs_enrichment: false,
+    search: '',
   };
   _arrBrowserState[svc + ':' + tabId] = state;
 
   // Map tabId → backend filter params
   const params = new URLSearchParams({ sort: state.sort, limit: '500' });
   if (state.needs_enrichment) params.set('needs_enrichment', 'true');
+  if (state.search)          params.set('search', state.search);
   if (tabId === 'tv')        params.set('root_filter', 'tv');
   if (tabId === 'anime')     params.set('root_filter', 'anime');
   if (tabId === 'curatarr')  params.set('curatarr_only', 'true');
@@ -1941,6 +1943,10 @@ async function renderSynopsisBrowser(svc, tabId, opts = {}) {
                onchange="setBrowserFilter('${svc}','${tabId}', this.checked)"/>
         Only items needing enrichment
       </label>
+      <input type="text" id="arr-search-${svc}-${tabId}" value="${escAttr(state.search || '')}"
+             placeholder="Search title…"
+             oninput="setBrowserSearch('${svc}','${tabId}', this.value)"
+             style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:var(--radius);font-size:12px;width:200px"/>
       <button class="btn btn-secondary btn-sm" onclick="renderSynopsisBrowser('${svc}','${tabId}',{forceRefresh:true})" style="margin-left:auto" title="Bypass 15-min cache and re-fetch from ${esc(svc)}">↻ Refresh</button>
     </div>
   `;
@@ -1966,7 +1972,9 @@ function renderArrItemRow(svc, item) {
     ? new Date(item.added).toLocaleDateString()
     : '—';
   const enrichedBadge = item.has_enrichment
-    ? `<span style="color:var(--success);font-size:10px">✓ enriched (${esc(item.enrichment_source || 'cache')})</span>`
+    ? ((item.enrichment_source || '').startsWith('raw')
+        ? `<span style="color:var(--amber);font-size:10px">raw metadata · awaiting polish</span>`
+        : `<span style="color:var(--success);font-size:10px">✓ enriched (${esc(item.enrichment_source || 'cache')})</span>`)
     : `<span style="color:var(--amber);font-size:10px">⚠ no synopsis</span>`;
   const synopsisHTML = item.synopsis
     ? `<p style="color:var(--text2);font-size:12px;margin:6px 0 0;line-height:1.45">${esc(item.synopsis)}</p>`
@@ -2013,6 +2021,21 @@ function setBrowserFilter(svc, tabId, needsEnrichment) {
   state.needs_enrichment = needsEnrichment;
   _arrBrowserState[svc + ':' + tabId] = state;
   renderSynopsisBrowser(svc, tabId);
+}
+
+// Debounced title search: re-render destroys the input, so wait for a typing
+// pause, then restore focus + caret so the user can keep typing seamlessly.
+let _browserSearchTimer = null;
+function setBrowserSearch(svc, tabId, value) {
+  const state = _arrBrowserState[svc + ':' + tabId] || {};
+  state.search = value;
+  _arrBrowserState[svc + ':' + tabId] = state;
+  clearTimeout(_browserSearchTimer);
+  _browserSearchTimer = setTimeout(async () => {
+    await renderSynopsisBrowser(svc, tabId);
+    const inp = document.getElementById(`arr-search-${svc}-${tabId}`);
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }, 400);
 }
 
 async function reEnrich(svc, arrId, mode, btn) {
