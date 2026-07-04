@@ -12,8 +12,8 @@ Knowledge layering by change velocity (each layer has exactly ONE home):
 Rules:
 - Routers COMPOSE these blocks; prompt prose about the app never lives inline
   in a router again. (That's how the curator ended up sending the user to
-  Sonarr to delete a title while the '🗑 Delete & exit' button sat top right,
-  and improvising when asked what the ⚖ Stagnant badge means.)
+  Sonarr to delete a title while the 'Delete & exit' button sat top right,
+  and improvising when asked what the 'Stagnant' badge means.)
 - SCOPED injection: each surface gets its own block, not the whole app manual.
 - Every UI label referenced here must exist VERBATIM in frontend/index.html —
   enforced by tests/test_app_context_drift.py, so renaming a button without
@@ -23,7 +23,7 @@ Rules:
 # ── Deletion discussion (chat anchored on a deletion proposal) ────────────────
 
 DISCUSSION_UI_BLOCK = (
-    "UI: this discussion has a '🗑 Delete & exit' button (top right) that "
+    "UI: this discussion has a 'Delete & exit' button (top right) that "
     "executes the deletion right here in Curatarr, plus 'Exit discussion'. "
     "When the user decides to delete, point them to that button — never "
     "send them to Sonarr/Radarr/Lidarr to remove it manually.\n"
@@ -34,7 +34,7 @@ DISCUSSION_UI_BLOCK = (
 STAGNANT_VERDICT_BLOCK = (
     "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
     "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
-    "⚖ Stagnant badge for the OWNER to decide. Weigh keep vs delete "
+    "'Stagnant' badge for the OWNER to decide. Weigh keep vs delete "
     "honestly on their terms instead of pushing for deletion.\n"
 )
 
@@ -48,7 +48,7 @@ PRINCIPLE_REVIEW_BLOCK = (
     "but the OWNER decides. When they settle it, confirm the outcome in plain "
     "words (adopt / reject / adopt with their refined wording); the decision "
     "is applied automatically after the conversation, and the "
-    "'🧠 Learned principles' panel in the Deletions view remains the manual "
+    "'Learned principles' panel in the Deletions view remains the manual "
     "fallback.\n"
 )
 
@@ -59,13 +59,13 @@ APP_MAP_BLOCK = (
     "invent or deny capabilities):\n"
     "- Chat (you) · 'History & Taste' (watch history + taste profile) · "
     "'Recommendations' (your picks).\n"
-    "- 'Deletions' (admin): your deletion proposals, each with a '🗑 Delete' "
+    "- 'Deletions' (admin): your deletion proposals, each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
     "Sonarr/Radarr/Lidarr, plus Keep/Discuss. Sub-panels there: "
-    "'🛡️ Judge-protected titles' (what the judge KEPT, with reasoning), "
-    "'📉 Downscale-Kandidaten' (titles KEPT but flagged for a lower-bitrate "
+    "'Judge-protected titles' (what the judge KEPT, with reasoning), "
+    "'Downscale-Kandidaten' (titles KEPT but flagged for a lower-bitrate "
     "transcode — these are NOT deletion candidates), and "
-    "'🧠 Learned principles' (rules you learned from debates).\n"
+    "'Learned principles' (rules you learned from debates).\n"
     "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
     "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (running tasks) · "
     "'Libraries' / 'Users' (admin) · 'Settings'.\n"
@@ -80,7 +80,7 @@ LIBRARY_ACTIONS_BLOCK = (
     "claim something was added, downloaded, queued, or removed. ADDING new "
     "media is the user's job in Radarr/Sonarr/Lidarr. DELETING existing media "
     "happens INSIDE Curatarr: the user approves a proposal in the Deletions "
-    "view ('🗑 Delete') or uses '🗑 Delete & exit' in a deletion discussion, "
+    "view ('Delete') or uses 'Delete & exit' in a deletion discussion, "
     "and Curatarr executes it via the ARR — never send them to "
     "Sonarr/Radarr/Lidarr to delete files manually.\n"
 )
@@ -89,13 +89,13 @@ LIBRARY_ACTIONS_BLOCK = (
 # Every label the blocks above mention. tests/test_app_context_drift.py asserts
 # each exists verbatim in frontend/index.html (and that none is orphaned here).
 REFERENCED_UI_LABELS: tuple[str, ...] = (
-    "🗑 Delete & exit",
-    "🗑 Delete",
+    "Delete & exit",
+    "Delete",
     "Exit discussion",
-    "⚖ Stagnant",
-    "🛡️ Judge-protected titles",
-    "📉 Downscale-Kandidaten",
-    "🧠 Learned principles",
+    "Stagnant",
+    "Judge-protected titles",
+    "Downscale-Kandidaten",
+    "Learned principles",
     "History & Taste",
     "Recommendations",
     "Deletions",

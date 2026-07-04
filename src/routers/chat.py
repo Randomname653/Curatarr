@@ -1901,7 +1901,7 @@ async def send_message(
         # --- DISCUSS BUTTON: server looks up the real record by ID and builds a
         #     RAG-style context block. No fake assistant message is persisted —
         #     the LLM gets the context via the system prompt instead.
-        pre_stream_status.append("📋 Loading discussion context…")
+        pre_stream_status.append("Loading discussion context…")
         discuss_block, active_title, discuss_domain = await _build_discuss_context_block(
             message.discuss_context, user.id, db
         )
@@ -1926,7 +1926,7 @@ async def send_message(
         title_hint = _looks_like_title_introduction(message.message)
 
         if title_hint:
-            pre_stream_status.append("🔍 Identifying media reference…")
+            pre_stream_status.append("Identifying media reference…")
             detected_title, year_hint = await _detect_media_in_query(message.message)
 
             # Pass 31: override the cascade-detected title when a DIFFERENT
@@ -1974,7 +1974,7 @@ async def send_message(
                         )
                     logger.debug("[chat] Reusing cached title for thread %s: %s",
                                  thread_id, active_title)
-                    pre_stream_status.append(f"✓ Reusing cached metadata for '{active_title}'")
+                    pre_stream_status.append(f"Reusing cached metadata for '{active_title}'")
                 else:
                     # Pass 14.10: detected_title differs from any cached title
                     # for this thread → topic pivot. Smaller conversation
@@ -2105,7 +2105,7 @@ async def send_message(
     )
 
     # Retrieve relevant episodic memories — scoped to the same domain when known
-    pre_stream_status.append("🧠 Loading taste profile + memories…")
+    pre_stream_status.append("Loading taste profile + memories…")
     from src.services.episodic_memory import retrieve_memories, format_memories_for_context
     memories = await retrieve_memories(
         user.id, retrieval_query, top_k=6, media_category=domain,
@@ -2117,7 +2117,7 @@ async def send_message(
         memories = _filter_memories_for_topic(memories, active_title)
     memory_context = format_memories_for_context(memories)
     if memories:
-        pre_stream_status.append(f"✓ {len(memories)} relevant memor{'y' if len(memories) == 1 else 'ies'} loaded")
+        pre_stream_status.append(f"{len(memories)} relevant memor{'y' if len(memories) == 1 else 'ies'} loaded")
 
     # System-prompt layout: the discussion block goes LAST so it sits closest
     # to the user message in the LLM's attention window. Memories and RAG
@@ -2323,9 +2323,9 @@ FORMATTING RULES:
         # curator_start() call below blocks until the slot frees.
         if curator_busy():
             _holder = gate_owner()
-            _busy = (f"⏳ Curatarr is busy ({_holder}) — you are next in line…"
+            _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
                      if _holder else
-                     "⏳ Curatarr is busy with another request — you are next in line…")
+                     "Curatarr is busy with another request — you are next in line…")
             yield f"data: {json.dumps({'status': _busy})}\n\n"
 
         await curator_start("chat")
@@ -2365,7 +2365,7 @@ FORMATTING RULES:
         client_disconnected = False
 
         try:
-            yield f"data: {json.dumps({'status': '💭 Curatarr is thinking…'})}\n\n"
+            yield f"data: {json.dumps({'status': 'Curatarr is thinking…'})}\n\n"
             health_task = asyncio.create_task(_delayed_vram_probe())
             # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
             # the response can take 5-10 minutes. We'd rather wait it out
@@ -2422,7 +2422,7 @@ FORMATTING RULES:
                             continue
 
         except httpx.ConnectError:
-            msg = f"⚠️ Ollama not reachable at {ollama_url}. Make sure Ollama is running and '{settings.CURATOR_MODEL}' is pulled."
+            msg = f"Ollama not reachable at {ollama_url}. Make sure Ollama is running and '{settings.CURATOR_MODEL}' is pulled."
             full_response = msg
             yield f"data: {json.dumps({'token': msg})}\n\n"
 
@@ -2439,7 +2439,7 @@ FORMATTING RULES:
             raise
 
         except Exception as e:
-            msg = f"⚠️ Error: {e}"
+            msg = f"Error: {e}"
             full_response = msg
             yield f"data: {json.dumps({'token': msg})}\n\n"
 
