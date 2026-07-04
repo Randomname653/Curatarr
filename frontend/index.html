@@ -404,7 +404,7 @@ select option { background: var(--bg2); }
 <!-- PROACTIVE MESSAGES PANEL -->
 <div id="msg-panel">
   <div class="mp-header">
-    <span>🔔 Notifications</span>
+    <span>Notifications</span>
     <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px" onclick="toggleMsgPanel()">×</button>
   </div>
   <div id="msg-list"><div id="msg-empty">No new notifications</div></div>
@@ -521,12 +521,12 @@ select option { background: var(--bg2); }
       <div id="discuss-banner" style="display:none;background:var(--amber-dim);border-bottom:1px solid rgba(229,160,13,.3);padding:8px 16px;font-size:12px;color:var(--text2);align-items:center;gap:10px">
         <span style="font-size:14px">🔴</span>
         <span id="discuss-banner-text" style="flex:1"></span>
-        <button id="discuss-delete-btn" onclick="deleteFromDiscussion()" style="display:none;background:rgba(229,83,83,.15);border:1px solid rgba(229,83,83,.5);color:var(--danger);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">🗑 Delete &amp; exit</button>
+        <button id="discuss-delete-btn" onclick="deleteFromDiscussion()" style="display:none;background:rgba(229,83,83,.15);border:1px solid rgba(229,83,83,.5);color:var(--danger);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Delete &amp; exit</button>
         <button onclick="exitDiscussion()" style="background:transparent;border:1px solid rgba(229,160,13,.4);color:var(--amber);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Exit discussion</button>
       </div>
       <div id="messages">
         <div class="msg assistant">
-          👋 Hey! I'm Curatarr — your personal media curator. Ask me what to watch, how to clean up your library, or anything about your taste.
+          Hey! I'm Curatarr — your personal media curator. Ask me what to watch, how to clean up your library, or anything about your taste.
         </div>
       </div>
       <div id="chat-input-area">
@@ -549,7 +549,7 @@ select option { background: var(--bg2); }
           <button class="btn btn-secondary" onclick="syncHistory(true)">⚡ Force sync</button>
           <button class="btn btn-secondary" onclick="loadHistoryStatus()">Refresh</button>
           <button class="btn btn-secondary" onclick="recomputeTaste()">🧠 Recompute taste</button>
-          <button class="btn btn-secondary" onclick="showView('libraries',document.querySelector('.sb-item[onclick*=libraries]'))">⚙️ Library Config</button>
+          <button class="btn btn-secondary" onclick="showView('libraries',document.querySelector('.sb-item[onclick*=libraries]'))">Library Config</button>
         </div>
         <div id="history-stats" style="margin-bottom:20px"></div>
         <div class="cat-tabs" id="taste-tabs"></div>
@@ -622,22 +622,22 @@ select option { background: var(--bg2); }
 
         <!-- Judge protections: what the 4-pillar judge auto-saved, and why -->
         <div class="panel-section">
-          <button class="btn btn-secondary" onclick="loadJudgeProtections()">🛡️ Judge-protected titles</button>
+          <button class="btn btn-secondary" onclick="loadJudgeProtections()">Judge-protected titles</button>
           <span class="panel-hint">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
           <div id="protections-content" style="margin-top:12px"></div>
         </div>
 
         <!-- Downscale candidates: kept titles flagged as bitrate outliers -->
         <div class="panel-section">
-          <button class="btn btn-secondary" onclick="loadDownscale()">📉 Downscale-Kandidaten</button>
+          <button class="btn btn-secondary" onclick="loadDownscale()">Downscale-Kandidaten</button>
           <span class="panel-hint">Behalten, aber Bitrate-Ausreißer — Speicher zurückgewinnen ohne zu löschen. Nach dem Transcode „Erledigt" klicken.</span>
           <div id="downscale-content" style="margin-top:12px"></div>
         </div>
 
         <!-- Learned principles: what the curator taught itself from your debates -->
         <div class="panel-section">
-          <button class="btn btn-secondary" onclick="loadPrinciples()">🧠 Learned principles</button>
-          <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. ⚠ contradiction = your call.</span>
+          <button class="btn btn-secondary" onclick="loadPrinciples()">Learned principles</button>
+          <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. contradiction = your call.</span>
           <div id="principles-content" style="margin-top:12px"></div>
         </div>
       </div>
@@ -904,7 +904,7 @@ select option { background: var(--bg2); }
           <!-- LEFT SUB-NAV -->
           <nav class="settings-nav" style="flex:0 0 200px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:8px">
             <button class="settings-tab active" data-pane="account" onclick="openSettingsPane('account', this)">👤 Account</button>
-            <button class="settings-tab" data-pane="notifications" onclick="openSettingsPane('notifications', this)">🔔 Notifications</button>
+            <button class="settings-tab" data-pane="notifications" onclick="openSettingsPane('notifications', this)">Notifications</button>
             <button class="settings-tab admin-action-row" data-pane="library" onclick="openSettingsPane('library', this); loadLibrarySettings()" style="display:none">🗂️ Library</button>
             <button class="settings-tab admin-action-row" data-pane="maintenance" onclick="openSettingsPane('maintenance', this)" style="display:none">🛠️ Maintenance</button>
             <button class="settings-tab admin-action-row" data-pane="users" onclick="openSettingsPane('users', this); loadUsers()" style="display:none">👥 Users</button>
@@ -1914,11 +1914,11 @@ async function renderSynopsisBrowser(svc, tabId, opts = {}) {
   const ageStr = ageMin === 0 ? 'just now' : `${ageMin}m ago`;
   const cacheBadge =
       ci.source === 'live'
-    ? `<span style="color:var(--text3);font-size:11px" title="Fetched from ${esc(svc)} just now">● live</span>`
+    ? `<span style="color:var(--text3);font-size:11px" title="Fetched from ${esc(svc)} just now">live</span>`
     : ci.source === 'cache'
-    ? `<span style="color:var(--text3);font-size:11px" title="Served from 15-min server cache (${ageStr})">⌛ cached ${ageStr}</span>`
+    ? `<span style="color:var(--text3);font-size:11px" title="Served from 15-min server cache (${ageStr})">cached ${ageStr}</span>`
     : ci.source === 'stale'
-    ? `<span style="color:var(--amber);font-size:11px" title="${esc(svc)} unreachable: ${esc(ci.stale_error || 'connection failed')} — showing cache from ${ageStr}">⚠ stale ${ageStr}</span>`
+    ? `<span style="color:var(--amber);font-size:11px" title="${esc(svc)} unreachable: ${esc(ci.stale_error || 'connection failed')} — showing cache from ${ageStr}">stale ${ageStr}</span>`
     : '';
 
   // Toolbar (sort, filter, count)
@@ -1974,8 +1974,8 @@ function renderArrItemRow(svc, item) {
   const enrichedBadge = item.has_enrichment
     ? ((item.enrichment_source || '').startsWith('raw')
         ? `<span style="color:var(--amber);font-size:10px">raw metadata · awaiting polish</span>`
-        : `<span style="color:var(--success);font-size:10px">✓ enriched (${esc(item.enrichment_source || 'cache')})</span>`)
-    : `<span style="color:var(--amber);font-size:10px">⚠ no synopsis</span>`;
+        : `<span style="color:var(--success);font-size:10px">enriched (${esc(item.enrichment_source || 'cache')})</span>`)
+    : `<span style="color:var(--amber);font-size:10px">no synopsis</span>`;
   const synopsisHTML = item.synopsis
     ? `<p style="color:var(--text2);font-size:12px;margin:6px 0 0;line-height:1.45">${esc(item.synopsis)}</p>`
     : `<p style="color:var(--text3);font-size:12px;font-style:italic;margin:6px 0 0">No synopsis on file. Use "Refresh metadata" to fetch.</p>`;
@@ -2046,7 +2046,7 @@ async function reEnrich(svc, arrId, mode, btn) {
     await api('/api/library/reenrich', 'POST', {
       service: svc, arr_id: arrId, mode,
     });
-    btn.textContent = '✓ queued';
+    btn.textContent = 'queued';
     btn.style.color = 'var(--success)';
   } catch (e) {
     btn.textContent = '✗ ' + (e.message || 'failed').slice(0, 30);
@@ -2440,21 +2440,21 @@ async function loadUnreadMessages() {
 
     let html = '';
     if (principles.length) {
-      html += `<div class="mp-section">🧭 Learned principles awaiting review</div>`;
+      html += `<div class="mp-section">Principles awaiting review</div>`;
       html += principles.slice(0, 3).map(p => `
         <div class="msg-item" style="cursor:default">
-          <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="badge danger" style="font-size:10px;margin-right:4px">⚠ contradiction</span>' : ''}${esc(p.text)}</div>
+          <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="badge danger" style="font-size:10px;margin-right:4px">contradiction</span>' : ''}${esc(p.text)}</div>
           <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" style="flex:1" data-pid="${p.id}" data-ptext="${escAttr(p.text)}" onclick="discussPrinciple(+this.dataset.pid, this.dataset.ptext)">💬 Review together</button>
+            <button class="btn btn-primary btn-sm" style="flex:1" data-pid="${p.id}" data-ptext="${escAttr(p.text)}" onclick="discussPrinciple(+this.dataset.pid, this.dataset.ptext)">Review together</button>
           </div>
         </div>`).join('');
       if (principles.length > 3) {
-        html += `<div class="mp-more">${principles.length - 3} more in the 🧠 Learned principles panel</div>`;
+        html += `<div class="mp-more">${principles.length - 3} more in the Learned principles panel</div>`;
       }
     }
     if (r.message) {
       const m = r.message;
-      html += `<div class="mp-section">🤖 Curator messages</div>
+      html += `<div class="mp-section">Curator messages</div>
       <div class="msg-item" style="cursor:default">
         <div class="mi-text">${esc(m.message)}</div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
@@ -2462,8 +2462,8 @@ async function loadUnreadMessages() {
           <span class="mi-time">${new Date(m.created_at).toLocaleString()}</span>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-primary btn-sm" style="flex:1" data-mid="${m.id}" data-msg="${esc(m.message).replace(/"/g,'&quot;')}" data-ttype="${esc(m.trigger_type)}" onclick="respondToMessage(+this.dataset.mid, this.dataset.msg, this.dataset.ttype)">↵ Respond</button>
-          <button class="btn btn-secondary btn-sm" onclick="skipMessage(${m.id},this)" title="Skip — may come back later">↷ Skip</button>
+          <button class="btn btn-primary btn-sm" style="flex:1" data-mid="${m.id}" data-msg="${esc(m.message).replace(/"/g,'&quot;')}" data-ttype="${esc(m.trigger_type)}" onclick="respondToMessage(+this.dataset.mid, this.dataset.msg, this.dataset.ttype)">Respond</button>
+          <button class="btn btn-secondary btn-sm" onclick="skipMessage(${m.id},this)" title="Skip — may come back later">Skip</button>
         </div>
       </div>`;
       if (r.total > 1) html += `<div class="mp-more">${r.total - 1} more waiting</div>`;
@@ -2608,7 +2608,7 @@ async function sendMessage() {
       // Pass 81d: snapshot the context so we can clear one-shot flags on
       // the live object without retroactively mutating this turn's
       // payload. The ``reevaluate`` flag is one-shot — it fires the
-      // Level-2 framing on the FIRST turn after the 🔍 Reevaluate button,
+      // Level-2 framing on the FIRST turn after the Reevaluate button,
       // then we strip it so follow-up turns ("but also check Director X")
       // don't re-inject the long framing every send.
       payload.discuss_context = { ...pendingDiscussContext };
@@ -3402,7 +3402,7 @@ function _recCard(rec) {
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:3px;font-size:10px;padding:1px 6px;color:var(--text2);white-space:nowrap">${esc(g)}</span>`).join('');
   const isLib = rec.lane === 'library';
-  const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In deiner Library — noch ungesehen' : 'Nicht in der Library — zum Anschaffen'}">${isLib ? '📚' : '✨'}</span>`;
+  const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In deiner Library — noch ungesehen' : 'Nicht in der Library — zum Anschaffen'}">${isLib ? 'lib' : 'new'}</span>`;
   return `
   <div class="card" style="margin-bottom:12px">
     <div style="display:flex;align-items:flex-start;gap:12px">
@@ -3420,7 +3420,7 @@ function _recCard(rec) {
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
         ${laneBadge}
         <span class="badge amber">${Math.round((rec.confidence||0.7)*100)}%</span>
-        <button class="btn btn-secondary btn-sm" onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">💬 Discuss</button>
+        <button class="btn btn-secondary btn-sm" onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
       </div>
     </div>
   </div>`;
@@ -3515,7 +3515,7 @@ function _recentActivityBadge(p) {
   // Recent activity = orange-ish "🆕" tag. Small enough not to compete
   // with the confidence pill, distinct enough to spot at a glance.
   return ` <span class="badge amber" style="font-size:10px"
-                title="Latest episode/movie/track file imported ${ageDays}d ago — fresh activity may indicate this proposal is more relevant to review.">🆕 ${label}</span>`;
+                title="Latest episode/movie/track file imported ${ageDays}d ago — fresh activity may indicate this proposal is more relevant to review.">new · ${label}</span>`;
 }
 
 function _renderDeletionProposals(proposals) {
@@ -3542,20 +3542,20 @@ function _renderDeletionProposals(proposals) {
         <div style="display:flex;align-items:flex-start;gap:12px">
           ${p.poster_url ? `<img src="${esc(proxyImg(p.poster_url))}" alt="" style="width:56px;height:${p.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${p.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
           <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${p.stagnant?` <span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">⚖ Stagnant</span>`:''}${_recentActivityBadge(p)}</div>
+            <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${p.stagnant?` <span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}</div>
             <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
             ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
             <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
-            ${p.user_comment?`<div style="font-size:12px;color:var(--amber);margin-top:6px">💬 ${esc(p.user_comment)}</div>`:''}
+            ${p.user_comment?`<div style="font-size:12px;color:var(--amber);margin-top:6px">${esc(p.user_comment)}</div>`:''}
             <textarea id="del-comment-${p.id}" class="del-comment" style="margin-top:10px" placeholder="${placeholder}">${esc(p.user_comment||'')}</textarea>
             <div class="del-actions" style="margin-top:8px">
-              <button class="btn btn-danger btn-sm" onclick="approveDelete(${p.id},this)">${p.status==='limbo'?'🔄 Retry Delete':'🗑 Delete'}</button>
+              <button class="btn btn-danger btn-sm" onclick="approveDelete(${p.id},this)">${p.status==='limbo'?'Retry Delete':'Delete'}</button>
               ${p.status==='limbo'?`<span class="arr-limbo-error" style="display:block;margin-top:5px;font-size:11px;color:var(--amber)">⚠️ Previous delete attempt failed — ARR was unreachable. Click Retry Delete to try again.</span>`:''}
               <button class="btn btn-secondary btn-sm" onclick="rejectDelete(${p.id},this)">Keep</button>
-              <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">💬 Save note</button>
-              <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}">🗨 Discuss</button>
-              <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">🔍 Reevaluate</button>
+              <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">Save note</button>
+              <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}">Discuss</button>
+              <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">Reevaluate</button>
               ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
             </div>
           </div>
@@ -3663,7 +3663,7 @@ async function loadPrinciples() {
           ? '<span class="badge muted">rejected</span>'
           : '<span class="badge amber">shadow</span>';
       const nov = p.novelty === 'contradiction'
-        ? ' <span class="badge danger" title="Conflicts with an existing principle — your call">⚠ contradiction</span>'
+        ? ' <span class="badge danger" title="Conflicts with an existing principle — your call">contradiction</span>'
         : (p.novelty ? ` <span class="badge muted">${esc(p.novelty)}</span>` : '');
       const reinf = (p.times_reinforced || 0) > 0 ? ` <span style="color:var(--text3);font-size:11px">×${p.times_reinforced} reinforced</span>` : '';
       const meta = [p.basis, p.category].filter(Boolean).map(esc).join(' · ');
@@ -3726,7 +3726,7 @@ async function loadDownscale() {
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
-            <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">✓ Erledigt</button>
+            <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">Erledigt</button>
           </div>
         </div>
         ${p.bitrate_note ? `<div class="panel-item-sub">${esc(p.bitrate_note)}</div>` : ''}
@@ -3951,7 +3951,7 @@ async function approveDelete(id, btn) {
     if (r.limbo) {
       // ARR unreachable — proposal is in limbo, re-enable as a retry button
       btn.disabled = false;
-      btn.textContent = '🔄 Retry Delete';
+      btn.textContent = 'Retry Delete';
       const err = document.createElement('span');
       err.className = 'arr-limbo-error';
       err.style.cssText = 'display:block;margin-top:5px;font-size:11px;color:var(--amber)';
@@ -3967,11 +3967,11 @@ async function approveDelete(id, btn) {
       btn.closest('.card').style.opacity = '0.4';
       // Pass 22: removed the post-delete confirm popup. The user already
       // typed the reason in the prompt above — asking a second time
-      // ("want to tell Curatarr more?") was just nagging. The 🗨 Discuss
+      // ("want to tell Curatarr more?") was just nagging. The Discuss
       // button on the card stays visible (faded but clickable) for users
       // who genuinely want to elaborate.
     }
-  } catch(e) { btn.disabled = false; btn.textContent = '🗑 Delete'; }
+  } catch(e) { btn.disabled = false; btn.textContent = 'Delete'; }
 }
 
 async function rejectDelete(id, btn) {
@@ -4101,7 +4101,7 @@ async function saveComment(id) {
   }
 
   btn.disabled = false;
-  setTimeout(() => btn.textContent = '💬 Save note', 2500);
+  setTimeout(() => btn.textContent = 'Save note', 2500);
 }
 
 // Pass 27: discuss-banner helpers. Sticky discuss_context means the user
@@ -4123,7 +4123,7 @@ function _setDiscussBanner(text) {
       const isDeletion = pendingDiscussContext?.kind === 'deletion_proposal';
       delBtn.style.display = isDeletion ? 'inline-block' : 'none';
       delBtn.disabled = false;
-      delBtn.textContent = '🗑 Delete & exit';
+      delBtn.textContent = 'Delete & exit';
     }
   } else {
     banner.style.display = 'none';
@@ -4172,7 +4172,7 @@ function exitDiscussion() {
 // from the chat thread. We know the proposal_id from pendingDiscussContext,
 // so there's no reason to send the user back to the Deletions view just to
 // click delete on something the whole thread was about. Hits the same
-// /approve endpoint the Deletions-view "🗑 Delete" button uses.
+// /approve endpoint the Deletions-view "Delete" button uses.
 async function deleteFromDiscussion() {
   const ctx = pendingDiscussContext;
   if (!ctx || ctx.kind !== 'deletion_proposal' || !ctx.proposal_id) return;
@@ -4201,7 +4201,7 @@ async function deleteFromDiscussion() {
     if (r.limbo) {
       // ARR unreachable — proposal kept in limbo, user can retry.
       addMsg(`⚠️ ${r.error}`, 'assistant');
-      if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete & exit'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
       return;
     }
 
@@ -4225,11 +4225,11 @@ async function deleteFromDiscussion() {
       _setDiscussBanner(null);
     } else {
       addMsg(`❌ Delete failed for "${title}". Try again from the Deletions view.`, 'assistant');
-      if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete & exit'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
     }
   } catch (e) {
     addMsg(`❌ Delete request failed for "${title}". Try again from the Deletions view.`, 'assistant');
-    if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete & exit'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
   }
 }
 
