@@ -222,6 +222,17 @@ class ChromaDBWrapper:
             logger.debug("count_by_id_prefix(%r) failed: %s", prefix, e)
             return 0
     
+    def all_ids(self) -> List[str]:
+        """Every document id, cheaply (include=[] skips embeddings/documents).
+        Used by the KB overview to count vector coverage per ITEM identity —
+        raw id counts over-report because one item may carry ids from several
+        keying epochs."""
+        try:
+            return list((self.collection.get(include=[]) or {}).get("ids") or [])
+        except Exception as e:
+            logger.debug("all_ids() failed: %s", e)
+            return []
+
     def get_all(self, limit: int = 1000) -> List[Dict]:
         """Get all documents (for batch processing)."""
         result = self.collection.get(limit=limit)

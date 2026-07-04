@@ -51,6 +51,16 @@ class EnrichRequest(BaseModel):
     specific_plex_rating_keys: Optional[List[str]] = None
 
 
+@router.get("/overview")
+async def enrichment_overview(user: User = Depends(get_current_user)):
+    """The consolidated Knowledge-Base truth (see services/kb_overview.py):
+    one denominator per category, states derived from the JOIN of status
+    flags + live cache entries + vector ids, watch-history as its own
+    section, plus Wikipedia/OMDb coverage, music pipeline and storage."""
+    from src.services.kb_overview import build_overview
+    return await build_overview()
+
+
 @router.get("/status")
 async def enrichment_status(
     user: User = Depends(get_current_user),
