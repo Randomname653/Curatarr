@@ -252,38 +252,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .progress-fill { height: 100%; background: var(--amber); border-radius: 4px; transition: width .3s; }
 .progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 4px; }
 
-/* ── Pass 96b: Unified library-breakdown panel ───────────────────────────────
-   Same markup is rendered on the Library Configuration page AND the
-   Enrichment Status page. Numbers stay glanceable; the per-bucket
-   explainer reveals on hover via title="…" attributes. */
-.bd-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
-.bd-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
-.bd-icon  { font-size: 20px; }
-.bd-title { font-weight: 700; font-size: 15px; }
-.bd-svc   { font-size: 11px; color: var(--text3); background: var(--bg3); padding: 1px 6px; border-radius: 8px; text-transform: lowercase; }
-.bd-plex  { font-size: 11px; color: var(--text2); margin-left: auto; font-family: monospace; }
-.bd-muted { color: var(--text3); font-weight: 400; }
-.bd-help  { color: var(--text3); font-size: 11px; cursor: help; margin-left: 4px; }
-.bd-section { margin-bottom: 10px; }
-.bd-section:last-child { margin-bottom: 0; }
-.bd-section-head { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; }
-.bd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 16px; font-size: 12px; }
-.bd-grid > div { display: flex; align-items: baseline; gap: 6px; }
-.bd-k { color: var(--text3); }
-.bd-v { color: var(--text); font-weight: 600; }
-.bd-line { font-size: 12px; color: var(--text2); padding: 4px 0; }
-.bd-tag  { font-size: 10px; padding: 1px 5px; border-radius: 8px; background: var(--amber-dim); }
-.bd-state-row { display: grid; grid-template-columns: 200px 1fr 130px; gap: 10px; align-items: center; padding: 3px 0; font-size: 12px; cursor: help; }
-.bd-state-label { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bd-state-meter { background: var(--bg3); border-radius: 3px; height: 6px; overflow: hidden; }
-.bd-state-fill  { height: 100%; transition: width .3s; border-radius: 3px; }
-.bd-state-count { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
-.bd-state-pct   { color: var(--text3); margin-left: 4px; font-size: 11px; }
-@media (max-width: 720px) {
-  .bd-state-row { grid-template-columns: 1fr 100px; }
-  .bd-state-meter { grid-column: 1 / -1; }
-}
-
 /* ── SETUP WIZARD ── */
 #setup-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 100; display: flex; align-items: center; justify-content: center; }
 #setup-overlay.hidden { display: none; }
@@ -655,10 +623,10 @@ select option { background: var(--bg2); }
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
           <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Enrich by category</h3>
           <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> 🎵 Music</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-movie" checked> 🎬 Movies</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-show" checked> 📺 TV Shows</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-anime" checked> ⛩️ Anime</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-movie" checked> Movies</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-show" checked> TV Shows</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-anime" checked> Anime</label>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
             <span style="font-size:12px;color:var(--text3)">Source:</span>
@@ -676,42 +644,29 @@ select option { background: var(--bg2); }
                  breakdown, then asks for confirmation. -->
             <button class="btn btn-secondary" onclick="auditRequeueEnrichments(this)"
               title="Scans existing enrichment profiles for missing metadata (e.g. 0 ratings, not-found titles) and requeues only those for re-enrichment — no full re-process">
-              🔍 Audit metadata
+              Audit metadata
             </button>
             <button class="btn btn-secondary" onclick="omdbBackfill(this)"
               title="Backfill OMDb (writer, awards, extended plot) for every cached title that has an imdb_id but never got OMDb data. Fast over the supporter key — runs in the background, watch the task monitor.">
-              🎬 Backfill OMDb
+              Backfill OMDb
             </button>
             <button class="btn btn-secondary" style="color:var(--danger);border-color:var(--danger)"
               onclick="startEnrichForce(this)"
               title="Clears cache and re-enriches all selected categories — use after model or prompt changes">
-              🔄 Force Re-Enrich
+              Force Re-Enrich
             </button>
           </div>
         </div>
 
         <div id="enrich-progress-area"></div>
         <div id="enrich-live-section" style="display:none"></div>
-        <div id="enrich-cat-status"></div>
-
-        <!-- Pass 96b/c: unified library-breakdown panel (same renderer as
-             Library Configuration). Shown below the quick category summary
-             so users keep the legacy headline numbers AND get the detailed
-             per-library / per-state explainer view in one place. -->
-        <div style="margin-top:20px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <h3 style="font-size:13px;font-weight:600">Per-Library Breakdown</h3>
-            <span style="font-size:11px;color:var(--text3)">— inventory, pipeline state, vector coverage. Hover any number for its source explainer.</span>
-          </div>
-          <div id="enrich-breakdown-panel"><p class="loading">Loading library breakdowns…</p></div>
-        </div>
 
         <hr class="divider" style="margin:24px 0">
 
         <!-- SPOTIFY / MUSIC PIPELINE -->
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <h3 style="font-size:13px;font-weight:600">🎵 Spotify Import Pipeline</h3>
+            <h3 style="font-size:13px;font-weight:600">Spotify Import Pipeline</h3>
             <span id="music-running-badge" style="display:none;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);border-radius:10px;font-size:11px;padding:2px 8px">Running…</span>
           </div>
           <p style="font-size:12px;color:var(--text2);margin-bottom:12px">
@@ -731,8 +686,8 @@ select option { background: var(--bg2); }
               <input id="music-batch-input" type="number" min="50" max="2000" value="300"
                 style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);width:70px;font-size:12px;margin-left:4px">
             </label>
-            <button class="btn btn-primary btn-sm" id="music-start-btn" onclick="startMusicPipeline()">▶ Start</button>
-            <button class="btn btn-secondary btn-sm" id="music-stop-btn" style="display:none" onclick="stopMusicPipeline()">⏹ Stop</button>
+            <button class="btn btn-primary btn-sm" id="music-start-btn" onclick="startMusicPipeline()">Start</button>
+            <button class="btn btn-secondary btn-sm" id="music-stop-btn" style="display:none" onclick="stopMusicPipeline()">Stop</button>
             <button class="btn btn-secondary btn-sm" onclick="loadMusicStatus()">↻ Refresh</button>
           </div>
           <div id="music-result-area" style="margin-top:10px;font-size:12px"></div>
@@ -757,10 +712,10 @@ select option { background: var(--bg2); }
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           <select id="profile-cat" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
-            <option value="movie">🎬 Movies</option>
-            <option value="show">📺 TV Shows</option>
-            <option value="anime">⛩️ Anime</option>
-            <option value="music">🎵 Music</option>
+            <option value="movie">Movies</option>
+            <option value="show">TV Shows</option>
+            <option value="anime">Anime</option>
+            <option value="music">Music</option>
           </select>
           <select id="profile-source" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
             <option value="all">All sources</option>
@@ -781,18 +736,7 @@ select option { background: var(--bg2); }
         <p>Map your Plex libraries so Curatarr knows what to do with each one.</p>
       </div>
       <div class="view-body">
-        <!-- Pass 96b/c: unified per-library breakdown — same renderer the
-             Enrichment Status page uses. Configuration cards live below, so
-             the user can see what each library CURRENTLY contains (Plex/ARR
-             counts, enrichment pipeline state, vector coverage, Music
-             Phase 1/1.4/1.5+2) BEFORE deciding how to map it. -->
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-          <h3 style="font-size:13px;font-weight:600">Library Breakdown</h3>
-          <span style="font-size:11px;color:var(--text3)">— inventory, pipeline state, vector coverage. Hover any number for its source explainer.</span>
-        </div>
-        <div id="lib-breakdown-panel" style="margin-bottom:20px"><p class="loading">Loading library breakdowns…</p></div>
-
-        <hr class="divider" style="margin:16px 0 20px">
+        <p style="font-size:12px;color:var(--text3);margin-bottom:16px">Data-collection status lives in the Knowledge Base view — the single source of truth for enrichment, vectors and pipeline state.</p>
 
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
           <h3 style="font-size:13px;font-weight:600">Category Mapping</h3>
@@ -4420,400 +4364,95 @@ async function loadProfiles(offset=0) {
 }
 
 // ── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
-const _enrichCache = { data: null, ts: 0 };
-const ENRICH_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
-
-// ── Pass 96b: Unified library-breakdown panel ─────────────────────────────────
-//
-// Single renderer consumed by BOTH the Library Configuration page (above the
-// per-section category-select cards) and the Enrichment Status page (replaces
-// the legacy two-table layout). Same data, same display — so users can stop
-// asking "why does the Music % differ between the two screens?".
-//
-// Source of truth: GET /api/library/breakdown — see comment block above
-// ``library_breakdown`` in src/routers/library.py for the pipeline-state
-// taxonomy (LLM-polished / rule-based / awaiting-LLM / not-findable /
-// processing-error / never-processed).
-//
-// Every count is wrapped in ``<span title="…">`` so hovering reveals the
-// per-bucket explainer ("Pipeline crashed mid-item — always retried" etc).
-// That's how we keep the panel dense without being cryptic — the numbers
-// stay glanceable, the meaning is one hover away.
-
-const _breakdownCache = { data: null, ts: 0, inflight: false };
-const BREAKDOWN_CACHE_TTL = 90 * 1000;     // 90s — frontend cache window
-const BREAKDOWN_MIN_REFRESH = 60 * 1000;   // 60s — minimum gap between background refreshes
-                                            // (the 8s enrichment poll respects this so the
-                                            // panel doesn't flicker during a running pipeline)
-
-const CAT_ICON = { music: '🎵', movie: '🎬', show: '📺', anime: '⛩️' };
-
-function _fmtNum(n) {
-  return (n == null ? '—' : Number(n).toLocaleString());
-}
-
-function _fmtPct(n) {
-  if (n == null) return '—';
-  return `${(Math.round(Number(n) * 10) / 10)}%`;
-}
-
-function _fmtDateMaybe(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d)) return '—';
-  return d.toLocaleDateString(undefined, {day:'2-digit',month:'short',year:'numeric'})
-       + ' ' + d.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
-}
-
-function _stateBarRow(stateKey, state, denominator) {
-  // Inline pill with the count, percent, and a coloured progress sliver.
-  // ``title`` exposes the bucket's explainer from the API on hover.
-  const colors = {
-    llm_polished:         'var(--success)',
-    enriched_provisional: '#7fd9a9',   // Phase 2 #40 — mint-green: visually adjacent to llm_polished (success-green) but desaturated, signalling "good enough for now, scheduler will upgrade"
-    rule_based:           '#9cd1ff',
-    awaiting_llm:         'var(--amber)',
-    not_findable:         '#d18bff',
-    queued_for_retry:     '#5bb6c8',   // muted teal — distinct from awaiting_llm (amber) and never_processed (grey)
-    processing_error:     'var(--danger)',
-    never_processed:      'var(--text3)',
-  };
-  const c = colors[stateKey] || 'var(--text2)';
-  const pct = state.pct || 0;
-  return `
-    <div class="bd-state-row" title="${esc(state.explainer)}">
-      <div class="bd-state-label" style="color:${c}">${esc(state.label)}</div>
-      <div class="bd-state-meter">
-        <div class="bd-state-fill" style="width:${Math.min(pct,100)}%;background:${c}"></div>
-      </div>
-      <div class="bd-state-count">
-        <b>${_fmtNum(state.count)}</b>
-        <span class="bd-state-pct">${_fmtPct(state.pct)}</span>
-      </div>
-    </div>`;
-}
-
-function renderLibraryBreakdownPanel(lib) {
-  const inv      = lib.inventory   || {};
-  const plex     = inv.plex_section || {};
-  const arr      = inv.arr;
-  const wh       = lib.watch_history || {};
-  const pipeline = lib.pipeline      || {};
-  const vec      = lib.vector_store  || {};
-  const extras   = lib.music_extras;
-
-  const stateRows = Object.entries(pipeline.states || {})
-    .map(([k, s]) => _stateBarRow(k, s, pipeline.denominator))
-    .join('');
-
-  // ARR sub-block — handle "error / stale / live" presentations
-  let arrBlock = '<div class="bd-line bd-muted">No ARR service mapped to this category.</div>';
-  if (arr) {
-    if (arr.error) {
-      arrBlock = `<div class="bd-line" style="color:var(--danger)">
-        ${esc(arr.service)} unreachable: ${esc(arr.error)}
-      </div>`;
-    } else {
-      const stale = arr.stale ? `<span class="bd-tag" style="color:var(--amber)" title="${esc(arr.stale_reason || 'Showing cached data')}">⚠ cached</span>` : '';
-      arrBlock = `
-        <div class="bd-grid">
-          <div><span class="bd-k">${esc(arr.service)} total</span>
-               <span class="bd-v" title="Every item the ARR is aware of (managed or not yet downloaded)">${_fmtNum(arr.total)}</span> ${stale}</div>
-          <div><span class="bd-k">Downloaded</span>
-               <span class="bd-v" title="Items with at least one file on disk">${_fmtNum(arr.downloaded)}</span></div>
-          <div><span class="bd-k">Monitored</span>
-               <span class="bd-v" title="Items the ARR is actively watching for new releases">${_fmtNum(arr.monitored)}</span></div>
-          ${arr.total_albums != null ? `<div><span class="bd-k">Total albums</span>
-               <span class="bd-v">${_fmtNum(arr.total_albums)}</span></div>` : ''}
-        </div>`;
-    }
-  }
-
-  // Music-extras section — only rendered for music libraries
-  let extrasBlock = '';
-  if (extras) {
-    const phaseRow = (key, p, valueKey) => {
-      const pct = p.pct || 0;
-      return `
-        <div class="bd-state-row" title="${esc(p.explainer)}">
-          <div class="bd-state-label">${esc(p.label)}</div>
-          <div class="bd-state-meter">
-            <div class="bd-state-fill" style="width:${Math.min(pct,100)}%;background:var(--accent)"></div>
-          </div>
-          <div class="bd-state-count">
-            <b>${_fmtNum(p[valueKey])}</b><span class="bd-state-pct"> / ${_fmtNum(p.total)} · ${_fmtPct(p.pct)}</span>
-          </div>
-        </div>`;
-    };
-    extrasBlock = `
-      <div class="bd-section">
-        <div class="bd-section-head">🎵 Music pipeline (Spotify cascade)</div>
-        ${phaseRow('phase_1', extras.phase_1_plex_match,       'matched')}
-        ${phaseRow('phase_14', extras.phase_1_4_mbid_resolve,  'resolved')}
-        ${phaseRow('phase_152', extras.phase_1_5_2_genres,     'with_genres')}
-      </div>`;
-  }
-
-  const icon = CAT_ICON[lib.category] || '📁';
-
-  return `
-  <div class="bd-card" data-category="${esc(lib.category)}">
-    <div class="bd-header">
-      <span class="bd-icon">${icon}</span>
-      <span class="bd-title">${esc(lib.label)}</span>
-      ${lib.arr_service ? `<span class="bd-svc">via ${esc(lib.arr_service)}</span>` : ''}
-      <span class="bd-plex" title="Plex section title">📂 ${esc(plex.title || '—')}</span>
-    </div>
-
-    <div class="bd-section">
-      <div class="bd-section-head">📦 Inventory <span class="bd-muted">— where items live (external)</span></div>
-      <div class="bd-grid">
-        <div><span class="bd-k">Plex section</span>
-             <span class="bd-v" title="Number of items in the matched Plex library section">${_fmtNum(plex.item_count)}</span></div>
-        <div><span class="bd-k">Last Plex scan</span>
-             <span class="bd-v" title="When Plex last refreshed metadata for this section">${esc(_fmtDateMaybe(plex.scanned_at))}</span></div>
-      </div>
-      ${arrBlock}
-    </div>
-
-    <div class="bd-section">
-      <div class="bd-section-head">🗃 Watch history <span class="bd-muted">— what you actually consumed</span></div>
-      <div class="bd-grid">
-        <div><span class="bd-k">Unique ${esc(lib.unit || 'items')}</span>
-             <span class="bd-v" title="${esc(wh.scope || '')}">${_fmtNum(wh.unique_titles)}</span></div>
-        <div><span class="bd-k">Total plays</span>
-             <span class="bd-v" title="Every playback event we have on record">${_fmtNum(wh.total_plays)}</span></div>
-      </div>
-    </div>
-
-    <div class="bd-section">
-      <div class="bd-section-head">
-        ⚙️ Enrichment pipeline
-        <span class="bd-muted">— ${_fmtNum(pipeline.tracked)} of ${_fmtNum(pipeline.denominator)} tracked</span>
-        <span class="bd-help" title="${esc(pipeline.denominator_basis || '')}">ⓘ</span>
-      </div>
-      ${stateRows}
-    </div>
-
-    <div class="bd-section">
-      <div class="bd-section-head">
-        🧮 Vector store <span class="bd-muted">— ${_fmtPct(vec.pct)} coverage</span>
-        <span class="bd-help" title="${esc(vec.basis || '')}">ⓘ</span>
-      </div>
-      <div class="bd-grid">
-        <div><span class="bd-k">Indexed</span>
-             <span class="bd-v">${_fmtNum(vec.indexed)} / ${_fmtNum(vec.denominator)}</span></div>
-      </div>
-    </div>
-
-    ${extrasBlock}
-  </div>`;
-}
-
-async function loadLibraryBreakdowns(targetId, opts) {
-  opts = opts || {};
-  const el = document.getElementById(targetId);
-  if (!el) return;
-
-  // Treat "the panel currently shows real content" as the signal not to
-  // flash a loading placeholder. A `.bd-card` exists only when a previous
-  // render already wrote one; first paint and error states don't have it.
-  const hasContent = !!el.querySelector('.bd-card');
-
-  // Cache hit — paint immediately, no network.
-  if (!opts.forceRefresh
-      && _breakdownCache.data
-      && (Date.now() - _breakdownCache.ts < BREAKDOWN_CACHE_TTL)) {
-    el.innerHTML = _breakdownCache.data.libraries
-      .map(renderLibraryBreakdownPanel).join('')
-      || '<p class="bd-muted">No libraries configured yet.</p>';
-    return;
-  }
-
-  // Throttle background refreshes. The Enrichment Status page polls every
-  // 8 s while a pipeline is running; without this guard each poll would
-  // bust the breakdown cache and re-paint the panel, causing the visible
-  // "content → loading → content" flicker the user reported.
-  if (opts.forceRefresh
-      && hasContent
-      && _breakdownCache.ts
-      && (Date.now() - _breakdownCache.ts < BREAKDOWN_MIN_REFRESH)) {
-    return;
-  }
-
-  // Concurrency guard — a second invocation while the first is still
-  // in flight would race and could over-write the newer paint with the
-  // older response. Skip and let the in-flight one finish.
-  if (_breakdownCache.inflight) return;
-  _breakdownCache.inflight = true;
-
-  // Only swap to the loading placeholder when the panel is genuinely
-  // empty (first paint, or a previous error wiped it). Background
-  // refreshes leave the existing cards in place and replace them
-  // atomically with the new HTML once it's ready.
-  if (!hasContent) {
-    el.innerHTML = '<p class="loading">Loading library breakdown…</p>';
-  }
-
-  try {
-    // quick=true → use cached ARR counts (5-min TTL on the server) for the
-    // initial paint; fire a full fetch in the background to refresh ARR
-    // numbers without blocking the UI.
-    const quick = await api('/api/library/breakdown?quick=true');
-    _breakdownCache.data = quick;
-    _breakdownCache.ts = Date.now();
-    el.innerHTML = quick.libraries.map(renderLibraryBreakdownPanel).join('')
-                || '<p class="bd-muted">No libraries configured yet.</p>';
-
-    // Background refresh — only if some ARR was missing from the quick paint
-    const needsLive = (quick.libraries || []).some(l =>
-      l.arr_service && !(l.inventory && l.inventory.arr));
-    if (needsLive) {
-      try {
-        const full = await api('/api/library/breakdown');
-        _breakdownCache.data = full;
-        _breakdownCache.ts = Date.now();
-        el.innerHTML = full.libraries.map(renderLibraryBreakdownPanel).join('');
-      } catch(_) { /* keep the quick render if the live one fails */ }
-    }
-  } catch(e) {
-    // Only overwrite if we don't already have valid content on screen —
-    // a transient API hiccup shouldn't blow away the previous good paint.
-    if (!hasContent) {
-      el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
-    }
-  } finally {
-    _breakdownCache.inflight = false;
-  }
-}
-
 async function refreshArrCounts(btn) {
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  _enrichCache.data = null; // bust cache on manual refresh
-  // Null the timestamp too — the throttle in loadLibraryBreakdowns checks
-  // ``ts``, not ``data``, so leaving ts at "30 s ago" would skip the
-  // user-initiated refresh as if it were a poll.
-  _breakdownCache.data = null;
-  _breakdownCache.ts = 0;
   await api('/api/enrichment/arr-refresh', 'POST').catch(()=>{});
-  await loadEnrichStatus();
-  // Re-render the breakdown panel if currently visible
-  const panel = document.getElementById('enrich-breakdown-panel');
-  if (panel) await loadLibraryBreakdowns('enrich-breakdown-panel', { forceRefresh: true });
-  const cfgPanel = document.getElementById('lib-breakdown-panel');
-  if (cfgPanel) await loadLibraryBreakdowns('lib-breakdown-panel', { forceRefresh: true });
+  await loadEnrichStatus(true);
   if (btn) { btn.disabled = false; btn.textContent = '↻'; }
 }
 
-function _renderEnrichStatus(s, arrLoading) {
-  const cats = s.categories || {};
-  const rows = Object.entries(cats).map(([cat, d]) => `
-    <tr>
-      <td>${CAT_LABELS[cat]||cat}</td>
-      <td>
-        <div style="font-size:13px;font-weight:600">${(d.total_unique||d.total_in_history).toLocaleString()}</div>
-        <div style="font-size:11px;color:var(--text3)">${d.unit||'items'} · ${d.total_in_history.toLocaleString()} entries</div>
-      </td>
-      <td>
-        <div class="progress-bar" style="margin-bottom:2px"><div class="progress-fill" style="width:${d.pct}%"></div></div>
-        <div class="progress-label">
-          <span style="color:var(--success)">${d.enriched.toLocaleString()} enriched</span>
-          ${d.not_enriched>0?`<span style="color:var(--text3)">${d.not_enriched.toLocaleString()} pending</span>`:''}
-          <span>${d.pct}%</span>
-        </div>
-      </td>
-      <td>${d.vector_ready.toLocaleString()}</td>
-    </tr>`).join('');
+const KB_STATE_DEFS = {
+  enriched_live:  'Status flag set AND a live profile exists in the cache — the real, usable truth.',
+  enriched_dead:  'Flag says enriched but the cache entry is gone — re-queued automatically by the next enrichment run.',
+  awaiting_polish:'Raw API data is cached but no LLM profile has been written yet.',
+  retry_queued:   'Tracked with an error — retried on the next run.',
+  not_findable:   'The metadata APIs do not know this title.',
+  never_processed:'Never entered the pipeline.',
+};
 
-  const arr = s.arr || {};
-  const arrRow = (icon, key) => {
-    const a = arr[key];
-    if (!a) return '';
-    if (a.error && !a.total) return `<tr><td>${icon} ${key}</td><td colspan="3" style="color:var(--danger)">${esc(a.error)}</td></tr>`;
-    const pct = a.pct || 0;
-    const staleTag = a.stale ? `<span style="font-size:10px;color:var(--amber);margin-left:4px" title="${esc(a.stale_reason||'Unreachable — showing cached data')}">⚠ cached</span>` : '';
-    const albumRow = key === 'lidarr' && a.total_albums
-      ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${(a.total_albums||0).toLocaleString()} albums · ${(a.enriched_albums||0)} enriched</div>`
-      : '';
-    const vectorBadge = a.vector_count != null
-      ? `<span style="font-size:10px;color:var(--text3);margin-left:6px" title="Items indexed in vector store">🧮 ${(a.vector_count||0)} vectors</span>`
-      : '';
-    const orphanTag = a.orphaned
-      ? `<span style="font-size:10px;color:var(--amber);margin-left:6px" title="Enriched metadata for items no longer in ${key} (removed/replaced) — stale, safe to purge">⚠ ${a.orphaned} orphaned</span>`
-      : '';
+function _renderKbOverview(o, running, lastRun) {
+  const cats = o.categories || {};
+  const order = ['movie', 'show', 'anime', 'music'];
+  const rows = order.filter(c => cats[c]).map(cat => {
+    const c = cats[cat], d = c.denominator, s = c.states;
+    const pct = d.downloaded ? Math.round(100 * s.enriched_live / d.downloaded) : 0;
+    const cell = k => `<td title="${KB_STATE_DEFS[k]}" style="text-align:right${s[k] ? '' : ';color:var(--text3)'}">${s[k].toLocaleString()}</td>`;
     return `<tr>
-      <td>${icon} ${key.charAt(0).toUpperCase()+key.slice(1)}${staleTag}</td>
-      <td>${(a.total||0).toLocaleString()}<br><span style="font-size:11px;color:var(--text3)">${(a.downloaded||0).toLocaleString()} downloaded</span></td>
-      <td>${(a.monitored||0).toLocaleString()}</td>
-      <td>
-        <div class="progress-bar" style="margin-bottom:2px"><div class="progress-fill" style="width:${Math.min(pct,100)}%"></div></div>
-        <div class="progress-label"><span style="color:var(--success)">${a.enriched||0} enriched${vectorBadge}${orphanTag}</span><span>${pct}%</span></div>
-        ${albumRow}
-      </td>
+      <td>${cat}</td>
+      <td style="text-align:right">${d.downloaded.toLocaleString()} <span style="color:var(--text3)">/ ${d.arr_total.toLocaleString()}</span></td>
+      <td style="text-align:right;color:var(--success);font-weight:600" title="${KB_STATE_DEFS.enriched_live}">${s.enriched_live.toLocaleString()} <span style="color:var(--text3);font-weight:400">${pct}%</span></td>
+      ${cell('enriched_dead')}${cell('awaiting_polish')}${cell('retry_queued')}${cell('not_findable')}${cell('never_processed')}
+      <td style="text-align:right" title="Items with at least one vector-store entry (deduplicated by item identity)">${c.vectors.indexed.toLocaleString()}</td>
+      <td style="text-align:right" title="Live raw cache entries carrying Wikipedia significance">${c.wikipedia.significance_cached.toLocaleString()}</td>
+      <td style="text-align:right" title="Live raw cache entries with OMDb data (writer / awards / extended plot)">${c.omdb.covered.toLocaleString()}</td>
     </tr>`;
-  };
-  const arrRows = [arrRow('🎬','radarr'), arrRow('📺','sonarr'), arrRow('🎵','lidarr')].filter(Boolean).join('');
-  const arrSection = arrLoading
-    ? `<p style="font-size:12px;color:var(--text3)">⏳ Loading ARR libraries…</p>`
-    : arrRows ? `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <div style="font-size:12px;font-weight:600;color:var(--text2)">ARR Libraries</div>
-        <button class="btn btn-secondary btn-sm" onclick="refreshArrCounts(this)">↻</button>
-      </div>
-      <div class="tbl-wrap" style="margin-bottom:12px">
-        <table class="tbl"><thead><tr><th>Service</th><th>Total / Downloaded</th><th>Monitored</th><th>Enriched</th></tr></thead>
-        <tbody>${arrRows}</tbody></table>
-      </div>` : '';
+  }).join('');
 
-  document.getElementById('enrich-cat-status').innerHTML = `
-    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">
-      Items marked as "enriched" won't be re-fetched unless you re-run enrichment manually.
-      Items already in progress are skipped automatically.
+  const wh = o.watch_history_only || {};
+  const whRows = order.filter(c => wh[c]).map(c =>
+    `<tr><td>${c}</td><td style="text-align:right">${wh[c].rows.toLocaleString()}</td><td style="text-align:right">${wh[c].enriched.toLocaleString()}</td></tr>`).join('');
+
+  const mp = o.music_pipeline || {};
+  const phase = (label, pp, def) => pp ? `<tr><td title="${def}">${label}</td><td style="text-align:right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td style="text-align:right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+  const st = o.storage || {};
+
+  document.getElementById('enrich-overview').innerHTML = `
+    <div class="tbl-wrap" style="margin-bottom:6px;overflow-x:auto">
+      <table class="tbl"><thead><tr>
+        <th>Library</th>
+        <th style="text-align:right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
+        <th style="text-align:right">Enriched</th>
+        <th style="text-align:right">Dead</th>
+        <th style="text-align:right">Awaiting</th>
+        <th style="text-align:right">Retry</th>
+        <th style="text-align:right">Not findable</th>
+        <th style="text-align:right">Never</th>
+        <th style="text-align:right">Vectors</th>
+        <th style="text-align:right">Wikipedia</th>
+        <th style="text-align:right">OMDb</th>
+      </tr></thead><tbody>${rows}</tbody></table>
     </div>
-    <div class="tbl-wrap" style="margin-bottom:16px">
-      <table class="tbl"><thead><tr><th>Category</th><th>Unique / Total entries</th><th>Enriched</th><th>Vector ready</th></tr></thead>
-      <tbody>${rows}</tbody></table>
+    <p style="font-size:11px;color:var(--text3);margin:0 0 16px">One denominator per row: downloaded ARR items. Hover any header or number for its definition. Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px">
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages above">Watch-history tracking (own set)</div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th style="text-align:right">Tracking rows</th><th style="text-align:right">Enriched</th></tr></thead><tbody>${whRows}</tbody></table></div>
+      </div>
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Spotify pipeline</div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Phase</th><th style="text-align:right">Progress</th><th></th></tr></thead><tbody>
+          ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
+          ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
+          ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
+        </tbody></table></div>
+      </div>
     </div>
-    ${arrSection}
-    ${s.running?'<p style="color:var(--amber);margin-top:8px;font-size:12px">⚙️ Enrichment running… <span id="enrich-pct-live"></span></p>':''}
-    ${s.last_run?`<p style="color:var(--text3);font-size:11px;margin-top:6px">Last run: ${new Date(s.last_run).toLocaleString()}</p>`:''}`;
+    <p style="font-size:11px;color:var(--text3);margin-bottom:4px">Storage: enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</p>
+    ${running ? '<p style="color:var(--amber);margin-top:8px;font-size:12px">Enrichment running… <span id="enrich-pct-live"></span></p>' : ''}
+    ${lastRun ? `<p style="color:var(--text3);font-size:11px;margin-top:6px">Last run: ${new Date(lastRun).toLocaleString()}</p>` : ''}`;
 }
 
 async function loadEnrichStatus(forceRefresh) {
-  // Serve from 24h cache unless forced or stale
-  if (!forceRefresh && _enrichCache.data && (Date.now() - _enrichCache.ts < ENRICH_CACHE_TTL)) {
-    _renderEnrichStatus(_enrichCache.data, false);
-    if (_enrichCache.data.running) setTimeout(() => loadEnrichStatus(true), 8000);
-    // Pass 96c: refresh the unified breakdown panel alongside the legacy
-    // summary. Note we do NOT forward ``forceRefresh`` — the breakdown
-    // panel has its own 90 s cache + 60 s minimum-refresh throttle. The
-    // 8 s enrichment poll would otherwise repaint the panel constantly
-    // while a pipeline runs, causing the visible flicker the user
-    // reported. The panel still updates roughly once a minute, which is
-    // the right cadence for slowly-moving counts like "items tracked".
-    if (document.getElementById('enrich-breakdown-panel')) {
-      loadLibraryBreakdowns('enrich-breakdown-panel');
-    }
-    return;
-  }
-
   try {
-    // Phase 1: render DB stats immediately (no ARR API call)
-    const quick = await api('/api/enrichment/status?quick=true');
-    _renderEnrichStatus(quick, /* arrLoading= */ Object.keys(quick.arr || {}).length === 0);
-    // Pass 96c: see the long comment above — same reasoning, omit forceRefresh.
-    if (document.getElementById('enrich-breakdown-panel')) {
-      loadLibraryBreakdowns('enrich-breakdown-panel');
-    }
-
-    // Phase 2: fetch full data with live ARR counts in background
-    const full = await api('/api/enrichment/status');
-    _enrichCache.data = full;
-    _enrichCache.ts = Date.now();
-    _renderEnrichStatus(full, false);
-    if (full.running) setTimeout(() => loadEnrichStatus(true), 8000);
-  } catch(e) {
-    document.getElementById('enrich-cat-status').innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    const [ov, st] = await Promise.all([
+      api('/api/enrichment/overview'),
+      api('/api/enrichment/status?quick=true').catch(() => ({})),
+    ]);
+    _renderKbOverview(ov, !!st.running, st.last_run);
+    if (st.running) setTimeout(() => loadEnrichStatus(true), 8000);
+  } catch (e) {
+    const el = document.getElementById('enrich-overview');
+    if (el) el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
   }
 }
 
@@ -4989,7 +4628,7 @@ async function startEnrichForce(btn) {
   } catch(e) {
     el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔄 Force Re-Enrich'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Force Re-Enrich'; }
   }
 }
 
@@ -5066,7 +4705,7 @@ async function auditRequeueEnrichments(btn) {
   } catch (e) {
     el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔍 Audit metadata'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Audit metadata'; }
   }
 }
 
@@ -5088,7 +4727,7 @@ async function omdbBackfill(btn) {
   } catch (e) {
     el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🎬 Backfill OMDb'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Backfill OMDb'; }
   }
 }
 
@@ -5097,12 +4736,6 @@ let discoverSections=[];
 async function loadLibraryConfig() {
   const el=document.getElementById('lib-config-content');
   el.innerHTML='<p class="loading">Fetching library info from Plex…</p>';
-  // Pass 96c: fire the unified breakdown fetch in parallel with the config
-  // cards. Reuses the 90s frontend cache + 5-min server-side ARR cache, so
-  // toggling between views feels instant after the first paint.
-  if (document.getElementById('lib-breakdown-panel')) {
-    loadLibraryBreakdowns('lib-breakdown-panel');
-  }
   try {
     const [cfg,disc]=await Promise.all([
       api('/api/libraries/config'),
