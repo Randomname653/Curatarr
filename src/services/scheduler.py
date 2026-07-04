@@ -155,21 +155,27 @@ def start_scheduler():
         return
     _started = True
 
+    # ── Data Custodian (debt-based maintenance) ──────────────────────────────
+    # This app runs ON DEMAND — the old 02:00-04:30 crons practically never
+    # fired on the owner's usage pattern (which is how 10k enriched profiles
+    # rotted unnoticed). The custodian replaces them: every absorbed job
+    # carries a cadence + last-run stamp; a tick every 30 minutes runs
+    # whatever is OVERDUE, in priority order, as a background trickle
+    # (gaming-aware, curator-yielding, partial tasks continue next tick).
+    # Absorbed: plex_sync, arr_sync, arr_pre_enrich, music_pipeline,
+    # memory_decay, orphan_check, db_vacuum, db_backup + the previously
+    # button-only OMDb backfill / significance backfill / audit / taste
+    # recompute / enrichment cycle. enrichment_ttl_refresh is RETIRED —
+    # change-based invalidation (_source_hash + dead-cache revive in the
+    # pre-filter) replaced its purpose.
+    from src.services.data_custodian import custodian_tick
     scheduler.add_job(
-        _tracked("plex_sync")(job_plex_sync),
-        IntervalTrigger(hours=24),
-        id="plex_sync",
-        name="Daily Plex sync",
+        custodian_tick,
+        IntervalTrigger(minutes=30),
+        id="data_custodian",
+        name="Data custodian tick (debt-based maintenance)",
         replace_existing=True,
-        misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        _tracked("arr_sync")(job_arr_sync),
-        IntervalTrigger(hours=24),
-        id="arr_sync",
-        name="Daily ARR sync",
-        replace_existing=True,
-        misfire_grace_time=3600,
+        misfire_grace_time=900,
     )
     scheduler.add_job(
         _tracked("proactive_messages")(job_proactive_messages),
@@ -178,38 +184,6 @@ def start_scheduler():
         name="Proactive message cache fill",
         replace_existing=True,
         misfire_grace_time=600,
-    )
-    scheduler.add_job(
-        _tracked("memory_decay")(job_memory_decay),
-        CronTrigger(day_of_week="sun", hour=3),
-        id="memory_decay",
-        name="Weekly memory decay",
-        replace_existing=True,
-        misfire_grace_time=7200,
-    )
-    scheduler.add_job(
-        _tracked("orphan_check")(job_orphan_check),
-        CronTrigger(day_of_week="sun", hour=4),
-        id="orphan_check",
-        name="Weekly orphaned section check",
-        replace_existing=True,
-        misfire_grace_time=7200,
-    )
-    scheduler.add_job(
-        _tracked("arr_pre_enrich")(job_arr_pre_enrich),
-        CronTrigger(hour=2, minute=30),
-        id="arr_pre_enrich",
-        name="Daily ARR pre-enrichment batch",
-        replace_existing=True,
-        misfire_grace_time=7200,
-    )
-    scheduler.add_job(
-        _tracked("enrichment_ttl_refresh")(job_enrichment_ttl_refresh),
-        CronTrigger(hour=3, minute=30),
-        id="enrichment_ttl_refresh",
-        name="Daily enrichment TTL refresh",
-        replace_existing=True,
-        misfire_grace_time=7200,
     )
     # Phase 2 #41: hourly source-upgrade pass.
     # Promotes a small batch of provisional (fast-tier) rows to full-tier
@@ -226,35 +200,8 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=1800,
     )
-    scheduler.add_job(
-        _tracked("music_pipeline")(job_music_pipeline),
-        CronTrigger(hour=4, minute=0),
-        id="music_pipeline",
-        name="Daily music match + Last.fm enrichment",
-        replace_existing=True,
-        misfire_grace_time=7200,
-    )
-    # Pass 15b: weekly DB vacuum off-hours. Reclaims free SQLite pages
-    # without touching enrichment data.
-    scheduler.add_job(
-        _tracked("db_vacuum")(job_db_vacuum),
-        CronTrigger(day_of_week="sun", hour=4, minute=30),
-        id="db_vacuum",
-        name="Weekly DB vacuum",
-        replace_existing=True,
-        misfire_grace_time=14400,
-    )
-    # Daily consistent DB backup (SQLite online backup API) + rotation, at
-    # 02:00 — before the nightly enrich/sync churn, so it captures a stable
-    # snapshot. The restore point that didn't exist when a corrupt -wal hit.
-    scheduler.add_job(
-        _tracked("db_backup")(job_db_backup),
-        CronTrigger(hour=2, minute=0),
-        id="db_backup",
-        name="Daily DB backup",
-        replace_existing=True,
-        misfire_grace_time=7200,
-    )
+    # music_pipeline / db_vacuum / db_backup crons: absorbed by the custodian
+    # (see block above) — they never fired at 02:00-04:30 on an on-demand box.
     # Pass 16o: keep Library Manager arr cache warm. Catches recovery
     # windows for a flaky Lidarr without the user having to click.
     scheduler.add_job(
@@ -279,10 +226,10 @@ def start_scheduler():
     )
 
     scheduler.start()
-    logger.info("Scheduler started: plex_sync(24h), arr_sync(24h), arr_pre_enrich(02:30), "
-                "ttl_refresh(03:30), source_upgrade(hourly), music_pipeline(04:00), "
-                "proactive(30min), memory_decay(weekly), orphan_check(weekly), "
-                "db_vacuum(weekly), arr_cache_refresh(30min), game_watcher(30s)")
+    logger.info("Scheduler started: data_custodian(30min tick, debt-based — "
+                "sync/enrich/omdb/significance/spotify/taste/audit/decay/orphans/"
+                "vacuum/backup), proactive(30min), source_upgrade(hourly), "
+                "arr_cache_refresh(30min), game_watcher(30s)")
 
     # Run startup check — cache recommendations if missing, sync if overdue.
     # Retained via _track_task so asyncio's GC can't cancel it mid-flight.
@@ -337,35 +284,16 @@ async def _startup_check():
             logger.info("[startup] No cached recommendations — generating now")
             await _cache_recommendations(user_id)
 
-        # Pass 15a: missed-job catch-up. Each scheduled job persists its
-        # last successful run timestamp via _tracked(). On startup we fire
-        # any job whose interval has elapsed. Catch-ups are CONSOLIDATED:
-        # a job that missed 5 daily windows still only runs once.
-        catchup_jobs = [
-            ("plex_sync",             24.0,  job_plex_sync),
-            ("arr_sync",              24.0,  job_arr_sync),
-            ("memory_decay",          168.0, job_memory_decay),
-            ("orphan_check",          168.0, job_orphan_check),
-            ("arr_pre_enrich",        24.0,  job_arr_pre_enrich),
-            ("enrichment_ttl_refresh", 24.0, job_enrichment_ttl_refresh),
-            ("music_pipeline",        24.0,  job_music_pipeline),
-            ("db_vacuum",             168.0, job_db_vacuum),
-            # Backup is overdue-on-startup too: if no snapshot in the last 24h,
-            # take one shortly after launch (catch-up tracks the last run, so a
-            # --reload restart inside the window won't re-backup).
-            ("db_backup",             24.0,  job_db_backup),
-            # proactive_messages NOT included — 30min interval, catch-up
-            # would be noise.
-        ]
-        for job_id, interval_h, fn in catchup_jobs:
-            if _job_overdue(job_id, interval_h):
-                logger.info("[startup] catch-up: %s overdue — firing once", job_id)
-                try:
-                    await fn()
-                    _record_job_run(job_id)
-                except Exception as e:
-                    logger.warning("[startup] catch-up %s failed: %s — will retry next startup",
-                                   job_id, e)
+        # Pass 15a evolved into the Data Custodian: the old startup catch-up
+        # loop is now the custodian's FIRST TICK — same debt semantics
+        # (_job_overdue over persisted last-run stamps), but it also covers
+        # the previously button-only work (OMDb, significance, audit, taste,
+        # enrichment cycle), runs as a background trickle instead of blocking
+        # startup, and repeats every 30 minutes while the app is up. The
+        # first tick sleeps a settle window so the user's first clicks never
+        # compete with maintenance.
+        from src.services.data_custodian import custodian_tick
+        _track_task(asyncio.create_task(custodian_tick(first_tick=True)))
 
         # Resume enrichment if there are unfinished items (stopped mid-run or
         # game-mode items waiting for LLM). Runs in background after a short delay
