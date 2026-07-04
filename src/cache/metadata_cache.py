@@ -168,6 +168,29 @@ class MetadataCache:
             }
         return None
 
+    def live_key_set(self, prefix: str) -> set:
+        """All NON-EXPIRED cache keys starting with ``prefix`` (version prefix
+        stripped; un-versioned v1 keys included, matching get_cache's read
+        fallback). One query instead of thousands of point lookups — used by
+        the enrichment pre-filter to detect 'flag says enriched but the cache
+        entry is dead' items in bulk."""
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT cache_key FROM api_cache
+            WHERE (cache_key LIKE ? OR cache_key LIKE ?)
+              AND expires_at > ?
+            """,
+            (f"{_CACHE_VERSION}:{prefix}%", f"{prefix}%",
+             datetime.now().isoformat()),
+        )
+        out = set()
+        vpre = f"{_CACHE_VERSION}:"
+        for (k,) in cur.fetchall():
+            out.add(k[len(vpre):] if k.startswith(vpre) else k)
+        cur.close()
+        return out
+
     def set_cache(self, cache_key: str, response: Dict[str, Any], days: int = 7):
         """
         Cache API response.
