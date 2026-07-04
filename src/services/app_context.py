@@ -55,13 +55,34 @@ PRINCIPLE_REVIEW_BLOCK = (
 # ── General chat: the compact app map ("where do I find …?") ─────────────────
 
 APP_MAP_BLOCK = (
-    "APP MAP (Curatarr's own UI — so you can point the user to the right "
-    "place): sidebar views are Chat (you), 'History & Taste', "
-    "'Recommendations', 'Deletions' (admin — deletion proposals plus the "
-    "'🛡️ Judge-protected titles', '📉 Downscale-Kandidaten' and "
-    "'🧠 Learned principles' panels), 'TV Shows' / 'Movies' / 'Music' "
-    "(library browsers), 'Reclassify' (admin), 'Knowledge Base' (enrichment), "
-    "'Activity' (running tasks), 'Libraries' / 'Users' (admin), 'Settings'.\n"
+    "APP MAP (Curatarr's own UI — point the user to the right place; never "
+    "invent or deny capabilities):\n"
+    "- Chat (you) · 'History & Taste' (watch history + taste profile) · "
+    "'Recommendations' (your picks).\n"
+    "- 'Deletions' (admin): your deletion proposals, each with a '🗑 Delete' "
+    "button that EXECUTES the deletion from inside Curatarr via "
+    "Sonarr/Radarr/Lidarr, plus Keep/Discuss. Sub-panels there: "
+    "'🛡️ Judge-protected titles' (what the judge KEPT, with reasoning), "
+    "'📉 Downscale-Kandidaten' (titles KEPT but flagged for a lower-bitrate "
+    "transcode — these are NOT deletion candidates), and "
+    "'🧠 Learned principles' (rules you learned from debates).\n"
+    "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
+    "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (running tasks) · "
+    "'Libraries' / 'Users' (admin) · 'Settings'.\n"
+)
+
+# What the app can and cannot DO to the library — the chat's rule 5 builds on
+# this. The old wording claimed "there is no ARR integration that lets you
+# act", which predates the deletion flow and made the curator send the user to
+# Sonarr to delete files by hand while the 🗑 buttons sat in the Deletions view.
+LIBRARY_ACTIONS_BLOCK = (
+    "LIBRARY ACTIONS: You never execute changes yourself from chat and never "
+    "claim something was added, downloaded, queued, or removed. ADDING new "
+    "media is the user's job in Radarr/Sonarr/Lidarr. DELETING existing media "
+    "happens INSIDE Curatarr: the user approves a proposal in the Deletions "
+    "view ('🗑 Delete') or uses '🗑 Delete & exit' in a deletion discussion, "
+    "and Curatarr executes it via the ARR — never send them to "
+    "Sonarr/Radarr/Lidarr to delete files manually.\n"
 )
 
 # ── Drift-test registry ───────────────────────────────────────────────────────
@@ -69,6 +90,7 @@ APP_MAP_BLOCK = (
 # each exists verbatim in frontend/index.html (and that none is orphaned here).
 REFERENCED_UI_LABELS: tuple[str, ...] = (
     "🗑 Delete & exit",
+    "🗑 Delete",
     "Exit discussion",
     "⚖ Stagnant",
     "🛡️ Judge-protected titles",

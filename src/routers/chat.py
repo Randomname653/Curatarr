@@ -2137,17 +2137,12 @@ async def send_message(
     # sounds good", which is a pure hallucination — nothing was added,
     # nothing happens. This rule keeps the curator honest until the actual
     # *arr add pipeline lands (see backlog: "Library add pipeline").
-    no_library_actions_rule = (
-        "5. NO LIBRARY ACTIONS: You CANNOT add, remove, download, or modify "
-        "anything in the user's library. There is no integration to Sonarr / "
-        "Radarr / Lidarr that lets you act. NEVER claim a title was added, "
-        "downloaded, queued, or removed. NEVER say things like 'added to your "
-        "library', 'now in your queue', 'downloaded', 'queued for download', "
-        "or 'removed'. If the user says 'yes' / 'sounds good' to a "
-        "recommendation, treat that as them noting it for THEMSELVES. You can "
-        "say 'Noted — when you want it, add it to Radarr/Sonarr/Lidarr "
-        "yourself' or similar honest phrasing."
-    )
+    # App capability knowledge lives in app_context.py (SSOT, drift-tested).
+    # The old inline wording claimed "there is no ARR integration" — true for
+    # the chat itself, but the APP deletes via the ARR when the user approves,
+    # and the curator was sending users to Sonarr to delete files by hand.
+    from src.services.app_context import LIBRARY_ACTIONS_BLOCK
+    no_library_actions_rule = f"5. {LIBRARY_ACTIONS_BLOCK.strip()}"
 
     # NO INVENTION rule — paired with the _build_no_metadata_anchor block
     # AND the domain-aware [HIDDEN METADATA CONTEXT]. Two independent failure
