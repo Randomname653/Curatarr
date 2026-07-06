@@ -419,8 +419,10 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     # music-artist lines (all None for video docs, so they simply don't print)
     add("Artist type", data.get("artist_type"))
     if data.get("listeners"):
-        add("Community", f"{data['listeners']:,} Last.fm listeners"
-            if isinstance(data.get("listeners"), int) else data.get("listeners"))
+        try:
+            add("Community", f"{int(data['listeners']):,} Last.fm listeners")
+        except (TypeError, ValueError):
+            add("Community", data.get("listeners"))
     sim = data.get("similar_artists")
     add("Similar artists", sim[:8] if isinstance(sim, list) else sim)
     add("Bio", data.get("bio"), cap=650)
