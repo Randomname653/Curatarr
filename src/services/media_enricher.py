@@ -354,6 +354,12 @@ def build_verified_data(
             "relations_checked": bool(raw.get("relations_checked")),
             "anidb_tags":        raw.get("anidb_tags"),
             "staff":             raw.get("staff"),
+            # Music-artist fields (musicbrainz+lastfm) — they sat on the raw
+            # doc for 15k artists while the evidence block never showed them.
+            "bio":             raw.get("bio"),
+            "listeners":       raw.get("listeners"),
+            "artist_type":     raw.get("type") if raw.get("media_type") == "music" else None,
+            "similar_artists": raw.get("similar_artists"),
         }
     finally:
         if owns:
@@ -410,6 +416,14 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Notable", data.get("extra_context"))
     if data.get("rating"):
         add("Rating", f"{data['rating']}/10")
+    # music-artist lines (all None for video docs, so they simply don't print)
+    add("Artist type", data.get("artist_type"))
+    if data.get("listeners"):
+        add("Community", f"{data['listeners']:,} Last.fm listeners"
+            if isinstance(data.get("listeners"), int) else data.get("listeners"))
+    sim = data.get("similar_artists")
+    add("Similar artists", sim[:8] if isinstance(sim, list) else sim)
+    add("Bio", data.get("bio"), cap=650)
     add("Significance", data.get("significance"), cap=600)
     add("Community reception", data.get("reception"), cap=900)
     rels = data.get("relations")
