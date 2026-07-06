@@ -2135,11 +2135,18 @@ async def send_message(
     # to the user message in the LLM's attention window. Memories and RAG
     # items are explicitly framed as "background" so the model doesn't pivot
     # the topic to a title it sees in those blocks.
+    # The lock forbids the model pivoting on its own — it must NOT forbid the
+    # USER's comparison question. Live failure: asked "is Freezing what you
+    # just described, or just heavy fanservice?" (calibrating the standard
+    # against a reference title), the curator answered "I cannot answer that.
+    # My current focus is strictly locked" — and lost the consensus.
     topic_lock_rule = (
         "3. TOPIC LOCK: The current focus is the title in [CURRENT DISCUSSION CONTEXT] below. "
         "Other titles mentioned in [MEMORIES] or RELEVANT LIBRARY ITEMS are background only — "
-        "DO NOT switch the topic to them, do not start discussing them. "
-        "If the user's question doesn't fit the current title, say so explicitly instead of pivoting."
+        "do not switch the topic to them on your own. "
+        "When the USER asks how another title compares, answer the comparison — it calibrates "
+        "the standard — then bring the verdict back to the current title; the decision being "
+        "made here is about the current title only."
         if active_title else ""
     )
 
@@ -2284,7 +2291,7 @@ RELEVANT LIBRARY ITEMS:
 {rag_context if rag_context else ""}
 
 {discuss_block}
-{f"CURRENT FOCUS: You are strictly discussing the title '{active_title}'." if active_title else ""}
+{f"CURRENT FOCUS: The title under discussion is '{active_title}'." if active_title else ""}
 {pillar_framework}
 {hidden_metadata_context}
 
