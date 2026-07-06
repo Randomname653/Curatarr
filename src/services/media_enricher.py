@@ -353,6 +353,7 @@ def build_verified_data(
             "relations":         raw.get("relations"),
             "relations_checked": bool(raw.get("relations_checked")),
             "anidb_tags":        raw.get("anidb_tags"),
+            "staff":             raw.get("staff"),
         }
     finally:
         if owns:
@@ -391,6 +392,7 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Director", data.get("director"))
     cast = data.get("cast")
     add("Cast", cast[:4] if isinstance(cast, list) else cast)
+    add("Staff", data.get("staff"))
     add("Themes", data.get("themes"))
     add("Keywords", data.get("keywords"))
     add("Mood", data.get("mood"))
