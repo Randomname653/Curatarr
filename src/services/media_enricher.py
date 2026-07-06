@@ -348,6 +348,11 @@ def build_verified_data(
             # reception_checked stops the just-in-time top-up re-querying.
             "reception":         raw.get("reception"),
             "reception_checked": bool(raw.get("reception_checked")),
+            # Typed franchise graph (AniList) + AniDB community tags (weekly
+            # offline snapshot); relations_checked gates the light catch-up.
+            "relations":         raw.get("relations"),
+            "relations_checked": bool(raw.get("relations_checked")),
+            "anidb_tags":        raw.get("anidb_tags"),
         }
     finally:
         if owns:
@@ -405,6 +410,12 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
         add("Rating", f"{data['rating']}/10")
     add("Significance", data.get("significance"), cap=600)
     add("Community reception", data.get("reception"), cap=900)
+    rels = data.get("relations")
+    if rels and isinstance(rels, list):
+        add("Franchise", "; ".join(
+            f"{r.get('type')}: {r.get('title')}" + (f" ({r['year']})" if r.get("year") else "")
+            for r in rels if isinstance(r, dict) and r.get("title")))
+    add("AniDB tags", data.get("anidb_tags"), cap=400)
     add("Plot", data.get("plot"), cap=700)
     return "\n".join(lines)
 
@@ -812,6 +823,26 @@ async def ensure_verified_data(
                 )
         except Exception as e:
             logger.debug("[verified] reception top-up failed for %r: %s", title, e)
+
+    # Franchise/tags catch-up for docs reception-checked before relations
+    # existed — one AniList call + a local snapshot read, no LLM involved,
+    # so it is NOT allow_summarizer-gated. Idempotent via relations_checked.
+    if (data and data.get("reception_checked") and not data.get("relations_checked")
+            and media_type in ("anime", "movie", "show")):
+        try:
+            from src.services.reception import topup_franchise
+            if await asyncio.wait_for(topup_franchise(
+                title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                anilist_id=anilist_id, anidb_id=anidb_id,
+                plex_rating_key=plex_rating_key, year=data.get("year"), cache=cache,
+            ), timeout=15.0):
+                data = build_verified_data(
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] franchise top-up failed for %r: %s", title, e)
 
     # Already OMDb-checked, already has the fields, or no imdb_id → done.
     if (not data or data.get("omdb_checked") or data.get("writer")

@@ -45,7 +45,29 @@ _ANILIST_FIELDS = """
   title { romaji english }
   tags { name rank }
   reviews(sort: RATING_DESC, perPage: 4) { nodes { summary score body } }
+  relations { edges { relationType(version: 2)
+    node { seasonYear format title { romaji english } } } }
 """
+
+# The anime franchise graph — manga/novel sources are out of scope for
+# library curation, and long tails (character cameos etc.) only add noise.
+_RELATION_FORMATS = {"TV", "TV_SHORT", "MOVIE", "OVA", "ONA", "SPECIAL"}
+_MAX_RELATIONS = 8
+
+
+def _extract_relations(al: dict) -> list[dict]:
+    rels = []
+    for ed in ((al.get("relations") or {}).get("edges")) or []:
+        node = ed.get("node") or {}
+        if (node.get("format") or "") not in _RELATION_FORMATS:
+            continue
+        t = (node.get("title") or {}).get("english") or \
+            (node.get("title") or {}).get("romaji")
+        if not t:
+            continue
+        rels.append({"type": (ed.get("relationType") or "RELATED").replace("_", " ").title(),
+                     "title": t, "year": node.get("seasonYear")})
+    return rels[:_MAX_RELATIONS]
 
 _CONDENSE_SYS = (
     "You write a RECEPTION summary for a media curator's evidence file. "
@@ -155,16 +177,18 @@ def _anime_tags_line(al: dict) -> str:
 
 
 async def build_reception(title: str, media_type: str, *, year: int = None,
-                          anilist_id=None, tmdb_id=None) -> Optional[str]:
+                          anilist_id=None, tmdb_id=None) -> tuple[Optional[str], list]:
     """Fetch community reviews and condense them into a short RECEPTION
     paragraph. Score numbers are written deterministically; only the verdict
-    prose comes from the summarizer. None when no community data exists."""
+    prose comes from the summarizer. Returns (reception_text, typed_relations)
+    — relations ride along free on the same AniList call (anime only)."""
     async with httpx.AsyncClient(timeout=25) as client:
         if media_type == "anime":
             al = await _anilist_media(client, anilist_id=anilist_id,
                                       search=title, year=year)
             if not al:
-                return None
+                return None, []
+            relations = _extract_relations(al)
             mal_stats, mal_reviews = {}, []
             if al.get("idMal"):
                 core = await _jikan(client, f"/anime/{al['idMal']}")
@@ -178,9 +202,9 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             if not mal_reviews and not al_reviews:
                 # quantitative signal only — deterministic, no LLM, still honest
                 if not stats:
-                    return None
+                    return None, relations
                 return " ".join(x for x in (
-                    stats, tags, "Audience too small for written reviews.") if x)
+                    stats, tags, "Audience too small for written reviews.") if x), relations
             lines = [f"TITLE: {title}", stats, tags]
             for rv in al_reviews:
                 lines.append(f"\nAniList review ({rv.get('score')}/100): "
@@ -195,13 +219,13 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                          "invented beyond those above.")
             verdict = await _condense("\n".join(x for x in lines if x))
             if not verdict:
-                return " ".join(x for x in (stats, tags) if x) or None
-            return " ".join(x for x in (stats, verdict) if x)
+                return (" ".join(x for x in (stats, tags) if x) or None), relations
+            return " ".join(x for x in (stats, verdict) if x), relations
 
         # movies / shows: TMDB reviews (ratings already live on the raw doc)
         reviews = await _tmdb_reviews(client, tmdb_id, media_type)
         if not reviews:
-            return None
+            return None, []
         lines = [f"TITLE: {title}"]
         for rv in reviews[:_MAX_REVIEWS]:
             rating = (rv.get("author_details") or {}).get("rating")
@@ -210,7 +234,22 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                      "verdict, what viewers praise, what they slam, and whether "
                      "opinion is split. Plain prose, no bullet points, no scores "
                      "invented beyond those above.")
-        return await _condense("\n".join(lines))
+        return await _condense("\n".join(lines)), []
+
+
+def _offline_tags(title: str, media_type: str, *, anilist_id=None,
+                  mal_id=None, year=None) -> list[str]:
+    """AniDB community tags from the weekly offline snapshot (local read,
+    never a download in this path). Anime only."""
+    if media_type != "anime":
+        return []
+    try:
+        from src.services import anime_offline
+        off = anime_offline.lookup(anilist_id=anilist_id, mal_id=mal_id,
+                                   title=title, year=year)
+        return (off or {}).get("tags", [])[:18]
+    except Exception:
+        return []
 
 
 # ── raw-doc top-up (mirrors topup_significance) ──────────────────────────────
@@ -251,23 +290,98 @@ async def topup_reception(
             return False
         # prefer ids the raw doc itself carries (sonarr prefetch resolves them)
         doc = targets[0][1]
-        rec = await build_reception(
+        rec, rels = await build_reception(
             title, media_type, year=year or doc.get("year"),
             anilist_id=anilist_id or doc.get("anilist_id"),
             tmdb_id=tmdb_id or doc.get("tmdb_id"),
         )
+        anidb_tags = _offline_tags(title, media_type,
+                                   anilist_id=anilist_id or doc.get("anilist_id"),
+                                   mal_id=doc.get("mal_id"),
+                                   year=year or doc.get("year"))
         added = False
         for key, raw in targets:
             # Marker set even on None so titles with no community data are
             # never re-queried (same contract as significance_checked).
             raw["reception_checked"] = True
+            raw["relations_checked"] = True
             if rec:
                 raw["reception"] = rec
                 added = True
+            if rels:
+                raw["relations"] = rels
+            if anidb_tags:
+                raw["anidb_tags"] = anidb_tags
             cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
         return added
     except Exception as e:
         logger.debug("[reception] top-up failed for %r: %s", title, e)
+        return False
+    finally:
+        if owns:
+            cache.close()
+
+
+async def topup_franchise(
+    title: str,
+    media_type: str,
+    *,
+    tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
+    plex_rating_key=None, year: Optional[int] = None,
+    cache=None,
+) -> bool:
+    """Light catch-up for docs that were reception-checked BEFORE relations
+    existed: one AniList call (no LLM) + a local snapshot read. Idempotent
+    via ``relations_checked``. The franchise graph only EXISTS for anime in
+    our sources, but the marker is stamped on movies/shows too so the
+    backfill query converges instead of re-touching them every tick."""
+    if media_type not in ("anime", "movie", "show"):
+        return False
+    from src.cache.metadata_cache import MetadataCache
+    from src.services.media_enricher import _RAW_CACHE_DAYS
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+        t40 = (title or "")[:40]
+        if t40:
+            id_keys.append(t40)
+        targets = []
+        for k in id_keys:
+            hit = cache.get_cache(f"raw:{media_type}:{k}")
+            if not hit or not isinstance(hit.get("response"), dict):
+                continue
+            raw = hit["response"]
+            if raw.get("relations_checked"):
+                return False
+            targets.append((f"raw:{media_type}:{k}", raw))
+        if not targets:
+            return False
+        doc = targets[0][1]
+        rels, anidb_tags = [], []
+        if media_type == "anime":
+            al_id = anilist_id or doc.get("anilist_id")
+            async with httpx.AsyncClient(timeout=25) as client:
+                al = await _anilist_media(client, anilist_id=al_id,
+                                          search=title, year=year or doc.get("year"))
+            rels = _extract_relations(al) if al else []
+            anidb_tags = _offline_tags(title, media_type, anilist_id=al_id,
+                                       mal_id=doc.get("mal_id"),
+                                       year=year or doc.get("year"))
+        added = False
+        for key, raw in targets:
+            raw["relations_checked"] = True
+            if rels:
+                raw["relations"] = rels
+                added = True
+            if anidb_tags:
+                raw["anidb_tags"] = anidb_tags
+                added = True
+            cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+        return added
+    except Exception as e:
+        logger.debug("[reception] franchise top-up failed for %r: %s", title, e)
         return False
     finally:
         if owns:
@@ -293,6 +407,10 @@ async def run_reception_backfill(limit: int = 40) -> dict:
         except Exception:
             return False
 
+    # weekly snapshot for the AniDB-tag side (downloads at most once a week)
+    from src.services.anime_offline import ensure_offline_db
+    await ensure_offline_db(allow_download=True)
+
     cache = MetadataCache()
     try:
         cur = cache.conn.cursor()
@@ -301,7 +419,8 @@ async def run_reception_backfill(limit: int = 40) -> dict:
             SELECT cache_key, response FROM api_cache
             WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
               AND expires_at > ?
-              AND response NOT LIKE '%"reception_checked"%'
+              AND NOT (response LIKE '%"reception_checked"%'
+                       AND response LIKE '%"relations_checked"%')
             """,
             (datetime.now().isoformat(),),
         )
@@ -338,12 +457,15 @@ async def run_reception_backfill(limit: int = 40) -> dict:
             break
         title = resp.get("title") or id_key
         await wait_for_curator()
+        # full pass when reception was never fetched; light relations/tags
+        # catch-up (no LLM) when only the franchise fields are missing
+        fn = topup_reception if not resp.get("reception_checked") else topup_franchise
         try:
             if await asyncio.wait_for(
-                topup_reception(title, cat, plex_rating_key=id_key,
-                                year=resp.get("year"),
-                                anilist_id=resp.get("anilist_id"),
-                                tmdb_id=resp.get("tmdb_id")),
+                fn(title, cat, plex_rating_key=id_key,
+                   year=resp.get("year"),
+                   anilist_id=resp.get("anilist_id"),
+                   tmdb_id=resp.get("tmdb_id")),
                 timeout=90.0,
             ):
                 added += 1

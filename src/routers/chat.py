@@ -1509,6 +1509,37 @@ async def _build_discuss_context_block(
             _watched_lookup(proposal.user_id, [proposal.title],
                             category=proposal.category).get(proposal.title))
         block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
+        # Franchise reality-check: which typed relations actually sit in the
+        # user's library RIGHT NOW — a review's "compared to its predecessors"
+        # means something different when the predecessors are long gone.
+        _rels = (verified_payload or {}).get("relations") or []
+        if _rels:
+            try:
+                import re as _re
+                from src.cache.metadata_cache import MetadataCache as _MC
+                _mc = _MC()
+                try:
+                    _arr = _mc.get_cache("arr_library:sonarr")
+                finally:
+                    _mc.close()
+                _resp = (_arr or {}).get("response")
+                _items = _resp if isinstance(_resp, list) else (_resp or {}).get("items") or []
+                def _tnorm(s):
+                    return _re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+                _lib = {_tnorm(i.get("title")) for i in _items if isinstance(i, dict)}
+                if _lib:
+                    _fl = []
+                    for r in _rels[:6]:
+                        if not isinstance(r, dict) or not r.get("title"):
+                            continue
+                        _mark = "IN THE LIBRARY" if _tnorm(r["title"]) in _lib else "not in the library"
+                        _yr = f" ({r['year']})" if r.get("year") else ""
+                        _fl.append(f"  {r.get('type')}: {r['title']}{_yr} — {_mark}")
+                    if _fl:
+                        block += ("\nFRANCHISE (typed relations vs the current library):\n"
+                                  + "\n".join(_fl) + "\n")
+            except Exception as _e:
+                logger.debug("[chat] franchise library check failed: %s", _e)
         # Richer grounding for the discussion: the actual Wikipedia LEAD (entity-
         # matched, collision-guarded). The curator reasons far more precisely from
         # the real article than a thin synopsis — and a discussion is one title +
