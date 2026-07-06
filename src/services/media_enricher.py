@@ -342,6 +342,10 @@ def build_verified_data(
             # significance_checked stops the just-in-time top-up re-querying.
             "significance":         raw.get("significance"),
             "significance_checked": bool(raw.get("significance_checked")),
+            # Community reception (AniList/MAL/TMDB reviews, condensed);
+            # reception_checked stops the just-in-time top-up re-querying.
+            "reception":         raw.get("reception"),
+            "reception_checked": bool(raw.get("reception_checked")),
         }
     finally:
         if owns:
@@ -388,6 +392,7 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     if data.get("rating"):
         add("Rating", f"{data['rating']}/10")
     add("Significance", data.get("significance"), cap=600)
+    add("Community reception", data.get("reception"), cap=900)
     add("Plot", data.get("plot"), cap=700)
     return "\n".join(lines)
 
@@ -773,6 +778,28 @@ async def ensure_verified_data(
                 )
         except Exception as e:
             logger.debug("[verified] significance top-up failed for %r: %s", title, e)
+
+    # Community-reception grounding (AniList/MAL/TMDB reviews) — the judge's
+    # blind spot on obscure titles. Same contract as the significance top-up:
+    # allow_summarizer-gated (gate holders never trigger it), time-boxed,
+    # idempotent via reception_checked.
+    if (allow_summarizer and data and not data.get("reception")
+            and not data.get("reception_checked")
+            and media_type in ("anime", "movie", "show")):
+        try:
+            from src.services.reception import topup_reception
+            if await asyncio.wait_for(topup_reception(
+                title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                anilist_id=anilist_id, anidb_id=anidb_id,
+                plex_rating_key=plex_rating_key, year=data.get("year"), cache=cache,
+            ), timeout=45.0):
+                data = build_verified_data(
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] reception top-up failed for %r: %s", title, e)
 
     # Already OMDb-checked, already has the fields, or no imdb_id → done.
     if (not data or data.get("omdb_checked") or data.get("writer")

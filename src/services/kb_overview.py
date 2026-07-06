@@ -100,6 +100,8 @@ async def build_overview() -> dict:
                        for c in ("movie", "show", "anime", "music")}
         omdb_counts = {c: mc.count_raw_with_marker(c, '"omdb_checked"')
                        for c in ("movie", "show", "anime", "music")}
+        reception_counts = {c: mc.count_raw_with_marker(c, '"reception"')
+                            for c in ("movie", "show", "anime")}
     finally:
         mc.close()
 
@@ -181,6 +183,7 @@ async def build_overview() -> dict:
         c["vectors"]["of"] = c["denominator"]["downloaded"]
         c["wikipedia"] = {"significance_cached": wiki_counts.get(cat, 0)}
         c["omdb"] = {"covered": omdb_counts.get(cat, 0)}
+        c["reception"] = {"covered": reception_counts.get(cat, 0)}
 
     # ── watch-history-only section (its OWN set, never mixed into the above) ──
     with get_db_session() as db:

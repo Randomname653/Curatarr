@@ -134,6 +134,14 @@ async def _run_taste_if_due(deep: bool = False) -> bool:
     return True
 
 
+async def _run_reception(deep: bool = False) -> bool:
+    from src.services.reception import run_reception_backfill
+    r = await run_reception_backfill(limit=150 if deep else 40)
+    logger.info("[custodian] reception: +%d (checked %d, remaining %d)",
+                r.get("added", 0), r.get("checked", 0), r.get("remaining", 0))
+    return r.get("remaining", 0) == 0
+
+
 async def _run_memory_catchup(deep: bool = False) -> bool:
     from src.services.episodic_memory import extract_catchup
     r = await extract_catchup()
@@ -177,6 +185,8 @@ def _registry() -> list[Task]:
         Task("custodian_omdb",   "OMDb top-up",          24.0,  _run_omdb,
              takes_deep=True),
         Task("custodian_signif", "Wikipedia significance", 24.0, _run_significance,
+             needs_llm=True, takes_deep=True),
+        Task("custodian_recept", "Community reception",  24.0,  _run_reception,
              needs_llm=True, takes_deep=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
              takes_deep=True),
