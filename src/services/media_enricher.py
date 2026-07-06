@@ -332,6 +332,8 @@ def build_verified_data(
             "country":        raw.get("country"),
             "seasons":        raw.get("seasons"),
             "episodes_total": raw.get("episodes_total"),
+            "runtime_min":    raw.get("runtime_min"),
+            "studios":        raw.get("studios"),
             "extra_context":  raw.get("extra_context"),
             "source":         pick(enriched.get("source"), raw.get("source")),
             # imdb_id drives the dynamic OMDb top-up (ensure_verified_data);
@@ -388,6 +390,16 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Keywords", data.get("keywords"))
     add("Mood", data.get("mood"))
     add("Country", data.get("country"))
+    # Format facts sat in the dict but never rendered — the curator argued
+    # about commitment/pacing without knowing it was e.g. a 12x24min single
+    # season (the Lostorage WIXOSS "what do you know" dump exposed this).
+    if data.get("episodes_total"):
+        fmt = f"{data['episodes_total']} episodes x {data['runtime_min']} min" \
+            if data.get("runtime_min") else f"{data['episodes_total']} episodes"
+        if data.get("seasons"):
+            fmt = f"{data['seasons']} season(s), {fmt}"
+        add("Format", fmt)
+    add("Studio", data.get("studios"))
     add("Notable", data.get("extra_context"))
     if data.get("rating"):
         add("Rating", f"{data['rating']}/10")
