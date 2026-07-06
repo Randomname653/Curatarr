@@ -1,0 +1,153 @@
+"""
+Curatarr — Studio notes: what a studio is KNOWN FOR, as evidence.
+
+The Princess Lover! debate flipped on outside knowledge: "early GoHands,
+chaotic experimental visual language". The curator knew the studio only as a
+name — it could neither verify nor counter the claim, so it folded
+instantly. A studio's REPUTATION is title-independent knowledge that belongs
+in the evidence file of every title it produced.
+
+Prototype (tests/studio_proto.py, 20 real library studios): 20/20 Wikipedia
+articles found (3 homonym mis-hits -> the title-match guard below), and the
+8B summarizer distilled curator-grade notes — GoHands: "known for its
+distinctive animation style ... K, Hand Shakers ... bold character designs
+and dynamic action sequences".
+
+One note per STUDIO (~400 distinct across 2.3k anime), cached ~forever
+(reputation moves slowly), fetched JIT for discussed titles and back-filled
+piggyback by the reception walker.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from typing import Optional
+
+import httpx
+
+from src.config import settings
+from src.services.llm_utils import (clean_llm_text, ollama_options,
+                                    strip_think_tags, SUMMARIZER_KEEP_ALIVE)
+
+logger = logging.getLogger(__name__)
+
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+WIKI_HEADERS = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
+                              "personal media curator) python-httpx"}
+_NOTE_CACHE_DAYS = 3650   # reputation moves slowly; NONE results cache too
+
+_CONDENSE_SYS = (
+    "You write a one-line STUDIO NOTE for a media curator's evidence file. "
+    "Use ONLY the text given. State what the studio is KNOWN FOR — its visual "
+    "style, reputation, signature works. Skip founding dates, corporate "
+    "history and ownership. 2 sentences maximum, plain prose. If the text "
+    "documents no style or reputation, output exactly: NONE")
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _cache_key(studio: str) -> str:
+    return f"studio_note:{_norm(studio)}"
+
+
+def get_studio_note_cached(studio: str, cache) -> Optional[str]:
+    """Sync cache read for build_verified_data (no fetching)."""
+    try:
+        hit = cache.get_cache(_cache_key(studio))
+        if hit and isinstance(hit.get("response"), dict):
+            return hit["response"].get("note")
+    except Exception:
+        pass
+    return None
+
+
+async def _wiki_studio_lead(studio: str) -> str:
+    """Lead extract of the studio's article, homonym-guarded: the hit's title
+    must contain the studio name (proto: 'A-1 Pictures' -> 'Sony Pictures
+    Animation' and 'Felix Film' -> 'Felix the Cat' were exactly this trap)."""
+    want = _norm(studio)
+    async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
+        for query in (studio, f"{studio} animation studio"):
+            try:
+                sr = await client.get(WIKI_API, params={
+                    "action": "query", "list": "search", "format": "json",
+                    "srsearch": query, "srlimit": 5})
+                hits = (sr.json().get("query", {}).get("search", [])
+                        if sr.status_code == 200 else [])
+            except Exception:
+                hits = []
+            for h in hits[:4]:
+                t = h.get("title") or ""
+                if want not in _norm(t):
+                    continue
+                try:
+                    ex = await client.get(WIKI_API, params={
+                        "action": "query", "prop": "extracts", "format": "json",
+                        "titles": t, "exintro": 1, "explaintext": 1, "redirects": 1})
+                    pages = (ex.json().get("query") or {}).get("pages") or {}
+                    extract = next(iter(pages.values()), {}).get("extract") or ""
+                except Exception:
+                    continue
+                low = extract.lower()
+                if ("studio" in low or "animation" in low) and len(extract) > 200:
+                    return extract
+    return ""
+
+
+async def _condense(studio: str, extract: str) -> Optional[str]:
+    for model in (settings.SUMMARIZER_MODEL, settings.BASE_SUMMARIZER_MODEL):
+        if not model:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.post(f"{settings.effective_ollama}/api/chat", json={
+                    "model": model,
+                    "messages": [{"role": "system", "content": _CONDENSE_SYS},
+                                 {"role": "user",
+                                  "content": f"STUDIO: {studio}\n\nTEXT:\n{extract[:2400]}"}],
+                    "stream": False,
+                    "keep_alive": SUMMARIZER_KEEP_ALIVE,
+                    **ollama_options(temperature=0.1, num_predict=200),
+                })
+            if r.status_code != 200:
+                continue
+            out = clean_llm_text(strip_think_tags(
+                r.json().get("message", {}).get("content", "") or "")).strip()
+            out = re.sub(r"\s{2,}", " ", out.replace("**", "")).strip()
+            if not out or out.upper().startswith("NONE") or len(out) < 25:
+                return None
+            return out
+        except Exception as e:
+            logger.debug("[studio-note] condense via %s failed: %s", model, e)
+    return None
+
+
+async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
+    """Fetch-and-cache the note for one studio (idempotent — a checked
+    marker is written even when Wikipedia has nothing, so each studio costs
+    at most one Wikipedia + summarizer round ever)."""
+    if not studio or not _norm(studio):
+        return None
+    from src.cache.metadata_cache import MetadataCache
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        hit = cache.get_cache(_cache_key(studio))
+        if hit and isinstance(hit.get("response"), dict):
+            return hit["response"].get("note")
+        extract = await _wiki_studio_lead(studio)
+        note = await _condense(studio, extract) if extract else None
+        cache.set_cache(_cache_key(studio), {"checked": True, "note": note},
+                        days=_NOTE_CACHE_DAYS)
+        if note:
+            logger.info("[studio-note] %s: %s", studio, note[:100])
+        return note
+    except Exception as e:
+        logger.debug("[studio-note] failed for %r: %s", studio, e)
+        return None
+    finally:
+        if owns:
+            cache.close()

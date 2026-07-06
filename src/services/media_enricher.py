@@ -334,6 +334,7 @@ def build_verified_data(
             "episodes_total": raw.get("episodes_total"),
             "runtime_min":    raw.get("runtime_min"),
             "studios":        raw.get("studios"),
+            "studio_note":    _studio_note_for(cache, raw.get("studios")),
             "extra_context":  raw.get("extra_context"),
             "source":         pick(enriched.get("source"), raw.get("source")),
             # imdb_id drives the dynamic OMDb top-up (ensure_verified_data);
@@ -364,6 +365,22 @@ def build_verified_data(
     finally:
         if owns:
             cache.close()
+
+
+def _studio_note_for(cache, studios) -> Optional[str]:
+    """First cached studio-reputation note for this title's studios (sync
+    read only — fetching happens in ensure_verified_data / the walker)."""
+    if not studios:
+        return None
+    try:
+        from src.services.studio_notes import get_studio_note_cached
+        for s in (studios if isinstance(studios, list) else [studios])[:2]:
+            note = get_studio_note_cached(s, cache)
+            if note:
+                return note
+    except Exception:
+        pass
+    return None
 
 
 def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
@@ -413,6 +430,7 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             fmt = f"{data['seasons']} season(s), {fmt}"
         add("Format", fmt)
     add("Studio", data.get("studios"))
+    add("Studio note", data.get("studio_note"), cap=350)
     add("Notable", data.get("extra_context"))
     if data.get("rating"):
         add("Rating", f"{data['rating']}/10")
@@ -841,6 +859,25 @@ async def ensure_verified_data(
                 )
         except Exception as e:
             logger.debug("[verified] reception top-up failed for %r: %s", title, e)
+
+    # Studio reputation note (Wikipedia lead -> summarizer, once per STUDIO
+    # ever) — the Princess Lover! debate flipped on exactly this knowledge
+    # arriving from outside. Summarizer-gated like significance.
+    if (allow_summarizer and data and data.get("studios")
+            and not data.get("studio_note")):
+        try:
+            from src.services.studio_notes import ensure_studio_note
+            studios = data["studios"]
+            first = (studios if isinstance(studios, list) else [studios])[0]
+            if await asyncio.wait_for(ensure_studio_note(first, cache=cache),
+                                      timeout=30.0):
+                data = build_verified_data(
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] studio note failed for %r: %s", title, e)
 
     # Franchise/tags catch-up for docs reception-checked before relations
     # existed — one AniList call + a local snapshot read, no LLM involved,
