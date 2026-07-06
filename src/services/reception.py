@@ -504,6 +504,14 @@ async def run_reception_backfill(limit: int = 40) -> dict:
                 added += 1
         except Exception as e:
             logger.debug("[reception-backfill] %r failed: %s", title, e)
+        # piggyback: studio reputation notes (cache-hit after the first few
+        # titles — ~400 distinct studios cover the whole anime library)
+        try:
+            from src.services.studio_notes import ensure_studio_note
+            for s in (resp.get("studios") or [])[:2]:
+                await ensure_studio_note(s)
+        except Exception as e:
+            logger.debug("[reception-backfill] studio note %r: %s", title, e)
         checked += 1
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}
