@@ -47,7 +47,32 @@ _ANILIST_FIELDS = """
   reviews(sort: RATING_DESC, perPage: 4) { nodes { summary score body } }
   relations { edges { relationType(version: 2)
     node { seasonYear format title { romaji english } } } }
+  staff(perPage: 12, sort: RELEVANCE) {
+    edges { role node { name { full } } } }
 """
+
+# The creative core the curator's talent-pedigree arguments need; the
+# director already has his own verified-data line. Proto: 24/24 library
+# anime across 1960-2026 carried these roles (22/24 with 3+).
+_STAFF_KEEP = re.compile(
+    r"original creator|original story|series composition|script|screenplay"
+    r"|music|character design|chief director", re.I)
+
+
+def _extract_staff(al: dict) -> list[str]:
+    out, seen = [], set()
+    for ed in ((al.get("staff") or {}).get("edges")) or []:
+        role = (ed.get("role") or "").strip()
+        name = ((ed.get("node") or {}).get("name") or {}).get("full")
+        if not name or not _STAFF_KEEP.search(role):
+            continue
+        role = re.sub(r"\s*\(.*?\)\s*$", "", role)   # "Script (eps 3, 7)" -> "Script"
+        key = (role.lower(), name)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f"{role}: {name}")
+    return out[:6]
 
 # The anime franchise graph — manga/novel sources are out of scope for
 # library curation, and long tails (character cameos etc.) only add noise.
@@ -177,18 +202,20 @@ def _anime_tags_line(al: dict) -> str:
 
 
 async def build_reception(title: str, media_type: str, *, year: int = None,
-                          anilist_id=None, tmdb_id=None) -> tuple[Optional[str], list]:
+                          anilist_id=None, tmdb_id=None) -> tuple[Optional[str], list, list]:
     """Fetch community reviews and condense them into a short RECEPTION
     paragraph. Score numbers are written deterministically; only the verdict
     prose comes from the summarizer. Returns (reception_text, typed_relations)
-    — relations ride along free on the same AniList call (anime only)."""
+    — relations and staff ride along free on the same AniList call (anime
+    only)."""
     async with httpx.AsyncClient(timeout=25) as client:
         if media_type == "anime":
             al = await _anilist_media(client, anilist_id=anilist_id,
                                       search=title, year=year)
             if not al:
-                return None, []
+                return None, [], []
             relations = _extract_relations(al)
+            staff = _extract_staff(al)
             mal_stats, mal_reviews = {}, []
             if al.get("idMal"):
                 core = await _jikan(client, f"/anime/{al['idMal']}")
@@ -202,9 +229,9 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             if not mal_reviews and not al_reviews:
                 # quantitative signal only — deterministic, no LLM, still honest
                 if not stats:
-                    return None, relations
+                    return None, relations, staff
                 return " ".join(x for x in (
-                    stats, tags, "Audience too small for written reviews.") if x), relations
+                    stats, tags, "Audience too small for written reviews.") if x), relations, staff
             lines = [f"TITLE: {title}", stats, tags]
             for rv in al_reviews:
                 lines.append(f"\nAniList review ({rv.get('score')}/100): "
@@ -219,13 +246,13 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                          "invented beyond those above.")
             verdict = await _condense("\n".join(x for x in lines if x))
             if not verdict:
-                return (" ".join(x for x in (stats, tags) if x) or None), relations
-            return " ".join(x for x in (stats, verdict) if x), relations
+                return (" ".join(x for x in (stats, tags) if x) or None), relations, staff
+            return " ".join(x for x in (stats, verdict) if x), relations, staff
 
         # movies / shows: TMDB reviews (ratings already live on the raw doc)
         reviews = await _tmdb_reviews(client, tmdb_id, media_type)
         if not reviews:
-            return None, []
+            return None, [], []
         lines = [f"TITLE: {title}"]
         for rv in reviews[:_MAX_REVIEWS]:
             rating = (rv.get("author_details") or {}).get("rating")
@@ -290,7 +317,7 @@ async def topup_reception(
             return False
         # prefer ids the raw doc itself carries (sonarr prefetch resolves them)
         doc = targets[0][1]
-        rec, rels = await build_reception(
+        rec, rels, staff = await build_reception(
             title, media_type, year=year or doc.get("year"),
             anilist_id=anilist_id or doc.get("anilist_id"),
             tmdb_id=tmdb_id or doc.get("tmdb_id"),
@@ -310,6 +337,8 @@ async def topup_reception(
                 added = True
             if rels:
                 raw["relations"] = rels
+            if staff:
+                raw["staff"] = staff
             if anidb_tags:
                 raw["anidb_tags"] = anidb_tags
             cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
@@ -359,13 +388,14 @@ async def topup_franchise(
         if not targets:
             return False
         doc = targets[0][1]
-        rels, anidb_tags = [], []
+        rels, anidb_tags, staff = [], [], []
         if media_type == "anime":
             al_id = anilist_id or doc.get("anilist_id")
             async with httpx.AsyncClient(timeout=25) as client:
                 al = await _anilist_media(client, anilist_id=al_id,
                                           search=title, year=year or doc.get("year"))
             rels = _extract_relations(al) if al else []
+            staff = _extract_staff(al) if al else []
             anidb_tags = _offline_tags(title, media_type, anilist_id=al_id,
                                        mal_id=doc.get("mal_id"),
                                        year=year or doc.get("year"))
@@ -374,6 +404,9 @@ async def topup_franchise(
             raw["relations_checked"] = True
             if rels:
                 raw["relations"] = rels
+                added = True
+            if staff:
+                raw["staff"] = staff
                 added = True
             if anidb_tags:
                 raw["anidb_tags"] = anidb_tags
