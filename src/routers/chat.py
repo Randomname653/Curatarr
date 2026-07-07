@@ -1688,6 +1688,14 @@ async def _build_discuss_context_block(
             if _st and (_st.get("episodes") or 0) >= 2 and _eps_total:
                 _ws += f" (series total: {_eps_total} episodes)"
             block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
+            try:
+                from src.services.watch_status import viewing_pattern
+                _vp = viewing_pattern(proposal.user_id, proposal.title,
+                                      category=proposal.category)
+                if _vp:
+                    block += f"VIEWING PATTERN: {_vp}\n"
+            except Exception as _e:
+                logger.debug("[chat] viewing pattern failed: %s", _e)
         # Franchise reality-check: which typed relations actually sit in the
         # user's library RIGHT NOW — a review's "compared to its predecessors"
         # means something different when the predecessors are long gone.
@@ -2373,6 +2381,16 @@ async def send_message(
                 hidden_metadata_context = (hidden_metadata_context or "") + stance
                 logger.info("[chat] stance injected for %r (%d chars)",
                             active_title, len(stance))
+            # episode-level viewing signals for free chat too — "9 episodes"
+            # says less than "S1E1-E9 in order, stopped after E9, binged"
+            try:
+                from src.services.watch_status import viewing_pattern
+                _vp = viewing_pattern(user.id, active_title)
+                if _vp:
+                    hidden_metadata_context = ((hidden_metadata_context or "")
+                        + f"\nUSER VIEWING PATTERN for '{active_title}': {_vp}\n")
+            except Exception as _e:
+                logger.debug("[chat] viewing pattern failed: %s", _e)
 
 
     # 2. Build context — infer domain for hard data-level quarantine

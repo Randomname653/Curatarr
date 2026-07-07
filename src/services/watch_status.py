@@ -126,6 +126,93 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
     return agg
 
 
+def viewing_pattern(user_id: int, title: str, category: str = None) -> str | None:
+    """Derive the SIGNALS from episode-level history that raw counts hide:
+    watched in order vs scattered, where the user stopped (down to the
+    abandon-point inside an episode via view_offset), entry-loop rewatches
+    (E1 three times, never further), and binge vs slow-drip pacing. One
+    compact line for the curator, None for movies / no episode rows."""
+    if not user_id or not title:
+        return None
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    try:
+        with get_db_session() as db:
+            # series rows carry the EPISODE name in ``title`` — matching it
+            # made the movie "Inception" inherit some series' episode rows.
+            # Only series_title identifies the series.
+            q = db.query(W.season, W.episode, W.completed, W.viewed_at,
+                         W.view_offset_ms, W.duration_ms).filter(
+                W.user_id == user_id,
+                W.series_title == title,
+                W.episode.isnot(None),
+            )
+            if category:
+                q = q.filter(W.media_type == "music" if category == "music"
+                             else W.media_type != "music")
+            rows = q.all()
+    except Exception as e:
+        logger.debug("[watch] viewing_pattern failed for %r: %s", title, e)
+        return None
+    if not rows:
+        return None
+
+    per_ep: dict = {}
+    for r in rows:
+        key = (r.season or 1, r.episode)
+        d = per_ep.setdefault(key, {"plays": 0, "completed": False,
+                                    "pct": None, "last": None})
+        d["plays"] += 1
+        d["completed"] = d["completed"] or bool(r.completed)
+        if r.duration_ms and r.view_offset_ms is not None:
+            pct = r.view_offset_ms / max(r.duration_ms, 1)
+            d["pct"] = max(d["pct"] or 0.0, min(pct, 1.0))
+        if r.viewed_at and (d["last"] is None or r.viewed_at > d["last"]):
+            d["last"] = r.viewed_at
+
+    keys = sorted(per_ep)
+    parts = []
+    # order vs gaps (per lowest season with plays; simple and honest)
+    seasons = sorted({s for s, _ in keys})
+    if len(seasons) == 1:
+        s = seasons[0]
+        eps = sorted(e for _, e in keys)
+        if len(eps) == 1:
+            parts.append(f"only S{s}E{eps[0]}")
+        elif eps == list(range(1, len(eps) + 1)):
+            parts.append(f"S{s}E1-E{eps[-1]} in order")
+        else:
+            parts.append(f"{len(eps)} episodes of season {s}, with gaps")
+    else:
+        parts.append(f"{len(keys)} episodes scattered across seasons "
+                     f"{seasons[0]}-{seasons[-1]}")
+    # stop point + abandon position
+    stop = keys[-1]
+    stop_d = per_ep[stop]
+    stop_txt = f"stopped after S{stop[0]}E{stop[1]}"
+    if not stop_d["completed"] and stop_d["pct"] and 0.02 < stop_d["pct"] < 0.95:
+        stop_txt += f" (abandoned that episode at {stop_d['pct']:.0%})"
+    parts.append(stop_txt)
+    # pacing
+    dates = [d["last"] for d in per_ep.values() if d["last"]]
+    if len(dates) >= 2:
+        span = (max(dates) - min(dates)).days
+        if span <= 1 and len(per_ep) >= 20:
+            # 86 "episodes" in one day is a Plex bulk-mark import, not viewing
+            parts.append("likely bulk-marked as watched, not real-time viewing")
+        elif span <= 14:
+            parts.append(f"binged in {max(span, 1)} day(s)")
+        elif span > 90:
+            parts.append(f"slow drip over {span // 30} months")
+    # entry-loop / rewatched episodes
+    re_eps = sorted(((k, d["plays"]) for k, d in per_ep.items() if d["plays"] > 1),
+                    key=lambda x: -x[1])[:2]
+    if re_eps:
+        parts.append("re-played " + ", ".join(
+            f"S{k[0]}E{k[1]} x{n}" for k, n in re_eps))
+    return "; ".join(parts)
+
+
 def watch_tag(status: dict) -> str:
     """One-line watch tag for a status dict (or None → never watched).
 
