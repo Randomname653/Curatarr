@@ -58,9 +58,52 @@ def _unescape(b: bytes) -> str:
              .replace("&gt;", ">").replace("&quot;", '"').replace("&apos;", "'"))
 
 
-def _library_artist_norms() -> set[str]:
-    """The owner's music world: Lidarr artists ∪ listening-history artists."""
-    names: set[str] = set()
+# Discogs main-genre families vs the owner's Last.fm-style tags. Same-name
+# artists are COMMON in the dump (the library's frenchcore "Crypton" happily
+# absorbed a Schlager/Disco act of the same name on the first full run) — a
+# master whose Discogs genre family contradicts what we KNOW the artist is
+# gets dropped. Unknown-family artists are matched unfiltered (no anchor).
+_GENRE_FAMILIES = {
+    "electronic": {"electronic", "electro", "techno", "house", "trance", "edm",
+                   "hardcore", "gabber", "frenchcore", "speedcore", "uptempo",
+                   "hardstyle", "rave", "tekno", "freetekno", "dubstep", "dnb",
+                   "drum", "bass", "industrial", "idm", "ambient", "synthwave",
+                   "eurodance", "dance"},
+    "rock": {"rock", "metal", "punk", "grunge", "metalcore", "hardrock",
+             "alternative", "indie", "emo", "post-rock"},
+    "hip hop": {"hip", "hop", "rap", "trap", "grime", "drill"},
+    "funk / soul": {"funk", "soul", "disco", "motown", "rnb", "r&b"},
+    "pop": {"pop", "schlager", "kpop", "jpop"},
+    "jazz": {"jazz", "swing", "bebop", "fusion"},
+    "classical": {"classical", "orchestral", "opera", "baroque", "symphony"},
+    "reggae": {"reggae", "dancehall", "dub", "ska"},
+    "folk, world, & country": {"folk", "country", "world", "celtic", "acoustic",
+                               "singer-songwriter"},
+    "blues": {"blues"},
+    "latin": {"latin", "salsa", "bossa", "cumbia", "reggaeton"},
+}
+
+
+def _families_for_tags(tags) -> set[str]:
+    toks = set()
+    for t in tags or []:
+        toks.update(re.split(r"[^a-z&]+", str(t).lower()))
+    return {fam for fam, keys in _GENRE_FAMILIES.items() if toks & keys}
+
+
+def _library_artists() -> dict[str, set[str]]:
+    """The owner's music world: {norm_name: known genre FAMILIES (may be
+    empty)} from Lidarr ∪ listening history ∪ the enrichment cache (Last.fm
+    genres — the anchor that catches same-name dump collisions)."""
+    names: dict[str, set[str]] = {}
+
+    def _add(name: str, tags=None):
+        n = _norm(name)
+        if not n:
+            return
+        fams = _families_for_tags(tags) if tags else set()
+        names.setdefault(n, set()).update(fams)
+
     try:
         from src.config import settings
         base = (settings.LIDARR_URL or "").rstrip("/")
@@ -69,7 +112,8 @@ def _library_artist_norms() -> set[str]:
                           params={"apikey": settings.LIDARR_API_KEY},
                           timeout=30)
             if r.status_code == 200:
-                names.update(a.get("artistName") or "" for a in r.json())
+                for a in r.json():
+                    _add(a.get("artistName") or "", a.get("genres"))
     except Exception as e:
         logger.debug("[discogs] lidarr artist list failed: %s", e)
     try:
@@ -77,12 +121,28 @@ def _library_artist_norms() -> set[str]:
         from src.database.models import WatchHistoryEntry as W
         from sqlalchemy import distinct
         with get_db_session() as db:
-            rows = (db.query(distinct(W.series_title))
-                    .filter(W.media_type == "music").all())
-            names.update(r[0] or "" for r in rows)
+            for (n,) in (db.query(distinct(W.series_title))
+                         .filter(W.media_type == "music").all()):
+                _add(n or "")
     except Exception as e:
         logger.debug("[discogs] history artist list failed: %s", e)
-    return {n for n in (_norm(x) for x in names) if n}
+    try:
+        # richest anchor: Last.fm genres on the raw music docs
+        from src.config import settings as _s
+        con = sqlite3.connect(str(_s.ENRICHMENT_CACHE))
+        for (resp,) in con.execute(
+                "SELECT response FROM api_cache WHERE cache_key LIKE '%raw:music:%'"):
+            try:
+                d = json.loads(resp)
+            except Exception:
+                continue
+            if isinstance(d, dict) and (d.get("name") or d.get("title")):
+                _add(d.get("name") or d.get("title"),
+                     (d.get("genres") or []) + (d.get("tags") or []))
+        con.close()
+    except Exception as e:
+        logger.debug("[discogs] cache genre anchor failed: %s", e)
+    return names
 
 
 def _latest_masters_key() -> Optional[str]:
@@ -139,7 +199,7 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
     key = _latest_masters_key()
     if not key:
         return {"error": "no dump key"}
-    wanted = _library_artist_norms()
+    wanted = _library_artists()
     if not wanted:
         return {"error": "no library artists"}
     url = f"{DATA_INDEX}?download={key}"
@@ -181,6 +241,14 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
                     ym = _YEAR_RE.search(block)
                     styles = [_unescape(x) for x in _STYLE_RE.findall(block)]
                     genres = [_unescape(x) for x in _GENRE_RE.findall(block)]
+                    # collision anchor: when we KNOW the artist's family and
+                    # the master's Discogs genres name a DIFFERENT family,
+                    # this is a same-name stranger — drop it
+                    known = wanted[a_norm]
+                    if known and genres:
+                        m_fams = {g.lower() for g in genres}
+                        if not (m_fams & known):
+                            continue
                     masters.append((
                         a_norm, _unescape(am.group(1)),
                         _unescape(tm.group(1)) if tm else "",
