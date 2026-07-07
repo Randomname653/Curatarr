@@ -335,6 +335,8 @@ def build_verified_data(
             "runtime_min":    raw.get("runtime_min"),
             "studios":        raw.get("studios"),
             "studio_note":    _studio_note_for(cache, raw.get("studios")),
+            "director_note":  _director_note_for(cache, pick(enriched.get("director"),
+                                                             raw.get("director"))),
             "extra_context":  raw.get("extra_context"),
             "source":         pick(enriched.get("source"), raw.get("source")),
             # imdb_id drives the dynamic OMDb top-up (ensure_verified_data);
@@ -370,6 +372,17 @@ def build_verified_data(
     finally:
         if owns:
             cache.close()
+
+
+def _director_note_for(cache, director) -> Optional[str]:
+    """Cached director-reputation note (sync read; fetch is JIT-only)."""
+    if not director or not isinstance(director, str):
+        return None
+    try:
+        from src.services.studio_notes import get_director_note_cached
+        return get_director_note_cached(director.split(",")[0].strip(), cache)
+    except Exception:
+        return None
 
 
 def _studio_note_for(cache, studios) -> Optional[str]:
@@ -418,6 +431,7 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Genres", data.get("genres"))
     add("Creator/Writer", data.get("writer"))
     add("Director", data.get("director"))
+    add("Director note", data.get("director_note"), cap=350)
     cast = data.get("cast")
     add("Cast", cast[:4] if isinstance(cast, list) else cast)
     add("Staff", data.get("staff"))
@@ -907,6 +921,23 @@ async def ensure_verified_data(
                 )
         except Exception as e:
             logger.debug("[verified] studio note failed for %r: %s", title, e)
+
+    # Director reputation note — JIT-ONLY (4.3k distinct directors forbid a
+    # bulk walker; debated titles collect the relevant names fast).
+    if (allow_summarizer and data and data.get("director")
+            and not data.get("director_note")):
+        try:
+            from src.services.studio_notes import ensure_director_note
+            if await asyncio.wait_for(ensure_director_note(data["director"],
+                                                           cache=cache),
+                                      timeout=30.0):
+                data = build_verified_data(
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] director note failed for %r: %s", title, e)
 
     # Franchise/tags catch-up for docs reception-checked before relations
     # existed — one AniList call + a local snapshot read, no LLM involved,

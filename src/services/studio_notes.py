@@ -43,6 +43,16 @@ _CONDENSE_SYS = (
     "history and ownership. 2 sentences maximum, plain prose. If the text "
     "documents no style or reputation, output exactly: NONE")
 
+_DIRECTOR_SYS = (
+    "You write a one-line DIRECTOR NOTE for a media curator's evidence file. "
+    "Use ONLY the text given. State what the director is KNOWN FOR — style, "
+    "reputation, signature works. Skip birth dates, family and biography. "
+    "2 sentences maximum, plain prose. If the text documents no style or "
+    "reputation, output exactly: NONE")
+
+# a person hit must actually be a film person, not a same-named homonym
+_PERSON_HINT = re.compile(r"director|filmmaker|screenwriter|animator|producer", re.I)
+
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
@@ -96,7 +106,8 @@ async def _wiki_studio_lead(studio: str) -> str:
     return ""
 
 
-async def _condense(studio: str, extract: str) -> Optional[str]:
+async def _condense(studio: str, extract: str,
+                    sys_prompt: str = None, label: str = "STUDIO") -> Optional[str]:
     for model in (settings.SUMMARIZER_MODEL, settings.BASE_SUMMARIZER_MODEL):
         if not model:
             continue
@@ -104,9 +115,9 @@ async def _condense(studio: str, extract: str) -> Optional[str]:
             async with httpx.AsyncClient(timeout=120) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
-                    "messages": [{"role": "system", "content": _CONDENSE_SYS},
+                    "messages": [{"role": "system", "content": sys_prompt or _CONDENSE_SYS},
                                  {"role": "user",
-                                  "content": f"STUDIO: {studio}\n\nTEXT:\n{extract[:2400]}"}],
+                                  "content": f"{label}: {studio}\n\nTEXT:\n{extract[:2400]}"}],
                     "stream": False,
                     "keep_alive": SUMMARIZER_KEEP_ALIVE,
                     **ollama_options(temperature=0.1, num_predict=200),
@@ -122,6 +133,80 @@ async def _condense(studio: str, extract: str) -> Optional[str]:
         except Exception as e:
             logger.debug("[studio-note] condense via %s failed: %s", model, e)
     return None
+
+
+def get_director_note_cached(name: str, cache) -> Optional[str]:
+    """Sync cache read for build_verified_data (no fetching)."""
+    try:
+        hit = cache.get_cache(f"director_note:{_norm(name)}")
+        if hit and isinstance(hit.get("response"), dict):
+            return hit["response"].get("note")
+    except Exception:
+        pass
+    return None
+
+
+async def _wiki_person_lead(name: str) -> str:
+    """Lead extract of a film person's article, homonym-guarded (title must
+    contain the name, lead must read like a film person)."""
+    want = _norm(name)
+    async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
+        for query in (name, f"{name} film director"):
+            try:
+                sr = await client.get(WIKI_API, params={
+                    "action": "query", "list": "search", "format": "json",
+                    "srsearch": query, "srlimit": 5})
+                hits = (sr.json().get("query", {}).get("search", [])
+                        if sr.status_code == 200 else [])
+            except Exception:
+                hits = []
+            for h in hits[:4]:
+                t = h.get("title") or ""
+                if want not in _norm(t):
+                    continue
+                try:
+                    ex = await client.get(WIKI_API, params={
+                        "action": "query", "prop": "extracts", "format": "json",
+                        "titles": t, "exintro": 1, "explaintext": 1, "redirects": 1})
+                    pages = (ex.json().get("query") or {}).get("pages") or {}
+                    extract = next(iter(pages.values()), {}).get("extract") or ""
+                except Exception:
+                    continue
+                if _PERSON_HINT.search(extract) and len(extract) > 200:
+                    return extract
+    return ""
+
+
+async def ensure_director_note(name: str, cache=None) -> Optional[str]:
+    """Director counterpart of ensure_studio_note — JIT-ONLY by design:
+    4,303 distinct directors across the library make a bulk walker too
+    expensive, but debated/judged titles collect the relevant names fast
+    (proto: 12/16 coverage incl. long-tail, NONE results cache forever)."""
+    name = (name or "").split(",")[0].strip()
+    if not name or not _norm(name):
+        return None
+    from src.cache.metadata_cache import MetadataCache
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        key = f"director_note:{_norm(name)}"
+        hit = cache.get_cache(key)
+        if hit and isinstance(hit.get("response"), dict):
+            return hit["response"].get("note")
+        extract = await _wiki_person_lead(name)
+        note = (await _condense(name, extract, sys_prompt=_DIRECTOR_SYS,
+                                label="DIRECTOR") if extract else None)
+        cache.set_cache(key, {"checked": True, "note": note}, days=_NOTE_CACHE_DAYS)
+        if note:
+            logger.info("[director-note] %s: %s", name, note[:100])
+        return note
+    except Exception as e:
+        logger.debug("[director-note] failed for %r: %s", name, e)
+        return None
+    finally:
+        if owns:
+            cache.close()
 
 
 async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
