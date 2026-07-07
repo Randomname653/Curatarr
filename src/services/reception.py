@@ -274,7 +274,9 @@ def _offline_tags(title: str, media_type: str, *, anilist_id=None,
         from src.services import anime_offline
         off = anime_offline.lookup(anilist_id=anilist_id, mal_id=mal_id,
                                    title=title, year=year)
-        return (off or {}).get("tags", [])[:18]
+        # drop AniDB tag-maintenance noise ("x -- do not add -- to be split")
+        return [t for t in (off or {}).get("tags", [])
+                if "--" not in t and len(t) < 40][:18]
     except Exception:
         return []
 
