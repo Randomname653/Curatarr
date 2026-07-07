@@ -310,6 +310,14 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
                     c[s] += 1
         rows_out = []
         for a, c in agg.items():
+            _fams, toks = wanted.get(a, (set(), set()))
+            if toks and not boosted.get(a):
+                # the artist HAS a known style vocabulary and NONE of the
+                # matched masters fit it -> everything here belongs to a
+                # same-name stranger (Crypton case: the real frenchcore act
+                # has no masters in the dump, only the Disco homonym does).
+                # No line beats a wrong line.
+                continue
             keep = [(s, n) for s, n in c.most_common()
                     if s in boosted.get(a, ()) or n >= 2]
             rows_out.append((a, json.dumps([s for s, _ in keep[:8]])))
