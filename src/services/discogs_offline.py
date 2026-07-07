@@ -51,7 +51,12 @@ _DASHES = str.maketrans({c: "-" for c in "‐‑‒–—−"})
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower().translate(_DASHES)).strip()
+    # Discogs disambiguates homonyms with a trailing "(N)" — "Sefa (12)" IS
+    # the frenchcore Sefa. Strip it so the real act matches the library name;
+    # the family anchor + style boost + stranger-drop handle the homonyms
+    # this deliberately lets in.
+    s = re.sub(r"\s*\(\d+\)\s*$", "", s or "")
+    return re.sub(r"[^a-z0-9]+", " ", s.lower().translate(_DASHES)).strip()
 
 
 def _unescape(b: bytes) -> str:
