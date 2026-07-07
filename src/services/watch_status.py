@@ -94,6 +94,7 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
             q = db.query(
                 WatchHistoryEntry.title, WatchHistoryEntry.series_title,
                 WatchHistoryEntry.completed, WatchHistoryEntry.viewed_at,
+                WatchHistoryEntry.season, WatchHistoryEntry.episode,
             ).filter(
                 WatchHistoryEntry.user_id == user_id,
                 or_(WatchHistoryEntry.title.in_(titles),
@@ -112,20 +113,34 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
             r.series_title if r.series_title in tset else None)
         if not key:
             continue
-        a = agg.setdefault(key, {"count": 0, "completed": False, "last": None})
+        a = agg.setdefault(key, {"count": 0, "completed": False, "last": None,
+                                 "_eps": set()})
         a["count"] += 1
         a["completed"] = a["completed"] or bool(r.completed)
+        if r.episode is not None:
+            a["_eps"].add((r.season, r.episode))
         if r.viewed_at and (a["last"] is None or r.viewed_at > a["last"]):
             a["last"] = r.viewed_at
+    for a in agg.values():
+        a["episodes"] = len(a.pop("_eps"))
     return agg
 
 
 def watch_tag(status: dict) -> str:
-    """One-line watch tag for a status dict (or None → never watched)."""
+    """One-line watch tag for a status dict (or None → never watched).
+
+    Series honesty: 9 watch-history ROWS are 9 EPISODE plays, not 9 series
+    rewatches — "watched 9x" made the curator theorize about a title the
+    user had merely started ("you've watched Kill la Kill nine times")."""
     if not status:
         return "NOT watched"
     n = status["count"]
-    base = f"watched{f' {n}×' if n > 1 else ''}" if status["completed"] else "started, not finished"
+    eps = status.get("episodes") or 0
+    if eps >= 2:
+        base = f"{eps} episodes played" + (f" ({n} plays)" if n > eps else "")
+    else:
+        base = (f"watched{f' {n}×' if n > 1 else ''}"
+                if status["completed"] else "started, not finished")
     if status.get("last"):
         base += f", last {status['last'].strftime('%b %Y')}"
     return base

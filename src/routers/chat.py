@@ -388,15 +388,43 @@ def _library_title_index() -> list:
     return _LIB_TITLE_INDEX["items"] or items
 
 
+# words that mark a media reference sitting NEXT to a one-word title
+_MEDIA_ADJ_WORDS = {
+    "movie", "film", "films", "anime", "show", "series", "season", "episode",
+    "episodes", "album", "song", "track", "band", "watch", "watched",
+    "watching", "seen", "rewatch", "documentary", "serie", "staffel",
+    "folge", "geschaut", "gesehen", "schauen",
+}
+
+
 def _match_library_title(message: str) -> tuple[str, str] | None:
     """Longest library title contained verbatim (normalized, word-bounded)
-    in the message → (title, category). None when nothing matches."""
+    in the message → (title, category). None when nothing matches.
+
+    Single-word titles are collision bait — the library's film 'Trust'
+    matched "you shouldn't trust a studio's reputation" and hijacked the
+    anchor mid-conversation. A one-word title only counts when the original
+    message capitalizes it exactly, quotes it, or names a media word within
+    two tokens of it. Multi-word titles stay unconditional."""
     msg = f" {_norm_for_match(message)} "
     if len(msg) < 6:
         return None
+    tokens = msg.split()
     best = None
     for n, title, cat in _library_title_index():
-        if f" {n} " in msg and (best is None or len(n) > len(best[0])):
+        if f" {n} " not in msg:
+            continue
+        if " " not in n:
+            cap = _re.search(rf"\b{_re.escape(title)}\b", message)          # exact case
+            quoted = _re.search(rf"[\"'„»]{_re.escape(n)}[\"'“«]", message, _re.I)
+            if not cap and not quoted:
+                idxs = [i for i, t in enumerate(tokens) if t == n]
+                near = any(tokens[j] in _MEDIA_ADJ_WORDS
+                           for i in idxs
+                           for j in range(max(0, i - 2), min(len(tokens), i + 3)))
+                if not near:
+                    continue
+        if best is None or len(n) > len(best[0]):
             best = (n, title, cat)
     return (best[1], best[2]) if best else None
 
@@ -2159,6 +2187,14 @@ async def send_message(
                         forced_domain = alt_category  # may be None for protected
                         year_hint = None  # the regex year (if any) was for the wrong title
 
+            # The library scan KNOWS the category (sonarr root / radarr /
+            # lidarr) — feed it to the cascade so a library anime never gets
+            # fetched as a TMDB show again (Kill la Kill matched domain=show
+            # and lost its whole anime raw-doc: studio, format, AniDB tags…).
+            if (_lib0 and detected_title and not forced_domain
+                    and _lib0[0].lower() == detected_title.lower()):
+                forced_domain = _lib0[1]
+
             if detected_title:
                 # If the detected title matches the cached one, no need to re-fetch
                 # — the previous metadata is still valid for this thread.
@@ -2215,9 +2251,10 @@ async def send_message(
                         # cascade enriches but does NOT fetch the on-demand OMDb /
                         # Wikipedia significance — warm them now (cached, time-boxed)
                         # so the context block below carries them.
+                        verified_payload = None
                         try:
                             from src.services.media_enricher import ensure_verified_data
-                            await ensure_verified_data(
+                            verified_payload = await ensure_verified_data(
                                 active_title, matched_domain or "movie",
                                 tmdb_id=enrichment_data.get("tmdb_id"),
                                 tvdb_id=enrichment_data.get("tvdb_id"),
@@ -2230,6 +2267,19 @@ async def send_message(
                             domain=matched_domain or "movie",
                             year_hint=year_hint,
                         )
+                        # The FULL verified block (format, studio + note,
+                        # critics, reception, franchise, AniDB tags, staff…)
+                        # — the return value used to be thrown away and the
+                        # "raw metadata dump" honestly showed a thin context
+                        # while the rich raw-doc sat in the cache.
+                        if verified_payload and verified_payload.get("title"):
+                            try:
+                                from src.services.media_enricher import format_verified_block
+                                _fvb = format_verified_block(verified_payload)
+                                if _fvb:
+                                    hidden_metadata_context += "\n" + _fvb + "\n"
+                            except Exception as _e:
+                                logger.debug("[chat] verified block append failed: %s", _e)
                         # Cache the new active title + data for follow-up turns.
                         _set_thread_active_title(thread_id, (
                             active_title, enrichment_data, matched_domain or "movie",
