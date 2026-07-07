@@ -262,6 +262,16 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                           + ("completed" if ow.get("completed") else "not completed"))
     else:
         owner_line = "not watched by the owner"
+    if ow and (ow.get("episodes") or 0) >= 2 and category in ("show", "anime"):
+        # the SIGNALS behind the count: in order vs scattered, stop point,
+        # abandon position, entry-loop rewatches, binge vs slow drip
+        try:
+            from src.services.watch_status import viewing_pattern
+            vp = viewing_pattern(user_id, title, category=category)
+            if vp:
+                owner_line += f". Pattern: {vp}"
+        except Exception as e:
+            logger.debug("[pillars] viewing pattern failed for %r: %s", title, e)
     if category == "music":
         # play-count DEPTH for artists — "watched 10931x" says less than
         # "10931 plays across 257 tracks, top: …" (and honest silence:
