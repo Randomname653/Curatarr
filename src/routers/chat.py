@@ -36,6 +36,8 @@ router = APIRouter()
 
 CONVERSATION_WINDOW = 20            # last N messages to include as context
 CONVERSATION_WINDOW_TOPIC_SWITCH = 4 # smaller window when the user pivots to a new title
+_HISTORY_CHAR_BUDGET = 8000         # hard char budget for history (context diet)
+_ASSISTANT_CLIP = 700               # clip OLD assistant monologues to this many chars
 MAX_TOKENS_APPROX = 6000   # rough token budget for conversation history
 
 
@@ -991,16 +993,25 @@ def _verified_block_for(title: str, domain: str | None,
     three strands each rebuilding their own thin subset."""
     try:
         from src.services.media_enricher import build_verified_data, format_verified_block
-        vd = build_verified_data(
-            title, domain or "movie",
-            tmdb_id=(data or {}).get("tmdb_id"),
-            tvdb_id=(data or {}).get("tvdb_id"),
-            anilist_id=(data or {}).get("anilist_id"),
-        )
-        if vd and vd.get("title"):
-            fvb = format_verified_block(vd)
-            if fvb:
-                return "\n" + fvb + "\n"
+        # The raw doc lives under ONE category; the caller's domain can be
+        # wrong (an AniList timeout made Kill la Kill cascade to domain=show
+        # and the anime doc — studio note, reception, tags — went unseen).
+        # Cache reads are ~free: try the caller's domain first, then the
+        # sibling video categories.
+        tried = [domain or "movie"]
+        if (domain or "movie") in ("movie", "show", "anime"):
+            tried += [d for d in ("anime", "show", "movie") if d not in tried]
+        for dom in tried:
+            vd = build_verified_data(
+                title, dom,
+                tmdb_id=(data or {}).get("tmdb_id"),
+                tvdb_id=(data or {}).get("tvdb_id"),
+                anilist_id=(data or {}).get("anilist_id"),
+            )
+            if vd and vd.get("title"):
+                fvb = format_verified_block(vd)
+                if fvb:
+                    return "\n" + fvb + "\n"
     except Exception as e:
         logger.debug("[chat] verified block for %r failed: %s", title, e)
     return ""
@@ -2023,8 +2034,26 @@ def _load_conversation(
     if topic_changed and msgs:
         logger.info("[chat] Topic changed — loading only %d/%d messages for thread %s",
                     len(msgs), CONVERSATION_WINDOW, thread_id)
-    # Return in chronological order (oldest first)
-    return [{"role": m.role, "content": m.content} for m in reversed(msgs)]
+    # Context-budget diet: the watchdog measured 33.5k chars of input against
+    # a ~16k budget (num_ctx 8192 − num_predict 4096) — history was the bulk.
+    # Newest-first, keep messages until the budget is spent; clip OLD
+    # assistant monologues (their substance lives in memories/context anyway,
+    # and Ollama otherwise silently truncates the SYSTEM prompt instead).
+    # The newest assistant turn stays intact — anaphora resolution reads it.
+    out = []
+    budget = _HISTORY_CHAR_BUDGET
+    for i, m in enumerate(msgs):            # newest first
+        content = m.content or ""
+        if m.role == "assistant" and i > 0 and len(content) > _ASSISTANT_CLIP:
+            content = content[:_ASSISTANT_CLIP].rsplit(" ", 1)[0] + " … [clipped]"
+        if budget - len(content) < 0 and out:
+            break
+        budget -= len(content)
+        out.append({"role": m.role, "content": content})
+    if len(out) < len(msgs):
+        logger.info("[chat] history budget: kept %d/%d messages (%d chars)",
+                    len(out), len(msgs), _HISTORY_CHAR_BUDGET - budget)
+    return list(reversed(out))
 
 
 def _save_message(
@@ -2655,14 +2684,18 @@ FORMATTING RULES:
             # dossier reply broke off after two sentences). Make the size
             # VISIBLE so the next truncation names its cause.
             _prompt_chars = sum(len(m.get("content") or "") for m in messages)
+            _sys_chars = sum(len(m.get("content") or "") for m in messages
+                             if m.get("role") == "system")
+            _hist_chars = _prompt_chars - _sys_chars
             if _prompt_chars > 15000:
                 logger.warning(
-                    "[chat] prompt size %d chars (~%d tokens) — 8192 num_ctx "
-                    "minus 4096 num_predict leaves ~4k input tokens; expect "
-                    "squeezed/truncated generation",
-                    _prompt_chars, _prompt_chars // 4)
+                    "[chat] prompt size %d chars (~%d tokens; system=%d, "
+                    "history+user=%d) — 8192 num_ctx minus 4096 num_predict "
+                    "leaves ~4k input tokens; expect squeezed generation",
+                    _prompt_chars, _prompt_chars // 4, _sys_chars, _hist_chars)
             else:
-                logger.info("[chat] prompt size: %d chars", _prompt_chars)
+                logger.info("[chat] prompt size: %d chars (system=%d, history+user=%d)",
+                            _prompt_chars, _sys_chars, _hist_chars)
             health_task = asyncio.create_task(_delayed_vram_probe())
             # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
             # the response can take 5-10 minutes. We'd rather wait it out
