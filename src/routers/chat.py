@@ -338,10 +338,77 @@ def _extract_title_via_regex(query: str) -> str | None:
     return None
 
 
+_LIB_TITLE_INDEX: dict = {"ts": 0.0, "items": []}
+_LIB_TITLE_TTL_S = 600.0
+
+
+def _norm_for_match(s: str) -> str:
+    s = _re.sub(r"[‐‑‒–—−]", "-", (s or "").lower())
+    return _re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+def _library_title_index() -> list:
+    """[(norm, title, category)] over the user's OWN library (sonarr/radarr/
+    lidarr caches), rebuilt at most every 10 minutes. This is deterministic
+    ground truth — 25k known names — so extraction can't be defeated by
+    phrasing, typos around the title, or non-native grammar."""
+    import time as _time
+    if _time.time() - _LIB_TITLE_INDEX["ts"] < _LIB_TITLE_TTL_S and _LIB_TITLE_INDEX["items"]:
+        return _LIB_TITLE_INDEX["items"]
+    items = []
+    try:
+        from src.cache.metadata_cache import MetadataCache
+        mc = MetadataCache()
+        try:
+            for svc, cat_default, name_key in (("sonarr", "show", "title"),
+                                               ("radarr", "movie", "title"),
+                                               ("lidarr", "music", "artistName")):
+                hit = mc.get_cache(f"arr_library:{svc}")
+                resp = (hit or {}).get("response")
+                rows = (resp if isinstance(resp, list)
+                        else (resp or {}).get("items_raw") or (resp or {}).get("items") or [])
+                for it in rows:
+                    if not isinstance(it, dict):
+                        continue
+                    name = it.get(name_key)
+                    if not name:
+                        continue
+                    cat = cat_default
+                    if svc == "sonarr" and "anime" in (it.get("rootFolderPath") or "").lower():
+                        cat = "anime"
+                    n = _norm_for_match(name)
+                    if len(n) >= 4:
+                        items.append((n, name, cat))
+        finally:
+            mc.close()
+    except Exception as e:
+        logger.debug("[chat] library title index failed: %s", e)
+    if items:
+        _LIB_TITLE_INDEX.update(ts=_time.time(), items=items)
+    return _LIB_TITLE_INDEX["items"] or items
+
+
+def _match_library_title(message: str) -> tuple[str, str] | None:
+    """Longest library title contained verbatim (normalized, word-bounded)
+    in the message → (title, category). None when nothing matches."""
+    msg = f" {_norm_for_match(message)} "
+    if len(msg) < 6:
+        return None
+    best = None
+    for n, title, cat in _library_title_index():
+        if f" {n} " in msg and (best is None or len(n) > len(best[0])):
+            best = (n, title, cat)
+    return (best[1], best[2]) if best else None
+
+
 async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
     """
-    Two-pass title extraction:
+    Three-pass title extraction:
 
+      0. Deterministic LIBRARY SCAN: the longest library title contained
+         verbatim in the message wins. Phrasing-proof — "Kill la Kill
+         sounds interesting please ellaborate" defeated both passes below
+         while the title sat literally in the message (and in the library).
       1. Call curatarr-summarizer MODE 6 (LLM, JSON output)
       2. If LLM returned nothing usable, fall back to regex patterns
          on the user's literal message ("tell me about X", quoted phrases)
@@ -359,6 +426,13 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
     """
     normalized_query = _normalize_typos(query)
     year = _extract_year_hint(normalized_query)
+
+    # Pass 0: the user's own library is deterministic ground truth.
+    lib_hit = _match_library_title(normalized_query)
+    if lib_hit:
+        logger.info("[chat] entity matched against library: %r (%s)",
+                    lib_hit[0], lib_hit[1])
+        return lib_hit[0], year
 
     extraction_model = getattr(_cfg, "SUMMARIZER_MODEL", None) or "curatarr-summarizer"
     prompt = f"[MODE: ENTITY EXTRACTION]\nInput: {normalized_query}"
@@ -1572,7 +1646,8 @@ async def _build_discuss_context_block(
                 finally:
                     _mc.close()
                 _resp = (_arr or {}).get("response")
-                _items = _resp if isinstance(_resp, list) else (_resp or {}).get("items") or []
+                _items = (_resp if isinstance(_resp, list)
+                          else (_resp or {}).get("items_raw") or (_resp or {}).get("items") or [])
                 def _tnorm(s):
                     return _re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
                 _lib = {_tnorm(i.get("title")) for i in _items if isinstance(i, dict)}
