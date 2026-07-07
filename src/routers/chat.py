@@ -2090,11 +2090,41 @@ async def send_message(
         # to handle and produced confused "NO VERIFIED METADATA" responses
         # for titles we *did* have data on).
         cached = _thread_active_title.get(thread_id)
-        title_hint = _looks_like_title_introduction(message.message)
+        # The library scan runs UNGATED — it's a ~10ms in-memory check, and
+        # the hint gate is exactly what dropped "oh right kill la kill was my
+        # first contact" (all-lowercase, no hint pattern): the title sat
+        # verbatim in the message while the detector never ran. The gate now
+        # only saves the LLM/regex cost, never the deterministic pass.
+        _lib0 = _match_library_title(_normalize_typos(message.message))
+        title_hint = bool(_lib0) or _looks_like_title_introduction(message.message)
 
         if title_hint:
             pre_stream_status.append("Identifying media reference…")
             detected_title, year_hint = await _detect_media_in_query(message.message)
+            # Anaphora on OUR OWN recommendation: "tell me more about that"
+            # after the curator just pitched a title. Before running
+            # anchorless, scan the last assistant reply for the entity
+            # (library pass first, then the LLM) — a plausible anchor from
+            # our own words beats no anchor at all.
+            if (not detected_title and not cached
+                    and _re.search(r"\b(?:that|it|this|more)\b", message.message, _re.I)):
+                _last_a = (db.query(ConversationMessage)
+                           .filter(ConversationMessage.user_id == user.id,
+                                   ConversationMessage.role == "assistant",
+                                   (ConversationMessage.thread_id == thread_id)
+                                   | (ConversationMessage.thread_id.is_(None))
+                                   if thread_id == "general"
+                                   else ConversationMessage.thread_id == thread_id)
+                           .order_by(ConversationMessage.created_at.desc())
+                           .first())
+                if _last_a and _last_a.content:
+                    detected_title, year_hint = await _detect_media_in_query(
+                        _last_a.content[-1500:])
+                    if detected_title:
+                        logger.info("[chat] anchor recovered from last assistant "
+                                    "reply: %r", detected_title)
+                        pre_stream_status.append(
+                            f"Anchoring to '{detected_title}' from the previous reply")
 
             # Pass 31: override the cascade-detected title when a DIFFERENT
             # title in the message has stronger user-state (pending
