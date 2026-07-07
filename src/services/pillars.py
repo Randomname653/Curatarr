@@ -322,6 +322,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             allow_summarizer=False,
         )
         verified_text = format_verified_block(vd) or ""
+        # "9 episodes played" means something different for a 12- vs a
+        # 100-episode series — join the two data sources for the judge.
+        if (ow and (ow.get("episodes") or 0) >= 2
+                and isinstance(vd, dict) and vd.get("episodes_total")):
+            owner_line += f" (series total: {vd['episodes_total']} episodes)"
     except Exception as e:
         logger.debug("[pillars] verified-data failed for %r: %s", title, e)
     if verified_text:
