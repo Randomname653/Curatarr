@@ -341,6 +341,11 @@ def build_verified_data(
             # omdb_checked stops it (and the bulk backfill) re-querying.
             "imdb_id":        pick(raw.get("imdb_id"), enriched.get("imdb_id")),
             "omdb_checked":   bool(raw.get("omdb_checked")),
+            "ratings_checked": bool(raw.get("ratings_checked")),
+            # OMDb full harvest: critic scores + box office (Ratings array)
+            "rt_score":       raw.get("rt_score"),
+            "metacritic":     raw.get("metacritic"),
+            "box_office":     raw.get("box_office"),
             # Wikipedia-sourced cultural/historical significance (archive pillar);
             # significance_checked stops the just-in-time top-up re-querying.
             "significance":         raw.get("significance"),
@@ -434,6 +439,13 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Notable", data.get("extra_context"))
     if data.get("rating"):
         add("Rating", f"{data['rating']}/10")
+    critics = []
+    if data.get("rt_score"):
+        critics.append(f"Rotten Tomatoes {data['rt_score']}")
+    if data.get("metacritic") not in (None, "", "N/A"):
+        critics.append(f"Metacritic {data['metacritic']}/100")
+    add("Critics", ", ".join(critics) if critics else None)
+    add("Box office", data.get("box_office"))
     # music-artist lines (all None for video docs, so they simply don't print)
     add("Artist type", data.get("artist_type"))
     if data.get("listeners"):
@@ -660,6 +672,12 @@ async def topup_omdb(
     awards = omdb.get("awards")
     writer = omdb.get("writer")
     country = omdb.get("country")
+    # Full-harvest rule: the Ratings array (RT/Metacritic) and box office were
+    # extracted by fetch_omdb_data and then thrown away here for months.
+    _ratings   = omdb.get("ratings") or {}
+    rt_score   = _ratings.get("rt")
+    metacritic = _ratings.get("metacritic")
+    box_office = omdb.get("box_office")
     _bad = ("", "N/A", None)
 
     owns = cache is None
@@ -689,6 +707,12 @@ async def topup_omdb(
                 raw["writer"] = writer; changed = added = True
             if country not in _bad and not (raw.get("country") or "").strip():
                 raw["country"] = country; changed = True
+            if rt_score not in _bad and not raw.get("rt_score"):
+                raw["rt_score"] = rt_score; changed = added = True
+            if metacritic not in _bad and not raw.get("metacritic"):
+                raw["metacritic"] = metacritic; changed = added = True
+            if box_office not in _bad and not raw.get("box_office"):
+                raw["box_office"] = box_office; changed = True
             # Idempotency marker: OMDb was consulted for this title. Set even
             # when OMDb had no writer/awards — many titles legitimately don't —
             # so neither the bulk backfill nor the dynamic top-up ever re-query
@@ -696,6 +720,11 @@ async def topup_omdb(
             # every backfill re-fetched the exact same set.
             if not raw.get("omdb_checked"):
                 raw["omdb_checked"] = True
+                changed = True
+            # Ratings-era marker: docs OMDb-checked BEFORE the full-harvest fix
+            # lack it, so the backfill touches them exactly once more.
+            if not raw.get("ratings_checked"):
+                raw["ratings_checked"] = True
                 changed = True
             if changed:
                 cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
@@ -899,9 +928,13 @@ async def ensure_verified_data(
         except Exception as e:
             logger.debug("[verified] franchise top-up failed for %r: %s", title, e)
 
-    # Already OMDb-checked, already has the fields, or no imdb_id → done.
-    if (not data or data.get("omdb_checked") or data.get("writer")
-            or data.get("extra_context") or not data.get("imdb_id")):
+    # Fully OMDb-checked (incl. the ratings era), has the fields, or no
+    # imdb_id → done. Docs checked before the full-harvest fix (writer/awards
+    # present but no ratings_checked) get exactly one more fetch for RT/MC.
+    if (not data or not data.get("imdb_id")
+            or (data.get("omdb_checked") and data.get("ratings_checked"))
+            or ((data.get("writer") or data.get("extra_context"))
+                and data.get("ratings_checked"))):
         return data
     try:
         if await topup_omdb(
@@ -1019,11 +1052,13 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         imdb = b.get("imdb_id")
         if not imdb or imdb in ("", "N/A"):
             continue
-        if b.get("omdb_checked"):
-            continue   # already OMDb-checked once — idempotent, never re-query
-        if (b.get("writer") or "").strip() or (b.get("overview_extended") or "").strip():
-            continue   # OMDb-derived data already present from a prior run —
-            #            skip the re-fetch (the marker just wasn't stamped yet)
+        if b.get("omdb_checked") and b.get("ratings_checked"):
+            continue   # fully checked (incl. the ratings era) — never re-query
+        if (((b.get("writer") or "").strip() or (b.get("overview_extended") or "").strip())
+                and b.get("ratings_checked")):
+            continue   # OMDb data present AND ratings-era done — skip
+        # docs checked before the full-harvest fix (no ratings_checked) fall
+        # through: they get exactly ONE more fetch to pick up RT/Metacritic
         try:
             cat = k.split("raw:", 1)[1].split(":", 1)[0]
         except Exception:
