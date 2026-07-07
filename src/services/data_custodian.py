@@ -142,6 +142,19 @@ async def _run_reception(deep: bool = False) -> bool:
     return r.get("remaining", 0) == 0
 
 
+async def _run_discogs_styles(deep: bool = False) -> bool:
+    """Monthly CC0 masters-dump refresh (~590 MB stream, CPU-only). The
+    module itself skips when the local DB is <30 days old, so the 24h task
+    cadence just means 'check often, download rarely'."""
+    from src.services.discogs_offline import refresh_discogs_styles
+    r = await refresh_discogs_styles()
+    if r.get("skipped"):
+        return True
+    logger.info("[custodian] discogs styles: %s", r)
+    # 429 from the dump endpoint → stay due, retry next tick
+    return "error" not in r
+
+
 async def _run_memory_catchup(deep: bool = False) -> bool:
     from src.services.episodic_memory import extract_catchup
     r = await extract_catchup()
@@ -189,6 +202,8 @@ def _registry() -> list[Task]:
         Task("custodian_recept", "Community reception",  24.0,  _run_reception,
              needs_llm=True, takes_deep=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
+             takes_deep=True),
+        Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,
              takes_deep=True),
         Task("custodian_taste",  "Taste vectors",        24.0,  _run_taste_if_due,
              needs_llm=True, takes_deep=True),
