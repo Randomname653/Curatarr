@@ -1505,10 +1505,22 @@ async def _build_discuss_context_block(
         # The curator knows the title is in the library but not whether the USER
         # has actually SEEN it — the signal that separates "delete unwatched
         # clutter" from "they watched this, it earned its place". Surface it.
-        _ws = _watch_tag(
-            _watched_lookup(proposal.user_id, [proposal.title],
-                            category=proposal.category).get(proposal.title))
-        block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
+        if proposal.category == "music":
+            # artist proposals get play-count DEPTH (dash-folded + mbid match —
+            # "Mike WiLL Made‐It" U+2010 found nothing by exact name)
+            import re as _re
+            from src.services.watch_status import (music_listening_stats,
+                                                   format_listening_line)
+            _mbid_m = _re.search(r"/artist/([0-9a-f\-]{36})", proposal.arr_url or "")
+            _ls = music_listening_stats(proposal.user_id, proposal.title,
+                                        _mbid_m.group(1) if _mbid_m else None)
+            block += (f"\nOWNER LISTENING RECORD for '{proposal.title}': "
+                      f"{format_listening_line(_ls)}\n")
+        else:
+            _ws = _watch_tag(
+                _watched_lookup(proposal.user_id, [proposal.title],
+                                category=proposal.category).get(proposal.title))
+            block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
         # Franchise reality-check: which typed relations actually sit in the
         # user's library RIGHT NOW — a review's "compared to its predecessors"
         # means something different when the predecessors are long gone.
