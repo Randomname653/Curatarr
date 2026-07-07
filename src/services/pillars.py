@@ -149,12 +149,15 @@ def _watch_filters(item: dict, category: str):
 
 
 def _owner_watch(db, owner_id: int, item: dict, category: str) -> dict | None:
-    """The OWNER's own watch status -> {count, completed, last} or None."""
+    """The OWNER's own watch status -> {count, completed, last, episodes}
+    or None. ``episodes`` counts DISTINCT (season, episode) — 9 rows are 9
+    episode plays, not 9 series rewatches."""
     from src.database.models import WatchHistoryEntry
     filters = _watch_filters(item, category)
     if not filters:
         return None
-    rows = (db.query(WatchHistoryEntry.viewed_at, WatchHistoryEntry.completed)
+    rows = (db.query(WatchHistoryEntry.viewed_at, WatchHistoryEntry.completed,
+                     WatchHistoryEntry.season, WatchHistoryEntry.episode)
               .filter(WatchHistoryEntry.user_id == owner_id, *filters).all())
     if not rows:
         return None
@@ -162,6 +165,8 @@ def _owner_watch(db, owner_id: int, item: dict, category: str) -> dict | None:
         "count": len(rows),
         "completed": any(bool(r.completed) for r in rows),
         "last": max((r.viewed_at for r in rows if r.viewed_at), default=None),
+        "episodes": len({(r.season, r.episode) for r in rows
+                         if r.episode is not None}),
     }
 
 
@@ -248,8 +253,13 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     if ow:
         flags["owner_watched"] = True
         when = f", last {ow['last'].strftime('%b %Y')}" if ow.get("last") else ""
-        owner_line = (f"watched {ow['count']}x{when}, "
-                      + ("completed" if ow.get("completed") else "not completed"))
+        if (ow.get("episodes") or 0) >= 2:
+            owner_line = (f"{ow['episodes']} episodes played"
+                          + (f" ({ow['count']} plays)" if ow["count"] > ow["episodes"] else "")
+                          + when)
+        else:
+            owner_line = (f"watched {ow['count']}x{when}, "
+                          + ("completed" if ow.get("completed") else "not completed"))
     else:
         owner_line = "not watched by the owner"
     if category == "music":
