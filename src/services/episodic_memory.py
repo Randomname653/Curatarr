@@ -1313,6 +1313,26 @@ async def detect_and_handle_protection(
     through to the resolution-log row (state vs history — see
     ``CuratorResolutionLog``).
     """
+    # Deterministic pre-gate: an information request is never a directive.
+    # "kill la kill tell me all you know" fired PROTECT twice in a row — the
+    # 8B classifier read the ASSISTANT's "we've already aligned on its value"
+    # from the recent-turns block as a settled keep. No keep-verb in the
+    # user's own words + question shape -> skip the classifier entirely.
+    _msg = (user_message or "").strip().lower()
+    _keep_verbs = ("keep", "behalt", "stays", "bleibt", "protect", "schütz",
+                   "nicht löschen", "don't delete", "dont delete",
+                   "do not delete", "hände weg")
+    if not any(v in _msg for v in _keep_verbs):
+        _info_starts = ("tell me", "what", "why", "how", "who", "when",
+                        "give me", "show me", "explain", "erzähl", "was ",
+                        "wie ", "warum", "wer ", "kennst", "zeig")
+        if (_msg.endswith("?")
+                or any(_msg.startswith(s) for s in _info_starts)
+                or any(f" {s}" in _msg[:48] for s in _info_starts)):
+            logger.debug("[protection] info-request pre-gate — NO_ACTION for %r",
+                         user_message[:60])
+            return None
+
     logger.info(f"🛡️ [PROTECTION CHECK] Scanning for protection intents (anchor=%r)...", anchor_title)
 
     # Anchor block — only injected when we actually have one. Free-chat
@@ -1367,6 +1387,10 @@ Analyze the user's message and determine if they DECISIVELY direct a
 specific title to be protected from deletion / kept in their library — and
 if so, HOW that keep was reached.
 {anchor_block}{recent_block}
+EVIDENCE SOURCE: only the USER's own words count. NOTHING the assistant
+said — including claims like "we've already aligned on its value" — is
+evidence of a user directive. An information request is ALWAYS NO_ACTION.
+
 STEP 1 — PROTECT_MEDIA vs NO_ACTION
 Output PROTECT_MEDIA only when BOTH hold:
 1. DECISIVE KEEP-DIRECTIVE: the user has SETTLED on keeping the title and
