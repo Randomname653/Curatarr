@@ -12,6 +12,65 @@ import logging
 logger = logging.getLogger("curatarr")
 
 
+# MusicBrainz names use typographic dashes (U+2010 "Mike WiLL Made‐It") while
+# the Plex/Spotify history carries ASCII "-" — an exact match finds NOTHING
+# for such artists. Fold every dash variant before comparing.
+_DASHES = str.maketrans({c: "-" for c in "‐‑‒–—−"})
+
+
+def _artist_variants(name: str) -> list[str]:
+    base = (name or "").strip().lower()
+    folded = base.translate(_DASHES)
+    return list({base, folded})
+
+
+def music_listening_stats(user_id: int, artist: str,
+                          artist_mbid: str = None) -> dict | None:
+    """The owner's REAL listening record for one artist, from watch_history:
+    {plays, tracks, last, top:[(track, plays)…]} or None when never played.
+    Matches by dash-folded artist name OR artist_mbid (the robust key)."""
+    if not user_id or not (artist or artist_mbid):
+        return None
+    from sqlalchemy import func, or_
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    conds = []
+    variants = _artist_variants(artist) if artist else []
+    if variants:
+        conds.append(func.lower(W.series_title).in_(variants))
+    if artist_mbid:
+        conds.append(W.artist_mbid == artist_mbid)
+    try:
+        with get_db_session() as db:
+            base = db.query(W).filter(W.user_id == user_id,
+                                      W.media_type == "music", or_(*conds))
+            plays = base.count()
+            if not plays:
+                return None
+            tracks = base.with_entities(func.count(func.distinct(W.title))).scalar()
+            last = base.with_entities(func.max(W.viewed_at)).scalar()
+            top = (db.query(W.title, func.count(W.id).label("n"))
+                   .filter(W.user_id == user_id, W.media_type == "music", or_(*conds))
+                   .group_by(W.title).order_by(func.count(W.id).desc())
+                   .limit(5).all())
+            return {"plays": plays, "tracks": tracks, "last": last,
+                    "top": [(t, n) for t, n in top]}
+    except Exception as e:
+        logger.debug("[watch] music_listening_stats failed for %r: %s", artist, e)
+        return None
+
+
+def format_listening_line(stats: dict | None) -> str:
+    """One evidence line from music_listening_stats — honest about silence."""
+    if not stats:
+        return "NO recorded plays in the owner's listening history."
+    when = f", last {stats['last'].strftime('%b %Y')}" if stats.get("last") else ""
+    top = "; top tracks: " + ", ".join(
+        f"{t} ({n} plays)" for t, n in (stats.get("top") or [])[:3])
+    return (f"{stats['plays']} plays across {stats['tracks']} distinct "
+            f"tracks{when}{top}")
+
+
 def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
     """Map each title → {count, completed, last} from watch_history, in ONE query.
     Absent from the result = the user never played it.

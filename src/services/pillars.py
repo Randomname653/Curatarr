@@ -122,13 +122,23 @@ def _watch_filters(item: dict, category: str):
     match on. We constrain in SQL because the owner has hundreds of thousands
     of watch rows."""
     from src.database.models import WatchHistoryEntry
-    from sqlalchemy import or_
+    from sqlalchemy import func, or_
     title = (item.get("title") or "").strip()
     tmdb_id = item.get("tmdb_id")
     title_conds = []
     if title:
         title_conds.append(WatchHistoryEntry.title == title)
         title_conds.append(WatchHistoryEntry.series_title == title)
+        if category == "music":
+            # MusicBrainz artist names carry typographic dashes (U+2010,
+            # "Mike WiLL Made‐It") while the history has ASCII "-" — the
+            # exact match above sees NOTHING for such artists.
+            from src.services.watch_status import _artist_variants
+            title_conds.append(
+                func.lower(WatchHistoryEntry.series_title).in_(_artist_variants(title)))
+    if category == "music" and (item.get("artist_mbid") or item.get("mbid")):
+        title_conds.append(WatchHistoryEntry.artist_mbid ==
+                           (item.get("artist_mbid") or item.get("mbid")))
     if tmdb_id:
         title_conds.append(WatchHistoryEntry.tmdb_id == tmdb_id)
     if not title_conds:
@@ -242,6 +252,19 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                       + ("completed" if ow.get("completed") else "not completed"))
     else:
         owner_line = "not watched by the owner"
+    if category == "music":
+        # play-count DEPTH for artists — "watched 10931x" says less than
+        # "10931 plays across 257 tracks, top: …" (and honest silence:
+        # 1 play in 2019 is the strongest CUT signal there is)
+        try:
+            from src.services.watch_status import (music_listening_stats,
+                                                   format_listening_line)
+            ls = music_listening_stats(
+                user_id, title, item.get("artist_mbid") or item.get("mbid"))
+            owner_line = format_listening_line(ls)
+            flags["owner_watched"] = bool(ls)
+        except Exception as e:
+            logger.debug("[pillars] listening stats failed for %r: %s", title, e)
 
     # ── OTHER household users (PILLAR III) ──
     try:
