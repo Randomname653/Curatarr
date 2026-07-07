@@ -283,6 +283,10 @@ _TITLE_REGEX_FALLBACKS = [
     _re.compile(r'\bwhat\s+(?:do you think\s+)?about\s+([^,.?!]{2,80})', _re.IGNORECASE),
     _re.compile(r"\bwhat(?:'s|\s+is)\s+([^,.?!]{2,80})", _re.IGNORECASE),
     _re.compile(r'\bdo you know\s+([^,.?!]{2,80})', _re.IGNORECASE),
+    # "tell me everything you know about X" / "what do you know about X" —
+    # the Kill la Kill opener matched NO pattern and the whole first message
+    # ran without any metadata anchor.
+    _re.compile(r'\bknow about\s+([^,.?!]{2,80})', _re.IGNORECASE),
     _re.compile(r'\bhave you (?:heard|seen)\s+(?:of\s+)?([^,.?!]{2,80})', _re.IGNORECASE),
     _re.compile(r'\bkennst du\s+([^,.?!]{2,80})', _re.IGNORECASE),
     _re.compile(r'\bwas h[äa]ltst du von\s+([^,.?!]{2,80})', _re.IGNORECASE),
@@ -422,9 +426,33 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
             title = stripped
         title = title.strip("\"'") or None
 
+    # Anaphora guard: "tell me about the studio behind it" extracted
+    # 'the studio behind it' as a TITLE, cascaded through every domain,
+    # flagged a topic switch and DROPPED the real anchor (Kill la Kill).
+    # A follow-up question about the current title is not a new entity —
+    # returning None keeps the thread's cached anchor and context alive.
+    if title and _looks_anaphoric(title):
+        logger.info("[chat] extracted %r is anaphoric — keeping current anchor", title)
+        return None, year
+
     if title:
         logger.info("[chat] entity extracted: %r (year hint=%s)", title, year)
     return title, year
+
+
+_ANAPHORIC_BARE = {"it", "that", "this", "them", "these", "those", "him", "her",
+                   "the same", "the one", "the show", "the movie", "the anime",
+                   "the film", "the series", "the album", "the band", "the studio",
+                   "the director"}
+
+
+def _looks_anaphoric(title: str) -> bool:
+    t = _re.sub(r"\s+", " ", (title or "").strip().lower())
+    if t in _ANAPHORIC_BARE:
+        return True
+    # "the studio behind it", "the director of that", "the sequel to this"
+    return bool(_re.search(r"\b(?:behind|of|to|about|for|from)\s+"
+                           r"(?:it|that|this|them|those)$", t))
 
 
 def _extract_title_from_dict(parsed) -> str | None:
@@ -2351,6 +2379,7 @@ CRITICAL BEHAVIOR RULES:
 {lang_rule}
 2. TONE: Be direct, concise, and highly opinionated. NEVER use generic AI apologies or corporate bot phrases. Talk to the user like a brutally honest friend.
 TRANSPARENCY: If the user asks for the raw metadata, show EVERYTHING you were given above — verified data AND watch status, storage, size context, reception, Wikipedia — never a partial selection, never refuse.
+EVIDENCE HONESTY: NEVER fabricate or imitate a metadata/context block. If no context block exists for a title, say exactly that. General knowledge about well-known titles is welcome ONLY when explicitly labeled as general knowledge rather than library data.
 {topic_lock_rule}
 {no_invention_rule}
 {no_library_actions_rule}
