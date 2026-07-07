@@ -1013,6 +1013,31 @@ def _verified_extras_block(title: str, domain: str) -> str:
     return ("\n" + "\n".join(out)) if out else ""
 
 
+def _verified_block_for(title: str, domain: str | None,
+                        data: dict | None = None) -> str:
+    """Cache-only FULL verified block ("" when nothing cached) — the one way
+    every strand attaches the complete dossier (format, studio + note,
+    critics, reception, franchise, AniDB tags, staff, music fields). Sync
+    and cheap: build_verified_data reads the warm cache, no LLM, no network.
+    Every context path must end with this — the Kill la Kill session showed
+    three strands each rebuilding their own thin subset."""
+    try:
+        from src.services.media_enricher import build_verified_data, format_verified_block
+        vd = build_verified_data(
+            title, domain or "movie",
+            tmdb_id=(data or {}).get("tmdb_id"),
+            tvdb_id=(data or {}).get("tvdb_id"),
+            anilist_id=(data or {}).get("anilist_id"),
+        )
+        if vd and vd.get("title"):
+            fvb = format_verified_block(vd)
+            if fvb:
+                return "\n" + fvb + "\n"
+    except Exception as e:
+        logger.debug("[chat] verified block for %r failed: %s", title, e)
+    return ""
+
+
 def _build_hidden_context(
     title: str, data: dict, domain: str = "movie",
     year_hint: int | None = None,
@@ -1656,9 +1681,12 @@ async def _build_discuss_context_block(
             except Exception as _e:
                 logger.debug("[chat] discography line failed: %s", _e)
         else:
-            _ws = _watch_tag(
-                _watched_lookup(proposal.user_id, [proposal.title],
-                                category=proposal.category).get(proposal.title))
+            _st = _watched_lookup(proposal.user_id, [proposal.title],
+                                  category=proposal.category).get(proposal.title)
+            _ws = _watch_tag(_st)
+            _eps_total = (verified_payload or {}).get("episodes_total")
+            if _st and (_st.get("episodes") or 0) >= 2 and _eps_total:
+                _ws += f" (series total: {_eps_total} episodes)"
             block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
         # Franchise reality-check: which typed relations actually sit in the
         # user's library RIGHT NOW — a review's "compared to its predecessors"
@@ -1885,6 +1913,13 @@ async def _build_discuss_context_block(
             if a:
                 anchor_title = a
                 anchor_category = "music"
+
+        # Anchored non-track entities (rewatch series, binge, music marathon
+        # artist) get the FULL cached dossier too — this branch anchored the
+        # title but attached no data at all, so a rewatch discussion ran on
+        # a bare name while the raw doc knew everything.
+        if anchor_title and ttype != "track_obsession":
+            block += _verified_block_for(anchor_title, anchor_category)
 
         # No resolvable entity → say so instead of improvising. The "whimsical
         # escapism" message had no anchor; asked "what exactly are we talking
@@ -2202,9 +2237,14 @@ async def send_message(
                     active_title = cached[0]
                     cached_data = cached[1] if len(cached) > 1 else None
                     if cached_data:
+                        _dom = cached[2] if len(cached) > 2 else "movie"
                         hidden_metadata_context = _build_hidden_context(
-                            active_title, cached_data, domain=cached[2] if len(cached) > 2 else "movie"
+                            active_title, cached_data, domain=_dom
                         )
+                        # reuse path carried only the thin live fetch — attach
+                        # the full dossier from the warm cache too
+                        hidden_metadata_context += _verified_block_for(
+                            active_title, _dom, cached_data)
                     logger.debug("[chat] Reusing cached title for thread %s: %s",
                                  thread_id, active_title)
                     pre_stream_status.append(f"Reusing cached metadata for '{active_title}'")
@@ -2313,6 +2353,8 @@ async def send_message(
                 hidden_metadata_context = _build_hidden_context(
                     active_title, cached_data, domain=cached_domain
                 )
+                hidden_metadata_context += _verified_block_for(
+                    active_title, cached_domain, cached_data)
             else:
                 hidden_metadata_context = _build_no_metadata_anchor(active_title)
             logger.debug("[chat] Reusing cached context for thread %s: %s",
