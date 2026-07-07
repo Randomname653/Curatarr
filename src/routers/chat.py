@@ -1516,6 +1516,15 @@ async def _build_discuss_context_block(
                                         _mbid_m.group(1) if _mbid_m else None)
             block += (f"\nOWNER LISTENING RECORD for '{proposal.title}': "
                       f"{format_listening_line(_ls)}\n")
+            try:
+                from src.services.lidarr_discography import discography_summary
+                _disc = await discography_summary(
+                    artist_mbid=_mbid_m.group(1) if _mbid_m else None,
+                    artist_name=proposal.title)
+                if _disc:
+                    block += f"DISCOGRAPHY of '{proposal.title}' {_disc}\n"
+            except Exception as _e:
+                logger.debug("[chat] discography line failed: %s", _e)
         else:
             _ws = _watch_tag(
                 _watched_lookup(proposal.user_id, [proposal.title],

@@ -265,6 +265,15 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             flags["owner_watched"] = bool(ls)
         except Exception as e:
             logger.debug("[pillars] listening stats failed for %r: %s", title, e)
+        try:
+            from src.services.lidarr_discography import discography_summary
+            disc = await discography_summary(
+                artist_mbid=item.get("artist_mbid") or item.get("mbid"),
+                artist_name=title)
+            if disc:
+                owner_line += f" Discography {disc}."
+        except Exception as e:
+            logger.debug("[pillars] discography failed for %r: %s", title, e)
 
     # ── OTHER household users (PILLAR III) ──
     try:
