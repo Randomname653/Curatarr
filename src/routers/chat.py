@@ -981,38 +981,6 @@ def _fmt_field(value, fallback: str = "(not in our database)") -> str:
     return str(value)
 
 
-def _verified_extras_block(title: str, domain: str) -> str:
-    """Extra VERIFIED fields the per-domain blocks above don't natively show —
-    creator/writer (the Level-2 'pedigree' signal), the LLM-derived themes &
-    keywords, and awards. Pulled from the cache with NO LLM (general chat's
-    cascade already ran a full enrich incl. OMDb, so the cache is warm). Returns
-    "" when nothing extra is available; video domains only."""
-    if domain not in ("movie", "show", "tv", "anime"):
-        return ""
-    try:
-        from src.services.media_enricher import build_verified_data
-        d = build_verified_data(title, "show" if domain == "tv" else domain)
-    except Exception:
-        return ""
-    if not d:
-        return ""
-    out = []
-
-    def _add(label, val):
-        if val in (None, "", []):
-            return
-        if isinstance(val, list):
-            val = ", ".join(str(v) for v in val if v)
-        out.append(f"- {label}: {val}")
-
-    _add("Creator/Writer", d.get("writer"))
-    _add("Themes", d.get("themes"))
-    _add("Keywords", d.get("keywords"))
-    _add("Notable", d.get("extra_context"))
-    _add("Significance", d.get("significance"))
-    return ("\n" + "\n".join(out)) if out else ""
-
-
 def _verified_block_for(title: str, domain: str | None,
                         data: dict | None = None) -> str:
     """Cache-only FULL verified block ("" when nothing cached) — the one way
@@ -1137,7 +1105,7 @@ Item: '{title}' ({year}, anime){year_mismatch_note}
 - Source material: {source_mat}
 - Genres: {genres}
 - Rating: {rating}
-- Synopsis: {synopsis}{_verified_extras_block(title, domain)}
+- Synopsis: {synopsis}
 """
 
     # Default: movie/tv
@@ -1164,7 +1132,7 @@ Item: '{title}' ({year}){year_mismatch_note}
 - Runtime: {runtime}
 - Genres: {genres}
 - Rating: {rating}{series_block}
-- Synopsis: {synopsis}{_verified_extras_block(title, domain)}
+- Synopsis: {synopsis}
 """
 
 
@@ -2681,6 +2649,20 @@ FORMATTING RULES:
 
         try:
             yield f"data: {json.dumps({'status': 'Curatarr is thinking…'})}\n\n"
+            # Context-budget watchdog: num_ctx=8192 is baked into the model
+            # and num_predict=4096 shares it — past ~16k chars of input the
+            # generation gets squeezed and dies mid-word (the Kill la Kill
+            # dossier reply broke off after two sentences). Make the size
+            # VISIBLE so the next truncation names its cause.
+            _prompt_chars = sum(len(m.get("content") or "") for m in messages)
+            if _prompt_chars > 15000:
+                logger.warning(
+                    "[chat] prompt size %d chars (~%d tokens) — 8192 num_ctx "
+                    "minus 4096 num_predict leaves ~4k input tokens; expect "
+                    "squeezed/truncated generation",
+                    _prompt_chars, _prompt_chars // 4)
+            else:
+                logger.info("[chat] prompt size: %d chars", _prompt_chars)
             health_task = asyncio.create_task(_delayed_vram_probe())
             # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
             # the response can take 5-10 minutes. We'd rather wait it out
