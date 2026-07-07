@@ -364,6 +364,7 @@ def build_verified_data(
             "staff":             raw.get("staff"),
             # Music-artist fields (musicbrainz+lastfm) — they sat on the raw
             # doc for 15k artists while the evidence block never showed them.
+            "discogs_styles":  _discogs_styles_for(raw),
             "bio":             raw.get("bio"),
             "listeners":       raw.get("listeners"),
             "artist_type":     raw.get("type") if raw.get("media_type") == "music" else None,
@@ -372,6 +373,17 @@ def build_verified_data(
     finally:
         if owns:
             cache.close()
+
+
+def _discogs_styles_for(raw: dict) -> Optional[list]:
+    """Aggregated Discogs styles for a music artist (local snapshot read)."""
+    if (raw or {}).get("media_type") != "music":
+        return None
+    try:
+        from src.services.discogs_offline import artist_styles
+        return artist_styles(raw.get("name") or raw.get("title")) or None
+    except Exception:
+        return None
 
 
 def _director_note_for(cache, director) -> Optional[str]:
@@ -462,6 +474,7 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Box office", data.get("box_office"))
     # music-artist lines (all None for video docs, so they simply don't print)
     add("Artist type", data.get("artist_type"))
+    add("Styles (Discogs)", data.get("discogs_styles"))
     if data.get("listeners"):
         try:
             add("Community", f"{int(data['listeners']):,} Last.fm listeners")
