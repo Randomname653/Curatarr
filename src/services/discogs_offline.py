@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 DATA_INDEX = "https://data.discogs.com/"
 UA = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                     "personal media curator) python-httpx"}
-STYLES_DB_PATH = Path("data/cache/discogs_styles.db")
+# repo-root-anchored — background/standalone runners don't share the app CWD
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+STYLES_DB_PATH = _REPO_ROOT / "data" / "cache" / "discogs_styles.db"
 MAX_AGE_DAYS = 30
 
 _MASTER_RE = re.compile(rb"<master id=\"(\d+)\">(.*?)</master>", re.S)
@@ -91,18 +93,26 @@ def _families_for_tags(tags) -> set[str]:
     return {fam for fam, keys in _GENRE_FAMILIES.items() if toks & keys}
 
 
-def _library_artists() -> dict[str, set[str]]:
-    """The owner's music world: {norm_name: known genre FAMILIES (may be
-    empty)} from Lidarr ∪ listening history ∪ the enrichment cache (Last.fm
-    genres — the anchor that catches same-name dump collisions)."""
-    names: dict[str, set[str]] = {}
+def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
+    """The owner's music world: {norm_name: (genre FAMILIES, raw tag TOKENS)}
+    from Lidarr ∪ listening history ∪ the enrichment cache (Last.fm genres).
+    Families anchor against cross-family same-name collisions; the tag
+    tokens boost the artist's REAL styles during aggregation (within-family
+    collisions like frenchcore-Crypton vs Electronic-Disco-Crypton)."""
+    names: dict[str, tuple[set, set]] = {}
 
     def _add(name: str, tags=None):
         n = _norm(name)
         if not n:
             return
         fams = _families_for_tags(tags) if tags else set()
-        names.setdefault(n, set()).update(fams)
+        toks = set()
+        for t in tags or []:
+            toks.update(re.split(r"[^a-z]+", str(t).lower()))
+        toks.discard("")
+        cur = names.setdefault(n, (set(), set()))
+        cur[0].update(fams)
+        cur[1].update(toks)
 
     try:
         from src.config import settings
@@ -127,9 +137,14 @@ def _library_artists() -> dict[str, set[str]]:
     except Exception as e:
         logger.debug("[discogs] history artist list failed: %s", e)
     try:
-        # richest anchor: Last.fm genres on the raw music docs
+        # richest anchor: Last.fm genres on the raw music docs. Resolve the
+        # cache path against the repo root — standalone scripts/background
+        # runners don't share the app's CWD and silently found NOTHING.
         from src.config import settings as _s
-        con = sqlite3.connect(str(_s.ENRICHMENT_CACHE))
+        p = Path(str(_s.ENRICHMENT_CACHE))
+        if not p.is_absolute():
+            p = _REPO_ROOT / p
+        con = sqlite3.connect(str(p))
         for (resp,) in con.execute(
                 "SELECT response FROM api_cache WHERE cache_key LIKE '%raw:music:%'"):
             try:
@@ -244,10 +259,10 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
                     # collision anchor: when we KNOW the artist's family and
                     # the master's Discogs genres name a DIFFERENT family,
                     # this is a same-name stranger — drop it
-                    known = wanted[a_norm]
-                    if known and genres:
+                    known_fams, _known_toks = wanted[a_norm]
+                    if known_fams and genres:
                         m_fams = {g.lower() for g in genres}
-                        if not (m_fams & known):
+                        if not (m_fams & known_fams):
                             continue
                     masters.append((
                         a_norm, _unescape(am.group(1)),
@@ -275,13 +290,30 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
             CREATE TABLE artist_styles (artist_norm TEXT PRIMARY KEY, styles TEXT);
         """)
         cur.executemany("INSERT INTO master_styles VALUES (?,?,?,?,?,?)", masters)
+        # Aggregation with a KNOWN-STYLE boost: within-family same-name
+        # collisions survive the genre anchor (Discogs files Disco under
+        # Electronic, so the frenchcore Crypton still absorbed a Disco act).
+        # Styles whose tokens match the artist's own Last.fm tags count 4x,
+        # so the artist's real core outranks a stranger's output; unmatched
+        # styles also need >=2 masters to make the top list at all.
         agg: dict[str, Counter] = {}
+        boosted: dict[str, set] = {}
         for a_norm, _a, _t, _y, _g, styles_json in masters:
-            agg.setdefault(a_norm, Counter()).update(json.loads(styles_json))
-        cur.executemany(
-            "INSERT INTO artist_styles VALUES (?,?)",
-            [(a, json.dumps([s for s, _ in c.most_common(8)]))
-             for a, c in agg.items()])
+            c = agg.setdefault(a_norm, Counter())
+            _fams, toks = wanted.get(a_norm, (set(), set()))
+            for s in json.loads(styles_json):
+                s_toks = set(re.split(r"[^a-z]+", s.lower())) - {""}
+                if toks and (s_toks & toks):
+                    c[s] += 4
+                    boosted.setdefault(a_norm, set()).add(s)
+                else:
+                    c[s] += 1
+        rows_out = []
+        for a, c in agg.items():
+            keep = [(s, n) for s, n in c.most_common()
+                    if s in boosted.get(a, ()) or n >= 2]
+            rows_out.append((a, json.dumps([s for s, _ in keep[:8]])))
+        cur.executemany("INSERT INTO artist_styles VALUES (?,?)", rows_out)
         cur.executescript("""
             CREATE INDEX idx_ms_artist ON master_styles(artist_norm);
         """)
