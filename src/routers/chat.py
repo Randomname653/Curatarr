@@ -615,7 +615,8 @@ _KEEP_STANCE_TOKENS: tuple[str, ...] = (
 )
 
 
-def _is_in_flipflop_loop(user_id: int, anchor: str, window: int = 6) -> bool:
+def _is_in_flipflop_loop(user_id: int, anchor: str, thread_id: str | None = None,
+                         window: int = 6) -> bool:
     """Pass 49: detect a curator stance flip-flop on ``anchor`` over the
     last ``window`` assistant turns.
 
@@ -631,13 +632,23 @@ def _is_in_flipflop_loop(user_id: int, anchor: str, window: int = 6) -> bool:
         from src.database.connection import get_db_session
         from src.database.models import ConversationMessage
         with get_db_session() as db:
-            msgs = (
+            q = (
                 db.query(ConversationMessage.content)
                   .filter(
                       ConversationMessage.user_id == user_id,
                       ConversationMessage.role == "assistant",
                   )
-                  .order_by(ConversationMessage.created_at.desc())
+            )
+            # audit 11c: without the thread filter, parallel discussions
+            # cross-triggered / diluted each other's flip detection
+            if thread_id:
+                if thread_id == "general":
+                    q = q.filter((ConversationMessage.thread_id == "general")
+                                 | (ConversationMessage.thread_id.is_(None)))
+                else:
+                    q = q.filter(ConversationMessage.thread_id == thread_id)
+            msgs = (
+                q.order_by(ConversationMessage.created_at.desc())
                   .limit(window)
                   .all()
             )
@@ -700,7 +711,7 @@ async def _check_protection_intent_bg(
     a missed log row is the acceptable failure mode (a calm follow-up turn
     re-affirming the keep will be logged normally).
     """
-    if anchor_title and _is_in_flipflop_loop(user_id, anchor_title):
+    if anchor_title and _is_in_flipflop_loop(user_id, anchor_title, thread_id=thread_id):
         logger.info(
             "[protection] flip-flop loop on %r — skipping detector for this turn",
             anchor_title,

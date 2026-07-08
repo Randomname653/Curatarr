@@ -289,6 +289,11 @@ async def serve_frontend():
 
 @app.get("/{full_path:path}")
 async def catch_all(full_path: str):
+    # audit 11g: unknown /api/... paths returned index.html with 200 —
+    # a typo in an API call got HTML instead of a 404.
+    if full_path.startswith("api"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Unknown API path")
     """Serve frontend for all non-API routes (SPA routing).
 
     Resolves the requested path under frontend/ and verifies it stays inside
