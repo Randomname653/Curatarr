@@ -1668,11 +1668,18 @@ async def _build_discuss_context_block(
                 _ws += f" (series total: {_eps_total} episodes)"
             block += f"\nUSER WATCH STATUS for '{proposal.title}': {_ws}\n"
             try:
-                from src.services.watch_status import viewing_pattern
+                from src.services.watch_status import (viewing_pattern,
+                                                       viewing_stop_point)
                 _vp = viewing_pattern(proposal.user_id, proposal.title,
                                       category=proposal.category)
                 if _vp:
                     block += f"VIEWING PATTERN: {_vp}\n"
+                    _sp = viewing_stop_point(proposal.user_id, proposal.title)
+                    if _sp and proposal.category in ("show", "anime"):
+                        from src.services.episode_context import stop_point_context
+                        _spc = await stop_point_context(proposal.title, *_sp)
+                        if _spc:
+                            block += f"STOP-POINT CONTEXT: {_spc}\n"
             except Exception as _e:
                 logger.debug("[chat] viewing pattern failed: %s", _e)
         # Franchise reality-check: which typed relations actually sit in the
@@ -2381,11 +2388,18 @@ async def send_message(
             # episode-level viewing signals for free chat too — "9 episodes"
             # says less than "S1E1-E9 in order, stopped after E9, binged"
             try:
-                from src.services.watch_status import viewing_pattern
+                from src.services.watch_status import (viewing_pattern,
+                                                       viewing_stop_point)
                 _vp = viewing_pattern(user.id, active_title)
                 if _vp:
                     hidden_metadata_context = ((hidden_metadata_context or "")
                         + f"\nUSER VIEWING PATTERN for '{active_title}': {_vp}\n")
+                    _sp = viewing_stop_point(user.id, active_title)
+                    if _sp:
+                        from src.services.episode_context import stop_point_context
+                        _spc = await stop_point_context(active_title, *_sp)
+                        if _spc:
+                            hidden_metadata_context += f"STOP-POINT CONTEXT: {_spc}\n"
             except Exception as _e:
                 logger.debug("[chat] viewing pattern failed: %s", _e)
 
