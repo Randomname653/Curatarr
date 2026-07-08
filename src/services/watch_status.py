@@ -213,6 +213,26 @@ def viewing_pattern(user_id: int, title: str, category: str = None) -> str | Non
     return "; ".join(parts)
 
 
+def viewing_stop_point(user_id: int, title: str) -> tuple[int, int] | None:
+    """The coordinates behind viewing_pattern's stop line: the highest
+    (season, episode) the user played for this series, or None."""
+    if not user_id or not title:
+        return None
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    try:
+        with get_db_session() as db:
+            rows = (db.query(W.season, W.episode)
+                    .filter(W.user_id == user_id, W.series_title == title,
+                            W.episode.isnot(None)).all())
+        if not rows:
+            return None
+        return max((r.season or 1, r.episode) for r in rows)
+    except Exception as e:
+        logger.debug("[watch] stop point failed for %r: %s", title, e)
+        return None
+
+
 def watch_tag(status: dict) -> str:
     """One-line watch tag for a status dict (or None → never watched).
 
