@@ -1171,104 +1171,108 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
     keys via EnrichmentStatus + MediaIdentity. ``categories`` / ``source``
     / ``limit`` are then ignored.
     """
-    # Normalize legacy source value
-    if source == "all":
-        source = "both"
-
-    if force:
-        logger.info("Force re-enrichment requested -- clearing cache for %s (source=%s)", categories, source)
-        try:
-            from src.cache.metadata_cache import MetadataCache
-            from src.database.models import ArrEnrichmentStatus
-            # One sqlite3 handle (MetadataCache.conn) instead of two pointed
-            # at the same file — concurrent writers used to deadlock here.
-            _mc = MetadataCache()
-            try:
-                # Phase 2 #39 fix: every key in api_cache is prefixed with the
-                # ``_CACHE_VERSION`` (currently "v2:") by ``MetadataCache.set_cache``.
-                # The pre-fix LIKE 'enriched:{cat}:%' matched zero rows, so
-                # ``force=True`` silently never cleared the polished cache —
-                # users hitting "🔄 Force Re-Enrich" expected a fresh fetch but
-                # got cache-hits via the polished tier-1 path. Documented as a
-                # latent bug in ARCHITECTURE.md §15 since #38a; fixed now so
-                # force re-enrich actually does what its name promises +
-                # streaming-merge (#39) fires for every item.
-                from src.cache.metadata_cache import _CACHE_VERSION as _CV
-                for cat in categories:
-                    if source in ("watch_history", "both"):
-                        deleted = _mc.conn.execute(
-                            "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                            (f"{_CV}:enriched:{cat}:%",)
-                        ).rowcount
-                        logger.info("Cleared %d cache entries for %s", deleted, cat)
-                    elif source == "arr":
-                        # Clear only ARR-sourced cache keys (radarr/sonarr/lidarr prefixes).
-                        deleted = 0
-                        for svc in ("radarr", "sonarr", "lidarr"):
-                            deleted += _mc.conn.execute(
-                                "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                                (f"{_CV}:enriched:{cat}:{svc}:%",)
-                            ).rowcount
-                        logger.info("Cleared %d ARR cache entries for %s", deleted, cat)
-
-                # Pass 46 (Bug 4 / B7): also wipe per-item embedding caches.
-                # ``emb:{pid}`` and ``emb_ts:{pid}`` live with a 90-day TTL
-                # and gate re-embedding by ts comparison; force-re-enrich
-                # MUST drop them or the next taste-vector recompute keeps
-                # reusing vectors built from the now-deleted old profiles.
-                # ``LIKE 'emb:%'`` matches both emb: and emb_ts: in one go.
-                # Only run on watch_history / both — emb caches are keyed
-                # by plex_rating_key, which arr-only items don't have.
-                if source in ("watch_history", "both"):
-                    emb_deleted = _mc.conn.execute(
-                        "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                        (f"%:emb:%",),
-                    ).rowcount
-                    emb_ts_deleted = _mc.conn.execute(
-                        "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                        (f"%:emb_ts:%",),
-                    ).rowcount
-                    logger.info(
-                        "Cleared %d emb + %d emb_ts cache rows", emb_deleted, emb_ts_deleted,
-                    )
-
-                _mc.conn.commit()
-            finally:
-                _mc.close()
-            with get_db_session() as db:
-                if source in ("watch_history", "both"):
-                    db.query(EnrichmentStatus).filter(
-                        EnrichmentStatus.media_category.in_(categories)
-                    ).update({"enriched": False, "error": None, "enriched_at": None},
-                             synchronize_session=False)
-                if source in ("arr", "both"):
-                    db.query(ArrEnrichmentStatus).filter(
-                        ArrEnrichmentStatus.category.in_(categories)
-                    ).update({"enriched": False, "enriched_at": None},
-                             synchronize_session=False)
-                db.commit()
-        except Exception as e:
-            logger.warning("Force-clear failed: %s", e)
-
-    import json as _json
-    # The route already acquired the enrichment_running lock atomically via
-    # acquire_state_lock(); we don't need to set it again here. The flag
-    # is released in the finally-block at the end of this function.
-    set_state("enrichment_progress", "0")
-    # Persist settings so a startup-resume uses the exact same parameters
-    set_state("enrichment_last_settings", _json.dumps({
-        "categories": categories,
-        "source": source,
-        "limit": limit,
-    }))
-    set_state("enrichment_interrupted", "1")
-    setup_task = task_monitor.create(
-        name=f"Enrichment setup: {', '.join(categories)}",
-        category="enrichment",
-    )
-    task_monitor.start(setup_task)
-
+    # Audit #4: the lock-release finally must cover the WHOLE body —
+    # the force-clear block, the set_state calls and task_monitor.create
+    # used to sit BEFORE the try; an exception there stranded the lock
+    # until restart.
     try:
+        # Normalize legacy source value
+        if source == "all":
+            source = "both"
+
+        if force:
+            logger.info("Force re-enrichment requested -- clearing cache for %s (source=%s)", categories, source)
+            try:
+                from src.cache.metadata_cache import MetadataCache
+                from src.database.models import ArrEnrichmentStatus
+                # One sqlite3 handle (MetadataCache.conn) instead of two pointed
+                # at the same file — concurrent writers used to deadlock here.
+                _mc = MetadataCache()
+                try:
+                    # Phase 2 #39 fix: every key in api_cache is prefixed with the
+                    # ``_CACHE_VERSION`` (currently "v2:") by ``MetadataCache.set_cache``.
+                    # The pre-fix LIKE 'enriched:{cat}:%' matched zero rows, so
+                    # ``force=True`` silently never cleared the polished cache —
+                    # users hitting "🔄 Force Re-Enrich" expected a fresh fetch but
+                    # got cache-hits via the polished tier-1 path. Documented as a
+                    # latent bug in ARCHITECTURE.md §15 since #38a; fixed now so
+                    # force re-enrich actually does what its name promises +
+                    # streaming-merge (#39) fires for every item.
+                    from src.cache.metadata_cache import _CACHE_VERSION as _CV
+                    for cat in categories:
+                        if source in ("watch_history", "both"):
+                            deleted = _mc.conn.execute(
+                                "DELETE FROM api_cache WHERE cache_key LIKE ?",
+                                (f"{_CV}:enriched:{cat}:%",)
+                            ).rowcount
+                            logger.info("Cleared %d cache entries for %s", deleted, cat)
+                        elif source == "arr":
+                            # Clear only ARR-sourced cache keys (radarr/sonarr/lidarr prefixes).
+                            deleted = 0
+                            for svc in ("radarr", "sonarr", "lidarr"):
+                                deleted += _mc.conn.execute(
+                                    "DELETE FROM api_cache WHERE cache_key LIKE ?",
+                                    (f"{_CV}:enriched:{cat}:{svc}:%",)
+                                ).rowcount
+                            logger.info("Cleared %d ARR cache entries for %s", deleted, cat)
+
+                    # Pass 46 (Bug 4 / B7): also wipe per-item embedding caches.
+                    # ``emb:{pid}`` and ``emb_ts:{pid}`` live with a 90-day TTL
+                    # and gate re-embedding by ts comparison; force-re-enrich
+                    # MUST drop them or the next taste-vector recompute keeps
+                    # reusing vectors built from the now-deleted old profiles.
+                    # ``LIKE 'emb:%'`` matches both emb: and emb_ts: in one go.
+                    # Only run on watch_history / both — emb caches are keyed
+                    # by plex_rating_key, which arr-only items don't have.
+                    if source in ("watch_history", "both"):
+                        emb_deleted = _mc.conn.execute(
+                            "DELETE FROM api_cache WHERE cache_key LIKE ?",
+                            (f"%:emb:%",),
+                        ).rowcount
+                        emb_ts_deleted = _mc.conn.execute(
+                            "DELETE FROM api_cache WHERE cache_key LIKE ?",
+                            (f"%:emb_ts:%",),
+                        ).rowcount
+                        logger.info(
+                            "Cleared %d emb + %d emb_ts cache rows", emb_deleted, emb_ts_deleted,
+                        )
+
+                    _mc.conn.commit()
+                finally:
+                    _mc.close()
+                with get_db_session() as db:
+                    if source in ("watch_history", "both"):
+                        db.query(EnrichmentStatus).filter(
+                            EnrichmentStatus.media_category.in_(categories)
+                        ).update({"enriched": False, "error": None, "enriched_at": None},
+                                 synchronize_session=False)
+                    if source in ("arr", "both"):
+                        db.query(ArrEnrichmentStatus).filter(
+                            ArrEnrichmentStatus.category.in_(categories)
+                        ).update({"enriched": False, "enriched_at": None},
+                                 synchronize_session=False)
+                    db.commit()
+            except Exception as e:
+                logger.warning("Force-clear failed: %s", e)
+
+        import json as _json
+        # The route already acquired the enrichment_running lock atomically via
+        # acquire_state_lock(); we don't need to set it again here. The flag
+        # is released in the finally-block at the end of this function.
+        set_state("enrichment_progress", "0")
+        # Persist settings so a startup-resume uses the exact same parameters
+        set_state("enrichment_last_settings", _json.dumps({
+            "categories": categories,
+            "source": source,
+            "limit": limit,
+        }))
+        set_state("enrichment_interrupted", "1")
+        setup_task = task_monitor.create(
+            name=f"Enrichment setup: {', '.join(categories)}",
+            category="enrichment",
+        )
+        task_monitor.start(setup_task)
+
         # Phase 2 #41: targeted re-enrichment for the source-upgrade job.
         # ``specific_plex_rating_keys`` short-circuits the watch_history +
         # ARR collect path — we look up each key directly in EnrichmentStatus
