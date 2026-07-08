@@ -19,7 +19,7 @@ import httpx
 import numpy as np
 
 from src.config import settings
-from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, CURATOR_KEEP_ALIVE
+from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
 from src.database.connection import get_db_session
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.database.models import (
@@ -343,7 +343,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
                             "messages": [{"role": "user", "content": prompt}],
                             "stream": False,
                             "keep_alive": CURATOR_KEEP_ALIVE,
-                            **ollama_options(temperature=0.7, num_predict=max_tokens),
+                            **curator_options(temperature=0.7, num_predict=max_tokens),
                         },
                     )
                 if r.status_code == 200:

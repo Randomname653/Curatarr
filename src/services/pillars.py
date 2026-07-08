@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import logging
 
+from src.services.llm_utils import CURATOR_NUM_CTX
+
 logger = logging.getLogger(__name__)
 
 
@@ -478,7 +480,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         "think": False,
         "keep_alive": "10m",
         "options": {"temperature": 0.0, "num_predict": 800,
-                    "num_ctx": 8192, "num_gpu": 99},
+                    "num_ctx": CURATOR_NUM_CTX, "num_gpu": 99},
     }
     async def _post():
         async with httpx.AsyncClient(timeout=_JUDGE_TIMEOUT) as client:

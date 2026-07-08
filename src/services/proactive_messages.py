@@ -34,7 +34,7 @@ from src.database.models import (
     WatchHistoryEntry, ProactiveMessage, TasteVectorEntry, User
 )
 from src.config import settings
-from src.services.llm_utils import strip_think_tags, ollama_options, CURATOR_KEEP_ALIVE
+from src.services.llm_utils import strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
 from src.services.series_progress import (
     compute_watch_progress,
     get_series_progress,
@@ -1204,7 +1204,7 @@ async def generate_proactive_message(
                             ],
                             "stream": False,
                             "keep_alive": CURATOR_KEEP_ALIVE,
-                            **ollama_options(temperature=0.85, num_predict=800),
+                            **curator_options(temperature=0.85, num_predict=800),
                         },
                     )
                 if resp.status_code == 200:
