@@ -3548,22 +3548,24 @@ function _setAnalysePulse(on) {
   if (dot) dot.style.display = on ? '' : 'none';
 }
 
-// ── Judge protections (admin debug: what the 3-pillar judge auto-saved) ──────
+// ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
   if (!el) return;
-  el.innerHTML = '<p class="loading">Loading judge-protected titles…</p>';
+  el.innerHTML = '<p class="loading">Loading protected titles…</p>';
   try {
     const r = await api('/api/recommendations/protections');
     const rows = r.protections || [];
     if (!rows.length) {
-      el.innerHTML = '<p style="color:var(--text3);font-size:13px">Nothing auto-protected by the judge yet — titles appear here after a pillar-judged analysis.</p>';
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">No protections yet — titles appear here when the judge protects them or you grant protection in chat.</p>';
       return;
     }
     el.innerHTML = rows.map(p => {
-      const badge = p.verdict === 'KEEP_WITH_FLAG'
-        ? '<span class="badge amber">KEEP · downscale</span>'
-        : '<span class="badge muted">HARD_KEEP</span>';
+      const badge = p.source && p.source !== 'judge'
+        ? '<span class="badge amber">CHAT</span>'
+        : (p.verdict === 'KEEP_WITH_FLAG'
+            ? '<span class="badge amber">KEEP · downscale</span>'
+            : '<span class="badge muted">HARD_KEEP</span>');
       const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
       return `<div class="panel-item">
         <div class="panel-item-head">

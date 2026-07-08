@@ -360,12 +360,14 @@ async def list_judge_protections(
     user: User = Depends(require_admin),   # curation = admin only
     db: Session = Depends(get_db),
 ):
-    """Admin debug view: every title the 4-pillar judge auto-protected, with the
-    pillar Begründung — so the admin can see WHY a title was saved and lift it."""
+    """Admin view: EVERY protection — judge auto-saves AND chat-intent grants —
+    with reason and source, so the admin can see WHY a title was saved and can
+    lift it. (The old source=='judge' filter made chat protections invisible:
+    a chat-granted protection had NO place in the UI to undo.)"""
     from src.database.models import ProtectedMedia
     rows = (
         db.query(ProtectedMedia)
-        .filter(ProtectedMedia.user_id == user.id, ProtectedMedia.source == "judge")
+        .filter(ProtectedMedia.user_id == user.id)
         .order_by(ProtectedMedia.created_at.desc())
         .all()
     )
@@ -376,6 +378,7 @@ async def list_judge_protections(
                 "title": p.title or p.identifier,
                 "category": p.category,
                 "verdict": p.verdict,
+                "source": p.source or "chat",
                 "reason": p.reason,
                 "arr_url": p.arr_url,
                 "created_at": p.created_at.isoformat() if p.created_at else None,

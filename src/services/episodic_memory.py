@@ -1409,6 +1409,11 @@ Output NO_ACTION when the user has NOT settled — they are still negotiating:
 - "I like X", "X is great" — a preference, not a keep-directive.
 - "Add X to my library" — an addition request, not protection.
 
+Output NO_ACTION when the user POSTPONES the decision — parking is not
+keeping: "let it simmer", "we'll talk about this later / in another chat",
+"lass uns das später klären", "park it for now". The proposal simply stays
+pending; do NOT protect.
+
 Output NO_ACTION when the user is AGREEING to delete (NOT a keep-directive,
 the OPPOSITE of one):
 - "delete it", "remove it", "i'll delete this", "i will delete this",
