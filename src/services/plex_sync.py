@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 from src.services.task_monitor import task_monitor
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.services.llm_utils import (
-    strip_think_tags, ollama_options,
+    strip_think_tags, ollama_options, curator_options,
     detect_user_language, language_directive,
 )
 
@@ -1406,7 +1406,7 @@ CRITICAL RULES (YOU MUST OBEY):
                         "model": model,
                         "messages": [{"role": "user", "content": prompt}],
                         "stream": False,
-                        **ollama_options(temperature=0.8, num_predict=2000),
+                        **curator_options(temperature=0.8, num_predict=2000),
                     },
                 )
             if resp.status_code == 200:

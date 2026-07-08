@@ -12,6 +12,7 @@ from typing import AsyncGenerator
 
 from src.services.llm_utils import (
     ThinkTagStreamFilter, clean_llm_text, ollama_options, strip_think_tags,
+    curator_options, CURATOR_NUM_CTX,
     CURATOR_KEEP_ALIVE, SUMMARIZER_KEEP_ALIVE,
     detect_user_language, language_directive,
 )
@@ -2041,8 +2042,10 @@ def _load_conversation(
     if topic_changed and msgs:
         logger.info("[chat] Topic changed — loading only %d/%d messages for thread %s",
                     len(msgs), CONVERSATION_WINDOW, thread_id)
-    # Context-budget diet: the watchdog measured 33.5k chars of input against
-    # a ~16k budget (num_ctx 8192 − num_predict 4096) — history was the bulk.
+    # Context-budget diet: the watchdog measured 33.5k chars of input when
+    # the window was still 8192 — history was the bulk. The window is
+    # CURATOR_NUM_CTX now, but history stays on a diet: old monologues add
+    # noise, not signal.
     # Newest-first, keep messages until the budget is spent; clip OLD
     # assistant monologues (their substance lives in memories/context anyway,
     # and Ollama otherwise silently truncates the SYSTEM prompt instead).
@@ -2692,21 +2695,23 @@ FORMATTING RULES:
 
         try:
             yield f"data: {json.dumps({'status': 'Curatarr is thinking…'})}\n\n"
-            # Context-budget watchdog: num_ctx=8192 is baked into the model
-            # and num_predict=4096 shares it — past ~16k chars of input the
-            # generation gets squeezed and dies mid-word (the Kill la Kill
-            # dossier reply broke off after two sentences). Make the size
-            # VISIBLE so the next truncation names its cause.
+            # Context-budget watchdog: input + num_predict share the
+            # CURATOR_NUM_CTX window — past the budget the generation gets
+            # squeezed and dies mid-word (the Kill la Kill reply broke off
+            # after two sentences back on the 8192 window). Keep the size
+            # VISIBLE so any truncation names its cause.
             _prompt_chars = sum(len(m.get("content") or "") for m in messages)
             _sys_chars = sum(len(m.get("content") or "") for m in messages
                              if m.get("role") == "system")
             _hist_chars = _prompt_chars - _sys_chars
-            if _prompt_chars > 15000:
+            _input_budget_chars = (CURATOR_NUM_CTX - 4096) * 4   # ~4 chars/token
+            if _prompt_chars > _input_budget_chars * 0.9:
                 logger.warning(
                     "[chat] prompt size %d chars (~%d tokens; system=%d, "
-                    "history+user=%d) — 8192 num_ctx minus 4096 num_predict "
-                    "leaves ~4k input tokens; expect squeezed generation",
-                    _prompt_chars, _prompt_chars // 4, _sys_chars, _hist_chars)
+                    "history+user=%d) — near the %d-token window minus 4096 "
+                    "predict; expect squeezed generation",
+                    _prompt_chars, _prompt_chars // 4, _sys_chars, _hist_chars,
+                    CURATOR_NUM_CTX)
             else:
                 logger.info("[chat] prompt size: %d chars (system=%d, history+user=%d)",
                             _prompt_chars, _sys_chars, _hist_chars)
@@ -2725,10 +2730,10 @@ FORMATTING RULES:
                         "keep_alive": CURATOR_KEEP_ALIVE,
                         # 2048 cut long, in-flight monologues off mid-sentence
                         # (the "hoarding" critique stopped at "...The Godfather").
-                        # 4096 lets a full argument land; stays within the baked
-                        # num_ctx=8192 budget (input + output) for typical free
-                        # chat without paying the VRAM cost of a bigger context.
-                        **ollama_options(temperature=0.7, num_predict=4096),
+                        # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
+                        # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
+                        # input tokens — the 33.5k-char Kill la Kill turn fits.
+                        **curator_options(temperature=0.7, num_predict=4096),
                     },
                 ) as resp:
                     async for line in resp.aiter_lines():

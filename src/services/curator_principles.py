@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import json
 import logging
+
+from src.services.llm_utils import CURATOR_NUM_CTX
 from datetime import datetime
 
 import httpx
@@ -130,7 +132,7 @@ async def _curator_json(system: str, user: str, schema: dict,
                      {"role": "user", "content": user}],
         "format": schema, "stream": False, "think": False, "keep_alive": "10m",
         "options": {"temperature": 0.1, "num_predict": num_predict,
-                    "num_ctx": 8192, "num_gpu": 99},
+                    "num_ctx": CURATOR_NUM_CTX, "num_gpu": 99},
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)

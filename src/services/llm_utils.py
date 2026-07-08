@@ -129,6 +129,21 @@ SUMMARIZER_KEEP_ALIVE = "30s"
 CURATOR_IDLE_EVICT_SECONDS = 60
 CURATOR_IDLE_EVICT_BUSY    = 10
 
+# Curator context window — benchmarked 2026-07-08 (tests/benchmarks/
+# num_ctx_bench.py, nomic resident, RTX 4090 24GB): 16384 runs 100% GPU at
+# full speed (32-34 t/s, 23.96 GB total); 20480 tips over (generation
+# halves). Passed as a REQUEST option — no model rebuild involved. MUST be
+# identical on EVERY curator call site: a num_ctx mismatch between requests
+# forces a full model reload (~6.5 s) on each switch.
+CURATOR_NUM_CTX = 16384
+
+
+def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
+    """ollama_options for CURATOR calls — pins the shared num_ctx so chat,
+    judge, proactive and principle calls all reuse one resident instance."""
+    return ollama_options(temperature, num_predict,
+                          num_ctx=CURATOR_NUM_CTX, **extra)
+
 
 def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
     """
