@@ -34,7 +34,7 @@ import httpx
 
 from src.database.connection import get_db_session
 from src.database.models import EpisodicMemory, EncryptedTasteVector
-from src.services.taste_vectors import decrypt_vector, encrypt_vector, merge_feedback_into_vector
+from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
 from src.services.llm_utils import clean_llm_text, parse_llm_json, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE
 
@@ -781,8 +781,6 @@ _THREAD_EXTRACT_DEBOUNCE_S = 300.0
 # keyed by f"{user_id}:{thread_id}" → the pending asyncio debounce task
 _pending_thread_extracts: dict[str, asyncio.Task] = {}
 # strong refs to in-flight principle-capture tasks (fire-and-forget would
-# otherwise be garbage-collectable mid-run)
-_running_captures: set = set()
 
 
 def _extract_key(user_id: int, thread_id: str) -> str:
@@ -1901,41 +1899,3 @@ async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: 
             )
 
 # ── MEMORY DECAY / CLEANUP ────────────────────────────────────────────────────
-
-async def run_memory_decay(user_id: int, keep_top: int = 500):
-    """
-    Remove low-importance, old, never-accessed memories.
-    Keeps the memory store lean and relevant.
-    Called after each sync.
-
-    Two paths:
-      1. Volume-based — fires when total > keep_top, drops 90-day-old low-importance.
-      2. Time-based   — even with few memories, anything > 180 days old, importance < 0.3,
-                        access_count == 0 is genuinely stale and gets dropped.
-    """
-    with get_db_session() as db:
-        total = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id).count()
-
-        deleted_total = 0
-
-        if total > keep_top:
-            cutoff = datetime.utcnow() - timedelta(days=90)
-            deleted_total += db.query(EpisodicMemory).filter(
-                EpisodicMemory.user_id == user_id,
-                EpisodicMemory.importance < 0.5,
-                EpisodicMemory.access_count == 0,
-                EpisodicMemory.created_at < cutoff,
-            ).delete()
-
-        # Time-based path — runs regardless of total. Drops only the very stale.
-        very_stale_cutoff = datetime.utcnow() - timedelta(days=180)
-        deleted_total += db.query(EpisodicMemory).filter(
-            EpisodicMemory.user_id == user_id,
-            EpisodicMemory.importance < 0.3,
-            EpisodicMemory.access_count == 0,
-            EpisodicMemory.created_at < very_stale_cutoff,
-        ).delete()
-
-        if deleted_total:
-            db.commit()
-            logger.info("Memory decay: removed %d stale memories for user %d", deleted_total, user_id)

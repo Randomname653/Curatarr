@@ -312,19 +312,6 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
     return None
 
 
-async def _fetch_poster_batch(titles_cats: list) -> dict:
-    """Fetch posters for multiple titles concurrently. Returns {title: url}."""
-    import asyncio
-    sem = asyncio.Semaphore(5)
-
-    async def fetch_one(title, cat):
-        async with sem:
-            return title, await _fetch_poster(title, cat)
-
-    results = await asyncio.gather(*[fetch_one(t, c) for t, c in titles_cats])
-    return {t: u for t, u in results if u}
-
-
 @router.get("/by-category")
 async def get_recommendations_by_category(
     limit: int = Query(5),

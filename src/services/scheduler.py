@@ -684,7 +684,7 @@ async def job_arr_pre_enrich():
     Daily at 02:30: enrich a batch of unenriched ARR library items so the
     deletion-proposal engine always has rating + genre data when it runs.
 
-    Runs BEFORE job_arr_sync (daily variable time) and job_enrichment_ttl_refresh
+    Runs BEFORE job_arr_sync (daily variable time)
     (03:30) so newly queued items are included in the same overnight window.
 
     Batch size: ARR_PRE_ENRICH_BATCH (default 80) — small enough to finish in
@@ -863,63 +863,6 @@ async def job_source_upgrade():
         logger.error("[scheduler] Source-upgrade pass failed: %s", e, exc_info=True)
 
 
-async def job_enrichment_ttl_refresh():
-    """
-    Daily: mark the oldest N LLM-enriched items as pending again so they get
-    refreshed on the next enrichment run. Staggered to avoid big-bang expiry.
-
-    With ENRICHMENT_REFRESH_BATCH_SIZE=150 and a 10k-title library the full
-    cycle completes in ~67 days — well within the 90-day TTL window.
-    """
-    logger.info("[scheduler] Starting enrichment TTL refresh")
-    from src.services.task_monitor import task_monitor
-    task = task_monitor.create(name="Enrichment TTL Refresh", category="enrichment")
-    task_monitor.start(task)
-    try:
-        from src.database.connection import get_db_session
-        from src.database.models import EnrichmentStatus
-
-        cutoff = datetime.utcnow() - timedelta(days=settings.ENRICHMENT_TTL_DAYS)
-        batch  = settings.ENRICHMENT_REFRESH_BATCH_SIZE
-
-        with get_db_session() as db:
-            expired = (
-                db.query(EnrichmentStatus)
-                .filter(
-                    EnrichmentStatus.enriched   == True,
-                    EnrichmentStatus.error.is_(None),
-                    EnrichmentStatus.enriched_at <= cutoff,
-                )
-                .order_by(EnrichmentStatus.enriched_at.asc())
-                .limit(batch)
-                .all()
-            )
-            for item in expired:
-                # Pass 86: PRESERVE the old ``enriched_at`` timestamp on a
-                # TTL re-queue. The producer's priority sort (enrichment.py
-                # post-pre-filter) treats ``enriched_at IS NULL`` as
-                # "never-enriched, top priority" and everything else as
-                # "TTL-refresh, oldest-first" — without this preservation,
-                # nulling ``enriched_at`` here made TTL re-queues
-                # indistinguishable from genuinely-new imports and they
-                # crowded fresh items out of the daily batch budget.
-                item.enriched = False
-                item.error    = None
-            db.commit()
-
-        task_monitor.done(task, f"Queued {len(expired)} items for re-enrichment")
-        logger.info("[scheduler] TTL refresh: %d items queued (cutoff=%s)", len(expired), cutoff.date())
-    except Exception as e:
-        task_monitor.error(task, str(e))
-        logger.error("[scheduler] Enrichment TTL refresh failed: %s", e)
-
-
-async def trigger_post_enrichment(user_id: int):
-    """Called after enrichment completes — recompute taste + cache recs."""
-    logger.info("[scheduler] Post-enrichment pipeline for user %d", user_id)
-    await _recompute_and_cache_recs(user_id)
-
-
 async def _recompute_and_cache_recs(user_id: int = None):
     """Recompute taste vectors then pre-cache recommendations."""
     if _gaming():
@@ -1021,52 +964,6 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
     except Exception as e:
         logger.error("[scheduler] track-metadata warm failed: %s", e)
         return 0
-
-
-async def job_music_pipeline():
-    """
-    Daily at 04:00: match Spotify plays to Plex tracks, then fetch Last.fm genres
-    for any plays still missing them (both Spotify and Plex).
-    """
-    logger.info("[scheduler] Starting daily music pipeline")
-    from src.services.task_monitor import task_monitor
-    task = task_monitor.create(name="Music Match + Enrichment", category="music")
-    task_monitor.start(task)
-    try:
-        from src.database.connection import get_db_session
-        from src.database.models import User
-        from src.services.music_matcher import run_music_pipeline
-
-        with get_db_session() as db:
-            admin = db.query(User).filter_by(is_admin=True).first()
-            if not admin:
-                task_monitor.skip(task, "No admin user")
-                return
-            user_id = admin.id
-
-        task_monitor.update(task, message="Running Plex match + Last.fm enrichment")
-        result = await run_music_pipeline(user_id)
-
-        # Pass 69: phase 3 — pre-warm Last.fm metadata for the most-played
-        # recent tracks so the discuss-context path serves them from cache
-        # instead of a live call. Best-effort: returns 0 on failure, never
-        # breaks the pipeline's success reporting.
-        task_monitor.update(task, message="Warming top-track metadata cache")
-        warmed = await _warm_top_track_metadata(user_id)
-
-        p1 = result.get("phase1_plex_match", {})
-        p2 = result.get("phase2_lastfm_genres", {})
-        summary = (
-            f"Plex matched={p1.get('matched', 0)} | "
-            f"Last.fm enriched={p2.get('enriched_plays', 0)} plays "
-            f"({p2.get('tracks_queried', 0)} tracks) | "
-            f"track-meta warmed={warmed}"
-        )
-        task_monitor.done(task, summary)
-        logger.info("[scheduler] Music pipeline complete: %s", summary)
-    except Exception as e:
-        task_monitor.error(task, str(e))
-        logger.error("[scheduler] Music pipeline failed: %s", e)
 
 
 async def job_db_vacuum():

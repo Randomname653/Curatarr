@@ -82,8 +82,6 @@ class Settings(BaseSettings):
     # Set False — current models (granite4.1:8b, qwen3.6:27b) do not emit think blocks.
     # Keep this flag so switching to a reasoning model only requires an .env change.
     LLM_THINK_TAGS: bool = False
-    # Kept for .env backward-compat; no longer used — enrichment uses a single LLM worker.
-    ENRICH_PARALLEL_SLOTS: int = 0
     # Max concurrent big-model (curator) generations across the WHOLE server.
     # A single GPU can only run one without spilling to CPU, so the default 1
     # serializes chat + recommendations + proactive + verification: a second

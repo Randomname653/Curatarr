@@ -358,7 +358,7 @@ async def _get_arr_counts() -> dict:
                 )
                 # Pass 91c: Lidarr always showed 0% enriched because
                 # ``ArrEnrichmentStatus`` never gets music rows — the
-                # music pipeline (in-app job_music_pipeline + standalone
+                # music pipeline (custodian music task + standalone
                 # music_enricher.py) writes to the general
                 # ``EnrichmentStatus`` table instead. To get a meaningful
                 # coverage number, intersect Lidarr's artistName set with
@@ -1497,7 +1497,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # Pass 86: priority sort — fresh imports (never enriched) go to the
         # front of the queue, then TTL-refresh re-queues by oldest-first.
         # The scheduler's TTL refresh PRESERVES the old enriched_at on a
-        # re-queue (scheduler.py::job_enrichment_ttl_refresh, Pass 86), so
+        # re-queue (now change-based invalidation via the custodian), so
         # ``enriched_at IS NULL`` is now a reliable "never been enriched"
         # marker — fresh items get LLM-polished within the same batch as
         # they arrive instead of waiting behind the background refresh

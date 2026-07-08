@@ -308,11 +308,6 @@ def _aggregate_arr_rating(item: dict) -> tuple[float, dict]:
     return (weighted_sum / weight_total, breakdown)
 
 
-def _extract_arr_rating(item: dict) -> float:
-    """Backwards-compatible wrapper — returns the aggregated rating only."""
-    return _aggregate_arr_rating(item)[0]
-
-
 CATEGORY_LABELS = {
     "music": "🎵 Music",
     "movie": "🎬 Movies",

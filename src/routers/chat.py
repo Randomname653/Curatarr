@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from src.database import get_db
 from src.database.models import ConversationMessage, User
 from src.routers.auth import get_current_user
-from src.schemas.chat import ChatMessage, ChatResponse
+from src.schemas.chat import ChatMessage
 from src.config import settings
 from src.services.plex_sync import get_user_taste_context
 from src.services.media_enricher import enrich_media_item
@@ -39,7 +39,6 @@ CONVERSATION_WINDOW = 20            # last N messages to include as context
 CONVERSATION_WINDOW_TOPIC_SWITCH = 4 # smaller window when the user pivots to a new title
 _HISTORY_CHAR_BUDGET = 8000         # hard char budget for history (context diet)
 _ASSISTANT_CLIP = 700               # clip OLD assistant monologues to this many chars
-MAX_TOKENS_APPROX = 6000   # rough token budget for conversation history
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -2093,30 +2092,6 @@ def _save_message(
         thread_id=thread_id,
     ))
     db.commit()
-
-
-def _thread_has_history(user_id: int, thread_id: str, db: Session) -> bool:
-    """Cheap existence check — does this thread already have any messages?
-
-    Used to gate the entity-detection / live-enrichment path: the small-model
-    title extraction + 3 s enrichment lookup is worthwhile on the FIRST turn
-    of a thread (the LLM has no context yet and the user typically opens with
-    a media-mention). On every subsequent turn the LLM has the topic from
-    its own conversation history; spending 1-3 s of latency on each follow-up
-    just to extract a title that's likely a pronoun ("it", "that one") makes
-    typing feel sluggish.
-    """
-    q = db.query(ConversationMessage.id).filter(
-        ConversationMessage.user_id == user_id,
-    )
-    if thread_id == "general":
-        q = q.filter(
-            (ConversationMessage.thread_id == "general")
-            | (ConversationMessage.thread_id.is_(None))
-        )
-    else:
-        q = q.filter(ConversationMessage.thread_id == thread_id)
-    return q.first() is not None
 
 
 # ── STREAMING CHAT ────────────────────────────────────────────────────────────
