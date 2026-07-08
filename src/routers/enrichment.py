@@ -1532,6 +1532,11 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         if total == 0:
             task_monitor.done(setup_task, "Nothing to enrich -- all items already have profiles")
             set_state("last_enrichment_at", datetime.utcnow().isoformat())
+            # Audit #2: without this reset the interrupted flag stayed 1
+            # forever on the nothing-to-do path -- every server boot saw
+            # "interrupted", ran a resume, hit total==0 again AND paid a
+            # full taste recomputation (LLM summaries) each time.
+            set_state("enrichment_interrupted", "0")
             await _run_taste_computation(user_id, categories)
             return
 

@@ -98,15 +98,28 @@ async def _run_spotify(deep: bool = False) -> bool:
         return True
     batch = 2000 if deep else 1000
     r = await run_music_pipeline(uid, batch=batch)
+    # Top-track metadata warm phase (Pass 69) — its only caller used to be
+    # the retired job_music_pipeline, so the track-obsession discuss cache
+    # went cold when the custodian absorbed the pipeline (audit #10).
+    try:
+        from src.services.scheduler import _warm_top_track_metadata
+        warmed = await _warm_top_track_metadata(uid)
+        if warmed:
+            logger.info("[custodian] top-track metadata warmed: %d", warmed)
+    except Exception as e:
+        logger.debug("[custodian] track warm failed: %s", e)
     # Heuristic done-check: every phase consumed less than its batch → the
     # queues are (near) drained; otherwise stay due and continue next tick.
+    # Audit #1: the keys MUST match what the phases actually return
+    # (enriched_plays / tracks_queried) — the old enriched/queried read 0
+    # forever and stamped the pipeline done with thousands of tracks open.
     mbid = (r.get("phase1_4_mbid") or {})
     sp = (r.get("phase1_5_spotify") or {})
     lf = (r.get("phase2_lastfm_genres") or {})
     busy = max(
         mbid.get("resolved", 0) or 0,
-        sp.get("enriched", 0) or 0,
-        (lf.get("queried", 0) or 0),
+        sp.get("enriched_plays", 0) or 0,
+        lf.get("tracks_queried", 0) or 0,
     )
     return busy < batch
 

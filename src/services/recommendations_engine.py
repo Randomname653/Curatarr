@@ -1701,10 +1701,12 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         genres = [g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()]
         return sum(genre_affinity.get(g, 0) for g in genres) + _monitored_bonus(item)
 
+    user_vector_n = _normalize_vec(user_vector) if user_vector else None
+
     def _vector_score(item: dict):
         """Cosine similarity (user taste vector · item ChromaDB embedding),
         or None when either side is missing."""
-        if not user_vector:
+        if user_vector_n is None:
             return None
         doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or item.get("title") or "")
         if not doc_id:
@@ -1719,7 +1721,13 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
             # never actually ran.
             emb = res.get("embedding") if res else None
             if emb is not None:
-                return float(np.dot(user_vector, emb)) + _monitored_bonus(item)
+                # Audit #6: stored embeddings are RAW (norm ~13) -- the same
+                # trap the deletion path fixed with _normalize_vec. A bare
+                # dot ranked by |emb| instead of taste fit and drowned the
+                # 0.1 monitored bonus.
+                emb_n = _normalize_vec(emb)
+                if emb_n is not None and user_vector_n is not None:
+                    return float(np.dot(user_vector_n, emb_n)) + _monitored_bonus(item)
         except Exception:
             pass
         return None
