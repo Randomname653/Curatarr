@@ -1254,8 +1254,7 @@ def _expected_sources_for(media_type: str, is_anime: bool, ids: dict) -> list[st
         return ["mb", "lastfm"]
     if is_anime:
         sources = ["anilist"]
-        if ids.get("mal_id") or True:  # Jikan can also title-search, so always try
-            sources.append("jikan")
+        sources.append("jikan")  # Jikan can title-search too — always try (audit 11b: was `if … or True`)
         return sources
     # movie / show
     sources = ["tmdb"]
@@ -3439,7 +3438,7 @@ async def enrich_media_item(
             "runtime":       raw.get("runtime"),
             "studios":       raw.get("studios") or raw.get("studio") or "",
             "episodes_total": raw.get("episodes_total") or raw.get("episodes"),
-            "source_material": raw.get("source_material") or raw.get("source") or "",
+            "source_material": raw.get("source_material") or "",  # audit 11a: raw["source"] is PROVENANCE (tmdb/anilist), not source material
             "plot_summary":  raw.get("overview_extended") or raw.get("overview") or "",
             "tmdb_id":       tmdb_id or raw.get("tmdb_id"),
             "anilist_id":    anilist_id or raw.get("anilist_id"),

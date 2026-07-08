@@ -840,23 +840,22 @@ async def generate_deletion_proposals(
         cutoff = _dt.utcnow() - _td(days=60)
         candidate_titles = {item.get("title") for item in arr_items if item.get("title")}
         curator_positioned: set[str] = set()
-        for t in candidate_titles:
-            try:
-                hit = (
-                    db.query(ConversationMessage.id)
-                    .filter(
-                        ConversationMessage.user_id == user_id,
-                        ConversationMessage.role == "assistant",
-                        ConversationMessage.content.like(f"%{t}%"),
-                        ConversationMessage.created_at >= cutoff,
-                    )
-                    .limit(1)
-                    .first()
-                )
-                if hit:
-                    curator_positioned.add(t)
-            except Exception as e:
-                logger.debug("[deletions] curator-stance check failed for %r: %s", t, e)
+        # audit 11f: this used to fire one LIKE '%title%' query PER candidate
+        # (thousands per category per run). Load the recent assistant text
+        # ONCE and substring-match in Python instead.
+        try:
+            _rows = (db.query(ConversationMessage.content)
+                     .filter(ConversationMessage.user_id == user_id,
+                             ConversationMessage.role == "assistant",
+                             ConversationMessage.created_at >= cutoff)
+                     .all())
+            _blob = " | ".join((r.content or "") for r in _rows).lower()
+            if _blob:
+                for t in candidate_titles:
+                    if t and t.lower() in _blob:
+                        curator_positioned.add(t)
+        except Exception as e:
+            logger.debug("[deletions] curator-stance scan failed: %s", e)
         if curator_positioned:
             logger.info(
                 "[deletions] %d/%d candidates skipped — curator already positioned on them in chat: %s",

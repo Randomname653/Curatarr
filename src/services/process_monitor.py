@@ -83,7 +83,7 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
     "lghub.exe", "logioverlay.exe",
     "razer synapse 3.exe", "razercentralservice.exe",
     "synapse3.exe", "steelseriessoftware.exe", "steelseriesgge.exe",
-    "corsairhid.exe", "iCUE.exe",
+    "corsairhid.exe", "icue.exe",
     "msiafterburner.exe", "rivatunerstatisticsserver.exe",
     "glasswire.exe", "nzxt cam.exe",
     "onedrive.exe", "googledrivefs.exe", "dropbox.exe",

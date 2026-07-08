@@ -579,6 +579,25 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
                 skipped += 1
                 continue
 
+            # audit 11d: Plex moves lastViewedAt on every sync for IN-
+            # PROGRESS items — the (user, key, viewed_at) dedup then turned
+            # each evening of the same unfinished film into a NEW row
+            # (playcount inflation). Advance the unfinished row instead.
+            if is_in_progress:
+                _prev = db.query(WatchHistoryEntry).filter(
+                    WatchHistoryEntry.user_id == user.id,
+                    WatchHistoryEntry.plex_item_id == rating_key,
+                    WatchHistoryEntry.completed == False,  # noqa: E712
+                ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
+                if _prev is not None and _prev.viewed_at != viewed_at:
+                    existing.discard((user.id, rating_key, _prev.viewed_at))
+                    _prev.viewed_at = viewed_at
+                    _prev.view_offset_ms = int(view_offset_ms or 0)
+                    _prev.completed = completed
+                    existing.add(dedup_key)
+                    skipped += 1
+                    continue
+
             genres_list = [g.get("tag", "") for g in (entry.get("Genre") or [])]
             genres_str = ",".join(g for g in genres_list if g)
             if not genres_str:
