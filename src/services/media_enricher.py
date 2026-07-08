@@ -463,8 +463,13 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Studio", data.get("studios"))
     add("Studio note", data.get("studio_note"), cap=350)
     add("Notable", data.get("extra_context"))
-    if data.get("rating"):
-        add("Rating", f"{data['rating']}/10")
+    # rating can be a CONTENT rating string for anime ("PG-13 - Teens 13 or
+    # older") — that rendered as "PG-13 - Teens 13 or older/10". Only format
+    # numeric scores as N/10.
+    try:
+        add("Rating", f"{float(data.get('rating')):g}/10")
+    except (TypeError, ValueError):
+        add("Content rating", data.get("rating"))
     critics = []
     if data.get("rt_score"):
         critics.append(f"Rotten Tomatoes {data['rt_score']}")
