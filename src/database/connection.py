@@ -255,6 +255,9 @@ def _migrate_deletion_proposals_autoincrement() -> None:
                     synopsis TEXT,
                     genres TEXT,
                     latest_activity_at DATETIME,
+                    tvdb_id INTEGER,
+                    tmdb_id INTEGER,
+                    stagnant BOOLEAN,
                     FOREIGN KEY(user_id) REFERENCES users (id)
                 )
             """))
@@ -263,11 +266,11 @@ def _migrate_deletion_proposals_autoincrement() -> None:
                     (id, user_id, media_id, title, service, arr_url, reason,
                      confidence, storage_mb, status, user_comment, created_at,
                      resolved_at, category, poster_url, synopsis, genres,
-                     latest_activity_at)
+                     latest_activity_at, tvdb_id, tmdb_id, stagnant)
                 SELECT id, user_id, media_id, title, service, arr_url, reason,
                        confidence, storage_mb, status, user_comment, created_at,
                        resolved_at, category, poster_url, synopsis, genres,
-                       latest_activity_at
+                       latest_activity_at, tvdb_id, tmdb_id, stagnant
                 FROM deletion_proposals_old_pre90c
             """))
             # Seed sqlite_sequence so AUTOINCREMENT continues from current max.
