@@ -712,12 +712,11 @@ async def job_arr_pre_enrich():
             task_monitor.skip(task, "Enrichment already running — skipping pre-enrich")
             return
 
-        # Pass 46 (Bug 3): the awaited ``_run_enrichment`` releases the
-        # lock in its own finally on the happy path. Wrap our setup in a
-        # try/finally so a crash BEFORE that finally registers (import
-        # error, batch math, task_monitor update) still clears the lock.
-        # Double-release is safe: ``release_state_lock`` is just
-        # ``set_state(key, "0")`` — idempotent.
+        # Audit #3: the old unconditional finally double-released the lock —
+        # a /start acquiring between _run_enrichment's release and ours got
+        # unlocked from under it. handed_off transfers ownership to the
+        # callee (which releases from its very first line since audit #4).
+        handed_off = False
         try:
             batch = int(getattr(settings, "ARR_PRE_ENRICH_BATCH", 80))
             task_monitor.update(task, message=f"Enriching up to {batch} ARR items (movie/show/anime/music)")
@@ -726,6 +725,7 @@ async def job_arr_pre_enrich():
             # source="arr" — only look at ARR items, not watch history
             # limit=batch   — cap per run to keep runtime predictable
             # force=False   — skip already-LLM-enriched items
+            handed_off = True
             await _run_enrichment(
                 user_id=user_id,
                 categories=["movie", "show", "anime", "music"],
@@ -737,7 +737,8 @@ async def job_arr_pre_enrich():
             task_monitor.done(task, f"ARR pre-enrichment batch complete (up to {batch} items)")
             logger.info("[scheduler] ARR pre-enrichment done (batch=%d)", batch)
         finally:
-            release_state_lock("enrichment_running")
+            if not handed_off:
+                release_state_lock("enrichment_running")
 
     except Exception as e:
         task_monitor.error(task, str(e))
@@ -820,6 +821,7 @@ async def job_source_upgrade():
                 "Main enrichment already running — deferring upgrade pass")
             return
 
+        handed_off = False
         try:
             task_monitor.update(task, message=f"Upgrading {len(target_keys)} provisional rows")
             from src.routers.enrichment import _run_enrichment
@@ -827,6 +829,7 @@ async def job_source_upgrade():
             # (they're enriched=True). specific_plex_rating_keys
             # short-circuits watch_history + ARR collect. fast_only=
             # False is the whole point — run the canonical full path.
+            handed_off = True
             await _run_enrichment(
                 user_id=user_id,
                 categories=[],          # ignored when specific keys given
@@ -840,7 +843,8 @@ async def job_source_upgrade():
             logger.info("[scheduler] Source-upgrade pass done: %d items processed",
                         len(target_keys))
         finally:
-            release_state_lock("enrichment_running")
+            if not handed_off:
+                release_state_lock("enrichment_running")
 
     except Exception as e:
         task_monitor.error(task, str(e))

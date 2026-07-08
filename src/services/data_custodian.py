@@ -96,8 +96,17 @@ async def _run_spotify(deep: bool = False) -> bool:
     uid = _admin_id()
     if uid is None:
         return True
+    # Audit #7: same lock as the manual /music/start endpoint — the two
+    # paths used to run the pipeline CONCURRENTLY into MusicBrainz/Last.fm.
+    from src.services.app_state import acquire_state_lock, release_state_lock
+    if not acquire_state_lock("music_pipeline_running"):
+        logger.info("[custodian] music pipeline already running — retry next tick")
+        return False
     batch = 2000 if deep else 1000
-    r = await run_music_pipeline(uid, batch=batch)
+    try:
+        r = await run_music_pipeline(uid, batch=batch)
+    finally:
+        release_state_lock("music_pipeline_running")
     # Top-track metadata warm phase (Pass 69) — its only caller used to be
     # the retired job_music_pipeline, so the track-obsession discuss cache
     # went cold when the custodian absorbed the pipeline (audit #10).

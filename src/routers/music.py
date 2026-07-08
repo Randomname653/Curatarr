@@ -70,7 +70,11 @@ async def start_pipeline(
     Idempotent on re-run: already-matched plays are skipped, already-enriched
     tracks are skipped.  Safe to call multiple times.
     """
-    if get_state("music_pipeline_running") == "1":
+    # Audit #7: atomic acquire in the ENDPOINT — the old get_state check
+    # here + set_state later in the background task left a window where two
+    # fast starts (or a custodian tick) both passed the check.
+    from src.services.app_state import acquire_state_lock
+    if not acquire_state_lock("music_pipeline_running"):
         raise HTTPException(status_code=409, detail="Music pipeline already running")
 
     set_state("music_pipeline_stop_requested", "0")
@@ -150,7 +154,8 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
     from datetime import datetime
     from src.services.task_monitor import task_monitor
 
-    set_state("music_pipeline_running",     "1")
+    # music_pipeline_running is already held: the endpoint (or custodian)
+    # acquired it atomically before this task was scheduled.
     set_state("music_pipeline_interrupted", "1")
     set_state("music_pipeline_stop_requested", "0")
     set_state("music_pipeline_progress", _json.dumps({
