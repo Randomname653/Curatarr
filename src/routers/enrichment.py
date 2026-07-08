@@ -1265,6 +1265,10 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             "categories": categories,
             "source": source,
             "limit": limit,
+            # Audit #8: without these a interrupted upgrade/fast run resumed
+            # as a FULL run (or a no-op with source="upgrade")
+            "fast_only": fast_only,
+            "specific": bool(specific_plex_rating_keys),
         }))
         set_state("enrichment_interrupted", "1")
         setup_task = task_monitor.create(
@@ -1891,6 +1895,17 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     if is_game_running():
                         # Persist raw API data to SQLite, skip LLM, mark for later
                         await _write_game_mode_db(citem, ccat, raw)
+                        # Audit #9b: the slow-source fetches spawned for this
+                        # item are never awaited on this path — cancel them
+                        # or they run into the void (and the finalizer that
+                        # would consume them is never spawned).
+                        if remaining:
+                            for _rt in (remaining.values()
+                                        if isinstance(remaining, dict) else remaining):
+                                try:
+                                    _rt.cancel()
+                                except Exception:
+                                    pass
                         game_skipped += 1
                         if game_skipped == 1:
                             logger.info("Game detected — LLM paused, unloading models, API pre-fetching only")
@@ -1908,7 +1923,11 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                         # fetch_tier='full' as a SECOND DB update.
                         if remaining and live_ref is not None:
                             from src.services.media_enricher import _finalize_streaming_merge
-                            asyncio.create_task(_finalize_streaming_merge(
+                            from src.services.bg_tasks import track_task
+                            # Audit #9a: a bare create_task violates the
+                            # Pass-41 rule — GC could collect the finalizer
+                            # and leave the item provisional forever.
+                            track_task(_finalize_streaming_merge(
                                 citem["plex_rating_key"],
                                 live_ref,
                                 remaining,

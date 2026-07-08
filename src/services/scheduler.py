@@ -355,9 +355,20 @@ async def _resume_enrichment_if_needed(user_id: int):
             return
 
         saved = _json.loads(raw_settings)
+        # Audit #8: an interrupted UPGRADE / targeted run must not resume as
+        # a normal run — source="upgrade" collects nothing (no-op) and the
+        # hourly upgrade job re-picks its rows anyway. Same for fast_only:
+        # resuming it as a full run silently changes semantics.
+        if saved.get("specific") or saved.get("source") == "upgrade":
+            from src.services.app_state import set_state as _ss
+            _ss("enrichment_interrupted", "0")
+            logger.info("[startup] interrupted run was a targeted/upgrade pass — "
+                        "not resuming (the hourly job re-picks its rows)")
+            return
         categories = saved.get("categories") or ["music", "movie", "show", "anime"]
         source     = saved.get("source") or "both"
         limit      = saved.get("limit")   # None = no limit
+        fast_only  = bool(saved.get("fast_only"))
 
         logger.info(
             "[startup] Enrichment was interrupted — resuming with categories=%s source=%s limit=%s",
@@ -379,7 +390,8 @@ async def _resume_enrichment_if_needed(user_id: int):
         handed_off = False
         try:
             _track_task(asyncio.create_task(
-                _run_enrichment(user_id, categories, source, limit, False),
+                _run_enrichment(user_id, categories, source, limit, False,
+                                fast_only=fast_only),
                 name=f"enrichment_resume_user_{user_id}",
             ))
             handed_off = True
