@@ -35,11 +35,5 @@ class DiscussContext(BaseModel):
 
 class ChatMessage(BaseModel):
     message: str
-    media_context: Optional[List[str]] = None
     discuss_context: Optional[DiscussContext] = None
 
-
-class ChatResponse(BaseModel):
-    response: str
-    media_references: Optional[List[Dict[str, Any]]] = None
-    user_taste_update: Optional[Dict[str, float]] = None
