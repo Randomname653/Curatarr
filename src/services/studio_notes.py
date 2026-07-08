@@ -53,6 +53,13 @@ _DIRECTOR_SYS = (
 # a person hit must actually be a film person, not a same-named homonym
 _PERSON_HINT = re.compile(r"director|filmmaker|screenwriter|animator|producer", re.I)
 
+# Placeholder values must never be treated as names: Director "Unknown"
+# searched Wikipedia, matched the FILM "A Complete Unknown" (substring!),
+# and granite condensed it into a James Mangold note that got cached for
+# ten years under director_note:unknown.
+_NAME_SENTINELS = {"unknown", "n a", "na", "none", "various", "tba", "tbd",
+                   "unbekannt", "misc", "not available", "no director"}
+
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
@@ -162,7 +169,11 @@ async def _wiki_person_lead(name: str) -> str:
                 hits = []
             for h in hits[:4]:
                 t = h.get("title") or ""
-                if want not in _norm(t):
+                tn = _norm(t)
+                # PERSON articles must BE the name (plus optional
+                # disambiguator) — a contains-check let "A Complete
+                # Unknown" pass for director "Unknown".
+                if tn != want and not tn.startswith(want + " "):
                     continue
                 try:
                     ex = await client.get(WIKI_API, params={
@@ -183,7 +194,7 @@ async def ensure_director_note(name: str, cache=None) -> Optional[str]:
     expensive, but debated/judged titles collect the relevant names fast
     (proto: 12/16 coverage incl. long-tail, NONE results cache forever)."""
     name = (name or "").split(",")[0].strip()
-    if not name or not _norm(name):
+    if not name or _norm(name) in _NAME_SENTINELS or not _norm(name):
         return None
     from src.cache.metadata_cache import MetadataCache
     owns = cache is None
@@ -213,7 +224,7 @@ async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
     """Fetch-and-cache the note for one studio (idempotent — a checked
     marker is written even when Wikipedia has nothing, so each studio costs
     at most one Wikipedia + summarizer round ever)."""
-    if not studio or not _norm(studio):
+    if not studio or _norm(studio) in _NAME_SENTINELS or not _norm(studio):
         return None
     from src.cache.metadata_cache import MetadataCache
     owns = cache is None
