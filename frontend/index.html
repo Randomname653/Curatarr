@@ -1258,10 +1258,7 @@ async function finishSetup() {
 }
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
-function cancelPlexLogin() {
-  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-  document.getElementById('pin-box').style.display = 'none';
-}
+
 
 async function startPlexLogin() {
   const data = await api('/api/auth/plex/pin','POST');
@@ -4370,12 +4367,7 @@ async function loadProfiles(offset=0) {
 }
 
 // ── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
-async function refreshArrCounts(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  await api('/api/enrichment/arr-refresh', 'POST').catch(()=>{});
-  await loadEnrichStatus(true);
-  if (btn) { btn.disabled = false; btn.textContent = '↻'; }
-}
+
 
 const KB_STATE_DEFS = {
   enriched_live:  'Status flag set AND a live profile exists in the cache — the real, usable truth.',
