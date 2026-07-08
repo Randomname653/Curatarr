@@ -253,6 +253,10 @@ async def enrich_album(album_name: str, artist_name: str, mbid: str = None) -> O
     """
     Full album enrichment: MusicBrainz album tags + Last.fm album tags.
     Returns merged profile for embedding.
+
+    NOT YET WIRED (deliberate backlog, follow-up audit 2026-07-08): built for
+    album-level evidence, but music proposals are currently artist-level.
+    Wire it up when album debates (Bomber-class) get their own dossier.
     """
     from src.cache.metadata_cache import MetadataCache
     cache = MetadataCache()
