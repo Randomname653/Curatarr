@@ -129,10 +129,15 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .msg.assistant { align-self: flex-start; background: var(--bg3); border: 1px solid var(--border); padding: 10px 14px; border-radius: 12px 12px 12px 3px; }
 .msg.assistant p { margin-bottom: 12px; }
 .msg.assistant p:last-child { margin-bottom: 0; }
-.msg.assistant h3 { font-size: 15px; font-weight: 600; color: var(--amber); margin: 16px 0 8px 0; }
+/* The accent must not depend on WHICH markdown the model happens to emit:
+   it used to live only on h3, so replies structured with bold + numbered
+   lists (the model's recent habit) rendered colorless. Headings, bold and
+   list markers all carry amber now — bold is where titles & verdicts live. */
+.msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4 { font-size: 15px; font-weight: 600; color: var(--amber); margin: 16px 0 8px 0; }
 .msg.assistant ul, .msg.assistant ol { margin-bottom: 12px; padding-left: 20px; }
 .msg.assistant li { margin-bottom: 4px; }
-.msg.assistant strong { color: var(--text); font-weight: 700; }
+.msg.assistant li::marker { color: var(--amber); font-weight: 600; }
+.msg.assistant strong { color: var(--amber); font-weight: 700; }
 
 /* ── Chat thinking placeholder ── */
 .thinking-dots { display: inline-flex; gap: 5px; align-items: center; padding: 2px 0; }
