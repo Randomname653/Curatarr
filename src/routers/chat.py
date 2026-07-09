@@ -1693,6 +1693,14 @@ async def _build_discuss_context_block(
                             block += f"STOP-POINT CONTEXT: {_spc}\n"
             except Exception as _e:
                 logger.debug("[chat] viewing pattern failed: %s", _e)
+            if proposal.category in ("show", "anime"):
+                try:
+                    from src.services.episode_context import series_availability
+                    _av = await series_availability(proposal.title)
+                    if _av:
+                        block += f"SERIES AVAILABILITY: {_av}\n"
+                except Exception as _e:
+                    logger.debug("[chat] availability failed: %s", _e)
         # Franchise reality-check: which typed relations actually sit in the
         # user's library RIGHT NOW — a review's "compared to its predecessors"
         # means something different when the predecessors are long gone.
@@ -2389,6 +2397,13 @@ async def send_message(
                         _spc = await stop_point_context(active_title, *_sp)
                         if _spc:
                             hidden_metadata_context += f"STOP-POINT CONTEXT: {_spc}\n"
+                try:
+                    from src.services.episode_context import series_availability
+                    _av = await series_availability(active_title)
+                    if _av:
+                        hidden_metadata_context += f"SERIES AVAILABILITY: {_av}\n"
+                except Exception as _e:
+                    logger.debug("[chat] availability failed: %s", _e)
             except Exception as _e:
                 logger.debug("[chat] viewing pattern failed: %s", _e)
 

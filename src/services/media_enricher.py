@@ -356,6 +356,9 @@ def build_verified_data(
             # reception_checked stops the just-in-time top-up re-querying.
             "reception":         raw.get("reception"),
             "reception_checked": bool(raw.get("reception_checked")),
+            # multi-season awareness: how the LAST season landed (reviews
+            # attach to season entries — the finale is invisible from S1)
+            "finale_reception":  raw.get("finale_reception"),
             # Typed franchise graph (AniList) + AniDB community tags (weekly
             # offline snapshot); relations_checked gates the light catch-up.
             "relations":         raw.get("relations"),
@@ -490,6 +493,7 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Bio", data.get("bio"), cap=650)
     add("Significance", data.get("significance"), cap=600)
     add("Community reception", data.get("reception"), cap=900)
+    add("Finale reception", data.get("finale_reception"), cap=700)
     rels = data.get("relations")
     if rels and isinstance(rels, list):
         add("Franchise", "; ".join(

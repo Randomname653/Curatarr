@@ -46,7 +46,7 @@ _ANILIST_FIELDS = """
   tags { name rank }
   reviews(sort: RATING_DESC, perPage: 4) { nodes { summary score body } }
   relations { edges { relationType(version: 2)
-    node { seasonYear format title { romaji english } } } }
+    node { id idMal seasonYear format title { romaji english } } } }
   staff(perPage: 12, sort: RELEVANCE) {
     edges { role node { name { full } } } }
 """
@@ -91,7 +91,8 @@ def _extract_relations(al: dict) -> list[dict]:
         if not t:
             continue
         rels.append({"type": (ed.get("relationType") or "RELATED").replace("_", " ").title(),
-                     "title": t, "year": node.get("seasonYear")})
+                     "title": t, "year": node.get("seasonYear"),
+                     "anilist_id": node.get("id"), "mal_id": node.get("idMal")})
     return rels[:_MAX_RELATIONS]
 
 _CONDENSE_SYS = (
@@ -213,8 +214,15 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             al = await _anilist_media(client, anilist_id=anilist_id,
                                       search=title, year=year)
             if not al:
-                return None, [], []
+                return None, [], [], None
             relations = _extract_relations(al)
+            # multi-season awareness: the finale's reviews live on the LAST
+            # season's entry — fetch and condense them once per title
+            finale = None
+            try:
+                finale = await _finale_reception(client, al, title)
+            except Exception as e:
+                logger.debug("[reception] finale walk failed for %r: %s", title, e)
             staff = _extract_staff(al)
             mal_stats, mal_reviews = {}, []
             if al.get("idMal"):
@@ -229,7 +237,7 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             if not mal_reviews and not al_reviews:
                 # quantitative signal only — deterministic, no LLM, still honest
                 if not stats:
-                    return None, relations, staff
+                    return None, relations, staff, finale
                 return " ".join(x for x in (
                     stats, tags, "Audience too small for written reviews.") if x), relations, staff
             lines = [f"TITLE: {title}", stats, tags]
@@ -246,13 +254,13 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                          "invented beyond those above.")
             verdict = await _condense("\n".join(x for x in lines if x))
             if not verdict:
-                return (" ".join(x for x in (stats, tags) if x) or None), relations, staff
-            return " ".join(x for x in (stats, verdict) if x), relations, staff
+                return (" ".join(x for x in (stats, tags) if x) or None), relations, staff, finale
+            return " ".join(x for x in (stats, verdict) if x), relations, staff, finale
 
         # movies / shows: TMDB reviews (ratings already live on the raw doc)
         reviews = await _tmdb_reviews(client, tmdb_id, media_type)
         if not reviews:
-            return None, [], []
+            return None, [], [], None
         lines = [f"TITLE: {title}"]
         for rv in reviews[:_MAX_REVIEWS]:
             rating = (rv.get("author_details") or {}).get("rating")
@@ -262,6 +270,66 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                      "opinion is split. Plain prose, no bullet points, no scores "
                      "invented beyond those above.")
         return await _condense("\n".join(lines)), []
+
+
+async def _finale_reception(client: httpx.AsyncClient, al: dict,
+                            base_title: str) -> Optional[str]:
+    """Multi-season awareness: reviews attach to the SEASON entry on
+    MAL/AniList, so a franchise's finale verdict (Magia Record S3's
+    cast-slaughter ending) is invisible from the S1 entry the library
+    carries. Follow the Sequel chain to the last season and condense ITS
+    reviews. None for single-season titles."""
+    seen = {al.get("id")}
+    cur = al
+    last = None
+    for _hop in range(3):
+        seqs = [r for r in _extract_relations(cur)
+                if r.get("type") == "Sequel" and r.get("anilist_id")
+                and r["anilist_id"] not in seen]
+        if not seqs:
+            break
+        nxt = max(seqs, key=lambda r: r.get("year") or 0)
+        seen.add(nxt["anilist_id"])
+        cur = await _anilist_media(client, anilist_id=nxt["anilist_id"])
+        if not cur:
+            break
+        last = cur
+    if last is None:
+        return None
+    f_title = ((last.get("title") or {}).get("english")
+               or (last.get("title") or {}).get("romaji") or "final season")
+    mal_reviews = []
+    if last.get("idMal"):
+        await asyncio.sleep(_JIKAN_PAUSE_S)
+        revs = await _jikan(client, f"/anime/{last['idMal']}/reviews")
+        mal_reviews = (revs.get("data") or [])[:_MAX_REVIEWS]
+    al_reviews = (last.get("reviews") or {}).get("nodes") or []
+    if not mal_reviews and not al_reviews:
+        if last.get("averageScore"):
+            return (f"final season '{f_title}': AniList "
+                    f"{last['averageScore']}/100, no written reviews yet")
+        return None
+    lines = [f"TITLE: {f_title} (the FINAL season of {base_title})"]
+    if last.get("averageScore"):
+        lines.append(f"AniList score: {last['averageScore']}/100")
+    for rv in al_reviews:
+        lines.append("")
+        lines.append(f"AniList review ({rv.get('score')}/100): "
+                     f"{_clip(rv.get('summary'), 180)} {_clip(rv.get('body'), 600)}")
+    for rv in mal_reviews:
+        t = ",".join(rv.get("tags") or [])
+        lines.append("")
+        lines.append(f"MAL review ({rv.get('score')}/10, {t}): "
+                     f"{_clip(rv.get('review'), 800)}")
+    lines.append("")
+    lines.append("TASK: Write FINALE RECEPTION - 2 to 4 sentences on how the "
+                 "series CONCLUDES per these reviews: tonal shifts, departures "
+                 "from the source material, whether the ending divides the "
+                 "community. Plain prose, no invented facts.")
+    verdict = await _condense(chr(10).join(lines))
+    if not verdict:
+        return None
+    return f"[{f_title}] {verdict}"
 
 
 def _offline_tags(title: str, media_type: str, *, anilist_id=None,
@@ -319,7 +387,7 @@ async def topup_reception(
             return False
         # prefer ids the raw doc itself carries (sonarr prefetch resolves them)
         doc = targets[0][1]
-        rec, rels, staff = await build_reception(
+        rec, rels, staff, finale = await build_reception(
             title, media_type, year=year or doc.get("year"),
             anilist_id=anilist_id or doc.get("anilist_id"),
             tmdb_id=tmdb_id or doc.get("tmdb_id"),
@@ -341,6 +409,8 @@ async def topup_reception(
                 raw["relations"] = rels
             if staff:
                 raw["staff"] = staff
+            if finale:
+                raw["finale_reception"] = finale
             if anidb_tags:
                 raw["anidb_tags"] = anidb_tags
             cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
