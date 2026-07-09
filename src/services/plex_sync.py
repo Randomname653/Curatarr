@@ -1396,7 +1396,7 @@ async def _generate_taste_summary(
     prompt = f"""[MODE: USER TASTE PROFILE GENERATION]
 {lang_line}
 
-You are Curatarr, an elite, analytical media curator. Write a 3-4 sentence summary of the user's taste in the '{type_label}' category.
+You are Curatarr, an elite, analytical media curator. Write a 4-6 sentence summary (one tight paragraph, no essay) of the user's taste in the '{type_label}' category.
 
 DATA:
 - Volume: {volume_str}
@@ -1420,11 +1420,14 @@ CRITICAL RULES (YOU MUST OBEY):
     try:
         ollama_url = settings.effective_ollama
 
-        # Try SUMMARIZER (8B) first — sufficient for 3-4 sentences and much faster.
-        # Fall back to CURATOR (32B) if summarizer isn't available.
+        # CURATOR (27B) first: the taste summary is the justification base
+        # for every pitch, every judge verdict (OWNER TASTE line) and the
+        # chat opener — quality beats speed here, and it only runs on
+        # recompute. The 8B stays as fallback (it half-inverted memories:
+        # "insists on retaining Nukitashi" became "you swiftly abandon").
         model_order = [
-            settings.SUMMARIZER_MODEL, settings.BASE_SUMMARIZER_MODEL,
             settings.CURATOR_MODEL,    settings.BASE_CURATOR_MODEL,
+            settings.SUMMARIZER_MODEL, settings.BASE_SUMMARIZER_MODEL,
         ]
         # Yield to an active chat before generating — this can fall back to
         # the big curator model, and even the 8B shouldn't fight a live chat
@@ -1434,17 +1437,25 @@ CRITICAL RULES (YOU MUST OBEY):
         for model in model_order:
             if not model:
                 continue
-            # 300s: DeepSeek-R1 think tokens can be slow; 8B is fast but 32B needs headroom
-            async with httpx.AsyncClient(timeout=300) as client:
-                resp = await client.post(
-                    f"{ollama_url}/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        **curator_options(temperature=0.8, num_predict=2000),
-                    },
-                )
+            # Timeout PER MODEL, not around the whole chain: a queued/cold
+            # curator used to abort straight to the rule-based stats dump
+            # without ever trying the 8B (the anime profile shipped as
+            # "You've watched 779 items. Top genres: …" because of it).
+            try:
+                # 300s: 27B queued behind an app call needs headroom; 8B is fast
+                async with httpx.AsyncClient(timeout=300) as client:
+                    resp = await client.post(
+                        f"{ollama_url}/api/chat",
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "stream": False,
+                            **curator_options(temperature=0.8, num_predict=2000),
+                        },
+                    )
+            except httpx.TimeoutException:
+                logger.warning("Taste summary: %r timed out after 300s — trying next model", model)
+                continue
             if resp.status_code == 200:
                 return strip_think_tags(resp.json().get("message", {}).get("content", "").strip())
             if resp.status_code == 404:
@@ -1452,8 +1463,6 @@ CRITICAL RULES (YOU MUST OBEY):
                 continue
             logger.warning("Taste summary: Ollama returned %s for model %r", resp.status_code, model)
             break
-    except httpx.TimeoutException:
-        logger.warning("Taste summary timed out after 300s — using rule-based fallback")
     except Exception as e:
         logger.warning("Taste summary generation failed: %s", e)
 
