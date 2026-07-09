@@ -51,6 +51,24 @@ def recency_weight(viewed_at: datetime, now: datetime, half_life_days: int = 60)
     return math.exp(-age_days * math.log(2) / half_life_days)
 
 
+# How hard a dropped item pushes the taste vector AWAY from its profile.
+# The old code gave drops a small POSITIVE weight (0.05-0.39), so abandoned
+# content still pulled the vector toward itself — the docstring's promised
+# negative signal was never implemented.
+DROP_PUSH_WEIGHT = 0.35
+
+
+def _is_drop(entry: dict) -> bool:
+    """True when the user demonstrably abandoned this item early (<40%
+    watched, not completed). Music rows are always completed → never drops."""
+    if entry.get("completed"):
+        return False
+    d, v = entry.get("duration_ms"), entry.get("view_offset_ms")
+    if not d or v is None:
+        return False
+    return (v / d) < 0.4
+
+
 def completion_weight(entry: WatchHistoryEntry) -> float:
     """
     Weight based on actual completion percentage.
@@ -105,6 +123,10 @@ def weighted_average_embedding(embeddings_weights: list) -> Optional[list]:
     """
     Compute weighted average of embeddings.
     embeddings_weights: [(embedding_list, weight), ...]
+
+    Weights may be NEGATIVE (dropped items push the vector away from their
+    profile). The denominator uses |w| so negatives act as repulsion instead
+    of shrinking/flipping the normalisation.
     """
     if not embeddings_weights:
         return None
@@ -115,7 +137,7 @@ def weighted_average_embedding(embeddings_weights: list) -> Optional[list]:
         return None
 
     dim = len(valid[0][0])
-    total_weight = sum(w for _, w in valid)
+    total_weight = sum(abs(w) for _, w in valid)
     if total_weight == 0:
         return None
 
@@ -294,6 +316,9 @@ async def compute_taste_vector_for_user(
     completions = []
     binge_series: dict = {}
     dropped_genres: Counter = Counter()   # genres of items abandoned early
+    plex_genre_counter: Counter = Counter()  # SAME source as dropped_genres —
+    # the denominator for drop RATES (raw drop counts just mirror the top
+    # genres: you drop most of what you start most)
     dropped_titles: list = []  # series → list of viewed_at
 
     for idx, e in enumerate(entries):
@@ -305,16 +330,22 @@ async def compute_taste_vector_for_user(
         c = completion_weight(e)
         completions.append(c)
 
+        # Genre base rate from the SAME Plex-genre source the drop tracker
+        # uses — enables drop RATE (dropped/started) instead of raw counts.
+        if e.get('genres'):
+            for g in e.get('genres').split(","):
+                g = g.strip()
+                if g:
+                    plex_genre_counter[g] += 1
+
         # Track dropped items (< 40% completion) as negative signals
-        if e.get('duration_ms') and e.get('duration_ms') > 0 and e.get('view_offset_ms'):
-            actual_rate = min(1.0, e.get('view_offset_ms') / e.get('duration_ms'))
-            if actual_rate < 0.4 and not e.get('completed'):
-                if e.get('genres'):
-                    for g in e.get('genres').split(","):
-                        g = g.strip()
-                        if g:
-                            dropped_genres[g] += 1
-                dropped_titles.append(e.get('series_title') or e.get('title'))
+        if _is_drop(e):
+            if e.get('genres'):
+                for g in e.get('genres').split(","):
+                    g = g.strip()
+                    if g:
+                        dropped_genres[g] += 1
+            dropped_titles.append(e.get('series_title') or e.get('title'))
 
         # Title tracking
         label = e.get('series_title') or e.get('title')
@@ -392,10 +423,19 @@ async def compute_taste_vector_for_user(
             if ur is not None:
                 rating_factor = ur / 6.0
 
-        total_w = r_weight * c_weight * replay * rating_factor
+        if _is_drop(e):
+            # The design's promised negative signal, finally real: a drop
+            # contributes a NEGATIVE weight, pushing the taste vector away
+            # from the abandoned item's profile (see weighted_average_embedding).
+            total_w = -DROP_PUSH_WEIGHT * r_weight
+        else:
+            total_w = r_weight * c_weight * replay * rating_factor
         scored.append((total_w, e))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # Sort by |weight| — a plain descending sort would push every negative
+    # (drop) entry to the tail, where the EMBED_CAP slice silently discards
+    # exactly the repulsion signals we just added.
+    scored.sort(key=lambda x: abs(x[0]), reverse=True)
     # max_items=0 means no cap — use all entries
     # For embedding we still cap at 5000 to avoid memory issues with huge libraries
     EMBED_CAP = 5000
@@ -406,12 +446,56 @@ async def compute_taste_vector_for_user(
         from src.database.models import EnrichmentStatus
         enrichment_ts = {}
         enrichment_ts_by_title = {}
+        music_key_by_artist = {}   # artist title → enriched-doc cache key
         for e in db.query(EnrichmentStatus).filter(
             EnrichmentStatus.enriched == True,
         ).all():
             ts_val = e.enriched_at.isoformat() if e.enriched_at else "enriched"
             enrichment_ts[e.plex_rating_key] = ts_val
             enrichment_ts_by_title[e.title] = ts_val
+            if e.media_category == "music" and e.plex_rating_key:
+                music_key_by_artist[e.title] = e.plex_rating_key
+
+    # ── MUSIC: aggregate to ARTIST level before embedding ────────────────────
+    # Row-level selection made the music vector a "last few weeks" vector:
+    # 371k play rows, top-5000 by weight (= the most recent), of which only
+    # the warmed top tracks had enrichment docs — 0.55% of plays defined the
+    # whole taste. One embedding per ARTIST (the artist doc carries bio,
+    # genres, similar-to — a better taste representant than track titles),
+    # weighted by recency × log-plays × best user rating, keeps every listened
+    # artist in the average and makes the vector stable against binges.
+    if category == "music":
+        by_artist: dict = {}
+        for e in entries:
+            a = e.get("series_title") or e.get("title")
+            if not a:
+                continue
+            d = by_artist.setdefault(a, {"plays": 0, "last": None, "ur": None})
+            d["plays"] += 1
+            va = e.get("viewed_at")
+            if va and (d["last"] is None or va > d["last"]):
+                d["last"] = va
+            if user_rating_by_item:
+                ur = user_rating_by_item.get(str(e.get("plex_item_id") or ""))
+                if ur is not None and (d["ur"] is None or ur > d["ur"]):
+                    d["ur"] = ur
+        artist_entries = []
+        for a, d in by_artist.items():
+            key = music_key_by_artist.get(a)
+            if not key:
+                continue   # not enriched — genre counters already cover it
+            w = (recency_weight(d["last"], now)
+                 * (1.0 + math.log10(max(d["plays"], 1)))
+                 * ((d["ur"] / 6.0) if d["ur"] is not None else 1.0))
+            artist_entries.append((w, {
+                "plex_item_id": key, "media_type": "music",
+                "title": a, "series_title": None,
+            }))
+        artist_entries.sort(key=lambda x: abs(x[0]), reverse=True)
+        logger.info("Music: %d listened artists → %d with enrichment docs "
+                    "(was %d play rows)", len(by_artist), len(artist_entries),
+                    len(entries))
+        top_entries = artist_entries[:EMBED_CAP]
 
     # Count how many need fresh embeddings
     # Only items WITH enrichment data get embedded — unenriched items use genre counters
@@ -596,6 +680,19 @@ async def compute_taste_vector_for_user(
             else:
                 i += 1
 
+    # Genre aversion as drop RATE (dropped/started), not raw counts — raw
+    # counts just mirrored the affinity list ("you abandon the most of what
+    # you start the most": Drama was top-affinity AND top-aversion). Noise
+    # guards: >=2 drops and >=4 starts per genre, rate >= 0.2.
+    genre_aversion = {}
+    for g, n_drop in dropped_genres.items():
+        base = plex_genre_counter.get(g, 0)
+        if n_drop >= 2 and base >= 4:
+            rate = n_drop / base
+            if rate >= 0.2:
+                genre_aversion[g] = round(rate, 3)
+    genre_aversion = dict(sorted(genre_aversion.items(), key=lambda x: -x[1])[:10])
+
     task_monitor.done(_tv_task, f"Complete: {len(embeddings_weights)} embeddings, {len(entries)} entries")
     return {
         "embedding": taste_embedding,
@@ -604,7 +701,7 @@ async def compute_taste_vector_for_user(
         "genre_affinity": normalize(genre_counter, 20),
         "theme_affinity": normalize(theme_counter, 15),
         "mood_affinity": normalize(mood_counter, 10),
-        "genre_aversion": normalize(dropped_genres, 10),   # genres of dropped items
+        "genre_aversion": genre_aversion,   # drop-rate per genre
         "dropped_titles": dropped_titles[:20],
         "top_titles": [k for k, _ in title_counter.most_common(30)],
         "watch_count": len(entries),
@@ -711,8 +808,11 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                 ).first()
 
                 # --- MEMORY CARRY-OVER ---
+                # Chat-sourced fields (feedback, dislikes, theme/mood aversion)
+                # carry over across recomputes. genre_aversion does NOT any
+                # more: it is the freshly computed drop-rate — the old max()
+                # merge kept stale chat strings alive in it forever.
                 old_feedback = {}
-                old_ga = {}
                 if existing_etv and existing_etv.encrypted_blob:
                     try:
                         old_data = json.loads(existing_etv.encrypted_blob)
@@ -721,22 +821,15 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                             old_feedback["disliked_titles"] = old_data.get("disliked_titles", [])
                             old_feedback["theme_aversion"] = old_data.get("theme_aversion", {})
                             old_feedback["mood_aversion"] = old_data.get("mood_aversion", {})
-                            old_ga = old_data.get("genre_aversion", {})
                     except Exception as e:
                         logger.warning("Could not read old taste vector for carry-over: %s", e)
-
-                # Merge computed aversions (from abandonments) with manual aversions (from chat).
-                merged_ga = res.get("genre_aversion", {}).copy()
-                for k, v in old_ga.items():
-                    # Keep the strongest aversion value for each key.
-                    merged_ga[k] = max(v, merged_ga.get(k, 0.0))
 
                 # Store vector stats (embedding stored separately when PIN available)
                 blob = json.dumps({
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "embedding_items": res.get("embedding_items", 0),
                     "binges": res.get("binges", []),
-                    "genre_aversion": merged_ga,
+                    "genre_aversion": res.get("genre_aversion", {}),
                     "explicit_feedback": old_feedback.get("explicit_feedback", []),
                     "disliked_titles": old_feedback.get("disliked_titles", []),
                     "theme_aversion": old_feedback.get("theme_aversion", {}),
