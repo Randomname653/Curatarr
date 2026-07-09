@@ -770,6 +770,8 @@ async def generate_deletion_proposals(
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
         user_vector = None
         taste_blurb = ""
+        disliked_lc: set = set()
+        feedback_sentiment_lc: dict = {}
         if tv:
             # Use the taste section that matches THIS category — not a blind
             # [:400] that always returned the [MOVIE] block (which judged anime/
@@ -780,7 +782,18 @@ async def generate_deletion_proposals(
                 EncryptedTasteVector.media_category == category
             ).first()
             if encrypted and encrypted.encrypted_blob:
-                user_vector = json.loads(encrypted.encrypted_blob).get("embedding")
+                _blob = json.loads(encrypted.encrypted_blob)
+                user_vector = _blob.get("embedding")
+                # explicit owner feedback finally gets a reader: a recorded
+                # dislike nudges a candidate UP the deletion list, recorded
+                # praise nudges it down (soft — taste mismatch still rules)
+                disliked_lc = {(t or "").lower()
+                               for t in _blob.get("disliked_titles") or []}
+                feedback_sentiment_lc = {}
+                for _fb in _blob.get("explicit_feedback") or []:
+                    _ft = (_fb.get("title") or "").lower()
+                    if _ft:   # chronological list — the latest statement wins
+                        feedback_sentiment_lc[_ft] = _fb.get("sentiment")
 
         # 2. Load Whitelist (ProtectedMedia)
         protected = {
@@ -1131,7 +1144,18 @@ async def generate_deletion_proposals(
         user_rating_swing = (
             (p["user_rating"] - 5.0) * 6 if p["user_rating"] is not None else 0.0
         )
-        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing
+        # Explicit owner feedback (taste blob): recorded dislike pushes the
+        # candidate toward a pitch, recorded praise pulls it away. Soft on
+        # purpose — well below the mismatch signal and the consider cap.
+        _tl = (p["item"].get("title") or "").lower()
+        _sent = feedback_sentiment_lc.get(_tl)
+        if _sent == "negative" or _tl in disliked_lc:
+            feedback_swing = 15.0
+        elif _sent == "positive":
+            feedback_swing = -15.0
+        else:
+            feedback_swing = 0.0
+        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing
         if del_score > 30:
             scored_candidates.append({
                 "item": p["item"],
@@ -1710,13 +1734,17 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
         type_data = json.loads(tv.genre_affinity or "{}") if (tv and tv.genre_affinity) else {}
         user_vector = None
+        disliked_lc: set = set()
         encrypted = db.query(EncryptedTasteVector).filter(
             EncryptedTasteVector.user_id == user_id,
             EncryptedTasteVector.media_category == category,
         ).first()
         if encrypted and encrypted.encrypted_blob:
             try:
-                user_vector = json.loads(encrypted.encrypted_blob).get("embedding")
+                _blob = json.loads(encrypted.encrypted_blob)
+                user_vector = _blob.get("embedding")
+                disliked_lc = {(t or "").lower()
+                               for t in _blob.get("disliked_titles") or []}
             except Exception:
                 user_vector = None
 
@@ -1729,7 +1757,12 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         return items[:top_n]
 
     def _monitored_bonus(item: dict) -> float:
-        return 0.1 if item.get("monitored") else 0.0
+        bonus = 0.1 if item.get("monitored") else 0.0
+        # a recorded dislike should never rank high in RECOMMENDATIONS —
+        # push it down in both the vector and the genre branch
+        if (item.get("title") or "").lower() in disliked_lc:
+            bonus -= 0.25
+        return bonus
 
     def _genre_score(item: dict) -> float:
         genres = [g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()]
