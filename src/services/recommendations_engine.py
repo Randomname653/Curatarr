@@ -10,6 +10,7 @@ Features:
   - Context-aware recommendations from the library or discovery feed.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
