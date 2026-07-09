@@ -610,7 +610,13 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False, "think": False, "keep_alive": "10m",
-        "options": {"temperature": 0.7, "num_predict": 500, "num_gpu": 99},
+        # num_ctx MUST match every other curator call: this one slipped the
+        # 16384 rollout (no explicit value -> baked 8192 default), so a
+        # deletion run alternated judge(16k)/monologue(8k) and FULLY
+        # RELOADED the 20 GB model twice per candidate — the VRAM sawtooth
+        # the owner caught in Task Manager.
+        "options": {"temperature": 0.7, "num_predict": 500, "num_gpu": 99,
+                    "num_ctx": CURATOR_NUM_CTX},
     }
 
     async def _post():
