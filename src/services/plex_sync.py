@@ -1340,6 +1340,7 @@ async def _generate_taste_summary(
     media_type: str = "movie",
     genre_aversion: dict = None,
     dropped_titles: list = None,
+    binges: list = None,
 ) -> str:
     """Ask Ollama to write a concise per-type taste summary using the CURATOR model."""
     top_genres = sorted(genre_affinity.items(), key=lambda x: x[1], reverse=True)[:8]
@@ -1354,6 +1355,19 @@ async def _generate_taste_summary(
     # Build aversion context strings
     aversion_str = ", ".join(list((genre_aversion or {}).keys())[:8]) or "None detected"
     dropped_titles_str = ", ".join((dropped_titles or [])[:5]) or "None detected"
+
+    # Volume line: completion percentages are meaningless for music (every
+    # play row is "completed") — plays only there, plays + completion for video.
+    if media_type == "music":
+        volume_str = f"{watch_count} plays"
+    else:
+        volume_str = f"{watch_count} plays, {avg_completion:.0%} avg completion"
+    binge_line = ""
+    if binges:
+        binge_bits = ", ".join(f"{b['series']} ({b['episodes']} eps in {b['hours']}h)"
+                               for b in binges[:3] if b.get("series"))
+        if binge_bits:
+            binge_line = f"- Recent Binges: {binge_bits}\n"
 
     # Load domain-filtered memories so music profiles never pull film memories
     memories = await retrieve_memories(
@@ -1385,11 +1399,13 @@ async def _generate_taste_summary(
 You are Curatarr, an elite, analytical media curator. Write a 3-4 sentence summary of the user's taste in the '{type_label}' category.
 
 DATA:
+- Volume: {volume_str}
 - Top Watched / Favorite Titles: {titles_str}
 - Top Genres: {genres_str}
 - Top Moods/Themes: {moods_str} | {themes_str}
 - Abandoned / Dropped Genres: {aversion_str}
-- User Memories: {memory_context if memory_context else "None"}
+- Dropped Titles (abandoned early): {dropped_titles_str}
+{binge_line}- User Memories: {memory_context if memory_context else "None"}
 
 CRITICAL RULES (YOU MUST OBEY):
 1. ABSTRACTION OVER ANCHORING: DO NOT explicitly name the 'Top Watched' titles in your text. Instead, synthesize the *aesthetic, thematic, and structural qualities* those titles share.
@@ -1398,6 +1414,7 @@ CRITICAL RULES (YOU MUST OBEY):
 4. EMBRACE CONTRADICTIONS: If the data shows conflicting patterns (e.g., heavy drama vs. light sitcoms), highlight this contrast playfully without forcing a unifying theory.
 5. NEGATIVE SPACE: You MUST dedicate at least one sentence to explicitly analyzing what the user rejects or abandons (based on the Abandoned/Dropped data). Defining their boundaries is critical.
 6. TONE: Highly perceptive, slightly snarky, and brutally honest. Speak directly to the user in the second person.
+7. DOMAIN LOCK: This profile covers {type_label} ONLY — never mention other media domains or rules from them (an anime rule does not belong in a music profile).
 """
 
     try:
