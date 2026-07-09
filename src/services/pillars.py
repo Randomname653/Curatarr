@@ -385,6 +385,43 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     except Exception as e:
         logger.debug("[pillars] taste failed for %r: %s", title, e)
 
+    # ── OWNER FEEDBACK (the taste blob's explicit_feedback/disliked_titles —
+    # written for years, read by NOBODY until now). A recorded "delete,
+    # plot is terrible" or a standing dislike is direct owner testimony the
+    # judge must weigh; standing aversions ride along on the taste line. ──
+    feedback_line = ""
+    try:
+        import json as _json
+        from src.database.models import EncryptedTasteVector
+        etv = db.query(EncryptedTasteVector).filter(
+            EncryptedTasteVector.user_id == user_id,
+            EncryptedTasteVector.media_category == category).first()
+        if etv and etv.encrypted_blob:
+            blob = _json.loads(etv.encrypted_blob)
+            tl = title.lower()
+            fbs = [f for f in (blob.get("explicit_feedback") or [])
+                   if (f.get("title") or "").lower() == tl]
+            if fbs:
+                last = fbs[-1]   # chronological — latest statement wins
+                when = (last.get("date") or "")[:10]
+                feedback_line = (
+                    f"OWNER FEEDBACK on this title ({when or 'undated'}): "
+                    f"{last.get('sentiment') or 'neutral'}"
+                    f" — {last.get('reason') or 'no reason recorded'}\n")
+                flags["owner_signal"] = True
+            elif tl in {(t or "").lower() for t in (blob.get("disliked_titles") or [])}:
+                feedback_line = ("OWNER FEEDBACK: this title is on the owner's "
+                                 "recorded dislike list.\n")
+                flags["owner_signal"] = True
+            aversions = sorted((blob.get("theme_aversion") or {}).items(),
+                               key=lambda x: -x[1])[:5]
+            if aversions:
+                av_str = ", ".join(k for k, _ in aversions)
+                taste = (taste + " " if taste else "") + \
+                    f"Standing aversions the owner has voiced: {av_str}."
+    except Exception as e:
+        logger.debug("[pillars] owner-feedback failed for %r: %s", title, e)
+
     # Item profile (title + genres + short synopsis) — the anchor for BOTH the
     # per-item owner signals (P2) and the learned-principles retrieval (P4).
     prof_parts = [title, "" if genres_str == "Unknown" else genres_str,
@@ -445,6 +482,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         f"OTHER HOUSEHOLD USERS:\n{other_block}\n"
         f"ACCLAIM & METADATA:\n{meta_block}\n"
         + (f"OWNER TASTE: {taste}\n" if taste else "")
+        + feedback_line
         + owner_signals
         + (f"TECH: {tech_line}\n" if tech_line else "TECH: no technical profile on record.\n")
     )
