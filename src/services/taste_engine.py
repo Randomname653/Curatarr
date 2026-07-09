@@ -749,16 +749,11 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
         )
         summary_parts.append(f"[{cat.upper()}] {summary}")
 
-    summary_text = "\n\n".join(summary_parts)
-    total_count = sum(r["watch_count"] for r in all_results.values())
-    overall_completion = round(
-        sum(r["avg_completion"] * r["watch_count"] for r in all_results.values())
-        / max(total_count, 1), 3
-    )
-
     # Store plain stats in TasteVectorEntry
     type_summaries = {}
     top_titles_by_type = {}
+    themes_by_type = {}
+    moods_by_type = {}
     for cat, res in all_results.items():
         type_summaries[cat] = {
             "genre_affinity": res["genre_affinity"],
@@ -770,17 +765,53 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
             "embedding_items": res.get("embedding_items", 0),
         }
         top_titles_by_type[cat] = res["top_titles"][:20]
+        themes_by_type[cat] = list(res["theme_affinity"].keys())[:10]
+        moods_by_type[cat] = list(res["mood_affinity"].keys())[:6]
 
     with get_db_session() as db:
         existing = db.query(TasteVectorEntry).filter(
             TasteVectorEntry.user_id == user_id
         ).first()
+
+        # MERGE with the stored per-category data instead of replacing it —
+        # a partial recompute (categories=["anime"]) used to wipe the other
+        # categories' summaries, titles and stats from TasteVectorEntry.
+        summary_by_cat = {}
+        if existing:
+            def _merged(old_json: str, new: dict) -> dict:
+                try:
+                    old = json.loads(old_json or "{}")
+                except Exception:
+                    old = {}
+                if not isinstance(old, dict):
+                    old = {}
+                old.update(new)
+                return old
+            type_summaries = _merged(existing.genre_affinity, type_summaries)
+            top_titles_by_type = _merged(existing.top_titles, top_titles_by_type)
+            themes_by_type = _merged(existing.actor_affinity, themes_by_type)
+            moods_by_type = _merged(existing.director_affinity, moods_by_type)
+            for p in (existing.summary_text or "").split("\n\n"):
+                if p.startswith("[") and "]" in p:
+                    summary_by_cat[p[1:p.index("]")].lower()] = p
+        for p in summary_parts:
+            summary_by_cat[p[1:p.index("]")].lower()] = p
+        summary_text = "\n\n".join(
+            summary_by_cat[c] for c in ("music", "movie", "show", "anime", "other")
+            if c in summary_by_cat)
+
+        # totals over the MERGED per-category stats, not just this run's slice
+        total_count = sum((ts.get("watch_count") or 0)
+                          for ts in type_summaries.values() if isinstance(ts, dict))
+        overall_completion = round(
+            sum((ts.get("avg_completion") or 0) * (ts.get("watch_count") or 0)
+                for ts in type_summaries.values() if isinstance(ts, dict))
+            / max(total_count, 1), 3)
+
         data = dict(
             genre_affinity=json.dumps(type_summaries),
-            actor_affinity=json.dumps({cat: list(res["theme_affinity"].keys())[:10]
-                                       for cat, res in all_results.items()}),
-            director_affinity=json.dumps({cat: list(res["mood_affinity"].keys())[:6]
-                                          for cat, res in all_results.items()}),
+            actor_affinity=json.dumps(themes_by_type),
+            director_affinity=json.dumps(moods_by_type),
             top_titles=json.dumps(top_titles_by_type),
             watch_count=total_count,
             avg_completion=overall_completion,
