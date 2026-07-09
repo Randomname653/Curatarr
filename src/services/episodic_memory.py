@@ -1801,6 +1801,7 @@ async def analyze_deletion_comment(user_id: int, title: str, comment: str, media
                 memory_type="explicit_statement" if is_kept else "feedback",
                 content=content,
                 metadata={"title": title, "source": "deletion_comment"},
+                media_category=media_category,
             )
             if mem_id:
                 await resolve_memory_conflicts(
@@ -1880,6 +1881,7 @@ Output ONLY valid JSON:
                 memory_type="explicit_statement" if is_kept else "feedback",
                 content=f"The user {'decided to keep' if is_kept else 'agreed to delete'} '{title}'. Reason: {reason_en}",
                 metadata={"title": title, "source": "deletion_comment"},
+                media_category=media_category,
             )
             
             # 1.5 NEU: Check auf Konflikte mit alten Erinnerungen

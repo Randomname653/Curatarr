@@ -211,12 +211,16 @@ def merge_feedback_into_vector(vector: dict, feedback: dict) -> dict:
     vector["explicit_feedback"].append(entry)
     vector["explicit_feedback"] = vector["explicit_feedback"][-100:]  # keep last 100
 
-    # Update affinity/aversion based on sentiment
+    # Update aversions based on sentiment. Chat aspects are FREE TEXT from
+    # the summarizer ("sound quality", "annoying", "dark narrative") — they
+    # belong in theme_aversion. genre_aversion is reserved for the taste
+    # engine's computed drop-rate per real genre; mixing chat strings into
+    # it produced "genres" like "modern Simpson's seasons".
     if feedback.get("sentiment") == "negative":
         for aspect in feedback.get("genre_aspects", []):
-            aversion = vector.get("genre_aversion", {})
+            aversion = vector.get("theme_aversion", {})
             aversion[aspect] = min(1.0, aversion.get(aspect, 0) + 0.15)
-            vector["genre_aversion"] = aversion
+            vector["theme_aversion"] = aversion
         if feedback.get("title"):
             disliked = vector.get("disliked_titles", [])
             if feedback["title"] not in disliked:

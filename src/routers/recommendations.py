@@ -916,7 +916,11 @@ async def update_comment(
     is_kept = False
     if comment:
         from src.services.episodic_memory import analyze_deletion_comment
-        is_kept = await analyze_deletion_comment(user.id, p.title, comment)
+        # pass the proposal's REAL category — the old default ("show") routed
+        # every movie/music/anime comment into the show taste vector, which
+        # filled its feedback caps (100/50) while the other vectors stayed at 0
+        is_kept = await analyze_deletion_comment(
+            user.id, p.title, comment, media_category=p.category or "show")
 
     return {"ok": True, "is_kept": is_kept}
 
