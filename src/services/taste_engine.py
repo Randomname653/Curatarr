@@ -646,8 +646,9 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
             top_titles=res["top_titles"][:15],
             watch_count=res["watch_count"],
             avg_completion=res["avg_completion"],
-            genre_aversion=res.get("genre_aversion", {}), 
-            dropped_titles=res.get("dropped_titles", [])[:5] 
+            genre_aversion=res.get("genre_aversion", {}),
+            dropped_titles=res.get("dropped_titles", [])[:5],
+            binges=res.get("binges", [])[-3:],
         )
         summary_parts.append(f"[{cat.upper()}] {summary}")
 

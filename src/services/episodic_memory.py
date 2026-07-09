@@ -27,6 +27,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -331,6 +332,87 @@ Output ONLY a JSON block:
                 logger.debug(f"Memory conflict resolution failed: {e}")
 
 # ── RETRIEVE MEMORIES ─────────────────────────────────────────────────────────
+
+# ── MEMORY CATEGORY CLASSIFICATION ────────────────────────────────────────────
+# 85% of memories were stored with media_category=NULL, and the retrieval
+# filter passes NULL into EVERY domain — the "no nudity in anime" preference
+# surfaced in the MUSIC taste profile. Classify deterministically: explicit
+# medium words first, then a library-title match; None only when genuinely
+# ambiguous (an untagged memory reaches all profiles, so tag conservatively).
+
+_CAT_PATTERNS = [
+    ("anime", re.compile(r"\b(anime|manga|seiy[uū]u|isekai)\b", re.I)),
+    ("music", re.compile(r"\b(album|track|song|band|musician|artist|"
+                         r"discograph\w*|concert|playlist|listening)\b", re.I)),
+    ("movie", re.compile(r"\b(movie|film)s?\b", re.I)),
+    ("show", re.compile(r"\b(series|season|episode|sitcom|tv show|show)\b", re.I)),
+]
+
+# quoted title, tolerant of apostrophes inside ('Murphy's Law' must not stop
+# at the possessive) — the lookahead requires a boundary AFTER the close quote
+_QUOTED_TITLE = re.compile(r"[\"']([^\"']{3,80}(?:'[^\"']{1,40})*?)[\"'](?=[\s.,;:!?)]|$)")
+
+_CATEGORY_VALUES = {"anime", "movie", "show", "music"}
+
+
+def _title_category(title: str) -> Optional[str]:
+    """Authoritative category for an exact title: deletion_proposals first
+    (survives deletion — the title is usually GONE from the library by the
+    time the memory is classified), then the live library index."""
+    t = (title or "").strip()
+    if len(t) < 3:
+        return None
+    try:
+        with get_db_session() as db:
+            row = db.execute(
+                __import__("sqlalchemy").text(
+                    "SELECT category FROM deletion_proposals WHERE title = :t "
+                    "ORDER BY id DESC LIMIT 1"), {"t": t}).fetchone()
+        if row and row[0] in _CATEGORY_VALUES:
+            return row[0]
+    except Exception as e:
+        logger.debug("[memory] proposal lookup failed for %r: %s", t, e)
+    try:
+        from src.routers.chat import _library_title_index, _norm_for_match
+        want = _norm_for_match(t)
+        cats = {cat for n, _title, cat in _library_title_index() if n == want}
+        if len(cats) == 1:
+            return cats.pop()
+    except Exception as e:
+        logger.debug("[memory] library lookup failed for %r: %s", t, e)
+    return None
+
+
+def classify_memory_category(content: str, title: str = None) -> Optional[str]:
+    """Deterministic media_category for a memory, or None when ambiguous
+    (an untagged memory reaches EVERY profile, so tag conservatively).
+
+    Order matters: named titles are authoritative — medium keywords must
+    only see the content WITH titles masked out, otherwise "White Album"
+    (an anime) classifies as music. Anime beats show ("the anime series");
+    any other keyword mix is ambiguous."""
+    quoted = _QUOTED_TITLE.findall(content or "")
+    for t in ([title] if title else []) + quoted:
+        cat = _title_category(t)
+        if cat:
+            return cat
+    masked = _QUOTED_TITLE.sub(" ", content or "")
+    hits = {cat for cat, rx in _CAT_PATTERNS if rx.search(masked)}
+    if hits == {"anime"} or hits == {"anime", "show"}:
+        return "anime"
+    if len(hits) == 1:
+        return hits.pop()
+    if hits:
+        return None
+    try:
+        from src.routers.chat import _match_library_title
+        m = _match_library_title(content or "")
+        if m:
+            return m[1]
+    except Exception as e:
+        logger.debug("[memory] library classify failed: %s", e)
+    return None
+
 
 async def retrieve_memories(
     user_id: int,
@@ -735,7 +817,10 @@ async def _run_memory_extraction(
                     memory_type=fact.get("type", "preference"), # Fallback auf preference
                     content=fact["content"],
                     metadata={"title": fact.get("title", ""), "source": "chat"},
-                    media_category=media_category,
+                    # domain-less chats used to mint NULL memories that leak
+                    # into every taste profile — classify from the content
+                    media_category=media_category
+                    or classify_memory_category(fact["content"], title_field),
                 )
                 if mem_id:
                     logger.info(f"🧠 [MEMORY SAVED] ID: {mem_id} | Type: {fact.get('type')} | Content: {fact['content']}")
