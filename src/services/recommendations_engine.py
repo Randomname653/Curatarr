@@ -1215,6 +1215,37 @@ async def generate_deletion_proposals(
         judged = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
+        # PRE-JUDGE SIGNIFICANCE WARM-UP: the judge's own JIT is summarizer-
+        # gated (it holds the curator gate, and a summarizer call there
+        # evicts the resident model), so it only ever SEES cached Wikipedia
+        # significance — and the backfill walker is slow for music/movies.
+        # Result: C418 was judged "functionally invisible" with the
+        # Minecraft-composer article sitting unfetched. Warm exactly the
+        # candidates about to be judged, BEFORE the gate is taken: the
+        # summarizer loads once, distills the batch, then hands the GPU to
+        # the curator. Cached/checked titles cost one cache read.
+        try:
+            from src.services.media_enricher import topup_significance
+            _warm_slice = scored_candidates[:JUDGE_CAP]
+            _warmed = 0
+            for _c in _warm_slice:
+                _it = _c["item"]
+                try:
+                    if await asyncio.wait_for(topup_significance(
+                        _it.get("title"), category,
+                        tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
+                        plex_rating_key=_it.get("plex_rating_key"),
+                        year=_it.get("year"),
+                    ), timeout=20.0):
+                        _warmed += 1
+                except Exception:
+                    continue
+            if _warmed:
+                _msg(f"{category}: significance warmed for {_warmed} candidate(s)")
+                logger.info("[deletions] %s: pre-judge significance warm-up "
+                            "added %d article(s)", category, _warmed)
+        except Exception as _e:
+            logger.debug("[deletions] significance warm-up failed: %s", _e)
         _gate_label = f"deletion scan: {category}"
         await curator_start(_gate_label)
         try:

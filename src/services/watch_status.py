@@ -134,6 +134,12 @@ def viewing_pattern(user_id: int, title: str, category: str = None) -> str | Non
     compact line for the curator, None for movies / no episode rows."""
     if not user_id or not title:
         return None
+    # Episode semantics NEVER apply to music: Spotify rows carry
+    # season=1/episode=1 per play, so a band anchor produced "played S1E1
+    # 39 times" and a fake binge line (the PRESIDENT chat). Music is
+    # excluded unconditionally — its depth line is music_listening_stats.
+    if category == "music":
+        return None
     from src.database.connection import get_db_session
     from src.database.models import WatchHistoryEntry as W
     try:
@@ -146,10 +152,8 @@ def viewing_pattern(user_id: int, title: str, category: str = None) -> str | Non
                 W.user_id == user_id,
                 W.series_title == title,
                 W.episode.isnot(None),
+                W.media_type != "music",
             )
-            if category:
-                q = q.filter(W.media_type == "music" if category == "music"
-                             else W.media_type != "music")
             rows = q.all()
     except Exception as e:
         logger.debug("[watch] viewing_pattern failed for %r: %s", title, e)
@@ -224,7 +228,8 @@ def viewing_stop_point(user_id: int, title: str) -> tuple[int, int] | None:
         with get_db_session() as db:
             rows = (db.query(W.season, W.episode)
                     .filter(W.user_id == user_id, W.series_title == title,
-                            W.episode.isnot(None)).all())
+                            W.episode.isnot(None),
+                            W.media_type != "music").all())
         if not rows:
             return None
         return max((r.season or 1, r.episode) for r in rows)
