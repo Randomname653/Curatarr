@@ -2412,6 +2412,29 @@ async def send_message(
     # Prefer the discuss-context's category when set (server-validated), else
     # fall back to keyword inference on the user message.
     domain = discuss_domain or _infer_domain(message.message, message.discuss_context)
+
+    # ALBUM DOSSIER: when a music artist is the active anchor and the user's
+    # message names one of THAT artist's albums, attach album-level evidence
+    # (type incl. Compilation/Live, stock, owner track-plays, Last.fm numbers,
+    # Discogs styles). Albums only ever appeared as bare names in debates —
+    # the Bomber discussion argued "definitive version" with zero album facts.
+    if active_title and domain == "music":
+        try:
+            from src.services.album_dossier import (_lidarr_artist_albums,
+                                                    detect_album_in_message,
+                                                    build_album_dossier)
+            _artist, _albums = await _lidarr_artist_albums(active_title)
+            if _albums:
+                _alb = detect_album_in_message(_albums, message.message)
+                if _alb:
+                    _dossier = await build_album_dossier(active_title, _alb["title"])
+                    if _dossier:
+                        hidden_metadata_context = ((hidden_metadata_context or "")
+                                                   + "\n" + _dossier + "\n")
+                        logger.info("[chat] album dossier attached: %r (%s)",
+                                    _alb["title"], active_title)
+        except Exception as _e:
+            logger.debug("[chat] album dossier failed: %s", _e)
     taste_context = await get_user_taste_context(user.id, query=message.message)
     # When a discussion is active, anchor the RAG / memory queries on the
     # actual title under discussion — using the user's free-form reply ("lets
