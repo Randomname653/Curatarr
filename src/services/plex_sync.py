@@ -1434,6 +1434,18 @@ CRITICAL RULES (YOU MUST OBEY):
         # for the single GPU.
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
+        # Evict the embedding model BEFORE the 27B call. The recompute's
+        # embedding phase leaves nomic resident (keep_alive 2m), and the
+        # packed curator then runs in partial CPU offload — measured 0.5 t/s
+        # instead of 15, which is what actually blew the 300s timeouts
+        # (125 tokens took 257s). Two seconds of unload buys a 30x speedup.
+        try:
+            async with httpx.AsyncClient(timeout=15) as _c:
+                await _c.post(f"{ollama_url}/api/embeddings",
+                              json={"model": settings.EMBEDDING_MODEL,
+                                    "prompt": "unload", "keep_alive": 0})
+        except Exception as _e:
+            logger.debug("Taste summary: embedder evict failed: %s", _e)
         for model in model_order:
             if not model:
                 continue
@@ -1442,22 +1454,32 @@ CRITICAL RULES (YOU MUST OBEY):
             # without ever trying the 8B (the anime profile shipped as
             # "You've watched 779 items. Top genres: …" because of it).
             try:
-                # 300s: 27B queued behind an app call needs headroom; 8B is fast
-                async with httpx.AsyncClient(timeout=300) as client:
+                # num_predict 700, not 2000: the 2000 was a DeepSeek-R1
+                # think-token relic — the 27B writes ~15 t/s on the packed
+                # 4090, so an output allowed to run to a 2000 cap plus a
+                # cold load blew the timeout (3x reproduced on anime).
+                # 4-6 sentences need <300 tokens; 700 is generous.
+                # 420s: cold 20GB load + eval headroom.
+                async with httpx.AsyncClient(timeout=420) as client:
                     resp = await client.post(
                         f"{ollama_url}/api/chat",
                         json={
                             "model": model,
                             "messages": [{"role": "user", "content": prompt}],
                             "stream": False,
-                            **curator_options(temperature=0.8, num_predict=2000),
+                            **curator_options(temperature=0.8, num_predict=700),
                         },
                     )
             except httpx.TimeoutException:
-                logger.warning("Taste summary: %r timed out after 300s — trying next model", model)
+                logger.warning("Taste summary: %r timed out after 420s — trying next model", model)
                 continue
+            d = resp.json() if resp.status_code == 200 else {}
+            if d.get("eval_count"):
+                logger.info("Taste summary: %r generated %d tokens in %.0fs",
+                            model, d["eval_count"],
+                            (d.get("eval_duration") or 0) / 1e9)
             if resp.status_code == 200:
-                return strip_think_tags(resp.json().get("message", {}).get("content", "").strip())
+                return strip_think_tags((d.get("message") or {}).get("content", "").strip())
             if resp.status_code == 404:
                 logger.info("Taste summary: model %r not found, trying next...", model)
                 continue
