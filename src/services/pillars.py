@@ -274,6 +274,16 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                 owner_line += f". Pattern: {vp}"
         except Exception as e:
             logger.debug("[pillars] viewing pattern failed for %r: %s", title, e)
+    if category in ("show", "anime"):
+        # stock truth for the judge: episodes known/aired/monitored/on disk,
+        # incl. whether any monitored+aired episode is missing
+        try:
+            from src.services.episode_context import series_availability
+            av = await series_availability(title)
+            if av:
+                owner_line += f". Availability: {av}"
+        except Exception as e:
+            logger.debug("[pillars] availability failed for %r: %s", title, e)
     if category == "music":
         # play-count DEPTH for artists — "watched 10931x" says less than
         # "10931 plays across 257 tracks, top: …" (and honest silence:

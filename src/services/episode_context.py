@@ -52,10 +52,8 @@ def _sonarr_series_id(series_title: str) -> Optional[int]:
     return None
 
 
-async def stop_point_context(series_title: str, season: int,
-                             episode: int) -> Optional[str]:
-    """Two-line context around the user's stop point, or None (not a Sonarr
-    series / API down / episode unknown)."""
+async def _fetch_episodes(series_title: str) -> Optional[list]:
+    """All Sonarr episode rows for a series (one LAN call), or None."""
     base = (settings.SONARR_URL or "").rstrip("/")
     key = settings.SONARR_API_KEY
     if not base or not key:
@@ -67,11 +65,47 @@ async def stop_point_context(series_title: str, season: int,
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{base}/api/v3/episode",
                                  params={"seriesId": sid, "apikey": key})
-        if r.status_code != 200:
-            return None
-        eps = r.json()
+        return r.json() if r.status_code == 200 else None
     except Exception as e:
         logger.debug("[episode-ctx] fetch failed for %r: %s", series_title, e)
+        return None
+
+
+async def series_availability(series_title: str) -> Optional[str]:
+    """The series' stock truth in one line: how many episodes exist, how
+    many have aired, how many are monitored, how many sit on disk — and
+    whether any MONITORED, AIRED episode is missing (named, up to three).
+    None when the series isn't in Sonarr."""
+    eps = await _fetch_episodes(series_title)
+    if not eps:
+        return None
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    regular = [e for e in eps if (e.get("seasonNumber") or 0) >= 1]
+    total = len(regular)
+    aired = [e for e in regular if (e.get("airDateUtc") or "9999") <= now]
+    monitored = [e for e in regular if e.get("monitored")]
+    on_disk = [e for e in regular if e.get("hasFile")]
+    missing = [e for e in monitored
+               if not e.get("hasFile") and (e.get("airDateUtc") or "9999") <= now]
+    line = (f"{total} episodes known, {len(aired)} aired, "
+            f"{len(monitored)} monitored, {len(on_disk)} on disk")
+    if missing:
+        names = ", ".join(f"S{e['seasonNumber']}E{e['episodeNumber']}"
+                          for e in missing[:3])
+        more = f" (+{len(missing) - 3} more)" if len(missing) > 3 else ""
+        line += f" — {len(missing)} monitored & aired but MISSING: {names}{more}"
+    else:
+        line += " — all monitored, aired episodes are on disk"
+    return line
+
+
+async def stop_point_context(series_title: str, season: int,
+                             episode: int) -> Optional[str]:
+    """Two-line context around the user's stop point, or None (not a Sonarr
+    series / API down / episode unknown)."""
+    eps = await _fetch_episodes(series_title)
+    if not eps:
         return None
 
     def _find(s: int, e: int) -> Optional[dict]:
