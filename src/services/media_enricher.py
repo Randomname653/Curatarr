@@ -529,6 +529,31 @@ def _wiki_hit_matches(query_title: str, hit_title: str, media_type: str) -> bool
     return not any(w in disambig for w in cross)
 
 
+_SIG_VOCAB = re.compile(
+    r"award|prize|nominat|record|guinness|influen|acclaim|best.sell|classic"
+    r"|milestone|legacy|landmark|box.office|bomb|flop|canon|adapted into"
+    r"|first (?:anime|film|series|game)|genre.defin", re.I)
+
+
+def _significance_slice(extract: str, lead_chars: int = 2500,
+                        budget: int = 7000) -> str:
+    """Lead + the paragraphs that actually carry significance vocabulary,
+    within ``budget`` — instead of the first N chars of a long article."""
+    lead = extract[:lead_chars]
+    out = [lead]
+    used = len(lead)
+    for para in extract[lead_chars:].split("\n"):
+        p = para.strip()
+        if not p or not _SIG_VOCAB.search(p):
+            continue
+        take = p[:1200]
+        if used + len(take) > budget:
+            break
+        out.append(take)
+        used += len(take)
+    return "\n".join(out)
+
+
 async def fetch_significance(
     title: str, media_type: str = "movie", year: Optional[int] = None,
 ) -> Optional[str]:
@@ -546,6 +571,16 @@ async def fetch_significance(
     hint = {"anime": "anime", "movie": "film", "show": "television series",
             "music": "band musician"}.get(media_type, "")
     query = f"{title} {hint}".strip()
+    # medium plausibility for the DIRECT-title lookup below: the exact page
+    # exists but could be a same-named stranger, so its opening must read
+    # like the right kind of entity before we trust it.
+    plaus = {
+        "music": re.compile(r"musician|band|singer|composer|record (?:producer|label)"
+                            r"|DJ|discograph", re.I),
+        "movie": re.compile(r"\bfilm\b|\bmovie\b", re.I),
+        "show": re.compile(r"television|tv series|streaming series", re.I),
+        "anime": re.compile(r"anime|manga|television", re.I),
+    }.get(media_type)
     try:
         # Wikipedia's API rejects generic / browser-spoofing User-Agents with a
         # 403 — it requires a descriptive UA that includes a contact/URL.
@@ -553,33 +588,54 @@ async def fetch_significance(
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
-            sr = await client.get("https://en.wikipedia.org/w/api.php", params={
-                "action": "query", "list": "search", "srsearch": query,
-                "format": "json", "srlimit": 5,
-            })
-            hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
-            # Pick the first hit whose article title actually MATCHES this title —
-            # NOT a blind hits[0], which resolves same-name collisions to whatever
-            # entity Wikipedia ranks most popular (a J-pop act for an anime, a
-            # video game for a series). A wrong page poisons the significance.
-            page = next((h["title"] for h in hits
-                         if _wiki_hit_matches(title, h["title"], media_type)), None)
-            if not page:
-                logger.debug("[significance] no Wikipedia hit matched %r (%s) — hits: %s",
-                             title, media_type, [h.get("title") for h in hits])
-                return None
-            ex = await client.get("https://en.wikipedia.org/w/api.php", params={
-                "action": "query", "prop": "extracts", "explaintext": 1,
-                "redirects": 1, "titles": page, "format": "json",
-            })
-            pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
+            # DIRECT title lookup first: coded names ("C418") drown in keyword
+            # search — the hint pushed the actual article out of the top 5
+            # while the exact page sat there all along.
             extract = ""
-            for _pid, pdata in pages.items():
-                extract = pdata.get("extract") or ""
-                break
+            ex0 = await client.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "prop": "extracts", "explaintext": 1,
+                "redirects": 1, "titles": title, "format": "json",
+            })
+            if ex0.status_code == 200:
+                for _pid, pdata in (ex0.json().get("query", {}).get("pages", {})).items():
+                    cand = pdata.get("extract") or ""
+                    if (len(cand) >= 300
+                            and "may refer to" not in cand[:200].lower()
+                            and (plaus is None or plaus.search(cand[:1500]))):
+                        extract = cand
+                    break
+            if not extract:
+                sr = await client.get("https://en.wikipedia.org/w/api.php", params={
+                    "action": "query", "list": "search", "srsearch": query,
+                    "format": "json", "srlimit": 5,
+                })
+                hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
+                # Pick the first hit whose article title actually MATCHES this
+                # title — NOT a blind hits[0], which resolves same-name
+                # collisions to whatever entity Wikipedia ranks most popular.
+                page = next((h["title"] for h in hits
+                             if _wiki_hit_matches(title, h["title"], media_type)), None)
+                if not page:
+                    logger.debug("[significance] no Wikipedia hit matched %r (%s) — hits: %s",
+                                 title, media_type, [h.get("title") for h in hits])
+                    return None
+                ex = await client.get("https://en.wikipedia.org/w/api.php", params={
+                    "action": "query", "prop": "extracts", "explaintext": 1,
+                    "redirects": 1, "titles": page, "format": "json",
+                })
+                pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
+                for _pid, pdata in pages.items():
+                    extract = pdata.get("extract") or ""
+                    break
             if not extract or len(extract) < 120:
                 return None
-            extract = extract[:7000]
+            # The blind [:7000] cut dropped the exact paragraphs significance
+            # lives in: Cutthroat Island's Guinness "biggest box-office bomb"
+            # sits in Reception/Legacy PAST the 7k mark of a 16k article, so
+            # the distiller only ever saw production trivia and said NONE.
+            # Keep the lead, then cherry-pick paragraphs carrying
+            # significance vocabulary, within the same total budget.
+            extract = _significance_slice(extract)
     except Exception as e:
         logger.debug("[significance] Wikipedia fetch failed for %r: %s", title, e)
         return None
