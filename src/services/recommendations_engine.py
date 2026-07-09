@@ -962,6 +962,14 @@ async def generate_deletion_proposals(
         if title in protected or tmdb_id in protected:
             continue
 
+        # Zero-byte guard (deletion run 2026-07-08): six of eleven music
+        # proposals were Lidarr MONITORING GHOSTS — artists with no files on
+        # disk. A deletion pitch that frees 0 bytes is the wrong action
+        # entirely (that's an unmonitor decision, not curation); it also
+        # burns a judge call and a proposal slot on nothing.
+        if not (item.get("size_mb") or 0):
+            continue
+
         # Keep-cooldown (see 2b): the user said "Keep" recently — honor it.
         if title in rejected_recent or tmdb_id in rejected_recent:
             continue
