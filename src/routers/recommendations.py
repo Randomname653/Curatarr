@@ -739,12 +739,17 @@ async def get_deletion_proposals(
     else:
         proposals = await generate_deletion_proposals(user.id, arr_items, category)
 
-    # Enrich each proposal with poster, synopsis, genres from TMDB + ARR metadata
-    item_map = {i["title"]: i for i in arr_items}
+    # Enrich each proposal with poster, synopsis, genres from TMDB + ARR metadata.
+    # Keyed by (title, category) — a bare title map let same-named items from
+    # different services collide: the lidarr band "The Devil Wears Prada"
+    # overwrote the radarr film's slot, so the FILM's proposal shipped with
+    # category='music' + the band's poster/synopsis, and the discussion then
+    # argued about the wrong medium entirely.
+    item_map = {(i["title"], i.get("category")): i for i in arr_items}
 
     async def _enrich(p: dict) -> dict:
-        orig = item_map.get(p["title"], {})
-        cat = orig.get("category", category or "movie")
+        orig = item_map.get((p["title"], p.get("category")), {})
+        cat = orig.get("category", p.get("category") or category or "movie")
         genres = orig.get("genres", "")
         # Pass 51/52: hand _fetch_tmdb every stable ID the ARR item carries
         # so it can resolve the EXACT entry instead of guessing from a
