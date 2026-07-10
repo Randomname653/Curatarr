@@ -580,6 +580,12 @@ class MediaTechProfile(Base):
     # duplicate doesn't masquerade as bitrate bloat.
     versions        = Column(Integer, default=1)
     redundant_mb    = Column(Float, default=0.0)
+    # Remux = untouched disc stream — its bitrate is legitimately several times
+    # an encode's, so remuxes form their OWN size class (movie|1080|h264|remux)
+    # instead of reading as "3x bloated" against the encode median. Detected
+    # from the file path ("remux" in the primary part's name); for series it's
+    # majority-of-episodes.
+    is_remux        = Column(Boolean, default=False)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

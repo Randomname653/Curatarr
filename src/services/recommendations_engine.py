@@ -1143,7 +1143,8 @@ async def generate_deletion_proposals(
         _tp = (_tech_idx.get(("tmdb", _it.get("tmdb_id")))
                or _tech_idx.get(("tvdb", _it.get("tvdb_id"))))
         _so = size_outlier(_tp["media_type"], _tp["resolution"], _tp["codec"],
-                           _tp["mb_per_min"]) if _tp else None
+                           _tp["mb_per_min"],
+                           is_remux=_tp.get("is_remux", False)) if _tp else None
         if _so:
             size_pts = (min(25.0, (_so["ratio"] - 1.0) * 12.0)
                         if _so["verdict"] == "bloated" else 0.0)

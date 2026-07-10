@@ -216,12 +216,15 @@ def _tech_facts(item: dict, media_type: str) -> tuple[str, bool]:
     if not prof or not prof.get("mb_per_min"):
         return "", False
     res, codec, mbpm = prof.get("resolution"), prof.get("codec"), prof.get("mb_per_min")
+    remux = prof.get("is_remux", False)
     gb = (prof.get("size_mb") or 0) / 1024.0
-    parts = [f"{res or '?'} {codec or '?'}", f"{gb:.1f} GB", f"{mbpm:.0f} MB/min"]
+    parts = [f"{res or '?'} {codec or '?'}{' remux' if remux else ''}",
+             f"{gb:.1f} GB", f"{mbpm:.0f} MB/min"]
     outlier = False
-    out = size_outlier(media_type, res, codec, mbpm)
+    out = size_outlier(media_type, res, codec, mbpm, is_remux=remux)
     if out and out.get("verdict") and out.get("median"):
-        parts.append(f"{out.get('ratio')}x class median ({out['verdict']})")
+        klass = "remux-class" if remux else "class"
+        parts.append(f"{out.get('ratio')}x {klass} median ({out['verdict']})")
         outlier = (out["verdict"] == "bloated")
     return ", ".join(parts), outlier
 

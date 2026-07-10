@@ -1712,12 +1712,18 @@ def _parse_media(item: dict) -> dict:
     vdr = (primary.get("videoDynamicRange") or "").lower()
     if vdr and vdr != "sdr":
         hdr = True
+    # Remux detection from the primary part's file path (Radarr/Sonarr naming
+    # carries the quality title, e.g. "…Bluray.REMUX.AVC…"). Untouched disc
+    # streams are legitimately several times an encode's bitrate — they need
+    # their own size class or every remux reads as "bloated".
+    is_remux = "remux" in ((ppart.get("file") or "").lower())
     return {
         "size_bytes": total_size, "primary_bytes": primary_size,
         "duration_ms": duration_ms,
         "resolution": _res_bucket(primary.get("videoResolution")),
         "codec": (primary.get("videoCodec") or "").lower() or None,
         "hdr": hdr, "audio": audio, "subs": subs, "versions": len(medias),
+        "remux": is_remux,
     }
 
 
@@ -1782,6 +1788,8 @@ def _persist_tech_profiles(agg: dict) -> int:
             row.item_count = a["count"]
             row.versions = a.get("versions", 1)
             row.redundant_mb = redundant_mb
+            # series = majority-of-episodes; movies = the one file
+            row.is_remux = (a.get("remux_files", 0) * 2) > (a["count"] or 1)
             row.updated_at = datetime.utcnow()
             written += 1
         db.commit()
@@ -1843,7 +1851,7 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                     "size_bytes": 0, "primary_bytes": 0, "redundant_bytes": 0,
                     "duration_ms": 0, "res": Counter(), "codec": Counter(),
                     "hdr": False, "audio": set(), "subs": set(),
-                    "count": 0, "versions": 1})
+                    "count": 0, "versions": 1, "remux_files": 0})
                 m = _parse_media(it)
                 a["size_bytes"] += m["size_bytes"] or 0           # total footprint
                 a["primary_bytes"] += m["primary_bytes"] or 0     # bitrate basis
@@ -1858,6 +1866,8 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                 a["audio"] |= m["audio"]
                 a["subs"] |= m["subs"]
                 a["count"] += 1
+                if m.get("remux"):
+                    a["remux_files"] += 1
 
             # Shows: merge series ids/title from the show items (type 2).
             if category in ("show", "anime"):
