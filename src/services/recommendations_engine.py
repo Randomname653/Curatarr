@@ -795,9 +795,18 @@ async def generate_deletion_proposals(
                     if _ft:   # chronological list — the latest statement wins
                         feedback_sentiment_lc[_ft] = _fb.get("sentiment")
 
-        # 2. Load Whitelist (ProtectedMedia)
+        # 2. Load Whitelist (ProtectedMedia) — category-scoped: protections
+        # match by identifier (often a bare TITLE), and a title-only match
+        # crosses domains. The user protecting the BAND "The Devil Wears
+        # Prada" must not shield the same-named FILM from ever being
+        # pitched. NULL category = legacy rows → still protect everywhere.
+        from sqlalchemy import or_ as _or
         protected = {
-            p.identifier for p in db.query(ProtectedMedia).filter(ProtectedMedia.user_id == user_id).all()
+            p.identifier for p in db.query(ProtectedMedia).filter(
+                ProtectedMedia.user_id == user_id,
+                _or(ProtectedMedia.category == category,
+                    ProtectedMedia.category.is_(None)),
+            ).all()
         }
 
         # 2b. KEEP-COOLDOWN: titles the user explicitly kept (clicked "Keep" →
