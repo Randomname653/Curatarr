@@ -115,6 +115,9 @@ def _migrate_columns() -> None:
         # Redundant-version (duplicate) tracking on the tech profile.
         ("media_tech_profiles",   "versions", "INTEGER DEFAULT 1"),
         ("media_tech_profiles",   "redundant_mb", "FLOAT DEFAULT 0"),
+        # Remux class: untouched disc streams get their own size norms
+        # instead of reading as "3x bloated" against encode medians.
+        ("media_tech_profiles",   "is_remux", "INTEGER DEFAULT 0"),
         # Pass 99-fu13 / Phase 2 #37: per-item enrichment-source tracking.
         # ``fetch_tier`` distinguishes a provisional fast-pass enrichment
         # ("fast" — only the cheap sources were consulted) from the

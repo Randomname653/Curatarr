@@ -23,18 +23,32 @@ logger = logging.getLogger("curatarr")
 # Below this a class is too sparse to trust → the item falls back to a coarser
 # class (drop codec, then drop resolution). Logged at compute time.
 _MIN_SAMPLES = 15
+# Remux classes are a smaller population — accept a thinner norm rather than
+# leaving every remux unjudged (or worse, judged against encode medians).
+_MIN_SAMPLES_REMUX = 8
 
 
-def _class_keys(media_type: str, resolution, codec) -> list:
+def _class_keys(media_type: str, resolution, codec, is_remux: bool = False) -> list:
     """Candidate class keys for an item, finest → coarsest.
 
     Crucially the fallback drops TYPE before RESOLUTION: bitrate is driven first
     by resolution (4K ≈ 5× 1080p) and only secondarily by type (a movie ≈ 1.5× a
     show at the same res). So a sparse class like a 4K *show* falls back to
     ``*|4k|*`` (all 4K content) — NOT to ``show|*|*`` (1080p-dominated), which
-    would falsely flag it as 5× bloated."""
+    would falsely flag it as 5× bloated.
+
+    REMUX items live in their own class branch (``…|remux``) and NEVER fall
+    back into encode classes: an untouched disc stream is legitimately several
+    times an encode's bitrate — against the encode median every remux read as
+    "3× bloated" and the curator complained about each one. No remux norm →
+    None → no verdict (safe)."""
     res = resolution or "*"
     cod = codec or "*"
+    if is_remux:
+        keys = [f"{media_type}|{res}|{cod}|remux", f"{media_type}|{res}|*|remux"]
+        if res != "*":
+            keys.append(f"*|{res}|*|remux")
+        return keys
     keys = [f"{media_type}|{res}|{cod}", f"{media_type}|{res}|*"]
     if res != "*":
         keys.append(f"*|{res}|*")          # resolution across all types
@@ -54,16 +68,20 @@ def compute_size_norms() -> dict:
         rows = db.query(
             MediaTechProfile.media_type, MediaTechProfile.resolution,
             MediaTechProfile.codec, MediaTechProfile.mb_per_min,
+            MediaTechProfile.is_remux,
         ).filter(MediaTechProfile.mb_per_min.isnot(None)).all()
-    for mt, res, cod, mpm in rows:
+    for mt, res, cod, mpm, remux in rows:
         if not mt or not mpm or mpm <= 0:
             continue
-        for ck in _class_keys(mt, res, cod):
+        # remuxes feed ONLY the remux branch — keeping them out of the encode
+        # buckets also stops them skewing the encode medians upward
+        for ck in _class_keys(mt, res, cod, is_remux=bool(remux)):
             buckets[ck].append(mpm)
 
     norms, collapsed = [], 0
     for ck, vals in buckets.items():
-        if len(vals) < _MIN_SAMPLES:
+        min_n = _MIN_SAMPLES_REMUX if ck.endswith("|remux") else _MIN_SAMPLES
+        if len(vals) < min_n:
             collapsed += 1
             continue
         arr = np.asarray(vals, dtype=float)
@@ -108,16 +126,17 @@ def _load_norms() -> dict:
     return _NORMS_CACHE["data"]
 
 
-def size_outlier(media_type: str, resolution, codec, mb_per_min) -> dict:
+def size_outlier(media_type: str, resolution, codec, mb_per_min,
+                 is_remux: bool = False) -> dict:
     """Compare an item's mb_per_min against its class norm. Returns a verdict dict
     or None when there's no profile/norm to compare against (caller falls back to
-    today's blanket behaviour)."""
+    today's blanket behaviour). Remux items compare ONLY against remux norms."""
     # No resolution → no reliable class (bloat is resolution-relative); don't judge.
     if not mb_per_min or mb_per_min <= 0 or not media_type or not resolution:
         return None
     norms = _load_norms()
     chosen = None
-    for ck in _class_keys(media_type, resolution, codec):
+    for ck in _class_keys(media_type, resolution, codec, is_remux=is_remux):
         if ck in norms:
             chosen = (ck, norms[ck])
             break
@@ -207,6 +226,7 @@ def tech_profile_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> dic
             "size_mb": row.size_mb, "duration_min": row.duration_min,
             "hdr": row.hdr, "item_count": row.item_count, "title": row.title,
             "versions": row.versions or 1, "redundant_mb": row.redundant_mb or 0,
+            "is_remux": bool(row.is_remux),
         }
 
 
@@ -221,10 +241,12 @@ def load_tech_index() -> dict:
             MediaTechProfile.media_type, MediaTechProfile.resolution,
             MediaTechProfile.codec, MediaTechProfile.mb_per_min,
             MediaTechProfile.size_mb, MediaTechProfile.item_count,
+            MediaTechProfile.is_remux,
         ).filter(MediaTechProfile.mb_per_min.isnot(None)).all()
-    for tmdb_id, tvdb_id, mt, res, cod, mpm, smb, cnt in rows:
+    for tmdb_id, tvdb_id, mt, res, cod, mpm, smb, cnt, remux in rows:
         prof = {"media_type": mt, "resolution": res, "codec": cod,
-                "mb_per_min": mpm, "size_mb": smb, "item_count": cnt}
+                "mb_per_min": mpm, "size_mb": smb, "item_count": cnt,
+                "is_remux": bool(remux)}
         # Index by both int and str so the ARR item dict matches regardless of
         # how its id is typed upstream.
         if tmdb_id:
@@ -247,7 +269,8 @@ def _tech_profile_by_title(title: str) -> dict:
         return {"media_type": row.media_type, "resolution": row.resolution,
                 "codec": row.codec, "mb_per_min": row.mb_per_min,
                 "size_mb": row.size_mb, "item_count": row.item_count,
-                "versions": row.versions or 1, "redundant_mb": row.redundant_mb or 0}
+                "versions": row.versions or 1, "redundant_mb": row.redundant_mb or 0,
+                "is_remux": bool(row.is_remux)}
 
 
 def _dup_note(prof: dict) -> str:
@@ -310,8 +333,10 @@ def short_size_tag(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
     if not prof or not prof.get("mb_per_min"):
         return ""
     o = size_outlier(prof["media_type"], prof["resolution"], prof["codec"],
-                     prof["mb_per_min"])
+                     prof["mb_per_min"], is_remux=prof.get("is_remux", False))
     res = (prof.get("resolution") or "?").upper()
+    if prof.get("is_remux"):
+        res += " remux"
     dup = f" ·dup×{prof.get('versions')}" if (prof.get("versions", 1) or 1) > 1 else ""
     if not o:
         return f"[size: {res}{dup}]"
@@ -331,7 +356,7 @@ def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> str
     if not prof or not prof.get("mb_per_min"):
         return ""
     o = size_outlier(prof["media_type"], prof["resolution"], prof["codec"],
-                     prof["mb_per_min"])
+                     prof["mb_per_min"], is_remux=prof.get("is_remux", False))
     dup = _dup_note(prof) + _cross_dup_note(tmdb_id, tvdb_id)
     gb = (prof["size_mb"] or 0) / 1024
     if not o:
@@ -356,11 +381,12 @@ def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> str
     waste_gb = gb * (1.0 - 1.0 / ratio) if ratio > 0 else 0.0
     if o["verdict"] == "bloated" and waste_gb >= 4.0:
         res = (prof["resolution"] or "?").upper()
-        codec = (prof["codec"] or "?")
+        codec = (prof["codec"] or "?") + (" REMUX" if prof.get("is_remux") else "")
+        klass = "REMUX class" if prof.get("is_remux") else "class"
         eps = (f", {prof['item_count']} episodes" if prof.get("item_count", 1) > 1 else "")
         return (f"SIZE CONTEXT: {gb:.0f} GB — {res} {codec}{eps}, "
-                f"{o['mb_per_min']:.0f} MB/min vs class median {o['median']:.0f} "
-                f"({ratio:.1f}×, ~{waste_gb:.0f} GB reclaimable above the class norm) "
+                f"{o['mb_per_min']:.0f} MB/min vs {klass} median {o['median']:.0f} "
+                f"({ratio:.1f}×, ~{waste_gb:.0f} GB reclaimable above the {klass} norm) "
                 f"— GENUINELY oversized for its class. Size is a fair SECONDARY "
                 f"argument here (cite the figure), never the lead.{dup}")
     # Trivial waste, or normal/lean → flag ONLY a duplicate if present; never a
