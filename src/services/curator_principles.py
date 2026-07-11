@@ -57,6 +57,7 @@ _EXTRACT_SYS = """You extract GENERALIZABLE CURATION PRINCIPLES from a DEBATE be
 RULES:
 - Extract PRINCIPLES, never title verdicts. ("The user values slow films only when they show technical mastery" = YES. "Keep America's National Parks" = NO.)
 - A principle counts ONLY if the USER established it OR endorsed / conceded to it — NEVER the curator's own un-endorsed self-justifications, and never a point the user got rhetorically cornered on but did not actually concede.
+- Principles are TASTE rules (what the user values or rejects, and under which conditions) — NEVER factual/technical claims about works, production, or storage ("high bitrate is necessary to preserve animation" = NO), and never generalizations built on the user's unverified assertions about one specific work's scenes or creators.
 - Generalizable, title-agnostic, ONE sentence each, ALWAYS in ENGLISH regardless of the conversation's language (the rule-set is stored in English).
 - Be CONSERVATIVE: most conversations settle NO lasting principle. If nothing was genuinely established or endorsed by the user, return an empty list. Do NOT invent principles to fill space.
 

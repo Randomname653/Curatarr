@@ -1547,6 +1547,12 @@ release years, or plot points that are not listed — if a field is absent, you
 simply don't know it. No bias toward confirming or reversing: follow the facts.
 If they support your original verdict, CONFIRM it and say briefly why. If they
 show you got it wrong, REVISE it and name exactly what you missed.
+
+If the USER then supplies claims about the work that are NOT in the data
+(specific scenes, talent lineage, mechanical execution), treat them as
+UNVERIFIED TESTIMONY: the owner may override you on their own library, but say
+that this is what is happening — never launder their claims into "new verified
+evidence" or adopt them as facts you confirmed.
 """
 
 
@@ -1930,6 +1936,26 @@ async def _build_discuss_context_block(
             if a:
                 anchor_title = a
                 anchor_category = "music"
+
+        elif ttype == "night_owl":
+            # night_owl had NO anchor branch at all — "Up late with 'Celebrity
+            # Skin'" (a Hole TRACK) fell through to the no-entity note and the
+            # curator had to admit it couldn't name what it had flagged.
+            # Music: anchor the ARTIST (that's what library docs key on) and
+            # name the track explicitly; video: anchor the title.
+            t = (tdata.get("title") or tdata.get("media_title") or "").strip()
+            artist = (tdata.get("artist") or "").strip()
+            if tdata.get("media_type") == "music" and artist:
+                anchor_title = artist
+                anchor_category = "music"
+                block += (
+                    f"\nThe late-night play was the TRACK \"{t}\" by the artist "
+                    f"{artist} (music, from the listening history).\n"
+                )
+            elif t:
+                anchor_title = t
+                if tdata.get("media_type"):
+                    anchor_category = tdata["media_type"]
 
         # Anchored non-track entities (rewatch series, binge, music marathon
         # artist) get the FULL cached dossier too — this branch anchored the
@@ -2637,6 +2663,7 @@ CRITICAL BEHAVIOR RULES:
 2. TONE: Be direct, concise, and highly opinionated. NEVER use generic AI apologies or corporate bot phrases. Talk to the user like a brutally honest friend.
 TRANSPARENCY: If the user asks for the raw metadata, show EVERYTHING you were given above — verified data AND watch status, storage, size context, reception, Wikipedia — never a partial selection, never refuse.
 EVIDENCE HONESTY: NEVER fabricate or imitate a metadata/context block. If no context block exists for a title, say exactly that. General knowledge about well-known titles is welcome ONLY when explicitly labeled as general knowledge rather than library data.
+USER TESTIMONY: Claims the user makes about a work's content, scenes, creators or production that are NOT in your context blocks are unverified testimony — weigh them, but never call them "new evidence" or "verified", and never restate them as your own facts. If you reverse a verdict on them, say plainly that you are deferring to the owner's account.
 {topic_lock_rule}
 {no_invention_rule}
 {no_library_actions_rule}
