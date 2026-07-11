@@ -215,11 +215,28 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .card p { font-size: 12px; color: var(--text2); line-height: 1.5; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 
-/* ── ADMIN SUB-PANELS (Deletions: protections / downscale / principles) ── */
+/* ── CURATION SECTIONS (protections / downscale / principles) ── */
 .panel-section { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 16px; }
 .panel-hint { font-size: 12px; color: var(--text3); margin-left: 8px; }
-.panel-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; transition: border-color .12s; }
+/* Collapsible curation sections: native <details> so several can be open at
+   once and each can be folded away — the old always-expanded inline blocks
+   under the Deletions list were the complaint. */
+.cur-section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 12px; }
+.cur-section > summary { cursor: pointer; padding: 13px 16px; font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; user-select: none; }
+.cur-section > summary::-webkit-details-marker { display: none; }
+.cur-section > summary::before { content: '▸'; color: var(--amber); transition: transform .15s; }
+.cur-section[open] > summary::before { transform: rotate(90deg); }
+.cur-section > summary:hover { color: var(--amber); }
+.cur-section .cur-body { padding: 0 16px 14px; }
+.panel-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; transition: border-color .12s; animation: cardIn .22s ease both; }
 .panel-item:hover { border-color: var(--border2); }
+/* staggered card entrance (kept subtle; amber stays the identity) */
+@keyframes cardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.panel-item:nth-child(2) { animation-delay: .03s; }
+.panel-item:nth-child(3) { animation-delay: .06s; }
+.panel-item:nth-child(4) { animation-delay: .09s; }
+.panel-item:nth-child(5) { animation-delay: .12s; }
+.panel-item:nth-child(6) { animation-delay: .15s; }
 .panel-item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .panel-item-sub { color: var(--text2); font-size: 12px; margin-top: 8px; line-height: 1.5; }
 .panel-item-meta { color: var(--text3); font-size: 12px; }
@@ -433,6 +450,10 @@ select option { background: var(--bg2); }
         Deletions
         <span id="sb-deletions-pulse" class="sb-pulse-dot" style="display:none" title="Deletion analysis running…"></span>
       </div>
+      <div class="sb-item admin-only" onclick="showView('curation',this)" style="display:none">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Curation
+      </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">Manage</div>
@@ -550,10 +571,10 @@ select option { background: var(--bg2); }
           <div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
             <button id="lane-all-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecLane('all',this)">Alle</button>
             <button id="lane-lib-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('library',this)">📚 In Library</button>
-            <button id="lane-disc-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('discovery',this)">✨ Neu entdecken</button>
+            <button id="lane-disc-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('discovery',this)">✨ Discover new</button>
           </div>
           <button class="btn btn-secondary" onclick="regenerateRecs()">🔄 Regenerate</button>
-          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">📚 besitzt du, ungesehen · ✨ nicht in der Library, zum Anschaffen</span>
+          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">📚 you own it, still unwatched · ✨ not in your library, worth acquiring</span>
         </div>
         <div id="recs-content"><p class="loading">Click "Get recommendations" to load…</p></div>
       </div>
@@ -592,27 +613,38 @@ select option { background: var(--bg2); }
           <span style="font-size:12px;color:var(--text3)">Nothing is deleted without your explicit approval.</span>
         </div>
         <div id="del-content"></div>
+      </div>
+    </div>
 
-        <!-- Judge protections: what the 4-pillar judge auto-saved, and why -->
-        <div class="panel-section">
-          <button class="btn btn-secondary" onclick="loadJudgeProtections()">Judge-protected titles</button>
-          <span class="panel-hint">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
-          <div id="protections-content" style="margin-top:12px"></div>
-        </div>
+    <!-- CURATION: the judge's ledger — protections, downscale flags, learned rules.
+         Moved out of the Deletions view: the three inline blocks there couldn't be
+         collapsed or opened side by side and crowded the proposal list. -->
+    <div class="view" id="curation-view">
+      <div class="view-header">
+        <h1>Curation</h1>
+        <p>The judge's ledger: what it protected, what it flagged for downscaling, and the rules it has learned from your debates. Sections load when opened; keep several open at once.</p>
+      </div>
+      <div class="view-body">
+        <details class="cur-section" ontoggle="if (this.open) loadJudgeProtections()">
+          <summary>🛡️ Judge-protected titles
+            <span class="panel-hint">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
+          </summary>
+          <div class="cur-body"><div id="protections-content"></div></div>
+        </details>
 
-        <!-- Downscale candidates: kept titles flagged as bitrate outliers -->
-        <div class="panel-section">
-          <button class="btn btn-secondary" onclick="loadDownscale()">Downscale-Kandidaten</button>
-          <span class="panel-hint">Behalten, aber Bitrate-Ausreißer — Speicher zurückgewinnen ohne zu löschen. Nach dem Transcode „Erledigt" klicken.</span>
-          <div id="downscale-content" style="margin-top:12px"></div>
-        </div>
+        <details class="cur-section" ontoggle="if (this.open) loadDownscale()">
+          <summary>📉 Downscale candidates
+            <span class="panel-hint">Kept, but bitrate outliers — reclaim storage without deleting. Click "Done" after transcoding.</span>
+          </summary>
+          <div class="cur-body"><div id="downscale-content"></div></div>
+        </details>
 
-        <!-- Learned principles: what the curator taught itself from your debates -->
-        <div class="panel-section">
-          <button class="btn btn-secondary" onclick="loadPrinciples()">Learned principles</button>
-          <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. contradiction = your call.</span>
-          <div id="principles-content" style="margin-top:12px"></div>
-        </div>
+        <details class="cur-section" ontoggle="if (this.open) loadPrinciples()">
+          <summary>🧠 Learned principles
+            <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. contradiction = your call.</span>
+          </summary>
+          <div class="cur-body"><div id="principles-content"></div></div>
+        </details>
       </div>
     </div>
 
@@ -1545,7 +1577,7 @@ function showView(name, btn) {
   // Admin-only views — defense-in-depth on top of the hidden nav items + the
   // require_admin endpoints: never render the shell for a non-admin, even via a
   // stray programmatic call. (Library config + orphaned + deletions = curation.)
-  if (!currentUser?.is_admin && ['deletions','libraries','admin','reclassify'].includes(name)) return;
+  if (!currentUser?.is_admin && ['deletions','curation','libraries','admin','reclassify'].includes(name)) return;
   document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   // Clear all views — remove active class AND reset any inline display styles
@@ -3346,15 +3378,15 @@ function _stopRecsPoll() {
 
 // Lane presentation metadata for the two recommendation sections.
 const _LANE_META = {
-  library:   { icon: '📚', title: 'Aus deiner Library', sub: 'besitzt du · noch ungesehen' },
-  discovery: { icon: '✨', title: 'Neu entdecken',        sub: 'nicht in der Library · zum Anschaffen' },
+  library:   { icon: '📚', title: 'From your library', sub: 'you own it · still unwatched' },
+  discovery: { icon: '✨', title: 'Discover new',      sub: 'not in your library · worth acquiring' },
 };
 
 function _recCard(rec) {
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:3px;font-size:10px;padding:1px 6px;color:var(--text2);white-space:nowrap">${esc(g)}</span>`).join('');
   const isLib = rec.lane === 'library';
-  const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In deiner Library — noch ungesehen' : 'Nicht in der Library — zum Anschaffen'}">${isLib ? 'lib' : 'new'}</span>`;
+  const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`;
   return `
   <div class="card" style="margin-bottom:12px">
     <div style="display:flex;align-items:flex-start;gap:12px">
@@ -3697,14 +3729,14 @@ async function loadDownscale() {
     const r = await api('/api/recommendations/downscale');
     const rows = r.candidates || [];
     if (!rows.length) {
-      el.innerHTML = '<p style="color:var(--text3);font-size:13px">Keine Downscale-Kandidaten — KEEP_WITH_FLAG-Urteile aus dem nächsten Scan landen hier.</p>';
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">No downscale candidates — KEEP_WITH_FLAG verdicts from the next scan land here.</p>';
       return;
     }
-    const head = `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">${rows.length} Titel${r.total_gb ? ` · ${r.total_gb} GB gebunden (Ist-Größe der Dateien)` : ''}</div>`;
+    const head = `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">${rows.length} title(s)${r.total_gb ? ` · ${r.total_gb} GB bound (actual file size)` : ''}</div>`;
     el.innerHTML = head + rows.map(p => {
       const tech = p.tech
         ? `<span class="badge muted">${esc(p.tech.resolution || '?')} ${esc(p.tech.codec || '')} · ${p.tech.size_gb} GB${p.tech.mb_per_min ? ` · ${p.tech.mb_per_min} MB/min` : ''}</span>`
-        : '<span class="badge muted">kein Tech-Profil</span>';
+        : '<span class="badge muted">no tech profile</span>';
       const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
       return `<div class="panel-item">
         <div class="panel-item-head">
@@ -3712,7 +3744,7 @@ async function loadDownscale() {
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
-            <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="Datei wurde transkodiert — Schutz bleibt (HARD_KEEP), verlässt diese Liste">Erledigt</button>
+            <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="File has been transcoded — protection stays (HARD_KEEP); leaves this list">Done</button>
           </div>
         </div>
         ${p.bitrate_note ? `<div class="panel-item-sub">${esc(p.bitrate_note)}</div>` : ''}
