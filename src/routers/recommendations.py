@@ -446,6 +446,20 @@ async def list_principles(
     }
 
 
+@router.post("/principles/condense")
+async def condense_principles_endpoint(
+    dry_run: bool = False,
+    user: User = Depends(require_admin),
+):
+    """Rule-set hygiene: let the curator consolidate near-duplicate ACTIVE
+    principles (one call per category group). Sources become status='merged'
+    (audit trail, never hard-deleted); the consolidated rule goes active with
+    basis='condensed'. Conservative by design — 0 merges on a clean set is the
+    expected outcome."""
+    from src.services.curator_principles import condense_principles
+    return await condense_principles(user.id, dry_run=dry_run)
+
+
 @router.post("/principles/{principle_id}/{action}")
 async def update_principle(
     principle_id: int,

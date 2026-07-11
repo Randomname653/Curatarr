@@ -457,3 +457,120 @@ def format_principles_block(principles: list[str]) -> str:
              "apply them as part of your judgment):"]
     lines += [f"- {p}" for p in principles]
     return "\n".join(lines)
+
+
+# ── CONDENSE (rule-set hygiene) ───────────────────────────────────────────────
+# As debates accumulate, near-duplicate principles pile up and crowd unique
+# rules out of the judge's top_k. Prototype-validated (tests/condense_proto.py):
+# embedding-threshold clustering FAILED calibration (one-sentence rules sit too
+# close in nomic space — the top cosine pair was semantically different while a
+# real duplicate scored lower), so the merge decision is the curator's: ONE
+# format-forced call per category group over the full listing. Verified
+# conservative on the real rule-set (0 merges on a clean set) and precise on
+# planted duplicates (grouped exactly the clones, nothing else).
+
+_CONDENSE_SYS = """You maintain a media curator's RULE-SET: the owner's established curation principles. Some principles have accumulated near-duplicates. Identify groups of principles that state the SAME underlying requirement, and write ONE consolidated principle per group.
+
+RULES:
+- Be CONSERVATIVE. Merge ONLY principles whose meaning is the same requirement or the same requirement plus a sharpening of it. Most principles stand alone; an EMPTY merges list is the expected common outcome.
+- Never merge a KEEP-condition rule with a DELETE-condition rule, even on the same topic.
+- The consolidated principle must preserve EVERY nuance that could change a future verdict — one sentence, title-agnostic, ENGLISH, no examples. If the nuances cannot fit one sentence, do not merge.
+- Use the exact IDs shown. A group needs at least 2 ids."""
+
+_CONDENSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "merges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "integer"}},
+                    "merged_principle": {"type": "string"},
+                },
+                "required": ["ids", "merged_principle"],
+            },
+        },
+    },
+    "required": ["merges"],
+}
+
+
+async def condense_principles(user_id: int, dry_run: bool = False) -> dict:
+    """Consolidate near-duplicate ACTIVE principles, one curator call per
+    category group. Sources become status='merged' (audit trail, never hard
+    deleted, related records the successor); the consolidated rule is written
+    active with basis='condensed' and the summed reinforcement count."""
+    with get_db_session() as db:
+        rows = [{"id": p.id, "text": p.text, "category": p.category,
+                 "basis": p.basis, "times_reinforced": p.times_reinforced or 0}
+                for p in db.query(CuratorPrinciple).filter(
+                    CuratorPrinciple.user_id == user_id,
+                    CuratorPrinciple.status == "active",
+                ).order_by(CuratorPrinciple.id)]
+
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(r["category"], []).append(r)
+
+    report = {"active_before": len(rows), "groups_reviewed": 0,
+              "merged": [], "dry_run": dry_run}
+    claimed: set = set()   # a principle may join at most one merge group
+
+    for cat, members in groups.items():
+        if len(members) < 2:
+            continue
+        report["groups_reviewed"] += 1
+        listing = "\n".join(f"ID {m['id']}: {m['text']}" for m in members)
+        try:
+            res = await _curator_json(
+                _CONDENSE_SYS,
+                f"ACTIVE PRINCIPLES:\n{listing}\n\n"
+                f"Propose merge groups (empty list if none).",
+                _CONDENSE_SCHEMA, num_predict=600)
+        except Exception as e:
+            logger.warning("[principles] condense call failed for %r: %s", cat, e)
+            continue
+        valid = {m["id"]: m for m in members}
+        for mg in (res.get("merges") or []):
+            ids = [i for i in dict.fromkeys(mg.get("ids") or [])
+                   if i in valid and i not in claimed]
+            text = (mg.get("merged_principle") or "").strip()
+            if len(ids) < 2 or not text:
+                continue
+            claimed.update(ids)
+            entry = {"category": cat, "sources": [
+                {"id": i, "text": valid[i]["text"], "basis": valid[i]["basis"]}
+                for i in sorted(ids)], "text": text}
+            if not dry_run:
+                emb = await _embed(text)
+                with get_db_session() as db:
+                    new = CuratorPrinciple(
+                        user_id=user_id, text=text, category=cat,
+                        basis="condensed", status="active",
+                        novelty="NEW",
+                        times_reinforced=sum(valid[i]["times_reinforced"] for i in ids),
+                        origin_summary="condensed from #" + ",#".join(str(i) for i in sorted(ids)),
+                        embedding_json=json.dumps(emb) if emb else None,
+                        created_at=datetime.utcnow(),
+                        activated_at=datetime.utcnow(),
+                    )
+                    db.add(new)
+                    db.flush()
+                    for i in ids:
+                        src = db.get(CuratorPrinciple, i)
+                        if src:
+                            src.status = "merged"
+                            src.related = f"merged into #{new.id}"
+                    db.commit()
+                    entry["new_id"] = new.id
+            report["merged"].append(entry)
+
+    report["active_after"] = (report["active_before"]
+                              - sum(len(m["sources"]) for m in report["merged"])
+                              + len(report["merged"]))
+    logger.info("[principles] condense: %d group(s) reviewed, %d merge(s), "
+                "active %d -> %d%s", report["groups_reviewed"],
+                len(report["merged"]), report["active_before"],
+                report["active_after"], " (dry run)" if dry_run else "")
+    return report
