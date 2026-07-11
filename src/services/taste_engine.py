@@ -109,7 +109,10 @@ async def embed_text(text: str) -> Optional[list]:
                 json={
                     "model": settings.EMBEDDING_MODEL,
                     "prompt": text,
-                    "keep_alive": "2m",  # release VRAM after 2min, not default 5min
+                    "keep_alive": "2m",  # release RAM after 2min, not default 5min
+                    # CPU-only: a GPU-resident nomic pushes the packed 27B into
+                    # partial offload (0.5 t/s) — see episodic_memory._embed
+                    "options": {"num_gpu": 0},
                 },
             )
         if r.status_code == 200:
