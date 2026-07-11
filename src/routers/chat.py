@@ -1652,6 +1652,25 @@ async def _build_discuss_context_block(
         # gap that left the delete pitch cold-reading anime).
         _doc_key = (f"{proposal.service}:{proposal.media_id}"
                     if proposal.service and proposal.media_id else None)
+        # Level-2 = license to FETCH, not just re-read. Five debates in a row
+        # (Gannibal: zero layers cached; Oreimo: reception never checked) had
+        # the user supplying keep arguments the pipeline could have delivered —
+        # reviews and Wikipedia substance ARE the steelman material. The user
+        # pressed a "look deeper" button; 20s of live top-up is what that
+        # click means. Idempotent markers make this free once warmed.
+        if getattr(ctx, "reevaluate", False):
+            try:
+                from src.services.media_enricher import topup_significance
+                from src.services.reception import topup_reception
+                _ids = dict(tmdb_id=proposal.tmdb_id, tvdb_id=proposal.tvdb_id,
+                            plex_rating_key=_doc_key)
+                await asyncio.wait_for(topup_significance(
+                    proposal.title, proposal.category or "movie", **_ids), timeout=20.0)
+                await asyncio.wait_for(topup_reception(
+                    proposal.title, proposal.category or "movie", **_ids), timeout=20.0)
+            except (asyncio.TimeoutError, Exception) as _e:
+                logger.debug("[chat] level-2 topups failed for %r: %s",
+                             proposal.title, _e)
         verified_payload = await ensure_verified_data(
             proposal.title, proposal.category or "movie",
             tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,
