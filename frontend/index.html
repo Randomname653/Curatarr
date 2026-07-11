@@ -3610,21 +3610,32 @@ async function loadPrinciples() {
       el.innerHTML = '<p style="color:var(--text3);font-size:13px">Nothing learned yet — principles are captured from your deletion debates once PRINCIPLES_ENABLED is on.</p>';
       return;
     }
-    el.innerHTML = rows.map(p => {
+    const nActive = rows.filter(p => p.status === 'active').length;
+    const condenseBar = nActive >= 2 ? `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="color:var(--text3);font-size:12px">${nActive} active rules</span>
+        <button class="btn btn-secondary btn-sm" onclick="condensePrinciples()"
+          title="Let the curator consolidate near-duplicate active rules (conservative — usually finds nothing on a clean set)">🧹 Condense duplicates</button>
+      </div>` : '';
+    el.innerHTML = condenseBar + rows.map(p => {
       const st = p.status === 'active'
         ? '<span class="badge success">active</span>'
         : p.status === 'rejected'
           ? '<span class="badge muted">rejected</span>'
-          : '<span class="badge amber">shadow</span>';
+          : p.status === 'merged'
+            ? '<span class="badge muted" title="Consolidated into a newer rule">merged</span>'
+            : '<span class="badge amber">shadow</span>';
       const nov = p.novelty === 'contradiction'
         ? ' <span class="badge danger" title="Conflicts with an existing principle — your call">contradiction</span>'
         : (p.novelty ? ` <span class="badge muted">${esc(p.novelty)}</span>` : '');
       const reinf = (p.times_reinforced || 0) > 0 ? ` <span style="color:var(--text3);font-size:11px">×${p.times_reinforced} reinforced</span>` : '';
       const meta = [p.basis, p.category].filter(Boolean).map(esc).join(' · ');
       const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
-      const actions = p.status === 'active'
-        ? `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'shadow')">Deactivate</button>`
-        : `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'activate')">Activate</button>`;
+      const actions = p.status === 'merged'
+        ? ''
+        : p.status === 'active'
+          ? `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'shadow')">Deactivate</button>`
+          : `<button class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'activate')">Activate</button>`;
       return `<div class="panel-item">
         <div class="panel-item-head" style="align-items:flex-start">
           <div style="flex:1;min-width:200px">
@@ -3651,6 +3662,27 @@ async function setPrinciple(id, action) {
   } catch(e) {
     alert('Failed: ' + (e.message || e));
   }
+}
+
+async function condensePrinciples() {
+  if (!confirm('Let the curator consolidate near-duplicate active rules?\n' +
+               'Merged originals are kept as an audit trail (status "merged").')) return;
+  const el = document.getElementById('principles-content');
+  if (el) el.innerHTML = '<p class="loading">Curator is reviewing the rule set… (one model call per category)</p>';
+  try {
+    const r = await api('/api/recommendations/principles/condense', 'POST');
+    const merges = r.merged || [];
+    if (!merges.length) {
+      alert('No duplicates found — the rule set is already clean (' + r.active_before + ' active rules).');
+    } else {
+      alert('Consolidated ' + merges.length + ' group(s):\n\n' + merges.map(m =>
+        m.sources.map(s => '– ' + s.text).join('\n') + '\n→ ' + m.text
+      ).join('\n\n') + '\n\nActive rules: ' + r.active_before + ' → ' + r.active_after);
+    }
+  } catch(e) {
+    alert('Condense failed: ' + (e.message || e));
+  }
+  loadPrinciples();
 }
 
 function _arrLabel(category) {
