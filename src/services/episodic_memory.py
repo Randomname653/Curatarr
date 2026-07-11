@@ -134,12 +134,20 @@ def compute_importance(memory_type: str, content: str, metadata: dict) -> float:
 # ── EMBEDDING ─────────────────────────────────────────────────────────────────
 
 async def _embed(text: str) -> Optional[list]:
-    """Generate embedding via Ollama."""
+    """Generate embedding via Ollama.
+
+    num_gpu=0: nomic runs CPU-ONLY. The 27B curator at 16k ctx fills the
+    4090 (~23.5 of 24.5 GB); a GPU-resident nomic pushes it into partial
+    offload — measured 0.5 t/s instead of 33. The judge funnel calls this
+    per candidate (considerations/principles/owner signals), which kept
+    nomic pinned and throttled EVERY verdict of a full deletion run into
+    the hours. A 323MB embedder on CPU costs ~100ms per call — invisible."""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/embeddings",
-                json={"model": settings.EMBEDDING_MODEL, "prompt": text},
+                json={"model": settings.EMBEDDING_MODEL, "prompt": text,
+                      "options": {"num_gpu": 0}},
             )
         if r.status_code == 200:
             return r.json().get("embedding")

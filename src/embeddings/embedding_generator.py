@@ -44,7 +44,12 @@ class EmbeddingGenerator:
         """
         payload = {
             "model": self.model,
-            "prompt": text
+            "prompt": text,
+            # CPU-only: a GPU-resident nomic pushes the packed 27B curator into
+            # partial offload (0.5 t/s measured) — see episodic_memory._embed.
+            # All embed callsites use num_gpu=0 so ollama never flip-reloads
+            # the embedder between GPU and CPU configurations.
+            "options": {"num_gpu": 0},
         }
 
         try:
