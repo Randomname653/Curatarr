@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     LASTFM_API_KEY: Optional[str] = None         # music tags + similar artists (optional)
     SPOTIFY_CLIENT_ID: Optional[str] = None      # Client Credentials — no user login needed
     SPOTIFY_CLIENT_SECRET: Optional[str] = None  # from developer.spotify.com
+    # SoulSync (optional LAN neighbour): aggregated music metadata from its 10
+    # enrichment workers (genres, last.fm tags/bio, external ids per artist +
+    # album). Read-only consumer — Curatarr never triggers downloads.
+    SOULSYNC_URL: Optional[str] = None           # e.g. http://192.168.1.100:12279
+    SOULSYNC_API_KEY: Optional[str] = None       # sk_… from SoulSync settings
     # AniList: no key needed (public GraphQL)
     # MusicBrainz: no key needed
 

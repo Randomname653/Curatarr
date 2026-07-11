@@ -167,6 +167,29 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
     except Exception as e:
         logger.debug("[album] discogs styles failed: %s", e)
 
+    # SoulSync (LAN neighbour): aggregated per-album metadata from its
+    # enrichment workers — genres/style/tags/label fill in over time as the
+    # workers progress; silently absent when unconfigured or unreachable.
+    try:
+        from src.services.soulsync_client import album_info
+        ss = await album_info(artist.get("artistName"), alb.get("title"))
+        if ss:
+            bits = []
+            if ss.get("genres"):
+                bits.append("genres: " + ", ".join(ss["genres"][:6]))
+            if ss.get("style"):
+                bits.append(f"style: {ss['style']}")
+            if ss.get("lastfm_tags"):
+                bits.append("tags: " + ", ".join(ss["lastfm_tags"][:6]))
+            if ss.get("label"):
+                bits.append(f"label: {ss['label']}")
+            if ss.get("record_type"):
+                bits.append(str(ss["record_type"]))
+            if bits:
+                lines.append("SoulSync: " + "; ".join(bits))
+    except Exception as e:
+        logger.debug("[album] soulsync failed: %s", e)
+
     return "\n".join(lines)
 
 
