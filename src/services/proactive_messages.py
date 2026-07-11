@@ -501,11 +501,23 @@ def detect_night_owl(entries: list[dict], now: datetime) -> Optional[dict]:
     for e in recent:
         view_time = e.get("last_viewed_at")
         if view_time and 2 <= view_time.hour <= 5:
+            # Carry artist + media type: a bare music-track title ("Celebrity
+            # Skin") was meaningless in the message AND unresolvable in the
+            # follow-up chat — the curator had to admit it didn't know what
+            # it had flagged.
+            title = e.get("title") or "something"
+            mt = e.get("media_type")
+            artist = (e.get("series_title") or "").strip()
+            display = f"{artist} – {title}" if (mt == "music" and artist) else title
+            verb = "listening to" if mt == "music" else "watching"
             return {
                 "type": "night_owl",
                 "trigger_type": "night_owl",
-                "media_title": e.get("title", "something"),
-                "context": f"Up late watching {e.get('title', 'something')}"
+                "media_title": display,
+                "title": title,
+                "artist": artist or None,
+                "media_type": mt,
+                "context": f"Up late {verb} {display}",
             }
     return None
 
