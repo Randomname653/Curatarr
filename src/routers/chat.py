@@ -1532,9 +1532,13 @@ Work through it from the data provided:
 1. Creator / writer / director — does the named talent's body of work change
    the read (a track record of subversion or deconstruction vs. straight-genre
    output)?
-2. Themes, keywords and the full plot — do they reveal substance the short
-   pitch missed (genuine satire, political allegory, psychological or structural
-   depth), or do they confirm it is exactly what the surface suggested?
+2. STEELMAN: build the STRONGEST keep case the data itself supports — the most
+   substantive reading of the themes, keywords and Wikipedia details (a
+   documented atrocity examined, a systemic critique, a structural gamble).
+   State that case explicitly in one or two sentences, THEN either concede to
+   it or refute it with specifics. Waving it off unstated ("a checklist of
+   hardships") is a broken scan — the user should never have to build the keep
+   case for you from your own data.
 3. Taste fit — given the full picture, does it fit the user's profile better or
    worse than your first take implied?
 

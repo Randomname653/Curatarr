@@ -532,7 +532,13 @@ def _wiki_hit_matches(query_title: str, hit_title: str, media_type: str) -> bool
 _SIG_VOCAB = re.compile(
     r"award|prize|nominat|record|guinness|influen|acclaim|best.sell|classic"
     r"|milestone|legacy|landmark|box.office|bomb|flop|canon|adapted into"
-    r"|first (?:anime|film|series|game)|genre.defin", re.I)
+    r"|first (?:anime|film|series|game)|genre.defin"
+    # documented depiction of serious historical/systemic subject matter —
+    # the 1923 case: the residential-school arc (institutional genocide,
+    # church-run colonization) never reached the significance line because
+    # the vocabulary only knew awards and milestones
+    r"|genocide|coloniz|residential school|boarding school|slaver|atrocit"
+    r"|massacre|internment|holocaust|censor|banned|controvers", re.I)
 
 
 def _significance_slice(extract: str, lead_chars: int = 2500,
@@ -643,7 +649,7 @@ async def fetch_significance(
     prompt = f"""[MODE: SIGNIFICANCE EXTRACTION]
 State the documented historical / cultural significance of "{title}" using ONLY the encyclopedia text below.
 
-Significance means the text EXPLICITLY documents at least one of: awards or nominations; being a genuine first / landmark / genre-defining work; documented influence on later works; a major commercial milestone (best-selling, record-breaking, a very long run, many adaptations); or canonical / "classic" status.
+Significance means the text EXPLICITLY documents at least one of: awards or nominations; being a genuine first / landmark / genre-defining work; documented influence on later works; a major commercial milestone (best-selling, record-breaking, a very long run, many adaptations); canonical / "classic" status; or the work depicting / examining a serious historical atrocity or systemic injustice (genocide, colonization, residential/boarding-school systems, slavery, internment) — only when the text explicitly describes that as part of the work, and name WHAT it depicts.
 
 These are NOT significance — if the text has only these, there is none: cast or crew names; filming location, production company or funding body; premiere date or platform; a creator's debut; being called "high-profile"; or the plot.
 
