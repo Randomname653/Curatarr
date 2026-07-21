@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Curatarr</title>
 <!-- Favicon: inline SVG data-URI — no extra file, no static mount, zero
-     external requests. Arr-family vocabulary (solid colored disc, bold light
-     symbol): white "C" on the amber brand disc — picked from a 4-variant
-     16/32px screenshot comparison; the rounded-square ring version read as
-     a copyright mark next to the arr badges. -->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='30'%20fill='%23e5a00d'/%3E%3Cpath%20d='M%2045%2021%20A%2016.5%2016.5%200%201%200%2045%2043'%20fill='none'%20stroke='%23ffffff'%20stroke-width='10'%20stroke-linecap='round'/%3E%3C/svg%3E">
+     external requests. "Curation eye" in the arr-family vocabulary
+     (transparent background, free-standing geometric vector): a segmented
+     amber C-aperture with inner focus arc and pupil — the system's clinical
+     scanning eye, doubling as a double-C monogram. Screenshot-verified on
+     dark AND light tab backgrounds down to 16px. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%23f7c14a'/%3E%3Cstop%20offset='1'%20stop-color='%23e5a00d'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg%20stroke='url(%23g)'%20stroke-width='9'%20fill='none'%3E%3Cpath%20d='M%2048.9%2017.9%20A%2022%2022%200%200%200%2018.2%2014.9'/%3E%3Cpath%20d='M%2014.9%2018.2%20A%2022%2022%200%200%200%2014.9%2045.8'/%3E%3Cpath%20d='M%2018.2%2049.1%20A%2022%2022%200%200%200%2048.9%2046.1'/%3E%3C/g%3E%3Cpath%20d='M%2040.5%2023.5%20A%2012%2012%200%201%200%2040.5%2040.5'%20fill='none'%20stroke='%23f0b93a'%20stroke-width='3.6'%20stroke-linecap='round'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='5'%20fill='url(%23g)'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='2'%20fill='%23ffd873'/%3E%3C/svg%3E">
 <!-- Pass 97: marked.js is bundled locally so the UI loads with zero
      third-party requests. The previous ``cdn.jsdelivr.net`` reference
      leaked our IP + User-Agent + a Referer hint to jsDelivr on every
