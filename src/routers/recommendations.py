@@ -760,32 +760,8 @@ async def get_deletion_proposals(
     # category='music' + the band's poster/synopsis, and the discussion then
     # argued about the wrong medium entirely.
     item_map = {(i["title"], i.get("category")): i for i in arr_items}
-
-    async def _enrich(p: dict) -> dict:
-        orig = item_map.get((p["title"], p.get("category")), {})
-        cat = orig.get("category", p.get("category") or category or "movie")
-        genres = orig.get("genres", "")
-        # Pass 51/52: hand _fetch_tmdb every stable ID the ARR item carries
-        # so it can resolve the EXACT entry instead of guessing from a
-        # title search — tmdb_id (Radarr / Sonarr), tvdb_id (Sonarr
-        # fallback via /find), musicbrainz_id (Lidarr → Deezer bridge).
-        poster, synopsis = await _fetch_tmdb(
-            p["title"], cat,
-            tmdb_id=orig.get("tmdb_id"),
-            year=orig.get("year"),
-            tvdb_id=orig.get("tvdb_id"),
-            mbid=orig.get("musicbrainz_id"),
-        )
-        # Pass 51: ARR (Radarr/Sonarr) already returns an ``overview`` per
-        # item — it's the correct synopsis for THIS exact entry. Prefer the
-        # TMDB-by-ID synopsis, but fall back to the ARR text before giving
-        # up. A blank synopsis card when ARR had the description all along
-        # is the worst outcome.
-        if not synopsis:
-            synopsis = (orig.get("overview") or "").strip() or None
-        return {**p, "category": cat, "genres": genres, "poster_url": poster, "synopsis": synopsis}
-
-    enriched = await asyncio.gather(*[_enrich(p) for p in proposals])
+    enriched = await asyncio.gather(*[
+        _enrich_proposal(p, item_map, category) for p in proposals])
 
     if not enriched:
         # Generation produced nothing — keep whatever is in the DB rather than
@@ -1317,6 +1293,38 @@ async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
         event_type_name, event_type_int,
     )
     return result
+
+
+async def _enrich_proposal(p: dict, item_map: dict, fallback_category: str = None) -> dict:
+    """Attach poster / synopsis / genres to one proposal dict from TMDB + the
+    ARR item (keyed (title, category) — see the Devil-Wears-Prada collision).
+
+    Shared by BOTH write paths: the manual Analyse endpoint AND the scheduler's
+    nightly scan. The scheduler used to insert ``p.get("poster_url")`` while
+    the engine dict never carried the field — every auto-generated proposal
+    shipped without an image and never got one."""
+    orig = item_map.get((p["title"], p.get("category")), {})
+    cat = orig.get("category", p.get("category") or fallback_category or "movie")
+    genres = orig.get("genres", "")
+    # Pass 51/52: hand _fetch_tmdb every stable ID the ARR item carries
+    # so it can resolve the EXACT entry instead of guessing from a
+    # title search — tmdb_id (Radarr / Sonarr), tvdb_id (Sonarr
+    # fallback via /find), musicbrainz_id (Lidarr → Deezer bridge).
+    poster, synopsis = await _fetch_tmdb(
+        p["title"], cat,
+        tmdb_id=orig.get("tmdb_id"),
+        year=orig.get("year"),
+        tvdb_id=orig.get("tvdb_id"),
+        mbid=orig.get("musicbrainz_id"),
+    )
+    # Pass 51: ARR (Radarr/Sonarr) already returns an ``overview`` per
+    # item — it's the correct synopsis for THIS exact entry. Prefer the
+    # TMDB-by-ID synopsis, but fall back to the ARR text before giving
+    # up. A blank synopsis card when ARR had the description all along
+    # is the worst outcome.
+    if not synopsis:
+        synopsis = (orig.get("overview") or "").strip() or None
+    return {**p, "category": cat, "genres": genres, "poster_url": poster, "synopsis": synopsis}
 
 
 async def _fetch_arr_candidates(category: str = None) -> list:
