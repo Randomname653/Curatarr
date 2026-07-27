@@ -489,6 +489,15 @@ async def job_arr_sync():
             cat_proposals = await generate_deletion_proposals(
                 user_id, cat_items, cat, monitor_task=task,
             )
+            # Poster/synopsis/genres enrichment — the SAME step the manual
+            # Analyse endpoint runs. The engine dict carries no poster_url,
+            # so without this every scheduler-written proposal had no image.
+            if cat_proposals:
+                import asyncio as _aio
+                from src.routers.recommendations import _enrich_proposal
+                _imap = {(i["title"], i.get("category")): i for i in cat_items}
+                cat_proposals = list(await _aio.gather(*[
+                    _enrich_proposal(p, _imap, cat) for p in cat_proposals]))
             all_proposals.extend(cat_proposals)
             processed += len(cat_items)
             task_monitor.update(
