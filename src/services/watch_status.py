@@ -190,12 +190,28 @@ def viewing_pattern(user_id: int, title: str, category: str = None) -> str | Non
     else:
         parts.append(f"{len(keys)} episodes scattered across seasons "
                      f"{seasons[0]}-{seasons[-1]}")
-    # stop point + abandon position
+    # stop point + abandon position — TIME-AWARE. An unconditional "stopped
+    # after S1E2" the morning after two episodes reads as abandonment: the
+    # curator offered deletion for a series the user discovered YESTERDAY.
+    # People sleep and go to work between episodes; only dormancy is a stop.
+    from datetime import datetime
     stop = keys[-1]
     stop_d = per_ep[stop]
-    stop_txt = f"stopped after S{stop[0]}E{stop[1]}"
-    if not stop_d["completed"] and stop_d["pct"] and 0.02 < stop_d["pct"] < 0.95:
-        stop_txt += f" (abandoned that episode at {stop_d['pct']:.0%})"
+    last_any = max((d["last"] for d in per_ep.values() if d["last"]), default=None)
+    days_since = (datetime.utcnow() - last_any).days if last_any else None
+    if days_since is not None and days_since <= 7:
+        when = ("today" if days_since == 0 else
+                "yesterday" if days_since == 1 else f"{days_since} days ago")
+        stop_txt = (f"CURRENTLY WATCHING — at S{stop[0]}E{stop[1]} so far, "
+                    f"last episode played {when}")
+    elif days_since is not None and days_since <= 60:
+        stop_txt = f"paused at S{stop[0]}E{stop[1]}, last played {days_since} days ago"
+    else:
+        stop_txt = f"stopped after S{stop[0]}E{stop[1]}"
+        if days_since is not None:
+            stop_txt += f" ({max(days_since // 30, 2)} months without activity)"
+        if not stop_d["completed"] and stop_d["pct"] and 0.02 < stop_d["pct"] < 0.95:
+            stop_txt += f" (abandoned that episode at {stop_d['pct']:.0%})"
     parts.append(stop_txt)
     # pacing
     dates = [d["last"] for d in per_ep.values() if d["last"]]
@@ -204,7 +220,8 @@ def viewing_pattern(user_id: int, title: str, category: str = None) -> str | Non
         if span <= 1 and len(per_ep) >= 20:
             # 86 "episodes" in one day is a Plex bulk-mark import, not viewing
             parts.append("likely bulk-marked as watched, not real-time viewing")
-        elif span <= 14:
+        elif span <= 14 and len(per_ep) >= 3:
+            # >= 3: two episodes in an evening is just watching, not a binge
             parts.append(f"binged in {max(span, 1)} day(s)")
         elif span > 90:
             parts.append(f"slow drip over {span // 30} months")
