@@ -82,6 +82,9 @@ REM metadata cache + SQLite DBs - that spammed "watchfiles: N changes detected"
 REM and risked reload churn. Scoping to src/ keeps hot-reload for code while the
 REM data writes go unwatched. (The frontend is served statically - no app
 REM reload needed for index.html edits; just refresh the browser.)
-python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src
+REM --timeout-graceful-shutdown: backstop so lingering connections (an SSE
+REM stream from a tab that never got the shutdown signal, e.g. a sleeping
+REM phone) can only delay shutdown by 8s instead of forever.
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src --timeout-graceful-shutdown 8
 
 pause

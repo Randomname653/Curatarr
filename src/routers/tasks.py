@@ -79,18 +79,33 @@ async def stream_tasks(ticket: str = Query(None)):
     queue = task_monitor.subscribe()
 
     async def generate():
+        from src.services.task_monitor import shutdown_event
         try:
             snapshot = task_monitor.get_all()
             yield f"data: {json.dumps(snapshot)}\n\n"
 
-            while True:
+            while not shutdown_event.is_set():
+                # Wait on the queue AND the shutdown event: an endless
+                # while-True keepalive loop held uvicorn's graceful shutdown
+                # open ("Waiting for connections to close") until the user
+                # closed every browser tab by hand.
+                get_t = asyncio.create_task(queue.get())
+                shut_t = asyncio.create_task(shutdown_event.wait())
                 try:
-                    snapshot = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {json.dumps(snapshot)}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
+                    done, pending = await asyncio.wait(
+                        {get_t, shut_t}, timeout=15.0,
+                        return_when=asyncio.FIRST_COMPLETED)
                 except asyncio.CancelledError:
+                    get_t.cancel(); shut_t.cancel()
                     break
+                for p in pending:
+                    p.cancel()
+                if shut_t in done:
+                    break
+                if get_t in done:
+                    yield f"data: {json.dumps(get_t.result())}\n\n"
+                else:
+                    yield ": keepalive\n\n"
         finally:
             task_monitor.unsubscribe(queue)
 

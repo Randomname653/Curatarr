@@ -239,6 +239,19 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .panel-item:hover { border-color: var(--border2); }
 /* staggered card entrance (kept subtle; amber stays the identity) */
 @keyframes cardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ── SHUTDOWN FAREWELL (amber pulse + ripples washing over the page) ── */
+@keyframes sdPulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.14); opacity: .7; } }
+@keyframes sdRipple {
+  0%   { transform: translate(-50%,-50%) scale(.04); opacity: .5; }
+  100% { transform: translate(-50%,-50%) scale(1);   opacity: 0; }
+}
+.sd-overlay { position: fixed; inset: 0; z-index: 9999; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.sd-power { font-size: 46px; color: var(--amber); animation: sdPulse 1.5s ease-in-out infinite; }
+.sd-ripple { position: absolute; left: 50%; top: 50%; width: 170vmax; height: 170vmax;
+  border-radius: 50%; border: 2px solid var(--amber); opacity: 0; pointer-events: none;
+  transform: translate(-50%,-50%) scale(.04); animation: sdRipple 2.8s ease-out infinite; }
 .panel-item:nth-child(2) { animation-delay: .03s; }
 .panel-item:nth-child(3) { animation-delay: .06s; }
 .panel-item:nth-child(4) { animation-delay: .09s; }
@@ -3707,12 +3720,21 @@ async function setPrinciple(id, action) {
 
 async function shutdownServer() {
   if (!confirm('Shut down Curatarr?\n\nThe server stops gracefully: running jobs are finalized, pending memory extractions are flushed, and the database is released for sync.\n\nYou will need to start it again on the server.')) return;
+  // Release this tab's SSE stream BEFORE asking — open streams are exactly
+  // what used to pin "Waiting for connections to close".
+  if (taskEventSource) { try { taskEventSource.close(); } catch (e) {} taskEventSource = null; }
   try { await api('/api/system/shutdown', 'POST'); } catch (e) { /* server may die before replying */ }
-  document.body.innerHTML =
-    '<div style="display:flex;height:100vh;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--bg);color:var(--text);font-family:inherit">' +
-    '<div style="font-size:44px;color:var(--amber)">⏻</div>' +
+  const ov = document.createElement('div');
+  ov.className = 'sd-overlay';
+  ov.innerHTML =
+    '<div class="sd-ripple"></div>' +
+    '<div class="sd-ripple" style="animation-delay:.9s"></div>' +
+    '<div class="sd-ripple" style="animation-delay:1.8s"></div>' +
+    '<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--text)">' +
+    '<div class="sd-power">⏻</div>' +
     '<h2 style="font-weight:600">Curatarr is shutting down…</h2>' +
     '<p style="color:var(--text3);font-size:13px">You can close this tab. Start the server again to come back.</p></div>';
+  document.body.appendChild(ov);
 }
 
 async function condensePrinciples() {
