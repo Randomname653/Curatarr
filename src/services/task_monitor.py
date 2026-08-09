@@ -16,6 +16,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Set by the UI shutdown endpoint BEFORE it raises SIGINT: long-lived SSE
+# streams (the task stream's while-True keepalive loop) otherwise hold
+# uvicorn's graceful shutdown open forever — "Waiting for connections to
+# close" until every browser tab is closed or unloaded. Stream loops wait
+# on this and end themselves, releasing the connections within a second.
+shutdown_event = asyncio.Event()
+
 
 class TaskStatus(str, Enum):
     PENDING  = "pending"

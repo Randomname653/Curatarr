@@ -292,6 +292,15 @@ async def shutdown_server():
 
     async def _raise_sigint():
         await asyncio.sleep(0.6)   # let the HTTP response leave first
+        # End the long-lived SSE streams FIRST (every open tab, including
+        # phones) — they otherwise pin "Waiting for connections to close"
+        # until each browser tab is closed by hand.
+        try:
+            from src.services.task_monitor import shutdown_event
+            shutdown_event.set()
+        except Exception:
+            pass
+        await asyncio.sleep(0.4)   # let the streams drain
         logger.info("Shutdown requested from the web UI — raising SIGINT.")
         signal.raise_signal(signal.SIGINT)
 
