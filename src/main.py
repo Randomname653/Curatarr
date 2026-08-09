@@ -284,8 +284,15 @@ async def shutdown_server():
         except Exception:
             pass
         await asyncio.sleep(0.4)   # let the streams drain
-        logger.info("Shutdown requested from the web UI — raising SIGINT.")
-        signal.raise_signal(signal.SIGINT)
+        # Tray mode: the launcher registered a stop callback (sets
+        # server.should_exit — the graceful path for an embedded server).
+        # Dev/CLI mode: nothing registered → the SIGINT path, unchanged.
+        from src.services.shutdown_bridge import request_app_stop
+        if request_app_stop():
+            logger.info("Shutdown requested from the web UI — host stop callback engaged.")
+        else:
+            logger.info("Shutdown requested from the web UI — raising SIGINT.")
+            signal.raise_signal(signal.SIGINT)
 
     asyncio.create_task(_raise_sigint())
     return {"status": "shutting_down"}

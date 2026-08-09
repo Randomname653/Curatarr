@@ -35,3 +35,7 @@ python-json-logger>=2.0.0
 
 # Scheduler
 apscheduler>=3.10.0
+
+# Tray launcher (curatarr_tray.pyw — background app, no console)
+pystray>=0.19.5
+pillow>=10.0.0
