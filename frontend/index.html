@@ -240,18 +240,14 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 /* staggered card entrance (kept subtle; amber stays the identity) */
 @keyframes cardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-/* ── SHUTDOWN FAREWELL (amber pulse + ripples washing over the page) ── */
-@keyframes sdPulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.14); opacity: .7; } }
-@keyframes sdRipple {
-  0%   { transform: translate(-50%,-50%) scale(.04); opacity: .5; }
-  100% { transform: translate(-50%,-50%) scale(1);   opacity: 0; }
-}
+/* ── SHUTDOWN FAREWELL (logo pulse + ripples, driven via the Web Animations
+   API so the whole thing can wind DOWN over ~20s — playbackRate changes are
+   phase-continuous, CSS duration changes would jump) ── */
 .sd-overlay { position: fixed; inset: 0; z-index: 9999; background: var(--bg);
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.sd-power { font-size: 46px; color: var(--amber); animation: sdPulse 1.5s ease-in-out infinite; }
 .sd-ripple { position: absolute; left: 50%; top: 50%; width: 170vmax; height: 170vmax;
   border-radius: 50%; border: 2px solid var(--amber); opacity: 0; pointer-events: none;
-  transform: translate(-50%,-50%) scale(.04); animation: sdRipple 2.8s ease-out infinite; }
+  transform: translate(-50%,-50%) scale(.04); }
 .panel-item:nth-child(2) { animation-delay: .03s; }
 .panel-item:nth-child(3) { animation-delay: .06s; }
 .panel-item:nth-child(4) { animation-delay: .09s; }
@@ -3727,14 +3723,45 @@ async function shutdownServer() {
   const ov = document.createElement('div');
   ov.className = 'sd-overlay';
   ov.innerHTML =
-    '<div class="sd-ripple"></div>' +
-    '<div class="sd-ripple" style="animation-delay:.9s"></div>' +
-    '<div class="sd-ripple" style="animation-delay:1.8s"></div>' +
-    '<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--text)">' +
-    '<div class="sd-power">⏻</div>' +
+    '<div class="sd-ripple"></div><div class="sd-ripple"></div><div class="sd-ripple"></div>' +
+    '<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:16px;color:var(--text)">' +
+    '<svg class="sd-logo" width="96" height="96" viewBox="0 0 64 64">' +
+    '<defs><linearGradient id="sdg" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0" stop-color="#f7c14a"/><stop offset="1" stop-color="#e5a00d"/></linearGradient></defs>' +
+    '<g stroke="url(#sdg)" stroke-width="9" fill="none">' +
+    '<path d="M 48.9 17.9 A 22 22 0 0 0 18.2 14.9"/>' +
+    '<path d="M 14.9 18.2 A 22 22 0 0 0 14.9 45.8"/>' +
+    '<path d="M 18.2 49.1 A 22 22 0 0 0 48.9 46.1"/></g>' +
+    '<path d="M 40.5 23.5 A 12 12 0 1 0 40.5 40.5" fill="none" stroke="#f0b93a" stroke-width="3.6" stroke-linecap="round"/>' +
+    '<circle cx="32" cy="32" r="5" fill="url(#sdg)"/><circle cx="32" cy="32" r="2" fill="#ffd873"/></svg>' +
     '<h2 style="font-weight:600">Curatarr is shutting down…</h2>' +
     '<p style="color:var(--text3);font-size:13px">You can close this tab. Start the server again to come back.</p></div>';
   document.body.appendChild(ov);
+
+  // Wind-down: pulse + ripples run at full speed, then decelerate to a
+  // standstill over ~20s (the server is long gone — endless pulsing would
+  // suggest activity). playbackRate is eased down phase-continuously.
+  const logo = ov.querySelector('.sd-logo');
+  const anims = [logo.animate(
+    [{ transform: 'scale(1)', opacity: 1 },
+     { transform: 'scale(1.12)', opacity: .72 },
+     { transform: 'scale(1)', opacity: 1 }],
+    { duration: 1500, iterations: Infinity, easing: 'ease-in-out' })];
+  ov.querySelectorAll('.sd-ripple').forEach((r, i) => anims.push(r.animate(
+    [{ transform: 'translate(-50%,-50%) scale(.04)', opacity: .5 },
+     { transform: 'translate(-50%,-50%) scale(1)', opacity: 0 }],
+    { duration: 2800, delay: i * 900, iterations: Infinity, easing: 'ease-out' })));
+  const t0 = Date.now(), WIND_DOWN_MS = 20000;
+  const tick = setInterval(() => {
+    const rate = Math.max(0, 1 - (Date.now() - t0) / WIND_DOWN_MS);
+    anims.forEach(a => { a.playbackRate = rate; });
+    if (rate <= 0) {
+      clearInterval(tick);
+      anims.forEach(a => a.cancel());   // ripples return to opacity 0 base
+      logo.style.transition = 'opacity 1.5s';
+      logo.style.opacity = '.55';       // the eye dims — powered off
+    }
+  }, 150);
 }
 
 async function condensePrinciples() {
