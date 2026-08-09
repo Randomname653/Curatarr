@@ -277,6 +277,28 @@ app.include_router(music.router,           prefix="/api/music",           tags=[
 app.include_router(library.router,         prefix="/api/library",         tags=["library"])
 app.include_router(image_proxy.router,     prefix="/api/image",           tags=["image"])
 
+# ── SYSTEM ────────────────────────────────────────────────────────────────────
+
+@app.post("/api/system/shutdown", dependencies=_ADMIN_ONLY)
+async def shutdown_server():
+    """Graceful shutdown from the web UI (admin only, confirmed client-side).
+
+    Replies first, then raises SIGINT in the event loop — uvicorn then runs
+    the exact Ctrl+C path: in-flight requests finish and the lifespan
+    teardown executes (pending memory extractions flushed, scheduler
+    stopped, app-state flags cleared, sync-guard released). No console
+    access needed."""
+    import signal
+
+    async def _raise_sigint():
+        await asyncio.sleep(0.6)   # let the HTTP response leave first
+        logger.info("Shutdown requested from the web UI — raising SIGINT.")
+        signal.raise_signal(signal.SIGINT)
+
+    asyncio.create_task(_raise_sigint())
+    return {"status": "shutting_down"}
+
+
 # ── FRONTEND ──────────────────────────────────────────────────────────────────
 
 _FRONTEND_ROOT = Path("frontend").resolve()

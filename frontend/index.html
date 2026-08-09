@@ -507,6 +507,8 @@ select option { background: var(--bg2); }
     </div>
     <div class="sb-footer">
       <button onclick="logout()">Sign out</button>
+      <button class="admin-action-row" onclick="shutdownServer()" style="display:none;color:var(--danger)"
+              title="Gracefully stop the Curatarr server (running jobs are finalized)">⏻ Shutdown</button>
     </div>
   </nav>
 
@@ -3701,6 +3703,16 @@ async function setPrinciple(id, action) {
   } catch(e) {
     alert('Failed: ' + (e.message || e));
   }
+}
+
+async function shutdownServer() {
+  if (!confirm('Shut down Curatarr?\n\nThe server stops gracefully: running jobs are finalized, pending memory extractions are flushed, and the database is released for sync.\n\nYou will need to start it again on the server.')) return;
+  try { await api('/api/system/shutdown', 'POST'); } catch (e) { /* server may die before replying */ }
+  document.body.innerHTML =
+    '<div style="display:flex;height:100vh;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--bg);color:var(--text);font-family:inherit">' +
+    '<div style="font-size:44px;color:var(--amber)">⏻</div>' +
+    '<h2 style="font-weight:600">Curatarr is shutting down…</h2>' +
+    '<p style="color:var(--text3);font-size:13px">You can close this tab. Start the server again to come back.</p></div>';
 }
 
 async function condensePrinciples() {
