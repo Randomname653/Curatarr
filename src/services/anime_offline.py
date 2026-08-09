@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 DUMP_URL = ("https://github.com/manami-project/anime-offline-database"
             "/releases/latest/download/anime-offline-database-minified.json")
 # repo-root-anchored — background/standalone runners don't share the app CWD
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from src.paths import ROOT as _REPO_ROOT
 OFFLINE_DB_PATH = _REPO_ROOT / "data" / "cache" / "anime_offline.db"
 MAX_AGE_DAYS = 7
 

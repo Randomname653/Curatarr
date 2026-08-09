@@ -27,6 +27,8 @@ import os
 import time
 from pathlib import Path
 
+from src.paths import DATA_DIR
+
 logger = logging.getLogger(__name__)
 
 # 60s payload cache — the endpoint may be polled by the KB view.
@@ -217,7 +219,7 @@ async def build_overview() -> dict:
     # ── storage ────────────────────────────────────────────────────────────────
     storage = {
         "enrichment_cache_mb": _file_size_mb(settings.ENRICHMENT_CACHE),
-        "main_db_mb": _file_size_mb(Path("data") / "curatarr.db"),
+        "main_db_mb": _file_size_mb(DATA_DIR / "curatarr.db"),
         "chromadb_mb": _dir_size_mb(str(settings.CHROMADB_PATH)),
     }
     storage["total_mb"] = round(sum(storage.values()), 1)

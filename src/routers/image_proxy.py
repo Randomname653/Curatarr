@@ -100,7 +100,8 @@ def _host_allowed(host: str) -> bool:
 
 # ── Disk cache ───────────────────────────────────────────────────────────────
 
-_CACHE_DIR = Path("data/cache/images")
+from src.paths import DATA_DIR
+_CACHE_DIR = DATA_DIR / "cache" / "images"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 _MAX_BYTES = 5 * 1024 * 1024   # 5 MB per image — posters are 10-80 KB typically

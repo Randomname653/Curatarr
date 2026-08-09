@@ -26,7 +26,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 ANIME_LIST_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list-master.xml"
-MAPPING_DB_PATH = Path("data/cache/anime_mapping.db")
+from src.paths import DATA_DIR
+MAPPING_DB_PATH = DATA_DIR / "cache" / "anime_mapping.db"
 MAX_AGE_DAYS = 7  # re-download weekly
 
 
