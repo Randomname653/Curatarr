@@ -174,6 +174,23 @@ ollama serve
 start.bat
 ```
 
+### Run in the background (system tray, no console)
+
+Double-click **`curatarr_tray.pyw`** — Curatarr runs as a tray icon (the amber
+curation eye) with no console window. The tray menu offers *Open Curatarr*,
+*Open logs*, *Start with Windows* (autostart toggle), *Restart* and
+*Shutdown* (graceful — same teardown as Ctrl+C). All output goes to
+`data\logs\curatarr.log`. Run `python scripts\make_icon.py` once to render
+`assets\curatarr.ico` for the autostart shortcut.
+
+`start.bat` remains the **dev entry**: live console, hot reload on `src\`
+edits, and it self-heals missing dependencies and Ollama models. If the tray
+icon disappears right after starting, check `data\logs\curatarr.log` — or run
+`start.bat` for a live console. Note: the server binds `HOST`/`PORT` from
+`.env` in tray mode (defaults `0.0.0.0:8000`); browser-facing settings
+(`PLEX_REDIRECT_URI`, `CORS_ORIGINS`) stay localhost-based and must be
+overridden together if you change `PORT`.
+
 On Linux / macOS:
 
 ```bash
