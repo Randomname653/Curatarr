@@ -36,7 +36,7 @@ DATA_INDEX = "https://data.discogs.com/"
 UA = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                     "personal media curator) python-httpx"}
 # repo-root-anchored — background/standalone runners don't share the app CWD
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from src.paths import ROOT as _REPO_ROOT
 STYLES_DB_PATH = _REPO_ROOT / "data" / "cache" / "discogs_styles.db"
 MAX_AGE_DAYS = 30
 

@@ -13,30 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from src.config import settings
+from src.log_setup import init_logging
+from src.paths import DATA_DIR, frontend_root
 
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
-)
-# Pass 99-fu4: silence apscheduler's per-job "Running"/"executed successfully"
-# INFO chatter. With Game-mode VRAM watcher firing every 30 s + ARR cache
-# refresh every 30 min + several daily jobs, the logs got dominated by
-# scheduling noise that drowned out real signal. The scheduler's own
-# lifecycle events (Added job, Scheduler started) live on
-# ``apscheduler.scheduler`` and stay at INFO. Per-job-fire chatter from
-# ``apscheduler.executors.default`` gets bumped to WARNING — we still
-# see failures, just not the green-path pulse.
-logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
-# Quiet the firehose: httpx logs one INFO line per HTTP call (Ollama / TMDB /
-# OMDb / embeddings — hundreds per minute during enrichment and the OMDb
-# backfill), and watchfiles logs every detected file change. Both buried the
-# real signal. WARNING keeps genuine errors visible. (watchfiles' reloader runs
-# in the parent process — the start.bat ``--reload-dir src`` is what stops it
-# watching the data/cache dir in the first place; this is the belt-and-braces.)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("watchfiles").setLevel(logging.WARNING)
-logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
+# File + (when a console exists) stderr logging, incl. the apscheduler/httpx/
+# watchfiles noise suppression — see src/log_setup.py. Idempotent: the tray
+# launcher calls it before importing this module so preflight is logged too.
+init_logging(settings.LOG_LEVEL)
 logger = logging.getLogger("curatarr")
 
 # ── STARTUP / SHUTDOWN ────────────────────────────────────────────────────────
@@ -54,8 +37,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("[sync-guard] enable failed: %s", e)
 
-    Path("data/chromadb").mkdir(parents=True, exist_ok=True)
-    Path("data/cache").mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "chromadb").mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
 
     from src.database.connection import init_db
     init_db()
@@ -180,7 +163,7 @@ async def _startup_sync_if_needed():
                 logger.info("No users yet — skipping startup sync")
                 return
 
-        marker = Path("data/.last_sync")
+        marker = DATA_DIR / ".last_sync"
         if marker.exists():
             import time
             age_h = (time.time() - marker.stat().st_mtime) / 3600
@@ -209,7 +192,7 @@ async def _startup_sync():
 
         result = await sync_plex_history()
         logger.info("Sync: %d new, %d skipped", result.get("synced", 0), result.get("skipped", 0))
-        Path("data/.last_sync").touch()
+        (DATA_DIR / ".last_sync").touch()
 
         with get_db_session() as db:
             user_ids = [u.id for u in db.query(User).filter(User.is_active == True).all()]
@@ -310,7 +293,7 @@ async def shutdown_server():
 
 # ── FRONTEND ──────────────────────────────────────────────────────────────────
 
-_FRONTEND_ROOT = Path("frontend").resolve()
+_FRONTEND_ROOT = frontend_root()
 
 
 @app.get("/")

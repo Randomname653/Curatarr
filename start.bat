@@ -87,4 +87,10 @@ REM stream from a tab that never got the shutdown signal, e.g. a sleeping
 REM phone) can only delay shutdown by 8s instead of forever.
 python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src --timeout-graceful-shutdown 8
 
-pause
+REM Clean exit (web-UI shutdown / Ctrl+C) -> close the window by itself.
+REM Crash (port in use, import error) -> keep the output visible.
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] Curatarr exited with an error ^(code %errorlevel%^). Output above.
+    pause
+)

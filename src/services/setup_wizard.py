@@ -23,7 +23,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ENV_PATH = Path(".env")
+from src.paths import ENV_FILE
+ENV_PATH = ENV_FILE
 
 
 # ── Pass 97: endpoint privacy classifier ──────────────────────────────────────

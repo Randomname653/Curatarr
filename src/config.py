@@ -10,11 +10,18 @@ from pydantic import field_validator, HttpUrl
 from pydantic.types import SecretStr
 from typing import Optional
 
+from src.paths import ROOT, ENV_FILE
+
 
 class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────────────────────────
     APP_NAME: str = "Curatarr"
     VERSION: str = "1.0.0"
+    # HOST is the BIND address only (0.0.0.0 = serve the LAN, intentional for
+    # the multi-user household). It is NOT a navigable origin — browser-facing
+    # defaults (PLEX_REDIRECT_URI, CORS_ORIGINS) stay localhost-based and must
+    # be overridden together with PORT if that ever changes.
+    HOST: str = "0.0.0.0"
     PORT: int = 8000
     DEBUG: bool = False
     FIRST_RUN: bool = True   # set to False by setup wizard after completion
@@ -25,9 +32,25 @@ class Settings(BaseSettings):
     AES_KEY_SIZE: int = 32
 
     # ── Database ─────────────────────────────────────────────────────────────
-    DATABASE_URL: str = "sqlite:///./data/curatarr.db"
-    CHROMADB_PATH: str = "./data/chromadb"
-    ENRICHMENT_CACHE: str = "./data/cache/enrichment.db"
+    # Anchored to the repo/app root (src/paths.py) so the app works from ANY
+    # working directory — tray launcher, autostart shortcut, frozen build.
+    DATABASE_URL: str = f"sqlite:///{(ROOT / 'data' / 'curatarr.db').as_posix()}"
+    CHROMADB_PATH: str = str(ROOT / "data" / "chromadb")
+    ENRICHMENT_CACHE: str = str(ROOT / "data" / "cache" / "enrichment.db")
+
+    @field_validator("DATABASE_URL", "CHROMADB_PATH", "ENRICHMENT_CACHE", mode="after")
+    @classmethod
+    def _anchor_relative_paths(cls, v: str) -> str:
+        """Re-anchor RELATIVE overrides from an old .env ("./data/…") to ROOT.
+        Absolute user overrides pass through untouched."""
+        if v.startswith("sqlite:///"):
+            p = v[len("sqlite:///"):]
+            if not Path(p).is_absolute():
+                return f"sqlite:///{(ROOT / p.lstrip('./')).as_posix()}"
+            return v
+        if v and not Path(v).is_absolute():
+            return str(ROOT / v.lstrip("./"))
+        return v
 
     # ── Plex ─────────────────────────────────────────────────────────────────
     PLEX_URL: Optional[HttpUrl] = None
@@ -158,7 +181,9 @@ class Settings(BaseSettings):
     WATCH_HISTORY_BATCH_SIZE: int = 100
     MDBLIST_API_KEY: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
+    # str(ENV_FILE): the .env is found next to the app root regardless of the
+    # process CWD (tray launcher / autostart shortcut / frozen build).
+    model_config = {"env_file": str(ENV_FILE), "env_file_encoding": "utf-8", "extra": "allow"}
 
     @property
     def effective_plex_url(self) -> str:
