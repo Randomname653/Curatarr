@@ -176,8 +176,11 @@ start.bat
 
 ### Run in the background (system tray, no console)
 
-Double-click **`curatarr_tray.pyw`** — Curatarr runs as a tray icon (the amber
-curation eye) with no console window. The tray menu offers *Open Curatarr*,
+Double-click **`start_tray.bat`** — Curatarr runs as a tray icon (the amber
+curation eye) with no console window. (The bat pins the same Python
+interpreter as `start.bat`; double-clicking `curatarr_tray.pyw` directly goes
+through the Windows py-launcher, which picks the NEWEST installed Python —
+on a multi-Python box that can be an interpreter without the dependencies.) The tray menu offers *Open Curatarr*,
 *Open logs*, *Start with Windows* (autostart toggle), *Restart* and
 *Shutdown* (graceful — same teardown as Ctrl+C). All output goes to
 `data\logs\curatarr.log`. Run `python scripts\make_icon.py` once to render

@@ -112,11 +112,17 @@ def _preflight_deps() -> bool:
         import PIL, pystray                            # noqa: F401
         return True
     except Exception as e:
-        logger.error("Dependency preflight failed: %s", e)
+        logger.error("Dependency preflight failed on %s: %s", sys.executable, e)
         ctypes.windll.user32.MessageBoxW(
             None,
             f"Curatarr cannot start — a dependency is missing:\n\n{e}\n\n"
-            "Run start.bat once to install dependencies.",
+            f"Interpreter: {sys.executable}\n"
+            f"Python {sys.version.split()[0]}\n\n"
+            "This is usually a multi-Python mixup (the .pyw double-click "
+            "uses the py-launcher's NEWEST install). Start the tray via "
+            "start_tray.bat instead — it pins the same interpreter as "
+            "start.bat — or install the missing package for the "
+            "interpreter shown above.",
             "Curatarr", 0x10)
         return False
 
