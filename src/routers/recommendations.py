@@ -102,6 +102,7 @@ async def get_recommendations(
                      "genres": r.genres, "category": r.category,
                      "category_label": CAT_LABEL.get(r.category, r.category),
                      "lane": r.lane or "discovery",
+                     "year": r.year,   # library lane only; helps [+ Add] disambiguate
                      "poster_url": r.poster_url, "synopsis": r.synopsis,
                      "cached_at": r.cached_at.isoformat() if r.cached_at else None}
                     for r in cached]
