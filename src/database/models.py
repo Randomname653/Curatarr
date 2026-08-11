@@ -17,7 +17,7 @@ Base = declarative_base()
 class User(Base):
     """User model with Plex OAuth integration."""
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     plex_user_id = Column(String(64), unique=True, nullable=False, index=True)
     plex_username = Column(String(256), nullable=False)
@@ -25,6 +25,15 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
+    # The user's OWN plex.tv token, captured at PIN login. Powers per-account
+    # Plex writes ("Curatarr Recommended" playlists are account-private — the
+    # owner token cannot create them for other household members). Plaintext
+    # by design: same trust level as PLEX_TOKEN in .env on this single-
+    # household box, and UserResponse serializes explicit fields only, so
+    # there is no API leak path. NULL = hasn't logged in since this column
+    # landed → playlist push skips them until their next login (which also
+    # self-heals revoked tokens, since every login re-stores the newest one).
+    plex_token = Column(String(512), nullable=True)
 
 
 class Session(Base):
@@ -472,6 +481,16 @@ class CachedRecommendation(Base):
     poster_url  = Column(String(500))
     synopsis    = Column(Text, nullable=True)
     cached_at   = Column(DateTime, default=datetime.utcnow)
+    # Resolving ids for the "Curatarr Recommended" Plex playlists + the
+    # watched-a-rec follow-up. LIBRARY-lane rows get them from the arr
+    # candidate pool + tech-profile resolution at cache time; DISCOVERY-lane
+    # rows stay NULL (LLM-suggested titles own nothing yet). plex_rating_key
+    # is the REAL Plex ratingKey (movie item / series), unlike the synthetic
+    # "radarr:{id}" doc-keys used elsewhere.
+    tmdb_id         = Column(Integer, nullable=True)
+    tvdb_id         = Column(Integer, nullable=True)
+    year            = Column(Integer, nullable=True)
+    plex_rating_key = Column(String(64), nullable=True)
 
     __table_args__ = (
         Index("ix_cached_recs_user_cat", "user_id", "category"),
