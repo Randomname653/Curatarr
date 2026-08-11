@@ -793,7 +793,13 @@ async def generate_deletion_proposals(
                 for _fb in _blob.get("explicit_feedback") or []:
                     _ft = (_fb.get("title") or "").lower()
                     if _ft:   # chronological list — the latest statement wins
-                        feedback_sentiment_lc[_ft] = _fb.get("sentiment")
+                        # (sentiment, weight): weight > 1 = elevated signal
+                        # (verdict on a Curatarr-recommended title); entries
+                        # from before the field existed read as 1.0.
+                        feedback_sentiment_lc[_ft] = (
+                            _fb.get("sentiment"),
+                            float(_fb.get("weight") or 1.0),
+                        )
 
         # 2. Load Whitelist (ProtectedMedia) — category-scoped: protections
         # match by identifier (often a bare TITLE), and a title-only match
@@ -1158,11 +1164,11 @@ async def generate_deletion_proposals(
         # candidate toward a pitch, recorded praise pulls it away. Soft on
         # purpose — well below the mismatch signal and the consider cap.
         _tl = (p["item"].get("title") or "").lower()
-        _sent = feedback_sentiment_lc.get(_tl)
+        _sent, _fb_weight = feedback_sentiment_lc.get(_tl) or (None, 1.0)
         if _sent == "negative" or _tl in disliked_lc:
-            feedback_swing = 15.0
+            feedback_swing = 15.0 * min(_fb_weight, 2.0)
         elif _sent == "positive":
-            feedback_swing = -15.0
+            feedback_swing = -15.0 * min(_fb_weight, 2.0)
         else:
             feedback_swing = 0.0
         del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing

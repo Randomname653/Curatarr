@@ -410,7 +410,12 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                 feedback_line = (
                     f"OWNER FEEDBACK on this title ({when or 'undated'}): "
                     f"{last.get('sentiment') or 'neutral'}"
-                    f" — {last.get('reason') or 'no reason recorded'}\n")
+                    f" — {last.get('reason') or 'no reason recorded'}")
+                if float(last.get("weight") or 1.0) > 1.0:
+                    feedback_line += (" (said in a Curatarr-recommendation "
+                                      "follow-up — weigh this owner verdict "
+                                      "heavily)")
+                feedback_line += "\n"
                 flags["owner_signal"] = True
             elif tl in {(t or "").lower() for t in (blob.get("disliked_titles") or [])}:
                 feedback_line = ("OWNER FEEDBACK: this title is on the owner's "

@@ -944,6 +944,7 @@ async def extract_memories_from_thread(
     # WHAT the thread is about (from trusted DB rows, not assistant prose)
     # without exposing any assistant claims.
     anchor_line = ""
+    followup_ctx = None   # set for recommendation_followup threads (see below)
     try:
         if thread_id.startswith("proactive_message:"):
             from src.database.models import ProactiveMessage
@@ -954,6 +955,14 @@ async def extract_memories_from_thread(
                 anchor_line = ("CONVERSATION SUBJECT (the assistant's opening that the "
                                "user is replying to — context ONLY, extract nothing "
                                f"from it): {pm.message[:300]}\n\n")
+            if pm and pm.trigger_type == "recommendation_followup":
+                try:
+                    td = json.loads(pm.trigger_data or "{}")
+                    if td.get("title"):
+                        followup_ctx = {"title": td["title"],
+                                        "category": td.get("category")}
+                except Exception:
+                    pass
         elif thread_id.startswith("deletion_proposal:"):
             from src.database.models import DeletionProposal
             with get_db_session() as db:
@@ -1049,6 +1058,24 @@ JSON:"""
     except Exception as e:
         logger.warning("[principles] thread capture scheduling failed for %s: %s",
                        thread_id, e)
+
+    # Recommendation-followup verdict bridge: the GENERIC extraction path
+    # above deliberately never writes taste-vector feedback (only the
+    # deletion-comment analyzer does) — so the "you watched what I
+    # recommended, how was it?" thread needs its own analyzer to turn the
+    # user's verdict into an ELEVATED-WEIGHT feedback entry. Fire-and-forget
+    # like the principle capture: this also runs inside synchronous flushes.
+    try:
+        if followup_ctx:
+            from src.services.bg_tasks import track_task
+            track_task(
+                analyze_recommendation_feedback(
+                    user_id, followup_ctx["title"], followup_ctx.get("category"),
+                    user_msgs),
+                name=f"rec_feedback:{thread_id}",
+            )
+    except Exception as e:
+        logger.warning("[rec-feedback] scheduling failed for %s: %s", thread_id, e)
 
 
 async def _debounced_thread_extract(
@@ -1941,9 +1968,81 @@ Output ONLY valid JSON:
 
     return False
 
+async def analyze_recommendation_feedback(
+    user_id: int, title: str, category: str, user_msgs: list,
+) -> None:
+    """Turn the user's verdict from a recommendation-followup thread into an
+    ELEVATED-WEIGHT taste signal. Mirrors analyze_deletion_comment's
+    summarizer branch minus the KEEP/DELETE action — here the only question
+    is: did the recommendation land? Neutral/empty sentiment writes nothing
+    (better no signal than noise)."""
+    if not user_msgs:
+        return
+    joined = "\n".join(f"- {m[:400]}" for m in user_msgs[-6:])
+    prompt = f"""[MODE: RECOMMENDATION FEEDBACK ANALYSIS]
+The curator recommended '{title}' ({category or 'title'}) and the user watched it.
+Below are the user's messages from the follow-up conversation.
+
+Task 1: Their overall verdict on THIS title: positive / negative / neutral.
+Task 2: The core reason, in ENGLISH, one sentence.
+Task 3: Aspects they explicitly liked or disliked (genres, themes, qualities).
+
+Output ONLY valid JSON:
+{{"sentiment": "positive" | "negative" | "neutral", "reason": "...", "aspects": ["..."]}}
+
+USER MESSAGES:
+{joined}"""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{settings.effective_ollama}/api/chat",
+                json={
+                    "model": settings.SUMMARIZER_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "keep_alive": SUMMARIZER_KEEP_ALIVE,
+                    **ollama_options(temperature=0.1, num_predict=400),
+                },
+            )
+        if r.status_code != 200:
+            return
+        data = parse_llm_json(r.json().get("message", {}).get("content", "") or "")
+        sentiment = (data.get("sentiment") or "").lower()
+        if sentiment not in ("positive", "negative"):
+            logger.info("[rec-feedback] %r: neutral/unclear verdict — no signal stored.",
+                        title)
+            return
+        reason = data.get("reason") or ""
+        aspects = data.get("aspects") or []
+        content = (f"The user {'liked' if sentiment == 'positive' else 'disliked'} "
+                   f"the recommended title '{title}'. Reason: {reason}")
+        mem_id = await write_memory(
+            user_id=user_id,
+            memory_type="feedback",
+            content=content,
+            metadata={"title": title, "source": "curatarr_recommendation"},
+            media_category=category,
+        )
+        if mem_id:
+            await resolve_memory_conflicts(
+                user_id=user_id, new_memory_id=mem_id,
+                new_content=content, metadata={"title": title},
+            )
+            logger.info("🧠 [REC FEEDBACK] %s: %s — %s", title, sentiment, reason[:80])
+        await update_taste_profile_from_memory(
+            user_id=user_id, title=title, sentiment=sentiment,
+            aspects=aspects, reason=reason,
+            media_category=category or "show",
+            weight=2.0, source="curatarr_recommendation",
+        )
+    except Exception as e:
+        logger.error("💥 [REC FEEDBACK ERROR]: %s: %s", type(e).__name__,
+                     e or "(no message)")
+
+
 # ── TASTE VECTOR UPDATE FROM MEMORY ──────────────────────────────────────────────
 
-async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: str, aspects: list, reason: str, media_category: str = "show"):
+async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: str, aspects: list, reason: str, media_category: str = "show", weight: float = 1.0, source: str = "chat"):
     """
     Updates the structured JSON Taste Vector with explicit user feedback.
     Currently operates on unencrypted JSON (Phase A).
@@ -1954,8 +2053,12 @@ async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: 
     feedback_data = {
         "title": title,
         "sentiment": sentiment, # "positive" or "negative"
-        "genre_aspects": aspects, 
-        "reason": reason
+        "genre_aspects": aspects,
+        "reason": reason,
+        # weight > 1.0 = elevated signal (e.g. verdicts on titles Curatarr
+        # itself recommended); source tags where the feedback came from.
+        "weight": float(weight or 1.0),
+        "source": source,
     }
 
     with get_db_session() as db:
