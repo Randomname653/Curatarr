@@ -466,6 +466,7 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
     synced = 0
     skipped = 0
     unattributed = 0  # play events whose accountID couldn't be resolved → fell back to admin
+    new_play_hits: list[dict] = []   # inserted rows, for the rec-watch matcher below
 
     with get_db_session() as db:
         users = db.query(User).all()
@@ -684,6 +685,18 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
                 genres=genres_str,
                 tmdb_id=int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
             ))
+            # Collect the hit for the watched-a-recommendation follow-up:
+            # identity_key is already the SERIES-level ratingKey for episodes
+            # — exactly what CachedRecommendation.plex_rating_key stores.
+            new_play_hits.append({
+                "user_id": user.id,
+                "identity_key": identity_key,
+                "title": entry.get("title", ""),
+                "series_title": series_title,
+                "media_type": media_type,
+                "tmdb_id": int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
+                "viewed_at": viewed_at.isoformat() if viewed_at else None,
+            })
             existing.add(dedup_key)
             synced += 1
 
@@ -719,6 +732,13 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
     if synced > 0:
         # New watch data → invalidate downstream recommendation caches.
         set_datetime("recs_invalidate_at", datetime.utcnow())
+        # Watched-a-recommendation detection: match the fresh rows against
+        # each user's library-lane recs (feeds the follow-up trigger and the
+        # all-sampled early refresh). Best-effort — never blocks the sync.
+        try:
+            _process_rec_watch_hits(new_play_hits)
+        except Exception as e:
+            logger.warning("[rec-hits] processing failed: %s", e)
         from src.services.taste_engine import compute_all_taste_vectors
         with get_db_session() as db:
             active_users = db.query(User).filter(User.is_active == True).all()
@@ -734,6 +754,110 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
         "unattributed": unattributed,
         "total_fetched": len(all_entries),
     }
+
+
+def _match_hits_to_recs(hits: list[dict], recs: list[dict]) -> list[dict]:
+    """Pure matching core (testable without a DB): which of the fresh watch
+    rows land on an active library-lane recommendation? Strongest key first:
+    real Plex ratingKey (episode rows carry the SERIES key) → tmdb id →
+    normalized title. "Watched into it" counts — completion is irrelevant."""
+    from src.services.library_memory import normalize_title
+    matched = []
+    for hit in hits:
+        for rec in recs:
+            if rec.get("user_id") != hit.get("user_id"):
+                continue
+            if rec.get("plex_rating_key") and hit.get("identity_key") and \
+                    str(rec["plex_rating_key"]) == str(hit["identity_key"]):
+                pass
+            elif rec.get("tmdb_id") and hit.get("tmdb_id") and \
+                    rec["tmdb_id"] == hit["tmdb_id"]:
+                pass
+            elif normalize_title(rec.get("title") or "") and \
+                    normalize_title(rec.get("title") or "") in (
+                        normalize_title(hit.get("series_title") or ""),
+                        normalize_title(hit.get("title") or "")):
+                pass
+            else:
+                continue
+            matched.append({"rec_id": rec.get("id"), "user_id": hit["user_id"],
+                            "title": rec.get("title"),
+                            "category": rec.get("category"),
+                            "watched_at": hit.get("viewed_at")})
+            break
+    return matched
+
+
+def _process_rec_watch_hits(hits: list[dict]) -> None:
+    """Persist rec-watch matches for the follow-up trigger and fire the
+    all-sampled early refresh. Title+category are COPIED into each stored hit
+    so the follow-up survives the weekly cache regeneration deleting rows."""
+    if not hits:
+        return
+    import json as _json
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation
+    from src.services.app_state import get_state, set_state
+    from src.services.library_memory import seen_index, normalize_title
+
+    user_ids = {h["user_id"] for h in hits}
+    with get_db_session() as db:
+        rec_rows = [{
+            "id": r.id, "user_id": r.user_id, "title": r.title,
+            "category": r.category, "tmdb_id": r.tmdb_id,
+            "plex_rating_key": r.plex_rating_key,
+        } for r in db.query(CachedRecommendation).filter(
+            CachedRecommendation.user_id.in_(user_ids),
+            CachedRecommendation.lane == "library").all()]
+    if not rec_rows:
+        return
+
+    matches = _match_hits_to_recs(hits, rec_rows)
+    if not matches:
+        return
+
+    from datetime import datetime as _dt, timedelta as _td
+    cutoff = (_dt.utcnow() - _td(days=30)).isoformat()
+    for uid in {m["user_id"] for m in matches}:
+        key = f"rec_watch_hits:user_id={uid}"
+        try:
+            queue = _json.loads(get_state(key) or "[]")
+        except Exception:
+            queue = []
+        known = {(q.get("title"), q.get("category")) for q in queue}
+        for m in matches:
+            if m["user_id"] == uid and (m["title"], m["category"]) not in known:
+                queue.append({k: m[k] for k in
+                              ("rec_id", "title", "category", "watched_at")})
+        # prune: 30 days / 50 entries
+        queue = [q for q in queue
+                 if not q.get("watched_at") or q["watched_at"] >= cutoff][-50:]
+        set_state(key, _json.dumps(queue))
+        logger.info("[rec-hits] user %d: %d recommendation watch hit(s) queued",
+                    uid, len([m for m in matches if m["user_id"] == uid]))
+
+        # All-sampled check per category: every library-lane rec of this user
+        # + category has now been watched into → clear both custodian stamps
+        # so the next 30-min tick regenerates JUST this user (144h guard
+        # shields the others) and re-pushes their playlist.
+        for cat in {m["category"] for m in matches if m["user_id"] == uid}:
+            cat_titles = {normalize_title(r["title"]) for r in rec_rows
+                          if r["user_id"] == uid and r["category"] == cat}
+            if not cat_titles:
+                continue
+            seen = seen_index(uid, cat)
+            seen_titles = {normalize_title(t) for t in seen.get("titles", set())}
+            hit_titles = {normalize_title(q["title"]) for q in queue
+                          if q.get("category") == cat}
+            if cat_titles <= (seen_titles | hit_titles):
+                flags = get_state(f"recs_all_sampled:user_id={uid}") or ""
+                if cat not in flags:
+                    set_state(f"recs_all_sampled:user_id={uid}",
+                              (flags + "," + cat).strip(","))
+                set_state("job_last_run:custodian_recs", "")
+                set_state("job_last_run:plex_rec_playlist", "")
+                logger.info("[rec-hits] user %d sampled ALL %s recs — early "
+                            "refresh scheduled (next custodian tick)", uid, cat)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
