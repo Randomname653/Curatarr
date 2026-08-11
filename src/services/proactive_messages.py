@@ -628,6 +628,8 @@ def detect_guilty_pleasure(entries: list[dict], now: datetime) -> Optional[dict]
 # trigger is independently togglable in Settings → Notifications. Order here
 # matches priority in _run_all_triggers below.
 TRIGGER_TYPES: list[dict] = [
+    {"type": "recommendation_followup", "label": "Recommendation follow-up",
+     "description": "When you watch something from your Curatarr Recommended playlist, ask how it landed — your verdict feeds back with extra weight."},
     {"type": "rewatch",           "label": "Rewatch suggestions",
      "description": "When you've watched a title several times, surface a thought about coming back to it."},
     {"type": "binge_episode",     "label": "Binge detection",
@@ -687,6 +689,41 @@ def set_disabled_triggers(user_id: int, disabled: set[str]) -> None:
     set_state(f"notif_disabled:user_id={user_id}", json.dumps(cleaned))
 
 
+def detect_recommendation_followup(user_id: int,
+                                   asked_subjects: dict | None = None) -> Optional[dict]:
+    """The user watched something the curator put on their Curatarr-
+    Recommended playlist (queued by plex_sync._process_rec_watch_hits).
+    Returns the OLDEST hit not yet asked about.
+
+    PEEKS, never consumes: de-dup comes from asked_subjects (the message we
+    send indexes the title), so a failed LLM generation can't lose the hit;
+    stale hits age out via the queue's 30-day prune. Feedback given in the
+    follow-up thread is stored with elevated weight — this is the highest-
+    value trigger, which is why it runs FIRST in the candidates list."""
+    from src.services.app_state import get_state
+    try:
+        queue = json.loads(get_state(f"rec_watch_hits:user_id={user_id}") or "[]")
+    except Exception:
+        return None
+    asked = asked_subjects or {}
+    asked_titles = asked.get("titles") or set()
+    asked_series = asked.get("series") or {}
+    for hit in queue:                      # oldest first
+        title = hit.get("title") or ""
+        n = normalize_title(title)
+        if not n or n in asked_titles or n in asked_series:
+            continue
+        return {
+            "type": "recommendation_followup",
+            "trigger_type": "recommendation_followup",
+            "title": title,
+            "category": hit.get("category"),
+            "rec_id": hit.get("rec_id"),
+            "watched_at": hit.get("watched_at"),
+        }
+    return None
+
+
 def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
                       recently_fired: set[str],
                       disabled: set[str] | None = None,
@@ -706,6 +743,12 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
     disabled = disabled or set()
     _tracks = (asked_subjects or {}).get("tracks")
     candidates = [
+        # FIRST on purpose: the runner returns the first hit, and a watched-
+        # recommendation follow-up (elevated-weight feedback) outranks
+        # rewatch/binge chatter. The shared 1-day type cooldown paces it to
+        # max one per day — deliberate; the hit queue holds the rest.
+        ("recommendation_followup",
+         lambda: detect_recommendation_followup(user_id, asked_subjects)),
         ("rewatch",           lambda: detect_rewatch(entries, asked_subjects)),
         ("track_obsession",   lambda: detect_track_obsession(user_id, _tracks)),
         ("binge_episode",     lambda: detect_binge(entries, now, asked_subjects)),
@@ -781,6 +824,16 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
         elif ttype in _SERIES_TRIGGER_TYPES:
             if td.get("series"):
                 series.setdefault(normalize_title(td["series"]), td.get("milestone"))
+        elif ttype == "recommendation_followup":
+            # once asked about a recommended title, never re-ask it — the
+            # detector peeks its queue and relies on THIS index for de-dup
+            title = td.get("title")
+            if not title:
+                continue
+            if td.get("category") in ("show", "anime"):
+                series.setdefault(normalize_title(title), None)
+            else:
+                titles.add(normalize_title(title))
     return {"tracks": tracks, "titles": titles, "series": series}
 
 
@@ -1013,7 +1066,18 @@ async def generate_proactive_message(
         f"FINISHED it; otherwise ask about their current point, never the ending.\n"
     ) if prog_phrase else ""
 
-    if t == "binge_episode":
+    if t == "recommendation_followup":
+        prompt = (
+            f"You are Curatarr, an opinionated personal curator. "
+            f"You put \"{trigger['title']}\" ({trigger.get('category', 'title')}) on the "
+            f"user's Curatarr Recommended playlist — and they actually watched into it."
+            f"{taste}\n\n"
+            f"Write ONE short message (max 2 sentences): you recommended it, they tried "
+            f"it — ask how it landed. Direct, curious, opinionated; invite a real "
+            f"verdict, good or bad."
+        )
+
+    elif t == "binge_episode":
         prompt = (
             f"You are Curatarr, an opinionated personal curator. "
             f"The user just watched {trigger['count']} episodes of \"{trigger['series']}\" "

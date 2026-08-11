@@ -1976,6 +1976,23 @@ async def _build_discuss_context_block(
                 if tdata.get("media_type"):
                     anchor_category = tdata["media_type"]
 
+        elif ttype == "recommendation_followup":
+            # The user watched something the curator put on their Curatarr-
+            # Recommended playlist; this thread collects their VERDICT, which
+            # is stored with elevated weight (see analyze_recommendation_
+            # feedback). Anchor the title so the dossier attaches.
+            t = (tdata.get("title") or "").strip()
+            if t:
+                anchor_title = t
+                anchor_category = tdata.get("category") or domain
+                block += (
+                    "\nThis title was on the user's Curatarr Recommended "
+                    "playlist and they watched into it. You are collecting "
+                    "their VERDICT — their feedback here is stored with "
+                    "elevated weight, so pin down what worked or didn't "
+                    "rather than making small talk.\n"
+                )
+
         # Anchored non-track entities (rewatch series, binge, music marathon
         # artist) get the FULL cached dossier too — this branch anchored the
         # title but attached no data at all, so a rewatch discussion ran on
