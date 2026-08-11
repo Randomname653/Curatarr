@@ -227,6 +227,11 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
             is_admin=first_ever,
             is_active=True,
             created_at=datetime.now(timezone.utc),
+            # Store the user's OWN plex.tv token — per-account Plex writes
+            # ("Curatarr Recommended" playlists) are impossible with the
+            # owner token alone. Every login re-stores the newest token,
+            # which self-heals tokens revoked via plex.tv sign-out.
+            plex_token=auth_token,
         )
         db.add(user)
         db.commit()
@@ -242,6 +247,7 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account deactivated")
         user.last_login = datetime.now(timezone.utc)
+        user.plex_token = auth_token   # refresh on every login (see above)
         db.commit()
 
     token = _create_jwt(user.id, user.is_admin)

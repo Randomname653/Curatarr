@@ -118,6 +118,14 @@ def _migrate_columns() -> None:
         # Remux class: untouched disc streams get their own size norms
         # instead of reading as "3x bloated" against encode medians.
         ("media_tech_profiles",   "is_remux", "INTEGER DEFAULT 0"),
+        # "Curatarr Recommended" Plex playlists: per-user plex token captured
+        # at PIN login (account-private playlist writes), and resolving ids on
+        # cached recommendations (library lane only; discovery stays NULL).
+        ("users",                  "plex_token", "VARCHAR(512)"),
+        ("cached_recommendations", "tmdb_id", "INTEGER"),
+        ("cached_recommendations", "tvdb_id", "INTEGER"),
+        ("cached_recommendations", "year", "INTEGER"),
+        ("cached_recommendations", "plex_rating_key", "VARCHAR(64)"),
         # Pass 99-fu13 / Phase 2 #37: per-item enrichment-source tracking.
         # ``fetch_tier`` distinguishes a provisional fast-pass enrichment
         # ("fast" — only the cheap sources were consulted) from the
