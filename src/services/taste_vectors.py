@@ -198,14 +198,20 @@ def detect_binges_from_history(entries: list) -> list:
 def merge_feedback_into_vector(vector: dict, feedback: dict) -> dict:
     """
     Merge explicit user feedback (from conversation) into the taste vector.
-    feedback = {title, sentiment: positive/negative, aspects: [genre, theme, ...], reason}
+    feedback = {title, sentiment: positive/negative, genre_aspects: [...],
+    reason, weight?, source?} — weight > 1.0 marks elevated signals
+    (verdicts on titles Curatarr itself recommended); entries written
+    before the field existed read as 1.0.
     """
+    weight = float(feedback.get("weight") or 1.0)
     entry = {
         "title": feedback.get("title", ""),
         "sentiment": feedback.get("sentiment", "neutral"),
-        "aspects": feedback.get("aspects", []),
+        "aspects": feedback.get("genre_aspects") or feedback.get("aspects") or [],
         "reason": feedback.get("reason", ""),
         "date": datetime.utcnow().isoformat(),
+        "weight": weight,
+        "source": feedback.get("source", "chat"),
     }
     vector["explicit_feedback"] = vector.get("explicit_feedback", [])
     vector["explicit_feedback"].append(entry)
@@ -219,7 +225,7 @@ def merge_feedback_into_vector(vector: dict, feedback: dict) -> dict:
     if feedback.get("sentiment") == "negative":
         for aspect in feedback.get("genre_aspects", []):
             aversion = vector.get("theme_aversion", {})
-            aversion[aspect] = min(1.0, aversion.get(aspect, 0) + 0.15)
+            aversion[aspect] = min(1.0, aversion.get(aspect, 0) + 0.15 * min(weight, 2.0))
             vector["theme_aversion"] = aversion
         if feedback.get("title"):
             disliked = vector.get("disliked_titles", [])
