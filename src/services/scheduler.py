@@ -1131,6 +1131,75 @@ async def job_db_backup():
         logger.error("[backup] DB backup failed: %s: %s", type(e).__name__, e)
 
 
+def _attach_rec_ids(recs: list, arr_lib: list, category: str) -> None:
+    """Match each LIBRARY-lane rec back to the arr candidate that produced it
+    and attach tmdb/tvdb/year plus the REAL Plex ratingKey (via
+    MediaTechProfile → MediaIdentity). The LLM occasionally reformats
+    punctuation, so exact title match gets a normalized fallback. Items the
+    resolver can't place keep NULL — the playlist push skips them and logs.
+
+    NOTE: the arr items' own "plex_rating_key" field is the SYNTHETIC
+    "radarr:{id}" ChromaDB doc key — never write it into the rec row; the
+    real key lands under ``plex_rating_key_real``."""
+    from src.services.library_memory import normalize_title
+    from src.database.connection import get_db_session
+    from src.database.models import MediaTechProfile, MediaIdentity
+
+    by_title = {(i.get("title") or ""): i for i in arr_lib}
+    by_norm = {normalize_title(i.get("title") or ""): i for i in arr_lib}
+    matched = []
+    for rec in recs:
+        t = rec.get("title") or ""
+        item = by_title.get(t) or by_norm.get(normalize_title(t))
+        if not item:
+            continue
+        rec["tmdb_id"] = item.get("tmdb_id")
+        rec["tvdb_id"] = item.get("tvdb_id")
+        rec["year"] = item.get("year")
+        matched.append(rec)
+
+    if not matched:
+        return
+    # Resolve real Plex ratingKeys in ONE session: tmdb → tvdb → normalized
+    # title against MediaTechProfile (whole-library sweep incl. unwatched),
+    # then MediaIdentity as the watched-items fallback for retitled entries.
+    try:
+        with get_db_session() as db:
+            mt_types = ["show", "anime"] if category in ("show", "anime") else [category]
+            profs = db.query(
+                MediaTechProfile.plex_rating_key, MediaTechProfile.tmdb_id,
+                MediaTechProfile.tvdb_id, MediaTechProfile.title,
+            ).filter(MediaTechProfile.media_type.in_(mt_types)).all()
+            idents = db.query(
+                MediaIdentity.plex_rating_key, MediaIdentity.tmdb_id,
+                MediaIdentity.tvdb_id, MediaIdentity.title,
+            ).filter(MediaIdentity.media_type.in_(mt_types)).all()
+        by_tmdb, by_tvdb, by_ntitle = {}, {}, {}
+        for rows in (idents, profs):   # profs written last → take precedence
+            for key, tmdb, tvdb, title in rows:
+                if tmdb:
+                    by_tmdb[tmdb] = key
+                if tvdb:
+                    by_tvdb[tvdb] = key
+                if title:
+                    by_ntitle[normalize_title(title)] = key
+        unresolved = []
+        for rec in matched:
+            key = (by_tmdb.get(rec.get("tmdb_id"))
+                   or by_tvdb.get(rec.get("tvdb_id"))
+                   or by_ntitle.get(normalize_title(rec.get("title") or "")))
+            if key:
+                rec["plex_rating_key_real"] = str(key)
+            else:
+                unresolved.append(rec.get("title"))
+        if unresolved:
+            logger.info("[scheduler] %d/%d library recs without a Plex ratingKey "
+                        "(playlist push will skip): %s", len(unresolved),
+                        len(matched), ", ".join(unresolved[:4]))
+    except Exception as e:
+        logger.warning("[scheduler] plex-key resolution failed: %s", e)
+
+
 async def _cache_recommendations(user_id: int):
     """Pre-generate and store BOTH recommendation lanes for every category:
     'library' (owned but unwatched — watch from your shelf) and 'discovery'
@@ -1180,6 +1249,14 @@ async def _cache_recommendations(user_id: int):
                             rec["poster_url"] = None
                             rec["synopsis"] = None
 
+                    # LIBRARY lane: attach resolving ids (tmdb/tvdb/year from
+                    # the arr candidate that produced the rec) + the REAL Plex
+                    # ratingKey — the "Curatarr Recommended" playlist push and
+                    # the watched-a-rec follow-up both key on them. Discovery
+                    # recs own nothing → columns stay NULL.
+                    if arr_lib:
+                        _attach_rec_ids(recs, arr_lib, cat)
+
                     # Lane-scoped write — short, await-free transaction.
                     with get_db_session() as db:
                         db.query(CachedRecommendation).filter(
@@ -1198,6 +1275,10 @@ async def _cache_recommendations(user_id: int):
                                 genres=rec.get("genres", ""),
                                 poster_url=rec.get("poster_url"),
                                 synopsis=rec.get("synopsis"),
+                                tmdb_id=rec.get("tmdb_id"),
+                                tvdb_id=rec.get("tvdb_id"),
+                                year=rec.get("year"),
+                                plex_rating_key=rec.get("plex_rating_key_real"),
                                 cached_at=datetime.utcnow(),
                             ))
                         db.commit()
