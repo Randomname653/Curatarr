@@ -193,6 +193,75 @@ async def _run_audit(deep: bool = False) -> bool:
     return True
 
 
+# How stale a user's rec cache may get before the weekly task regenerates it.
+# 144h (6d) < the 168h task cadence, so the true weekly run refreshes every
+# user, while an EARLY run (all-sampled flag cleared the job stamp) only does
+# LLM work for the flagged user — everyone else short-circuits as fresh.
+_RECS_FRESH_HOURS = 144
+
+
+async def _run_recs(deep: bool = False) -> bool:
+    """Weekly recommendation-cache refresh for ALL active users. Closes the
+    old gap where recs regenerated only at startup-if-empty / manually /
+    post-arr-sync — and only ever for the admin. Returns False when any user
+    failed so the task stays due and resumes next tick (the freshness guard
+    makes the retry skip users already done)."""
+    from datetime import datetime, timedelta
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation, User
+    from src.services.app_state import get_state, set_state
+    from src.services import scheduler as sched
+
+    with get_db_session() as db:
+        users = [(u.id, u.plex_username) for u in
+                 db.query(User).filter(User.is_active == True).all()]
+    all_ok = True
+    for uid, uname in users:
+        sampled_flag = get_state(f"recs_all_sampled:user_id={uid}") or ""
+        with get_db_session() as db:
+            newest = (db.query(CachedRecommendation.cached_at)
+                      .filter(CachedRecommendation.user_id == uid)
+                      .order_by(CachedRecommendation.cached_at.desc())
+                      .first())
+        fresh = (newest and newest[0]
+                 and datetime.utcnow() - newest[0] < timedelta(hours=_RECS_FRESH_HOURS))
+        if fresh and not sampled_flag:
+            continue
+        try:
+            logger.info("[custodian] refreshing recommendations for %s%s",
+                        uname, " (all sampled)" if sampled_flag else "")
+            await sched._cache_recommendations(uid)
+            set_state(f"recs_all_sampled:user_id={uid}", "")
+        except Exception as e:
+            logger.warning("[custodian] rec refresh failed for %s: %s", uname, e)
+            all_ok = False
+    return all_ok
+
+
+async def _run_playlist_push(deep: bool = False) -> bool:
+    """Push/refresh every active user's Curatarr-Recommended Plex playlists.
+    Users without a stored token are logged-and-skipped and do NOT hold the
+    task open (it would stay due forever); a transient Plex error does."""
+    from src.database.connection import get_db_session
+    from src.database.models import User
+    from src.services.plex_playlists import push_user_playlists
+
+    with get_db_session() as db:
+        users = db.query(User).filter(User.is_active == True).all()
+        # detach the attributes we need before the session closes
+        users = [type("U", (), {"id": u.id, "plex_username": u.plex_username,
+                                "plex_token": u.plex_token})() for u in users]
+    all_ok = True
+    for u in users:
+        try:
+            await push_user_playlists(u)
+        except Exception as e:
+            logger.warning("[custodian] playlist push failed for %s: %s",
+                           u.plex_username, e)
+            all_ok = False
+    return all_ok
+
+
 @dataclass
 class Task:
     job_id: str
@@ -229,6 +298,15 @@ def _registry() -> list[Task]:
              takes_deep=True),
         Task("custodian_taste",  "Taste vectors",        24.0,  _run_taste_if_due,
              needs_llm=True, takes_deep=True),
+        # Curatarr-Recommended pipeline: taste feeds recs, recs feed the Plex
+        # playlists — this order means one weekly tick does taste → recs →
+        # playlists. Early refresh: the all-sampled hook in plex_sync clears
+        # both job stamps, so the next 30-min tick reruns just these two
+        # (the 144h per-user freshness guard shields everyone already done).
+        Task("custodian_recs",   "Recommendation cache refresh", 168.0,
+             _run_recs, needs_llm=True),
+        Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
+             _run_playlist_push),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
              takes_deep=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay),
