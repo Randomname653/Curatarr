@@ -3423,9 +3423,56 @@ function _recCard(rec) {
         ${laneBadge}
         <span class="badge amber">${Math.round((rec.confidence||0.7)*100)}%</span>
         <button class="btn btn-secondary btn-sm" onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
+        ${rec.lane === 'discovery' && currentUser?.is_admin
+          ? `<button class="btn btn-secondary btn-sm" onclick="onAddRecToArr(this)" data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`
+          : ''}
       </div>
     </div>
   </div>`;
+}
+
+// Feature B: one-click acquire from a Discovery pitch. Admin-only button
+// (POST /api/library/add 403s for everyone else as defense-in-depth) —
+// resolves the pitch title against the arr's own lookup, confirms, then
+// adds with the saved defaults + curatarr tag.
+async function onAddRecToArr(btn) {
+  const title = btn.dataset.title;
+  const year = parseInt(btn.dataset.year, 10) || null;
+  const svc = {movie:'radarr', show:'sonarr', anime:'sonarr', music:'lidarr'}[btn.dataset.category];
+  if (!svc) return;
+  const restore = () => { btn.disabled = false; btn.textContent = '+ Add'; btn.style.background = ''; btn.style.color = ''; };
+  const fail = (label, hold) => {
+    btn.textContent = label.slice(0, 40);
+    btn.style.background = 'var(--danger)';
+    btn.style.color = '#fff';
+    setTimeout(restore, hold || 4000);
+  };
+  btn.disabled = true;
+  btn.textContent = 'searching…';
+  try {
+    const r = await api(`/api/library/search/${svc}?q=${encodeURIComponent(title)}`);
+    const matches = r.matches || [];
+    const tl = title.toLowerCase();
+    const m = (year && matches.find(x => (x.title||'').toLowerCase() === tl && x.year === year))
+           || matches.find(x => (x.title||'').toLowerCase() === tl)
+           || matches[0];
+    if (!m) { fail('✗ no match'); return; }
+    if (m.already_added) { btn.textContent = 'In library ✓'; return; }   // stays disabled
+    if (!confirm(`Add "${m.title}"${m.year ? ` (${m.year})` : ''} to ${svc}?`)) { restore(); return; }
+    btn.textContent = 'adding…';
+    await api('/api/library/add', 'POST', {
+      service: svc, title: m.title, year: m.year,
+      tvdb_id: m.tvdb_id, tmdb_id: m.tmdb_id, mbid: m.mbid,
+    });
+    btn.textContent = 'Added ✓';
+    btn.style.background = 'var(--success)';
+    btn.style.color = '#000';
+  } catch (e) {
+    let detail = e.message || 'failed';
+    try { detail = JSON.parse(detail).detail || detail; } catch {}
+    if (detail.includes('defaults incomplete')) alert(detail);
+    fail('✗ ' + detail);
+  }
 }
 
 function _recSection(lane, recs) {
