@@ -628,6 +628,12 @@ select option { background: var(--bg2); }
             <option value="30">last 30 days</option>
             <option value="60">last 60 days</option>
           </select>
+          <label style="display:flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)"
+                 title="Select every visible proposal for bulk deletion">
+            <input type="checkbox" id="del-select-all" onchange="delToggleAll(this)"/>
+            Select all
+          </label>
+          <button class="btn btn-danger" id="del-bulk-btn" onclick="bulkDelete()" disabled>Delete selected (0)</button>
           <span style="font-size:12px;color:var(--text3)">Nothing is deleted without your explicit approval.</span>
         </div>
         <div id="del-content"></div>
@@ -3589,6 +3595,7 @@ function _renderDeletionProposals(proposals) {
       return `
       <div class="card" data-del-id="${p.id}" style="margin-bottom:12px;border-color:${p.stagnant?'rgba(229,160,13,.35)':(p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)')}">
         <div style="display:flex;align-items:flex-start;gap:12px">
+          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" onchange="updateDelBulkCount()" style="margin-top:4px;flex-shrink:0;accent-color:var(--amber)" title="Select for bulk delete"/>
           ${p.poster_url ? `<img src="${esc(proxyImg(p.poster_url))}" alt="" style="width:56px;height:${p.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${p.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${p.stagnant?` <span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}</div>
@@ -3611,6 +3618,10 @@ function _renderDeletionProposals(proposals) {
         </div>
       </div>`;
     }).join('');
+  // Fresh render = fresh selection: reset the bulk bar + master checkbox.
+  const master = document.getElementById('del-select-all');
+  if (master) master.checked = false;
+  updateDelBulkCount();
 }
 
 // Pass 17: read the "🆕 Just-arrived" toggle + days dropdown from the DOM.
@@ -4061,6 +4072,109 @@ function showDeleteConfirmModal(title) {
     cancelBtn.onclick = () => cleanup(false);
     overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
   });
+}
+
+// ── BULK DELETE (multi-select) ────────────────────────────────────────────────
+
+function delToggleAll(master) {
+  document.querySelectorAll('#del-content .del-cb').forEach(cb => { cb.checked = master.checked; });
+  updateDelBulkCount();
+}
+
+function updateDelBulkCount() {
+  const boxes = [...document.querySelectorAll('#del-content .del-cb:checked')];
+  const btn = document.getElementById('del-bulk-btn');
+  if (!btn) return;
+  const gb = boxes.reduce((s, b) => s + (parseFloat(b.dataset.gb) || 0), 0);
+  btn.textContent = boxes.length
+    ? `Delete selected (${boxes.length}) — ${gb.toFixed(1)} GB`
+    : 'Delete selected (0)';
+  btn.disabled = boxes.length === 0;
+}
+
+// Same 3s-countdown pattern as the single-item modal, plus an optional shared
+// reason field (replaces the prompt(); sent per item as "Deleted: <reason>"
+// so the backend stays on the no-LLM fast path).
+function showBulkDeleteConfirmModal(count, gb) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center';
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--bg2);border:1px solid rgba(229,83,83,.4);border-radius:var(--radius);padding:28px 24px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+    modal.innerHTML = `
+      <div style="font-size:36px;margin-bottom:12px">🗑</div>
+      <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
+      <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${count} items · ${gb} GB</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:16px;line-height:1.5">This removes them from your *arr libraries and deletes the files.<br>This cannot be undone.</div>
+      <input id="_bulk_reason" placeholder="Shared reason (optional — Curatarr will learn)" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px;margin-bottom:16px"/>
+      <div style="font-size:36px;font-weight:700;color:var(--danger);margin-bottom:16px;min-height:44px" id="_del_countdown">3</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="_del_confirm" class="btn btn-danger" disabled style="min-width:140px">Delete ${count} (3)</button>
+        <button id="_del_cancel" class="btn btn-secondary" style="min-width:80px">Cancel</button>
+      </div>`;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    let s = 3;
+    const cd = modal.querySelector('#_del_countdown');
+    const confirmBtn = modal.querySelector('#_del_confirm');
+    const cancelBtn = modal.querySelector('#_del_cancel');
+    const timer = setInterval(() => {
+      s--;
+      cd.textContent = s > 0 ? s : '';
+      confirmBtn.textContent = s > 0 ? `Delete ${count} (${s})` : `Delete ${count}`;
+      if (s <= 0) { clearInterval(timer); confirmBtn.disabled = false; }
+    }, 1000);
+
+    const cleanup = (confirmed) => {
+      const reason = (modal.querySelector('#_bulk_reason').value || '').trim();
+      clearInterval(timer); document.body.removeChild(overlay);
+      resolve({ confirmed, reason });
+    };
+    confirmBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+  });
+}
+
+async function bulkDelete() {
+  const boxes = [...document.querySelectorAll('#del-content .del-cb:checked')];
+  if (!boxes.length) return;
+  const gb = boxes.reduce((s, b) => s + (parseFloat(b.dataset.gb) || 0), 0);
+  const res = await showBulkDeleteConfirmModal(boxes.length, gb.toFixed(1));
+  if (!res.confirmed) return;
+  const btn = document.getElementById('del-bulk-btn');
+  btn.disabled = true;
+  btn.textContent = `Deleting ${boxes.length}…`;
+  let started;
+  try {
+    started = await api('/api/recommendations/deletions/bulk-approve', 'POST', {
+      ids: boxes.map(b => parseInt(b.dataset.id, 10)),
+      comment: res.reason || null,
+    });
+  } catch (e) {
+    let d = e.message || 'failed';
+    try { d = JSON.parse(d).detail || d; } catch {}
+    alert('Bulk delete failed to start: ' + d);
+    updateDelBulkCount();
+    return;
+  }
+  // The job runs server-side (visible live in Activity too) — poll the task
+  // registry until it finishes, then reload the list and show the summary.
+  const tid = started.task_id;
+  const poll = setInterval(async () => {
+    try {
+      const r = await api('/api/tasks/');
+      const t = (r.tasks || []).find(x => x.id === tid);
+      if (!t || !['running', 'pending'].includes(t.status)) {
+        clearInterval(poll);
+        const last = t?.logs?.length ? t.logs[t.logs.length - 1].msg : 'finished';
+        _delProposalsAll = null;
+        loadDeletions(currentDelCategory);
+        alert('Bulk delete: ' + last);
+      }
+    } catch {}
+  }, 2000);
 }
 
 async function approveDelete(id, btn) {

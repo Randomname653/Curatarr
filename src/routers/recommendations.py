@@ -11,6 +11,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.database import get_db
@@ -1010,29 +1011,36 @@ async def approve_deletion(
             "error": f"{service_name} is currently unreachable. The item has NOT been deleted and can be retried.",
         }
 
+    success = await _delete_one_and_log(db, user.id, p)
+    db.commit()
+    return {"ok": success, "limbo": False, "status": p.status}
+
+
+async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
+    """Execute the arr delete for ONE proposal: status/resolved_at plus the
+    CuratorResolutionLog row. Shared by the single-approve endpoint and the
+    bulk runner so both paths stay behaviourally identical. Does NOT commit
+    — the caller owns the transaction.
+
+    Pass 66 / 81e resolution logging: originally hardcoded to
+    ``resolution_type="consensus"`` with ``curator_stance = p.reason`` —
+    fine when the proposal pitch WAS the curator's final word. But with
+    Level-2 reevaluation (Pass 81) the curator's last word can be either a
+    CONFIRM (still wants delete — true consensus) or a REVERSAL (now wants
+    to keep — user deleting anyway is an OVERRIDE). The static ``p.reason``
+    field can't represent that; the chat history can. 81e: pull the latest
+    assistant message from the deletion_proposal thread as the canonical
+    stance, parse the verdict polarity, classify accordingly. No chat
+    history → falls back to ``p.reason`` + ``"consensus"`` (unchanged
+    behaviour for the click-without-discussion path)."""
     success = await _execute_arr_delete(p)
     p.status = "deleted" if success else "error"
     p.resolved_at = datetime.utcnow()
 
-    # Pass 66 / 81e: log the resolution.
-    #
-    # Originally (Pass 66) this was hardcoded to ``resolution_type="consensus"``
-    # with ``curator_stance = p.reason`` — fine when the proposal pitch
-    # WAS the curator's final word. But with Level-2 reevaluation (Pass 81)
-    # the curator's last word can be either a CONFIRM (still wants delete
-    # — true consensus) or a REVERSAL (now wants to keep — user deleting
-    # anyway is an OVERRIDE). The static ``p.reason`` field can't represent
-    # that; the chat history can.
-    #
-    # 81e: pull the latest assistant message from the deletion_proposal
-    # thread as the canonical stance, parse the verdict polarity from it,
-    # and classify resolution_type accordingly. No chat history → falls
-    # back to the original ``p.reason`` + ``"consensus"`` (unchanged
-    # behaviour for the click-without-discussion path).
     if success:
         try:
             stance, polarity = _latest_curator_stance_for_proposal(
-                db, user.id, p.id, fallback_pitch=p.reason,
+                db, user_id, p.id, fallback_pitch=p.reason,
             )
             if polarity == "REVERSED":
                 resolution_type = "override"
@@ -1041,7 +1049,7 @@ async def approve_deletion(
                 resolution_type = "consensus"
                 override_reason = None
             db.add(CuratorResolutionLog(
-                user_id=user.id,
+                user_id=user_id,
                 title=p.title,
                 category=p.category,
                 outcome="deleted",
@@ -1051,14 +1059,139 @@ async def approve_deletion(
             ))
             logger.info(
                 "📒 [RESOLUTION LOG] user=%d '%s' deleted (%s)%s",
-                user.id, p.title, resolution_type,
+                user_id, p.title, resolution_type,
                 f" — {override_reason}" if override_reason else "",
             )
         except Exception as e:
             logger.debug("[deletion] resolution-log write failed: %s", e)
+    return success
 
-    db.commit()
-    return {"ok": success, "limbo": False, "status": p.status}
+
+# In-memory run guard for bulk delete — deliberately NOT a DB lock (same
+# rationale as the OMDb-backfill guard in enrichment.py: a --reload mid-run
+# would strand a DB lock forever; a module flag self-heals on reload).
+_bulk_delete_running = False
+
+
+class BulkApproveRequest(BaseModel):
+    ids: list[int]
+    comment: Optional[str] = None   # plain reason — server prefixes "Deleted: "
+
+
+@router.post("/deletions/bulk-approve")
+async def bulk_approve_deletions(
+    req: BulkApproveRequest,
+    user: User = Depends(require_admin),   # deletions = admin curation only
+):
+    """Delete several proposals in one background job. Runs as a
+    task_monitor task (live in the Activity SSE stream); the arr of each
+    distinct service is probed ONCE up front instead of per item."""
+    global _bulk_delete_running
+    if _bulk_delete_running:
+        raise HTTPException(409, "A bulk delete is already running")
+    ids = list({int(i) for i in (req.ids or [])})
+    if not ids:
+        raise HTTPException(400, "No proposal ids given")
+    with get_db_session() as db:
+        n = db.query(DeletionProposal).filter(
+            DeletionProposal.id.in_(ids),
+            DeletionProposal.user_id == user.id,
+            DeletionProposal.status.in_(["pending", "limbo"]),
+        ).count()
+    if not n:
+        raise HTTPException(404, "No matching open proposals")
+
+    from src.services.bg_tasks import track_task
+    from src.services.task_monitor import task_monitor
+    _bulk_delete_running = True
+    task = task_monitor.create(name=f"Bulk delete ({n} items)",
+                               category="curation", total=n)
+    track_task(
+        _run_bulk_delete_bg(task, user.id, ids, (req.comment or "").strip()),
+        name="bulk-delete",
+    )
+    return {"status": "started", "task_id": task.id, "count": n}
+
+
+async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) -> None:
+    """Background bulk-delete runner (wiring mirrors _run_omdb_backfill_bg).
+
+    Per item this replays exactly what the two single-item requests do —
+    optional comment via the "Deleted: " prefix fast path (NO summarizer
+    call), then _delete_one_and_log — committing after each item so a
+    mid-run crash loses nothing. Honors task cancellation between items."""
+    global _bulk_delete_running
+    from src.services.task_monitor import task_monitor, TaskStatus
+    from src.services.episodic_memory import analyze_deletion_comment
+    task_monitor.start(task)
+    ok = failed = limbo = 0
+    freed_mb = 0.0
+    try:
+        with get_db_session() as db:
+            props = db.query(DeletionProposal).filter(
+                DeletionProposal.id.in_(ids),
+                DeletionProposal.user_id == user_id,
+                DeletionProposal.status.in_(["pending", "limbo"]),
+            ).order_by(DeletionProposal.id.asc()).all()
+            task_monitor.update(task, total=len(props))
+
+            # ONE reachability probe per distinct arr, not per item.
+            reachable = {svc: await _probe_arr(svc)
+                         for svc in {p.service for p in props}}
+
+            for i, p in enumerate(props, 1):
+                if task.status == TaskStatus.SKIPPED:   # user hit cancel
+                    task_monitor.update(task, message="Cancelled — remaining items untouched",
+                                        level="warn")
+                    break
+                title = p.title
+                if not reachable.get(p.service):
+                    p.status = "limbo"
+                    db.commit()
+                    limbo += 1
+                    task_monitor.update(task, processed=i,
+                                        message=f"{title}: {p.service} unreachable → limbo",
+                                        level="warn")
+                    continue
+                try:
+                    if comment:
+                        p.user_comment = f"Deleted: {comment}"
+                        db.commit()
+                        try:
+                            # Prefix fast path in analyze_deletion_comment —
+                            # taste/memory learning without any LLM call.
+                            await analyze_deletion_comment(
+                                user_id, title, f"Deleted: {comment}",
+                                media_category=p.category or "show")
+                        except Exception as e:
+                            logger.debug("[bulk-delete] comment learn failed for %r: %s",
+                                         title, e)
+                    success = await _delete_one_and_log(db, user_id, p)
+                    db.commit()
+                    if success:
+                        ok += 1
+                        freed_mb += float(p.storage_mb or 0)
+                        task_monitor.update(task, processed=i, message=f"Deleted {title}")
+                    else:
+                        failed += 1
+                        task_monitor.update(task, processed=i,
+                                            message=f"{title}: arr delete failed",
+                                            level="error")
+                except Exception as e:
+                    failed += 1
+                    logger.error("[bulk-delete] %r failed: %s", title, e)
+                    task_monitor.update(task, processed=i,
+                                        message=f"{title}: {e}", level="error")
+        task_monitor.done(
+            task,
+            f"{ok} deleted, {failed} failed, {limbo} limbo — "
+            f"{freed_mb / 1024:.1f} GB freed",
+        )
+    except Exception as e:
+        logger.error("[bulk-delete] run failed: %s", e)
+        task_monitor.done(task, f"Bulk delete failed: {e}")
+    finally:
+        _bulk_delete_running = False
 
 
 @router.post("/deletions/{proposal_id}/reject")
