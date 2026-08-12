@@ -8,7 +8,29 @@ from non-streaming responses and filtered out of streaming token streams.
 
 import json
 import re
+from datetime import datetime
 from typing import Any
+
+
+def seasonal_context(now: datetime | None = None) -> str:
+    """ONE concise prompt line anchoring 'now' — month + holiday window.
+    Used as a soft ingredient by the recommendation and collection-designer
+    prompts; deliberately says nothing about availability or streaming."""
+    now = now or datetime.utcnow()
+    m, d = now.month, now.day
+    if m == 10:
+        season = "Halloween season"
+    elif (m == 11 and d >= 25) or (m == 12 and d <= 26):
+        season = "the holiday season"
+    elif m in (6, 7, 8):
+        season = "summer"
+    elif m in (12, 1, 2):
+        season = "winter"
+    elif m in (3, 4, 5):
+        season = "spring"
+    else:
+        season = "autumn"
+    return f"Seasonal context: it is {now.strftime('%B')} — {season}."
 
 
 def strip_think_tags(content: str) -> str:
