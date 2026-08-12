@@ -20,7 +20,7 @@ import httpx
 import numpy as np
 
 from src.config import settings
-from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
+from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE, seasonal_context
 from src.database.connection import get_db_session
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.database.models import (
@@ -361,6 +361,23 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             curator_done()
 
 
+def _rhythm_line(ts: dict) -> str:
+    """One prompt line from the taste vector's temporal distributions — only
+    when a pattern is actually pronounced (>40% share), else silent."""
+    t = ts.get("temporal") or {}
+    tod = t.get("time_of_day_dist") or {}
+    dow = t.get("day_of_week_dist") or {}
+    parts = []
+    if tod:
+        k, v = max(tod.items(), key=lambda x: x[1])
+        if v > 0.4:
+            parts.append(f"mostly {k}")
+    weekend = (dow.get("5") or 0) + (dow.get("6") or 0)
+    if weekend > 0.4:
+        parts.append("weekend-heavy")
+    return f"Viewing rhythm: {', '.join(parts)}." if parts else ""
+
+
 async def generate_recommendations(
     user_id: int,
     category: str = None,
@@ -422,6 +439,8 @@ async def generate_recommendations(
         top_themes = list((ts.get("themes") or {}).keys())[:5]
         top_moods = list((ts.get("moods") or {}).keys())[:4]
         top_titles = ts.get("top_titles", [])[:8]
+        # One soft context line: current season + (if pronounced) viewing rhythm.
+        context_line = " ".join(x for x in (seasonal_context(), _rhythm_line(ts)) if x)
 
         import re
         match = re.search(rf'\[{cat.upper()}\]([^\[]*)', summary_text)
@@ -530,6 +549,7 @@ You are Curatarr, a highly analytical and slightly opinionated personal media cu
 
 USER'S {cat.upper()} TASTE PROFILE:
 {cat_summary or f"Top genres: {', '.join(top_genres)}. Often watches: {', '.join(top_titles[:5])}."}
+{context_line}
 
 AVAILABLE {cat.upper()} LIBRARY (unwatched):
 {items_text}
@@ -562,6 +582,7 @@ You are Curatarr, a highly analytical and slightly opinionated personal media cu
 
 USER'S {cat.upper()} TASTE PROFILE:
 {cat_summary or f"Top genres: {', '.join(top_genres)}. Often watches: {', '.join(top_titles[:5])}."}
+{context_line}
 
 DO NOT suggest these (the user already knows them well) — and do NOT suggest anything they already OWN or have already SEEN. Owned/seen titles are stripped automatically, so any such pick is a wasted slot. Spend every pick on something genuinely NEW to them:
 {avoid_hint}

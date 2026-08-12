@@ -697,6 +697,7 @@ async def compute_taste_vector_for_user(
     genre_aversion = dict(sorted(genre_aversion.items(), key=lambda x: -x[1])[:10])
 
     task_monitor.done(_tv_task, f"Complete: {len(embeddings_weights)} embeddings, {len(entries)} entries")
+    from src.services.taste_vectors import compute_temporal_patterns
     return {
         "embedding": taste_embedding,
         "embedding_items": len(embeddings_weights),
@@ -710,6 +711,9 @@ async def compute_taste_vector_for_user(
         "watch_count": len(entries),
         "avg_completion": avg_completion,
         "binges": binges[-10:],
+        # time-of-day / day-of-week distributions — read by the rec prompts
+        # as a one-line "viewing rhythm" ingredient
+        "temporal": compute_temporal_patterns(entries),
     }
 
 
@@ -766,6 +770,7 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
             "watch_count": res["watch_count"],
             "avg_completion": res["avg_completion"],
             "embedding_items": res.get("embedding_items", 0),
+            "temporal": res.get("temporal", {}),
         }
         top_titles_by_type[cat] = res["top_titles"][:20]
         themes_by_type[cat] = list(res["theme_affinity"].keys())[:10]

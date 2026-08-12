@@ -131,9 +131,12 @@ def compute_temporal_patterns(entries: list) -> dict:
     total = len(entries)
 
     for e in entries:
-        if not e.viewed_at:
+        # accepts both ORM rows and the plain dicts taste_engine works with
+        viewed_at = e.get("viewed_at") if isinstance(e, dict) \
+            else getattr(e, "viewed_at", None)
+        if not viewed_at:
             continue
-        h = e.viewed_at.hour
+        h = viewed_at.hour
         if h < 6:
             time_buckets["night"] += 1
         elif h < 12:
@@ -142,7 +145,7 @@ def compute_temporal_patterns(entries: list) -> dict:
             time_buckets["afternoon"] += 1
         else:
             time_buckets["evening"] += 1
-        day_buckets[str(e.viewed_at.weekday())] += 1
+        day_buckets[str(viewed_at.weekday())] += 1
 
     if total > 0:
         time_dist = {k: round(v / total, 3) for k, v in time_buckets.items()}
