@@ -262,6 +262,19 @@ async def _run_playlist_push(deep: bool = False) -> bool:
     return all_ok
 
 
+async def _run_collections(deep: bool = False) -> bool:
+    """Design + push the household's "Curatarr · " collection shelves."""
+    from src.services.collection_designer import design_collections
+    from src.services.plex_collections import push_collections
+    designs = await design_collections()
+    if not designs:
+        logger.info("[custodian] no collection designs produced — task stays due")
+        return False
+    res = await push_collections(designs)
+    logger.info("[custodian] collections pushed: %s", res)
+    return True
+
+
 @dataclass
 class Task:
     job_id: str
@@ -307,6 +320,10 @@ def _registry() -> list[Task]:
              _run_recs, needs_llm=True),
         Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
              _run_playlist_push),
+        # Household collections: the 27B designs rotating themed shelves from
+        # the OWNED library (section-global — one set via the owner token).
+        Task("plex_collections", "Curatarr collections", 168.0,
+             _run_collections, needs_llm=True),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
              takes_deep=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay),
