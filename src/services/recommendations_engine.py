@@ -361,6 +361,80 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             curator_done()
 
 
+_TRENDING_TTL_H = 24
+
+
+def _trending_fresh(cached: dict, now: datetime = None) -> bool:
+    """True when a cached tmdb_trending:{cat} blob is younger than the TTL."""
+    try:
+        fetched = datetime.fromisoformat(cached.get("fetched_at") or "")
+    except Exception:
+        return False
+    return ((now or datetime.utcnow()) - fetched).total_seconds() < _TRENDING_TTL_H * 3600
+
+
+def _trending_line(titles: list) -> str:
+    """ONE optional discovery-prompt line. Soft by design: the taste profile
+    stays the judge, and partition() strips owned/seen afterwards anyway."""
+    if not titles:
+        return ""
+    return ("Currently trending this week — consider ONLY those that genuinely "
+            "fit the taste profile: " + ", ".join(titles[:10]))
+
+
+async def _get_trending(cat: str) -> list:
+    """≤10 'Title (Year)' zeitgeist candidates per category from TMDB
+    (trending + upcoming/on-air; anime via popular-JP-animation discover).
+    Cached 24 h in app_state; ANY failure degrades to [] and the prompt
+    line simply drops out. Runs inside custodian_recs, so it is already
+    gated behind the weekly needs_llm tick — no extra scheduling."""
+    if cat == "music":
+        return []
+    from src.services.app_state import get_state, set_state
+    key = f"tmdb_trending:{cat}"
+    try:
+        cached = json.loads(get_state(key) or "{}")
+        if _trending_fresh(cached):
+            return cached.get("titles") or []
+    except Exception:
+        pass
+    api_key = settings.TMDB_API_KEY
+    if not api_key:
+        return []
+    if cat == "movie":
+        paths = [("/trending/movie/week", {}), ("/movie/upcoming", {})]
+    elif cat == "anime":
+        # generic tv-trending is US-network noise for this category — ask
+        # TMDB for currently-popular Japanese animation instead
+        paths = [("/discover/tv", {"with_genres": "16", "with_origin_country": "JP",
+                                   "sort_by": "popularity.desc"})]
+    else:
+        paths = [("/trending/tv/week", {}), ("/tv/on_the_air", {})]
+    titles: list = []
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            for path, extra in paths:
+                r = await client.get(f"https://api.themoviedb.org/3{path}",
+                                     params={"api_key": api_key, **extra})
+                if r.status_code != 200:
+                    continue
+                for it in (r.json().get("results") or []):
+                    name = it.get("title") or it.get("name")
+                    year = (it.get("release_date") or it.get("first_air_date") or "")[:4]
+                    if not name:
+                        continue
+                    t = f"{name} ({year})" if year else name
+                    if t not in titles:
+                        titles.append(t)
+        titles = titles[:10]
+        if titles:
+            set_state(key, json.dumps(
+                {"fetched_at": datetime.utcnow().isoformat(), "titles": titles}))
+    except Exception as e:
+        logger.debug("[trending] fetch failed for %s: %s", cat, e)
+    return titles
+
+
 def _rhythm_line(ts: dict) -> str:
     """One prompt line from the taste vector's temporal distributions — only
     when a pattern is actually pronounced (>40% share), else silent."""
@@ -570,6 +644,8 @@ Output format:
         else:
             owned = await owned_index(cat)
             noun = "tracks/artists" if cat == "music" else "titles"
+            trend = _trending_line(await _get_trending(cat))
+            trend_block = f"\n{trend}" if trend else ""
             # Soft nudge: the user's prominent taste anchors are the titles the
             # model is most tempted to echo straight back. Naming them helps —
             # but the HARD guarantee is partition() after parsing, which strips
@@ -582,7 +658,7 @@ You are Curatarr, a highly analytical and slightly opinionated personal media cu
 
 USER'S {cat.upper()} TASTE PROFILE:
 {cat_summary or f"Top genres: {', '.join(top_genres)}. Often watches: {', '.join(top_titles[:5])}."}
-{context_line}
+{context_line}{trend_block}
 
 DO NOT suggest these (the user already knows them well) — and do NOT suggest anything they already OWN or have already SEEN. Owned/seen titles are stripped automatically, so any such pick is a wasted slot. Spend every pick on something genuinely NEW to them:
 {avoid_hint}
