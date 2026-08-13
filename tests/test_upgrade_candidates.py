@@ -69,5 +69,17 @@ html = (root / "frontend/index.html").read_text(encoding="utf-8")
 for frag in ["loadUpgrades", "loadRedundancy", "upgrade-content", "redundancy-content"]:
     check(f"frontend has {frag}", frag in html)
 
+# ── redundancy provenance (owner request: Plex + arr jump-offs + files) ──────
+
+sn = (root / "src/services/size_norms.py").read_text(encoding="utf-8")
+check("duplicate_report entries carry provenance",
+      '"plex_rating_key": r.plex_rating_key' in sn and '"copies": copies' in sn)
+check("redundancy endpoint enriches per-version files + both jump-offs",
+      "plex_web_base" in rec and "_attach_files" in rec and "_attach_arr" in rec)
+check("arr match is category-scoped (same-name titles can't steal the link)",
+      '(cat, normalize_title(t))' in rec)
+check("panel renders both links + file lines",
+      "Open in Plex" in html and "per-file detail unavailable" in html)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

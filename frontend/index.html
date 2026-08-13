@@ -4081,17 +4081,50 @@ async function loadRedundancy() {
       el.innerHTML = '<p style="color:var(--text3);font-size:13px">No redundant versions found — the library keeps one copy per title.</p>';
       return;
     }
-    const line = (t, n, gb, label) => `<div class="panel-item">
-      <div class="panel-item-head"><div><strong>${esc(t)}</strong>
-        <span class="badge muted">${n} ${label}</span>
-        <span class="badge amber">${gb} GB redundant</span></div></div>
+    const CAT = { movie: '🎬 Movies', show: '📺 TV Shows', anime: '⛩️ Anime', music: '🎵 Music' };
+    const ARR = { movie: 'radarr', show: 'sonarr', anime: 'sonarr', music: 'lidarr' };
+    const links = (e) => {
+      const plex = r.plex_web_base && e.plex_rating_key
+        ? `<a href="${esc(r.plex_web_base + encodeURIComponent('/library/metadata/' + e.plex_rating_key))}" target="_blank" class="btn btn-secondary btn-sm">Open in Plex</a>` : '';
+      const arr = e.arr_url
+        ? `<a href="${esc(e.arr_url)}" target="_blank" class="btn btn-secondary btn-sm">Open in ${esc(ARR[e.media_type] || 'arr')}</a>` : '';
+      return plex + arr;
+    };
+    const techBadge = (e) => `<span class="badge muted">${esc(e.resolution || '?')}${e.is_remux ? ' remux' : ''}${e.codec ? ' ' + esc(e.codec) : ''} · ${e.size_gb} GB</span>`;
+
+    const intraCard = (e) => `<div class="panel-item">
+      <div class="panel-item-head">
+        <div><strong>${esc(e.title)}</strong>
+          <span class="badge muted">${esc(CAT[e.media_type] || e.media_type || '')}</span>
+          <span class="badge muted">${e.versions} versions</span>
+          <span class="badge amber">${e.redundant_gb} GB redundant</span></div>
+        <div class="panel-actions">${links(e)}</div>
+      </div>
+      ${(e.files || []).length
+        ? `<div class="panel-item-sub">${e.files.map(f =>
+            `${esc(f.resolution || '?')} · ${f.size_gb} GB · ${esc(f.file || '')}`).join('<br>')}</div>`
+        : `<div class="panel-item-sub">Primary: ${esc(e.resolution || '?')}${e.is_remux ? ' remux' : ''} — per-file detail unavailable (series aggregate).</div>`}
     </div>`;
+
+    const crossCard = (g) => `<div class="panel-item">
+      <div class="panel-item-head">
+        <div><strong>${esc(g.title)}</strong>
+          <span class="badge muted">${g.count} copies</span>
+          <span class="badge amber">${g.redundant_gb} GB redundant</span></div>
+      </div>
+      <div class="panel-item-sub">${(g.copies || []).map(c =>
+        `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+          <span>${esc(CAT[c.media_type] || c.media_type || '')} · ${esc(c.resolution || '?')}${c.is_remux ? ' remux' : ''} · ${c.size_gb} GB</span>
+          <span style="display:flex;gap:6px">${links(c)}</span>
+        </div>`).join('')}</div>
+    </div>`;
+
     el.innerHTML =
       `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">Total reclaimable: <strong style="color:var(--amber)">${r.total_redundant_gb || 0} GB</strong> · ${intra.length + cross.length} title(s)</div>` +
       (intra.length ? `<div style="font-size:12px;color:var(--text3);margin:8px 0 6px">Multiple qualities of one item (${r.intra_redundant_gb} GB)</div>` +
-        intra.map(([t, n, gb]) => line(t, n, gb, 'versions')).join('') : '') +
+        intra.map(intraCard).join('') : '') +
       (cross.length ? `<div style="font-size:12px;color:var(--text3);margin:12px 0 6px">Same title as separate items (${r.cross_redundant_gb} GB)</div>` +
-        cross.map(([t, n, gb]) => line(t, n, gb, 'copies')).join('') : '');
+        cross.map(crossCard).join('') : '');
   } catch(e) {
     el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load redundancy audit')}</p>`;
   }
