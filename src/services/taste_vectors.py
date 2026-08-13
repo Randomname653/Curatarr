@@ -225,15 +225,35 @@ def merge_feedback_into_vector(vector: dict, feedback: dict) -> dict:
     # belong in theme_aversion. genre_aversion is reserved for the taste
     # engine's computed drop-rate per real genre; mixing chat strings into
     # it produced "genres" like "modern Simpson's seasons".
+    bump = 0.15 * min(weight, 2.0)
     if feedback.get("sentiment") == "negative":
+        aversion = vector.get("theme_aversion", {})
         for aspect in feedback.get("genre_aspects", []):
-            aversion = vector.get("theme_aversion", {})
-            aversion[aspect] = min(1.0, aversion.get(aspect, 0) + 0.15 * min(weight, 2.0))
-            vector["theme_aversion"] = aversion
+            aversion[aspect] = min(1.0, aversion.get(aspect, 0) + bump)
+        # Key cap: free-text keys accumulated unbounded (unlike the [-100:]
+        # and [-50:] lists right here) — keep the strongest 20.
+        vector["theme_aversion"] = dict(
+            sorted(aversion.items(), key=lambda x: -x[1])[:20])
         if feedback.get("title"):
             disliked = vector.get("disliked_titles", [])
             if feedback["title"] not in disliked:
                 disliked.append(feedback["title"])
             vector["disliked_titles"] = disliked[-50:]
+    elif feedback.get("sentiment") == "positive":
+        # Latest statement wins BOTH ways: praise takes the title off the
+        # dislike list and walks the named aversions back down — before
+        # this, a dislike was a one-way ratchet no amount of later praise
+        # could undo.
+        title = feedback.get("title")
+        if title:
+            vector["disliked_titles"] = [t for t in vector.get("disliked_titles", [])
+                                         if t != title]
+        aversion = vector.get("theme_aversion", {})
+        for aspect in feedback.get("genre_aspects", []):
+            if aspect in aversion:
+                aversion[aspect] = round(aversion[aspect] - bump, 4)
+                if aversion[aspect] <= 0.01:
+                    del aversion[aspect]
+        vector["theme_aversion"] = aversion
 
     return vector

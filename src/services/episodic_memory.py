@@ -2029,11 +2029,17 @@ USER MESSAGES:
                 new_content=content, metadata={"title": title},
             )
             logger.info("🧠 [REC FEEDBACK] %s: %s — %s", title, sentiment, reason[:80])
+        # Asymmetric elevation (owner-approved after the feedback-loop
+        # review): NEGATIVE verdicts on our own recommendations stay ×2 —
+        # they are self-correcting. Positive ones clamp to ×1: the system
+        # caused the exposure itself, and amplifying its own hits is the
+        # textbook degenerate-feedback-loop pattern (Chaney 2018).
         await update_taste_profile_from_memory(
             user_id=user_id, title=title, sentiment=sentiment,
             aspects=aspects, reason=reason,
             media_category=category or "show",
-            weight=2.0, source="curatarr_recommendation",
+            weight=2.0 if sentiment == "negative" else 1.0,
+            source="curatarr_recommendation",
         )
     except Exception as e:
         logger.error("💥 [REC FEEDBACK ERROR]: %s: %s", type(e).__name__,
