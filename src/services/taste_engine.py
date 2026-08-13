@@ -889,10 +889,12 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                 # upside down. mood_aversion (never written, never read)
                 # is dropped from the blob entirely.
                 old_feedback = {}
+                old_rev = 0
                 if existing_etv and existing_etv.encrypted_blob:
                     try:
                         old_data = json.loads(existing_etv.encrypted_blob)
                         if old_data.get("version", 0) == 0:  # Phase A: unencrypted
+                            old_rev = int(old_data.get("rev") or 0)
                             old_feedback["explicit_feedback"] = old_data.get("explicit_feedback", [])
                             old_feedback["disliked_titles"] = old_data.get("disliked_titles", [])
                             aversion = old_data.get("theme_aversion", {}) or {}
@@ -914,7 +916,7 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                 cal = _global_cosine_anchors(res.get("embedding"), cat)
 
                 # Store vector stats (embedding stored separately when PIN available)
-                blob = json.dumps({
+                blob_dict = {
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "embedding_items": res.get("embedding_items", 0),
                     "binges": res.get("binges", []),
@@ -925,29 +927,57 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                     "cal_p10": cal[0] if cal else None,
                     "cal_p90": cal[1] if cal else None,
                     "version": 0,  # 0 = unencrypted, 1 = AES-256
-                })
+                }
                 # --- ENDE NEU ---
 
                 if existing_etv:
-                    existing_etv.encrypted_blob = blob
+                    # Optimistic write (eval 1.4): a chat-feedback merge that
+                    # landed between our carry-over read and this commit must
+                    # not be clobbered — on a rev miss, take the merger's
+                    # fresh feedback fields and try once more.
+                    from src.services.taste_vectors import cas_update_blob
+                    if not cas_update_blob(db, existing_etv.id, old_rev, blob_dict):
+                        db.rollback()
+                        db.expire_all()
+                        fresh = db.query(EncryptedTasteVector).filter(
+                            EncryptedTasteVector.id == existing_etv.id).first()
+                        try:
+                            fd = json.loads(fresh.encrypted_blob) if fresh else {}
+                        except Exception:
+                            fd = {}
+                        for k in ("explicit_feedback", "disliked_titles",
+                                  "theme_aversion"):
+                            if fd.get(k) is not None:
+                                blob_dict[k] = fd[k]
+                        new_rev = int(fd.get("rev") or 0)
+                        if not cas_update_blob(db, existing_etv.id, new_rev, blob_dict):
+                            logger.warning("[taste] %s blob CAS lost twice — "
+                                           "forcing recompute result", cat)
+                            blob_dict["rev"] = new_rev + 1
+                            fresh.encrypted_blob = json.dumps(blob_dict)
+                        existing_etv = fresh or existing_etv
                     existing_etv.computed_at = datetime.utcnow()
                     existing_etv.watch_count = res["watch_count"]
                     existing_etv.summary_text = next(
                         (p for p in summary_parts if f"[{cat.upper()}]" in p), ""
                     )
                 else:
+                    blob_dict["rev"] = 1
                     db.add(EncryptedTasteVector(
                         user_id=user_id,
                         media_category=cat,
                         salt="unencrypted",
-                        encrypted_blob=blob,
+                        encrypted_blob=json.dumps(blob_dict),
                         computed_at=datetime.utcnow(),
                         watch_count=res["watch_count"],
                         summary_text=next(
                             (p for p in summary_parts if f"[{cat.upper()}]" in p), ""
                         ),
                     ))
-            db.commit()
+                # Commit PER category: the CAS-miss path rolls back, which
+                # must never discard the categories already written in this
+                # loop.
+                db.commit()
         logger.info("Taste vectors computed and stored for user %d", user_id)
         logger.info("Summary preview: %s", summary_text[:200] if summary_text else "(empty)")
     except Exception as e:

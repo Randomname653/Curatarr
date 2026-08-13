@@ -931,7 +931,17 @@ async def generate_deletion_proposals(
                 EncryptedTasteVector.media_category == category
             ).first()
             if encrypted and encrypted.encrypted_blob:
-                _blob = json.loads(encrypted.encrypted_blob)
+                # Version gate (eval 1.10): a v1-encrypted blob must degrade
+                # LOUDLY, not silently zero out every taste signal.
+                try:
+                    _blob = json.loads(encrypted.encrypted_blob)
+                except Exception:
+                    _blob = {}
+                if _blob.get("version") == 1:
+                    logger.warning("[deletions] %s taste blob is encrypted "
+                                   "(v1) — scoring WITHOUT taste signals "
+                                   "until the PIN flow decrypts it", category)
+                    _blob = {}
                 user_vector = _blob.get("embedding")
                 # Global calibration anchors from the last taste rebuild
                 # (eval 1.6) — per-batch anchors made stored scores
@@ -1960,6 +1970,10 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         if encrypted and encrypted.encrypted_blob:
             try:
                 _blob = json.loads(encrypted.encrypted_blob)
+                if _blob.get("version") == 1:
+                    logger.warning("[recs] %s taste blob is encrypted (v1) — "
+                                   "ranking without the taste vector", category)
+                    _blob = {}
                 user_vector = _blob.get("embedding")
                 disliked_lc = {(t or "").lower()
                                for t in _blob.get("disliked_titles") or []}
