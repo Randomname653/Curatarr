@@ -62,14 +62,33 @@ class ChromaDBWrapper:
         self.collection = self._get_or_create_collection()
     
     def _get_or_create_collection(self):
-        """Get or create collection."""
+        """Get or create collection.
+
+        Space assertion (eval 1.12): every cosine assumption in the app
+        (taste mismatch, calibration anchors, RAG ranking) silently breaks
+        if a collection is ever recreated without ``hnsw:space=cosine`` —
+        Chroma's default is L2, and only THIS create path sets cosine. A
+        collection restored/recreated any other way must fail LOUDLY at
+        startup instead of ranking by the wrong metric for weeks."""
         try:
-            return self.client.get_collection(self.collection_name)
+            coll = self.client.get_collection(self.collection_name)
         except Exception:
             return self.client.create_collection(
                 name=self.collection_name,
                 metadata={"hnsw:space": "cosine"}
             )
+        space = (coll.metadata or {}).get("hnsw:space")
+        if space != "cosine":
+            logger.critical(
+                "ChromaDB collection %r has hnsw:space=%r (expected 'cosine') "
+                "— it was recreated outside the wrapper (corruption restore?). "
+                "Refusing to serve wrong-metric rankings.",
+                self.collection_name, space,
+            )
+            raise RuntimeError(
+                f"ChromaDB collection '{self.collection_name}' is not in "
+                f"cosine space (hnsw:space={space!r})")
+        return coll
     
     def reset(self):
         """**Destructive — wipes ALL ChromaDB collections, not just ours.**
@@ -201,6 +220,20 @@ class ChromaDBWrapper:
         )
         return True
     
+    def embeddings_for_domain(self, domain: str, limit: int = 30000) -> List:
+        """All stored embeddings of one domain (movie/show/anime/music) —
+        used by the taste rebuild to compute GLOBAL calibration anchors
+        (centroid-vs-corpus cosine p10/p90) instead of per-batch anchors.
+        Returns a list of raw vectors; caller normalizes."""
+        try:
+            res = self.collection.get(where={"domain": domain},
+                                      include=["embeddings"], limit=limit)
+            emb = res.get("embeddings")
+            return list(emb) if emb is not None else []
+        except Exception as e:
+            logger.warning("embeddings_for_domain(%s) failed: %s", domain, e)
+            return []
+
     def get_count(self) -> int:
         """Get number of documents in collection."""
         return self.collection.count()

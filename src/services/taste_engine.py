@@ -256,6 +256,37 @@ def build_item_text(entry: WatchHistoryEntry, enriched: Optional[dict]) -> str:
     return " | ".join(p for p in parts if p)
 
 
+def _global_cosine_anchors(embedding, category: str):
+    """Eval 1.6: p10/p90 of the fresh taste centroid against the WHOLE
+    category corpus in ChromaDB. Per-batch anchors made stored del_scores
+    non-stationary (the same item scored differently depending on batch
+    composition); computed once per rebuild (~ms of dot products) and
+    stored beside the vector, they make scores comparable across runs.
+    Returns (p10, p90) or None."""
+    if not embedding:
+        return None
+    try:
+        import numpy as np
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        embs = get_chroma_db().embeddings_for_domain(category)
+        if len(embs) < 50:
+            return None
+        m = np.asarray(embs, dtype=float)
+        norms = np.linalg.norm(m, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        m = m / norms
+        c = np.asarray(embedding, dtype=float)
+        cn = np.linalg.norm(c)
+        if not cn:
+            return None
+        cos = m @ (c / cn)
+        return (round(float(np.percentile(cos, 10)), 4),
+                round(float(np.percentile(cos, 90)), 4))
+    except Exception as e:
+        logger.warning("global anchors failed for %s: %s", category, e)
+        return None
+
+
 # ── MAIN COMPUTATION ──────────────────────────────────────────────────────────
 
 async def compute_taste_vector_for_user(
@@ -878,6 +909,10 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                     except Exception as e:
                         logger.warning("Could not read old taste vector for carry-over: %s", e)
 
+                # Global calibration anchors: centroid vs the whole category
+                # corpus, so deletion scoring stops depending on batch mix.
+                cal = _global_cosine_anchors(res.get("embedding"), cat)
+
                 # Store vector stats (embedding stored separately when PIN available)
                 blob = json.dumps({
                     "embedding": res["embedding"] if res.get("embedding") else None,
@@ -887,6 +922,8 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                     "explicit_feedback": old_feedback.get("explicit_feedback", []),
                     "disliked_titles": old_feedback.get("disliked_titles", []),
                     "theme_aversion": old_feedback.get("theme_aversion", {}),
+                    "cal_p10": cal[0] if cal else None,
+                    "cal_p90": cal[1] if cal else None,
                     "version": 0,  # 0 = unencrypted, 1 = AES-256
                 })
                 # --- ENDE NEU ---
