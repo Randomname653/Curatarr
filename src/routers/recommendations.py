@@ -600,9 +600,78 @@ async def get_upgrade_candidates(_user: User = Depends(require_admin)):
 @router.get("/redundancy")
 async def get_redundancy(_user: User = Depends(require_admin)):
     """Redundant-storage audit (intra-item versions + cross-item same-id
-    copies) — duplicate_report() finally gets a caller."""
+    copies). Entries carry provenance; intra entries are enriched LIVE from
+    Plex with the actual per-version files (resolution, size, filename) so
+    the panel can say WHICH file is the duplicate, and a Plex web deep-link
+    base lets the UI jump to the item."""
+    import asyncio as _aio
+    import os as _os
+
     from src.services.size_norms import duplicate_report
-    return duplicate_report()
+    rep = duplicate_report()
+    try:
+        from src.services.plex_playlists import (_base, _headers, _owner_token,
+                                                 get_machine_identifier)
+        mid = await get_machine_identifier()
+        if mid:
+            rep["plex_web_base"] = (f"https://app.plex.tv/desktop/#!/server/{mid}"
+                                    "/details?key=")
+        tok = _owner_token()
+        if tok:
+            async def _attach_files(entry: dict):
+                key = entry.get("plex_rating_key")
+                if not key:
+                    return
+                try:
+                    async with httpx.AsyncClient(timeout=10) as c:
+                        r = await c.get(f"{_base()}/library/metadata/{key}",
+                                        headers=_headers(tok))
+                    meta = ((r.json().get("MediaContainer") or {}).get("Metadata")
+                            or [{}])[0]
+                    files = []
+                    for m in meta.get("Media") or []:
+                        part = (m.get("Part") or [{}])[0]
+                        files.append({
+                            "resolution": m.get("videoResolution"),
+                            "size_gb": round((part.get("size") or 0) / 1024 ** 3, 1),
+                            "file": _os.path.basename(part.get("file") or ""),
+                        })
+                    if files:
+                        entry["files"] = files
+                except Exception:
+                    pass   # series keys carry no Media[] — panel degrades
+
+            await _aio.gather(*[_attach_files(e)
+                                for e in rep.get("intra_item") or []])
+    except Exception as e:
+        logger.debug("[redundancy] plex detail enrich failed: %s", e)
+
+    # Second jump-off: the arr detail page. The cached candidate pool
+    # already carries each item's ready-made arr_url — matched per
+    # category so a same-named title in another library can't steal it.
+    try:
+        from src.services.library_memory import normalize_title
+        url_map: dict = {}
+        for cat in ("movie", "show", "anime"):
+            for c in await _fetch_arr_candidates(cat):
+                u, t = c.get("arr_url"), c.get("title") or ""
+                if u and t:
+                    url_map.setdefault((cat, normalize_title(t)), u)
+
+        def _attach_arr(entry: dict):
+            key = (entry.get("media_type"), normalize_title(entry.get("title") or ""))
+            u = url_map.get(key)
+            if u:
+                entry["arr_url"] = u
+
+        for e in rep.get("intra_item") or []:
+            _attach_arr(e)
+        for grp in rep.get("cross_item") or []:
+            for c in grp.get("copies") or []:
+                _attach_arr(c)
+    except Exception as e:
+        logger.debug("[redundancy] arr-url enrich failed: %s", e)
+    return rep
 
 
 @router.get("/deletions")

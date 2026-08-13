@@ -171,30 +171,42 @@ def _coerce_int(v):
 def duplicate_report() -> dict:
     """Audit of redundant storage. INTRA-item = one Plex item kept in several
     qualities (versions>1). CROSS-item = the same tmdb/tvdb id across multiple
-    separate Plex items. Returns totals + worst offenders for a curator summary
-    or a 'what's redundant?' answer."""
+    separate Plex items. Returns totals + worst offenders, each entry carrying
+    its provenance (ratingKey, library category, resolution/codec, and for
+    cross-item the full copy list) so the UI can name WHAT is duplicated and
+    deep-link to WHERE it lives."""
     from collections import defaultdict
+
+    def _row(r) -> dict:
+        return {"title": r.title, "plex_rating_key": r.plex_rating_key,
+                "media_type": r.media_type, "resolution": r.resolution,
+                "codec": r.codec, "is_remux": bool(r.is_remux),
+                "size_gb": round((r.size_mb or 0) / 1024, 1)}
+
     intra = []
     by_tmdb, by_tvdb = defaultdict(list), defaultdict(list)
     with get_db_session() as db:
         for r in db.query(MediaTechProfile).all():
             if (r.versions or 1) > 1 and (r.redundant_mb or 0) >= 500:
-                intra.append((r.title, r.versions, round((r.redundant_mb or 0) / 1024, 1)))
+                intra.append({**_row(r), "versions": r.versions,
+                              "redundant_gb": round((r.redundant_mb or 0) / 1024, 1)})
             if r.tmdb_id:
-                by_tmdb[r.tmdb_id].append((r.title, r.size_mb or 0))
+                by_tmdb[r.tmdb_id].append(_row(r))
             if r.tvdb_id:
-                by_tvdb[r.tvdb_id].append((r.title, r.size_mb or 0))
+                by_tvdb[r.tvdb_id].append(_row(r))
     cross, seen = [], set()
     for grp in (by_tmdb, by_tvdb):
         for _id, rows in grp.items():
-            if len(rows) > 1 and rows[0][0] not in seen:
-                seen.add(rows[0][0])
-                sizes = sorted((s for _, s in rows), reverse=True)
-                cross.append((rows[0][0], len(rows), round(sum(sizes[1:]) / 1024, 1)))
-    intra.sort(key=lambda x: x[2], reverse=True)
-    cross.sort(key=lambda x: x[2], reverse=True)
-    intra_gb = round(sum(x[2] for x in intra), 1)
-    cross_gb = round(sum(x[2] for x in cross), 1)
+            if len(rows) > 1 and rows[0]["title"] not in seen:
+                seen.add(rows[0]["title"])
+                copies = sorted(rows, key=lambda c: c["size_gb"], reverse=True)
+                cross.append({"title": copies[0]["title"], "count": len(copies),
+                              "redundant_gb": round(sum(c["size_gb"] for c in copies[1:]), 1),
+                              "copies": copies})
+    intra.sort(key=lambda x: x["redundant_gb"], reverse=True)
+    cross.sort(key=lambda x: x["redundant_gb"], reverse=True)
+    intra_gb = round(sum(x["redundant_gb"] for x in intra), 1)
+    cross_gb = round(sum(x["redundant_gb"] for x in cross), 1)
     return {"intra_item": intra[:20], "cross_item": cross[:20],
             "intra_redundant_gb": intra_gb, "cross_redundant_gb": cross_gb,
             "total_redundant_gb": round(intra_gb + cross_gb, 1)}
