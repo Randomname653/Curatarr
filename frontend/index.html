@@ -587,11 +587,17 @@ select option { background: var(--bg2); }
         </div>
         <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
-            <button id="lane-all-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecLane('all',this)">Alle</button>
+            <button id="lane-all-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecLane('all',this)">All</button>
             <button id="lane-lib-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('library',this)">📚 In Library</button>
             <button id="lane-disc-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('discovery',this)">✨ Discover new</button>
           </div>
           <button class="btn btn-secondary" onclick="regenerateRecs()">🔄 Regenerate</button>
+          <div style="display:flex;margin-left:auto">
+            <input id="lib-search" placeholder="Search your library…"
+                   style="background:var(--bg3);border:1px solid var(--border);border-right:none;color:var(--text);padding:6px 10px;border-radius:var(--radius) 0 0 var(--radius);font-size:13px;width:210px"
+                   onkeydown="if(event.key==='Enter')searchLibrary()"/>
+            <button class="btn btn-secondary btn-sm" style="border-radius:0 var(--radius) var(--radius) 0" onclick="searchLibrary()" title="Semantic search over what you own — describe a mood, theme or 'like X but…'">🔍</button>
+          </div>
           <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">📚 you own it, still unwatched · ✨ not in your library, worth acquiring</span>
         </div>
         <div id="recs-content"><p class="loading">Click "Get recommendations" to load…</p></div>
@@ -3478,6 +3484,42 @@ async function onAddRecToArr(btn) {
     try { detail = JSON.parse(detail).detail || detail; } catch {}
     if (detail.includes('defaults incomplete')) alert(detail);
     fail('✗ ' + detail);
+  }
+}
+
+// Semantic library search — the same ChromaDB retrieval as the chat's hidden
+// RAG, surfaced directly: ranked OWNED titles with watched/size badges.
+async function searchLibrary() {
+  const q = (document.getElementById('lib-search')?.value || '').trim();
+  if (q.length < 2) return;
+  _stopRecsPoll();
+  const el = document.getElementById('recs-content');
+  el.innerHTML = '<p class="loading">Searching your library…</p>';
+  try {
+    const cat = currentRecsCategory ? `&category=${currentRecsCategory}` : '';
+    const r = await api(`/api/library/semantic-search?q=${encodeURIComponent(q)}${cat}&limit=12`);
+    const hits = r.results || [];
+    const back = `<div style="margin:0 0 12px"><a href="#" onclick="loadRecs(currentRecsCategory);return false" style="color:var(--amber);font-size:13px">← Back to recommendations</a></div>`;
+    if (!hits.length) {
+      el.innerHTML = back + `<p class="loading">No semantic matches for "${esc(q)}" — coverage follows the enrichment index.</p>`;
+      return;
+    }
+    el.innerHTML = back +
+      `<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Semantic matches in your library for <strong style="color:var(--amber)">${esc(q)}</strong>${currentRecsCategory ? ` · ${esc(currentRecsCategory)}` : ''}</div>` +
+      hits.map(h => `
+      <div class="card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+          <div style="font-weight:600;font-size:14px">${esc(h.title)}</div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <span class="badge ${/unwatched|not/i.test(h.watch_tag || '') ? 'muted' : 'amber'}">${esc(h.watch_tag || '')}</span>
+            ${h.size_tag ? `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2)">${esc(h.size_tag)}</span>` : ''}
+          </div>
+        </div>
+        ${h.genres ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${esc(h.genres)}${h.themes ? ` · ${esc(h.themes)}` : ''}</div>` : ''}
+        ${h.doc ? `<div style="font-size:12px;color:var(--text2);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(h.doc.slice(0, 220))}</div>` : ''}
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = `<p class="loading">Search failed: ${esc((e.message || '').slice(0, 120))}</p>`;
   }
 }
 
