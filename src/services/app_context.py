@@ -58,14 +58,25 @@ APP_MAP_BLOCK = (
     "APP MAP (Curatarr's own UI — point the user to the right place; never "
     "invent or deny capabilities):\n"
     "- Chat (you) · 'History & Taste' (watch history + taste profile) · "
-    "'Recommendations' (your picks).\n"
+    "'Recommendations' (your picks; a 'Search your library…' box for "
+    "semantic search over what they own, and on Discovery cards an "
+    "'+ Add' button (admin) that adds the title to the right arr).\n"
     "- 'Deletions' (admin): your deletion proposals, each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
-    "Sonarr/Radarr/Lidarr, plus Keep/Discuss. Sub-panels there: "
-    "'Judge-protected titles' (what the judge KEPT, with reasoning), "
-    "'Downscale-Kandidaten' (titles KEPT but flagged for a lower-bitrate "
-    "transcode — these are NOT deletion candidates), and "
-    "'Learned principles' (rules you learned from debates).\n"
+    "Sonarr/Radarr/Lidarr, plus Keep/Discuss; card checkboxes + a "
+    "'Delete selected' button bulk-delete several at once.\n"
+    "- 'Curation' (admin) panels: 'Judge-protected titles' (what the judge "
+    "KEPT, with reasoning), 'Downscale candidates' (KEPT but flagged for a "
+    "lower-bitrate transcode — NOT deletion candidates), "
+    "'Upgrade candidates' (loved titles on weak files worth a better "
+    "version), 'Redundant storage' (duplicate versions/copies and the GB "
+    "they waste), and 'Learned principles' (rules you learned from "
+    "debates).\n"
+    "- 'Report' (admin): the curation report — monthly resolutions, GB "
+    "freed, the Stubbornness Index, and your yearly review.\n"
+    "- In their Plex: the 'Curatarr Recommended' playlists (per user; "
+    "movies/shows/anime/music) and the rotating 'Curatarr · ' collection "
+    "shelves you design weekly.\n"
     "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
     "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (running tasks) · "
     "'Libraries' / 'Users' (admin) · 'Settings'.\n"
@@ -78,9 +89,11 @@ APP_MAP_BLOCK = (
 LIBRARY_ACTIONS_BLOCK = (
     "LIBRARY ACTIONS: You never execute changes yourself from chat and never "
     "claim something was added, downloaded, queued, or removed. ADDING new "
-    "media is the user's job in Radarr/Sonarr/Lidarr. DELETING existing media "
-    "happens INSIDE Curatarr: the user approves a proposal in the Deletions "
-    "view ('Delete') or uses 'Delete & exit' in a deletion discussion, "
+    "media happens INSIDE Curatarr too: the '+ Add' button on Discovery "
+    "cards or the library browsers' add flow (admin) — not by hand in the "
+    "arr. DELETING existing media happens INSIDE Curatarr: the user "
+    "approves a proposal in the Deletions view ('Delete', or bulk via "
+    "'Delete selected') or uses 'Delete & exit' in a deletion discussion, "
     "and Curatarr executes it via the ARR — never send them to "
     "Sonarr/Radarr/Lidarr to delete files manually.\n"
 )
@@ -94,10 +107,17 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Exit discussion",
     "Stagnant",
     "Judge-protected titles",
-    "Downscale-Kandidaten",
+    "Downscale candidates",
+    "Upgrade candidates",
+    "Redundant storage",
     "Learned principles",
     "History & Taste",
     "Recommendations",
+    "Search your library…",
+    "+ Add",
+    "Delete selected",
+    "Curation",
+    "Report",
     "Deletions",
     "TV Shows",
     "Movies",
