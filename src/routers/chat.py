@@ -945,40 +945,15 @@ async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,
     Semantic search over the ChromaDB vector store.
     When *domain* is given, only vectors tagged with that domain are considered,
     eliminating cross-media-type contamination in the context window.
+
+    The retrieval core lives in services.semantic_search — SHARED with the
+    user-facing /api/library/semantic-search endpoint; this wrapper keeps the
+    chat injection format unchanged.
     """
-    try:
-        from src.vector_store.chromadb_wrapper import ChromaDBWrapper
-        from src.embeddings.embedding_generator import EmbeddingGenerator
-        gen = EmbeddingGenerator()
-        embedding = await gen.generate_embedding(query)
-        if not embedding:
-            return ""
-        chroma = ChromaDBWrapper()
-        where = {"domain": domain} if domain else None
-        results = chroma.query(query_embeddings=[embedding], n_results=n_results, where=where)
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
-        await gen.close()
-        watched = _watched_lookup(user_id, [m.get("title", "") for m in metas],
-                                  category=domain)
-        from src.services.size_norms import short_size_tag
-        lines = []
-        for doc, meta in zip(docs, metas):
-            title = meta.get("title", "Unknown")
-            genres = meta.get("genres", "")
-            themes = meta.get("themes", "")
-            tag = _watch_tag(watched.get(title))
-            stag = short_size_tag(tmdb_id=meta.get("tmdb_id"),
-                                  tvdb_id=meta.get("tvdb_id"),
-                                  plex_rating_key=meta.get("plex_rating_key"),
-                                  title=title)
-            lines.append(f"- {title} [{tag}]{(' ' + stag) if stag else ''} "
-                         f"({genres}{', '+themes if themes else ''}): {doc[:200]}")
-        return "\n".join(lines)
-    except Exception as e:
-        logger.debug("RAG failed: %s", e)
-        return ""
-    
+    from src.services.semantic_search import semantic_hits, format_rag_context
+    return format_rag_context(await semantic_hits(
+        query, n_results=n_results, domain=domain, user_id=user_id))
+
 
 def _fmt_field(value, fallback: str = "(not in our database)") -> str:
     """Format a metadata field for the hidden context block.

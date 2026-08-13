@@ -1026,6 +1026,29 @@ async def library_search(
     return {"service": service, "matches": matches}
 
 
+@router.get("/semantic-search")
+async def semantic_library_search(
+    q: str,
+    category: Optional[str] = None,
+    limit: int = 10,
+    user: User = Depends(get_current_user),
+):
+    """Natural-language search over the OWN library.
+
+    Rides the same ChromaDB retrieval the chat's hidden RAG uses
+    (services.semantic_search) — ranked owned titles with the caller's
+    watched-status tag and the size tag. Read-only, so no admin gate;
+    coverage follows the enrichment/vector index."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"query": q, "category": category, "results": []}
+    cat = category if category in ("movie", "show", "anime", "music") else None
+    from src.services.semantic_search import semantic_hits
+    hits = await semantic_hits(q, n_results=max(1, min(int(limit or 10), 25)),
+                               domain=cat, user_id=user.id)
+    return {"query": q, "category": cat, "results": hits}
+
+
 class LibraryAddRequest(BaseModel):
     service: str = Field(..., pattern="^(sonarr|radarr|lidarr)$")
     # ID fields — caller provides whichever the service needs
