@@ -364,13 +364,45 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
 _TRENDING_TTL_H = 24
 
 
-def _trending_fresh(cached: dict, now: datetime = None) -> bool:
-    """True when a cached tmdb_trending:{cat} blob is younger than the TTL."""
+def _trending_fresh(cached: dict, now: datetime = None,
+                    ttl_h: float = _TRENDING_TTL_H) -> bool:
+    """True when a cached {fetched_at, …} app_state blob is younger than ttl_h."""
     try:
         fetched = datetime.fromisoformat(cached.get("fetched_at") or "")
     except Exception:
         return False
-    return ((now or datetime.utcnow()) - fetched).total_seconds() < _TRENDING_TTL_H * 3600
+    return ((now or datetime.utcnow()) - fetched).total_seconds() < ttl_h * 3600
+
+
+async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
+    """SoulSync graph neighbours of the user's favourite artists — the
+    similar_artists field was fetched-and-discarded until now. Read-only
+    metadata (never the download endpoint), cached 168h per user; any
+    failure or an unconfigured SoulSync degrades to []."""
+    from src.services.app_state import get_state, set_state
+    key = f"soulsync_neighbors:{user_id}"
+    try:
+        cached = json.loads(get_state(key) or "{}")
+        if _trending_fresh(cached, ttl_h=168):
+            return cached.get("names") or []
+    except Exception:
+        pass
+    names: list = []
+    try:
+        from src.services import soulsync_client
+        seen = {(t or "").lower() for t in top_titles}
+        for artist in top_titles[:5]:
+            info = await soulsync_client.artist_info(artist)
+            for s in (info or {}).get("similar_artists") or []:
+                if s and s.lower() not in seen and s not in names:
+                    names.append(s)
+        names = names[:12]
+        if names:
+            set_state(key, json.dumps(
+                {"fetched_at": datetime.utcnow().isoformat(), "names": names}))
+    except Exception as e:
+        logger.debug("[music-neighbors] failed: %s", e)
+    return names
 
 
 def _trending_line(titles: list) -> str:
@@ -646,6 +678,15 @@ Output format:
             noun = "tracks/artists" if cat == "music" else "titles"
             trend = _trending_line(await _get_trending(cat))
             trend_block = f"\n{trend}" if trend else ""
+            if cat == "music":
+                from src.services.library_memory import normalize_title as _nt
+                owned_t = owned.get("titles") or set()
+                nb = [n for n in await _get_music_neighbors(user_id, top_titles)
+                      if _nt(n) not in owned_t and n.lower() not in owned_t]
+                if nb:
+                    trend_block += ("\nGraph neighbours of their favourite "
+                                    "artists (from the listening graph — only "
+                                    "if taste-fit): " + ", ".join(nb[:12]))
             # Soft nudge: the user's prominent taste anchors are the titles the
             # model is most tempted to echo straight back. Naming them helps —
             # but the HARD guarantee is partition() after parsing, which strips
