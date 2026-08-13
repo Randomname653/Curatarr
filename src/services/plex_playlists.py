@@ -6,8 +6,13 @@ strictly read-only against Plex). Per user and per video category, a playlist
 with the library-lane recommendations — the curator's picks appear where the
 household actually watches, per-account private:
 
-  Curatarr Recommended · Movies / · Shows / · Anime   (music excluded v1 —
-  artist recs don't map to playable playlist items)
+  Curatarr Recommended · Movies / · Shows / · Anime / · Music
+
+Music (probe-verified 2026-08-13, scripts/dev/probe_plex_music_playlist.py):
+artist recs resolve by name in the music sections, and an ALBUM ratingKey in
+an audio-playlist uri expands to all its tracks — so the music playlist is
+"one unheard album per recommended artist" (viewedLeafCount via the USER
+token = their listen state).
 
 Mechanics, probe-verified against the live server (2026-08-16):
 - playlists are ACCOUNT-private → created with the USER's own token
@@ -85,13 +90,17 @@ async def get_machine_identifier(force: bool = False) -> Optional[str]:
         return None
 
 
-async def list_video_playlists(token: str) -> list[dict]:
+async def list_playlists(token: str, playlist_type: str = "video") -> list[dict]:
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
         r = await c.get(f"{_base()}/playlists", headers=_headers(token),
-                        params={"playlistType": "video"})
+                        params={"playlistType": playlist_type})
     if r.status_code != 200:
         raise RuntimeError(f"playlist list HTTP {r.status_code}")
     return (r.json().get("MediaContainer") or {}).get("Metadata") or []
+
+
+async def list_video_playlists(token: str) -> list[dict]:
+    return await list_playlists(token, "video")
 
 
 async def delete_playlist(token: str, rating_key: str) -> None:
@@ -99,27 +108,28 @@ async def delete_playlist(token: str, rating_key: str) -> None:
         await c.delete(f"{_base()}/playlists/{rating_key}", headers=_headers(token))
 
 
-async def create_playlist(token: str, title: str, metadata_keys: list[str]) -> Optional[dict]:
+async def create_playlist(token: str, title: str, metadata_keys: list[str],
+                          playlist_type: str = "video") -> Optional[dict]:
     """Create a dumb (non-smart) playlist from item ratingKeys. Returns the
-    playlist metadata (ratingKey, leafCount) or None."""
+    playlist metadata (ratingKey, leafCount) or None. For audio playlists an
+    ALBUM key expands to all its tracks (probe-verified)."""
     mid = await get_machine_identifier()
     if not mid or not metadata_keys:
         return None
-    uri = (f"server://{mid}/com.plexapp.plugins.library"
-           f"/library/metadata/{','.join(metadata_keys)}")
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        def params(m):
+            uri = (f"server://{m}/com.plexapp.plugins.library"
+                   f"/library/metadata/{','.join(metadata_keys)}")
+            return {"type": playlist_type, "smart": "0",
+                    "title": title, "uri": uri}
         r = await c.post(f"{_base()}/playlists", headers=_headers(token),
-                         params={"type": "video", "smart": "0",
-                                 "title": title, "uri": uri})
+                         params=params(mid))
         if r.status_code == 400:
             # stale machineIdentifier after a server reinstall — refresh once
             mid = await get_machine_identifier(force=True)
             if mid:
-                uri = (f"server://{mid}/com.plexapp.plugins.library"
-                       f"/library/metadata/{','.join(metadata_keys)}")
                 r = await c.post(f"{_base()}/playlists", headers=_headers(token),
-                                 params={"type": "video", "smart": "0",
-                                         "title": title, "uri": uri})
+                                 params=params(mid))
     if r.status_code != 200:
         raise RuntimeError(f"playlist create HTTP {r.status_code}")
     meta = (r.json().get("MediaContainer") or {}).get("Metadata") or [{}]
@@ -249,3 +259,134 @@ async def push_user_playlists(user) -> dict:
 
     _save_snapshot(user.id, snap)
     return {"pushed": pushed}
+
+
+# ── MUSIC ─────────────────────────────────────────────────────────────────────
+
+MUSIC_PLAYLIST_TITLE = "Curatarr Recommended · Music"
+_MAX_MUSIC_ARTISTS = 5
+
+
+async def resolve_artist_key(name: str) -> Optional[str]:
+    """Artist name → Plex artist ratingKey via the music sections' title
+    filter (owner token — the library is shared). Music rec rows carry no
+    plex_rating_key (artists live outside MediaTechProfile), hence by-name.
+    None = not in Plex (yet) — caller skips and logs."""
+    token = _owner_token()
+    if not token or not name:
+        return None
+    from src.database.connection import get_db_session
+    from src.database.models import LibraryConfig
+    with get_db_session() as db:
+        sections = [lc.plex_section_key for lc in
+                    db.query(LibraryConfig)
+                    .filter(LibraryConfig.media_category == "music").all()]
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        for sec in sections:
+            try:
+                r = await c.get(f"{_base()}/library/sections/{sec}/all",
+                                headers=_headers(token),
+                                params={"type": "8", "title": name})
+                meta = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+                if meta:
+                    return str(meta[0].get("ratingKey"))
+            except Exception as e:
+                logger.debug("[playlists] artist lookup %r in %s failed: %s",
+                             name, sec, e)
+    return None
+
+
+async def pick_album_key(user_token: str, artist_key: str,
+                         check_first: int = 4) -> Optional[str]:
+    """The artist's first UNHEARD album for this account (viewedLeafCount is
+    absent from the children listing, so the first few albums get a single
+    metadata GET each with the USER token = their listen state). Falls back
+    to the plain first album."""
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        try:
+            r = await c.get(f"{_base()}/library/metadata/{artist_key}/children",
+                            headers=_headers(user_token))
+            albums = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+        except Exception as e:
+            logger.debug("[playlists] albums of %s failed: %s", artist_key, e)
+            return None
+        if not albums:
+            return None
+        for a in albums[:check_first]:
+            key = str(a.get("ratingKey"))
+            try:
+                r = await c.get(f"{_base()}/library/metadata/{key}",
+                                headers=_headers(user_token))
+                m = ((r.json().get("MediaContainer") or {}).get("Metadata") or [{}])[0]
+                if int(m.get("viewedLeafCount") or 0) == 0:
+                    return key
+            except Exception:
+                continue
+        return str(albums[0].get("ratingKey"))
+
+
+async def push_user_music_playlist(user) -> dict:
+    """One audio playlist per user: one unheard album for each of their top
+    library-lane music recommendations (album keys expand to their tracks).
+    Same freshness guard + find-delete-recreate as the video push."""
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation
+
+    if not user.plex_token:
+        logger.info("[playlists] %s: no stored Plex token — music playlist "
+                    "appears after their next login; skipped.", user.plex_username)
+        return {"pushed": [], "skipped": "no_token"}
+
+    with get_db_session() as db:
+        rows = (db.query(CachedRecommendation)
+                .filter(CachedRecommendation.user_id == user.id,
+                        CachedRecommendation.category == "music",
+                        CachedRecommendation.lane == "library")
+                .order_by(CachedRecommendation.confidence.desc())
+                .limit(_MAX_MUSIC_ARTISTS).all())
+        artists = [{"title": r.title, "cached_at": r.cached_at} for r in rows]
+    if not artists:
+        return {"pushed": []}
+
+    snap = _load_snapshot(user.id)
+    prev = snap.get("music") or {}
+    newest = max((a["cached_at"] for a in artists if a["cached_at"]), default=None)
+    if prev.get("pushed_at"):
+        try:
+            pushed_dt = datetime.fromisoformat(prev["pushed_at"])
+            fresh = newest is None or newest <= pushed_dt
+            recent = (datetime.utcnow() - pushed_dt).total_seconds() < _REPUSH_HOURS * 3600
+            if fresh and recent:
+                return {"pushed": []}
+        except Exception:
+            pass
+
+    keys, titles = [], []
+    for a in artists:
+        artist_key = await resolve_artist_key(a["title"])
+        if not artist_key:
+            logger.info("[playlists] %s/music: %r not found in Plex — skipped.",
+                        user.plex_username, a["title"])
+            continue
+        album_key = await pick_album_key(user.plex_token, artist_key)
+        if album_key:
+            keys.append(album_key)
+            titles.append(a["title"])
+    if not keys:
+        logger.info("[playlists] %s/music: no resolvable artists — skipped.",
+                    user.plex_username)
+        return {"pushed": []}
+
+    for pl in await list_playlists(user.plex_token, "audio"):
+        if pl.get("title") == MUSIC_PLAYLIST_TITLE:
+            await delete_playlist(user.plex_token, str(pl.get("ratingKey")))
+    meta = await create_playlist(user.plex_token, MUSIC_PLAYLIST_TITLE, keys,
+                                 playlist_type="audio")
+    snap["music"] = {"pushed_at": datetime.utcnow().isoformat(),
+                     "playlist_key": (meta or {}).get("ratingKey"),
+                     "titles": titles}
+    _save_snapshot(user.id, snap)
+    logger.info("[playlists] %s: pushed '%s' (%d albums, %s tracks)",
+                user.plex_username, MUSIC_PLAYLIST_TITLE, len(keys),
+                (meta or {}).get("leafCount"))
+    return {"pushed": ["music"]}

@@ -262,6 +262,29 @@ async def _run_playlist_push(deep: bool = False) -> bool:
     return all_ok
 
 
+async def _run_music_playlist_push(deep: bool = False) -> bool:
+    """Push/refresh every active user's Curatarr-Recommended MUSIC playlist
+    (one unheard album per recommended artist). Token-less users are
+    logged-and-skipped, same contract as the video push."""
+    from src.database.connection import get_db_session
+    from src.database.models import User
+    from src.services.plex_playlists import push_user_music_playlist
+
+    with get_db_session() as db:
+        users = db.query(User).filter(User.is_active == True).all()  # noqa: E712
+        users = [type("U", (), {"id": u.id, "plex_username": u.plex_username,
+                                "plex_token": u.plex_token})() for u in users]
+    all_ok = True
+    for u in users:
+        try:
+            await push_user_music_playlist(u)
+        except Exception as e:
+            logger.warning("[custodian] music playlist push failed for %s: %s",
+                           u.plex_username, e)
+            all_ok = False
+    return all_ok
+
+
 async def _run_collections(deep: bool = False) -> bool:
     """Design + push the household's "Curatarr · " collection shelves."""
     from src.services.collection_designer import design_collections
@@ -320,6 +343,10 @@ def _registry() -> list[Task]:
              _run_recs, needs_llm=True),
         Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
              _run_playlist_push),
+        # Music variant: one unheard album per recommended artist, per user.
+        # Plex reads/writes only — no LLM gate.
+        Task("plex_music_playlist", "Curatarr music playlists", 168.0,
+             _run_music_playlist_push),
         # Household collections: the 27B designs rotating themed shelves from
         # the OWNED library (section-global — one set via the owner token).
         Task("plex_collections", "Curatarr collections", 168.0,

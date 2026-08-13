@@ -56,12 +56,16 @@ async def create_collection(section_key: str, plex_type: int, title: str,
                             keys: list[str]) -> Optional[dict]:
     """Create a dumb collection from item ratingKeys (movies type=1,
     shows/anime type=2 with SERIES keys). Returns the collection metadata
-    or None; a 400 refetches the machineIdentifier once (server reinstall)."""
+    or None; a 400 refetches the machineIdentifier once (server reinstall).
+
+    Generous timeout: show-collection creates kick off server-side metadata
+    work and can exceed the module default (a 20s timeout dropped one of
+    four shelves on the first live run)."""
     token = _owner_token()
     mid = await get_machine_identifier()
     if not token or not mid or not keys:
         return None
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(timeout=60.0) as c:
         def params(m):
             uri = (f"server://{m}/com.plexapp.plugins.library"
                    f"/library/metadata/{','.join(keys)}")
