@@ -588,6 +588,23 @@ async def downscale_done(
     return {"status": "ok", "id": row.id, "title": row.title or row.identifier}
 
 
+@router.get("/upgrade-candidates")
+async def get_upgrade_candidates(_user: User = Depends(require_admin)):
+    """Loved-but-lean titles: strong watch/feedback signal on a file below
+    1080p or well under its class median. Read-only — acting on it stays a
+    manual click in the arr (no auto-regrab)."""
+    from src.services.upgrade_curation import upgrade_candidates
+    return {"candidates": upgrade_candidates()}
+
+
+@router.get("/redundancy")
+async def get_redundancy(_user: User = Depends(require_admin)):
+    """Redundant-storage audit (intra-item versions + cross-item same-id
+    copies) — duplicate_report() finally gets a caller."""
+    from src.services.size_norms import duplicate_report
+    return duplicate_report()
+
+
 @router.get("/deletions")
 async def get_deletion_proposals(
     category: Optional[str] = Query(None),
