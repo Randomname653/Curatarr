@@ -669,6 +669,20 @@ select option { background: var(--bg2); }
           <div class="cur-body"><div id="downscale-content"></div></div>
         </details>
 
+        <details class="cur-section" ontoggle="if (this.open) loadUpgrades()">
+          <summary>⬆️ Upgrade candidates
+            <span class="panel-hint">The inverse of downscale: titles you demonstrably love sitting on weak files (below 1080p or a lean bitrate). Acting on it is your click in the arr — nothing is re-grabbed automatically.</span>
+          </summary>
+          <div class="cur-body"><div id="upgrade-content"></div></div>
+        </details>
+
+        <details class="cur-section" ontoggle="if (this.open) loadRedundancy()">
+          <summary>🧬 Redundant storage
+            <span class="panel-hint">Duplicate versions of the same title (4K Remux + 1080p) and the same id kept as separate items — the GB you could reclaim without losing anything.</span>
+          </summary>
+          <div class="cur-body"><div id="redundancy-content"></div></div>
+        </details>
+
         <details class="cur-section" ontoggle="if (this.open) loadPrinciples()">
           <summary>🧠 Learned principles
             <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. contradiction = your call.</span>
@@ -3920,6 +3934,59 @@ async function loadDownscale() {
     }).join('');
   } catch(e) {
     el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load downscale candidates')}</p>`;
+  }
+}
+
+async function loadUpgrades() {
+  const el = document.getElementById('upgrade-content');
+  if (!el) return;
+  el.innerHTML = '<p class="loading">Scanning for loved-but-lean titles…</p>';
+  try {
+    const r = await api('/api/recommendations/upgrade-candidates');
+    const rows = r.candidates || [];
+    if (!rows.length) {
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">No upgrade candidates — everything you love is already in decent shape.</p>';
+      return;
+    }
+    el.innerHTML = `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">${rows.length} title(s) worth a better version</div>` +
+      rows.map(p => `<div class="panel-item">
+        <div class="panel-item-head">
+          <div><strong>${esc(p.title || '—')}</strong>
+            <span class="badge amber">${esc(p.weakness || '')}</span>
+            <span class="panel-item-meta">${esc(p.category || '')}${p.size_gb ? ` · ${p.size_gb} GB` : ''}</span></div>
+        </div>
+        <div class="panel-item-sub">Why it qualifies: ${esc(p.love_reason || '')}</div>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load upgrade candidates')}</p>`;
+  }
+}
+
+async function loadRedundancy() {
+  const el = document.getElementById('redundancy-content');
+  if (!el) return;
+  el.innerHTML = '<p class="loading">Auditing redundant storage…</p>';
+  try {
+    const r = await api('/api/recommendations/redundancy');
+    const intra = r.intra_item || [];
+    const cross = r.cross_item || [];
+    if (!intra.length && !cross.length) {
+      el.innerHTML = '<p style="color:var(--text3);font-size:13px">No redundant versions found — the library keeps one copy per title.</p>';
+      return;
+    }
+    const line = (t, n, gb, label) => `<div class="panel-item">
+      <div class="panel-item-head"><div><strong>${esc(t)}</strong>
+        <span class="badge muted">${n} ${label}</span>
+        <span class="badge amber">${gb} GB redundant</span></div></div>
+    </div>`;
+    el.innerHTML =
+      `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">Total reclaimable: <strong style="color:var(--amber)">${r.total_redundant_gb || 0} GB</strong> · ${intra.length + cross.length} title(s)</div>` +
+      (intra.length ? `<div style="font-size:12px;color:var(--text3);margin:8px 0 6px">Multiple qualities of one item (${r.intra_redundant_gb} GB)</div>` +
+        intra.map(([t, n, gb]) => line(t, n, gb, 'versions')).join('') : '') +
+      (cross.length ? `<div style="font-size:12px;color:var(--text3);margin:12px 0 6px">Same title as separate items (${r.cross_redundant_gb} GB)</div>` +
+        cross.map(([t, n, gb]) => line(t, n, gb, 'copies')).join('') : '');
+  } catch(e) {
+    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load redundancy audit')}</p>`;
   }
 }
 
