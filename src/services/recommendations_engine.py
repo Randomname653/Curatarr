@@ -910,11 +910,22 @@ async def generate_deletion_proposals(
         taste_blurb = ""
         disliked_lc: set = set()
         feedback_sentiment_lc: dict = {}
+        cal_anchors = None
+        ts_genres: dict = {}
         if tv:
             # Use the taste section that matches THIS category — not a blind
             # [:400] that always returned the [MOVIE] block (which judged anime/
             # show/music pitches by the user's film taste).
             taste_blurb = _taste_section(tv.summary_text, category)
+            try:
+                # genre affinity of THIS category — the taste fallback for
+                # candidates without an embedding (eval 1.7)
+                _td = json.loads(tv.genre_affinity or "{}")
+                ts_genres = {g.lower(): s for g, s in
+                             ((_td.get(category) or {}).get("genre_affinity")
+                              or {}).items()}
+            except Exception:
+                ts_genres = {}
             encrypted = db.query(EncryptedTasteVector).filter(
                 EncryptedTasteVector.user_id == user_id,
                 EncryptedTasteVector.media_category == category
@@ -922,6 +933,12 @@ async def generate_deletion_proposals(
             if encrypted and encrypted.encrypted_blob:
                 _blob = json.loads(encrypted.encrypted_blob)
                 user_vector = _blob.get("embedding")
+                # Global calibration anchors from the last taste rebuild
+                # (eval 1.6) — per-batch anchors made stored scores
+                # non-stationary across runs.
+                _p10, _p90 = _blob.get("cal_p10"), _blob.get("cal_p90")
+                if _p10 is not None and _p90 is not None and (_p90 - _p10) > 1e-3:
+                    cal_anchors = (float(_p10), float(_p90))
                 # explicit owner feedback finally gets a reader: a recorded
                 # dislike nudges a candidate UP the deletion list, recorded
                 # praise nudges it down (soft — taste mismatch still rules)
@@ -1261,18 +1278,49 @@ async def generate_deletion_proposals(
     # full range and reflects real RELATIVE taste-fit. Items with no embedding
     # get a neutral 0.5. Scoring (size + rating swings) is unchanged from here.
     _cos_vals = [p["cosine"] for p in prelim if p["cosine"] is not None]
-    _lo, _hi = _cosine_anchors(_cos_vals)
+    if cal_anchors:
+        # Anchors from the last taste rebuild: computed once against the
+        # WHOLE category corpus, so the same item scores the same across
+        # runs regardless of batch composition.
+        _lo, _hi = cal_anchors
+        _anchor_src = "global"
+    else:
+        _lo, _hi = _cosine_anchors(_cos_vals)
+        _anchor_src = "batch"
     logger.info(
-        "[deletions] %s: %d/%d candidates have embeddings; cosine anchors p10=%.3f p90=%.3f",
-        category, len(_cos_vals), len(prelim), _lo, _hi,
+        "[deletions] %s: %d/%d candidates have embeddings; cosine anchors "
+        "p10=%.3f p90=%.3f (%s)",
+        category, len(_cos_vals), len(prelim), _lo, _hi, _anchor_src,
     )
     # Tech-profile index for outlier-based size scoring — loaded once (a DB query
     # per candidate would be thousands). Empty when the tech sync hasn't run yet,
     # in which case size_pts falls back to today's blanket log1p below.
     from src.services.size_norms import load_tech_index, size_outlier
     _tech_idx = load_tech_index()
+    _taste_src_counts = {"embedding": 0, "genre": 0, "none": 0}
     for p in prelim:
-        mismatch = _cosine_to_mismatch(p["cosine"], _lo, _hi)
+        # Taste source (eval 1.7): items without an embedding are missing
+        # NOT at random (enrichment failures, keying epochs, obscure titles)
+        # — a silent neutral 0.5 pinned them all mid-range. Genre affinity
+        # is a real, if coarser, taste signal; only items with neither get
+        # the neutral value, now with a visible reason code.
+        if p["cosine"] is not None:
+            mismatch = _cosine_to_mismatch(p["cosine"], _lo, _hi)
+            taste_src = "embedding"
+        else:
+            _genres = [g.strip().lower()
+                       for g in (p["item"].get("genres") or "").split(",")
+                       if g.strip()]
+            _overlap = sum(ts_genres.get(g, 0) for g in _genres)
+            if ts_genres and _genres:
+                # damped to [0.15, 0.85] — coarse metadata must not produce
+                # extreme verdicts either way
+                mismatch = 0.85 - 0.7 * min(1.0, _overlap)
+                taste_src = "genre"
+            else:
+                mismatch = 0.5
+                taste_src = "none"
+        _taste_src_counts[taste_src] += 1
         # Vector mismatch is the dominant signal (0-80). Size is logarithmic so
         # huge files don't dominate; rating swing is protective above 5/10 and
         # penalising below. USER rating swing (music only) weights the user's own
@@ -1321,12 +1369,21 @@ async def generate_deletion_proposals(
                 "item": p["item"],
                 "score": del_score,
                 "mismatch": mismatch,
+                "taste_source": taste_src,   # embedding / genre / none
                 "rating_breakdown": p["rating_breakdown"],
                 "rating": p["rating"],
                 "arr_rating": p["arr_rating"],
                 "cached_rating": p["cached_rating"],
                 "user_rating": p["user_rating"],   # Plex stars (music) for the pitch
             })
+
+    if _taste_src_counts["genre"] or _taste_src_counts["none"]:
+        logger.info(
+            "[deletions] %s taste sources: %d embedding, %d genre-fallback, "
+            "%d without any taste signal (neutral 0.5)",
+            category, _taste_src_counts["embedding"],
+            _taste_src_counts["genre"], _taste_src_counts["none"],
+        )
 
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
 
@@ -1884,7 +1941,8 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     do NOT mix them in one sort: enriched items rank among themselves by
     cosine, un-enriched items among themselves by genre overlap, and the
     enriched group is placed first — we have real taste-fit data for those.
-    Small ``monitored`` nudge in both.
+    ``monitored`` breaks ties and recorded dislikes group last (rank flags,
+    not score bonuses — flat bonuses drowned the narrow cosine band).
 
     Unlike the old version this ALWAYS ranks — no early-out for small
     libraries. ``generate_recommendations`` only feeds the LLM the first ~30
@@ -1916,17 +1974,21 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     if not user_vector and not genre_affinity:
         return items[:top_n]
 
-    def _monitored_bonus(item: dict) -> float:
-        bonus = 0.1 if item.get("monitored") else 0.0
-        # a recorded dislike should never rank high in RECOMMENDATIONS —
-        # push it down in both the vector and the genre branch
-        if (item.get("title") or "").lower() in disliked_lc:
-            bonus -= 0.25
-        return bonus
+    # Rank-based flags instead of flat score bonuses (eval finding 1.2):
+    # the observed cosine band is only ~0.14 wide (anisotropic space), so
+    # the old +0.10/-0.25 additive bonus was 70-180% of the entire usable
+    # taste signal — monitored status could outrank any taste fit. As sort-
+    # tuple components they can only group (dislikes last) and break ties
+    # (monitored first), never drown the cosine.
+    def _dislike_rank(item: dict) -> int:
+        return 0 if (item.get("title") or "").lower() in disliked_lc else 1
+
+    def _monitored_rank(item: dict) -> int:
+        return 1 if item.get("monitored") else 0
 
     def _genre_score(item: dict) -> float:
         genres = [g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()]
-        return sum(genre_affinity.get(g, 0) for g in genres) + _monitored_bonus(item)
+        return sum(genre_affinity.get(g, 0) for g in genres)
 
     user_vector_n = _normalize_vec(user_vector) if user_vector else None
 
@@ -1954,7 +2016,7 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
                 # 0.1 monitored bonus.
                 emb_n = _normalize_vec(emb)
                 if emb_n is not None and user_vector_n is not None:
-                    return float(np.dot(user_vector_n, emb_n)) + _monitored_bonus(item)
+                    return float(np.dot(user_vector_n, emb_n))
         except Exception:
             pass
         return None
@@ -1964,9 +2026,10 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     for item in items:
         vs = _vector_score(item)
         if vs is not None:
-            vectored.append((vs, item))
+            vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
         else:
-            genre_only.append((_genre_score(item), item))
+            genre_only.append(((_dislike_rank(item), _genre_score(item),
+                                _monitored_rank(item)), item))
 
     vectored.sort(key=lambda t: t[0], reverse=True)
     genre_only.sort(key=lambda t: t[0], reverse=True)
