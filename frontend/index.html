@@ -470,6 +470,10 @@ select option { background: var(--bg2); }
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Curation
       </div>
+      <div class="sb-item admin-only" onclick="showView('report',this)" style="display:none">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Report
+      </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">Manage</div>
@@ -693,6 +697,18 @@ select option { background: var(--bg2); }
     </div>
 
     <!-- KNOWLEDGE BASE -->
+    <!-- REPORT: the curation cockpit — aggregated debate history, storage wins,
+         stubbornness, redundancy, taste evolution. Data nobody else has. -->
+    <div class="view" id="report-view">
+      <div class="view-header">
+        <h1>Curation Report</h1>
+        <p>What the curator and you actually did with this library: resolutions, freed storage, the titles you defend but never touch — and a yearly review in the curator's own words.</p>
+      </div>
+      <div class="view-body">
+        <div id="report-content"><p class="loading">Loading…</p></div>
+      </div>
+    </div>
+
     <div class="view" id="enrich-view">
       <div class="view-header">
         <h1>Knowledge Base</h1>
@@ -1621,7 +1637,7 @@ function showView(name, btn) {
   // Admin-only views — defense-in-depth on top of the hidden nav items + the
   // require_admin endpoints: never render the shell for a non-admin, even via a
   // stray programmatic call. (Library config + orphaned + deletions = curation.)
-  if (!currentUser?.is_admin && ['deletions','curation','libraries','admin','reclassify'].includes(name)) return;
+  if (!currentUser?.is_admin && ['deletions','curation','libraries','admin','reclassify','report'].includes(name)) return;
   document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   // Clear all views — remove active class AND reset any inline display styles
@@ -1643,7 +1659,98 @@ function showView(name, btn) {
   if (name==='arr-radarr') loadArrPage('radarr');
   if (name==='arr-lidarr') loadArrPage('lidarr');
   if (name==='reclassify') loadReclassify();
+  if (name==='report') loadReport();
   // tasks view uses live SSE, no manual load needed
+}
+
+// ── Curation Report (admin) ──────────────────────────────────────────────
+function _repBar(pct, color) {
+  return `<div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden"><div style="width:${Math.min(100, pct)}%;height:100%;background:${color}"></div></div>`;
+}
+
+async function loadReport() {
+  const el = document.getElementById('report-content');
+  el.innerHTML = '<p class="loading">Crunching the curation ledger…</p>';
+  let d;
+  try { d = await api('/api/stats/curation?months=12'); }
+  catch (e) { el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load report')}</p>`; return; }
+  const t = d.totals || {};
+  const resTotal = (t.consensus || 0) + (t.overrides || 0);
+  const maxAct = Math.max(1, ...(d.months || []).map(m => m.deleted + m.kept));
+  const maxGb = Math.max(1, ...(d.months || []).map(m => m.gb_freed || 0));
+
+  const tiles = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">
+      ${[['GB freed', t.gb_freed || 0], ['Deleted', t.deleted || 0],
+         ['Kept after debate', t.kept || 0],
+         ['Override rate', resTotal ? Math.round(100 * (t.overrides || 0) / resTotal) + '%' : '—'],
+         ['Redundant on disk', (d.duplicates?.total_redundant_gb || 0) + ' GB']]
+        .map(([l, v]) => `<div class="card" style="text-align:center;padding:14px">
+          <div style="font-size:22px;font-weight:700;color:var(--amber)">${esc(String(v))}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">${esc(l)}</div></div>`).join('')}
+    </div>`;
+
+  const monthRows = (d.months || []).map(m => {
+    const act = m.deleted + m.kept;
+    return `<div style="display:grid;grid-template-columns:64px 1fr 1fr 90px;gap:10px;align-items:center;margin-bottom:6px;font-size:11px;color:var(--text3)">
+      <span>${esc(m.month)}</span>
+      <div title="${m.deleted} deleted / ${m.kept} kept">${_repBar(100 * act / maxAct, 'var(--amber)')}</div>
+      <div title="${m.gb_freed} GB freed">${_repBar(100 * (m.gb_freed || 0) / maxGb, 'var(--success)')}</div>
+      <span>${act ? `${m.deleted}✕ ${m.kept}✓` : ''}${m.gb_freed ? ` · ${m.gb_freed} GB` : ''}</span>
+    </div>`;
+  }).join('');
+
+  const resSplit = resTotal ? `
+    <div style="margin:14px 0 20px">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px">How debates ended: <strong style="color:var(--text)">${t.consensus} consensus</strong> · <strong style="color:var(--amber)">${t.overrides} overrides</strong></div>
+      <div style="display:flex;height:10px;border-radius:3px;overflow:hidden">
+        <div style="width:${Math.round(100 * t.consensus / resTotal)}%;background:var(--bg3);border:1px solid var(--border)"></div>
+        <div style="flex:1;background:var(--amber)"></div>
+      </div>
+    </div>` : '';
+
+  const stubborn = (d.stubbornness || []).length ? `
+    <h3 style="font-size:14px;margin:20px 0 8px">🪨 Stubbornness Index <span style="font-weight:400;color:var(--text3);font-size:12px">kept over the curator's objection, untouched ${(d.stubbornness || []).length ? '90+' : ''} days</span></h3>
+    ${d.stubbornness.map(s => `<div class="panel-item">
+      <div class="panel-item-head"><div><strong>${esc(s.title)}</strong>
+        <span class="badge muted">${esc(s.category || '')}</span>
+        <span class="badge amber">${s.days_since_play == null ? 'never played since' : s.days_since_play + ' days untouched'}</span></div></div>
+      ${s.curator_stance ? `<div class="panel-item-sub">Curator's standing objection: ${esc(s.curator_stance)}</div>` : ''}
+    </div>`).join('')}` : '';
+
+  const taste = (d.taste_evolution || []).length ? `
+    <h3 style="font-size:14px;margin:20px 0 8px">🧭 Taste evolution <span style="font-weight:400;color:var(--text3);font-size:12px">your latest recorded verdicts</span></h3>
+    ${d.taste_evolution.map(f => `<div class="panel-item">
+      <div class="panel-item-head"><div><strong>${esc(f.title || '')}</strong>
+        <span class="badge ${f.sentiment === 'positive' ? 'amber' : 'muted'}">${esc(f.sentiment || '')}${f.weight > 1 ? ' ·×' + f.weight : ''}</span>
+        <span class="panel-item-meta">${esc((f.date || '').slice(0, 10))} · ${esc(f.category || '')}</span></div></div>
+      ${f.reason ? `<div class="panel-item-sub">${esc(f.reason)}</div>` : ''}
+    </div>`).join('')}` : '';
+
+  const narrative = `
+    <h3 style="font-size:14px;margin:20px 0 8px">📜 Yearly review</h3>
+    <div class="card" style="padding:14px">
+      <div id="report-narrative" style="font-size:13px;line-height:1.7;color:var(--text2)">${d.narrative ? esc(d.narrative) : '<span style="color:var(--text3)">Not written yet.</span>'}</div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="writeYearlyReview(this)">${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>
+    </div>`;
+
+  el.innerHTML = tiles + resSplit +
+    `<h3 style="font-size:14px;margin:0 0 8px">Monthly activity <span style="font-weight:400;color:var(--text3);font-size:12px">resolutions · GB freed</span></h3>` +
+    monthRows + stubborn + taste + narrative;
+}
+
+async function writeYearlyReview(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Curator is writing…';
+  try {
+    const r = await api('/api/stats/curation/narrative', 'POST');
+    if (r.ok) document.getElementById('report-narrative').textContent = r.narrative;
+    else alert(r.error || 'Curator unavailable');
+  } catch (e) {
+    alert('Failed: ' + (e.message || '').slice(0, 120));
+  }
+  btn.disabled = false;
+  btn.textContent = 'Rewrite yearly review';
 }
 
 // ── Reclassify (Manage → anime ↔ TV library config audit) ────────────────
