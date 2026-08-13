@@ -59,9 +59,21 @@ def encrypt_vector(data: dict, key: bytes) -> dict:
 
 
 def decrypt_vector(blob: dict, key: bytes) -> Optional[dict]:
-    """Decrypt an AES-256-GCM blob. Returns None on failure."""
+    """Decrypt an AES-256-GCM blob. Returns None on failure.
+
+    v0 note (eval 1.9): the blobs the app ACTUALLY writes in Phase A store
+    their fields top-level ({"embedding": …, "version": 0}) — only the
+    dev-mode encrypt fallback ever produced the {"plaintext": …} wrapper.
+    Parse both, and never let a shape mismatch raise instead of the
+    documented None."""
     if blob.get("version") == 0:
-        return json.loads(blob["plaintext"])
+        try:
+            if "plaintext" in blob:
+                return json.loads(blob["plaintext"])
+            return blob
+        except Exception as e:
+            logger.warning("v0 blob parse failed: %s", e)
+            return None
     try:
         from Crypto.Cipher import AES
         cipher = AES.new(
@@ -78,48 +90,31 @@ def decrypt_vector(blob: dict, key: bytes) -> Optional[dict]:
         return None
 
 
-# ── TASTE VECTOR SCHEMA ───────────────────────────────────────────────────────
-# This is what gets encrypted and stored per user per media_type.
+# ── TASTE BLOB CONCURRENCY ────────────────────────────────────────────────────
+# (The old aspirational "schema_version 2" template — never produced by any
+# writer, never consumed by any reader — is gone; the REAL blob shape is
+# whatever taste_engine's rebuild writes plus the feedback fields merged in.)
 
-def empty_taste_vector() -> dict:
-    return {
-        # Positive signals (genre/theme/mood → score 0..1)
-        "genre_affinity": {},
-        "theme_affinity": {},
-        "mood_affinity": {},
-        "actor_affinity": {},
-        "director_affinity": {},
-        "similar_to": [],          # list of titles/artists user seems to like
+def cas_update_blob(db, etv_id: int, old_rev: int, blob: dict) -> bool:
+    """Optimistic write for the taste blob (eval 1.4). The blob is a
+    read-modify-write shared by the minutes-long taste rebuild and the
+    chat-feedback mergers — SQLite serialises the WRITES, not our RMW
+    cycle, so a late writer could silently clobber the other side's work.
+    Writes only if the stored ``rev`` still matches what the caller read;
+    on a miss the caller re-reads and re-merges. Caller commits."""
+    from sqlalchemy import func
 
-        # Negative signals
-        "genre_aversion": {},
-        "theme_aversion": {},
-        "mood_aversion": {},
-        "disliked_titles": [],
-
-        # Viewing patterns
-        "binge_series": [],         # [{series, episodes, duration_h, date}]
-        "avg_completion": 1.0,
-        "session_durations_h": [],  # rolling last 50
-
-        # Temporal patterns
-        "time_of_day_dist": {       # fraction of views per period
-            "night": 0.0,           # 0-6h
-            "morning": 0.0,         # 6-12h
-            "afternoon": 0.0,       # 12-18h
-            "evening": 0.0,         # 18-24h
-        },
-        "day_of_week_dist": {str(i): 0.0 for i in range(7)},
-
-        # Feedback from conversations
-        "explicit_feedback": [],    # [{title, sentiment, reason, date}]
-
-        # Meta
-        "watch_count": 0,
-        "computed_at": None,
-        "summary_text": "",
-        "schema_version": 2,
-    }
+    from src.database.models import EncryptedTasteVector
+    blob = dict(blob)
+    blob["rev"] = int(old_rev) + 1
+    n = (db.query(EncryptedTasteVector)
+         .filter(EncryptedTasteVector.id == etv_id,
+                 func.coalesce(func.json_extract(
+                     EncryptedTasteVector.encrypted_blob, "$.rev"), 0)
+                 == int(old_rev))
+         .update({"encrypted_blob": json.dumps(blob)},
+                 synchronize_session=False))
+    return bool(n)
 
 
 # ── VECTOR COMPUTATION ────────────────────────────────────────────────────────
@@ -157,45 +152,8 @@ def compute_temporal_patterns(entries: list) -> dict:
     return {"time_of_day_dist": time_dist, "day_of_week_dist": day_dist}
 
 
-def detect_binges_from_history(entries: list) -> list:
-    """Find all binge sessions in history."""
-    show_entries = [e for e in entries if e.media_type in ("show", "anime") and e.viewed_at]
-    show_entries.sort(key=lambda e: e.viewed_at)
-
-    binges = []
-    by_series: dict = {}
-    for e in show_entries:
-        key = e.series_title or e.title
-        by_series.setdefault(key, []).append(e)
-
-    for series, eps in by_series.items():
-        # Sliding window: find runs of 3+ episodes within BINGE_SESSION_HOURS
-        eps.sort(key=lambda e: e.viewed_at)
-        i = 0
-        while i < len(eps):
-            window = [eps[i]]
-            j = i + 1
-            while j < len(eps):
-                span_h = (eps[j].viewed_at - eps[i].viewed_at).total_seconds() / 3600
-                if span_h <= settings.BINGE_SESSION_HOURS:
-                    window.append(eps[j])
-                    j += 1
-                else:
-                    break
-            if len(window) >= settings.BINGE_EPISODE_THRESHOLD:
-                duration_h = (window[-1].viewed_at - window[0].viewed_at).total_seconds() / 3600
-                binges.append({
-                    "series": series,
-                    "episodes": len(window),
-                    "duration_h": round(duration_h, 1),
-                    "date": window[0].viewed_at.isoformat(),
-                    "media_type": eps[0].media_type,
-                })
-                i = j  # skip past this binge window
-            else:
-                i += 1
-
-    return binges[-20:]  # keep last 20 binges
+# (detect_binges_from_history is gone — it was a dead, already-diverged
+# duplicate of the inline binge detection in taste_engine, eval 1.11.)
 
 
 def merge_feedback_into_vector(vector: dict, feedback: dict) -> dict:

@@ -111,14 +111,24 @@ class WatchHistoryEntry(Base):
 
 
 class TasteVectorEntry(Base):
-    """Computed taste vector per user, refreshed after each Plex sync."""
+    """Computed taste vector per user, refreshed after each Plex sync.
+
+    COLUMN NAMES LIE (eval 1.11) — they predate the per-category rework and
+    a SQLite rename means a copy-migration, so they are documented instead:
+      genre_affinity    = the FULL per-category summary dict
+                          {cat: {genre_affinity, themes, moods, top_titles,
+                           watch_count, avg_completion, temporal, …}}
+      actor_affinity    = per-category THEME lists (never actors)
+      director_affinity = per-category MOOD lists (never directors)
+    Writer: taste_engine.compute_all_taste_vectors; readers:
+    recommendations_engine (type_data) + chat context builders."""
     __tablename__ = "taste_vectors"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-    genre_affinity = Column(Text, nullable=True)        # JSON {genre: score}
-    actor_affinity = Column(Text, nullable=True)        # JSON
-    director_affinity = Column(Text, nullable=True)     # JSON
+    genre_affinity = Column(Text, nullable=True)        # JSON — see docstring: full summary dict
+    actor_affinity = Column(Text, nullable=True)        # JSON — see docstring: themes
+    director_affinity = Column(Text, nullable=True)     # JSON — see docstring: moods
     top_titles = Column(Text, nullable=True)            # JSON list
     watch_count = Column(Integer, default=0)
     avg_completion = Column(Float, default=0.0)

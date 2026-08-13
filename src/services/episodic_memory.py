@@ -2067,36 +2067,51 @@ async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: 
         "source": source,
     }
 
+    from src.services.taste_vectors import cas_update_blob
+
     with get_db_session() as db:
         from src.database.models import EncryptedTasteVector
-        
-        etv = db.query(EncryptedTasteVector).filter(
-            EncryptedTasteVector.user_id == user_id,
-            EncryptedTasteVector.media_category == media_category
-        ).first()
-
-        if not etv:
-            return
 
         try:
-            # We are in "Phase A" (unencrypted), so load the JSON directly.
-            current_vector = json.loads(etv.encrypted_blob)
+            # Optimistic RMW (eval 1.4): re-read + re-merge when another
+            # writer (the minutes-long taste rebuild) got in between our
+            # read and our write — before this, whoever committed last
+            # silently clobbered the other side's changes.
+            for attempt in (1, 2):
+                etv = db.query(EncryptedTasteVector).filter(
+                    EncryptedTasteVector.user_id == user_id,
+                    EncryptedTasteVector.media_category == media_category
+                ).first()
+                if not etv:
+                    return
 
-            # If the vector already uses the new v1 encryption, bail out —
-            # we don't have the PIN here and can't decrypt.
-            if current_vector.get("version") == 1:
-                logger.warning(f"⚠️ [TASTE VECTOR] Vector for {media_category} is encrypted. Cannot update without PIN.")
+                # We are in "Phase A" (unencrypted), so load the JSON directly.
+                current_vector = json.loads(etv.encrypted_blob)
+
+                # If the vector already uses the new v1 encryption, bail out —
+                # we don't have the PIN here and can't decrypt.
+                if current_vector.get("version") == 1:
+                    logger.warning(f"⚠️ [TASTE VECTOR] Vector for {media_category} is encrypted. Cannot update without PIN.")
+                    return
+
+                old_rev = int(current_vector.get("rev") or 0)
+                # Merge the feedback (updates theme_aversion, disliked_titles, etc.)
+                updated_vector = merge_feedback_into_vector(current_vector, feedback_data)
+
+                if cas_update_blob(db, etv.id, old_rev, updated_vector):
+                    db.commit()
+                    break
+                db.rollback()
+                db.expire_all()
+                logger.info("[TASTE VECTOR] blob rev moved underneath us — "
+                            "re-merging (attempt %d)", attempt)
+            else:
+                logger.warning("⚠️ [TASTE VECTOR] feedback merge lost the CAS "
+                               "race twice — giving up this entry")
                 return
 
-            # Merge the feedback (updates genre_aversion, disliked_titles, etc.)
-            updated_vector = merge_feedback_into_vector(current_vector, feedback_data)
-
-            # Persist as plain JSON again so recommendations_engine can read it.
-            etv.encrypted_blob = json.dumps(updated_vector)
-            db.commit()
-            
             logger.info(f"🧠 [TASTE VECTOR UPDATED] Added {sentiment} feedback for '{title}'. Aspects: {aspects}")
-            
+
         except Exception as e:
             # Pass 82e: same fix as the sibling error handlers in this
             # module — include exception class so the log line is useful

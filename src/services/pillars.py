@@ -401,6 +401,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             EncryptedTasteVector.media_category == category).first()
         if etv and etv.encrypted_blob:
             blob = _json.loads(etv.encrypted_blob)
+            if blob.get("version") == 1:
+                logger.warning("[pillars] taste blob for %s is encrypted (v1) "
+                               "— judging without owner-feedback signals",
+                               category)
+                blob = {}
             tl = title.lower()
             fbs = [f for f in (blob.get("explicit_feedback") or [])
                    if (f.get("title") or "").lower() == tl]
