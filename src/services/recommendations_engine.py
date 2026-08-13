@@ -1303,10 +1303,16 @@ async def generate_deletion_proposals(
         # purpose — well below the mismatch signal and the consider cap.
         _tl = (p["item"].get("title") or "").lower()
         _sent, _fb_weight = feedback_sentiment_lc.get(_tl) or (None, 1.0)
-        if _sent == "negative" or _tl in disliked_lc:
+        # Latest statement wins: an explicit positive verdict overrides an
+        # older entry on the dislike list (the OR used to make dislikes a
+        # ratchet no later praise could undo). The bare dislike-list check
+        # only fires for titles WITHOUT any recorded feedback statement.
+        if _sent == "negative":
             feedback_swing = 15.0 * min(_fb_weight, 2.0)
         elif _sent == "positive":
             feedback_swing = -15.0 * min(_fb_weight, 2.0)
+        elif _tl in disliked_lc:
+            feedback_swing = 15.0
         else:
             feedback_swing = 0.0
         del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing

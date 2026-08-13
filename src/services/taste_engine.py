@@ -847,10 +847,16 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                 ).first()
 
                 # --- MEMORY CARRY-OVER ---
-                # Chat-sourced fields (feedback, dislikes, theme/mood aversion)
+                # Chat-sourced fields (feedback, dislikes, theme aversion)
                 # carry over across recomputes. genre_aversion does NOT any
                 # more: it is the freshly computed drop-rate — the old max()
                 # merge kept stale chat strings alive in it forever.
+                # theme_aversion now DECAYS on carry-over (60d half-life,
+                # same as the watch signal): before this, a casual complaint
+                # was the only immortal signal in the system while actual
+                # viewing behaviour faded — the reliability order was
+                # upside down. mood_aversion (never written, never read)
+                # is dropped from the blob entirely.
                 old_feedback = {}
                 if existing_etv and existing_etv.encrypted_blob:
                     try:
@@ -858,8 +864,17 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                         if old_data.get("version", 0) == 0:  # Phase A: unencrypted
                             old_feedback["explicit_feedback"] = old_data.get("explicit_feedback", [])
                             old_feedback["disliked_titles"] = old_data.get("disliked_titles", [])
-                            old_feedback["theme_aversion"] = old_data.get("theme_aversion", {})
-                            old_feedback["mood_aversion"] = old_data.get("mood_aversion", {})
+                            aversion = old_data.get("theme_aversion", {}) or {}
+                            if aversion and existing_etv.computed_at:
+                                days = max(0.0, (datetime.utcnow()
+                                                 - existing_etv.computed_at
+                                                 ).total_seconds() / 86400)
+                                factor = 0.5 ** (days / 60.0)
+                                aversion = {k: round(v * factor, 4)
+                                            for k, v in aversion.items()
+                                            if v * factor >= 0.05}
+                            old_feedback["theme_aversion"] = dict(
+                                sorted(aversion.items(), key=lambda x: -x[1])[:20])
                     except Exception as e:
                         logger.warning("Could not read old taste vector for carry-over: %s", e)
 
@@ -872,7 +887,6 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                     "explicit_feedback": old_feedback.get("explicit_feedback", []),
                     "disliked_titles": old_feedback.get("disliked_titles", []),
                     "theme_aversion": old_feedback.get("theme_aversion", {}),
-                    "mood_aversion": old_feedback.get("mood_aversion", {}),
                     "version": 0,  # 0 = unencrypted, 1 = AES-256
                 })
                 # --- ENDE NEU ---

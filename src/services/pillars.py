@@ -424,9 +424,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             aversions = sorted((blob.get("theme_aversion") or {}).items(),
                                key=lambda x: -x[1])[:5]
             if aversions:
-                av_str = ", ".join(k for k, _ in aversions)
+                # Scores included: without them a casual two-year-old
+                # complaint read rhetorically equal to a 1.0 aversion.
+                av_str = ", ".join(f"{k} ({v:.2f})" for k, v in aversions)
                 taste = (taste + " " if taste else "") + \
-                    f"Standing aversions the owner has voiced: {av_str}."
+                    f"Standing aversions the owner has voiced (0-1): {av_str}."
     except Exception as e:
         logger.debug("[pillars] owner-feedback failed for %r: %s", title, e)
 
