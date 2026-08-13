@@ -30,7 +30,8 @@ from src.services.plex_playlists import (_base, _headers, _owner_token,
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 20.0
+_TIMEOUT = 60.0   # section collection listings + creates both exceed 20s on
+                  # this server (Kometa keeps hundreds of collections around)
 
 COLLECTION_PREFIX = "Curatarr · "
 
