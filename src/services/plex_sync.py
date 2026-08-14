@@ -1564,10 +1564,8 @@ CRITICAL RULES (YOU MUST OBEY):
         # instead of 15, which is what actually blew the 300s timeouts
         # (125 tokens took 257s). Two seconds of unload buys a 30x speedup.
         try:
-            async with httpx.AsyncClient(timeout=15) as _c:
-                await _c.post(f"{ollama_url}/api/embeddings",
-                              json={"model": settings.EMBEDDING_MODEL,
-                                    "prompt": "unload", "keep_alive": 0})
+            from src.services.embed_service import evict_embedder
+            await evict_embedder()
         except Exception as _e:
             logger.debug("Taste summary: embedder evict failed: %s", _e)
         for model in model_order:

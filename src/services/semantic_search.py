@@ -23,19 +23,19 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
     chat context has always shown.
     """
     try:
-        from src.vector_store.chromadb_wrapper import ChromaDBWrapper
-        from src.embeddings.embedding_generator import EmbeddingGenerator
-        gen = EmbeddingGenerator()
-        embedding = await gen.generate_embedding(query)
+        from src.services.embed_service import embed_query
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        # QUERY side of the Nomic prefix schema — the one place the missing
+        # prefixes measurably hurt retrieval (asymmetric search).
+        embedding = await embed_query(query)
         if not embedding:
             return []
-        chroma = ChromaDBWrapper()
+        chroma = get_chroma_db()
         where = {"domain": domain} if domain else None
         results = chroma.query(query_embeddings=[embedding],
                                n_results=n_results, where=where)
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
-        await gen.close()
         from src.services.size_norms import short_size_tag
         watched = watched_lookup(user_id, [m.get("title", "") for m in metas],
                                  category=domain)
