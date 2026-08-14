@@ -481,6 +481,58 @@ async def _run_omdb_backfill_bg() -> None:
         _omdb_backfill_running = False
 
 
+# In-memory run guard, same reload-self-healing rationale as the OMDb flag.
+_emb_migration_running = False
+
+
+async def _run_embedding_migration_bg() -> None:
+    global _emb_migration_running
+    from src.services.embedding_migration import run_embedding_migration
+    from src.services.task_monitor import task_monitor
+    task = task_monitor.create(name="Embedding migration (v2-moe)",
+                               category="enrichment")
+    task_monitor.start(task)
+    try:
+        res = await run_embedding_migration(task)
+        if res.get("ok"):
+            task_monitor.done(task, f"Migrated {res['docs']} docs "
+                                    f"({res['failed']} failed), eval "
+                                    f"{res['eval_rate']:.0%}, "
+                                    f"{res['db_vectors']} DB vectors, "
+                                    f"{res['users_rebuilt']} users rebuilt — "
+                                    f"profile FLIPPED to v2")
+        else:
+            task_monitor.done(task, f"Migration did NOT flip: {res}")
+    except Exception as e:
+        logger.error("[emb-migration] failed: %s", e, exc_info=True)
+        task_monitor.done(task, f"Embedding migration failed: {e}")
+    finally:
+        _emb_migration_running = False
+
+
+@router.post("/embedding-migration")
+async def start_embedding_migration(user: User = Depends(get_current_user)):
+    """One-shot atomic embedding migration to nomic-embed-text-v2-moe
+    (parallel collection + prefixes + eval gate + profile flip). Admin via
+    the router-wide gate; progress in the Activity view. The legacy
+    collection is kept for rollback."""
+    global _emb_migration_running
+    if _emb_migration_running:
+        raise HTTPException(status_code=409, detail="Migration already running")
+    _emb_migration_running = True
+    from src.services.bg_tasks import track_task
+    track_task(_run_embedding_migration_bg(), name="embedding-migration")
+    return {"status": "started"}
+
+
+@router.post("/embedding-migration/rollback")
+async def rollback_embedding(user: User = Depends(get_current_user)):
+    """Flip the profile back to the untouched legacy corpus (see the
+    caveat on DB-side memory vectors in the service docstring)."""
+    from src.services.embedding_migration import rollback_embedding_migration
+    return rollback_embedding_migration()
+
+
 @router.post("/omdb-backfill")
 async def start_omdb_backfill(
     background_tasks: BackgroundTasks,
