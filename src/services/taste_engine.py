@@ -111,6 +111,44 @@ async def embed_text(text: str) -> Optional[list]:
     return vecs[0] if vecs else None
 
 
+def _unit(vec) -> Optional[list]:
+    """L2-normalize. Every vector entering the centroid average MUST be
+    unit-length: the legacy corpus stored RAW vectors (norm ~13) — mixing
+    one of those with unit vectors would weight it 13x in the mean."""
+    if vec is None or len(vec) == 0:
+        return None
+    norm = math.sqrt(sum(float(x) * float(x) for x in vec))
+    return [float(x) / norm for x in vec] if norm > 0 else None
+
+
+def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
+    """The item's STORED index vector, if it is in ChromaDB (eval 1.3).
+
+    The index and the taste side used to embed two DIFFERENT texts for the
+    same item (prose embedding_text vs the pipe template) — every cosine in
+    the system compared mismatched representations. Preferring the stored
+    vector unifies the representation for free and makes the post-migration
+    taste rebuild a lookup instead of a re-embed. Same id cascade as the
+    index writer: plex key → tmdb → anilist → title."""
+    try:
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        chroma = get_chroma_db()
+        candidates = [entry.get("plex_item_id")]
+        if profile:
+            candidates += [profile.get("tmdb_id"), profile.get("anilist_id")]
+        candidates += [entry.get("series_title"), entry.get("title")]
+        for cid in candidates:
+            if not cid:
+                continue
+            res = chroma.get_by_id(str(cid))
+            emb = res.get("embedding") if res else None
+            if emb is not None and len(emb):
+                return _unit(list(emb))
+    except Exception as e:
+        logger.debug("chroma item lookup failed: %s", e)
+    return None
+
+
 def weighted_average_embedding(embeddings_weights: list) -> Optional[list]:
     """
     Compute weighted average of embeddings.
@@ -561,6 +599,8 @@ async def compute_taste_vector_for_user(
     embeddings_weights = []
     sem = asyncio.Semaphore(10)
     _embed_done = 0
+    from src.services.embed_service import get_profile as _emb_profile
+    _emb_model = _emb_profile().get("model") or "?"
 
     async def embed_entry(weight: float, entry: dict):
         if _tv_task.status.value == "skipped":
@@ -574,13 +614,22 @@ async def compute_taste_vector_for_user(
         if not profile:
             return None, weight
 
+        # Preferred source: the item's STORED index vector (eval 1.3 —
+        # one representation for index and taste; also makes the
+        # post-migration rebuild a cheap lookup instead of a re-embed).
+        doc_vec = _chroma_item_vector(entry, profile)
+        if doc_vec is not None:
+            return doc_vec, weight
+
         emb_ts = get_emb_ts(entry)
-        cached_emb = cache.get_cache(f"emb:{pid}")
-        cached_ts = (cache.get_cache(f"emb_ts:{pid}") or {}).get("response")
+        # Model-scoped cache key: a model flip must never serve vectors
+        # from the previous embedding space.
+        cached_emb = cache.get_cache(f"emb:{_emb_model}:{pid}")
+        cached_ts = (cache.get_cache(f"emb_ts:{_emb_model}:{pid}") or {}).get("response")
 
         # Use cached embedding if enrichment hasn't changed since last embed
         if cached_emb and cached_ts == emb_ts:
-            return cached_emb["response"], weight
+            return _unit(cached_emb["response"]), weight
 
         text = build_item_text_dict(entry, profile)
         if not text:
@@ -592,10 +641,10 @@ async def compute_taste_vector_for_user(
             emb = await embed_text(text)
 
         if emb:
-            cache.set_cache(f"emb:{pid}", emb, days=90)
-            cache.set_cache(f"emb_ts:{pid}", emb_ts if emb_ts else "none", days=90)
+            cache.set_cache(f"emb:{_emb_model}:{pid}", emb, days=90)
+            cache.set_cache(f"emb_ts:{_emb_model}:{pid}", emb_ts if emb_ts else "none", days=90)
 
-        return emb, weight
+        return _unit(emb) if emb else None, weight
 
     tasks = [embed_entry(w, e) for w, e in enriched_entries]
 
@@ -737,7 +786,8 @@ async def compute_taste_vector_for_user(
     }
 
 
-async def compute_all_taste_vectors(user_id: int, categories: list = None):
+async def compute_all_taste_vectors(user_id: int, categories: list = None,
+                                    skip_summaries: bool = False):
     """
     Compute taste vectors for the given categories (default: all).
     Stores in TasteVectorEntry (plain text for chat context)
@@ -757,10 +807,14 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
         logger.warning("No taste data for user %d", user_id)
         return
 
-    # Generate LLM summaries per category
+    # Generate LLM summaries per category. skip_summaries=True (the
+    # embedding-migration rebuild) recomputes only vectors/stats — the
+    # persist block below merges per-category summaries from the EXISTING
+    # row, so the curator-written texts survive untouched and no GPU/LLM
+    # call happens.
     from src.services.plex_sync import _generate_taste_summary, TYPE_LABELS
     summary_parts = []
-    for cat, res in all_results.items():
+    for cat, res in ({} if skip_summaries else all_results).items():
         summary = await _generate_taste_summary(
             user_id=user_id,
             media_type=cat,
@@ -947,8 +1001,11 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None):
                         existing_etv = fresh or existing_etv
                     existing_etv.computed_at = datetime.utcnow()
                     existing_etv.watch_count = res["watch_count"]
+                    # skip_summaries rebuilds produce no parts — keep the
+                    # existing curator-written summary in that case.
                     existing_etv.summary_text = next(
-                        (p for p in summary_parts if f"[{cat.upper()}]" in p), ""
+                        (p for p in summary_parts if f"[{cat.upper()}]" in p),
+                        existing_etv.summary_text or "",
                     )
                 else:
                     blob_dict["rev"] = 1
