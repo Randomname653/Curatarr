@@ -38,13 +38,21 @@ class ChromaDBWrapper:
     - Managing metadata
     """
     
-    def __init__(self, collection_name: str = "media_knowledge"):
+    def __init__(self, collection_name: str = None):
         """
         Initialize ChromaDB client and collection.
-        
+
         Args:
-            collection_name: Name of the collection to use
+            collection_name: Name of the collection to use. None → the
+                active embedding profile's collection (media_knowledge
+                until the migration flips it).
         """
+        if collection_name is None:
+            try:
+                from src.services.embed_service import get_profile
+                collection_name = get_profile().get("collection") or "media_knowledge"
+            except Exception:
+                collection_name = "media_knowledge"
         # Pass 97: explicitly disable PostHog telemetry. ChromaDB ≥0.5
         # defaults to anonymized_telemetry=True and ships usage events
         # (``collection_query``, ``collection_add``, OS, version, an
@@ -291,15 +299,33 @@ class ChromaDBWrapper:
 # ── Lazy singleton accessor ───────────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
+def _cached_wrapper() -> ChromaDBWrapper:
+    return ChromaDBWrapper()
+
+
 def get_chroma_db() -> ChromaDBWrapper:
     """Return the process-wide ChromaDB wrapper, instantiated on first call.
 
-    Memoized via ``functools.lru_cache(maxsize=1)``. Replaces the previous
-    module-level ``chroma_db = ChromaDBWrapper()`` which opened a
-    PersistentClient at import time and could crash the whole app before
-    it ever started.
+    Profile-aware (eval package 2): the active embedding profile names the
+    collection to serve; when the migration runner flips the profile, the
+    cached wrapper is rebuilt so queries and writes move to the new
+    collection together with the new model — never partially.
     """
-    return ChromaDBWrapper()
+    inst = _cached_wrapper()
+    try:
+        from src.services.embed_service import get_profile
+        wanted = get_profile().get("collection") or "media_knowledge"
+        if inst.collection_name != wanted:
+            refresh_singleton()
+            inst = _cached_wrapper()
+    except Exception:
+        pass
+    return inst
+
+
+def refresh_singleton() -> None:
+    """Drop the cached wrapper (called by embed_service.set_profile)."""
+    _cached_wrapper.cache_clear()
 
 
 def __getattr__(name):

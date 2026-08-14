@@ -101,25 +101,14 @@ def completion_weight(entry: WatchHistoryEntry) -> float:
 # ── EMBEDDING ─────────────────────────────────────────────────────────────────
 
 async def embed_text(text: str) -> Optional[list]:
-    """Generate embedding via Ollama nomic-embed-text."""
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                f"{settings.effective_ollama}/api/embeddings",
-                json={
-                    "model": settings.EMBEDDING_MODEL,
-                    "prompt": text,
-                    "keep_alive": "2m",  # release RAM after 2min, not default 5min
-                    # CPU-only: a GPU-resident nomic pushes the packed 27B into
-                    # partial offload (0.5 t/s) — see episodic_memory._embed
-                    "options": {"num_gpu": 0},
-                },
-            )
-        if r.status_code == 200:
-            return r.json().get("embedding")
-    except Exception as e:
-        logger.debug("Embedding failed: %s", e)
-    return None
+    """Embed one taste-input text via the central embed service.
+
+    DOCUMENT side: the taste centroid is averaged from item texts, so it
+    must live in the same space as the indexed item documents (the Nomic
+    prefix schema's asymmetry belongs to QUERIES only)."""
+    from src.services.embed_service import embed_documents
+    vecs = await embed_documents([text])
+    return vecs[0] if vecs else None
 
 
 def weighted_average_embedding(embeddings_weights: list) -> Optional[list]:

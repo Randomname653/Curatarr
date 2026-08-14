@@ -133,27 +133,23 @@ def compute_importance(memory_type: str, content: str, metadata: dict) -> float:
 
 # ── EMBEDDING ─────────────────────────────────────────────────────────────────
 
-async def _embed(text: str) -> Optional[list]:
-    """Generate embedding via Ollama.
+async def _embed(text: str, kind: str = "document") -> Optional[list]:
+    """Embed via the central embed service (CPU-only there — a GPU-resident
+    embedder used to throttle every judge verdict to 0.5 t/s).
 
-    num_gpu=0: nomic runs CPU-ONLY. The 27B curator at 16k ctx fills the
-    4090 (~23.5 of 24.5 GB); a GPU-resident nomic pushes it into partial
-    offload — measured 0.5 t/s instead of 33. The judge funnel calls this
-    per candidate (considerations/principles/owner signals), which kept
-    nomic pinned and throttled EVERY verdict of a full deletion run into
-    the hours. A 323MB embedder on CPU costs ~100ms per call — invisible."""
+    kind: "document" for stored memories, "query" for retrieval lookups —
+    the Nomic prefix schema's asymmetric sides. Stored memory embeddings
+    are re-embedded document-side by the migration runner, so both sides
+    stay in one space."""
+    from src.services.embed_service import embed_documents, embed_query
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                f"{settings.effective_ollama}/api/embeddings",
-                json={"model": settings.EMBEDDING_MODEL, "prompt": text,
-                      "options": {"num_gpu": 0}},
-            )
-        if r.status_code == 200:
-            return r.json().get("embedding")
+        if kind == "query":
+            return await embed_query(text)
+        vecs = await embed_documents([text])
+        return vecs[0] if vecs else None
     except Exception as e:
         logger.debug("Memory embedding failed: %s", e)
-    return None
+        return None
 
 
 def _cosine_similarity(a: list, b: list) -> float:
@@ -433,7 +429,7 @@ async def retrieve_memories(
     Retrieve top-k relevant memories for a query.
     Scoring: semantic_similarity * importance * recency_boost
     """
-    query_embedding = await _embed(query)
+    query_embedding = await _embed(query, kind="query")
 
     with get_db_session() as db:
         q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
@@ -565,7 +561,7 @@ async def retrieve_considerations(
     """
     if not item_profile or not item_profile.strip():
         return []
-    item_emb = await _embed(item_profile)
+    item_emb = await _embed(item_profile, kind="query")
     if not item_emb:
         return []
     with get_db_session() as db:
