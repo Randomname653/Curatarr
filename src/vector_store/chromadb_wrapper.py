@@ -26,6 +26,89 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Ops hardening (eval package 4) ────────────────────────────────────────────
+
+_lock_handle = None            # exclusive per-process lock, held for lifetime
+_quick_checked = False
+_fallback_counts = {"query": 0, "get": 0}
+_FALLBACK_WARN_EVERY = 25      # empty-result fallbacks can mask corruption
+
+
+def _startup_quick_check() -> None:
+    """PRAGMA quick_check on Chroma's backing SQLite, once per process.
+    Corruption here used to degrade silently (every query fell into the
+    empty-result fallback) — fail LOUDLY with the restore path instead."""
+    global _quick_checked
+    if _quick_checked:
+        return
+    _quick_checked = True
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_file = Path(str(settings.CHROMADB_PATH)) / "chroma.sqlite3"
+        if not db_file.exists():
+            return   # fresh install — nothing to check
+        con = sqlite3.connect(str(db_file), timeout=30)
+        try:
+            ok = (con.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0]
+        finally:
+            con.close()
+        if ok != "ok":
+            logger.critical(
+                "ChromaDB backing store FAILED quick_check: %r. Restore "
+                "path: stop the app, move data/chromadb aside, restart, "
+                "then rebuild via POST /api/enrichment/embedding-migration "
+                "(the corpus is reproducible from the enrichment caches).",
+                ok)
+            raise RuntimeError(f"ChromaDB store corrupt (quick_check: {ok})")
+        logger.info("[chroma] quick_check ok (%s)", db_file.name)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.warning("[chroma] quick_check skipped: %s", e)
+
+
+def _acquire_process_lock() -> None:
+    """Exclusive lock on data/chromadb — TWO PersistentClients (running app
+    + a standalone script) are exactly the pattern behind the existing
+    data/_chromadb_corrupt_* backups. The OS releases the lock with the
+    process, so a crash never leaves it stuck."""
+    global _lock_handle
+    if _lock_handle is not None:
+        return
+    try:
+        from pathlib import Path
+        lock_path = Path(str(settings.CHROMADB_PATH)) / ".curatarr.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "a+")
+        try:
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except ImportError:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_handle = fh
+    except OSError:
+        logger.critical(
+            "data/chromadb is already locked by ANOTHER process — refusing "
+            "a second PersistentClient (this exact pattern corrupted the "
+            "store before). Stop the other process first.")
+        raise RuntimeError("ChromaDB is in use by another process")
+    except Exception as e:
+        logger.warning("[chroma] process lock unavailable: %s", e)
+
+
+def _count_fallback(kind: str) -> None:
+    """Empty-result fallbacks are the corruption mask — count and surface."""
+    _fallback_counts[kind] = _fallback_counts.get(kind, 0) + 1
+    n = _fallback_counts[kind]
+    if n % _FALLBACK_WARN_EVERY == 0:
+        logger.warning(
+            "[chroma] %d %s calls have hit the empty-result fallback this "
+            "process — if this keeps climbing, suspect store corruption "
+            "(run PRAGMA quick_check / see the restore path).", n, kind)
+
 
 class ChromaDBWrapper:
     """
@@ -53,6 +136,16 @@ class ChromaDBWrapper:
                 collection_name = get_profile().get("collection") or "media_knowledge"
             except Exception:
                 collection_name = "media_knowledge"
+
+        # Ops hardening (eval package 4): the known Chroma corruption
+        # pattern here was a second process / a kill during an HNSW
+        # checkpoint. (a) quick_check the backing SQLite at startup so a
+        # corrupt store fails LOUDLY with a restore hint instead of
+        # serving empty results for weeks; (b) hold an exclusive
+        # process lock for data/chromadb — a second PersistentClient
+        # (e.g. a standalone script beside the running app) is refused.
+        _startup_quick_check()
+        _acquire_process_lock()
         # Pass 97: explicitly disable PostHog telemetry. ChromaDB ≥0.5
         # defaults to anonymized_telemetry=True and ships usage events
         # (``collection_query``, ``collection_add``, OS, version, an
@@ -167,8 +260,10 @@ class ChromaDBWrapper:
         except Exception as e:
             # Same resilience as get_by_id: a corrupt/inconsistent index segment
             # must not 500 callers (chat RAG, scoring). Return an empty result
-            # in ChromaDB's nested shape so callers just see "no neighbours".
+            # in ChromaDB's nested shape so callers just see "no neighbours" —
+            # but COUNT it: this fallback is exactly what masked corruption.
             logger.debug("[chroma] query failed: %s", e)
+            _count_fallback("query")
             return {"ids": [[]], "distances": [[]], "documents": [[]],
                     "metadatas": [[]], "embeddings": [[]]}
 
@@ -197,7 +292,9 @@ class ChromaDBWrapper:
             # over thousands of ids, and one failed lookup shouldn't 500 the
             # whole analysis. Treat it as a missing embedding — callers already
             # fall back to a neutral taste-mismatch score for that item.
+            # Counted: a climbing fallback rate is the corruption tell.
             logger.debug("[chroma] get_by_id(%s) failed: %s", doc_id, e)
+            _count_fallback("get")
             return None
         if result and result['ids']:
             embeddings = result.get('embeddings')
