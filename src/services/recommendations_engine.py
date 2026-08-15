@@ -547,6 +547,27 @@ async def generate_recommendations(
         top_titles = ts.get("top_titles", [])[:8]
         # One soft context line: current season + (if pronounced) viewing rhythm.
         context_line = " ".join(x for x in (seasonal_context(), _rhythm_line(ts)) if x)
+        # Multimodal pairs: show the LLM the distinct taste clusters so its
+        # picks serve each interest instead of an averaged blend.
+        try:
+            with get_db_session() as _cdb:
+                _cetv = _cdb.query(EncryptedTasteVector).filter(
+                    EncryptedTasteVector.user_id == user_id,
+                    EncryptedTasteVector.media_category == cat).first()
+            _cl = []
+            if _cetv and _cetv.encrypted_blob:
+                _cb = json.loads(_cetv.encrypted_blob)
+                if _cb.get("version") != 1:
+                    _cl = _cb.get("cluster_centroids") or []
+            if _cl:
+                context_line += ("\nTheir taste here splits into distinct "
+                                 "clusters — serve them ALL, not a blend: "
+                                 + " | ".join(
+                                     f"{int(c.get('share', 0) * 100)}% around "
+                                     f"{', '.join(c.get('top_titles', [])[:3])}"
+                                     for c in _cl[:5]))
+        except Exception:
+            pass
 
         import re
         match = re.search(rf'\[{cat.upper()}\]([^\[]*)', summary_text)
@@ -915,6 +936,7 @@ async def generate_deletion_proposals(
         corpus_mean = None
         drop_vector = None
         drop_anchors = None
+        taste_clusters = None
         ts_genres: dict = {}
         if tv:
             # Use the taste section that matches THIS category — not a blind
@@ -958,6 +980,10 @@ async def generate_deletion_proposals(
                 # drop centroid + its anchors for the scoring-side penalty.
                 corpus_mean = _blob.get("corpus_mean")
                 drop_vector = _blob.get("drop_embedding")
+                # Multimodal pairs: score as MAX over cluster centroids
+                # (ComiRec serving) — the blob's anchors were calibrated
+                # against exactly that statistic.
+                taste_clusters = _blob.get("cluster_centroids")
                 _d10, _d90 = _blob.get("drop_cal_p10"), _blob.get("drop_cal_p90")
                 drop_anchors = ((float(_d10), float(_d90))
                                 if _d10 is not None and _d90 is not None
@@ -1178,7 +1204,12 @@ async def generate_deletion_proposals(
         n = np.linalg.norm(c)
         return c / n if n else None
 
-    user_cmp = _cmp_vec(user_vector) if user_vector else None
+    if taste_clusters:
+        user_cmps = [v for v in (_cmp_vec(c.get("embedding"))
+                                 for c in taste_clusters) if v is not None]
+    else:
+        _u = _cmp_vec(user_vector) if user_vector else None
+        user_cmps = [_u] if _u is not None else []
     drop_cmp = _cmp_vec(drop_vector) if drop_vector else None
     for item in arr_items:
         title = item.get("title")
@@ -1282,11 +1313,13 @@ async def generate_deletion_proposals(
         item_vec = item_vector_res.get("embedding") if item_vector_res else None
         cosine = None
         drop_cos = None
-        if item_vec is not None and user_cmp is not None:
+        if item_vec is not None and user_cmps:
             try:
                 iv_c = _cmp_vec(item_vec)
                 if iv_c is not None:
-                    cosine = float(np.dot(user_cmp, iv_c))
+                    # MAX over centroids: one strong interest match counts,
+                    # a blend of unrelated interests doesn't dilute it.
+                    cosine = max(float(np.dot(u, iv_c)) for u in user_cmps)
                     if drop_cmp is not None:
                         drop_cos = float(np.dot(drop_cmp, iv_c))
             except Exception:
@@ -2019,10 +2052,12 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
                                    "ranking without the taste vector", category)
                     _blob = {}
                 user_vector = _blob.get("embedding")
+                user_clusters = _blob.get("cluster_centroids")
                 disliked_lc = {(t or "").lower()
                                for t in _blob.get("disliked_titles") or []}
             except Exception:
                 user_vector = None
+                user_clusters = None
 
     ts = type_data.get(category, {}) if isinstance(type_data, dict) else {}
     genre_affinity = {g.lower(): s for g, s in (ts.get("genre_affinity") or {}).items()}
@@ -2048,7 +2083,15 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         genres = [g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()]
         return sum(genre_affinity.get(g, 0) for g in genres)
 
-    user_vector_n = _normalize_vec(user_vector) if user_vector else None
+    # Multimodal pairs rank by MAX over cluster centroids (ComiRec) — one
+    # strong interest match wins; a blend of unrelated interests can't
+    # dilute it. Single-centroid pairs behave exactly as before.
+    if user_clusters:
+        user_vecs_n = [v for v in (_normalize_vec(c.get("embedding"))
+                                   for c in user_clusters) if v is not None]
+    else:
+        _un = _normalize_vec(user_vector) if user_vector else None
+        user_vecs_n = [_un] if _un is not None else []
 
     def _vector_score(item: dict):
         """Cosine similarity (user taste vector · item ChromaDB embedding),
@@ -2073,8 +2116,8 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
                 # dot ranked by |emb| instead of taste fit and drowned the
                 # 0.1 monitored bonus.
                 emb_n = _normalize_vec(emb)
-                if emb_n is not None and user_vector_n is not None:
-                    return float(np.dot(user_vector_n, emb_n))
+                if emb_n is not None and user_vecs_n:
+                    return max(float(np.dot(u, emb_n)) for u in user_vecs_n)
         except Exception:
             pass
         return None
