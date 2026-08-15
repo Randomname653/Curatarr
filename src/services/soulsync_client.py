@@ -84,6 +84,29 @@ async def _get(path: str, params: dict = None) -> Optional[dict]:
         return None
 
 
+async def list_artists_page(page: int = 1, limit: int = 100) -> Optional[dict]:
+    """One page of the FULL artist catalogue, WITH pagination metadata
+    (the plain _get strips the data wrapper and loses it). Returns
+    {"artists": [raw dicts], "pagination": {page, total, total_pages,
+    has_next}} or None. Used by the catalog-sync job to enumerate all
+    ~5k artists page by page (the API paginates by *page*, not offset)."""
+    if not _configured():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            r = await c.get(_base() + "/library/artists", headers=_headers(),
+                            params={"page": page, "limit": limit})
+        if r.status_code != 200:
+            return None
+        body = r.json()
+        data = body.get("data") or {}
+        return {"artists": data.get("artists") or [],
+                "pagination": body.get("pagination") or {}}
+    except Exception as e:
+        logger.debug("[soulsync] list_artists_page(%d) failed: %s", page, e)
+        return None
+
+
 async def artist_info(name: str) -> Optional[dict]:
     """SoulSync's aggregated view of one artist (exact name match after
     normalisation), or None. Normalised fields:

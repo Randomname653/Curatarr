@@ -285,6 +285,15 @@ async def _run_music_playlist_push(deep: bool = False) -> bool:
     return all_ok
 
 
+async def _run_music_catalog_sync(deep: bool = False) -> bool:
+    """SoulSync→Lidarr catalog sync (Modell B): SoulSync owns the files,
+    Lidarr is the passive structure index — this keeps it complete
+    (disarmed adds) and surfaces folder-name drift."""
+    from src.services.music_catalog_sync import sync_soulsync_to_lidarr
+    res = await sync_soulsync_to_lidarr()
+    return bool(res.get("ok"))
+
+
 async def _run_collections(deep: bool = False) -> bool:
     """Design + push the household's "Curatarr · " collection shelves."""
     from src.services.collection_designer import design_collections
@@ -347,6 +356,10 @@ def _registry() -> list[Task]:
         # Plex reads/writes only — no LLM gate.
         Task("plex_music_playlist", "Curatarr music playlists", 168.0,
              _run_music_playlist_push),
+        # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
+        # adds + folder-drift report). No-op without SoulSync configured.
+        Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
+             _run_music_catalog_sync),
         # Household collections: the 27B designs rotating themed shelves from
         # the OWNED library (section-global — one set via the owner token).
         Task("plex_collections", "Curatarr collections", 168.0,
