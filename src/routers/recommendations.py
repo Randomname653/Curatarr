@@ -1175,7 +1175,7 @@ async def bulk_approve_deletions(
     global _bulk_delete_running
     if _bulk_delete_running:
         raise HTTPException(409, "A bulk delete is already running")
-    ids = list({int(i) for i in (req.ids or [])})
+    ids = list({int(i) for i in (req.ids or [])})   # dedupe, keep ints
     if not ids:
         raise HTTPException(400, "No proposal ids given")
     with get_db_session() as db:
@@ -1752,6 +1752,15 @@ async def _fetch_arr_candidates(category: str = None) -> list:
                         # won't score on the size component) and log the
                         # count so a "everything is size 0" situation is
                         # visible instead of silent.
+                        # SOURCE-OF-TRUTH note (SoulSync gap analysis,
+                        # 2026-08-15): Lidarr stays the STRUCTURAL source
+                        # for music on purpose — sizes (sizeOnDisk gates
+                        # deletion scoring), internal ids (the lidarr:{id}
+                        # identity spine of embeddings + proposals),
+                        # monitored state, import history and all write
+                        # paths have no SoulSync equivalent. SoulSync is
+                        # primary for METADATA only (music_metadata.
+                        # enrich_artist merges it first).
                         stats = a.get("statistics") or {}
                         size = stats.get("sizeOnDisk", 0) or 0
                         if size <= 0:
