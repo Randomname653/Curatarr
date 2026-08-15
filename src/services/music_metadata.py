@@ -430,16 +430,34 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
     cache_key = f"artist_profile:{mbid}" if mbid else f"artist_profile:{artist_name[:60].lower()}"
 
     if not skip_mb:
-        # Full mode: regular MB+Last.fm read-through cache.
+        # Full mode: regular read-through cache.
         cache = MetadataCache()
         cached = cache.get_cache(cache_key)
         if cached:
             cache.close()
             return cached["response"]
         cache.close()
+
+        # SoulSync FIRST (owner decision 2026-08-15): the LAN neighbour
+        # aggregates 10 providers in ONE call and is the richer, actively
+        # maintained source — its fields WIN the merge below. MusicBrainz
+        # stays for what SoulSync lacks (type/country/rating); Last.fm is
+        # skipped entirely when SoulSync already carries its fields, and
+        # both remain the full fallback for installations WITHOUT SoulSync
+        # (the client degrades to None when unconfigured).
+        ss = None
+        try:
+            from src.services.soulsync_client import artist_info
+            ss = await artist_info(artist_name)
+        except Exception:
+            ss = None
+        _ss_covers_lastfm = bool(ss and ss.get("lastfm_tags")
+                                 and ss.get("lastfm_bio")
+                                 and ss.get("similar_artists"))
         mb, lfm = await asyncio.gather(
             fetch_musicbrainz_artist(artist_name, mbid=mbid),
-            fetch_lastfm_artist(artist_name),
+            (fetch_lastfm_artist(artist_name) if not _ss_covers_lastfm
+             else asyncio.sleep(0, result=None)),
             return_exceptions=True,
         )
         if isinstance(mb, Exception):
@@ -452,12 +470,13 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         # raw:music:{id_key} cache at fetch_and_prepare_raw level still
         # short-circuits identical fast requests on the same item.
         mb = None
+        ss = None
         try:
             lfm = await fetch_lastfm_artist(artist_name)
         except Exception:
             lfm = None
 
-    if not mb and not lfm:
+    if not mb and not lfm and not ss:
         # Pass 80: cache the merged-None outcome as well. The two sub-fetches
         # now neg-cache on their own — this layer's neg-cache is the
         # belt-and-braces: a single ``get_cache`` lookup short-circuits the
@@ -471,32 +490,42 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
             cache.close()
         return None
 
-    # Merge: prefer MusicBrainz for factual data, Last.fm for tags/similar
+    # Merge: SoulSync fields WIN (primary), MusicBrainz supplies the factual
+    # fields SoulSync lacks (type/country/rating), Last.fm fills what's left.
+    _ss = ss or {}
     genres = list(dict.fromkeys(
-        (mb or {}).get("genres", []) + (lfm or {}).get("genres", [])
+        _ss.get("genres", []) + _ss.get("lastfm_tags", [])
+        + (mb or {}).get("genres", []) + (lfm or {}).get("genres", [])
     ))[:10]
     tags = list(dict.fromkeys(
-        (mb or {}).get("tags", []) + (lfm or {}).get("tags", [])
+        _ss.get("lastfm_tags", [])
+        + (mb or {}).get("tags", []) + (lfm or {}).get("tags", [])
     ))[:15]
-    similar = (lfm or {}).get("similar_artists", [])
+    similar = _ss.get("similar_artists") or (lfm or {}).get("similar_artists", [])
 
     # Bio comes pre-cleaned from fetch_lastfm_artist (citations stripped).
     # Apply a second-pass strip here as well in case the profile was cached
     # before the fix was deployed.
-    raw_bio = (lfm or {}).get("bio", "") or ""
+    raw_bio = _ss.get("lastfm_bio") or (lfm or {}).get("bio", "") or ""
     clean_bio = re.sub(r'\[\d+\]', '', raw_bio).strip()
 
     profile = {
         "name": artist_name,
-        "mbid": (mb or {}).get("mbid"),
+        "mbid": (mb or {}).get("mbid") or _ss.get("musicbrainz_id"),
         "type": (mb or {}).get("type", ""),
         "country": (mb or {}).get("country", ""),
         "genres": genres,
         "tags": tags,
         "similar_artists": similar,
         "bio": clean_bio,
-        "listeners": (lfm or {}).get("listeners"),
+        "listeners": _ss.get("lastfm_listeners") or (lfm or {}).get("listeners"),
         "rating": (mb or {}).get("rating"),
+        # SoulSync extras — mood for prompts, deezer_id lets the poster
+        # path skip the MB→Deezer bridge. NOT part of embedding_text: the
+        # text template stays byte-stable so the index doesn't drift.
+        "mood": _ss.get("mood") or None,
+        "deezer_id": (_ss.get("external_ids") or {}).get("deezer_id"),
+        "metadata_source": "soulsync" if ss else ("mb+lastfm" if (mb or lfm) else "none"),
         "embedding_text": (
             f"{artist_name} — {', '.join(genres[:6])}. "
             f"Tags: {', '.join(tags[:8])}. "
