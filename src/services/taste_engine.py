@@ -186,6 +186,82 @@ def weighted_mean_embedding(embeddings_weights: list) -> tuple:
     return [x / pre_norm for x in avg], pre_norm
 
 
+def _cluster_centroids(pos_titled: list, max_k: int = 5) -> Optional[list]:
+    """Spherical k-means over the positive watch embeddings — the
+    multi-centroid upgrade for MULTIMODAL (user, category) pairs only
+    (eval 2.2 / PinnerSage: a single mean of conflicting interests lands
+    in a region matching none of them).
+
+    Deterministic on purpose (no random init): farthest-point seeding
+    from the weight-strongest item, k ≤ 5 via a log2 ramp (MIND-style).
+    Returns [{embedding, weight, share, top_titles}] sorted by weight,
+    clusters under 8% mass dropped — or None when clustering degenerates.
+    """
+    try:
+        import numpy as np
+        n = len(pos_titled)
+        k = min(max_k, max(2, int(math.log2(max(4, n)) / 2)))
+        m = np.asarray([e for e, _, _ in pos_titled], dtype=float)
+        w = np.asarray([wt for _, wt, _ in pos_titled], dtype=float)
+        titles = [t for _, _, t in pos_titled]
+
+        # farthest-point init, seeded at the strongest item
+        seeds = [int(np.argmax(w))]
+        while len(seeds) < k:
+            sims = np.max(m @ m[seeds].T, axis=1)
+            sims[seeds] = np.inf
+            seeds.append(int(np.argmin(sims)))
+        cents = m[seeds].copy()
+
+        assign = None
+        for _ in range(15):
+            new_assign = np.argmax(m @ cents.T, axis=1)
+            if assign is not None and np.array_equal(new_assign, assign):
+                break
+            assign = new_assign
+            for c in range(k):
+                mask = assign == c
+                if not mask.any():
+                    continue
+                v = (m[mask] * w[mask, None]).sum(axis=0)
+                norm = np.linalg.norm(v)
+                if norm > 0:
+                    cents[c] = v / norm
+
+        total_w = float(w.sum())
+        out = []
+        for c in range(k):
+            mask = assign == c
+            cw = float(w[mask].sum())
+            if cw < total_w * 0.08 or int(mask.sum()) < 3:
+                continue   # noise cluster — not a real interest
+            idx = np.argsort(-(w * mask))[:12]
+            # dedupe: several rows of one series share a title
+            uniq = list(dict.fromkeys(
+                titles[int(i)] for i in idx if mask[int(i)] and titles[int(i)]))
+            out.append({
+                "embedding": [float(x) for x in cents[c]],
+                "weight": round(cw, 3),
+                "share": round(cw / total_w, 3),
+                "top_titles": uniq[:3],
+            })
+        out.sort(key=lambda c: -c["weight"])
+        if len(out) < 2:
+            return None
+        # k-means happily splits ONE tight cloud into k halves — reject the
+        # artificial split when any two centroids are near-parallel (that
+        # was a unimodal taste after all; the single centroid serves it).
+        cmat = np.asarray([c["embedding"] for c in out])
+        sims = cmat @ cmat.T
+        np.fill_diagonal(sims, 0.0)
+        if float(sims.max()) > 0.9:
+            return None
+        return out
+    except Exception as e:
+        logger.warning("taste clustering failed: %s", e)
+        return None
+
+
 # ── BUILD TEXT REPRESENTATION ─────────────────────────────────────────────────
 
 def build_item_text_dict(entry: dict, enriched: Optional[dict]) -> str:
@@ -327,11 +403,22 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
         mc_norms[mc_norms == 0] = 1.0
         mc = mc / mc_norms
 
-        def _anchors(vec):
-            c = _center(vec)
-            if c is None:
-                return None
-            cos = mc @ c
+        def _anchors(vec_or_list):
+            """Anchors for a single centroid OR max-over-clusters (the
+            reader scores multimodal pairs as MAX over cluster centroids,
+            so the calibration distribution must be built the same way)."""
+            if isinstance(vec_or_list, list) and vec_or_list \
+                    and isinstance(vec_or_list[0], dict):
+                centered = [_center(c["embedding"]) for c in vec_or_list]
+                centered = [c for c in centered if c is not None]
+                if not centered:
+                    return None
+                cos = np.max(np.stack([mc @ c for c in centered]), axis=0)
+            else:
+                c = _center(vec_or_list)
+                if c is None:
+                    return None
+                cos = mc @ c
             return (round(float(np.percentile(cos, 10)), 4),
                     round(float(np.percentile(cos, 90)), 4))
 
@@ -637,8 +724,9 @@ async def compute_taste_vector_for_user(
     _emb_model = _emb_profile().get("model") or "?"
 
     async def embed_entry(weight: float, entry: dict):
+        _t = entry.get("series_title") or entry.get("title") or ""
         if _tv_task.status.value == "skipped":
-            return None, weight
+            return None, weight, _t
 
         pid = entry.get("plex_item_id", "")
         enriched_data = cache.get_cache(f"enriched:{entry.get('media_type') or 'movie'}:{pid}")
@@ -646,14 +734,14 @@ async def compute_taste_vector_for_user(
 
         # Skip embedding entirely if no enrichment data — genre counters handle these
         if not profile:
-            return None, weight
+            return None, weight, _t
 
         # Preferred source: the item's STORED index vector (eval 1.3 —
         # one representation for index and taste; also makes the
         # post-migration rebuild a cheap lookup instead of a re-embed).
         doc_vec = _chroma_item_vector(entry, profile)
         if doc_vec is not None:
-            return doc_vec, weight
+            return doc_vec, weight, _t
 
         emb_ts = get_emb_ts(entry)
         # Model-scoped cache key: a model flip must never serve vectors
@@ -663,22 +751,22 @@ async def compute_taste_vector_for_user(
 
         # Use cached embedding if enrichment hasn't changed since last embed
         if cached_emb and cached_ts == emb_ts:
-            return _unit(cached_emb["response"]), weight
+            return _unit(cached_emb["response"]), weight, _t
 
         text = build_item_text_dict(entry, profile)
         if not text:
-            return None, weight
+            return None, weight, _t
 
         async with sem:
             if _tv_task.status.value == "skipped":
-                return None, weight
+                return None, weight, _t
             emb = await embed_text(text)
 
         if emb:
             cache.set_cache(f"emb:{_emb_model}:{pid}", emb, days=90)
             cache.set_cache(f"emb_ts:{_emb_model}:{pid}", emb_ts if emb_ts else "none", days=90)
 
-        return _unit(emb) if emb else None, weight
+        return _unit(emb) if emb else None, weight, _t
 
     tasks = [embed_entry(w, e) for w, e in enriched_entries]
 
@@ -696,9 +784,9 @@ async def compute_taste_vector_for_user(
         for result in chunk_results:
             if isinstance(result, Exception):
                 continue
-            emb, w = result
+            emb, w, t = result
             if emb:
-                embeddings_weights.append((emb, w))
+                embeddings_weights.append((emb, w, t))
                 chunk_hits += 1
 
         _embed_done = min(i + CHUNK, embed_total)
@@ -752,14 +840,28 @@ async def compute_taste_vector_for_user(
     # Two centroids (eval 2.3): positives form the taste centroid, drops
     # form their own — kept OUT of the positive representation and applied
     # as a scoring-side penalty by the readers.
-    _pos = [(emb, w) for emb, w in embeddings_weights if w > 0]
-    _neg = [(emb, -w) for emb, w in embeddings_weights if w < 0]
+    _pos = [(emb, w) for emb, w, _t in embeddings_weights if w > 0]
+    _pos_titled = [(emb, w, _t) for emb, w, _t in embeddings_weights if w > 0]
+    _neg = [(emb, -w) for emb, w, _t in embeddings_weights if w < 0]
     taste_embedding, pre_norm = weighted_mean_embedding(_pos)
     drop_embedding, _ = weighted_mean_embedding(_neg)
+    multimodal = bool(_pos) and pre_norm < 0.75
     logger.info("[taste] %s/%s: pre-norm %.3f (%d pos / %d drop vectors)%s",
                 user_id, category or "all", pre_norm, len(_pos), len(_neg),
                 " — MULTIMODAL (single centroid represents this pair poorly)"
-                if _pos and pre_norm < 0.75 else "")
+                if multimodal else "")
+
+    # Multi-centroid upgrade (eval 2.2, built only where the measurement
+    # says so): for multimodal pairs, cluster the watch embeddings and let
+    # the readers score as MAX over cluster centroids (ComiRec serving).
+    cluster_centroids = (
+        _cluster_centroids(_pos_titled)
+        if multimodal and len(_pos) >= 40 else None)
+    if cluster_centroids:
+        logger.info("[taste] %s/%s: %d taste clusters: %s",
+                    user_id, category or "all", len(cluster_centroids),
+                    " | ".join(f"{int(c['share'] * 100)}% {', '.join(c['top_titles'][:2])}"
+                               for c in cluster_centroids))
 
     # ── NORMALIZE STATS ───────────────────────────────────────────────────────
     def normalize(counter: Counter, top_n: int) -> dict:
@@ -814,6 +916,7 @@ async def compute_taste_vector_for_user(
     return {
         "embedding": taste_embedding,
         "drop_embedding": drop_embedding,   # eval 2.3: scoring-side repulsion
+        "cluster_centroids": cluster_centroids,   # multimodal pairs only
         "pre_norm": round(pre_norm, 4),     # multimodality diagnostic
         "embedding_items": len(embeddings_weights),
         "total_entries": len(entries),
@@ -1002,13 +1105,17 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
 
                 # Corpus calibration: mean-centering + global anchors for
                 # BOTH centroids, one corpus pass (eval 1.6 + 2.3 + 2.4).
-                calib = _corpus_calibration(res.get("embedding"),
-                                            res.get("drop_embedding"), cat)
+                # Multimodal pairs calibrate against max-over-clusters —
+                # the same statistic the reader scores with.
+                calib = _corpus_calibration(
+                    res.get("cluster_centroids") or res.get("embedding"),
+                    res.get("drop_embedding"), cat)
 
                 # Store vector stats (embedding stored separately when PIN available)
                 blob_dict = {
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "drop_embedding": res.get("drop_embedding"),
+                    "cluster_centroids": res.get("cluster_centroids"),
                     "pre_norm": res.get("pre_norm"),
                     "embedding_items": res.get("embedding_items", 0),
                     "binges": res.get("binges", []),
