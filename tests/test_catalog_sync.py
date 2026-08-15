@@ -42,6 +42,7 @@ PAGES = [
     ], "pagination": {"has_next": True}},
     {"artists": [
         {"name": "Ghost Folder Artist", "musicbrainz_id": "mb-3", "album_count": 4},
+        {"name": "Grown Artist", "musicbrainz_id": "mb-4", "album_count": 5},
     ], "pagination": {"has_next": False}},
 ]
 
@@ -54,6 +55,7 @@ sc._configured = lambda: True
 sc.list_artists_page = fake_pages
 
 added = []
+refreshed = []
 
 
 class FakeLidarr:
@@ -62,15 +64,21 @@ class FakeLidarr:
 
     async def get_artists(self):
         return [
-            {"artistName": "Existing Artist", "foreignArtistId": "mb-1",
-             "statistics": {"trackFileCount": 40}},
-            {"artistName": "Ghost Folder Artist", "foreignArtistId": "mb-3",
-             "statistics": {"trackFileCount": 0}},   # SoulSync knows 4 albums
+            {"id": 11, "artistName": "Existing Artist", "foreignArtistId": "mb-1",
+             "statistics": {"trackFileCount": 40, "albumCount": 3}},
+            {"id": 22, "artistName": "Ghost Folder Artist", "foreignArtistId": "mb-3",
+             "statistics": {"trackFileCount": 0, "albumCount": 4}},   # SS: 4 albums
+            {"id": 33, "artistName": "Grown Artist", "foreignArtistId": "mb-4",
+             "statistics": {"trackFileCount": 10, "albumCount": 2}},  # SS: 5 albums
         ]
 
     async def add_artist(self, **kw):
         added.append(kw)
         return {"id": 999}
+
+    async def refresh_artist(self, artist_id):
+        refreshed.append(artist_id)
+        return {"id": 1}
 
 
 lib._get_arr_url_key = lambda svc: ("http://lidarr", "key")
@@ -81,7 +89,7 @@ lib._read_defaults = lambda svc: {"root_folder_path": "/music",
 
 res = asyncio.run(mcs.sync_soulsync_to_lidarr())
 check("sync paginates the full catalogue",
-      res["soulsync_artists"] == 4 and res["lidarr_artists"] == 2)
+      res["soulsync_artists"] == 5 and res["lidarr_artists"] == 3)
 check("only the missing artist WITH an mbid is added",
       len(added) == 1 and added[0]["mbid"] == "mb-2")
 check("the add is fully DISARMED (monitored/monitor/search/new-items)",
@@ -92,6 +100,12 @@ check("the add is fully DISARMED (monitored/monitor/search/new-items)",
 check("mbid-less artists counted, not added", res["no_mbid"] == 1)
 check("file-less artist with SoulSync albums lands on the mismatch list",
       res["path_mismatches"] == ["Ghost Folder Artist"])
+# the healing queue (owner cases 1+2): new add scans first, then the
+# SoulSync-filled empty artist, then the album-count-behind artist
+check("surgical refreshes queued: added + file-less + grown",
+      refreshed == [999, 22, 33] and res["refreshes_queued"] == 3)
+check("grown artist reported", res["grown_artists"] == ["Grown Artist"])
+check("healthy artist NOT refreshed", 11 not in refreshed)
 check("state stamped", mcs._STATE_KEY in _state)
 
 sc._configured = lambda: False
