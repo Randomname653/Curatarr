@@ -4,6 +4,7 @@ Curatarr 1.0 - Recommendations & Deletions Router
 All endpoints are category-aware and use the LLM for pitches.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -1099,7 +1100,8 @@ async def approve_deletion(
 
     success = await _delete_one_and_log(db, user.id, p)
     db.commit()
-    return {"ok": success, "limbo": False, "status": p.status}
+    # limbo can now come from the freshness guard too, not only the probe
+    return {"ok": success, "limbo": p.status == "limbo", "status": p.status}
 
 
 async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
@@ -1119,6 +1121,20 @@ async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
     stance, parse the verdict polarity, classify accordingly. No chat
     history → falls back to ``p.reason`` + ``"consensus"`` (unchanged
     behaviour for the click-without-discussion path)."""
+    # Catalog-mode freshness contract (owner decision 2026-08-15): SoulSync
+    # OWNS the music files and may move/rename them; Lidarr is only the
+    # passive index. Deleting against a stale index "succeeds" while the
+    # file stays on disk — so refresh the ONE artist, wait, then require
+    # actual track files. Drift parks the proposal in LIMBO (retryable
+    # after a refresh), never in error.
+    if p.service == "lidarr":
+        drift = await _lidarr_freshness_guard(p)
+        if drift:
+            logger.warning("[deletion] lidarr delete BLOCKED for %r: %s",
+                           p.title, drift)
+            p.status = "limbo"
+            return False
+
     success = await _execute_arr_delete(p)
     p.status = "deleted" if success else "error"
     p.resolved_at = datetime.utcnow()
@@ -1151,6 +1167,52 @@ async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
         except Exception as e:
             logger.debug("[deletion] resolution-log write failed: %s", e)
     return success
+
+
+async def _lidarr_freshness_guard(p) -> Optional[str]:
+    """Refresh ONE artist, wait for the command, then require real track
+    files (per-file API — the aggregated sizeOnDisk is exactly the field
+    that lies when stale). Returns None when the delete is safe, else the
+    drift reason. Also trues up storage_mb from the actual file bytes so
+    the "GB freed" stats are exact. Conservative on ANY doubt: a blocked
+    delete costs a retry, a stale delete silently strands files."""
+    if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
+        return "lidarr not configured"
+    base = str(settings.effective_lidarr_url).rstrip("/")
+    headers = {"X-Api-Key": settings.LIDARR_API_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(f"{base}/api/v1/command", headers=headers,
+                                  json={"name": "RefreshArtist",
+                                        "artistId": int(p.media_id)})
+            if r.status_code not in (200, 201):
+                return f"RefreshArtist rejected (HTTP {r.status_code})"
+            cmd_id = r.json().get("id")
+            state = "queued"
+            # Live-measured: a small artist's refresh (MB roundtrip + disk
+            # scan) ran >40 s — a short window would block every delete.
+            for _ in range(60):                      # ≤ ~120 s
+                await asyncio.sleep(2)
+                cr = await client.get(f"{base}/api/v1/command/{cmd_id}",
+                                      headers=headers)
+                state = (cr.json() or {}).get("status", "?")
+                if state in ("completed", "failed"):
+                    break
+            if state != "completed":
+                return f"refresh did not complete (status={state})"
+            tf = await client.get(f"{base}/api/v1/trackfile", headers=headers,
+                                  params={"artistId": int(p.media_id)})
+            files = tf.json() if tf.status_code == 200 else []
+            if not files:
+                return ("no track files after refresh — SoulSync likely "
+                        "moved/renamed the folder; fix the artist Path in "
+                        "Lidarr, then retry")
+            true_mb = sum(f.get("size") or 0 for f in files) / 1048576
+            if true_mb > 0:
+                p.storage_mb = true_mb
+    except Exception as e:
+        return f"freshness check failed: {e}"
+    return None
 
 
 # In-memory run guard for bulk delete — deliberately NOT a DB lock (same
@@ -1211,6 +1273,7 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
     from src.services.episodic_memory import analyze_deletion_comment
     task_monitor.start(task)
     ok = failed = limbo = 0
+    drift_hits = 0          # lidarr freshness-guard blocks this run
     freed_mb = 0.0
     try:
         with get_db_session() as db:
@@ -1239,6 +1302,20 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                                         message=f"{title}: {p.service} unreachable → limbo",
                                         level="warn")
                     continue
+                # Mass-drift breaker: several file-less lidarr artists in
+                # one run = a SoulSync reorganize just moved folders under
+                # the index. Stop touching music, tell the owner to run a
+                # full Lidarr refresh first.
+                if p.service == "lidarr" and drift_hits >= 3:
+                    p.status = "limbo"
+                    db.commit()
+                    limbo += 1
+                    task_monitor.update(task, processed=i,
+                                        message=f"{title}: skipped — mass drift "
+                                                "(SoulSync reorganize?); full "
+                                                "Lidarr refresh needed",
+                                        level="warn")
+                    continue
                 try:
                     if comment:
                         p.user_comment = f"Deleted: {comment}"
@@ -1258,6 +1335,15 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                         ok += 1
                         freed_mb += float(p.storage_mb or 0)
                         task_monitor.update(task, processed=i, message=f"Deleted {title}")
+                    elif p.status == "limbo":
+                        # freshness guard parked it (stale index / drift)
+                        limbo += 1
+                        if p.service == "lidarr":
+                            drift_hits += 1
+                        task_monitor.update(task, processed=i,
+                                            message=f"{title}: parked in limbo "
+                                                    "(index drift — refresh & retry)",
+                                            level="warn")
                     else:
                         failed += 1
                         task_monitor.update(task, processed=i,

@@ -707,6 +707,7 @@ class LidarrClient(MediaService):
         monitor_option: str = "all",  # "all" | "future" | "missing" | "existing" | "first" | "latest" | "none"
         search_for_missing: bool = True,
         tags: Optional[List[int]] = None,
+        monitor_new_items: str = "all",   # "none" for catalog-mode adds
     ) -> Dict:
         """Add an artist to Lidarr by MusicBrainz ID.
 
@@ -721,7 +722,7 @@ class LidarrClient(MediaService):
             "metadataProfileId": metadata_profile_id,
             "rootFolderPath": root_folder_path,
             "monitored": monitored,
-            "monitorNewItems": "all",
+            "monitorNewItems": monitor_new_items,
             "tags": tags or [],
             "addOptions": {
                 "monitor": monitor_option,
@@ -731,6 +732,35 @@ class LidarrClient(MediaService):
         return await self.request(
             "POST", "/api/v1/artist",
             json_data=payload, use_cache=False,
+        )
+
+    # ── Catalog-mode helpers (SoulSync owns the files, Lidarr is the
+    #    passive structure index) ──────────────────────────────────────────
+    async def refresh_artist(self, artist_id: int) -> Dict:
+        """POST /api/v1/command RefreshArtist — rescans ONE artist incl.
+        disk. An API-issued command counts as 'Manual' for the
+        rescan-after-refresh setting, which is exactly what catalog mode
+        relies on (scheduled refreshes no longer touch the disk)."""
+        return await self.request(
+            "POST", "/api/v1/command",
+            json_data={"name": "RefreshArtist", "artistId": artist_id},
+            use_cache=False,
+        )
+
+    async def get_command(self, command_id: int) -> Dict:
+        """Poll a queued Lidarr command (status: queued/started/completed)."""
+        return await self.request(
+            "GET", f"/api/v1/command/{command_id}", use_cache=False,
+        )
+
+    async def get_trackfiles(self, artist_id: int) -> List[Dict]:
+        """Per-file truth (path + size in bytes) for one artist. Unlike the
+        aggregated statistics.sizeOnDisk this cannot lie about stale
+        state after a refresh — the freshness guard reads THIS before any
+        delete."""
+        return await self.request(
+            "GET", "/api/v1/trackfile",
+            params={"artistId": artist_id}, use_cache=False,
         )
 
     async def test_connection(self) -> Dict:
