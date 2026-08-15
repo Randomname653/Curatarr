@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import src.vector_store.chromadb_wrapper as cw
 from src.services.recommendations_engine import (_cosine_anchors,
                                                  _cosine_to_mismatch)
-from src.services.taste_engine import _global_cosine_anchors
+from src.services.taste_engine import _corpus_calibration
 
 PASS = FAIL = 0
 
@@ -47,15 +47,22 @@ centroid = list(rng.normal(0.5, 0.1, size=8))
 cw.get_chroma_db = lambda: SimpleNamespace(
     embeddings_for_domain=lambda domain, limit=30000: fake_corpus)
 
-cal = _global_cosine_anchors(centroid, "movie")
-check("global anchors computed from the corpus",
-      cal is not None and -1.0 <= cal[0] < cal[1] <= 1.0)
+calib = _corpus_calibration(centroid, list(rng.normal(0.5, 0.1, size=8)), "movie")
+check("calibration: centered anchors computed from the corpus",
+      calib is not None and -1.0 <= calib["cal"][0] < calib["cal"][1] <= 1.0)
+check("calibration carries the corpus mean (centering flag for readers)",
+      len(calib["corpus_mean"]) == 8)
+check("drop centroid gets its own anchors",
+      calib["drop_cal"] is not None
+      and calib["drop_cal"][0] < calib["drop_cal"][1])
+check("no drop centroid -> drop_cal None",
+      _corpus_calibration(centroid, None, "movie")["drop_cal"] is None)
 
 cw.get_chroma_db = lambda: SimpleNamespace(
     embeddings_for_domain=lambda domain, limit=30000: fake_corpus[:10])
 check("tiny corpus (<50) -> None (batch fallback stays)",
-      _global_cosine_anchors(centroid, "movie") is None)
-check("no embedding -> None", _global_cosine_anchors(None, "movie") is None)
+      _corpus_calibration(centroid, None, "movie") is None)
+check("no embedding -> None", _corpus_calibration(None, None, "movie") is None)
 
 # ── wiring asserts ───────────────────────────────────────────────────────────
 
@@ -74,7 +81,7 @@ check("taste_source recorded on scored candidates",
 
 te = (root / "src/services/taste_engine.py").read_text(encoding="utf-8")
 check("rebuild stores cal_p10/cal_p90 beside the vector",
-      '"cal_p10": cal[0] if cal else None' in te)
+      '"cal_p10": (calib or {}).get("cal", (None, None))[0]' in te)
 
 cw_src = (root / "src/vector_store/chromadb_wrapper.py").read_text(encoding="utf-8")
 check("startup asserts hnsw:space == cosine (loud failure)",
