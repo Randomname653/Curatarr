@@ -711,7 +711,8 @@ CRITICAL RULES AND GUARDRAILS:
 2. SYNTHESIZE, DON'T QUOTE: Use the Taste Profile to UNDERSTAND what fits, then describe each suggestion in YOUR OWN vocabulary. Don't narrate the profile back at the user — they wrote those signals, they don't need them echoed.
 {_blacklist_rule(3)}
 4. NO LAZY ANCHORING: DO NOT explicitly name titles from the Taste Profile to draw comparisons.
-5. JSON ONLY: Output as a strictly valid JSON array.
+5. EXPLORATION QUOTA: make ~15% of the picks (1-2) deliberate stretches slightly OUTSIDE the profile — an adjacent genre, era or tone they haven't tried; start those reasons with "Exploration pick:".
+6. JSON ONLY: Output as a strictly valid JSON array.
 
 Output format:
 [{{"title": "...", "reason": "Your elite 2-3 sentence pitch.", "confidence": 0.0-1.0, "genres": "..."}}]"""
@@ -911,6 +912,9 @@ async def generate_deletion_proposals(
         disliked_lc: set = set()
         feedback_sentiment_lc: dict = {}
         cal_anchors = None
+        corpus_mean = None
+        drop_vector = None
+        drop_anchors = None
         ts_genres: dict = {}
         if tv:
             # Use the taste section that matches THIS category — not a blind
@@ -949,6 +953,15 @@ async def generate_deletion_proposals(
                 _p10, _p90 = _blob.get("cal_p10"), _blob.get("cal_p90")
                 if _p10 is not None and _p90 is not None and (_p90 - _p10) > 1e-3:
                     cal_anchors = (float(_p10), float(_p90))
+                # Eval 2.3/2.4: corpus mean (anisotropy centering — anchors
+                # in a blob that carries it are CENTERED ones), plus the
+                # drop centroid + its anchors for the scoring-side penalty.
+                corpus_mean = _blob.get("corpus_mean")
+                drop_vector = _blob.get("drop_embedding")
+                _d10, _d90 = _blob.get("drop_cal_p10"), _blob.get("drop_cal_p90")
+                drop_anchors = ((float(_d10), float(_d90))
+                                if _d10 is not None and _d90 is not None
+                                and (_d90 - _d10) > 1e-3 else None)
                 # explicit owner feedback finally gets a reader: a recorded
                 # dislike nudges a candidate UP the deletion list, recorded
                 # praise nudges it down (soft — taste mismatch still rules)
@@ -1149,6 +1162,24 @@ async def generate_deletion_proposals(
     prelim: list[dict] = []                # all candidates, pre-calibration
     hard_protect_skipped: list[str] = []   # for the post-loop log line
     user_vector_n = _normalize_vec(user_vector)   # unit vector for cosine math
+    # Centered comparison space (eval 2.4): text embeddings share a common
+    # cone; subtracting the corpus mean widens the discriminative range and
+    # makes drop repulsion real. A blob carrying corpus_mean guarantees its
+    # anchors were computed against the SAME centered space; legacy blobs
+    # without it stay uncentered end-to-end — never mixed.
+    _mean_v = (np.asarray(corpus_mean, dtype=float)
+               if corpus_mean else None)
+
+    def _cmp_vec(vec):
+        vn = _normalize_vec(vec)
+        if vn is None or _mean_v is None:
+            return vn
+        c = vn - _mean_v
+        n = np.linalg.norm(c)
+        return c / n if n else None
+
+    user_cmp = _cmp_vec(user_vector) if user_vector else None
+    drop_cmp = _cmp_vec(drop_vector) if drop_vector else None
     for item in arr_items:
         title = item.get("title")
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
@@ -1250,18 +1281,21 @@ async def generate_deletion_proposals(
         item_vector_res = chroma_db.get_by_id(doc_id)
         item_vec = item_vector_res.get("embedding") if item_vector_res else None
         cosine = None
-        if item_vec is not None and user_vector_n is not None:
+        drop_cos = None
+        if item_vec is not None and user_cmp is not None:
             try:
-                iv = np.asarray(item_vec, dtype=float)
-                ivn = np.linalg.norm(iv)
-                if ivn:
-                    cosine = float(np.dot(user_vector_n, iv) / ivn)
+                iv_c = _cmp_vec(item_vec)
+                if iv_c is not None:
+                    cosine = float(np.dot(user_cmp, iv_c))
+                    if drop_cmp is not None:
+                        drop_cos = float(np.dot(drop_cmp, iv_c))
             except Exception:
                 cosine = None
 
         prelim.append({
             "item": item,
             "cosine": cosine,
+            "drop_cos": drop_cos,
             "size_gb": size_gb,
             "rating": effective_rating,
             "rating_breakdown": rating_breakdown,
@@ -1373,7 +1407,17 @@ async def generate_deletion_proposals(
             feedback_swing = 15.0
         else:
             feedback_swing = 0.0
-        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing
+        # Drop-centroid penalty (eval 2.3): similarity to the user's
+        # ABANDONED items pushes toward deletion — the scoring-side form
+        # of repulsion the in-centroid subtraction never delivered.
+        # Stretched by the drop centroid's own global anchors; capped at
+        # 20 points, deliberately soft under the 80-point mismatch.
+        drop_penalty = 0.0
+        if p.get("drop_cos") is not None and drop_anchors:
+            d_lo, d_hi = drop_anchors
+            drop_penalty = 20.0 * max(0.0, min(1.0, (p["drop_cos"] - d_lo)
+                                               / (d_hi - d_lo)))
+        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing + drop_penalty
         if del_score > 30:
             scored_candidates.append({
                 "item": p["item"],

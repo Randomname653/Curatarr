@@ -149,27 +149,30 @@ def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
     return None
 
 
-def weighted_average_embedding(embeddings_weights: list) -> Optional[list]:
-    """
-    Compute weighted average of embeddings.
-    embeddings_weights: [(embedding_list, weight), ...]
+def weighted_mean_embedding(embeddings_weights: list) -> tuple:
+    """Weighted mean of unit embeddings → (unit centroid | None, pre_norm).
 
-    Weights may be NEGATIVE (dropped items push the vector away from their
-    profile). The denominator uses |w| so negatives act as repulsion instead
-    of shrinking/flipping the normalisation.
-    """
-    if not embeddings_weights:
-        return None
+    Non-negative weights only: the old in-centroid drop subtraction was
+    mathematically void (eval 1.8 — the |w| denominator cancelled under L2
+    normalisation, so repulsion strength was just the neg/pos mass ratio,
+    near zero for typical users). Drops now form their OWN centroid and
+    act as a scoring-side penalty instead.
 
-    # Filter out None embeddings
-    valid = [(emb, w) for emb, w in embeddings_weights if emb]
+    pre_norm is the length of the mean BEFORE normalisation — the free
+    multimodality diagnostic from the eval (PinnerSage rationale): a low
+    pre-norm means the items point in conflicting directions and the
+    single centroid represents this (user, category) poorly. Logged and
+    stored; multi-centroid clustering only gets built if the numbers say
+    so ("erst messen, dann bauen").
+    """
+    valid = [(emb, w) for emb, w in embeddings_weights if emb and w > 0]
     if not valid:
-        return None
+        return None, 0.0
 
     dim = len(valid[0][0])
-    total_weight = sum(abs(w) for _, w in valid)
-    if total_weight == 0:
-        return None
+    total_weight = sum(w for _, w in valid)
+    if total_weight <= 0:
+        return None, 0.0
 
     avg = [0.0] * dim
     for emb, w in valid:
@@ -177,12 +180,10 @@ def weighted_average_embedding(embeddings_weights: list) -> Optional[list]:
         for i in range(dim):
             avg[i] += emb[i] * factor
 
-    # L2 normalize
-    norm = math.sqrt(sum(x * x for x in avg))
-    if norm > 0:
-        avg = [x / norm for x in avg]
-
-    return avg
+    pre_norm = math.sqrt(sum(x * x for x in avg))
+    if pre_norm <= 0:
+        return None, 0.0
+    return [x / pre_norm for x in avg], pre_norm
 
 
 # ── BUILD TEXT REPRESENTATION ─────────────────────────────────────────────────
@@ -283,13 +284,21 @@ def build_item_text(entry: WatchHistoryEntry, enriched: Optional[dict]) -> str:
     return " | ".join(p for p in parts if p)
 
 
-def _global_cosine_anchors(embedding, category: str):
-    """Eval 1.6: p10/p90 of the fresh taste centroid against the WHOLE
-    category corpus in ChromaDB. Per-batch anchors made stored del_scores
-    non-stationary (the same item scored differently depending on batch
-    composition); computed once per rebuild (~ms of dot products) and
-    stored beside the vector, they make scores comparable across runs.
-    Returns (p10, p90) or None."""
+def _corpus_calibration(embedding, drop_embedding, category: str):
+    """Eval 1.6 + 2.4: one pass over the category corpus produces
+    everything the scoring side needs to compare cosines across runs:
+
+      corpus_mean — the anisotropy fix: text embeddings share a common
+        cone; subtracting the corpus mean before comparing widens the
+        discriminative range and makes the drop repulsion real.
+      cal (p10, p90) — the taste centroid's percentile anchors against
+        the CENTERED corpus (global, so stored del_scores stay stationary
+        across batches).
+      drop_cal — same anchors for the drop centroid (scoring penalty).
+
+    Mean and anchors are written together in one rebuild: a reader that
+    finds corpus_mean in the blob knows the anchors are centered ones.
+    Returns dict or None (tiny corpus / no embedding)."""
     if not embedding:
         return None
     try:
@@ -302,15 +311,40 @@ def _global_cosine_anchors(embedding, category: str):
         norms = np.linalg.norm(m, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         m = m / norms
-        c = np.asarray(embedding, dtype=float)
-        cn = np.linalg.norm(c)
-        if not cn:
+        mean = m.mean(axis=0)
+
+        def _center(vec):
+            v = np.asarray(vec, dtype=float)
+            n = np.linalg.norm(v)
+            if not n:
+                return None
+            v = v / n - mean
+            n = np.linalg.norm(v)
+            return v / n if n else None
+
+        mc = m - mean
+        mc_norms = np.linalg.norm(mc, axis=1, keepdims=True)
+        mc_norms[mc_norms == 0] = 1.0
+        mc = mc / mc_norms
+
+        def _anchors(vec):
+            c = _center(vec)
+            if c is None:
+                return None
+            cos = mc @ c
+            return (round(float(np.percentile(cos, 10)), 4),
+                    round(float(np.percentile(cos, 90)), 4))
+
+        cal = _anchors(embedding)
+        if not cal:
             return None
-        cos = m @ (c / cn)
-        return (round(float(np.percentile(cos, 10)), 4),
-                round(float(np.percentile(cos, 90)), 4))
+        return {
+            "corpus_mean": [round(float(x), 6) for x in mean],
+            "cal": cal,
+            "drop_cal": _anchors(drop_embedding) if drop_embedding else None,
+        }
     except Exception as e:
-        logger.warning("global anchors failed for %s: %s", category, e)
+        logger.warning("corpus calibration failed for %s: %s", category, e)
         return None
 
 
@@ -715,7 +749,17 @@ async def compute_taste_vector_for_user(
         message=f"Embeddings complete: {len(embeddings_weights)}/{embed_total} vectors")
 
     # ── WEIGHTED AVERAGE ──────────────────────────────────────────────────────
-    taste_embedding = weighted_average_embedding(embeddings_weights)
+    # Two centroids (eval 2.3): positives form the taste centroid, drops
+    # form their own — kept OUT of the positive representation and applied
+    # as a scoring-side penalty by the readers.
+    _pos = [(emb, w) for emb, w in embeddings_weights if w > 0]
+    _neg = [(emb, -w) for emb, w in embeddings_weights if w < 0]
+    taste_embedding, pre_norm = weighted_mean_embedding(_pos)
+    drop_embedding, _ = weighted_mean_embedding(_neg)
+    logger.info("[taste] %s/%s: pre-norm %.3f (%d pos / %d drop vectors)%s",
+                user_id, category or "all", pre_norm, len(_pos), len(_neg),
+                " — MULTIMODAL (single centroid represents this pair poorly)"
+                if _pos and pre_norm < 0.75 else "")
 
     # ── NORMALIZE STATS ───────────────────────────────────────────────────────
     def normalize(counter: Counter, top_n: int) -> dict:
@@ -769,6 +813,8 @@ async def compute_taste_vector_for_user(
     from src.services.taste_vectors import compute_temporal_patterns
     return {
         "embedding": taste_embedding,
+        "drop_embedding": drop_embedding,   # eval 2.3: scoring-side repulsion
+        "pre_norm": round(pre_norm, 4),     # multimodality diagnostic
         "embedding_items": len(embeddings_weights),
         "total_entries": len(entries),
         "genre_affinity": normalize(genre_counter, 20),
@@ -954,21 +1000,27 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
                     except Exception as e:
                         logger.warning("Could not read old taste vector for carry-over: %s", e)
 
-                # Global calibration anchors: centroid vs the whole category
-                # corpus, so deletion scoring stops depending on batch mix.
-                cal = _global_cosine_anchors(res.get("embedding"), cat)
+                # Corpus calibration: mean-centering + global anchors for
+                # BOTH centroids, one corpus pass (eval 1.6 + 2.3 + 2.4).
+                calib = _corpus_calibration(res.get("embedding"),
+                                            res.get("drop_embedding"), cat)
 
                 # Store vector stats (embedding stored separately when PIN available)
                 blob_dict = {
                     "embedding": res["embedding"] if res.get("embedding") else None,
+                    "drop_embedding": res.get("drop_embedding"),
+                    "pre_norm": res.get("pre_norm"),
                     "embedding_items": res.get("embedding_items", 0),
                     "binges": res.get("binges", []),
                     "genre_aversion": res.get("genre_aversion", {}),
                     "explicit_feedback": old_feedback.get("explicit_feedback", []),
                     "disliked_titles": old_feedback.get("disliked_titles", []),
                     "theme_aversion": old_feedback.get("theme_aversion", {}),
-                    "cal_p10": cal[0] if cal else None,
-                    "cal_p90": cal[1] if cal else None,
+                    "corpus_mean": (calib or {}).get("corpus_mean"),
+                    "cal_p10": (calib or {}).get("cal", (None, None))[0],
+                    "cal_p90": (calib or {}).get("cal", (None, None))[1],
+                    "drop_cal_p10": ((calib or {}).get("drop_cal") or (None, None))[0],
+                    "drop_cal_p90": ((calib or {}).get("drop_cal") or (None, None))[1],
                     "version": 0,  # 0 = unencrypted, 1 = AES-256
                 }
                 # --- ENDE NEU ---
