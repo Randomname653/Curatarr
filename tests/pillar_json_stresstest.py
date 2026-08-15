@@ -32,7 +32,15 @@ import urllib.error
 
 # ── Config (matches .env + the baked curatarr-curator Modelfile) ─────────────
 OLLAMA           = "http://localhost:11434"          # .env OLLAMA_ENDPOINT
-MODELS           = ["gemma4:31b", "curatarr-curator"]  # base (clean) vs persona-baked
+MODELS           = [
+    "gemma4:31b",        # incumbent base (clean)
+    "curatarr-curator",  # persona-baked incumbent
+    # 2026-08 curator A/B candidates (bench plan): judge-fitness gate
+    "qwen3.8:27b",
+    "gemma4:26b",
+    "qwen3.6:latest",    # local tag (same blob the June bench called :27b)
+    "muse-glimmer:30b",
+]
 ITERATIONS       = 3
 NUM_CTX          = 8192        # matches the baked Modelfile
 NUM_PREDICT      = 800         # headroom so the JSON never truncates mid-object
