@@ -19,6 +19,7 @@ Alle bekannten Kennzahlen stehen in **`model_baselines.csv`** — jedes neue Mod
 - **App AUS** (Chroma-Prozesslock verweigert sonst; Standalone neben laufender App ist by design verboten).
 - **GPU exklusiv** — kein Spiel, kein zweiter Run. Läufe NIE überlappen lassen (Latenz-Kontamination; im 2026-08-Lauf mussten mehrere Blöcke mit Asterisk geflaggt werden).
 - **VRAM-Grenze:** ≥22-GB-Modelle + 16k ctx = KV-Starvation auf der 4090 (qwen3.6-Lektion: 2s→600s-Eskalation, Timeouts in beiden Benches). Kandidaten über ~20 GB nur mit reduziertem ctx testen oder direkt disqualifizieren.
+- **num_ctx ist produktionsgetreu, nicht gleich:** Pipeline-Bench bei **16384** (= Runtime-`curator_options()` im Pitch-Pfad; nomic läuft deshalb produktionsweit CPU-only, be9adb3). Stresstest bei **8192** (= Judge-Pfad/Bake). Konsequenz: ~20-GB-dense-Modelle (gemma4:31b) tragen bei 16k echten VRAM-Druck — deren Pipeline-Latenz IST Produktionsrealität; der Judge-Vergleich bei 8k fällt für sie milder aus (2026-08: gemma 7.5s vs qwen 3.1s bei 16k, aber 7.6 vs 6.2 bei 8k). Beide Zahlen ausweisen, nie mischen.
 - Zwischen Läufen `ollama stop <model>` (gemma-SWA-Prompt-Cache-Wedge: „forcing full prompt re-processing" fror einen kompletten Run ein).
 - **Detached-Start auf Windows: NUR über das Bash-Tool mit `run_in_background`** und `python -u … > log 2>&1`. NIEMALS `Start-Process` aus einer Tool-PowerShell (Kindprozess stirbt mit der Tool-Console — hat einen halben Chat-Bench gekostet). Prozess-Checks mit `tasklist`, nicht MSYS `kill -0` (sieht Windows-PIDs nicht → Fehlalarm-DONE).
 
