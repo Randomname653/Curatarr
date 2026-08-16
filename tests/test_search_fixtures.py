@@ -124,8 +124,16 @@ async def main():
 
     check("Gleipnir beats MAGICAL GIRL SITE (femdom tag vs gore-only)",
           s2["Gleipnir"][0] > s2["MAGICAL GIRL SITE"][0])
-    check("Gleipnir fetish evidence cites a fetish-family tag",
-          any(m in s2["Gleipnir"][1] for m in ("Femdom", "Vore", "Yandere")))
+    check("Gleipnir fetish evidence cites Femdom (best-match, not first-hit)",
+          "Femdom" in s2["Gleipnir"][1])
+    # Round-6: mature TONE is synthesized from Seinen/Josei/Psychological/
+    # Gore — but NOT from slapstick/nudity (round-5 FSK guard holds).
+    check("Gleipnir mature tone evidenced via Seinen/Gore",
+          "mature tone ↔" in s2["Gleipnir"][1])
+    check("Madoka mature tone evidenced via psychological tags",
+          "mature tone ↔" in s2["Puella Magi Madoka Magica"][1])
+    check("Gleipnir now clears the cap (3/3 constraints evidenced)",
+          s2["Gleipnir"][0] >= 6)
     check("SITE capped <=5 (no fetish tag)",
           s2["MAGICAL GIRL SITE"][0] <= 5)
     check("Madoka capped <=5 (no fetish tag — the hallucination case)",
