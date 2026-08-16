@@ -48,11 +48,16 @@ _PARSE_SYS = (
     "search_text: a dense content description of what is wanted, WITHOUT the anchor title."
 )
 
+# minItems is load-bearing, not decoration: with grammar-forced output the
+# summarizer satisfied the old schema with the CHEAPEST valid document —
+# a literal {"ranking": []} — on every call, so the search silently fell
+# back to vector order. An empty array must be grammatically illegal.
 _RERANK_SCHEMA = {
     "type": "object",
     "properties": {
         "ranking": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "properties": {
@@ -60,7 +65,7 @@ _RERANK_SCHEMA = {
                     "fit": {"type": "integer"},
                     "why": {"type": "string"},
                 },
-                "required": ["i", "fit"],
+                "required": ["i", "fit", "why"],
             },
         }
     },
@@ -71,6 +76,8 @@ _RERANK_SYS = (
     "You rank a user's own library items against their search intent. "
     "Score each candidate 0-10 for satisfying the FULL query. "
     "Violating an explicit constraint caps the score at 2. "
+    "Constraints mean exactly what they say — never substitute a related "
+    "concept (an adult CAST is about character ages, not adult themes). "
     "Judge from the tags first, the prose second. "
     "why: one short factual clause. "
     "Return every candidate index exactly once."
@@ -322,10 +329,15 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
         cons = "; ".join(parsed["constraints"]) or "none stated"
         ranking = await _summarizer_json(
             _RERANK_SYS,
-            f"QUERY: {query}\nHARD CONSTRAINTS: {cons}\nCANDIDATES:\n" + "\n".join(lines),
+            f"QUERY: {query}\nHARD CONSTRAINTS: {cons}\n"
+            f"Score ALL {len(hits)} candidates (indices 0-{len(hits) - 1}), "
+            f"one ranking entry each.\nCANDIDATES:\n" + "\n".join(lines),
             _RERANK_SCHEMA,
-            num_predict=min(1400, 60 + 28 * len(hits)),
+            num_predict=min(1600, 80 + 45 * len(hits)),
             timeout=_RERANK_TIMEOUT)
+        if isinstance(ranking, dict) and not ranking.get("ranking"):
+            logger.info("[search] rerank returned an empty ranking — "
+                        "falling back to vector order")
 
     if isinstance(ranking, dict) and isinstance(ranking.get("ranking"), list):
         scored = {}

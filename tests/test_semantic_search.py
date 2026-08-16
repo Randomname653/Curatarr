@@ -155,6 +155,16 @@ res = asyncio.run(ss.curated_search(
 check("malformed entries skipped, valid one wins",
       res["mode"] == "reranked" and res["results"][0]["title"] == "Raising Project")
 
+# ── schema guards (the empty-ranking failure) ────────────────────────────────
+# Grammar-forced output satisfied the old schema with a literal
+# {"ranking": []} on EVERY call — the search silently served vector order.
+check("rerank schema forbids the empty array (minItems)",
+      ss._RERANK_SCHEMA["properties"]["ranking"].get("minItems", 0) >= 1)
+check("rerank schema requires why (no bare-index cop-out)",
+      "why" in ss._RERANK_SCHEMA["properties"]["ranking"]["items"]["required"])
+check("literal-constraints rule present (adult cast != adult themes)",
+      "never substitute" in ss._RERANK_SYS)
+
 # ── parse helper shape guards ────────────────────────────────────────────────
 
 _queue_summarizer([{"anchor_title": "  ", "constraints": ["a", 3, ""],
