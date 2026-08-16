@@ -219,6 +219,31 @@ check("duplicate index docs collapse to one hit per title",
       len(titles) == len(set(titles)))
 cw.get_chroma_db = lambda: fake_chroma
 
+# ── genre-coherence gate: anchored probe hits need genre overlap ─────────────
+
+class ProbeChroma(FakeChroma):
+    """The constraint probe (n_results=12 in these tests) returns a
+    genre-foreign stray — must be dropped when an anchor is known."""
+    def query(self, query_embeddings=None, n_results=10, where=None):
+        if n_results == 12:
+            return {
+                "ids": [["sonarr:99"]],
+                "documents": [["doc Akagi"]],
+                "metadatas": [[{"title": "Akagi", "genres": "Gambling, Noir",
+                                "themes": "", "year": 2005}]],
+                "distances": [[0.05]],
+            }
+        return super().query(query_embeddings, n_results, where)
+
+
+cw.get_chroma_db = lambda: ProbeChroma()
+_queue_summarizer([parse_adult])
+res = asyncio.run(ss.curated_search(
+    "like gushing over magical girls but adult", n_results=6, domain="anime"))
+check("genre-foreign probe hit dropped when anchor known",
+      all(h["title"] != "Akagi" for h in res["results"]))
+cw.get_chroma_db = lambda: fake_chroma
+
 # ── raw-tag cascade: enriched(doc_id) resolves the external id for raw ───────
 
 class FakeCache:

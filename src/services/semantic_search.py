@@ -98,6 +98,16 @@ _CONCEPT_FAMILIES = {
 # fixed in round 5). Ordered by precision — best-match picks the earliest.
 _TONE_FAMILY = ("seinen", "josei", "psychological", "noir", "gore", "tragedy")
 
+# Comedy markers DAMPEN dark evidence found in the same tag: round 8 —
+# "Darkly comedic satire of magical girl tropes" scored a literal 1.00 for
+# "darker" on a harmless 4-minute swimsuit short. The tag names darkness
+# and immediately laughs it off; cap such matches below the evidence
+# threshold so they show as honest near-misses.
+_COMEDY_MARKERS = ("comedic", "comedy", "slapstick", "parody", "gag",
+                   "lighthearted", "light-hearted")
+_COMEDY_DAMP = 0.60
+_DARK_TRIGGERS = ("dark", "grim", "bleak")
+
 
 def _families_for(ckey: str) -> tuple:
     """Family member tuples whose trigger appears in the constraint. The
@@ -304,14 +314,14 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
     direct get_by_id(title) misses id-keyed docs. Instead: a tiny vector
     probe for the title, then a normalized-title match against the top
     hits, then get_by_id on the MATCHED id for the stored embedding.
-    Returns (vector|None, matched_title|None).
+    Returns (vector|None, matched_title|None, genres_str).
     """
     try:
         from src.services.embed_service import embed_query
         from src.vector_store.chromadb_wrapper import get_chroma_db
         probe = await embed_query(anchor_title)
         if not probe:
-            return None, None
+            return None, None, ""
         chroma = get_chroma_db()
         res = chroma.query(query_embeddings=[probe], n_results=3,
                            where={"domain": domain} if domain else None)
@@ -324,10 +334,11 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
                 doc = chroma.get_by_id(str(cid))
                 emb = doc.get("embedding") if doc else None
                 if emb is not None and len(emb):
-                    return list(emb), meta.get("title", "")
+                    return (list(emb), meta.get("title", ""),
+                            meta.get("genres", "") or "")
     except Exception as e:
         logger.debug("[search] anchor resolve failed: %s", e)
-    return None, None
+    return None, None, ""
 
 
 # ── Tag acquisition (doc-id first — the 87% path) ────────────────────────────
@@ -569,7 +580,14 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
                         break
             if lex_best is not None:
                 best_sim, best_tag = 1.0, lex_best[1]
+            # Comedy dampener for dark constraints: a tag that names the
+            # darkness while laughing it off is a near-miss, not evidence.
+            if (best_tag is not None and not negated
+                    and any(d in ckey for d in _DARK_TRIGGERS)
+                    and any(cm in _norm_tag(best_tag) for cm in _COMEDY_MARKERS)):
+                best_sim = min(best_sim, _COMEDY_DAMP)
             if best_sim < 1.0 and cvec:
+                dark_c = any(d in ckey for d in _DARK_TRIGGERS)
                 for t in tags:
                     tkey = _norm_tag(t)
                     if not negated and tkey in used_tags:
@@ -583,6 +601,9 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
                     tvec = _vec_memo.get(tkey)
                     if tvec:
                         s = _dot(cvec, tvec)
+                        if dark_c and not negated and any(
+                                cm in tkey for cm in _COMEDY_MARKERS):
+                            s = min(s, _COMEDY_DAMP)
                         if s > best_sim:
                             best_sim, best_tag = s, t
             if (not negated and best_tag is not None
@@ -632,12 +653,14 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
         if m:
             parsed["anchor_title"] = m.group(1).strip(" .,;:'\"")
     anchor_used = None
+    anchor_genres = ""
 
     # Retrieval vector: the anchor item's stored embedding when the query
     # references a library title (similar-to-item), else the query text.
     vec = None
     if parsed and parsed["anchor_title"]:
-        vec, anchor_used = await _anchor_vector(parsed["anchor_title"], domain)
+        vec, anchor_used, anchor_genres = await _anchor_vector(
+            parsed["anchor_title"], domain)
     try:
         if vec is None:
             from src.services.embed_service import embed_query
@@ -677,6 +700,28 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 seen = {_norm_title(h["title"]) for h in hits}
                 if anchor_used:
                     seen.add(_norm_title(anchor_used))
+                # Genre-coherence gate (round 8): with a known anchor, a
+                # probe hit sharing NO genre with it is a tonal stray from
+                # another world — the mahjong thriller Akagi kept walking
+                # into a magical-girl query on one "Psychological
+                # manipulation" tag. Mnemosyne/Speed Grapher survive via
+                # Action/Ecchi overlap; without an anchor the probe stays
+                # genre-free by design.
+                ag = {g.strip().lower()
+                      for g in (anchor_genres or "").split(",") if g.strip()}
+                if ag:
+                    kept = []
+                    for h in extra:
+                        hg = {g.strip().lower()
+                              for g in (h.get("genres") or "").split(",")
+                              if g.strip()}
+                        if hg and not (hg & ag):
+                            logger.debug("[search] probe hit %r dropped — "
+                                         "no genre overlap with anchor",
+                                         h.get("title"))
+                            continue
+                        kept.append(h)
+                    extra = kept
                 for h in extra:
                     h["_probe"] = "constraint"
                 hits += [h for h in extra
