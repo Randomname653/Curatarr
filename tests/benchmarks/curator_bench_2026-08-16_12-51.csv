@@ -1,0 +1,67 @@
+model,case_id,category,type,elapsed_s,response_len,forbidden_hits,score_faithfulness,score_relevance,score_specificity,score_tone,score_format,score_consistency_MT_only,score_pushback_MT_only,total
+gemma4:31b,mt_qwaser,G. Pushback (multi-turn),multi,85.35,10907,0,5,5,4,5,4,5,5,33
+gemma4:31b,mt_fallout,G. Pushback (multi-turn),multi,66.96,8712,1,5,5,5,5,4,5,5,34
+gemma4:31b,mt_fnaf,G. Pushback (multi-turn),multi,47.53,6164,0,5,5,4,5,5,5,5,34
+gemma4:31b,mt_lawrence,G. Pushback (multi-turn),multi,46.0,6169,5,4,4,4,3,4,4,3,26
+gemma4:31b,mt_punisher,G. Pushback (multi-turn),multi,25.65,3069,0,4,4,4,4,4,4,4,28
+gemma4:31b,rec_001,A. Recommendations,single,6.57,826,0,5,5,5,4,5,,,24
+gemma4:31b,rec_002,A. Recommendations,single,2.75,266,0,5,5,5,5,5,,,25
+gemma4:31b,rec_003,A. Recommendations,single,8.16,1027,0,5,5,4,5,4,,,23
+gemma4:31b,rec_004,A. Recommendations,single,5.24,727,0,5,4,5,4,5,,,23
+gemma4:31b,rec_005,A. Recommendations,single,3.26,320,0,4,5,5,4,5,,,23
+gemma4:31b,rec_006,A. Recommendations,single,6.48,901,0,5,5,5,4,5,,,24
+gemma4:31b,tma_001,B. Tell-me-about,single,7.91,1156,0,5,4,5,5,5,,,24
+gemma4:31b,tma_002,B. Tell-me-about,single,6.65,908,0,5,4,5,5,5,,,24
+gemma4:31b,tma_003,B. Tell-me-about,single,6.34,936,0,5,4,4,5,5,,,23
+gemma4:31b,tma_004,B. Tell-me-about,single,9.12,1432,0,4,5,4,5,5,,,23
+gemma4:31b,tma_005,B. Tell-me-about,single,8.97,1232,0,5,5,4,5,5,,,24
+gemma4:31b,tma_006,B. Tell-me-about,single,10.74,1628,0,5,5,5,5,5,,,25
+gemma4:31b,def_001,C. Genre-Defense (one-shot),single,6.83,963,0,4,5,4,4,5,,,22
+gemma4:31b,def_002,C. Genre-Defense (one-shot),single,8.46,1243,0,5,4,5,5,5,,,24
+gemma4:31b,def_003,C. Genre-Defense (one-shot),single,7.69,1068,0,4,5,4,5,5,,,23
+gemma4:31b,def_004,C. Genre-Defense (one-shot),single,13.35,1999,0,5,5,5,5,5,,,25
+gemma4:31b,halu_001,D. Hallucination-Traps,single,6.33,830,0,5,5,4,5,5,,,24
+gemma4:31b,halu_002,D. Hallucination-Traps,single,4.54,482,0,5,5,4,5,5,,,24
+gemma4:31b,halu_003,D. Hallucination-Traps,single,6.57,828,0,5,4,5,5,5,,,24
+gemma4:31b,halu_004,D. Hallucination-Traps,single,9.21,1281,0,5,4,5,5,5,,,24
+gemma4:31b,de_001,E. Deutsch-Query (Response should be English per system prompt),single,12.3,1452,0,5,5,5,4,4,,,23
+gemma4:31b,de_002,E. Deutsch-Query,single,11.98,1485,0,5,5,5,4,4,,,23
+gemma4:31b,de_003,E. Deutsch-Query,single,18.47,2483,0,5,5,5,5,4,,,24
+gemma4:31b,de_004,E. Deutsch-Query,single,8.48,1180,0,0,3,2,4,3,,,12
+gemma4:31b,pers_001,F. Personal/Memory,single,4.94,650,0,3,4,4,4,5,,,20
+gemma4:31b,pers_002,F. Personal/Memory,single,7.76,1007,0,5,4,4,5,5,,,23
+gemma4:31b,pers_003,F. Personal/Memory,single,8.15,1162,0,4,5,4,5,5,,,23
+gemma4:31b,pers_004,F. Personal/Memory,single,4.09,529,0,5,5,4,5,5,,,24
+qwen3.8:27b,mt_qwaser,G. Pushback (multi-turn),multi,91.28,21577,1,3,4,4,4,3,4,4,26
+qwen3.8:27b,mt_fallout,G. Pushback (multi-turn),multi,35.42,8292,1,4,4,4,3,3,2,1,21
+qwen3.8:27b,mt_fnaf,G. Pushback (multi-turn),multi,39.93,9531,0,4,4,4,4,3,3,2,24
+qwen3.8:27b,mt_lawrence,G. Pushback (multi-turn),multi,28.19,6122,3,4,4,4,3,4,4,4,27
+qwen3.8:27b,mt_punisher,G. Pushback (multi-turn),multi,18.87,3831,0,4,4,4,4,4,4,4,28
+qwen3.8:27b,rec_001,A. Recommendations,single,2.71,409,0,5,5,4,4,5,,,23
+qwen3.8:27b,rec_002,A. Recommendations,single,7.76,1607,0,5,4,5,4,4,,,22
+qwen3.8:27b,rec_003,A. Recommendations,single,13.08,2512,0,4,3,4,4,4,,,19
+qwen3.8:27b,rec_004,A. Recommendations,single,8.03,1799,0,4,4,5,4,4,,,21
+qwen3.8:27b,rec_005,A. Recommendations,single,7.26,1670,0,4,4,4,4,4,,,20
+qwen3.8:27b,rec_006,A. Recommendations,single,7.48,1692,0,4,4,4,4,3,,,19
+qwen3.8:27b,tma_001,B. Tell-me-about,single,10.81,2658,0,1,4,4,3,3,,,15
+qwen3.8:27b,tma_002,B. Tell-me-about,single,4.94,1065,0,2,4,3,4,4,,,17
+qwen3.8:27b,tma_003,B. Tell-me-about,single,5.18,959,0,3,4,4,4,4,,,19
+qwen3.8:27b,tma_004,B. Tell-me-about,single,13.75,3110,0,1,3,3,3,3,,,13
+qwen3.8:27b,tma_005,B. Tell-me-about,single,9.07,1997,1,4,3,2,4,4,,,17
+qwen3.8:27b,tma_006,B. Tell-me-about,single,9.71,2217,0,4,4,5,4,4,,,21
+qwen3.8:27b,def_001,C. Genre-Defense (one-shot),single,11.96,2606,0,4,4,4,4,4,,,20
+qwen3.8:27b,def_002,C. Genre-Defense (one-shot),single,11.92,2813,0,4,4,5,4,4,,,21
+qwen3.8:27b,def_003,C. Genre-Defense (one-shot),single,4.8,937,0,5,4,4,5,5,,,23
+qwen3.8:27b,def_004,C. Genre-Defense (one-shot),single,14.39,3360,0,2,4,4,4,4,,,18
+qwen3.8:27b,halu_001,D. Hallucination-Traps,single,11.47,2505,0,2,4,4,4,3,,,17
+qwen3.8:27b,halu_002,D. Hallucination-Traps,single,4.8,803,0,3,4,4,5,4,,,20
+qwen3.8:27b,halu_003,D. Hallucination-Traps,single,10.8,2277,0,3,4,4,3,3,,,17
+qwen3.8:27b,halu_004,D. Hallucination-Traps,single,5.46,1015,0,5,4,4,4,5,,,22
+qwen3.8:27b,de_001,E. Deutsch-Query (Response should be English per system prompt),single,10.88,1984,0,5,5,4,4,4,,,22
+qwen3.8:27b,de_002,E. Deutsch-Query,single,9.43,1592,0,5,5,4,4,4,,,22
+qwen3.8:27b,de_003,E. Deutsch-Query,single,16.64,3179,0,5,5,5,4,4,,,23
+qwen3.8:27b,de_004,E. Deutsch-Query,single,5.91,1234,0,5,5,5,5,4,,,24
+qwen3.8:27b,pers_001,F. Personal/Memory,single,4.58,914,0,5,5,4,5,5,,,24
+qwen3.8:27b,pers_002,F. Personal/Memory,single,5.42,1074,0,2,4,3,4,3,,,16
+qwen3.8:27b,pers_003,F. Personal/Memory,single,7.77,1632,0,4,5,4,5,5,,,23
+qwen3.8:27b,pers_004,F. Personal/Memory,single,8.1,1705,0,5,5,4,4,5,,,23
