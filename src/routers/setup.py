@@ -152,14 +152,18 @@ async def build_models_endpoint(
     background_tasks: BackgroundTasks,
     _gate=Depends(require_admin_or_first_run),
 ):
-    """Build curatarr-curator and curatarr-summarizer Ollama models."""
+    """Build curatarr-curator and curatarr-summarizer Ollama models
+    (plus curatarr-pitcher when the two-bake split is enabled)."""
     from src.config import settings
     results = await build_ollama_models(
         settings.effective_ollama,
         settings.BASE_CURATOR_MODEL,
         settings.BASE_SUMMARIZER_MODEL,
+        base_pitcher=(settings.BASE_PITCHER_MODEL
+                      if (settings.PITCHER_MODEL or "").strip() else None),
     )
     return {
         "curator": results.get("curator", False),
         "summarizer": results.get("summarizer", False),
+        "pitcher": results.get("pitcher"),
     }

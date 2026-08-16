@@ -554,10 +554,12 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
     try:
         # skip_priority=True when an OUTER curator_start already holds the GPU
         # gate (the batch deletion loop) — re-acquiring it would deadlock.
+        # exclusive_model routes the eviction: a pitcher-bake verdict must
+        # clear the resident curator before loading (two-bake split).
         if skip_priority:
             r = await _post()
         else:
-            async with curator_priority("pillar verdict"):
+            async with curator_priority("pillar verdict", exclusive_model=model):
                 r = await _post()
         content = (r.json().get("message") or {}).get("content", "") or ""
         data = parse_llm_json(content)
@@ -626,9 +628,11 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
     temperature, NO schema. Call this ONLY for titles actually shown in the UI,
     so the expensive creative pass never runs on the whole candidate pool.
 
-    Sends NO system message on purpose: the baked curatarr-curator persona
-    drives the voice here, whereas adjudicate() overrides it with the neutral
-    constitution. Same model, two framings."""
+    Sends NO system message on purpose: the BAKED persona drives the voice
+    here (curatarr-curator — or curatarr-pitcher on a two-bake-split
+    deletion run; both bake the same CURATOR_SYSTEM_PROMPT), whereas
+    adjudicate() overrides it with the neutral constitution. Same model
+    within a run, two framings."""
     import httpx
     from src.config import settings
     from src.services.llm_priority import curator_priority
@@ -682,7 +686,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         if skip_priority:
             r = await _post()
         else:
-            async with curator_priority("pillar monologue"):
+            async with curator_priority("pillar monologue", exclusive_model=model):
                 r = await _post()
         return clean_llm_text((r.json().get("message") or {}).get("content", "") or "")
     except Exception as e:

@@ -35,11 +35,13 @@ OLLAMA           = "http://localhost:11434"          # .env OLLAMA_ENDPOINT
 MODELS           = [
     "gemma4:31b",        # incumbent base (clean)
     "curatarr-curator",  # persona-baked incumbent
-    # 2026-08 curator A/B candidates (bench plan): judge-fitness gate
+    # 2026-08 curator A/B verdict: gemma stays curator; qwen3.8 base won the
+    # pipeline bench → two-bake split. The pitcher bake is the artifact that
+    # actually judges deletion runs, so it must pass this gate too. (This
+    # test sends its own system message, so it validates SCHEMA fitness of
+    # the bake — the baked persona voice is only exercised live.)
     "qwen3.8:27b",
-    "gemma4:26b",
-    "qwen3.6:latest",    # local tag (same blob the June bench called :27b)
-    "muse-glimmer:30b",
+    "curatarr-pitcher",  # deletion-run bake (its block 404s RED until built)
 ]
 ITERATIONS       = 3
 NUM_CTX          = 8192        # matches the baked Modelfile

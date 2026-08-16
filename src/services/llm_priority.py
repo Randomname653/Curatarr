@@ -259,20 +259,19 @@ async def check_curator_vram_health(curator_model: str) -> dict:
 
 # ── CURATOR LIFECYCLE ─────────────────────────────────────────────────────────
 
-async def curator_start(owner: str = "curator request") -> None:
+async def curator_start(owner: str = "curator request", *,
+                        exclusive_model: str = None) -> None:
     """
     Signal that a curator (chat / recommendations) call is starting.
     ``owner`` is a debug label shown to queued callers ("deletion scan: anime").
 
-    On the *first* active call:
-      - Clears the priority event → enrichment workers pause after their
-        current item finishes
-      - Checks whether the summarizer is currently resident in VRAM.
-        If yes, evicts it so the curator can load without fighting for
-        the same VRAM budget. If no, skips the eviction call entirely
-        (saves 0.5–2 s of /api/ps polling per chat turn — and combined
-        with the SUMMARIZER_KEEP_ALIVE=30s lifetime, the summarizer is
-        often already gone by the time the user types their next message).
+    ``exclusive_model`` names the big model this holder is about to run —
+    default is the curator bake. On the *first* active call every OTHER
+    known big model that is actually resident gets evicted (two-bake
+    split: a deletion run passes the pitcher here, so the resident
+    curator is evicted before the pitcher loads — and vice versa when a
+    chat interjects mid-run). The gate itself stays model-agnostic: a
+    slot is a slot, whichever bake the holder runs.
 
     Concurrent calls (e.g. two chat streams open simultaneously) increment
     the counter but only trigger eviction once.
@@ -313,20 +312,87 @@ async def curator_start(owner: str = "curator request") -> None:
 
     if is_first:
         from src.config import settings
-        summarizer = settings.SUMMARIZER_MODEL or settings.BASE_SUMMARIZER_MODEL
-        if summarizer:
-            # Smart-skip: only evict if the summarizer is actually loaded.
-            # With SUMMARIZER_KEEP_ALIVE=30s the summarizer typically falls
-            # out of VRAM on its own between background tasks, so most chat
-            # turns won't need eviction at all.
-            base_name = summarizer.split(":")[0]
-            loaded = await loaded_models()
-            summarizer_resident = any(base_name in m.get("name", "") for m in loaded)
-            if summarizer_resident:
-                logger.info("Curator active — pausing enrichment, evicting summarizer")
-                await _evict_model(summarizer)
-            else:
-                logger.info("Curator active — pausing enrichment (summarizer already absent)")
+        target = (exclusive_model or settings.CURATOR_MODEL
+                  or settings.BASE_CURATOR_MODEL)
+        await evict_others(target)
+
+
+async def evict_others(target_model: str) -> None:
+    """Evict every known big model EXCEPT *target_model* — but only the
+    ones actually resident in VRAM.
+
+    The residency guard is load-bearing, not an optimization: POSTing
+    ``keep_alive: 0`` at a model that is NOT loaded makes Ollama
+    load-then-unload it (documented in process_monitor) — the "cleanup"
+    of an absent 17 GB pitcher would cost a 17 GB load. One /api/ps
+    probe covers all candidates.
+    """
+    from src.config import settings
+    candidates = {
+        settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL,
+        settings.SUMMARIZER_MODEL or settings.BASE_SUMMARIZER_MODEL,
+        (settings.PITCHER_MODEL or "").strip(),
+    }
+    candidates.discard("")
+    candidates.discard(None)
+    candidates.discard(target_model)
+    if not candidates:
+        return
+    loaded = await loaded_models()
+    evicted = False
+    for model in candidates:
+        base_name = model.split(":")[0]
+        if any(base_name in m.get("name", "") for m in loaded):
+            logger.info("Gate holder needs %s — evicting resident %s",
+                        target_model, model)
+            await _evict_model(model)
+            evicted = True
+    if not evicted:
+        logger.info("Gate holder needs %s — no other big model resident",
+                    target_model)
+
+
+async def evict_if_resident(model_name: str) -> None:
+    """Guarded single-model evict (run-end cleanup). No-ops when the
+    model is not in VRAM — see evict_others for why the guard matters."""
+    if not model_name:
+        return
+    base_name = model_name.split(":")[0]
+    loaded = await loaded_models()
+    if any(base_name in m.get("name", "") for m in loaded):
+        await _evict_model(model_name)
+
+
+async def resolve_pitcher_model() -> str:
+    """The model a deletion run should use: PITCHER_MODEL when configured
+    AND installed, else the curator bake.
+
+    The install probe (one /api/tags GET per run) is mandatory, not
+    defensive polish: pillars.adjudicate swallows ALL exceptions into a
+    safe EVALUATE fallback, so a misspelled pitcher name would silently
+    produce zero proposals per category with only debug noise. A visible
+    fallback to the known-good curator is strictly better.
+    """
+    from src.config import settings
+    pitcher = (settings.PITCHER_MODEL or "").strip()
+    fallback = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
+    if not pitcher:
+        return fallback
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{settings.effective_ollama}/api/tags")
+        if r.status_code == 200:
+            names = [m.get("name", "") or m.get("model", "")
+                     for m in r.json().get("models", [])]
+            for n in names:
+                if pitcher == n or pitcher in n or n in pitcher:
+                    return pitcher
+    except Exception as e:
+        logger.debug("pitcher install probe failed: %s", e)
+    logger.warning("PITCHER_MODEL=%s not installed — deletion run falls "
+                   "back to %s (run `python build_models.py`)",
+                   pitcher, fallback)
+    return fallback
 
 
 async def _scheduled_curator_evict() -> None:
@@ -359,17 +425,22 @@ async def _scheduled_curator_evict() -> None:
         raise
 
     # Idle window elapsed. If the curator is still in VRAM, evict it.
+    # The pitcher is included as leak hardening: the deletion run evicts
+    # it eagerly at run end, but if that evict failed (network blip) the
+    # pitcher would otherwise squat until its 10m keep_alive expires.
     from src.config import settings
     curator = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
     if not curator:
         return
-    base_name = curator.split(":")[0]
     loaded = await loaded_models()
-    if any(base_name in m.get("name", "") for m in loaded):
-        logger.info("Curator idle for %ds — evicting from VRAM", delay)
-        await _evict_model(curator)
-    else:
-        logger.debug("Curator already absent — nothing to evict")
+    targets = [curator, (settings.PITCHER_MODEL or "").strip()]
+    for model in [t for t in targets if t]:
+        base_name = model.split(":")[0]
+        if any(base_name in m.get("name", "") for m in loaded):
+            logger.info("%s idle for %ds — evicting from VRAM", model, delay)
+            await _evict_model(model)
+        else:
+            logger.debug("%s already absent — nothing to evict", model)
 
 
 def curator_done() -> None:
@@ -409,7 +480,8 @@ def curator_done() -> None:
 
 
 @asynccontextmanager
-async def curator_priority(owner: str = "curator request"):
+async def curator_priority(owner: str = "curator request", *,
+                           exclusive_model: str = None):
     """Async context manager — guarantees ``curator_done`` even on exceptions.
 
     Preferred over manually pairing ``curator_start`` / ``curator_done``::
@@ -418,7 +490,7 @@ async def curator_priority(owner: str = "curator request"):
             await ollama_call(...)
             ...
     """
-    await curator_start(owner)
+    await curator_start(owner, exclusive_model=exclusive_model)
     try:
         yield
     finally:

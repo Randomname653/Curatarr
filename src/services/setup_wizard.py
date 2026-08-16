@@ -269,6 +269,12 @@ async def test_lastfm(api_key: str) -> dict:
 
 # ── ENV WRITER ────────────────────────────────────────────────────────────────
 
+def _live_settings():
+    """Current settings instance (lazy — avoids an import cycle at load)."""
+    from src.config import settings
+    return settings
+
+
 def write_env(config: dict) -> None:
     """Write a validated config dict to .env file."""
     jwt_secret = config.get("jwt_secret") or secrets.token_hex(32)
@@ -289,6 +295,14 @@ def write_env(config: dict) -> None:
         f"EMBEDDING_MODEL={config.get('embedding_model', 'nomic-embed-text')}",
         f"CURATOR_MODEL=curatarr-curator",
         f"SUMMARIZER_MODEL=curatarr-summarizer",
+        # Two-bake split: fall back to the LIVE settings values (not hardcoded
+        # defaults) so a wizard re-run preserves an enabled pitcher instead of
+        # wiping it back to disabled. First run: settings hold the defaults →
+        # writes "" → split off. (The broader wipe hazard for keys outside
+        # this list — PILLARS_ENABLED etc. — predates this and stays a
+        # separate follow-up.)
+        f"PITCHER_MODEL={config.get('pitcher_model', _live_settings().PITCHER_MODEL)}",
+        f"BASE_PITCHER_MODEL={config.get('base_pitcher_model', _live_settings().BASE_PITCHER_MODEL)}",
         "",
         "# ARR Services",
         f"RADARR_URL={config.get('radarr_url', '')}",
@@ -409,10 +423,15 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
 
 async def build_ollama_models(ollama_endpoint: str,
                                base_curator: str,
-                               base_summarizer: str) -> dict:
+                               base_summarizer: str,
+                               base_pitcher: str = None) -> dict:
     """
-    Create curatarr-curator and curatarr-summarizer via Ollama /api/create.
-    Returns {curator: ok/error, summarizer: ok/error}
+    Create curatarr-curator and curatarr-summarizer via Ollama /api/create —
+    plus curatarr-pitcher when *base_pitcher* is given (two-bake split: the
+    deletion-run bake; same CURATOR_SYSTEM_PROMPT, different base). The
+    pitcher is strictly optional: its pull/create failure never blocks the
+    curator/summarizer builds.
+    Returns {curator: ok/error, summarizer: ok/error[, pitcher: ok/error]}
     """
     results = {}
 
@@ -496,6 +515,27 @@ async def build_ollama_models(ollama_endpoint: str,
     results["summarizer"] = await create_model(
         "curatarr-summarizer", base_summarizer, SUMMARIZER_SYSTEM_PROMPT
     )
+
+    # ── Step 3 (optional): the deletion-run pitcher bake ─────────────────────
+    # Same persona prompt as the curator ON PURPOSE (one voice, v1 — observe
+    # live before adding pitcher-specific rules). Pull + create are isolated:
+    # a missing/failed pitcher leaves curator/summarizer results untouched.
+    if base_pitcher:
+        if await model_exists(ollama_endpoint, base_pitcher):
+            print(f"  ✓  {base_pitcher} already present — skipping pull", flush=True)
+            pulled = True
+        else:
+            pulled = await pull_ollama_model(ollama_endpoint, base_pitcher)
+            if not pulled:
+                print(f"  ⚠️  Pull failed for pitcher base {base_pitcher} — "
+                      "deletion runs will fall back to the curator bake", flush=True)
+        if pulled:
+            logger.info("Building curatarr-pitcher from %s...", base_pitcher)
+            results["pitcher"] = await create_model(
+                "curatarr-pitcher", base_pitcher, CURATOR_SYSTEM_PROMPT
+            )
+        else:
+            results["pitcher"] = False
 
     return results
 

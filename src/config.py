@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     # Defaults here are only used when .env has no entry.
     BASE_CURATOR_MODEL: str = "qwen3.6:27b"        # chat + recommendations
     BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"   # enrichment + memory extraction
+    # Two-bake split (2026-08 benchmark, tests/benchmarks/model_baselines.csv):
+    # qwen3.8:27b won the pipeline bench (metadata-anchored pitches, collision
+    # flagging, data-bound refusals, 3.1s vs 7.5s median at 16k ctx; pillar
+    # stresstest 100% GREEN) but lost the chat bench (sycophancy + anchor-less
+    # confabulation) — so it serves ONLY the deletion run (judge + pitch
+    # monologue) as a dedicated bake, while the curator bake keeps chat and
+    # everything else. Empty PITCHER_MODEL = split disabled: deletion runs use
+    # the curator bake (graceful degradation for installs without the bake).
+    # The 4090 (24 GB) can never co-host both bakes — llm_priority's
+    # evict_others choreographs the swaps.
+    PITCHER_MODEL: str = ""
+    BASE_PITCHER_MODEL: str = "qwen3.8:27b"
     # ── Why granite4.1:8b again (after Phase A briefly used 3b)? ──────────
     # Phase A (2026-05-24 finale, single v5 prompt, 200 items × 4 models)
     # picked granite4.1:3b based on best curated pass-rate at the time.

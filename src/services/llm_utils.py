@@ -156,7 +156,10 @@ CURATOR_IDLE_EVICT_BUSY    = 10
 # full speed (32-34 t/s, 23.96 GB total); 20480 tips over (generation
 # halves). Passed as a REQUEST option — no model rebuild involved. MUST be
 # identical on EVERY curator call site: a num_ctx mismatch between requests
-# forces a full model reload (~6.5 s) on each switch.
+# forces a full model reload (~6.5 s) on each switch. This constant also
+# governs the PITCHER bake's calls (two-bake split): the deletion run's
+# judge + monologue both pin it, so one pitcher instance stays resident
+# for the whole batch — do NOT introduce a separate PITCHER_NUM_CTX.
 CURATOR_NUM_CTX = 16384
 
 
