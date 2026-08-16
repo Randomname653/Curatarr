@@ -92,6 +92,11 @@ FIXTURES = {
     "Magical Sempai": ["unmotivated freshman", "low-commitment club",
                        "stage-frightened mentor", "magic tricks that backfire",
                        "slapstick nudity", "gyaru fashion"],
+    # Round-7: the mahjong thriller that strolled in via the constraint
+    # probe and double-billed one tag for two constraints.
+    "Akagi": ["High-stakes mahjong duel", "Gambling as a metaphor for life",
+              "Youth prodigy vs. seasoned criminal", "Mafia underworld intrigue",
+              "Police pursuit", "Psychological manipulation"],
 }
 
 TITLES = list(FIXTURES.keys())
@@ -134,6 +139,13 @@ async def main():
           "mature tone ↔" in s2["Puella Magi Madoka Magica"][1])
     check("Gleipnir now clears the cap (3/3 constraints evidenced)",
           s2["Gleipnir"][0] >= 6)
+    # Round-7: tag exclusivity — one tag cannot evidence two constraints.
+    check("SITE cannot double-bill 'Body horror and gore' for darker+mature",
+          s2["MAGICAL GIRL SITE"][1].count("Body horror and gore (1.00)") <= 1)
+    check("Akagi cannot double-bill 'Psychological manipulation'",
+          s2["Akagi"][1].count("Psychological manipulation (1.00)") <= 1)
+    check("Akagi ranks clearly below Gleipnir (genre stray stays down)",
+          s2["Akagi"][0] < s2["Gleipnir"][0])
     check("SITE capped <=5 (no fetish tag)",
           s2["MAGICAL GIRL SITE"][0] <= 5)
     check("Madoka capped <=5 (no fetish tag — the hallucination case)",
