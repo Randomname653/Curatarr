@@ -95,6 +95,7 @@ def _queue_summarizer(answers):
 
 
 # Evidence stubs: controlled tag sets + controlled vectors.
+_real_candidate_tags = ss._candidate_tags   # kept for the cascade test below
 TAGS_BY_TITLE = {
     "Gushing Over Magical Girls": ["Bondage", "Sadism"],
     "Nanoha": ["Primarily Child Cast", "Magic"],
@@ -218,6 +219,60 @@ check("duplicate index docs collapse to one hit per title",
       len(titles) == len(set(titles)))
 cw.get_chroma_db = lambda: fake_chroma
 
+# ── raw-tag cascade: enriched(doc_id) resolves the external id for raw ───────
+
+class FakeCache:
+    """raw is EXTERNAL-id keyed; enriched hits on the doc id and carries
+    the resolved anilist_id — the cascade the live Gleipnir miss exposed."""
+    def __init__(self):
+        self.data = {
+            "enriched:anime:sonarr:1": {"response": {
+                "anilist_id": 99, "keywords": ["Lossy Keyword"]}},
+            "raw:anime:99": {"response": {
+                "tags": ["Femdom", "Seinen", "Gore"]}},
+        }
+
+    def get_cache(self, key):
+        return self.data.get(key)
+
+    def close(self):
+        pass
+
+
+import src.cache.metadata_cache as mc
+_orig_mc = mc.MetadataCache
+mc.MetadataCache = FakeCache
+tags_out = _real_candidate_tags(
+    [{"title": "Gleipnir", "doc_id": "sonarr:1", "themes": "death game"}],
+    "anime")
+mc.MetadataCache = _orig_mc
+check("raw tags resolved via the enriched entry's external id",
+      "Femdom" in tags_out[0] and "Seinen" in tags_out[0])
+check("raw tags beat the lossy enriched keywords",
+      "Lossy Keyword" not in tags_out[0])
+check("chroma themes still unioned in", "death game" in tags_out[0])
+
+# ── tag exclusivity: one tag evidences at most one positive constraint ──────
+
+VECS["darker"] = [0, 0, 1]          # matches bondage/sadism vector space
+excl_tags = {"Solo": ["Bondage"]}   # ONE tag that would satisfy both
+ss._candidate_tags = lambda hits, domain=None: [
+    excl_tags.get(h["title"], TAGS_BY_TITLE.get(h["title"], [])) for h in hits]
+TITLES.append("Solo")
+parse_two = {"anchor_title": None,
+             "constraints": ["bondage", "darker"],
+             "search_text": "x"}
+_queue_summarizer([parse_two])
+res = asyncio.run(ss.curated_search("bondage darker", n_results=7,
+                                    domain="anime"))
+solo = next(h for h in res["results"] if h["title"] == "Solo")
+check("one tag cannot evidence two constraints",
+      solo["fit_note"].count("Bondage") <= 2
+      and "unbelegt" in solo["fit_note"])
+TITLES.remove("Solo")
+ss._candidate_tags = lambda hits, domain=None: [
+    TAGS_BY_TITLE.get(h["title"], []) for h in hits]
+
 # ── unit guards on the pure helpers ──────────────────────────────────────────
 
 check("negation split: 'no gore' -> ('gore', True)",
@@ -246,9 +301,9 @@ check("summarizer used for the parse only",
       src_text.count("_summarizer_json(") == 2)  # def + parse call
 check("evidence thresholds documented as fixture-calibrated",
       "test_search_fixtures" in src_text)
-check("raw tags take priority over enriched keywords",
-      src_text.index('f"raw:{domain}:{h[\'doc_id\']}"')
-      < src_text.index('f"enriched:{domain}:{h[\'doc_id\']}"'))
+check("raw lookup follows the enriched entry's resolved external ids",
+      'enriched.get("anilist_id")' in src_text
+      and 'f"raw:{domain}:{rid}"' in src_text)
 
 chat = (root / "src/routers/chat.py").read_text(encoding="utf-8")
 check("chat RAG delegates to the shared core",

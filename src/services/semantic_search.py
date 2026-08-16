@@ -357,21 +357,36 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
                     tags.append(s)
 
         if cache is not None and domain:
-            keys = []
-            if h.get("doc_id"):
-                keys += [f"raw:{domain}:{h['doc_id']}",
-                         f"enriched:{domain}:{h['doc_id']}"]
-            keys += [f"raw:{domain}:{(h.get('title') or '')[:40]}",
-                     f"enriched:{domain}:{(h.get('title') or '')[:40]}"]
-            for k in keys:
+            def _read(key):
                 try:
-                    hit = cache.get_cache(k)
+                    hit = cache.get_cache(key)
                 except Exception:
                     hit = None
-                resp = (hit or {}).get("response") or {}
-                _add(resp.get("tags") or resp.get("keywords"))
-                if tags:
-                    break
+                return (hit or {}).get("response") or {}
+
+            # RAW entries are external-id keyed (raw:anime:96203) while the
+            # chroma doc id is the arr doc id (sonarr:1694) — a direct
+            # raw:{doc_id} read misses, which live-starved Gleipnir of its
+            # Seinen/Femdom/Gore raw tags (only the lossy enriched keywords
+            # + themes arrived). The enriched entry DOES hit on the doc id
+            # and embeds the resolved external ids: read it first, follow
+            # its ids to the raw entry, and only then fall back.
+            enriched = {}
+            if h.get("doc_id"):
+                enriched = _read(f"enriched:{domain}:{h['doc_id']}")
+            raw = {}
+            for rid in (enriched.get("anilist_id"), enriched.get("tmdb_id"),
+                        h.get("doc_id"), (h.get("title") or "")[:40]):
+                if rid:
+                    raw = _read(f"raw:{domain}:{rid}")
+                    if raw.get("tags") or raw.get("keywords"):
+                        break
+            _add(raw.get("tags") or raw.get("keywords"))
+            if not tags:
+                _add(enriched.get("keywords"))
+            if not tags:
+                _add(_read(f"enriched:{domain}:{(h.get('title') or '')[:40]}")
+                     .get("keywords"))
         _add((h.get("themes") or "").split(","))
         out.append(tags[:_TAG_CAP])
     try:
@@ -499,6 +514,13 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
             r_norm *= 0.5
         evs, notes = [], []
         capped5 = capped2 = False
+        # Tag exclusivity across POSITIVE constraints: round 7 showed one
+        # tag stem-cell-ing through half the query ("Body horror and gore"
+        # evidenced darker AND mature tone at 1.00 each on SITE; Akagi's
+        # "Psychological manipulation" double-billed the same way). Each
+        # tag may evidence at most ONE positive constraint; negation checks
+        # are exempt (a used tag can still violate an exclusion).
+        used_tags: set = set()
         for text, negated in cons:
             ckey = _norm_tag(text)
             cvec = _vec_memo.get(ckey)
@@ -521,7 +543,7 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
             lex_best = None   # (priority, tag)
             for t in tags:
                 tkey = _norm_tag(t)
-                if not tkey:
+                if not tkey or (not negated and tkey in used_tags):
                     continue
                 # All-words counts only when at least one CARRIER word is
                 # among the matches (a tag matching nothing but scaffolding
@@ -550,6 +572,8 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
             if best_sim < 1.0 and cvec:
                 for t in tags:
                     tkey = _norm_tag(t)
+                    if not negated and tkey in used_tags:
+                        continue
                     # Demographic antonym guard: a DIFFERING cast-age tag is
                     # counter-evidence, not near-evidence.
                     if c_demo:
@@ -561,6 +585,9 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
                         s = _dot(cvec, tvec)
                         if s > best_sim:
                             best_sim, best_tag = s, t
+            if (not negated and best_tag is not None
+                    and best_sim >= _T_LOW):
+                used_tags.add(_norm_tag(best_tag))
             if negated:
                 # A satisfied exclusion is FULL evidence — "no gore" met is
                 # as good as a positive constraint met, not a 1-sim penalty
