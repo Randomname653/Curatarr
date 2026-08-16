@@ -691,12 +691,84 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
         want = _norm_title(anchor_used)
         hits = [h for h in hits if _norm_title(h["title"]) != want]
 
-    # SECOND, constraint-focused probe: the anchor/search-text vector stays
-    # glued to the anchor's genre neighbourhood ("magical girl …"), so
+    # FACET probe (multi-vector items, stage 1): each positive constraint
+    # searches the theme-point collection; parents whose DIFFERENT facets
+    # hit DIFFERENT constraints are the contrast-resolution this stage
+    # exists for and keep full retrieval weight. Falls through to the
+    # legacy constraint-text probe while the facet backfill is young.
+    facet_found = False
+    if parsed and parsed["constraints"]:
+        try:
+            from src.services.facet_index import facet_probe
+            cons_core = [_split_negation(c)[0] for c in parsed["constraints"]]
+            cvmap = await _texts_to_vectors(cons_core)
+            cvecs = [cvmap.get(_norm_tag(c)) for c in cons_core]
+            probe = await facet_probe(cvecs, domain)
+            if probe:
+                facet_found = True
+                ag = {g.strip().lower()
+                      for g in (anchor_genres or "").split(",") if g.strip()}
+                seen = {_norm_title(h["title"]) for h in hits}
+                if anchor_used:
+                    seen.add(_norm_title(anchor_used))
+                from src.vector_store.chromadb_wrapper import get_chroma_db as _g
+                chroma = _g()
+                ranked = sorted(probe.items(),
+                                key=lambda kv: -max(kv[1]["sims"].values(),
+                                                    default=0.0))
+                added = 0
+                for parent, rec in ranked:
+                    if added >= 12 or len(hits) >= 40:
+                        break
+                    if _norm_title(rec.get("title", "")) in seen:
+                        continue
+                    hg = {g.strip().lower()
+                          for g in (rec.get("genres") or "").split(",")
+                          if g.strip()}
+                    if ag and hg and not (hg & ag):
+                        continue
+                    doc = chroma.get_by_id(parent)
+                    meta = (doc or {}).get("metadata") or {}
+                    h = {
+                        "title": rec.get("title") or meta.get("title", "?"),
+                        "year": meta.get("year") or None,
+                        "genres": meta.get("genres", rec.get("genres", "")),
+                        "themes": meta.get("themes", ""),
+                        "doc": (doc or {}).get("document") or "",
+                        "doc_id": parent,
+                        "watch_tag": "",
+                        "size_tag": "",
+                        "score": max(rec["sims"].values(), default=0.0),
+                    }
+                    # Contrast bonus: >=2 distinct constraints hit by
+                    # distinct facets → full retrieval weight; single-facet
+                    # hits get the probe damping like the legacy probe.
+                    if rec.get("hits", 0) < 2:
+                        h["_probe"] = "constraint"
+                    seen.add(_norm_title(h["title"]))
+                    hits.append(h)
+                    added += 1
+                if added:
+                    try:
+                        titles_new = [h["title"] for h in hits[-added:]]
+                        watched = watched_lookup(user_id, titles_new,
+                                                 category=domain)
+                        from src.services.size_norms import short_size_tag
+                        for h in hits[-added:]:
+                            h["watch_tag"] = watch_tag(watched.get(h["title"]))
+                            h["size_tag"] = short_size_tag(title=h["title"])
+                    except Exception as e:
+                        logger.debug("[search] facet hit decoration failed: %s", e)
+        except Exception as e:
+            logger.debug("[search] facet probe failed: %s", e)
+
+    # LEGACY constraint-text probe — transitional fallback while the facet
+    # collection is empty/young: the anchor/search-text vector stays glued
+    # to the anchor's genre neighbourhood ("magical girl …"), so
     # cross-genre titles that nail the TONE (the owner's Mnemosyne /
     # Speed Grapher examples) never enter the pool. A probe embedded from
     # the constraints alone widens it; evidence scoring sorts the union.
-    if parsed and parsed["constraints"]:
+    if parsed and parsed["constraints"] and not facet_found:
         try:
             from src.services.embed_service import embed_query as _eq
             cvec = await _eq(", ".join(parsed["constraints"]))

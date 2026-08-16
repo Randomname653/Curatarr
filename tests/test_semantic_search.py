@@ -60,6 +60,11 @@ class FakeChroma:
     def __init__(self):
         self.last_n = None
 
+    def facets_query(self, query_embeddings=None, n_results=20, where=None):
+        # Default: empty facet collection → legacy probe fallback.
+        return {"ids": [[]], "documents": [[]], "metadatas": [[]],
+                "distances": [[]]}
+
     def query(self, query_embeddings=None, n_results=10, where=None):
         self.last_n = n_results
         n = min(n_results, len(TITLES))
@@ -224,6 +229,56 @@ titles = [h["title"] for h in res["results"]]
 check("duplicate index docs collapse to one hit per title",
       len(titles) == len(set(titles)))
 cw.get_chroma_db = lambda: fake_chroma
+
+# ── facet probe: contrast title enters via two distinct facet points ─────────
+
+class FacetChroma(FakeChroma):
+    """A title whose facets live in BOTH query regions — the case a single
+    averaged point can never serve (multi-vector stage 1)."""
+    def facets_query(self, query_embeddings=None, n_results=20, where=None):
+        v = list(query_embeddings[0])
+        if v == VECS["adult cast"]:
+            return {"ids": [["dual:1::f0"]],
+                    "documents": [["grown-up ensemble"]],
+                    "metadatas": [[{"parent": "dual:1", "title": "DualWorld",
+                                    "genres": "Mahou Shoujo"}]],
+                    "distances": [[0.15]]}
+        if v == VECS["bondage"]:
+            return {"ids": [["dual:1::f1"]],
+                    "documents": [["bondage play"]],
+                    "metadatas": [[{"parent": "dual:1", "title": "DualWorld",
+                                    "genres": "Mahou Shoujo"}]],
+                    "distances": [[0.2]]}
+        return super().facets_query(query_embeddings, n_results, where)
+
+    def get_by_id(self, doc_id):
+        if doc_id == "dual:1":
+            return {"id": doc_id, "embedding": [0.5, 0.5],
+                    "document": "dual world doc",
+                    "metadata": {"title": "DualWorld", "year": 2020,
+                                 "genres": "Mahou Shoujo",
+                                 "themes": "Primarily Adult Cast, Bondage"}}
+        return super().get_by_id(doc_id)
+
+
+TAGS_BY_TITLE["DualWorld"] = ["Primarily Adult Cast", "Bondage"]
+cw.get_chroma_db = lambda: FacetChroma()
+_queue_summarizer([{"anchor_title": None,
+                    "constraints": ["adult cast", "bondage"],
+                    "search_text": "x"}])
+res = asyncio.run(ss.curated_search("adult bondage", n_results=6,
+                                    domain="anime"))
+dual = next((h for h in res["results"] if h["title"] == "DualWorld"), None)
+check("facet-probe contrast title enters the pool", dual is not None)
+check("both constraints evidenced on the facet title (met 2)",
+      dual is not None and dual["met"] == 2)
+check("contrast title ranks first (full retrieval weight, no damping)",
+      res["results"][0]["title"] == "DualWorld")
+check("facet hit decorated with parent doc + no internal _probe leak",
+      dual is not None and dual["doc"] == "dual world doc"
+      and "_probe" not in dual)
+cw.get_chroma_db = lambda: fake_chroma
+del TAGS_BY_TITLE["DualWorld"]
 
 # ── genre-coherence gate: anchored probe hits need genre overlap ─────────────
 
