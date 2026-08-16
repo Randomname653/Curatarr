@@ -47,7 +47,11 @@ Kategorien-Schnitte: qwen3.8 führt movie (21.73) und music (21.49), gemma4:31b 
 
 ## Stresstest-Gate (Stand)
 
-gemma4:31b, curatarr-curator (aktuelles Production-Bake), qwen3.8:27b, gemma4:26b: **alle 15/15 = 100 % auf JSON/Keys/Enum/Verdict, Determinismus 5/5 — GATE GREEN.** Verdict-Treffer inkl. der Constitution-Fälle (Tokyo Story → KEEP_WITH_FLAG trotz Owner-Antipathie, Twilight → HARD_KEEP über Household-Pillar, Manyu/Abandoned → CUT). Avg-Latenz: gemma4:26b 4.9s < qwen3.8 6.2s < curatarr-curator 6.8s < gemma4:31b 7.6s. qwen3.6: Timeouts (konsistent mit DNF). muse-glimmer: läuft bei Redaktionsschluss noch — für die Swap-Entscheidung irrelevant (qwen3.8-Gate ist GREEN).
+gemma4:31b, curatarr-curator (aktuelles Production-Bake), qwen3.8:27b, gemma4:26b: **alle 15/15 = 100 % auf JSON/Keys/Enum/Verdict, Determinismus 5/5 — GATE GREEN.** Verdict-Treffer inkl. der Constitution-Fälle (Tokyo Story → KEEP_WITH_FLAG trotz Owner-Antipathie, Twilight → HARD_KEEP über Household-Pillar, Manyu/Abandoned → CUT). Avg-Latenz: gemma4:26b 4.9s < qwen3.8 6.2s < curatarr-curator 6.8s < gemma4:31b 7.6s.
+
+**RED-Ausfälle (final):**
+- **qwen3.6:latest — RED:** 11/15 Calls in den Timeout (ein Durchläufer: Twilight nach 134.7s mit korrektem Verdict — funktional intakt, aber VRAM-erstickt). Bestätigt den Pipeline-DNF.
+- **muse-glimmer:30b — RED: 0/15 valides JSON.** Alle Calls antworteten normal schnell (6–21s), aber nie schema-konform — das Modell hält das strikte Pillar-JSON nicht ein ("determinism 5/5" = konsistent kaputt). Damit ist muse auch als Pillar-Judge raus; die Facts-Harvester-Idee bleibt, aber nur für Freitext-Jobs oder mit Format-Zwang (structured output / grammar).
 
 ## Empfehlung & nächste Schritte
 
