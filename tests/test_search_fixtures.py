@@ -124,7 +124,7 @@ async def score(constraints):
 
 def show(header, scores):
     print(f"\n=== {header} ===")
-    for t, (fit, note) in sorted(scores.items(), key=lambda x: -x[1][0]):
+    for t, (fit, note, *_rest) in sorted(scores.items(), key=lambda x: -x[1][0]):
         print(f"  {fit:>2}  {t[:32]:<34} {note[:110]}")
 
 
@@ -203,6 +203,18 @@ async def main():
           all(s1[t][0] <= 5 for t in child))
     check("adult evidence cites the literal tag",
           "Primarily Adult Cast" in s1["Speed Grapher"][1])
+
+    # ── round-9 contrast query: the documented split limit ──────────────────
+    # "cute pastel + sociopathic warfare" halves live in different tag
+    # worlds — no fixture title carries both. The system's honest answer is
+    # LOW met everywhere (the UI banner renders exactly this), never a fake
+    # full match.
+    qc = ["cute", "pastel aesthetic",
+          "calculated socio-pathological manipulation"]
+    sc = await score(qc)
+    show("cute · pastel · sociopathic manipulation (contrast limit)", sc)
+    check("contrast query: no title fakes more than 1 met criterion",
+          max(fit_note_met[2] for fit_note_met in sc.values()) <= 1)
 
     # ── negation: 'no gore' ─────────────────────────────────────────────────
     qn = ["no gore"]

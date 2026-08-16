@@ -3627,8 +3627,13 @@ async function searchLibrary() {
     }
     const modeTag = r.mode === 'evidence' ? ' · curated' : ' · similarity only';
     const anchorTag = r.anchor ? ` · similar to ${esc(r.anchor)}` : '';
+    const cov = r.coverage || null;
+    const covBanner = (cov && cov.constraints >= 3 && cov.best_met <= 1)
+      ? `<div style="font-size:12px;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:12px">No library title carries this full profile (best match: ${cov.best_met}/${cov.constraints} criteria) — showing partial matches.</div>`
+      : '';
     el.innerHTML = back +
       `<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Semantic matches in your library for <strong style="color:var(--amber)">${esc(q)}</strong>${currentRecsCategory ? ` · ${esc(currentRecsCategory)}` : ''}${anchorTag}${modeTag}</div>` +
+      covBanner +
       hits.map(h => `
       <div class="card" style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
