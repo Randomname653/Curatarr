@@ -79,6 +79,19 @@ FIXTURES = {
     "Fabiniku": ["gender-bending reincarnation", "BL romance",
                  "slapstick humor", "salaryman to adventurer",
                  "Primarily Adult Cast"],
+    # Round-5 owner catches: generic-word and rating-vs-tone false positives.
+    "Miss Machiko": ["perverted faculty", "slapstick nudity", "male harem",
+                     "age gap romance", "school setting",
+                     "teacher-student dynamics"],
+    "Endo and Kobayashi Live": ["Meta-gaming commentary",
+                                "Tsundere villainess obsession",
+                                "Otome game romance routes",
+                                "Player-to-game deity transformation",
+                                "Tragic destiny of antagonist",
+                                "School club dynamics"],
+    "Magical Sempai": ["unmotivated freshman", "low-commitment club",
+                       "stage-frightened mentor", "magic tricks that backfire",
+                       "slapstick nudity", "gyaru fashion"],
 }
 
 TITLES = list(FIXTURES.keys())
@@ -125,6 +138,23 @@ async def main():
           s2["RIN Daughters of Mnemosyne"][0]
           > max(s2["Jungle De Ikou"][0],
                 s2["Magical Girl Lyrical Nanoha"][0]))
+    # Round-5 regression: generic structure words are not evidence.
+    check("'School club dynamics' does not evidence fetish dynamics",
+          "School club dynamics" not in s2["Endo and Kobayashi Live"][1]
+          or "unbelegt" in s2["Endo and Kobayashi Live"][1].split("·")[1])
+    check("'teacher-student dynamics' does not evidence fetish dynamics",
+          s2["Miss Machiko"][0] <= 5
+          and "↔ teacher-student dynamics (1.00)"
+          not in s2["Miss Machiko"][1].split("·")[1])
+    # Round-5 regression: content rating (nudity) is not mature TONE.
+    check("'slapstick nudity' does not evidence mature tone",
+          "mature tone ↔ slapstick nudity"
+          not in s2["Magical Sempai"][1]
+          and "mature tone ↔ slapstick nudity" not in s2["Miss Machiko"][1])
+    check("Gleipnir still tops the round-5 false-positive crowd",
+          s2["Gleipnir"][0] > max(s2["Miss Machiko"][0],
+                                  s2["Endo and Kobayashi Live"][0],
+                                  s2["Magical Sempai"][0]))
 
     # ── Round-1 query: literal cast constraint ───────────────────────────────
     q1 = ["adult cast"]
