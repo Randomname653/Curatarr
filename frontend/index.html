@@ -3625,7 +3625,7 @@ async function searchLibrary() {
       el.innerHTML = back + `<p class="loading">No semantic matches for "${esc(q)}" — coverage follows the enrichment index.</p>`;
       return;
     }
-    const modeTag = r.mode === 'reranked' ? ' · curated' : ' · similarity only';
+    const modeTag = r.mode === 'evidence' ? ' · curated' : ' · similarity only';
     const anchorTag = r.anchor ? ` · similar to ${esc(r.anchor)}` : '';
     el.innerHTML = back +
       `<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Semantic matches in your library for <strong style="color:var(--amber)">${esc(q)}</strong>${currentRecsCategory ? ` · ${esc(currentRecsCategory)}` : ''}${anchorTag}${modeTag}</div>` +
