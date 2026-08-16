@@ -294,6 +294,14 @@ async def _run_music_catalog_sync(deep: bool = False) -> bool:
     return bool(res.get("ok"))
 
 
+async def _run_facet_backfill(deep: bool = False) -> bool:
+    """Multi-vector items stage 1: page the corpus into theme-facet points.
+    False while unfinished → the task stays due and every tick advances the
+    app_state cursor; True once the done flag is stamped."""
+    from src.services.facet_index import run_facet_backfill
+    return await run_facet_backfill()
+
+
 async def _run_collections(deep: bool = False) -> bool:
     """Design + push the household's "Curatarr · " collection shelves."""
     from src.services.collection_designer import design_collections
@@ -364,6 +372,12 @@ def _registry() -> list[Task]:
         # the OWNED library (section-global — one set via the owner token).
         Task("plex_collections", "Curatarr collections", 168.0,
              _run_collections, needs_llm=True),
+        # Multi-vector items stage 1: backfill theme-facet points for the
+        # existing corpus (CPU embeds only, resumable via app_state cursor;
+        # returns False until complete so every tick continues the run,
+        # then becomes a stamped no-op).
+        Task("facet_backfill",   "Facet index backfill", 24.0,
+             _run_facet_backfill),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
              takes_deep=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay),
