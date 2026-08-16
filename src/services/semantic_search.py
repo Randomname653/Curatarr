@@ -5,18 +5,21 @@ both the hidden chat-RAG injection and the user-facing
 ``GET /api/library/semantic-search`` endpoint. The chat path stays
 byte-identical via ``format_rag_context()``.
 
-The endpoint additionally runs ``curated_search()`` — a two-stage
-retrieve→rerank on top of the same vector store. Plain vector
-neighbourhood ranks by premise-noun overlap ("magical girl" matches
-everything magical-girl-shaped), so a query like "like Gushing Over
-Magical Girls but with more adult cast" ignored the modifier entirely
-and even returned the anchor itself as hit #1. The rerank judges the
-overfetched candidates against the parsed constraints using the raw
-enrichment tags (e.g. AniList "Primarily Adult Cast"), which never made
-it into the embedding prose. Every stage hard-falls-back to the plain
-vector order — the search is never worse than the old one.
+The endpoint runs ``curated_search()`` on top: query parse (LLM) →
+anchor-aware dual-probe retrieval → **deterministic constraint-evidence
+scoring**. History of that last stage: a granite listwise rerank was
+tried and removed — it collapsed on 20-40 candidate lists (positional
+boilerplate, hallucinated constraint matches), and its tag input was
+starved anyway by a doc-id bug (title-key cache lookups hit 3-4% while
+doc-id lookups hit 87%). "Does a tag evidence this constraint?" is a
+similarity question, not a generation task: embedding cosine between a
+parsed constraint and each individual tag cannot overlook a literal
+"Femdom", cannot invent evidence, and produces an honest machine-built
+fit note. The only LLM left in the loop is the query parse, which
+proved reliable in every live round.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -30,7 +33,66 @@ logger = logging.getLogger(__name__)
 # session without squatting on VRAM (curator_start evicts it anyway).
 _SEARCH_KEEP_ALIVE = "5m"
 _PARSE_TIMEOUT = 12.0
-_RERANK_TIMEOUT = 30.0
+
+# ── Evidence-scoring constants — calibrated on tests/test_search_fixtures.py
+# (the owner's two live review rounds), do not tweak by feel. Constraint↔tag
+# comparison is SYMMETRIC document-side embedding: the asymmetric
+# search_query:/search_document: prefixes are tuned for query→long-document
+# retrieval and collapse short-phrase similarity (measured: "subversive
+# fetish dynamics"↔"Femdom" scored 0.23 asymmetric vs a usable symmetric
+# scale where Gore↔"Body horror and gore" is 0.79). Literal substring
+# matches short-circuit to 1.0 BEFORE any embedding — a tag that says the
+# constraint outright can never be missed again. ─────────────────────────────
+_EV_FLOOR = 0.72     # cosine below this contributes 0 evidence (symmetric
+                     # short-tag noise floor measured at ~0.65-0.76:
+                     # "darker"↔"Magic" scored 0.76)
+_EV_CEIL = 0.95      # cosine at/above this counts as full evidence
+_T_LOW = 0.78        # any positive constraint below this → fit capped at 5
+_T_NEG = 0.85        # a NEGATED constraint at/above this → fit capped at 2
+_W_RETRIEVAL = 0.35  # weight of the vector-retrieval score in fit
+_W_EVIDENCE = 0.65   # weight of the constraint-evidence mean in fit
+_TAG_CAP = 20        # tags per candidate fed into scoring
+_NEG_PREFIXES = ("no ", "not ", "without ", "non-", "kein ", "keine ", "ohne ")
+# Cast-demographic words form an ANTONYM family embeddings cannot separate
+# ("adult cast"↔"Primarily Teen Cast" embeds near-identical). When both the
+# constraint and a tag name a demographic and they DIFFER, that tag is
+# counter-evidence — its similarity is forced to 0 for this constraint.
+_DEMO_WORDS = ("adult", "teen", "child", "kid")
+
+# Curated concept families over the CLOSED AniList tag vocabulary (389 tags
+# on this install). Embeddings put "Femdom"↔"fetish dynamics" at 0.71 —
+# inside the 0.65-0.76 short-tag noise band — so semantic-field membership
+# is encoded explicitly: a constraint containing the trigger word treats any
+# family member tag as literal evidence. Small on purpose; extend only with
+# vocabulary actually observed in the library.
+_CONCEPT_FAMILIES = {
+    "fetish": ("femdom", "bondage", "sadism", "masochism", "vore", "bdsm",
+               "psychosexual", "pain as pleasure", "yandere"),
+    "kink": ("femdom", "bondage", "sadism", "masochism", "vore", "bdsm",
+             "psychosexual", "pain as pleasure", "yandere"),
+    "dark": ("gore", "body horror", "horror", "tragedy", "grim", "bleak",
+             "dark", "psychological", "suicide", "death game"),
+    # NB: no bare "sexual" member — it substring-matched "Heterosexual"
+    # (an orientation tag, not a maturity marker) in calibration.
+    "mature": ("seinen", "josei", "ecchi", "nudity", "explicit",
+               "adult", "large breasts"),
+}
+
+
+def _families_for(ckey: str) -> tuple:
+    """Family member tuples whose trigger appears in the constraint. The
+    'mature'/'adult' trigger is skipped for CAST constraints — those are
+    the demographic-guard's domain ("adult cast" must not be evidenced by
+    Seinen/Ecchi)."""
+    fams = []
+    for trigger, members in _CONCEPT_FAMILIES.items():
+        if trigger in ckey:
+            if trigger == "mature" and "cast" in ckey:
+                continue
+            fams.append(members)
+    if "adult" in ckey and "cast" not in ckey:
+        fams.append(_CONCEPT_FAMILIES["mature"])
+    return tuple(fams)
 
 _PARSE_SCHEMA = {
     "type": "object",
@@ -51,7 +113,7 @@ _PARSE_SYS = (
     "search_text: a dense content description of what is wanted, WITHOUT the anchor title."
 )
 
-# Deterministic net under the LLM parse: "like <X> but/with/except …" — the
+# Deterministic net under the LLM parse: "like <X> but/with/except …" — a
 # tonal-query live test showed granite missing a lowercase mid-sentence title
 # (anchor null → no anchor vector, no self-filter, duplicate anchor cards).
 # A wrong regex guess is harmless: _anchor_vector verifies the candidate
@@ -59,47 +121,6 @@ _PARSE_SYS = (
 _ANCHOR_RE = re.compile(
     r"\b(?:like|similar to|wie)\s+(.{3,80}?)\s+(?:but|with|without|except|aber|nur)\b",
     re.IGNORECASE)
-
-# minItems is load-bearing, not decoration: with grammar-forced output the
-# summarizer satisfied the old schema with the CHEAPEST valid document —
-# a literal {"ranking": []} — on every call, so the search silently fell
-# back to vector order. An empty array must be grammatically illegal.
-_RERANK_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "ranking": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "i": {"type": "integer"},
-                    "fit": {"type": "integer"},
-                    "why": {"type": "string"},
-                },
-                "required": ["i", "fit", "why"],
-            },
-        }
-    },
-    "required": ["ranking"],
-}
-
-_RERANK_SYS = (
-    "You rank a user's own library items against their search intent. "
-    "Score each candidate 0-10 for satisfying the FULL query. "
-    "Score 8-10 ONLY when EVERY constraint has a directly quoted tag as "
-    "evidence. "
-    "A constraint counts as satisfied ONLY when a listed tag or premise fact "
-    "states it outright — 'implied' is not evidence. "
-    "If any constraint lacks evidence, score at most 5 and name that "
-    "constraint in why — never claim it is met. "
-    "Violating an explicit constraint caps the score at 2. "
-    "Constraints mean exactly what they say — never substitute a related "
-    "concept (an adult CAST is about character ages, not adult themes; "
-    "gore or violence alone is not a fetish dynamic). "
-    "why: one short factual clause quoting the deciding tag. "
-    "Return every candidate index exactly once."
-)
 
 
 async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
@@ -132,7 +153,14 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
 
 def _hits_from_results(results: dict, user_id: int = None,
                        domain: str = None) -> list:
-    """Chroma result dict → hit dicts (keeps the vector rank + score)."""
+    """Chroma result dict → hit dicts (keeps vector rank, score AND doc id).
+
+    The doc id is load-bearing: the enrichment cache keys most entries by
+    the arr doc-id ("sonarr:1694"), and title-keyed lookups only hit 3-4%
+    of titles — the original cause of the search judging candidates with
+    empty tag lists.
+    """
+    ids = (results.get("ids") or [[]])[0]
     docs = results.get("documents", [[]])[0]
     metas = results.get("metadatas", [[]])[0]
     dists = (results.get("distances") or [[]])[0]
@@ -157,6 +185,7 @@ def _hits_from_results(results: dict, user_id: int = None,
             "genres": meta.get("genres", ""),
             "themes": meta.get("themes", ""),
             "doc": doc or "",
+            "doc_id": str(ids[idx]) if idx < len(ids) and ids[idx] else None,
             "watch_tag": watch_tag(watched.get(title)),
             # The index never wrote tmdb/tvdb/plex keys into metadata, so the
             # size lookup has always resolved by title — call it that way.
@@ -179,19 +208,25 @@ def format_rag_context(hits: list) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Curated search (endpoint path): parse → anchor-aware retrieve → LLM rerank
+# Curated search: parse → anchor-aware retrieve → constraint-evidence scoring
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _norm_title(t: str) -> str:
     return "".join(c for c in (t or "").lower() if c.isalnum())
 
 
+def _norm_tag(t: str) -> str:
+    """Display-preserving normalization key: the index themes carry U+2011
+    non-breaking hyphens ("Gore‑heavy") and casing collisions."""
+    return re.sub(r"\s+", " ", (t or "").replace("‑", "-").strip()).lower()
+
+
 async def _summarizer_json(system: str, user: str, schema: dict,
                            num_predict: int, timeout: float):
-    """One summarizer-tier JSON call (granite). None on any failure —
-    callers fall back to the plain vector order. Deliberately NOT
-    curator-tier: an interactive search must never evict the summarizer
-    mid-enrichment or wait behind the chat gate."""
+    """One summarizer-tier JSON call (granite) — used ONLY for the query
+    parse. None on any failure; callers fall back to the plain vector
+    order. Deliberately NOT curator-tier: an interactive search must never
+    evict the summarizer mid-enrichment or wait behind the chat gate."""
     import httpx
     from src.config import settings
     from src.services.llm_utils import ollama_options, strip_think_tags
@@ -268,54 +303,242 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
     return None, None
 
 
-def _candidate_lines(hits: list, domain: str = None) -> list:
-    """Compact fact line per candidate for the rerank prompt.
+# ── Tag acquisition (doc-id first — the 87% path) ────────────────────────────
 
-    Tags come from the verified-data cache merge PLUS the title-keyed raw
-    entry — the raw AniList tags carry the demographic facts ("Primarily
-    Adult Cast") that the embedding prose never contained. Cache-only,
-    one shared handle, no network."""
+def _candidate_tags(hits: list, domain: str = None) -> list:
+    """Per candidate: raw AniList tags (doc-id keyed — the truth source; the
+    LLM-enriched keyword rewrite DROPS critical tags like Gleipnir's Femdom)
+    ∪ the Chroma themes phrases already on the hit. Cache-only, one handle.
+    Returns a list[str] per hit, display casing preserved, deduped, capped.
+    """
     from src.cache.metadata_cache import MetadataCache
-    from src.services.media_enricher import build_verified_data
-    lines = []
     cache = None
     try:
         cache = MetadataCache()
     except Exception as e:
         logger.debug("[search] cache open failed: %s", e)
-    for i, h in enumerate(hits):
-        tags = []
-        if cache is not None:
-            try:
-                vd = build_verified_data(h["title"], domain or "movie",
-                                         cache=cache) or {}
-                kw = vd.get("keywords") or []
-                tags = list(kw) if isinstance(kw, list) else [str(kw)]
-                raw_hit = cache.get_cache(f"raw:{domain}:{h['title'][:40]}") if domain else None
-                raw = (raw_hit or {}).get("response") or {}
-                for t in (raw.get("tags") or raw.get("keywords") or []):
-                    if t not in tags:
-                        tags.append(t)
-            except Exception as e:
-                logger.debug("[search] facts for %s failed: %s", h.get("title"), e)
-        year = f" ({h['year']})" if h.get("year") else ""
-        tag_s = ", ".join(str(t) for t in tags[:15]) or "none"
-        lines.append(f"[{i}] {h['title']}{year} · {h.get('genres') or '?'} · "
-                     f"tags: {tag_s} · {h.get('watch_tag') or ''} :: "
-                     f"{(h.get('doc') or '')[:180]}")
+    out = []
+    for h in hits:
+        tags, seen = [], set()
+
+        def _add(items):
+            for t in items or []:
+                s = str(t).replace("‑", "-").strip()
+                k = _norm_tag(s)
+                if s and k not in seen:
+                    seen.add(k)
+                    tags.append(s)
+
+        if cache is not None and domain:
+            keys = []
+            if h.get("doc_id"):
+                keys += [f"raw:{domain}:{h['doc_id']}",
+                         f"enriched:{domain}:{h['doc_id']}"]
+            keys += [f"raw:{domain}:{(h.get('title') or '')[:40]}",
+                     f"enriched:{domain}:{(h.get('title') or '')[:40]}"]
+            for k in keys:
+                try:
+                    hit = cache.get_cache(k)
+                except Exception:
+                    hit = None
+                resp = (hit or {}).get("response") or {}
+                _add(resp.get("tags") or resp.get("keywords"))
+                if tags:
+                    break
+        _add((h.get("themes") or "").split(","))
+        out.append(tags[:_TAG_CAP])
     try:
         if cache is not None:
             cache.close()
     except Exception:
         pass
-    return lines
+    return out
+
+
+# ── Embedding with a persistent per-text cache ───────────────────────────────
+
+_vec_memo: dict = {}   # in-process: norm_text -> unit vector
+
+
+async def _texts_to_vectors(texts: list) -> dict:
+    """norm_text -> unit vector for every distinct text, via nomic (CPU).
+
+    ALWAYS document-side (symmetric): constraints and tags are compared as
+    short phrases against each other, and the asymmetric prefix schema is
+    a retrieval tool that collapses short-phrase cosines (see the constants
+    block). Two cache layers: an in-process memo and the api_cache sqlite
+    (``tagemb:{model}:{sha1}`` — the taste_engine emb:* pattern). The raw
+    AniList vocabulary is a CLOSED 389-tag set, so after warm-up almost
+    every search scores fully from cache. Misses are embedded batched.
+    """
+    from src.services.embed_service import (get_profile, _post_embed, _l2)
+    prof = get_profile()
+    model = prof.get("model") or ""
+    want = {}
+    for t in texts:
+        k = _norm_tag(t)
+        if k:
+            want.setdefault(k, t)
+    result, misses = {}, []
+    cache = None
+    try:
+        from src.cache.metadata_cache import MetadataCache
+        cache = MetadataCache()
+    except Exception:
+        cache = None
+    for k, orig in want.items():
+        if k in _vec_memo:
+            result[k] = _vec_memo[k]
+            continue
+        if cache is not None:
+            try:
+                ck = f"tagemb2:{model}:{hashlib.sha1(k.encode()).hexdigest()[:16]}"
+                hit = cache.get_cache(ck)
+                vec = ((hit or {}).get("response") or {}).get("v")
+                if vec:
+                    _vec_memo[k] = vec
+                    result[k] = vec
+                    continue
+            except Exception:
+                pass
+        misses.append((k, orig))
+    if misses:
+        prefix = "search_document: " if prof.get("prefixes") else ""
+        num_ctx = int(prof.get("num_ctx") or 512)
+        texts_in = [prefix + orig for _, orig in misses]
+        vecs = []
+        for i in range(0, len(texts_in), 32):
+            vecs.extend(await _post_embed(model, texts_in[i:i + 32], num_ctx))
+        if len(vecs) == len(misses):
+            for (k, _orig), v in zip(misses, vecs):
+                unit = _l2(v)
+                if unit:
+                    _vec_memo[k] = unit
+                    result[k] = unit
+                    if cache is not None:
+                        try:
+                            ck = f"tagemb2:{model}:{hashlib.sha1(k.encode()).hexdigest()[:16]}"
+                            cache.set_cache(ck, {"v": unit}, days=90)
+                        except Exception:
+                            pass
+    try:
+        if cache is not None:
+            cache.close()
+    except Exception:
+        pass
+    return result
+
+
+def _dot(a: list, b: list) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _split_negation(constraint: str):
+    """'no gore' → ('gore', True); 'darker' → ('darker', False)."""
+    c = constraint.strip()
+    low = c.lower()
+    for p in _NEG_PREFIXES:
+        if low.startswith(p):
+            return c[len(p):].strip() or c, True
+    return c, False
+
+
+def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
+    """Deterministic fit per candidate from constraint↔tag cosine evidence.
+
+    Returns a list of (fit_int_0_10, note_str) aligned with *hits*. The
+    caller has already resolved all needed vectors into _vec_memo via
+    _texts_to_vectors — this function is pure math and cannot hallucinate:
+    every claim in the note quotes the argmax tag and its cosine.
+    """
+    cons = [_split_negation(c) for c in constraints]
+    # Batch-relative retrieval normalization (scores are cosine-similarity
+    # derived and shift with the query — the ORDER carries the signal).
+    scores = [h.get("score") for h in hits]
+    known = [s for s in scores if isinstance(s, (int, float))]
+    lo, hi = (min(known), max(known)) if known else (0.0, 1.0)
+    span = (hi - lo) or 1.0
+
+    out = []
+    for hi_idx, (h, tags) in enumerate(zip(hits, cand_tags)):
+        r = scores[hi_idx]
+        r_norm = ((r - lo) / span) if isinstance(r, (int, float)) else 0.5
+        evs, notes = [], []
+        capped5 = capped2 = False
+        for text, negated in cons:
+            ckey = _norm_tag(text)
+            cvec = _vec_memo.get(ckey)
+            c_demo = {w for w in _DEMO_WORDS if w in ckey}
+            best_sim, best_tag = 0.0, None
+            # LEXICAL FIRST: literal containment is evidence by definition,
+            # no model involved — the hard guarantee that a literal "Femdom"
+            # can never be overlooked again. Deliberately strict: the whole
+            # constraint core as substring, ALL its words, or a single
+            # DISTINCTIVE word (≥6 chars — "fetish", "femdom"; not "cast"/
+            # "tone", which matched Teen/Female Cast in calibration).
+            cwords = [w for w in ckey.split() if len(w) >= 4]
+            families = _families_for(ckey)
+            for t in tags:
+                tkey = _norm_tag(t)
+                if not tkey:
+                    continue
+                if (len(ckey) >= 4 and (ckey in tkey or tkey in ckey)) \
+                        or (cwords and all(w in tkey for w in cwords)) \
+                        or any(w in tkey for w in cwords if len(w) >= 6) \
+                        or any(m in tkey for fam in families for m in fam):
+                    best_sim, best_tag = 1.0, t
+                    break
+            if best_sim < 1.0 and cvec:
+                for t in tags:
+                    tkey = _norm_tag(t)
+                    # Demographic antonym guard: a DIFFERING cast-age tag is
+                    # counter-evidence, not near-evidence.
+                    if c_demo:
+                        t_demo = {w for w in _DEMO_WORDS if w in tkey}
+                        if t_demo and t_demo != c_demo:
+                            continue
+                    tvec = _vec_memo.get(tkey)
+                    if tvec:
+                        s = _dot(cvec, tvec)
+                        if s > best_sim:
+                            best_sim, best_tag = s, t
+            if negated:
+                # A satisfied exclusion is FULL evidence — "no gore" met is
+                # as good as a positive constraint met, not a 1-sim penalty
+                # that punishes benign vocabulary proximity.
+                if best_sim >= _T_NEG:
+                    capped2 = True
+                    evs.append(0.0)
+                    notes.append(f"violates '{text}' ↔ {best_tag} ({best_sim:.2f})")
+                else:
+                    evs.append(1.0)
+                    notes.append(f"free of '{text}' ✓")
+            else:
+                ev = max(0.0, min(1.0, (best_sim - _EV_FLOOR) / (_EV_CEIL - _EV_FLOOR)))
+                evs.append(ev)
+                if best_sim < _T_LOW:
+                    capped5 = True
+                    notes.append(
+                        f"{text}: unbelegt"
+                        + (f" (best: {best_tag} {best_sim:.2f})" if best_tag else ""))
+                else:
+                    notes.append(f"{text} ↔ {best_tag} ({best_sim:.2f})")
+        ev_mean = sum(evs) / len(evs) if evs else 0.5
+        fit = 10.0 * (_W_RETRIEVAL * r_norm + _W_EVIDENCE * ev_mean)
+        if capped5:
+            fit = min(fit, 5.0)
+        if capped2:
+            fit = min(fit, 2.0)
+        out.append((int(round(fit)), " · ".join(notes)[:220]))
+    return out
 
 
 async def curated_search(query: str, n_results: int = 10, domain: str = None,
                          user_id: int = None) -> dict:
-    """Two-stage search for the endpoint: retrieve (anchor-aware, overfetched)
-    → summarizer rerank against the parsed constraints. Falls back to the
-    plain vector order at every stage → ``mode`` says which one served."""
+    """Parse → anchor-aware dual-probe retrieval → deterministic
+    constraint-evidence scoring. ``mode`` reports the serving path:
+    "evidence" (scored against parsed constraints) or "vector" (plain
+    similarity order — parse failed or the query stated no constraints)."""
     limit = max(1, min(int(n_results or 10), 25))
     parsed = await _parse_query(query, domain)
     if parsed and not parsed["anchor_title"]:
@@ -355,7 +578,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
     # glued to the anchor's genre neighbourhood ("magical girl …"), so
     # cross-genre titles that nail the TONE (the owner's Mnemosyne /
     # Speed Grapher examples) never enter the pool. A probe embedded from
-    # the constraints alone widens it; the rerank sorts the union.
+    # the constraints alone widens it; evidence scoring sorts the union.
     if parsed and parsed["constraints"]:
         try:
             from src.services.embed_service import embed_query as _eq
@@ -376,52 +599,22 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
     if not hits:
         return {"results": [], "mode": "vector", "anchor": anchor_used}
 
-    ranking = None
-    if parsed:
-        lines = _candidate_lines(hits, domain)
-        cons = "; ".join(parsed["constraints"]) or "none stated"
-        ranking = await _summarizer_json(
-            _RERANK_SYS,
-            f"QUERY: {query}\nHARD CONSTRAINTS: {cons}\n"
-            f"Score ALL {len(hits)} candidates (indices 0-{len(hits) - 1}), "
-            f"one ranking entry each.\nCANDIDATES:\n" + "\n".join(lines),
-            _RERANK_SCHEMA,
-            num_predict=min(2000, 80 + 45 * len(hits)),
-            timeout=_RERANK_TIMEOUT)
-        if isinstance(ranking, dict) and not ranking.get("ranking"):
-            logger.info("[search] rerank returned an empty ranking — "
-                        "falling back to vector order")
-
-    if isinstance(ranking, dict) and isinstance(ranking.get("ranking"), list):
-        scored = {}
-        for r in ranking["ranking"]:
-            try:
-                i = int(r.get("i"))
-                if 0 <= i < len(hits) and i not in scored:
-                    fit = int(r.get("fit", 0))
-                    why = str(r.get("why") or "").strip()[:120]
-                    # Mechanical enforcement of the no-substitution rule: the
-                    # 8B reranker keeps writing "X implied by Y" in its own
-                    # evidence while scoring 8-10 (live: Madoka got a 10 with
-                    # "fetish dynamics implied by predatory entity"). When
-                    # the model confesses to inference instead of evidence,
-                    # cap the score where the prompt said it belongs.
-                    if fit > 5 and re.search(r"\bimplie[ds]?\b|\bsuggests?\b",
-                                             why, re.IGNORECASE):
-                        fit = 5
-                    scored[i] = (fit, why)
-            except Exception:
-                continue
-        if scored:
+    if parsed and parsed["constraints"]:
+        try:
+            cand_tags = _candidate_tags(hits, domain)
+            cons_core = [_split_negation(c)[0] for c in parsed["constraints"]]
+            await _texts_to_vectors(
+                cons_core + [t for tags in cand_tags for t in tags])
+            scored = _evidence_scores(parsed["constraints"], cand_tags, hits)
             order = sorted(range(len(hits)),
-                           key=lambda i: (-scored.get(i, (-1,))[0], i))
+                           key=lambda i: (-scored[i][0], i))
             out = []
             for i in order[:limit]:
                 h = dict(hits[i])
-                if i in scored:
-                    h["fit"] = scored[i][0]
-                    h["fit_note"] = scored[i][1]
+                h["fit"], h["fit_note"] = scored[i]
                 out.append(h)
-            return {"results": out, "mode": "reranked", "anchor": anchor_used}
+            return {"results": out, "mode": "evidence", "anchor": anchor_used}
+        except Exception as e:
+            logger.warning("[search] evidence scoring failed — vector order: %s", e)
 
     return {"results": hits[:limit], "mode": "vector", "anchor": anchor_used}
