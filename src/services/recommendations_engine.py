@@ -317,19 +317,23 @@ CATEGORY_LABELS = {
 }
 
 
-async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = False) -> Optional[str]:
+async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = False,
+                    model_override: Optional[str] = None) -> Optional[str]:
     """Call curator model, fall back to base model. Signals enrichment to pause.
 
     Pass skip_priority=True when the caller manages the curator lifecycle itself
     (e.g. a batch loop that wraps all calls in a single curator_start/done).
+    model_override prepends a specific bake to the fallback chain — used ONLY
+    by the legacy deletion-pitch call sites for the two-bake split; discovery,
+    collections and the yearly review pass nothing and stay on the curator.
     """
     from src.services.llm_priority import curator_start, curator_done
     if not skip_priority:
-        await curator_start("recommendations")
+        await curator_start("recommendations", exclusive_model=model_override)
     try:
-        for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
-            if not model:
-                continue
+        chain = ([model_override] if model_override else []) + [
+            settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]
+        for model in dict.fromkeys(m for m in chain if m):
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
                     r = await client.post(
@@ -1537,9 +1541,20 @@ async def generate_deletion_proposals(
     #   EVALUATE       → left alone, re-judged next scan
     # Keep judging DOWN the ranking until TARGET_CUTS proposals exist OR
     # JUDGE_CAP candidates are judged (a latency bound for a clean library).
+    # Two-bake split: the WHOLE deletion block (judge + monologue) runs on the
+    # pitcher bake when configured+installed, else the curator bake. Resolved
+    # ONCE per run (install probe included — a bad name must fall back
+    # visibly, not silently EVALUATE every candidate) and logged so the task
+    # monitor shows which bake produced the pitches.
+    from src.services.llm_priority import resolve_pitcher_model
+    pitch_model = await resolve_pitcher_model()
+    _msg(f"{category}: deletion run model: {pitch_model}")
+    logger.info("[deletions] %s: run model = %s", category, pitch_model)
+
     if getattr(settings, "PILLARS_ENABLED", False):
         from src.services.pillars import build_evidence, adjudicate, write_monologue
-        from src.services.llm_priority import curator_start, curator_done, gate_contested
+        from src.services.llm_priority import (curator_start, curator_done,
+                                               evict_if_resident, gate_contested)
         TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
@@ -1576,7 +1591,7 @@ async def generate_deletion_proposals(
         except Exception as _e:
             logger.debug("[deletions] significance warm-up failed: %s", _e)
         _gate_label = f"deletion scan: {category}"
-        await curator_start(_gate_label)
+        await curator_start(_gate_label, exclusive_model=pitch_model)
         try:
             for cand in scored_candidates:
                 if len(final_proposals) >= TARGET_CUTS or judged >= JUDGE_CAP:
@@ -1586,10 +1601,13 @@ async def generate_deletion_proposals(
                 # GPU within ONE verdict, not after the whole category. The
                 # semaphore wakes waiters FIFO, so release→re-acquire puts us
                 # behind the waiting chat and we resume when it finishes.
+                # exclusive_model on the RE-acquire is what evicts the chat's
+                # curator again after an interjection — without it the next
+                # adjudicate would load the pitcher AGAINST resident gemma.
                 if gate_contested():
                     _msg(f"{category}: yielding GPU to a waiting request…")
                     curator_done()
-                    await curator_start(_gate_label)
+                    await curator_start(_gate_label, exclusive_model=pitch_model)
                 item = cand["item"]
                 judged += 1
                 _msg(f"{category}: pillar-judging {judged} "
@@ -1598,7 +1616,8 @@ async def generate_deletion_proposals(
                 try:
                     with get_db_session() as _jdb:
                         ev = await build_evidence(item, user_id, category, _jdb)
-                    verdict = await adjudicate(ev["facts"], skip_priority=True,
+                    verdict = await adjudicate(ev["facts"], model=pitch_model,
+                                               skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
                 except Exception as e:
                     logger.warning("[deletions] pillar judge failed for %r: %s",
@@ -1607,7 +1626,7 @@ async def generate_deletion_proposals(
                 v = (verdict or {}).get("verdict")
                 if v in ("CUT", "STAGNANT"):
                     pitch = await write_monologue(
-                        ev["facts"], verdict,
+                        ev["facts"], verdict, model=pitch_model,
                         lang_directive=lang_directive_str, skip_priority=True)
                     if not pitch or not pitch.strip():
                         pitch = ("Flagged by the pillar judge — the model returned no "
@@ -1643,6 +1662,15 @@ async def generate_deletion_proposals(
                         _persist_judge_protection(user_id, item, category, v, verdict)
                 # EVALUATE / bare-Ego keep / None → neither propose nor protect.
         finally:
+            # Eager pitcher eviction BEFORE releasing the gate ("gate free ⇒
+            # VRAM free"): a chat right after the run loads the curator
+            # without waiting out the pitcher's 10m keep_alive. Guarded +
+            # best-effort — an eviction hiccup must never eat the proposals.
+            if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
+                try:
+                    await evict_if_resident(pitch_model)
+                except Exception as _ee:
+                    logger.debug("[deletions] pitcher evict failed: %s", _ee)
             curator_done()
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged.")
@@ -1704,7 +1732,8 @@ async def generate_deletion_proposals(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
         f"generating LLM pitches for top {len(top_pitch_set)}…"
     )
-    await curator_start(f"deletion pitches: {category}")
+    await curator_start(f"deletion pitches: {category}",
+                        exclusive_model=pitch_model)
     try:
         for _pidx, cand in enumerate(top_pitch_set, start=1):
             item = cand["item"]
@@ -1926,7 +1955,8 @@ CRITICAL RULES AND GUARDRAILS:
 9. PREMISE & FIT — NOT A REVIEW: You have this item's premise, themes and metadata, NOT a screening of it. Argue why its premise / genre / themes CLASH with the user's taste. Do NOT pass verdicts on execution you cannot know — no "static", "hollow", "melodramatic stalemate", "flat", "lands/doesn't land", no claims about pacing, acting or direction — unless that judgement is explicitly in the data above. For fact-based works (history, true events, documentary) a known outcome is NOT a flaw: never call it "predictable".
 10. RESPECT ACCLAIM — TASTE-FIT, NOT QUALITY: If the data shows strong acclaim (high RT / Metacritic, major awards, a documented milestone), you MUST acknowledge it, and the deletion is a pure TASTE-FIT call — never a quality verdict. Frame it honestly: "acclaimed / well-made, but not your lane — it's X, you want Y." NEVER label a highly-rated or award-winning title "narrative wallpaper", "flaccid", "worthless", or low-effort: calling a 97%-rated, multi-award film garbage is a factual error that wrecks your credibility. A work can be excellent AND a poor fit for THIS user — say exactly that."""
 
-            pitch = await _call_llm(prompt, skip_priority=True)
+            pitch = await _call_llm(prompt, skip_priority=True,
+                                    model_override=pitch_model)
             # Pass 51: empty-pitch guard. ``_call_llm`` returns None on an
             # HTTP / timeout failure and "" when the model emitted nothing
             # but <think> tags (stripped out by strip_think_tags). Either
@@ -1939,7 +1969,8 @@ CRITICAL RULES AND GUARDRAILS:
                 logger.warning(
                     "[deletions] empty pitch for %r — retrying once", item.get("title"),
                 )
-                pitch = await _call_llm(prompt, skip_priority=True)
+                pitch = await _call_llm(prompt, skip_priority=True,
+                                        model_override=pitch_model)
             if not pitch or not pitch.strip():
                 logger.warning(
                     "[deletions] pitch still empty for %r — using honest fallback",
@@ -1978,6 +2009,14 @@ CRITICAL RULES AND GUARDRAILS:
                 "category": category,
             })
     finally:
+        # Same eager pitcher cleanup as the pillar path ("gate free ⇒ VRAM
+        # free") — guarded and best-effort.
+        if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
+            try:
+                from src.services.llm_priority import evict_if_resident
+                await evict_if_resident(pitch_model)
+            except Exception as _ee:
+                logger.debug("[deletions] pitcher evict failed: %s", _ee)
         curator_done()
 
     return final_proposals

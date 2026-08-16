@@ -163,6 +163,7 @@ async def unload_llm_models() -> list[str]:
         settings.CURATOR_MODEL,
         settings.SUMMARIZER_MODEL,
         settings.EMBEDDING_MODEL,
+        (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
     ) if m]
     unloaded: list[str] = []
     async with httpx.AsyncClient(timeout=10) as client:

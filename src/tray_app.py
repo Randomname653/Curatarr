@@ -131,7 +131,12 @@ def _preflight_ollama() -> str | None:
     """Returns a warning string when models are missing (server still starts)."""
     missing = []
     from src.config import settings
-    for model in (settings.CURATOR_MODEL, settings.EMBEDDING_MODEL):
+    checked = [settings.CURATOR_MODEL, settings.EMBEDDING_MODEL]
+    # Two-bake split: warn-only nudge when enabled but not built — the app
+    # runs fine without it (deletion runs fall back to the curator bake).
+    if (settings.PITCHER_MODEL or "").strip():
+        checked.append(settings.PITCHER_MODEL.strip())
+    for model in checked:
         try:
             r = subprocess.run(["ollama", "show", model], capture_output=True,
                                timeout=20, creationflags=_CREATE_NO_WINDOW)
