@@ -524,6 +524,7 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
         if h.get("_probe") == "constraint":
             r_norm *= 0.5
         evs, notes = [], []
+        met = 0
         capped5 = capped2 = False
         # Tag exclusivity across POSITIVE constraints: round 7 showed one
         # tag stem-cell-ing through half the query ("Body horror and gore"
@@ -619,6 +620,7 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
                     notes.append(f"violates '{text}' ↔ {best_tag} ({best_sim:.2f})")
                 else:
                     evs.append(1.0)
+                    met += 1
                     notes.append(f"free of '{text}' ✓")
             else:
                 ev = max(0.0, min(1.0, (best_sim - _EV_FLOOR) / (_EV_CEIL - _EV_FLOOR)))
@@ -629,6 +631,7 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
                         f"{text}: unbelegt"
                         + (f" (best: {best_tag} {best_sim:.2f})" if best_tag else ""))
                 else:
+                    met += 1
                     notes.append(f"{text} ↔ {best_tag} ({best_sim:.2f})")
         ev_mean = sum(evs) / len(evs) if evs else 0.5
         fit = 10.0 * (_W_RETRIEVAL * r_norm + _W_EVIDENCE * ev_mean)
@@ -636,7 +639,12 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
             fit = min(fit, 5.0)
         if capped2:
             fit = min(fit, 2.0)
-        out.append((int(round(fit)), " · ".join(notes)[:220]))
+        # met = constraints actually evidenced (counted at the note sites:
+        # positives at/above threshold, satisfied exclusions). Surfaced so
+        # a CONTRAST query ("cute pastel" + "psychological warfare") whose
+        # halves no single library title carries reads as the partial-match
+        # list it is, instead of masquerading as recommendations (round 9).
+        out.append((int(round(fit)), " · ".join(notes)[:220], met))
     return out
 
 
@@ -745,9 +753,16 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             for i in order[:limit]:
                 h = dict(hits[i])
                 h.pop("_probe", None)
-                h["fit"], h["fit_note"] = scored[i]
+                h["fit"], h["fit_note"], h["met"] = scored[i]
                 out.append(h)
-            return {"results": out, "mode": "evidence", "anchor": anchor_used}
+            # Coverage honesty (round 9): tell the UI how much of the
+            # profile the BEST candidate actually carries, so a split
+            # contrast query renders as "partial matches", not as
+            # recommendations.
+            coverage = {"best_met": max((s[2] for s in scored), default=0),
+                        "constraints": len(parsed["constraints"])}
+            return {"results": out, "mode": "evidence",
+                    "anchor": anchor_used, "coverage": coverage}
         except Exception as e:
             logger.warning("[search] evidence scoring failed — vector order: %s", e)
 

@@ -150,6 +150,12 @@ check("unevidenced candidates capped at <=5",
 check("unbelegt named in the note",
       any("unbelegt" in h["fit_note"] for h in res["results"]
           if h["title"] == "Madoka"))
+check("met counts evidenced constraints per hit",
+      res["results"][0]["met"] == 1
+      and all(h["met"] == 0 for h in res["results"]
+              if h["title"] in ("Madoka", "Jungle De Ikou")))
+check("coverage reports best_met + constraint count",
+      res["coverage"] == {"best_met": 1, "constraints": 1})
 
 # ── negation: "no gore" violated -> capped at 2 ──────────────────────────────
 
@@ -347,7 +353,8 @@ check("endpoint rides curated_search and reports mode",
 
 html = (root / "frontend/index.html").read_text(encoding="utf-8")
 for frag in ["lib-search", "searchLibrary()", "semantic-search?q=",
-             "fit_note", "curating", "mode === 'evidence'"]:
+             "fit_note", "curating", "mode === 'evidence'",
+             "No library title carries this full profile"]:
     check(f"frontend has {frag}", frag in html)
 
 print(f"\n{PASS} passed, {FAIL} failed")

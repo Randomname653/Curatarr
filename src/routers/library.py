@@ -1051,7 +1051,8 @@ async def semantic_library_search(
     res = await curated_search(q, n_results=max(1, min(int(limit or 10), 25)),
                                domain=cat, user_id=user.id)
     return {"query": q, "category": cat, "results": res["results"],
-            "mode": res["mode"], "anchor": res.get("anchor")}
+            "mode": res["mode"], "anchor": res.get("anchor"),
+            "coverage": res.get("coverage")}
 
 
 class LibraryAddRequest(BaseModel):
