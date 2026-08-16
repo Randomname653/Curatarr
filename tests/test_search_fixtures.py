@@ -97,6 +97,13 @@ FIXTURES = {
     "Akagi": ["High-stakes mahjong duel", "Gambling as a metaphor for life",
               "Youth prodigy vs. seasoned criminal", "Mafia underworld intrigue",
               "Police pursuit", "Psychological manipulation"],
+    # Round-8: names darkness while laughing it off — a harmless 4-minute
+    # swimsuit short that scored a literal 1.00 for "darker".
+    "Nante Mouiidesukara": ["Homeless alien mentor", "Swimsuit-clad magical girl",
+                            "Lack of conventional villains",
+                            "Slice-of-life school setting",
+                            "Darkly comedic satire of magical girl tropes",
+                            "Kuudere protagonist"],
 }
 
 TITLES = list(FIXTURES.keys())
@@ -146,6 +153,13 @@ async def main():
           s2["Akagi"][1].count("Psychological manipulation (1.00)") <= 1)
     check("Akagi ranks clearly below Gleipnir (genre stray stays down)",
           s2["Akagi"][0] < s2["Gleipnir"][0])
+    # Round-8: comedy dampener — "Darkly comedic satire" is a near-miss
+    # for darker, not a 1.00.
+    check("'Darkly comedic satire' does not fully evidence darker",
+          "Darkly comedic satire of magical girl tropes (1.00)"
+          not in s2["Nante Mouiidesukara"][1])
+    check("comedy short scores at the bottom",
+          s2["Nante Mouiidesukara"][0] <= 2)
     check("SITE capped <=5 (no fetish tag)",
           s2["MAGICAL GIRL SITE"][0] <= 5)
     check("Madoka capped <=5 (no fetish tag — the hallucination case)",
