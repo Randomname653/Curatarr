@@ -92,6 +92,12 @@ _CONCEPT_FAMILIES = {
                "adult", "large breasts"),
 }
 
+# Mature TONE is a separate axis from the mature RATING: the owner's round-6
+# review asked for Seinen/Josei/Psychological/Gore to synthesize "mature
+# tone" (serious register) while slapstick nudity must NOT (the FSK trap
+# fixed in round 5). Ordered by precision — best-match picks the earliest.
+_TONE_FAMILY = ("seinen", "josei", "psychological", "noir", "gore", "tragedy")
+
 
 def _families_for(ckey: str) -> tuple:
     """Family member tuples whose trigger appears in the constraint. The
@@ -110,6 +116,9 @@ def _families_for(ckey: str) -> tuple:
             fams.append(members)
     if "adult" in ckey and "cast" not in ckey and "tone" not in ckey:
         fams.append(_CONCEPT_FAMILIES["mature"])
+    if "tone" in ckey and any(w in ckey for w in ("mature", "adult",
+                                                  "serious", "grim")):
+        fams.append(_TONE_FAMILY)
     return tuple(fams)
 
 _PARSE_SCHEMA = {
@@ -481,6 +490,13 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
     for hi_idx, (h, tags) in enumerate(zip(hits, cand_tags)):
         r = scores[hi_idx]
         r_norm = ((r - lo) / span) if isinstance(r, (int, float)) else 0.5
+        # Constraint-probe hits are tone matches from OUTSIDE the anchor's
+        # genre neighbourhood — welcome (Mnemosyne), but at equal evidence
+        # they should rank behind actual neighbours (round 6: the mahjong
+        # thriller Akagi strolled into a magical-girl query on a
+        # "Psychological manipulation" tag). Half retrieval weight.
+        if h.get("_probe") == "constraint":
+            r_norm *= 0.5
         evs, notes = [], []
         capped5 = capped2 = False
         for text, negated in cons:
@@ -497,6 +513,12 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
             cwords = [w for w in ckey.split() if len(w) >= 4]
             carriers = [w for w in cwords if w not in _GENERIC_WORDS]
             families = _families_for(ckey)
+            # Collect ALL lexical hits and pick the most precise one instead
+            # of the first in tag order — round 6: Gleipnir cited "yandere
+            # romance" while the tags literally contained "female antagonist
+            # femdom". Priority: direct constraint/carrier containment (0),
+            # then family members by their curated order (1 + index).
+            lex_best = None   # (priority, tag)
             for t in tags:
                 tkey = _norm_tag(t)
                 if not tkey:
@@ -506,12 +528,25 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
                 # words is no evidence).
                 all_words_hit = (cwords and all(w in tkey for w in cwords)
                                  and any(w in tkey for w in carriers))
+                prio = None
                 if (len(ckey) >= 4 and (ckey in tkey or tkey in ckey)) \
                         or all_words_hit \
-                        or any(w in tkey for w in carriers if len(w) >= 6) \
-                        or any(m in tkey for fam in families for m in fam):
-                    best_sim, best_tag = 1.0, t
-                    break
+                        or any(w in tkey for w in carriers if len(w) >= 6):
+                    prio = 0
+                else:
+                    for fam in families:
+                        for mi, m in enumerate(fam):
+                            if m in tkey:
+                                prio = 1 + mi
+                                break
+                        if prio is not None:
+                            break
+                if prio is not None and (lex_best is None or prio < lex_best[0]):
+                    lex_best = (prio, t)
+                    if prio == 0:
+                        break
+            if lex_best is not None:
+                best_sim, best_tag = 1.0, lex_best[1]
             if best_sim < 1.0 and cvec:
                 for t in tags:
                     tkey = _norm_tag(t)
@@ -615,6 +650,8 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 seen = {_norm_title(h["title"]) for h in hits}
                 if anchor_used:
                     seen.add(_norm_title(anchor_used))
+                for h in extra:
+                    h["_probe"] = "constraint"
                 hits += [h for h in extra
                          if _norm_title(h["title"]) not in seen][:max(0, 40 - len(hits))]
         except Exception as e:
@@ -635,10 +672,16 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             out = []
             for i in order[:limit]:
                 h = dict(hits[i])
+                h.pop("_probe", None)
                 h["fit"], h["fit_note"] = scored[i]
                 out.append(h)
             return {"results": out, "mode": "evidence", "anchor": anchor_used}
         except Exception as e:
             logger.warning("[search] evidence scoring failed — vector order: %s", e)
 
-    return {"results": hits[:limit], "mode": "vector", "anchor": anchor_used}
+    out = []
+    for h in hits[:limit]:
+        h = dict(h)
+        h.pop("_probe", None)
+        out.append(h)
+    return {"results": out, "mode": "vector", "anchor": anchor_used}
