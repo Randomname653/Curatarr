@@ -59,6 +59,20 @@ _NEG_PREFIXES = ("no ", "not ", "without ", "non-", "kein ", "keine ", "ohne ")
 # counter-evidence — its similarity is forced to 0 for this constraint.
 _DEMO_WORDS = ("adult", "teen", "child", "kid")
 
+# Structure nouns that appear in BOTH constraints and tags without carrying
+# the constraint's meaning. Live round 5: "subversive fetish DYNAMICS"
+# lexically matched "School club DYNAMICS" and "teacher-student DYNAMICS"
+# at 1.00 — the shared word is scaffolding, not evidence. These words never
+# count as a single-word match and cannot be the sole carrier of an
+# all-words match.
+_GENERIC_WORDS = frozenset({
+    "dynamics", "dynamic", "setting", "settings", "elements", "element",
+    "tone", "tones", "theme", "themes", "story", "stories", "narrative",
+    "structure", "style", "styles", "school", "comedy", "drama",
+    "character", "characters", "protagonist", "antagonist", "cast",
+    "series", "anime", "show", "content",
+})
+
 # Curated concept families over the CLOSED AniList tag vocabulary (389 tags
 # on this install). Embeddings put "Femdom"↔"fetish dynamics" at 0.71 —
 # inside the 0.65-0.76 short-tag noise band — so semantic-field membership
@@ -83,14 +97,18 @@ def _families_for(ckey: str) -> tuple:
     """Family member tuples whose trigger appears in the constraint. The
     'mature'/'adult' trigger is skipped for CAST constraints — those are
     the demographic-guard's domain ("adult cast" must not be evidenced by
-    Seinen/Ecchi)."""
+    Seinen/Ecchi) — and for TONE constraints: the family encodes the
+    content RATING (nudity/ecchi), but "mature TONE" means serious
+    register — live round 5 scored "slapstick nudity" a 1.00 for it.
+    Tone constraints fall through to embeddings and stay honestly
+    'unbelegt' rather than FSK-confused."""
     fams = []
     for trigger, members in _CONCEPT_FAMILIES.items():
         if trigger in ckey:
-            if trigger == "mature" and "cast" in ckey:
+            if trigger == "mature" and ("cast" in ckey or "tone" in ckey):
                 continue
             fams.append(members)
-    if "adult" in ckey and "cast" not in ckey:
+    if "adult" in ckey and "cast" not in ckey and "tone" not in ckey:
         fams.append(_CONCEPT_FAMILIES["mature"])
     return tuple(fams)
 
@@ -477,14 +495,20 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
             # DISTINCTIVE word (≥6 chars — "fetish", "femdom"; not "cast"/
             # "tone", which matched Teen/Female Cast in calibration).
             cwords = [w for w in ckey.split() if len(w) >= 4]
+            carriers = [w for w in cwords if w not in _GENERIC_WORDS]
             families = _families_for(ckey)
             for t in tags:
                 tkey = _norm_tag(t)
                 if not tkey:
                     continue
+                # All-words counts only when at least one CARRIER word is
+                # among the matches (a tag matching nothing but scaffolding
+                # words is no evidence).
+                all_words_hit = (cwords and all(w in tkey for w in cwords)
+                                 and any(w in tkey for w in carriers))
                 if (len(ckey) >= 4 and (ckey in tkey or tkey in ckey)) \
-                        or (cwords and all(w in tkey for w in cwords)) \
-                        or any(w in tkey for w in cwords if len(w) >= 6) \
+                        or all_words_hit \
+                        or any(w in tkey for w in carriers if len(w) >= 6) \
                         or any(m in tkey for fam in families for m in fam):
                     best_sim, best_tag = 1.0, t
                     break
