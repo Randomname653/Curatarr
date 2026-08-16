@@ -1036,17 +1036,22 @@ async def semantic_library_search(
     """Natural-language search over the OWN library.
 
     Rides the same ChromaDB retrieval the chat's hidden RAG uses
-    (services.semantic_search) — ranked owned titles with the caller's
-    watched-status tag and the size tag. Read-only, so no admin gate;
-    coverage follows the enrichment/vector index."""
+    (services.semantic_search), then layers the curated rerank on top:
+    query parse → anchor-aware retrieval (similar-to-item when the query
+    references a library title) → summarizer rerank against the parsed
+    constraints using the raw enrichment tags. Falls back to the plain
+    vector order at every stage — ``mode`` in the response says which
+    path served. Read-only, so no admin gate; coverage follows the
+    enrichment/vector index."""
     q = (q or "").strip()
     if len(q) < 2:
-        return {"query": q, "category": category, "results": []}
+        return {"query": q, "category": category, "results": [], "mode": "vector"}
     cat = category if category in ("movie", "show", "anime", "music") else None
-    from src.services.semantic_search import semantic_hits
-    hits = await semantic_hits(q, n_results=max(1, min(int(limit or 10), 25)),
+    from src.services.semantic_search import curated_search
+    res = await curated_search(q, n_results=max(1, min(int(limit or 10), 25)),
                                domain=cat, user_id=user.id)
-    return {"query": q, "category": cat, "results": hits}
+    return {"query": q, "category": cat, "results": res["results"],
+            "mode": res["mode"], "anchor": res.get("anchor")}
 
 
 class LibraryAddRequest(BaseModel):
