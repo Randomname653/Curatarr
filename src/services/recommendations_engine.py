@@ -1557,6 +1557,7 @@ async def generate_deletion_proposals(
                                                evict_if_resident, gate_contested)
         TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
+        thin_skipped = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
         # PRE-JUDGE SIGNIFICANCE WARM-UP: the judge's own JIT is summarizer-
@@ -1616,6 +1617,20 @@ async def generate_deletion_proposals(
                 try:
                     with get_db_session() as _jdb:
                         ev = await build_evidence(item, user_id, category, _jdb)
+                    # THIN-EVIDENCE GATE: no enrichment, no Wikipedia — only
+                    # the arr synopsis stub. Judging that produces confident
+                    # confabulation (the They Will Kill You / Buffaloed
+                    # mis-pitches: invented "painfully safe" verdicts on a
+                    # Sokolov splatter film). Skip until the enrichment
+                    # walker has reached the title; it re-enters the funnel
+                    # on the next scan with real facts. Costs no LLM call.
+                    if (ev.get("flags") or {}).get("evidence_thin"):
+                        thin_skipped += 1
+                        judged -= 1
+                        logger.info("[deletions] %s: skipping %r — no "
+                                    "enrichment on file yet (thin-evidence "
+                                    "gate)", category, item.get("title"))
+                        continue
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
@@ -1673,7 +1688,9 @@ async def generate_deletion_proposals(
                     logger.debug("[deletions] pitcher evict failed: %s", _ee)
             curator_done()
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
-             f"{judged} judged.")
+             f"{judged} judged"
+             + (f" ({thin_skipped} skipped: not yet enriched)" if thin_skipped else "")
+             + ".")
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────

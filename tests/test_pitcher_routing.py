@@ -187,6 +187,16 @@ check("run-end eager evict is guarded", eng.count("evict_if_resident(pitch_model
 check("_call_llm override only for pitches",
       eng.count("model_override=pitch_model") == 2)
 
+# Thin-evidence gate (the They Will Kill You / Buffaloed confabulation fix):
+# un-enriched titles must be SKIPPED, never judged blind.
+check("build_evidence flags thin evidence",
+      '"evidence_thin": False' in pil
+      and 'flags["evidence_thin"] = True' in pil)
+check("deletion loop skips thin candidates before the judge call",
+      '("evidence_thin")' in eng and "thin_skipped" in eng)
+check("thin skip happens BEFORE adjudicate (no LLM spent)",
+      eng.index('("evidence_thin")') < eng.index('verdict = await adjudicate'))
+
 cfg = (root / "src/config.py").read_text(encoding="utf-8")
 check("config: PITCHER_MODEL default empty (split off)",
       'PITCHER_MODEL: str = ""' in cfg)

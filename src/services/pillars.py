@@ -247,7 +247,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     media_type = item.get("media_type") or category
 
     flags = {"owner_watched": False, "other_user_engaged": False,
-             "bitrate_outlier": False, "acclaim_present": False, "owner_signal": False}
+             "bitrate_outlier": False, "acclaim_present": False,
+             "owner_signal": False, "evidence_thin": False}
 
     # ── OWNER watch ──
     try:
@@ -374,6 +375,14 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         if wiki:
             meta_block = f"WIKIPEDIA (no structured enrichment on file):\n{wiki}"
         else:
+            # Nothing but the arr synopsis stub. A judge given this WILL fill
+            # the gap with invented execution verdicts ("painfully safe",
+            # "generic grit") — the live failure on They Will Kill You /
+            # Buffaloed, two fresh library adds the walker hadn't enriched
+            # yet: 91% CUT confidence built on pure confabulation. Flag it so
+            # the deletion loop SKIPS the title until enrichment catches up
+            # (arr_pre_enrich runs within 24h) instead of judging blind.
+            flags["evidence_thin"] = True
             ov = (item.get("overview") or "").strip()
             meta_block = f"no verified enrichment — thin synopsis only: {ov[:300] or 'n/a'}"
 
