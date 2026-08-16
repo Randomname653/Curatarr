@@ -19,6 +19,7 @@ vector order — the search is never worse than the old one.
 
 import json
 import logging
+import re
 
 from src.services.watch_status import watched_lookup, watch_tag
 
@@ -44,9 +45,20 @@ _PARSE_SCHEMA = {
 _PARSE_SYS = (
     "You parse ONE media-library search query. "
     "anchor_title: the specific title referenced via like/similar-to, else null. "
+    "Titles are often lowercase mid-sentence ('like gushing over magical girls but …' "
+    "references the title Gushing Over Magical Girls). "
     "constraints: hard requirements or exclusions results must satisfy, as short phrases. "
     "search_text: a dense content description of what is wanted, WITHOUT the anchor title."
 )
+
+# Deterministic net under the LLM parse: "like <X> but/with/except …" — the
+# tonal-query live test showed granite missing a lowercase mid-sentence title
+# (anchor null → no anchor vector, no self-filter, duplicate anchor cards).
+# A wrong regex guess is harmless: _anchor_vector verifies the candidate
+# against actual library titles and returns None on a miss.
+_ANCHOR_RE = re.compile(
+    r"\b(?:like|similar to|wie)\s+(.{3,80}?)\s+(?:but|with|without|except|aber|nur)\b",
+    re.IGNORECASE)
 
 # minItems is load-bearing, not decoration: with grammar-forced output the
 # summarizer satisfied the old schema with the CHEAPEST valid document —
@@ -75,11 +87,17 @@ _RERANK_SCHEMA = {
 _RERANK_SYS = (
     "You rank a user's own library items against their search intent. "
     "Score each candidate 0-10 for satisfying the FULL query. "
+    "Score 8-10 ONLY when EVERY constraint has a directly quoted tag as "
+    "evidence. "
+    "A constraint counts as satisfied ONLY when a listed tag or premise fact "
+    "states it outright — 'implied' is not evidence. "
+    "If any constraint lacks evidence, score at most 5 and name that "
+    "constraint in why — never claim it is met. "
     "Violating an explicit constraint caps the score at 2. "
     "Constraints mean exactly what they say — never substitute a related "
-    "concept (an adult CAST is about character ages, not adult themes). "
-    "Judge from the tags first, the prose second. "
-    "why: one short factual clause. "
+    "concept (an adult CAST is about character ages, not adult themes; "
+    "gore or violence alone is not a fetish dynamic). "
+    "why: one short factual clause quoting the deciding tag. "
     "Return every candidate index exactly once."
 )
 
@@ -122,8 +140,16 @@ def _hits_from_results(results: dict, user_id: int = None,
     watched = watched_lookup(user_id, [m.get("title", "") for m in metas],
                              category=domain)
     hits = []
+    seen_titles = set()
     for idx, (doc, meta) in enumerate(zip(docs, metas)):
         title = meta.get("title", "Unknown")
+        # The index can hold two docs for one title (id-keyed + title-keyed
+        # from the writer's doc_id cascade) — the owner saw the same series
+        # twice in one result list. First (closest) doc wins.
+        tkey = _norm_title(title)
+        if tkey and tkey in seen_titles:
+            continue
+        seen_titles.add(tkey)
         dist = dists[idx] if idx < len(dists) else None
         hits.append({
             "title": title,
@@ -292,6 +318,10 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
     plain vector order at every stage → ``mode`` says which one served."""
     limit = max(1, min(int(n_results or 10), 25))
     parsed = await _parse_query(query, domain)
+    if parsed and not parsed["anchor_title"]:
+        m = _ANCHOR_RE.search(query)
+        if m:
+            parsed["anchor_title"] = m.group(1).strip(" .,;:'\"")
     anchor_used = None
 
     # Retrieval vector: the anchor item's stored embedding when the query
@@ -320,6 +350,29 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
     if anchor_used:
         want = _norm_title(anchor_used)
         hits = [h for h in hits if _norm_title(h["title"]) != want]
+
+    # SECOND, constraint-focused probe: the anchor/search-text vector stays
+    # glued to the anchor's genre neighbourhood ("magical girl …"), so
+    # cross-genre titles that nail the TONE (the owner's Mnemosyne /
+    # Speed Grapher examples) never enter the pool. A probe embedded from
+    # the constraints alone widens it; the rerank sorts the union.
+    if parsed and parsed["constraints"]:
+        try:
+            from src.services.embed_service import embed_query as _eq
+            cvec = await _eq(", ".join(parsed["constraints"]))
+            if cvec:
+                cres = get_chroma_db().query(
+                    query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
+                    where={"domain": domain} if domain else None)
+                extra = _hits_from_results(cres, user_id=user_id, domain=domain)
+                seen = {_norm_title(h["title"]) for h in hits}
+                if anchor_used:
+                    seen.add(_norm_title(anchor_used))
+                hits += [h for h in extra
+                         if _norm_title(h["title"]) not in seen][:max(0, 40 - len(hits))]
+        except Exception as e:
+            logger.debug("[search] constraint probe failed: %s", e)
+
     if not hits:
         return {"results": [], "mode": "vector", "anchor": anchor_used}
 
@@ -333,7 +386,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             f"Score ALL {len(hits)} candidates (indices 0-{len(hits) - 1}), "
             f"one ranking entry each.\nCANDIDATES:\n" + "\n".join(lines),
             _RERANK_SCHEMA,
-            num_predict=min(1600, 80 + 45 * len(hits)),
+            num_predict=min(2000, 80 + 45 * len(hits)),
             timeout=_RERANK_TIMEOUT)
         if isinstance(ranking, dict) and not ranking.get("ranking"):
             logger.info("[search] rerank returned an empty ranking — "
@@ -345,8 +398,18 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             try:
                 i = int(r.get("i"))
                 if 0 <= i < len(hits) and i not in scored:
-                    scored[i] = (int(r.get("fit", 0)),
-                                 str(r.get("why") or "").strip()[:120])
+                    fit = int(r.get("fit", 0))
+                    why = str(r.get("why") or "").strip()[:120]
+                    # Mechanical enforcement of the no-substitution rule: the
+                    # 8B reranker keeps writing "X implied by Y" in its own
+                    # evidence while scoring 8-10 (live: Madoka got a 10 with
+                    # "fetish dynamics implied by predatory entity"). When
+                    # the model confesses to inference instead of evidence,
+                    # cap the score where the prompt said it belongs.
+                    if fit > 5 and re.search(r"\bimplie[ds]?\b|\bsuggests?\b",
+                                             why, re.IGNORECASE):
+                        fit = 5
+                    scored[i] = (fit, why)
             except Exception:
                 continue
         if scored:

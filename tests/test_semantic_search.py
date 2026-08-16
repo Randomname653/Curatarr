@@ -145,6 +145,20 @@ check("rerank-fail -> mode vector", res["mode"] == "vector")
 check("rerank-fail -> anchor still filtered",
       res["results"][0]["title"] == "Nanoha")
 
+# ── "implied" confession caps the score in code ──────────────────────────────
+
+_queue_summarizer([parse_answer,
+                   {"ranking": [
+                       {"i": 0, "fit": 10, "why": "fetish implied by predatory entity"},
+                       {"i": 1, "fit": 8, "why": "femdom directly stated"},
+                   ]}])
+res = asyncio.run(ss.curated_search(
+    "like gushing over magical girls but adult", n_results=2, domain="anime"))
+check("model-confessed 'implied' evidence is capped to 5 in code",
+      res["results"][0]["fit"] == 8
+      and any(h.get("fit") == 5 and "implied" in h.get("fit_note", "")
+              for h in res["results"]))
+
 # ── malformed ranking entries tolerated ──────────────────────────────────────
 
 _queue_summarizer([parse_answer,
@@ -155,6 +169,36 @@ res = asyncio.run(ss.curated_search(
 check("malformed entries skipped, valid one wins",
       res["mode"] == "reranked" and res["results"][0]["title"] == "Raising Project")
 
+# ── regex anchor net (LLM missed the lowercase mid-sentence title) ───────────
+
+parse_no_anchor = {"anchor_title": None, "constraints": ["darker"],
+                   "search_text": "dark magical girl"}
+_queue_summarizer([parse_no_anchor, None])
+res = asyncio.run(ss.curated_search(
+    "like gushing over magical girls but darker and mature",
+    n_results=4, domain="anime"))
+check("regex net recovers the anchor when the parse returns null",
+      res["anchor"] == "Gushing Over Magical Girls")
+check("regex-recovered anchor is filtered from results",
+      all(h["title"] != "Gushing Over Magical Girls" for h in res["results"]))
+
+# ── title dedup (index holds id-keyed + title-keyed docs for one title) ──────
+
+class DupChroma(FakeChroma):
+    def query(self, query_embeddings=None, n_results=10, where=None):
+        r = super().query(query_embeddings, n_results, where)
+        for key in ("ids", "documents", "metadatas", "distances"):
+            r[key][0] = r[key][0][:2] + r[key][0][:2]  # duplicate first two
+        return r
+
+cw.get_chroma_db = lambda: DupChroma()
+_queue_summarizer([None])
+res = asyncio.run(ss.curated_search("magical", n_results=6, domain="anime"))
+titles = [h["title"] for h in res["results"]]
+check("duplicate index docs collapse to one hit per title",
+      len(titles) == len(set(titles)))
+cw.get_chroma_db = lambda: fake_chroma
+
 # ── schema guards (the empty-ranking failure) ────────────────────────────────
 # Grammar-forced output satisfied the old schema with a literal
 # {"ranking": []} on EVERY call — the search silently served vector order.
@@ -164,6 +208,11 @@ check("rerank schema requires why (no bare-index cop-out)",
       "why" in ss._RERANK_SCHEMA["properties"]["ranking"]["items"]["required"])
 check("literal-constraints rule present (adult cast != adult themes)",
       "never substitute" in ss._RERANK_SYS)
+check("evidence-only matching rule present (the Madoka hallucination fix)",
+      "'implied' is not evidence" in ss._RERANK_SYS
+      and "score at most 5" in ss._RERANK_SYS)
+check("constraint probe widens the pool cross-genre",
+      "constraint probe" in (Path(ss.__file__).read_text(encoding="utf-8")).lower())
 
 # ── parse helper shape guards ────────────────────────────────────────────────
 
