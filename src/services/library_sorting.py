@@ -316,6 +316,19 @@ def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
             meta["domain"] = new_cat
             meta["media_type"] = new_cat
             chroma.update_metadata(key, meta)
+            # Facet points carry their own domain copy — rewrite them too,
+            # or they stay quarantined under the OLD category forever.
+            # This helper is sync (called from the async reclassify flow),
+            # so the facet rewrite is scheduled fire-and-forget.
+            try:
+                import asyncio
+                from src.services.facet_index import write_facets
+                asyncio.create_task(write_facets(
+                    key, meta.get("title", ""), new_cat,
+                    meta.get("genres", ""), meta.get("themes", "")))
+            except Exception as _fe:
+                logger.debug("[lib-sort] facet re-categorize failed for %s: %s",
+                             key, _fe)
     except Exception as e:
         logger.warning("[lib-sort] vector re-categorize failed for %s: %s", key, e)
     return old_cat

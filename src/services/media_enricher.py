@@ -3160,6 +3160,15 @@ async def process_and_save(raw: dict) -> Optional[dict]:
                     )
                 except Exception:
                     chroma_db.update_metadata(doc_id, chroma_meta)
+                # Facet points (multi-vector items, stage 1) — isolated so a
+                # facet failure can never break the main index write.
+                try:
+                    from src.services.facet_index import write_facets
+                    await write_facets(doc_id, title, media_type,
+                                       chroma_meta["genres"],
+                                       profile.get("themes"))
+                except Exception as _fe:
+                    logger.debug("facet write failed for %r: %s", title, _fe)
             await gen.close()
     except Exception as e:
         logger.debug("ChromaDB store failed for '%s': %s", profile.get("title", "?"), e)
@@ -3355,6 +3364,13 @@ async def enrich_media_item(
                     )
                 except Exception:
                     chroma_db.update_metadata(doc_id, chroma_meta)
+                try:
+                    from src.services.facet_index import write_facets
+                    await write_facets(doc_id, title, "music",
+                                       chroma_meta["genres"],
+                                       profile.get("themes"))
+                except Exception as _fe:
+                    logger.debug("facet write failed for %r: %s", title, _fe)
             await gen.close()
         except Exception as e:
             logger.debug("Music ChromaDB store failed for '%s': %s", title, e)
@@ -3587,6 +3603,15 @@ async def enrich_media_item(
                         metadatas=[chroma_metadata],
                         ids=[doc_id]
                     )
+                try:
+                    from src.services.facet_index import write_facets
+                    await write_facets(doc_id, profile.get("title", ""),
+                                       chroma_metadata.get("domain", ""),
+                                       chroma_metadata.get("genres", ""),
+                                       profile.get("themes"))
+                except Exception as _fe:
+                    logger.debug("facet write failed for %r: %s",
+                                 profile.get("title"), _fe)
                 logger.debug("Successfully stored '%s' in ChromaDB.", profile.get("title"))
 
             try:
