@@ -201,6 +201,74 @@ class ChromaDBWrapper:
         logger.warning("ChromaDB reset(): wiping all collections at %s", settings.CHROMADB_PATH)
         self.client.reset()
         self.collection = self._get_or_create_collection()
+        self._facets = None
+
+    # ── FACET COLLECTION (multi-vector items, stage 1) ───────────────────────
+    # Facet points live in their OWN collection (media_facets_v1) so every
+    # consumer of the one-point-per-title assumption in the main collection
+    # (n_results slots, anchor resolution, embeddings_for_domain calibration
+    # with its 30k cap, count_by_id_prefix coverage) stays byte-identical.
+    # Same PersistentClient — the process lock forbids a second one.
+
+    FACETS_COLLECTION = "media_facets_v1"
+    _facets = None
+
+    def _facets_collection(self):
+        if self._facets is None:
+            try:
+                coll = self.client.get_collection(self.FACETS_COLLECTION)
+                if (coll.metadata or {}).get("hnsw:space") != "cosine":
+                    raise RuntimeError(
+                        f"facet collection '{self.FACETS_COLLECTION}' is not "
+                        "in cosine space")
+            except RuntimeError:
+                raise
+            except Exception:
+                coll = self.client.create_collection(
+                    name=self.FACETS_COLLECTION,
+                    metadata={"hnsw:space": "cosine"})
+            self._facets = coll
+        return self._facets
+
+    def facets_add(self, documents, embeddings, metadatas, ids) -> bool:
+        try:
+            embeddings = np.array(embeddings, dtype=np.float32)
+            self._facets_collection().add(
+                documents=documents, embeddings=embeddings,
+                metadatas=metadatas, ids=ids)
+            return True
+        except Exception as e:
+            logger.debug("[chroma] facets_add failed: %s", e)
+            return False
+
+    def facets_query(self, query_embeddings, n_results: int = 20,
+                     where=None) -> Dict:
+        try:
+            return self._facets_collection().query(
+                query_embeddings=query_embeddings, n_results=n_results,
+                where=where)
+        except Exception as e:
+            logger.debug("[chroma] facets_query failed: %s", e)
+            _count_fallback("query")
+            return {"ids": [[]], "distances": [[]], "documents": [[]],
+                    "metadatas": [[]]}
+
+    def facets_delete_by_parent(self, parent_id: str) -> bool:
+        """Upsert half: drop every facet of one title before re-adding —
+        never the metadata-only staleness the main writer's fallback has."""
+        try:
+            self._facets_collection().delete(where={"parent": str(parent_id)})
+            return True
+        except Exception as e:
+            logger.debug("[chroma] facets_delete_by_parent(%s) failed: %s",
+                         parent_id, e)
+            return False
+
+    def facets_count(self) -> int:
+        try:
+            return self._facets_collection().count()
+        except Exception:
+            return 0
     
     def add_documents(
         self,
