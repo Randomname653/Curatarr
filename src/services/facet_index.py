@@ -50,7 +50,7 @@ async def write_facets(doc_id: str, title: str, domain: str,
         return 0
     phrases = _phrases_from_themes(themes)
     try:
-        from src.services.embed_service import embed_documents
+        from src.services.embed_service import embed_documents, get_profile
         from src.vector_store.chromadb_wrapper import get_chroma_db
         chroma = get_chroma_db()
         # Delete-first even when the new theme set is empty: a re-enriched
@@ -62,12 +62,17 @@ async def write_facets(doc_id: str, title: str, domain: str,
         pairs = [(p, v) for p, v in zip(phrases, vecs) if v]
         if not pairs:
             return 0
+        # emb_model stamp (external eval catch): without it a profile
+        # rollback would probe v1 queries against v2 facet points with no
+        # way to tell the spaces apart.
+        emb_model = get_profile().get("model") or ""
         ok = chroma.facets_add(
             documents=[p for p, _ in pairs],
             embeddings=[v for _, v in pairs],
             metadatas=[{"parent": str(doc_id), "title": title or "",
                         "domain": domain or "", "genres": genres_str or "",
-                        "facet": FACET_KIND} for _ in pairs],
+                        "facet": FACET_KIND, "emb_model": emb_model}
+                       for _ in pairs],
             ids=[f"{doc_id}::f{i}" for i in range(len(pairs))])
         return len(pairs) if ok else 0
     except Exception as e:

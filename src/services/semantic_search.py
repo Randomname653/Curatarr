@@ -700,10 +700,14 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
     if parsed and parsed["constraints"]:
         try:
             from src.services.facet_index import facet_probe
-            cons_core = [_split_negation(c)[0] for c in parsed["constraints"]]
+            # Positive constraints ONLY: probing a negated constraint ("no
+            # gore" → probe for gore) would actively pull anti-matches into
+            # the pool (external eval catch).
+            cons_split = [_split_negation(c) for c in parsed["constraints"]]
+            cons_core = [text for text, neg in cons_split if not neg]
             cvmap = await _texts_to_vectors(cons_core)
             cvecs = [cvmap.get(_norm_tag(c)) for c in cons_core]
-            probe = await facet_probe(cvecs, domain)
+            probe = await facet_probe(cvecs, domain) if cvecs else {}
             if probe:
                 facet_found = True
                 ag = {g.strip().lower()

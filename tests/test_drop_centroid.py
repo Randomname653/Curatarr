@@ -57,7 +57,8 @@ te = (root / "src/services/taste_engine.py").read_text(encoding="utf-8")
 check("old in-centroid subtraction gone (weighted_average_embedding removed)",
       "def weighted_average_embedding" not in te)
 check("drops split into their own centroid at the mean step",
-      "_neg = [(emb, -w) for emb, w in embeddings_weights if w < 0]" in te)
+      "_neg = [(emb, -w) for emb, w, _t in embeddings_weights if w < 0]" in te
+      and "drop_embedding, _ = weighted_mean_embedding(_neg)" in te)
 check("pre-norm logged as the multimodality diagnostic",
       "pre-norm" in te and '"pre_norm": res.get("pre_norm")' in te)
 check("blob stores drop centroid + corpus mean + drop anchors",

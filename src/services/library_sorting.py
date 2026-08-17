@@ -316,19 +316,10 @@ def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
             meta["domain"] = new_cat
             meta["media_type"] = new_cat
             chroma.update_metadata(key, meta)
-            # Facet points carry their own domain copy — rewrite them too,
-            # or they stay quarantined under the OLD category forever.
-            # This helper is sync (called from the async reclassify flow),
-            # so the facet rewrite is scheduled fire-and-forget.
-            try:
-                import asyncio
-                from src.services.facet_index import write_facets
-                asyncio.create_task(write_facets(
-                    key, meta.get("title", ""), new_cat,
-                    meta.get("genres", ""), meta.get("themes", "")))
-            except Exception as _fe:
-                logger.debug("[lib-sort] facet re-categorize failed for %s: %s",
-                             key, _fe)
+            # Facet re-write happens in the ASYNC caller (apply_reclassify)
+            # after the to_thread hop: this helper runs in a worker thread
+            # where create_task has no loop — an external eval caught the
+            # original fire-and-forget here as a silent no-op.
     except Exception as e:
         logger.warning("[lib-sort] vector re-categorize failed for %s: %s", key, e)
     return old_cat
@@ -384,6 +375,20 @@ async def apply_reclassify(items: list) -> dict:
                 new_cat = classify_sonarr_category(sim) if series else (
                     "anime" if fix.get("seriesType") == "anime" else "show")
                 old_cat = await asyncio.to_thread(_recategorize_local, sid, new_cat)
+                # Facet points carry their own domain copy — rewrite them in
+                # THIS async context (the sync helper runs in a worker
+                # thread where a fire-and-forget task has no loop).
+                try:
+                    from src.services.facet_index import write_facets
+                    from src.vector_store.chromadb_wrapper import get_chroma_db
+                    _doc = get_chroma_db().get_by_id(f"sonarr:{sid}")
+                    _meta = (_doc or {}).get("metadata") or {}
+                    await write_facets(f"sonarr:{sid}", _meta.get("title", ""),
+                                       new_cat, _meta.get("genres", ""),
+                                       _meta.get("themes", ""))
+                except Exception as _fe:
+                    logger.debug("[lib-sort] facet re-categorize failed for %s: %s",
+                                 sid, _fe)
                 results.append({"sonarr_id": sid, "title": title, "ok": True, "moved": move,
                                 "old_category": old_cat, "new_category": new_cat})
             except Exception as e:
