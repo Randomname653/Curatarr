@@ -147,20 +147,23 @@ async def run_facet_backfill(task=None) -> bool:
 
     start_offset = offset
 
-    def _report(written: int = None):
+    def _report(written: int = None, within: int = 0):
         # Progress/rate/ETA are for THIS tick's slice — reporting the global
         # cursor as `processed` on a resumed run would inflate the rate with
         # titles done in earlier ticks and show a nonsense ETA. The global
-        # position goes in the message instead.
+        # position goes in the message instead. ``within`` = titles finished
+        # inside the current page (a 500-title page embeds for minutes — one
+        # update per page left the bar frozen between updates).
         if task is None:
             return
         try:
             from src.services.task_monitor import task_monitor
             slice_total = min(pages_per_run * _PAGE, max(total - start_offset, 0))
-            msg = f"{min(offset, total):,}/{total:,} titles indexed overall"
+            pos = min(offset + within, total)
+            msg = f"{pos:,}/{total:,} titles indexed overall"
             if written is not None:
-                msg += f" (+{written} facet points this page)"
-            task_monitor.update(task, processed=offset - start_offset,
+                msg += f" (+{written} facet points)"
+            task_monitor.update(task, processed=offset - start_offset + within,
                                 total=slice_total, message=msg)
         except Exception:
             pass
@@ -186,12 +189,14 @@ async def run_facet_backfill(task=None) -> bool:
         ids = page.get("ids") or []
         metas = page.get("metadatas") or []
         written = 0
-        for doc_id, meta in zip(ids, metas):
+        for i, (doc_id, meta) in enumerate(zip(ids, metas)):
             meta = meta or {}
             written += await write_facets(
                 str(doc_id), meta.get("title", ""),
                 meta.get("domain", "") or meta.get("media_type", ""),
                 meta.get("genres", ""), meta.get("themes", ""))
+            if (i + 1) % 25 == 0:
+                _report(written, within=i + 1)
         offset += len(ids) if ids else _PAGE
         set_state(_BACKFILL_CURSOR_KEY, str(offset))
         logger.info("[facets] backfill %d/%d titles (+%d points this page)",

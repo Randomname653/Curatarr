@@ -675,9 +675,9 @@ def _entity_divergence_reason(profile: dict, category: str, arr: dict) -> Option
     return None
 
 
-async def _audit_enrichments(dry_run: bool) -> dict:
+async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     """Scan the enrichment cache for incomplete OR wrong-entity profiles and
-    (unless dry_run) requeue them.
+    (unless dry_run) requeue them. ``task`` = optional Activity card.
 
     Requeue = delete the stale ``api_cache`` row AND flip the matching
     ``EnrichmentStatus`` / ``ArrEnrichmentStatus`` rows back to
@@ -696,9 +696,18 @@ async def _audit_enrichments(dry_run: bool) -> dict:
     # each hit: (cache_key, plex_rating_key, title, category, reason)
     hits: list[tuple] = []
 
+    def _prog(msg):
+        if task is None:
+            return
+        try:
+            task_monitor.update(task, message=msg)
+        except Exception:
+            pass
+
     # Arr ground-truth (doc-id → item) for the wrong-entity check. Best-effort:
     # if the arr is unreachable we skip that check and still audit completeness.
     truth: dict = {}
+    _prog("Fetching ARR ground truth for the entity check…")
     try:
         for _it in await _collect_arr_items(["movie", "show", "anime", "music"]):
             prk = _it.get("plex_rating_key")
@@ -713,6 +722,7 @@ async def _audit_enrichments(dry_run: bool) -> dict:
             "SELECT cache_key, response FROM api_cache WHERE cache_key LIKE ?",
             (prefix + "%",),
         ).fetchall()
+        _prog(f"Auditing {len(rows):,} cached profiles…")
         for row in rows:
             scanned += 1
             cache_key = row["cache_key"]
@@ -753,6 +763,7 @@ async def _audit_enrichments(dry_run: bool) -> dict:
 
     requeued = 0
     if not dry_run and hits:
+        _prog(f"Requeuing {len(hits):,} flagged profiles…")
         with get_db_session() as db:
             for _ck, prk, title, category, _reason in hits:
                 if prk:

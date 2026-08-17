@@ -495,11 +495,12 @@ async def topup_franchise(
 
 # ── custodian walker (mirrors run_significance_backfill) ─────────────────────
 
-async def run_reception_backfill(limit: int = 40) -> dict:
+async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     """Custodian walker: attach community reception to LIVE raw:* entries that
     were never reception-checked. Anime first (largest evidence gain), then
     shows/movies. Yields to any active curator, stops when a game grabs the
-    GPU, throttled to Jikan's public rate limit by the per-title pauses."""
+    GPU, throttled to Jikan's public rate limit by the per-title pauses.
+    ``task`` = the custodian's Activity card; per-title progress goes there."""
     import json as _json
     from datetime import datetime
     from src.cache.metadata_cache import MetadataCache
@@ -561,6 +562,14 @@ async def run_reception_backfill(limit: int = 40) -> dict:
                         "(%d/%d this pass)", checked, min(limit, total))
             break
         title = resp.get("title") or id_key
+        if task is not None:
+            try:
+                from src.services.task_monitor import task_monitor
+                task_monitor.update(
+                    task, processed=checked, total=min(limit, total),
+                    message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
+            except Exception:
+                pass
         await wait_for_curator()
         # full pass when reception was never fetched; light relations/tags
         # catch-up (no LLM) when only the franchise fields are missing

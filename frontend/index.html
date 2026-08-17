@@ -5621,7 +5621,7 @@ function renderTasks(tasks) {
             ${eta?`<span style="color:var(--amber)">${eta}</span>`:''}
           </div>
         </div>
-        ${t.status==='running'?`<span style="font-size:13px;font-weight:700;color:var(--amber)">${t.progress}%</span>`:''}
+        ${t.status==='running'?(t.total>0?`<span style="font-size:13px;font-weight:700;color:var(--amber)">${t.progress}%</span>`:`<span style="font-size:13px;color:var(--amber)" title="No item count for this job — watch the log line + elapsed time">⏳</span>`):''}
         ${t.status==='error'?`<span style="font-size:11px;color:var(--danger)">${esc(t.error||'')}</span>`:''}
       </div>
       ${t.status==='running'&&t.total>0?`

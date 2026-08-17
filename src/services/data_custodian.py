@@ -53,6 +53,23 @@ def _admin_id() -> int | None:
         return admin.id if admin else None
 
 
+def _prog(task, message: str = None, processed: int = None,
+          total: int = None) -> None:
+    """Best-effort progress into a runner's Activity card (None-safe)."""
+    if task is None:
+        return
+    try:
+        from src.services.task_monitor import task_monitor
+        kw = {}
+        if processed is not None:
+            kw["processed"] = processed
+        if total is not None:
+            kw["total"] = total
+        task_monitor.update(task, message=message, **kw)
+    except Exception:
+        pass
+
+
 # ── runners ───────────────────────────────────────────────────────────────────
 # Each returns True when fully done (stamp the cadence) or False when work
 # remains / the task was blocked (stay due — continue next tick).
@@ -74,24 +91,24 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
     return True
 
 
-async def _run_omdb(deep: bool = False) -> bool:
+async def _run_omdb(deep: bool = False, task=None) -> bool:
     from src.services.media_enricher import run_omdb_backfill
     limit = 5000 if deep else 2000
-    r = await run_omdb_backfill(limit=limit)
+    r = await run_omdb_backfill(task=task, limit=limit)
     cand, done = r.get("candidates", 0), r.get("enriched", 0)
     logger.info("[custodian] omdb top-up: %d/%d", done, cand)
     return cand <= limit
 
 
-async def _run_significance(deep: bool = False) -> bool:
+async def _run_significance(deep: bool = False, task=None) -> bool:
     from src.services.media_enricher import run_significance_backfill
-    r = await run_significance_backfill(limit=400 if deep else 150)
+    r = await run_significance_backfill(limit=400 if deep else 150, task=task)
     logger.info("[custodian] significance: +%d (checked %d, remaining %d)",
                 r.get("added", 0), r.get("checked", 0), r.get("remaining", 0))
     return r.get("remaining", 0) == 0
 
 
-async def _run_spotify(deep: bool = False) -> bool:
+async def _run_spotify(deep: bool = False, task=None) -> bool:
     from src.services.music_matcher import run_music_pipeline
     uid = _admin_id()
     if uid is None:
@@ -104,7 +121,7 @@ async def _run_spotify(deep: bool = False) -> bool:
         return False
     batch = 2000 if deep else 1000
     try:
-        r = await run_music_pipeline(uid, batch=batch)
+        r = await run_music_pipeline(uid, batch=batch, task=task)
     finally:
         release_state_lock("music_pipeline_running")
     # Top-track metadata warm phase (Pass 69) — its only caller used to be
@@ -156,20 +173,20 @@ async def _run_taste_if_due(deep: bool = False) -> bool:
     return True
 
 
-async def _run_reception(deep: bool = False) -> bool:
+async def _run_reception(deep: bool = False, task=None) -> bool:
     from src.services.reception import run_reception_backfill
-    r = await run_reception_backfill(limit=150 if deep else 40)
+    r = await run_reception_backfill(limit=150 if deep else 40, task=task)
     logger.info("[custodian] reception: +%d (checked %d, remaining %d)",
                 r.get("added", 0), r.get("checked", 0), r.get("remaining", 0))
     return r.get("remaining", 0) == 0
 
 
-async def _run_discogs_styles(deep: bool = False) -> bool:
+async def _run_discogs_styles(deep: bool = False, task=None) -> bool:
     """Monthly CC0 masters-dump refresh (~590 MB stream, CPU-only). The
     module itself skips when the local DB is <30 days old, so the 24h task
     cadence just means 'check often, download rarely'."""
     from src.services.discogs_offline import refresh_discogs_styles
-    r = await refresh_discogs_styles()
+    r = await refresh_discogs_styles(task=task)
     if r.get("skipped"):
         return True
     logger.info("[custodian] discogs styles: %s", r)
@@ -186,9 +203,9 @@ async def _run_memory_catchup(deep: bool = False) -> bool:
     return True
 
 
-async def _run_audit(deep: bool = False) -> bool:
+async def _run_audit(deep: bool = False, task=None) -> bool:
     from src.routers.enrichment import _audit_enrichments
-    r = await _audit_enrichments(dry_run=False)
+    r = await _audit_enrichments(dry_run=False, task=task)
     logger.info("[custodian] audit-requeue: %s", r)
     return True
 
@@ -238,7 +255,7 @@ async def _run_recs(deep: bool = False) -> bool:
     return all_ok
 
 
-async def _run_playlist_push(deep: bool = False) -> bool:
+async def _run_playlist_push(deep: bool = False, task=None) -> bool:
     """Push/refresh every active user's Curatarr-Recommended Plex playlists.
     Users without a stored token are logged-and-skipped and do NOT hold the
     task open (it would stay due forever); a transient Plex error does."""
@@ -252,17 +269,20 @@ async def _run_playlist_push(deep: bool = False) -> bool:
         users = [type("U", (), {"id": u.id, "plex_username": u.plex_username,
                                 "plex_token": u.plex_token})() for u in users]
     all_ok = True
-    for u in users:
+    for i, u in enumerate(users):
+        _prog(task, message=f"Pushing playlists for {u.plex_username}…",
+              processed=i, total=len(users))
         try:
             await push_user_playlists(u)
         except Exception as e:
             logger.warning("[custodian] playlist push failed for %s: %s",
                            u.plex_username, e)
             all_ok = False
+    _prog(task, processed=len(users), total=len(users))
     return all_ok
 
 
-async def _run_music_playlist_push(deep: bool = False) -> bool:
+async def _run_music_playlist_push(deep: bool = False, task=None) -> bool:
     """Push/refresh every active user's Curatarr-Recommended MUSIC playlist
     (one unheard album per recommended artist). Token-less users are
     logged-and-skipped, same contract as the video push."""
@@ -275,22 +295,25 @@ async def _run_music_playlist_push(deep: bool = False) -> bool:
         users = [type("U", (), {"id": u.id, "plex_username": u.plex_username,
                                 "plex_token": u.plex_token})() for u in users]
     all_ok = True
-    for u in users:
+    for i, u in enumerate(users):
+        _prog(task, message=f"Pushing music playlist for {u.plex_username}…",
+              processed=i, total=len(users))
         try:
             await push_user_music_playlist(u)
         except Exception as e:
             logger.warning("[custodian] music playlist push failed for %s: %s",
                            u.plex_username, e)
             all_ok = False
+    _prog(task, processed=len(users), total=len(users))
     return all_ok
 
 
-async def _run_music_catalog_sync(deep: bool = False) -> bool:
+async def _run_music_catalog_sync(deep: bool = False, task=None) -> bool:
     """SoulSync→Lidarr catalog sync (Modell B): SoulSync owns the files,
     Lidarr is the passive structure index — this keeps it complete
     (disarmed adds) and surfaces folder-name drift."""
     from src.services.music_catalog_sync import sync_soulsync_to_lidarr
-    res = await sync_soulsync_to_lidarr()
+    res = await sync_soulsync_to_lidarr(task=task)
     return bool(res.get("ok"))
 
 
@@ -303,16 +326,19 @@ async def _run_facet_backfill(task=None) -> bool:
     return await run_facet_backfill(task=task)
 
 
-async def _run_collections(deep: bool = False) -> bool:
+async def _run_collections(deep: bool = False, task=None) -> bool:
     """Design + push the household's "Curatarr · " collection shelves."""
     from src.services.collection_designer import design_collections
     from src.services.plex_collections import push_collections
+    _prog(task, message="Curator is designing collection shelves… (LLM)")
     designs = await design_collections()
     if not designs:
         logger.info("[custodian] no collection designs produced — task stays due")
         return False
+    _prog(task, message=f"Pushing {len(designs)} shelf design(s) to Plex…")
     res = await push_collections(designs)
     logger.info("[custodian] collections pushed: %s", res)
+    _prog(task, message=f"Pushed: {res}")
     return True
 
 
@@ -359,15 +385,15 @@ def _registry() -> list[Task]:
         Task("custodian_enrich", "Enrichment cycle",     24.0,  _run_enrichment_cycle,
              needs_llm=True, takes_deep=True, reports_own=True),
         Task("custodian_omdb",   "OMDb top-up",          24.0,  _run_omdb,
-             takes_deep=True),
+             takes_deep=True, takes_task=True),
         Task("custodian_signif", "Wikipedia significance", 24.0, _run_significance,
-             needs_llm=True, takes_deep=True),
+             needs_llm=True, takes_deep=True, takes_task=True),
         Task("custodian_recept", "Community reception",  24.0,  _run_reception,
-             needs_llm=True, takes_deep=True),
+             needs_llm=True, takes_deep=True, takes_task=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
-             takes_deep=True),
+             takes_deep=True, takes_task=True),
         Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,
-             takes_deep=True),
+             takes_deep=True, takes_task=True),
         Task("custodian_taste",  "Taste vectors",        24.0,  _run_taste_if_due,
              needs_llm=True, takes_deep=True, reports_own=True),
         # Curatarr-Recommended pipeline: taste feeds recs, recs feed the Plex
@@ -378,19 +404,19 @@ def _registry() -> list[Task]:
         Task("custodian_recs",   "Recommendation cache refresh", 168.0,
              _run_recs, needs_llm=True, reports_own=True),
         Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
-             _run_playlist_push),
+             _run_playlist_push, takes_task=True),
         # Music variant: one unheard album per recommended artist, per user.
         # Plex reads/writes only — no LLM gate.
         Task("plex_music_playlist", "Curatarr music playlists", 168.0,
-             _run_music_playlist_push),
+             _run_music_playlist_push, takes_task=True),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
-             _run_music_catalog_sync),
+             _run_music_catalog_sync, takes_task=True),
         # Household collections: the 27B designs rotating themed shelves from
         # the OWNED library (section-global — one set via the owner token).
         Task("plex_collections", "Curatarr collections", 168.0,
-             _run_collections, needs_llm=True),
+             _run_collections, needs_llm=True, takes_task=True),
         # Multi-vector items stage 1: backfill theme-facet points for the
         # existing corpus (CPU embeds only, resumable via app_state cursor;
         # returns False until complete so every tick continues the run,
@@ -399,7 +425,7 @@ def _registry() -> list[Task]:
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
-             takes_deep=True),
+             takes_deep=True, takes_task=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay,
              reports_own=True),
         Task("orphan_check",     "Orphaned sections",    168.0, sched.job_orphan_check,
