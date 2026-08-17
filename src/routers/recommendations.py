@@ -858,13 +858,11 @@ async def get_deletion_proposals(
         task_monitor.error(mtask, str(e))
         raise
 
-    # Enrich each proposal with poster, synopsis, genres from TMDB + ARR metadata.
-    # Keyed by (title, category) — a bare title map let same-named items from
-    # different services collide: the lidarr band "The Devil Wears Prada"
-    # overwrote the radarr film's slot, so the FILM's proposal shipped with
-    # category='music' + the band's poster/synopsis, and the discussion then
-    # argued about the wrong medium entirely.
-    item_map = {(i["title"], i.get("category")): i for i in arr_items}
+    # Enrich each proposal with poster, synopsis, genres from TMDB + ARR
+    # metadata. arr-id-first keying — see build_proposal_item_map (the
+    # Devil-Wears-Prada cross-service collision AND the same-service
+    # same-title Good-Boy collision).
+    item_map = build_proposal_item_map(arr_items)
     enriched = await asyncio.gather(*[
         _enrich_proposal(p, item_map, category) for p in proposals])
 
@@ -1619,15 +1617,35 @@ async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
     return result
 
 
+def build_proposal_item_map(arr_items: list) -> dict:
+    """Item lookup for _enrich_proposal with TWO key shapes per item:
+    ("id", service, str(arr_id)) — unique, wins — plus the legacy
+    (title, category) fallback for anything without an arr_id."""
+    item_map: dict = {}
+    for i in arr_items:
+        item_map[(i["title"], i.get("category"))] = i
+        if i.get("arr_id") is not None:
+            item_map[("id", i.get("service"), str(i.get("arr_id")))] = i
+    return item_map
+
+
 async def _enrich_proposal(p: dict, item_map: dict, fallback_category: str = None) -> dict:
     """Attach poster / synopsis / genres to one proposal dict from TMDB + the
-    ARR item (keyed (title, category) — see the Devil-Wears-Prada collision).
+    ARR item.
+
+    Lookup is arr-id-FIRST (build_proposal_item_map): the (title, category)
+    key alone collided for same-title entries WITHIN one service — the owner
+    holds BOTH 2025/26 "Good Boy" films in Radarr, the dict's last writer won,
+    and the dog-horror's card shipped with the OTHER film's synopsis+genres
+    (the pitch itself was right — the display lied). Same failure class as
+    the Devil-Wears-Prada movie-vs-band collision, one level deeper.
 
     Shared by BOTH write paths: the manual Analyse endpoint AND the scheduler's
     nightly scan. The scheduler used to insert ``p.get("poster_url")`` while
     the engine dict never carried the field — every auto-generated proposal
     shipped without an image and never got one."""
-    orig = item_map.get((p["title"], p.get("category")), {})
+    orig = (item_map.get(("id", p.get("service"), str(p.get("arr_id") or "")))
+            or item_map.get((p["title"], p.get("category")), {}))
     cat = orig.get("category", p.get("category") or fallback_category or "movie")
     genres = orig.get("genres", "")
     # Pass 51/52: hand _fetch_tmdb every stable ID the ARR item carries

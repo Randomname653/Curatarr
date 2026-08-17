@@ -42,10 +42,15 @@ def _phrases_from_themes(themes) -> list:
 
 
 async def write_facets(doc_id: str, title: str, domain: str,
-                       genres_str: str, themes) -> int:
+                       genres_str: str, themes, vec_map: dict = None) -> int:
     """(Re)write one title's facet points. Full upsert: delete-by-parent
     then add — a failed embed leaves the title WITHOUT facets rather than
-    with stale ones. Returns the number of facet points written."""
+    with stale ones. Returns the number of facet points written.
+
+    ``vec_map`` ({phrase: vector}) lets the backfill pre-embed a whole page
+    in batched, deduped calls (themes repeat ~6.7x across the corpus; one
+    embed call per title was the backfill's bottleneck). Phrases missing
+    from the map are embedded here as stragglers."""
     if not doc_id:
         return 0
     phrases = _phrases_from_themes(themes)
@@ -58,8 +63,16 @@ async def write_facets(doc_id: str, title: str, domain: str,
         chroma.facets_delete_by_parent(str(doc_id))
         if not phrases:
             return 0
-        vecs = await embed_documents(phrases)
-        pairs = [(p, v) for p, v in zip(phrases, vecs) if v]
+        if vec_map is not None:
+            lookup = dict(vec_map)
+            missing = [p for p in phrases if not lookup.get(p)]
+            if missing:
+                mv = await embed_documents(missing)
+                lookup.update({p: v for p, v in zip(missing, mv) if v})
+            pairs = [(p, lookup[p]) for p in phrases if lookup.get(p)]
+        else:
+            vecs = await embed_documents(phrases)
+            pairs = [(p, v) for p, v in zip(phrases, vecs) if v]
         if not pairs:
             return 0
         # emb_model stamp (external eval catch): without it a profile
@@ -188,13 +201,32 @@ async def run_facet_backfill(task=None) -> bool:
             return False
         ids = page.get("ids") or []
         metas = page.get("metadatas") or []
+        # Pre-embed the page's phrases: dedupe (themes repeat heavily across
+        # titles) + chunked batch calls — turns ~500 per-title embed calls
+        # per page into a handful, which is where the 39-min ticks went.
+        page_phrases: list = []
+        for meta in metas:
+            page_phrases.extend(_phrases_from_themes((meta or {}).get("themes", "")))
+        uniq = list(dict.fromkeys(page_phrases))
+        vec_map: dict = {}
+        from src.services.embed_service import embed_documents
+        _CHUNK = 256
+        for j in range(0, len(uniq), _CHUNK):
+            chunk = uniq[j:j + _CHUNK]
+            _report(within=0)   # keep the card's clock moving during embeds
+            try:
+                vecs = await embed_documents(chunk)
+                vec_map.update({p: v for p, v in zip(chunk, vecs) if v})
+            except Exception as e:
+                logger.debug("[facets] page embed chunk failed: %s", e)
         written = 0
         for i, (doc_id, meta) in enumerate(zip(ids, metas)):
             meta = meta or {}
             written += await write_facets(
                 str(doc_id), meta.get("title", ""),
                 meta.get("domain", "") or meta.get("media_type", ""),
-                meta.get("genres", ""), meta.get("themes", ""))
+                meta.get("genres", ""), meta.get("themes", ""),
+                vec_map=vec_map)
             if (i + 1) % 25 == 0:
                 _report(written, within=i + 1)
         offset += len(ids) if ids else _PAGE
