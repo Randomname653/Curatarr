@@ -876,6 +876,21 @@ def _extract_key(user_id: int, thread_id: str) -> str:
     return f"{user_id}:{thread_id}"
 
 
+async def _carded(coro, name: str, task_id: str) -> None:
+    """Run a fire-and-forget coroutine under an Activity card. The post-chat
+    curator calls (principle capture, rec-feedback analysis) are 27B/31B runs
+    that used to occupy the GPU with zero trace in the Activity view."""
+    from src.services.task_monitor import task_monitor
+    t = task_monitor.create(name=name, category="memory", task_id=task_id)
+    task_monitor.start(t)
+    try:
+        await coro
+    except Exception as e:
+        task_monitor.error(t, str(e))
+        raise
+    task_monitor.done(t)
+
+
 async def extract_memories_from_thread(
     user_id: int,
     thread_id: str,
@@ -1021,7 +1036,20 @@ USER MESSAGES (oldest → newest):
 
 JSON:"""
 
-    await _run_memory_extraction(user_id, prompt, media_category=media_category)
+    # Activity card: this is a real LLM run firing minutes after a chat goes
+    # quiet — GPU work the Activity view showed nothing for. Work-gated (the
+    # early-outs above return before this) so idle catch-up ticks stay silent.
+    # task_id per thread: a re-extraction replaces its old card.
+    from src.services.task_monitor import task_monitor
+    _mt = task_monitor.create(name="Chat memory extraction", category="memory",
+                              task_id=f"memx-{user_id}-{thread_id}")
+    task_monitor.start(_mt)
+    try:
+        await _run_memory_extraction(user_id, prompt, media_category=media_category)
+    except Exception as e:
+        task_monitor.error(_mt, str(e))
+        raise
+    task_monitor.done(_mt, f"{len(user_msgs)} new message(s) analyzed")
 
     # Advance the cursor only AFTER a successful run — a crash mid-extract
     # then re-tries the same window on the next flush instead of silently
@@ -1048,7 +1076,9 @@ JSON:"""
             # surfaced when re-run manually. track_task logs any exception.
             from src.services.bg_tasks import track_task
             track_task(
-                capture_principles_from_thread(user_id, thread_id, media_category),
+                _carded(
+                    capture_principles_from_thread(user_id, thread_id, media_category),
+                    "Principle capture (deletion debate)", f"princ-{thread_id}"),
                 name=f"principle_capture:{thread_id}",
             )
     except Exception as e:
@@ -1065,9 +1095,11 @@ JSON:"""
         if followup_ctx:
             from src.services.bg_tasks import track_task
             track_task(
-                analyze_recommendation_feedback(
-                    user_id, followup_ctx["title"], followup_ctx.get("category"),
-                    user_msgs),
+                _carded(
+                    analyze_recommendation_feedback(
+                        user_id, followup_ctx["title"], followup_ctx.get("category"),
+                        user_msgs),
+                    "Recommendation feedback analysis", f"recfb-{thread_id}"),
                 name=f"rec_feedback:{thread_id}",
             )
     except Exception as e:

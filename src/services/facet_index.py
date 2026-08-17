@@ -130,7 +130,9 @@ async def run_facet_backfill(task=None) -> bool:
     embed each title's themes (CPU — nomic runs num_gpu=0 everywhere),
     write facet points. Cursor in app_state; returns True when complete
     (the custodian stamps the task done), False to continue next tick.
-    Runs IN-process — the chroma process lock forbids sidecar scripts."""
+    Runs IN-process — the chroma process lock forbids sidecar scripts.
+    ``task`` is the custodian's Activity card (task_monitor Task) — page
+    progress goes there so the run is visible outside the console."""
     from src.services.app_state import get_state, set_state
     from src.vector_store.chromadb_wrapper import get_chroma_db
 
@@ -142,15 +144,37 @@ async def run_facet_backfill(task=None) -> bool:
     except Exception:
         offset = 0
     total = chroma.get_count()
+
+    start_offset = offset
+
+    def _report(written: int = None):
+        # Progress/rate/ETA are for THIS tick's slice — reporting the global
+        # cursor as `processed` on a resumed run would inflate the rate with
+        # titles done in earlier ticks and show a nonsense ETA. The global
+        # position goes in the message instead.
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            slice_total = min(pages_per_run * _PAGE, max(total - start_offset, 0))
+            msg = f"{min(offset, total):,}/{total:,} titles indexed overall"
+            if written is not None:
+                msg += f" (+{written} facet points this page)"
+            task_monitor.update(task, processed=offset - start_offset,
+                                total=slice_total, message=msg)
+        except Exception:
+            pass
     # Budget per custodian tick: one page batch keeps a tick short; the
     # 30-min custodian interval finishes ~27k titles in a few days, or
     # instantly via the manual maintenance button loop.
     pages_per_run = 6
+    _report()
     for _ in range(pages_per_run):
         if offset >= total:
             set_state(_BACKFILL_DONE_KEY, "1")
             logger.info("[facets] backfill COMPLETE — %d facet points",
                         chroma.facets_count())
+            _report()
             return True
         try:
             page = chroma.collection.get(
@@ -172,9 +196,5 @@ async def run_facet_backfill(task=None) -> bool:
         set_state(_BACKFILL_CURSOR_KEY, str(offset))
         logger.info("[facets] backfill %d/%d titles (+%d points this page)",
                     min(offset, total), total, written)
-        if task is not None:
-            try:
-                task.message = f"facet backfill {min(offset, total)}/{total}"
-            except Exception:
-                pass
+        _report(written)
     return False
