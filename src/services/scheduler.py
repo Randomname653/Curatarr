@@ -494,8 +494,9 @@ async def job_arr_sync():
             # so without this every scheduler-written proposal had no image.
             if cat_proposals:
                 import asyncio as _aio
-                from src.routers.recommendations import _enrich_proposal
-                _imap = {(i["title"], i.get("category")): i for i in cat_items}
+                from src.routers.recommendations import (
+                    _enrich_proposal, build_proposal_item_map)
+                _imap = build_proposal_item_map(cat_items)
                 cat_proposals = list(await _aio.gather(*[
                     _enrich_proposal(p, _imap, cat) for p in cat_proposals]))
             all_proposals.extend(cat_proposals)

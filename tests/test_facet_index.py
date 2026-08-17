@@ -152,5 +152,37 @@ check("page read failure returns False (retry next tick), cursor kept",
       and STATE.get(fi._BACKFILL_CURSOR_KEY) is None)
 fake.page_error_at = None
 
+# ── vec_map: page-batched, deduped embedding (backfill speed fix) ────────────
+
+calls = []
+async def _counting_embed(texts, profile=None):
+    calls.append(list(texts))
+    return [[1.0, 0.0] for _ in texts]
+es.embed_documents = _counting_embed
+
+n = asyncio.run(fi.write_facets(
+    "sonarr:9", "T", "anime", "", ["alpha beta", "gamma delta"],
+    vec_map={"alpha beta": [0.0, 1.0], "gamma delta": [1.0, 0.0]}))
+check("pre-embedded vec_map writes WITHOUT any embed call",
+      n == 2 and calls == [])
+
+n = asyncio.run(fi.write_facets(
+    "sonarr:9", "T", "anime", "", ["alpha beta", "fresh phrase"],
+    vec_map={"alpha beta": [0.0, 1.0]}))
+check("stragglers missing from vec_map are embedded individually",
+      n == 2 and calls == [["fresh phrase"]])
+
+STATE.clear()
+calls.clear()
+fake.count = 2
+fake.pages = {0: {"ids": ["y1", "y2"],
+                  "metadatas": [{"title": "A", "domain": "anime", "genres": "",
+                                 "themes": "shared theme, only-a"},
+                                {"title": "B", "domain": "anime", "genres": "",
+                                 "themes": "shared theme, only-b"}]}}
+asyncio.run(fi.run_facet_backfill())
+check("backfill pre-embeds the page DEDUPED (one chunked call, no per-title calls)",
+      len(calls) == 1 and sorted(calls[0]) == ["only-a", "only-b", "shared theme"])
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
