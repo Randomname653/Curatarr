@@ -2152,7 +2152,11 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     def _vector_score(item: dict):
         """Cosine similarity (user taste vector · item ChromaDB embedding),
         or None when either side is missing."""
-        if user_vector_n is None:
+        # External eval catch: P3b renamed the single vector into the
+        # user_vecs_n list but left this guard on the OLD name — NameError
+        # for every user with taste data (endpoint 500, scheduler swallowed
+        # it silently). Guard on what actually exists.
+        if not user_vecs_n:
             return None
         doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or item.get("title") or "")
         if not doc_id:
