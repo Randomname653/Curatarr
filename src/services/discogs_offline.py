@@ -210,10 +210,12 @@ def _gaming() -> bool:
         return False
 
 
-async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> dict:
+async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
+                                 task=None) -> dict:
     """Stream the newest masters dump, filter to the owner's artists, and
     rebuild the styles DB. ``max_bytes`` caps the compressed read (test
-    windows); production runs read the whole ~590 MB once a month."""
+    windows); production runs read the whole ~590 MB once a month. ``task``
+    = the custodian's Activity card (MB progress for the long stream)."""
     if _fresh() and not force and max_bytes is None:
         return {"skipped": "fresh"}
     key = _latest_masters_key()
@@ -225,9 +227,24 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
     url = f"{DATA_INDEX}?download={key}"
     logger.info("[discogs] streaming %s for %d library artists", key, len(wanted))
 
+    def _prog(read_b: int, total_b: int, n_masters: int):
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            task_monitor.update(
+                task, processed=read_b >> 20,
+                total=(total_b >> 20) if total_b else 0,
+                message=f"Streaming masters dump: {read_b >> 20} MB"
+                        + (f"/{total_b >> 20} MB" if total_b else "")
+                        + f" · {n_masters:,} library matches")
+        except Exception:
+            pass
+
     decomp = zlib.decompressobj(wbits=31)
     buf = b""
     read_c = 0
+    _next_report = 0
     masters: list[tuple] = []
     t0 = time.time()
     stopped = None
@@ -236,8 +253,15 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False) -> 
         async with client.stream("GET", url) as resp:
             if resp.status_code != 200:
                 return {"error": f"HTTP {resp.status_code} (endpoint rate-limits; retry next tick)"}
+            try:
+                total_bytes = int(resp.headers.get("content-length") or 0)
+            except Exception:
+                total_bytes = 0
             async for chunk in resp.aiter_bytes(1 << 19):
                 read_c += len(chunk)
+                if read_c >= _next_report:
+                    _prog(read_c, total_bytes, len(masters))
+                    _next_report = read_c + (16 << 20)   # every ~16 MB
                 if _gaming():
                     stopped = "game"
                     break

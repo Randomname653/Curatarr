@@ -1067,13 +1067,14 @@ async def ensure_verified_data(
     return data
 
 
-async def run_significance_backfill(limit: int = 150) -> dict:
+async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     """Custodian walker: fetch Wikipedia significance for LIVE raw:* entries
     that were never significance-checked. Until now this only happened
     just-in-time for titles the user happened to discuss — the archive pillar
     was blind for everything else. Summarizer-tier work: yields to any active
     curator and stops when a game grabs the GPU.
 
+    ``task`` = the custodian's Activity card; per-title progress goes there.
     Returns {"checked": n, "added": n, "remaining": n} — remaining>0 means the
     custodian should keep the task due and continue next tick."""
     import json as _json
@@ -1120,6 +1121,14 @@ async def run_significance_backfill(limit: int = 150) -> dict:
             year = (resp or {}).get("year")
         except Exception:
             continue
+        if task is not None:
+            try:
+                from src.services.task_monitor import task_monitor
+                task_monitor.update(
+                    task, processed=checked, total=min(limit, total),
+                    message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
+            except Exception:
+                pass
         await wait_for_curator()
         try:
             if await asyncio.wait_for(

@@ -86,11 +86,16 @@ check("reports_own set matches the audited self-reporting runners "
 
 check("registry job_ids are unique (stable card ids depend on it)",
       len({t.job_id for t in reg}) == len(reg))
-check("facet backfill receives the wrapper card for inner progress",
-      next(t for t in reg if t.job_id == "facet_backfill").takes_task
-      and not next(t for t in reg if t.job_id == "facet_backfill").reports_own)
 check("no runner is both self-reporting AND wrapper-progress-fed",
       not any(t.reports_own and t.takes_task for t in reg))
+
+# Owner follow-up (2026-08-17): wrapper cards sat at 0% until done because
+# the runners never reported INNER progress. Invariant now: every wrapper
+# runner takes the card and feeds it — a new runner without takes_task (or
+# reports_own) fails here, so silent 0%-forever cards can't come back.
+check("EVERY wrapper runner feeds its card (takes_task == not reports_own)",
+      {t.job_id for t in reg if t.takes_task}
+      == {t.job_id for t in reg if not t.reports_own})
 
 root = Path(__file__).resolve().parents[1]
 dc = (root / "src/services/data_custodian.py").read_text(encoding="utf-8")
@@ -138,6 +143,53 @@ check("manual analysis feeds the card into generate_deletion_proposals "
 fe = (root / "frontend/index.html").read_text(encoding="utf-8")
 for cat in ("custodian", "curation", "recs", "memory", "music", "maintenance"):
     check(f"frontend has an icon for category '{cat}'", f"{cat}: '" in fe)
+
+# ── 4. inner progress inside the wrapper runners (the 0%-until-done fix) ─────
+
+check("facet backfill reports WITHIN each 500-title page (25-title cadence)",
+      "% 25 == 0" in fi and "_report(written, within=i + 1)" in fi)
+
+rec = (root / "src/services/reception.py").read_text(encoding="utf-8")
+check("reception backfill: per-title progress into the card",
+      "def run_reception_backfill(limit: int = 40, task=None)" in rec
+      and "processed=checked, total=min(limit, total)" in rec)
+
+me = (root / "src/services/media_enricher.py").read_text(encoding="utf-8")
+check("significance backfill: per-title progress into the card",
+      "def run_significance_backfill(limit: int = 150, task=None)" in me
+      and me.count("processed=checked, total=min(limit, total)") >= 1)
+check("custodian passes the card into the OMDb backfill (it already "
+      "supported task= for the manual path)",
+      "run_omdb_backfill(task=task, limit=limit)" in dc)
+
+mcs = (root / "src/services/music_catalog_sync.py").read_text(encoding="utf-8")
+check("catalog sync: paging + compare-loop + refresh progress",
+      "Fetching SoulSync catalogue" in mcs
+      and "processed=ai, total=len(ss_artists)" in mcs
+      and "Queuing Lidarr refreshes" in mcs)
+
+mm = (root / "src/services/music_matcher.py").read_text(encoding="utf-8")
+check("music pipeline: 4-phase progress on the custodian card",
+      "def run_music_pipeline(user_id: int, batch: int = 300, task=None)" in mm
+      and "processed=done, total=4" in mm)
+
+do = (root / "src/services/discogs_offline.py").read_text(encoding="utf-8")
+check("discogs dump: MB progress against content-length",
+      "Streaming masters dump" in do and "content-length" in do)
+
+check("playlist pushes: per-user progress; collections: stage messages; "
+      "audit: card passthrough",
+      'message=f"Pushing playlists for {u.plex_username}…"' in dc
+      and "Curator is designing collection shelves" in dc
+      and "_audit_enrichments(dry_run=False, task=task)" in dc)
+
+en = (root / "src/routers/enrichment.py").read_text(encoding="utf-8")
+check("audit reports its stages (ground truth -> scan -> requeue)",
+      "Auditing {len(rows):,} cached profiles" in en
+      and "Requeuing {len(hits):,} flagged profiles" in en)
+
+check("frontend hides the fake 0% chip when a running card has no total",
+      "t.status==='running'?(t.total>0?" in fe)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

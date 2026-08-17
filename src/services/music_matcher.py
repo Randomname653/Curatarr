@@ -832,7 +832,7 @@ async def enrich_music_genres_lastfm(
 
 # ── Combined pipeline (used by scheduler) ────────────────────────────────────
 
-async def run_music_pipeline(user_id: int, batch: int = 300) -> dict:
+async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
     """Run Phase 1 (Plex match) → 1.4 (MBID resolve) → 1.5 (Spotify genres) →
     Phase 2 (Last.fm genres).
 
@@ -849,14 +849,32 @@ async def run_music_pipeline(user_id: int, batch: int = 300) -> dict:
     """
     logger.info("[music_matcher] Starting full music pipeline for user %d (batch=%d)",
                 user_id, batch)
+
+    def _prog(message, done):
+        # Activity-card phase progress for the custodian path (the manual
+        # router run cards the phases itself). MBID alone is ~1 req/s —
+        # minutes at 0% without this.
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            task_monitor.update(task, message=message, processed=done, total=4)
+        except Exception:
+            pass
+
+    _prog("Phase 1: matching Spotify plays to Plex tracks…", 0)
     phase1 = await match_spotify_to_plex(user_id)
     if "error" in phase1:
         logger.warning("[music_matcher] Phase 1 aborted: %s", phase1["error"])
+    _prog(f"Phase 1.4: resolving artist MBIDs (~1/s, batch {batch})…", 1)
     phase_mbid = await resolve_artist_mbids(user_id, batch=batch)
+    _prog(f"Phase 1.5: Spotify genres ({(phase_mbid or {}).get('resolved', 0)} MBIDs resolved)…", 2)
     phase_sp   = await enrich_music_genres_spotify(user_id, batch=batch)
+    _prog(f"Phase 2: Last.fm genres ({(phase_sp or {}).get('enriched_plays', 0)} plays enriched)…", 3)
     phase2     = await enrich_music_genres_lastfm(user_id, batch=batch)
     if "error" in phase2:
         logger.warning("[music_matcher] Phase 2 aborted: %s", phase2["error"])
+    _prog(f"Done: {(phase2 or {}).get('tracks_queried', 0)} tracks queried on Last.fm", 4)
     return {
         "phase1_plex_match":    phase1,
         "phase1_4_mbid":        phase_mbid,

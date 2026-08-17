@@ -50,9 +50,25 @@ _REFRESH_CAP_PER_RUN = 15  # each refresh = MB roundtrip + disk scan (~40-120s
 _STATE_KEY = "music_catalog_sync"
 
 
-async def sync_soulsync_to_lidarr() -> dict:
+async def sync_soulsync_to_lidarr(task=None) -> dict:
     from src.services import soulsync_client
     from src.services.app_state import set_state
+
+    def _prog(message=None, processed=None, total=None):
+        # Activity-card progress (the run takes ~10 min; without this it sat
+        # at 0% until done). None-safe: manual callers pass no task.
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            kw = {}
+            if processed is not None:
+                kw["processed"] = processed
+            if total is not None:
+                kw["total"] = total
+            task_monitor.update(task, message=message, **kw)
+        except Exception:
+            pass
 
     if not soulsync_client._configured():
         logger.info("[catalog-sync] SoulSync not configured — nothing to do")
@@ -62,6 +78,8 @@ async def sync_soulsync_to_lidarr() -> dict:
     ss_artists: list = []
     page = 1
     while True:
+        _prog(message=f"Fetching SoulSync catalogue… page {page} "
+                      f"({len(ss_artists):,} artists so far)")
         body = await soulsync_client.list_artists_page(page=page, limit=200)
         if not body:
             break
@@ -79,6 +97,8 @@ async def sync_soulsync_to_lidarr() -> dict:
         return {"ok": True, "skipped": "no_lidarr"}
     client = _make_client("lidarr", url, key)
     async with client:
+        _prog(message=f"{len(ss_artists):,} SoulSync artists — "
+                      "loading Lidarr index…")
         lidarr_artists = await client.get_artists() or []
         by_mbid = {a.get("foreignArtistId"): a for a in lidarr_artists
                    if a.get("foreignArtistId")}
@@ -89,7 +109,11 @@ async def sync_soulsync_to_lidarr() -> dict:
         can_add = bool(defaults.get("root_folder_path")
                        and defaults.get("quality_profile_id")
                        and defaults.get("metadata_profile_id"))
-        for a in ss_artists:
+        for ai, a in enumerate(ss_artists):
+            if ai % 250 == 0:
+                _prog(message=f"Comparing catalogues… {ai:,}/{len(ss_artists):,} "
+                              f"artists ({len(added)} added)",
+                      processed=ai, total=len(ss_artists))
             mbid = a.get("musicbrainz_id")
             name = a.get("name")
             if not mbid:
@@ -147,7 +171,10 @@ async def sync_soulsync_to_lidarr() -> dict:
                 if a.get("id"):
                     refresh_ids.append(int(a["id"]))
         refreshed = 0
+        _refresh_n = len(refresh_ids[:_REFRESH_CAP_PER_RUN])
         for aid in refresh_ids[:_REFRESH_CAP_PER_RUN]:
+            _prog(message=f"Queuing Lidarr refreshes… {refreshed}/{_refresh_n}",
+                  processed=refreshed, total=max(_refresh_n, 1))
             try:
                 await client.refresh_artist(aid)
                 refreshed += 1
