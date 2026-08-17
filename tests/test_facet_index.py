@@ -88,9 +88,12 @@ check("delete-by-parent runs BEFORE add (true upsert)",
 ids, metas, docs = fake.added[0]
 check("facet id schema parent::fN",
       ids == ["sonarr:1::f0", "sonarr:1::f1"])
-check("metadata carries parent/domain/genres for the probe gate",
-      metas[0] == {"parent": "sonarr:1", "title": "Gleipnir",
-                   "domain": "anime", "genres": "Action", "facet": "theme"})
+check("metadata carries parent/domain/genres for the probe gate "
+      "+ the emb_model rollback stamp (external eval catch)",
+      {k: v for k, v in metas[0].items() if k != "emb_model"}
+      == {"parent": "sonarr:1", "title": "Gleipnir",
+          "domain": "anime", "genres": "Action", "facet": "theme"}
+      and isinstance(metas[0].get("emb_model"), str))
 
 n = asyncio.run(fi.write_facets("sonarr:1", "Gleipnir", "anime", "", []))
 check("empty theme set still clears stale facets, writes none",

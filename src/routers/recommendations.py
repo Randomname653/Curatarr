@@ -828,19 +828,35 @@ async def get_deletion_proposals(
     # is scored against the correct taste vector and the cache is populated for
     # every individual category tab, not just a random top-10 across all types.
 
-    if not category:
-        # Run sequentially — Ollama is single-threaded and can't handle concurrent
-        # 27B curator calls without returning 500s.
-        cats_present = list({i["category"] for i in arr_items if i.get("category")})
-        proposals = []
-        for cat in cats_present:
-            cat_items = [i for i in arr_items if i.get("category") == cat]
-            if cat_items:
-                proposals.extend(
-                    await generate_deletion_proposals(user.id, cat_items, cat)
-                )
-    else:
-        proposals = await generate_deletion_proposals(user.id, arr_items, category)
+    # Activity card for the manual Analyze run. The scheduler's ARR-sync path
+    # already cards this work ("ARR Sync"), but the button-triggered run —
+    # minutes of scoring + LLM pitches — was invisible the moment the user
+    # left the Curation view. monitor_task lights up the Pass 99-fu5
+    # phase/per-pitch progress messages inside generate_deletion_proposals.
+    from src.services.task_monitor import task_monitor
+    mtask = task_monitor.create(
+        name=f"Deletion analysis: {category or 'all categories'}",
+        category="curation", task_id=f"del-analysis-{user.id}")
+    task_monitor.start(mtask)
+    try:
+        if not category:
+            # Run sequentially — Ollama is single-threaded and can't handle
+            # concurrent 27B curator calls without returning 500s.
+            cats_present = list({i["category"] for i in arr_items if i.get("category")})
+            proposals = []
+            for cat in cats_present:
+                cat_items = [i for i in arr_items if i.get("category") == cat]
+                if cat_items:
+                    proposals.extend(
+                        await generate_deletion_proposals(
+                            user.id, cat_items, cat, monitor_task=mtask)
+                    )
+        else:
+            proposals = await generate_deletion_proposals(
+                user.id, arr_items, category, monitor_task=mtask)
+    except Exception as e:
+        task_monitor.error(mtask, str(e))
+        raise
 
     # Enrich each proposal with poster, synopsis, genres from TMDB + ARR metadata.
     # Keyed by (title, category) — a bare title map let same-named items from
@@ -855,6 +871,7 @@ async def get_deletion_proposals(
     if not enriched:
         # Generation produced nothing — keep whatever is in the DB rather than
         # wiping it, so the user still sees the last known proposals.
+        task_monitor.done(mtask, "No candidates — previous proposals retained")
         return {"proposals": [], "total_gb": 0,
                 "message": "Analysis returned no candidates. Previous proposals retained."}
 
@@ -936,6 +953,7 @@ async def get_deletion_proposals(
             for p, row in saved
         ]
         dbs.commit()
+    task_monitor.done(mtask, f"{len(proposals_with_ids)} proposal(s) saved")
 
     # Pass 24: apply the same recent_only filter+sort the read path uses,
     # so an Analyse run with the "🆕 Just-arrived" toggle ON returns the

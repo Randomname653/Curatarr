@@ -81,7 +81,9 @@ APP_MAP_BLOCK = (
     "movies/shows/anime/music) and the rotating 'Curatarr · ' collection "
     "shelves you design weekly.\n"
     "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
-    "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (running tasks) · "
+    "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (live card for "
+    "EVERY background job — syncs, maintenance, memory extraction, LLM "
+    "runs — with progress and history) · "
     "'Libraries' / 'Users' (admin) · 'Settings'.\n"
 )
 

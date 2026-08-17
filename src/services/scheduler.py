@@ -1205,22 +1205,38 @@ async def _cache_recommendations(user_id: int):
     'library' (owned but unwatched — watch from your shelf) and 'discovery'
     (not owned, taste-fit — worth acquiring). Each lane is cached independently,
     so refreshing or emptying one never wipes the other."""
+    task = None
     try:
         from src.services.recommendations_engine import (
             generate_recommendations, score_arr_items,
         )
         from src.routers.recommendations import _fetch_arr_unwatched, _fetch_tmdb
         from src.database.connection import get_db_session
-        from src.database.models import CachedRecommendation
+        from src.database.models import CachedRecommendation, User
         from src.services.app_state import set_state
+        from src.services.task_monitor import task_monitor
 
         categories = ["movie", "show", "anime", "music"]
         total = 0
+
+        # Activity card — this is minutes of curator work (2 lanes × 4
+        # categories, LLM + TMDB each) that used to run with NO trace in the
+        # UI, most visibly right after app start when the cache is empty.
+        # task_id per user: a rerun replaces the old card instead of stacking.
+        with get_db_session() as db:
+            _u = db.query(User).filter(User.id == user_id).first()
+            uname = _u.plex_username if _u else f"user {user_id}"
+        task = task_monitor.create(
+            name=f"Recommendations refresh: {uname}", category="recs",
+            total=len(categories) * 2, task_id=f"recs-cache-{user_id}")
+        task_monitor.start(task)
+        lanes_done = 0
 
         for cat in categories:
             # DISCOVERY runs on taste alone (no pool). LIBRARY needs an
             # owned-but-unwatched, taste-scored candidate pool — build it once.
             lane_inputs = [("discovery", None)]
+            task_monitor.update(task, message=f"{cat}: building candidate pool…")
             try:
                 unwatched = await _fetch_arr_unwatched(user_id, cat)
                 if unwatched:
@@ -1228,8 +1244,15 @@ async def _cache_recommendations(user_id: int):
                     lane_inputs.append(("library", scored))
             except Exception as e:
                 logger.warning("[scheduler] %s library-pool build failed: %s", cat, e)
+            if len(lane_inputs) == 1:
+                # No library lane for this category — shrink the card total so
+                # the progress bar still ends at 100%.
+                task_monitor.update(task, total=max(task.total - 1, 1))
 
             for lane, arr_lib in lane_inputs:
+                lanes_done += 1
+                task_monitor.update(task, processed=lanes_done,
+                                    message=f"{cat}/{lane}: curator is generating…")
                 try:
                     recs = await generate_recommendations(
                         user_id=user_id, category=cat, limit=10, arr_library=arr_lib,
@@ -1284,15 +1307,21 @@ async def _cache_recommendations(user_id: int):
                         db.commit()
                     total += len(recs)
                     logger.info("[scheduler] Cached %d recs for %s/%s", len(recs), cat, lane)
+                    task_monitor.update(task, message=f"{cat}/{lane}: {len(recs)} recs cached")
 
                 except Exception as e:
                     logger.warning("[scheduler] Rec cache failed for %s/%s: %s", cat, lane, e)
+                    task_monitor.update(task, message=f"{cat}/{lane} failed: {e}", level="warn")
 
         set_state("recs_cached_at", datetime.utcnow().isoformat())
         logger.info("[scheduler] Recommendations cached: %d total", total)
+        task_monitor.done(task, f"{total} recommendations cached")
 
     except Exception as e:
         logger.error("[scheduler] Recommendation caching failed: %s", e)
+        if task is not None:
+            from src.services.task_monitor import task_monitor
+            task_monitor.error(task, str(e))
 
 
 # ── Pass 16o: keep Library Manager arr cache warm ────────────────────────────

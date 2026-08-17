@@ -294,12 +294,13 @@ async def _run_music_catalog_sync(deep: bool = False) -> bool:
     return bool(res.get("ok"))
 
 
-async def _run_facet_backfill(deep: bool = False) -> bool:
+async def _run_facet_backfill(task=None) -> bool:
     """Multi-vector items stage 1: page the corpus into theme-facet points.
     False while unfinished → the task stays due and every tick advances the
-    app_state cursor; True once the done flag is stamped."""
+    app_state cursor; True once the done flag is stamped. ``task`` is the
+    tick's Activity card — the backfill reports page progress into it."""
     from src.services.facet_index import run_facet_backfill
-    return await run_facet_backfill()
+    return await run_facet_backfill(task=task)
 
 
 async def _run_collections(deep: bool = False) -> bool:
@@ -324,21 +325,39 @@ class Task:
     needs_llm: bool = False      # skipped while a game holds the GPU
     settle_only: bool = False    # only in the first tick after app start
     takes_deep: bool = False     # runner accepts the deep= budget flag
+    takes_task: bool = False     # runner accepts task= (the Activity card) for progress
+    # True = the runner (or the code it calls) creates its own task_monitor
+    # card(s), so the tick must NOT add a wrapper card on top (double-carding
+    # the same work looks like a bug). False = the tick wraps the run in a
+    # generic Activity card — the DEFAULT, so newly added maintenance work is
+    # visible in the Activity view without remembering to instrument it.
+    reports_own: bool = False
 
 
 def _registry() -> list[Task]:
     # Priority order — first overdue runs first.
+    # reports_own=True marks runners whose inner code already creates its own
+    # Activity cards (scheduler jobs, the enrichment pipeline, taste compute,
+    # the rec-cache refresh, memory extraction) — everything else gets the
+    # tick's generic wrapper card so NO maintenance work runs invisibly.
     from src.services import scheduler as sched
     return [
-        Task("db_backup",        "DB backup",            24.0,  sched.job_db_backup),
-        Task("plex_sync",        "Plex sync",            24.0,  sched.job_plex_sync),
+        Task("db_backup",        "DB backup",            24.0,  sched.job_db_backup,
+             reports_own=True),
+        Task("plex_sync",        "Plex sync",            24.0,  sched.job_plex_sync,
+             reports_own=True),
         Task("arr_sync",         "ARR sync + deletion candidates", 24.0,
-             sched.job_arr_sync, needs_llm=True),
-        Task("arr_pre_enrich",   "ARR metadata prefetch", 24.0, sched.job_arr_pre_enrich),
+             sched.job_arr_sync, needs_llm=True, reports_own=True),
+        Task("arr_pre_enrich",   "ARR metadata prefetch", 24.0, sched.job_arr_pre_enrich,
+             reports_own=True),
+        # 0.4h cadence — a wrapper card every 24 min would drown the Activity
+        # view, so extract_memories_from_thread cards itself only when a
+        # thread actually gets extracted.
         Task("memory_catchup",   "Memory-extraction catch-up", 0.4,
-             _run_memory_catchup, needs_llm=True, takes_deep=True),
+             _run_memory_catchup, needs_llm=True, takes_deep=True,
+             reports_own=True),
         Task("custodian_enrich", "Enrichment cycle",     24.0,  _run_enrichment_cycle,
-             needs_llm=True, takes_deep=True),
+             needs_llm=True, takes_deep=True, reports_own=True),
         Task("custodian_omdb",   "OMDb top-up",          24.0,  _run_omdb,
              takes_deep=True),
         Task("custodian_signif", "Wikipedia significance", 24.0, _run_significance,
@@ -350,14 +369,14 @@ def _registry() -> list[Task]:
         Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,
              takes_deep=True),
         Task("custodian_taste",  "Taste vectors",        24.0,  _run_taste_if_due,
-             needs_llm=True, takes_deep=True),
+             needs_llm=True, takes_deep=True, reports_own=True),
         # Curatarr-Recommended pipeline: taste feeds recs, recs feed the Plex
         # playlists — this order means one weekly tick does taste → recs →
         # playlists. Early refresh: the all-sampled hook in plex_sync clears
         # both job stamps, so the next 30-min tick reruns just these two
         # (the 144h per-user freshness guard shields everyone already done).
         Task("custodian_recs",   "Recommendation cache refresh", 168.0,
-             _run_recs, needs_llm=True),
+             _run_recs, needs_llm=True, reports_own=True),
         Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
              _run_playlist_push),
         # Music variant: one unheard album per recommended artist, per user.
@@ -375,15 +394,18 @@ def _registry() -> list[Task]:
         # Multi-vector items stage 1: backfill theme-facet points for the
         # existing corpus (CPU embeds only, resumable via app_state cursor;
         # returns False until complete so every tick continues the run,
-        # then becomes a stamped no-op).
+        # then becomes a stamped no-op). takes_task: page progress lands in
+        # the wrapper card (N/total + ETA) instead of console-only logs.
         Task("facet_backfill",   "Facet index backfill", 24.0,
-             _run_facet_backfill),
+             _run_facet_backfill, takes_task=True),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
              takes_deep=True),
-        Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay),
-        Task("orphan_check",     "Orphaned sections",    168.0, sched.job_orphan_check),
+        Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay,
+             reports_own=True),
+        Task("orphan_check",     "Orphaned sections",    168.0, sched.job_orphan_check,
+             reports_own=True),
         Task("db_vacuum",        "DB vacuum",            168.0, sched.job_db_vacuum,
-             settle_only=True),
+             settle_only=True, reports_own=True),
     ]
 
 
@@ -427,10 +449,12 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
 
     from src.services.app_state import set_state
     from src.services.scheduler import _job_overdue, _record_job_run
+    from src.services.task_monitor import task_monitor
     actions = []
     async with _tick_lock:
         started = time.time()
         for t in _registry():
+            mon = None
             try:
                 if t.settle_only and _first_tick_done and not force:
                     continue
@@ -441,10 +465,26 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
                     continue
                 logger.info("[custodian] running %s …", t.job_id)
                 t0 = time.time()
-                done = await (t.runner(deep=deep) if t.takes_deep else t.runner())
+                # Activity card for every runner that doesn't card itself.
+                # Stable task_id: each run REPLACES the previous card instead
+                # of stacking (a still-backfilling task runs every tick — 48
+                # same-named cards a day would bury the rest of the view).
+                if not t.reports_own:
+                    mon = task_monitor.create(name=t.label, category="custodian",
+                                              task_id=f"cust-{t.job_id}")
+                    task_monitor.start(mon)
+                kwargs = {}
+                if t.takes_deep:
+                    kwargs["deep"] = deep
+                if t.takes_task:
+                    kwargs["task"] = mon
+                done = await t.runner(**kwargs)
                 done = True if done is None else bool(done)
                 if done:
                     _record_job_run(t.job_id)
+                if mon is not None:
+                    task_monitor.done(mon, "Complete" if done
+                                      else "Partial — continues next tick")
                 actions.append({
                     "task": t.job_id,
                     "result": "done" if done else "partial (continues next tick)",
@@ -452,6 +492,8 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
                 })
             except Exception as e:
                 logger.warning("[custodian] task %s failed: %s", t.job_id, e)
+                if mon is not None:
+                    task_monitor.error(mon, str(e))
                 actions.append({"task": t.job_id, "result": f"error: {e}"})
         _first_tick_done = True
         report = {
