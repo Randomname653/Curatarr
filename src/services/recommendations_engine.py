@@ -80,6 +80,14 @@ _VOCAB_GUIDELINES: dict[str, str] = {
         "depth vs novelty, replay value, and whether the library already covers this "
         "lane — and whether they still earn shelf space."
     ),
+    "spoken_word": (
+        "DOMAIN VOCABULARY — Spoken word / cabaret: this is a LANGUAGE performer "
+        "stored in the music library (Kabarett, Hörbuch, comedy readings, poetry). "
+        "Music metrics — rhythm patterns, sonic friction, drops, production, and "
+        "mismatch with the user's core music sound — do NOT apply and are not "
+        "evidence against it. Judge the linguistic craft: rhetorical density, "
+        "thematic bite, precision of delivery, and the replay value of the writing."
+    ),
     "anime": (
         "DOMAIN VOCABULARY — Anime: Focus on worldbuilding coherence, animation fluidity "
         "versus static frames, trope fatigue, narrative propulsion, and pacing discipline. "
@@ -99,6 +107,19 @@ _VOCAB_GUIDELINES: dict[str, str] = {
         "'directorial voice'."
     ),
 }
+
+# Spoken-word detection for music items. Deliberately NOT bare "comedy":
+# musical comedy acts are still music; these markers name the language forms.
+_SPOKEN_WORD_MARKERS = ("kabarett", "cabaret", "spoken word", "audiobook",
+                        "hörbuch", "hörspiel", "lesung", "poetry")
+
+
+def _is_spoken_word(genres_lower: str) -> bool:
+    """True when a music item's genres mark it as a language work (the
+    Malmsheimer case: a 174-play Kabarett artist judged — and pitched for
+    deletion — with music metrics against the owner's electronic sound)."""
+    return any(m in genres_lower for m in _SPOKEN_WORD_MARKERS)
+
 
 _FORBIDDEN_CROSS_DOMAIN = (
     "STRICTLY FORBIDDEN CROSS-DOMAIN TERMS: Never use music-related terms "
@@ -153,6 +174,8 @@ def _get_vocab_guideline(category: str, genres_str: str) -> str:
     genres_lower = (genres_str or "").lower()
 
     if category == "music":
+        if _is_spoken_word(genres_lower):
+            return _VOCAB_GUIDELINES["spoken_word"]
         return _VOCAB_GUIDELINES["music"]
     if "documentary" in genres_lower or "docuseries" in genres_lower:
         return _VOCAB_GUIDELINES["documentary"]
@@ -189,6 +212,20 @@ def _taste_section(summary_text: str, category: str) -> str:
 
 
 # ── Enrichment cache lookup for rating context ────────────────────────────────
+
+def _play_protection(plays: int) -> float:
+    """Score-side Resonance: sustained REPEATED listening protects an artist
+    in the deletion PRE-RANK. The judge always saw the listening line — but
+    the score never counted it, so a 174-play Kabarett artist ranked into the
+    pitch batch on pure taste-vector mismatch and the persona then dismissed
+    the plays rhetorically ('a habit, not value'). Log-scaled and capped at
+    30 so a true mismatch (80) still surfaces; <=2 plays stays 0 — a single
+    ancient play remains the strongest CUT signal there is."""
+    import math
+    if not plays or plays <= 2:
+        return 0.0
+    return min(30.0, math.log1p(float(plays)) * 6.0)
+
 
 def _get_cached_rating(item: dict, category: str) -> tuple:
     """
@@ -1378,6 +1415,32 @@ async def generate_deletion_proposals(
     # in which case size_pts falls back to today's blanket log1p below.
     from src.services.size_norms import load_tech_index, size_outlier
     _tech_idx = load_tech_index()
+    # Owner listening depth (music): ONE grouped query → per-artist plays by
+    # folded name and by mbid. The score needs it for every candidate — the
+    # per-item music_listening_stats call would be hundreds of round trips.
+    _plays_by_name: dict = {}
+    _plays_by_mbid: dict = {}
+    _variants_fn = None
+    if category == "music":
+        try:
+            from sqlalchemy import func as _f
+            from src.database.connection import get_db_session as _gds
+            from src.database.models import WatchHistoryEntry as _W
+            from src.services.watch_status import _artist_variants as _variants_fn
+            with _gds() as _pdb:
+                for _nm, _mb, _n in (_pdb.query(_f.lower(_W.series_title),
+                                                _W.artist_mbid, _f.count(_W.id))
+                                     .filter(_W.user_id == user_id,
+                                             _W.media_type == "music")
+                                     .group_by(_f.lower(_W.series_title),
+                                               _W.artist_mbid)):
+                    if _nm:
+                        _plays_by_name[_nm] = _plays_by_name.get(_nm, 0) + _n
+                    if _mb:
+                        _plays_by_mbid[_mb] = _plays_by_mbid.get(_mb, 0) + _n
+        except Exception as _e:
+            logger.debug("[deletions] play-map build failed: %s", _e)
+    _play_protected: list = []
     _taste_src_counts = {"embedding": 0, "genre": 0, "none": 0}
     for p in prelim:
         # Taste source (eval 1.7): items without an embedding are missing
@@ -1454,7 +1517,18 @@ async def generate_deletion_proposals(
             d_lo, d_hi = drop_anchors
             drop_penalty = 20.0 * max(0.0, min(1.0, (p["drop_cos"] - d_lo)
                                                / (d_hi - d_lo)))
-        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing + drop_penalty
+        # Listening-depth protection (music): counts what the judge's evidence
+        # line always showed but the score ignored.
+        play_prot = 0.0
+        if category == "music":
+            _pl = _plays_by_mbid.get(_it.get("musicbrainz_id") or "", 0)
+            if not _pl and _variants_fn and _plays_by_name:
+                for _v in _variants_fn(_it.get("title") or ""):
+                    _pl = max(_pl, _plays_by_name.get(_v, 0))
+            play_prot = _play_protection(_pl)
+            if play_prot >= 10.0:
+                _play_protected.append((_it.get("title"), _pl, round(play_prot, 1)))
+        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing + drop_penalty - play_prot
         if del_score > 30:
             scored_candidates.append({
                 "item": p["item"],
@@ -1474,6 +1548,12 @@ async def generate_deletion_proposals(
             "%d without any taste signal (neutral 0.5)",
             category, _taste_src_counts["embedding"],
             _taste_src_counts["genre"], _taste_src_counts["none"],
+        )
+    if _play_protected:
+        logger.info(
+            "[deletions] listening-depth protection on %d artist(s): %s",
+            len(_play_protected),
+            ", ".join(f"{t} ({n} plays, -{pts})" for t, n, pts in _play_protected[:8]),
         )
 
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
