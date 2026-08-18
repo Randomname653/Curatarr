@@ -500,9 +500,33 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         tech_line, outlier = "", False
     flags["bitrate_outlier"] = outlier
 
+    # ── FORM guard (music): spoken-word/cabaret artists live in the music
+    # library but are LANGUAGE works. Without this line the judge measured
+    # Malmsheimer (174 plays of Kabarett) against the owner's electronic
+    # sound and pitched him as 'background noise'. Lidarr genres are often
+    # empty — the enriched profile's genres decide too.
+    form_line = ""
+    if category == "music":
+        try:
+            from src.services.recommendations_engine import (
+                _get_cached_rating, _is_spoken_word)
+            _, _, _cg = _get_cached_rating(item, category)
+            _gl = "" if genres_str == "Unknown" else genres_str
+            if isinstance(_cg, list) and _cg:
+                _gl += " " + ", ".join(str(g) for g in _cg)
+            if _is_spoken_word(_gl.lower()):
+                form_line = (
+                    "FORM: spoken-word / cabaret — a LANGUAGE artist stored in "
+                    "the music library. Sonic metrics and mismatch with the "
+                    "owner's music sound are NOT valid evidence here; judge "
+                    "linguistic craft, thematic bite, delivery, replay value.\n")
+        except Exception as e:
+            logger.debug("[pillars] form guard failed for %r: %s", title, e)
+
     facts = (
         f"TITLE: {title} ({year}) — {category}, {genres_str}\n"
-        f"OWNER: {owner_line}.\n"
+        + form_line
+        + f"OWNER: {owner_line}.\n"
         f"OTHER HOUSEHOLD USERS:\n{other_block}\n"
         f"ACCLAIM & METADATA:\n{meta_block}\n"
         + (f"OWNER TASTE: {taste}\n" if taste else "")
