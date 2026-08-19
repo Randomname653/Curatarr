@@ -317,6 +317,16 @@ async def _run_music_catalog_sync(deep: bool = False, task=None) -> bool:
     return bool(res.get("ok"))
 
 
+async def _run_raw_refresh(deep: bool = False, task=None) -> bool:
+    """LLM-free raw-cache warmer (owner ask): the cache is read-through, so
+    rows nobody queries silently age out. This re-pulls pure API data for
+    discovery cards and expired prefetch rows (stale ids re-fetch even
+    gone-from-arr media) — the LLM enrichment cycle then runs on top via
+    its own task whenever capacity allows."""
+    from src.services.raw_refresh import run_raw_refresh
+    return await run_raw_refresh(task=task, deep=deep)
+
+
 async def _run_facet_backfill(task=None) -> bool:
     """Multi-vector items stage 1: page the corpus into theme-facet points.
     False while unfinished → the task stays due and every tick advances the
@@ -424,6 +434,11 @@ def _registry() -> list[Task]:
         # the wrapper card (N/total + ETA) instead of console-only logs.
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
+        # LLM-free raw-cache warmer: keeps API source data fresh in the
+        # background (discovery cards, expired prefetch incl. gone media)
+        # so evidence/zombie-rebuilds never stand on cold rows.
+        Task("raw_refresh",      "Raw-cache refresh",    24.0,
+             _run_raw_refresh, takes_deep=True, takes_task=True),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
              takes_deep=True, takes_task=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay,
