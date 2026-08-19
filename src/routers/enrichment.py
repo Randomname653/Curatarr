@@ -842,7 +842,12 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
             mc3.close()
         chroma = get_chroma_db()
         _prog("Walking chroma docs for zombies (missing profiles)…")
-        requeue_ids: list = []
+        # Two-phase: CLASSIFY everything first, then act — so the stale guard
+        # can veto a whole service whose "gone" share is implausible (an arr
+        # that is down contributes ZERO items to `truth` and every one of its
+        # docs would classify as gone; SoulSync's #828 lesson, ported).
+        from src.services.stale_guard import is_implausible_mass_stale
+        _cand: dict = {}          # service -> {"total": n, "live": [ids], "gone": [(id, dom)]}
         offset = 0
         while True:
             page = chroma.collection.get(include=["metadatas"],
@@ -855,6 +860,9 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 md = md or {}
                 if "::" in d or not d.startswith(("sonarr:", "radarr:", "lidarr:")):
                     continue
+                svc = d.split(":", 1)[0]
+                bucket = _cand.setdefault(svc, {"total": 0, "live": [], "gone": []})
+                bucket["total"] += 1
                 dom = md.get("domain") or md.get("media_type") or ""
                 t40 = (md.get("title") or "")[:40]
                 # A profile can live under the svc:id key OR the title key
@@ -866,17 +874,31 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                     continue
                 zstats["docs_walked"] += 1
                 if d in truth:
-                    zstats["arr_live_requeued"] += 1
-                    if not dry_run:
-                        requeue_ids.append(d)
+                    bucket["live"].append(d)
                 else:
-                    zstats["arr_gone"] += 1
-                    if not dry_run and zstats["rebuilt"] < _REBUILD_CAP:
-                        if await rebuild_doc_from_prefetch(d, dom):
-                            zstats["rebuilt"] += 1
-                        else:
-                            zstats["no_prefetch"] += 1
+                    bucket["gone"].append((d, dom))
             offset += len(ids)
+
+        requeue_ids: list = []
+        for svc, bucket in _cand.items():
+            if is_implausible_mass_stale(len(bucket["gone"]), bucket["total"]):
+                logger.warning(
+                    "[audit] zombie walk: %d/%d %s docs classify as gone — "
+                    "implausible (arr down?); skipping this service's "
+                    "gone-rebuilds this run", len(bucket["gone"]),
+                    bucket["total"], svc)
+                zstats[f"guard_skipped_{svc}"] = len(bucket["gone"])
+                bucket["gone"] = []
+            zstats["arr_live_requeued"] += len(bucket["live"])
+            if not dry_run:
+                requeue_ids.extend(bucket["live"])
+            for d, dom in bucket["gone"]:
+                zstats["arr_gone"] += 1
+                if not dry_run and zstats["rebuilt"] < _REBUILD_CAP:
+                    if await rebuild_doc_from_prefetch(d, dom):
+                        zstats["rebuilt"] += 1
+                    else:
+                        zstats["no_prefetch"] += 1
         if requeue_ids:
             with get_db_session() as db:
                 db.query(EnrichmentStatus).filter(
