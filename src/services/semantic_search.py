@@ -172,7 +172,7 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
     """
     try:
         from src.services.embed_service import embed_query
-        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
         # QUERY side of the Nomic prefix schema — the one place the missing
         # prefixes measurably hurt retrieval (asymmetric search).
         embedding = await embed_query(query)
@@ -181,7 +181,7 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
         chroma = get_chroma_db()
         results = chroma.query(query_embeddings=[embedding],
                                n_results=n_results,
-                               where={"domain": domain} if domain else None)
+                               where=_domain_where(domain))
         return _hits_from_results(results, user_id=user_id, domain=domain)
     except Exception as e:
         logger.debug("semantic search failed: %s", e)
@@ -318,13 +318,13 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
     """
     try:
         from src.services.embed_service import embed_query
-        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
         probe = await embed_query(anchor_title)
         if not probe:
             return None, None, ""
         chroma = get_chroma_db()
         res = chroma.query(query_embeddings=[probe], n_results=3,
-                           where={"domain": domain} if domain else None)
+                           where=_domain_where(domain))
         ids = (res.get("ids") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         want = _norm_title(anchor_title)
@@ -675,11 +675,11 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             vec = await embed_query((parsed or {}).get("search_text") or query)
         if not vec:
             return {"results": [], "mode": "vector", "anchor": None}
-        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
         fetch_n = min(40, max(3 * limit, 24))
         results = get_chroma_db().query(
             query_embeddings=[vec], n_results=fetch_n,
-            where={"domain": domain} if domain else None)
+            where=_domain_where(domain))
         hits = _hits_from_results(results, user_id=user_id, domain=domain)
     except Exception as e:
         logger.debug("[search] curated retrieval failed: %s", e)
@@ -779,7 +779,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             if cvec:
                 cres = get_chroma_db().query(
                     query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
-                    where={"domain": domain} if domain else None)
+                    where=_domain_where(domain))
                 extra = _hits_from_results(cres, user_id=user_id, domain=domain)
                 seen = {_norm_title(h["title"]) for h in hits}
                 if anchor_used:
