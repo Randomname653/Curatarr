@@ -12,6 +12,27 @@
 
 ---
 
+## 0. 2026-08 delta — subsystems newer than the sections below
+
+The 2026-08 run added several subsystems the numbered sections don't cover
+yet. Until those sections are rewritten, this is the map:
+
+| Subsystem | Files | One-liner |
+|---|---|---|
+| Data Custodian | `src/services/data_custodian.py` | Debt-based maintenance: ~20 tasks with cadences + persisted last-run stamps; a 30-min tick runs whatever is overdue, one at a time. Replaces most cron-shaped scheduler jobs. Every runner either creates its own Activity card or gets the tick's wrapper card (tested invariant). |
+| Curated search v3 | `src/services/semantic_search.py` | LLM parses the query once (anchor/constraints); scoring is deterministic over raw enrichment tags (lexical-first, concept/tone families, negation, guards) with per-constraint evidence notes + coverage honesty. |
+| Multi-vector facets | `src/services/facet_index.py`, collection `media_facets_v1` | Each title's theme phrases are individual vector points (separate collection — mixing into `media_knowledge_v2` breaks n_results math, the anchor resolver, and taste calibration). Gives contrast queries resolution. |
+| 4-pillar judge | `src/services/pillars.py` | Deletion verdicts (HARD_KEEP/KEEP_WITH_FLAG/CUT/STAGNANT/EVALUATE) from assembled evidence facts; KEEPs persist to ProtectedMedia; thin evidence skips the judge. `del_score` only pre-ranks. |
+| Two-bake split | `src/services/llm_priority.py`, `PITCHER_MODEL` | Deletion runs use a dedicated pitcher bake (benchmarked); chat stays on the curator bake. Residency-guarded eviction; per-run `/api/tags` probe with visible fallback. |
+| Owner match pins | `MediaMatchOverride`, hook at top of `fetch_and_prepare_raw`, "Fix match" UI | Durable entity resolution per (service, arr_id); overrides every automatic id source; apply purges the item's caches + flips status so the pipeline rebuilds on the pin. |
+| Corpus hygiene | `src/services/corpus_repair.py`, audit in `src/routers/enrichment.py` | Audit walks chroma docs too: zombies requeue (arr-live) or rebuild deterministically from prefetch (arr-gone); corrupt-id clusters requeue; per-service implausible-mass-staleness guard (`src/services/stale_guard.py`). |
+| Raw-cache refresher | `src/services/raw_refresh.py` | LLM-free background re-pull of API source data (discovery cards, expired prefetch incl. gone media) — the read-through cache no longer silently ages out. |
+| Playlist reconcile | `src/services/plex_playlists.py` | In-place delta edits (identity/pins/art survive) + stale-ratingKey self-heal with write-back; music stays delete+recreate (album→track expansion). |
+| Embedding profile SSOT | `src/services/embed_service.py` | The app_state embedding profile is the single truth (v2-moe stack); `effective_embedding_model()` feeds tray/setup/game-watcher checks; v1 collection deleted 2026-08-18. |
+| Significance tri-state | `fetch_significance` / `topup_significance` | str = significance, `""` = definitive none (stamp), None = transient (no stamp — walker retries). |
+
+---
+
 ## 1. One-paragraph overview
 
 Curatarr is a single-tenant FastAPI app that sits between a Plex server, the
