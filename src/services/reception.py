@@ -497,9 +497,10 @@ async def topup_franchise(
 
 async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     """Custodian walker: attach community reception to LIVE raw:* entries that
-    were never reception-checked. Anime first (largest evidence gain), then
-    shows/movies. Yields to any active curator, stops when a game grabs the
-    GPU, throttled to Jikan's public rate limit by the per-title pauses.
+    were never reception-checked, round-robin across anime/show/movie so no
+    domain starves behind another's queue. Yields to any active curator,
+    stops when a game grabs the GPU, throttled to Jikan's public rate limit
+    by the per-title pauses.
     ``task`` = the custodian's Activity card; per-title progress goes there."""
     import json as _json
     from datetime import datetime
@@ -535,7 +536,6 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     finally:
         cache.close()
 
-    # anime first — that's where the blind spot (and the data) is biggest
     order = {"anime": 0, "show": 1, "movie": 2}
     items = []
     for row in rows:
@@ -552,7 +552,19 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
         except Exception:
             continue
         items.append((order[cat], cat, id_key, resp or {}))
-    items.sort(key=lambda x: x[0])
+    # Round-robin across categories instead of the old strict anime-first:
+    # with ~2k anime unchecked, movies never got a turn — 45/6304 movies
+    # reception-checked while the Panic Room pitch judged a Fincher film
+    # with zero reception on file. Interleaving keeps every domain moving.
+    from collections import deque
+    _queues = {c: deque(x for x in items if x[1] == c)
+               for c in ("anime", "show", "movie")}
+    interleaved = []
+    while any(_queues.values()):
+        for c in ("anime", "show", "movie"):
+            if _queues[c]:
+                interleaved.append(_queues[c].popleft())
+    items = interleaved
 
     total = len(items)
     checked = added = 0
