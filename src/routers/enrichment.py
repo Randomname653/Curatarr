@@ -675,6 +675,10 @@ def _entity_divergence_reason(profile: dict, category: str, arr: dict) -> Option
     return None
 
 
+class _SkipZombieWalk(Exception):
+    """Control flow only: zombie walk skipped (no ARR ground truth)."""
+
+
 async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     """Scan the enrichment cache for incomplete OR wrong-entity profiles and
     (unless dry_run) requeue them. ``task`` = optional Activity card.
@@ -806,12 +810,102 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
         "[audit-requeue] scanned=%d incomplete=%d requeued=%d dry_run=%s by_reason=%s",
         scanned, len(hits), requeued, dry_run, by_reason,
     )
+
+    # ── ZOMBIE DOCS: chroma parents whose enriched cache row is GONE ─────────
+    # The row scan above can only heal what still HAS a row — a doc whose
+    # profile expired (deleted media, old epochs) was invisible forever:
+    # the Batman Beyond confabulation survived ~a year that way (1,251 such
+    # docs measured 2026-08-18). arr-live zombies requeue through the normal
+    # pipeline; arr-gone zombies rebuild deterministically from cached
+    # prefetch data (owner call: keep the knowledge, fix the assignment —
+    # never delete). Rebuilds are embed work — capped per run, the weekly
+    # audit drains the backlog across runs.
+    _REBUILD_CAP = 150
+    zstats = {"docs_walked": 0, "arr_live_requeued": 0, "arr_gone": 0,
+              "rebuilt": 0, "no_prefetch": 0}
+    try:
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.services.corpus_repair import rebuild_doc_from_prefetch
+        if not truth:
+            # No ARR ground truth → cannot tell live from gone; skip rather
+            # than misclassify (stats stay 0, next audit retries).
+            _prog("Zombie walk skipped — no ARR ground truth this run")
+            raise _SkipZombieWalk
+        live_keys: set = set()
+        mc3 = MetadataCache()
+        try:
+            for (k,) in mc3.conn.execute(
+                "SELECT cache_key FROM api_cache WHERE cache_key LIKE ? "
+                "AND expires_at > datetime('now')", (prefix + "%",)):
+                live_keys.add(k[len(_CACHE_VERSION) + 1:])   # strip "v2:"
+        finally:
+            mc3.close()
+        chroma = get_chroma_db()
+        _prog("Walking chroma docs for zombies (missing profiles)…")
+        requeue_ids: list = []
+        offset = 0
+        while True:
+            page = chroma.collection.get(include=["metadatas"],
+                                         limit=500, offset=offset)
+            ids = page.get("ids") or []
+            if not ids:
+                break
+            for doc_id, md in zip(ids, page.get("metadatas") or []):
+                d = str(doc_id)
+                md = md or {}
+                if "::" in d or not d.startswith(("sonarr:", "radarr:", "lidarr:")):
+                    continue
+                dom = md.get("domain") or md.get("media_type") or ""
+                t40 = (md.get("title") or "")[:40]
+                # A profile can live under the svc:id key OR the title key
+                # (music is title-keyed) — either counts as alive.
+                cands = {f"enriched:{dom}:{d}"}
+                if t40:
+                    cands.add(f"enriched:{dom}:{t40}")
+                if cands & live_keys:
+                    continue
+                zstats["docs_walked"] += 1
+                if d in truth:
+                    zstats["arr_live_requeued"] += 1
+                    if not dry_run:
+                        requeue_ids.append(d)
+                else:
+                    zstats["arr_gone"] += 1
+                    if not dry_run and zstats["rebuilt"] < _REBUILD_CAP:
+                        if await rebuild_doc_from_prefetch(d, dom):
+                            zstats["rebuilt"] += 1
+                        else:
+                            zstats["no_prefetch"] += 1
+            offset += len(ids)
+        if requeue_ids:
+            with get_db_session() as db:
+                db.query(EnrichmentStatus).filter(
+                    EnrichmentStatus.plex_rating_key.in_(requeue_ids),
+                ).update({"enriched": False, "enriched_at": None, "error": None},
+                         synchronize_session=False)
+                for d in requeue_ids:
+                    svc, _, aid = d.partition(":")
+                    if aid.isdigit():
+                        db.query(ArrEnrichmentStatus).filter(
+                            ArrEnrichmentStatus.service == svc,
+                            ArrEnrichmentStatus.arr_id == int(aid),
+                        ).update({"enriched": False, "enriched_at": None},
+                                 synchronize_session=False)
+                db.commit()
+        _prog(f"Zombie walk: {zstats['docs_walked']} found, "
+              f"{zstats['arr_live_requeued']} requeued, {zstats['rebuilt']} rebuilt")
+    except _SkipZombieWalk:
+        pass
+    except Exception as e:
+        logger.warning("[audit] zombie walk failed: %s", e)
+
     return {
         "scanned":    scanned,
         "incomplete": len(hits),
         "requeued":   requeued,
         "dry_run":    dry_run,
         "by_reason":  by_reason,
+        "zombies":    zstats,
     }
 
 
