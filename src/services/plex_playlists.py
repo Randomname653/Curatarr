@@ -136,6 +136,116 @@ async def create_playlist(token: str, title: str, metadata_keys: list[str],
     return meta[0]
 
 
+async def playlist_items(token: str, playlist_key: str) -> list[dict]:
+    """The playlist's current entries: [{item_id, rating_key}] —
+    playlistItemID is what the remove endpoint wants, NOT the ratingKey."""
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        r = await c.get(f"{_base()}/playlists/{playlist_key}/items",
+                        headers=_headers(token))
+    if r.status_code != 200:
+        raise RuntimeError(f"playlist items HTTP {r.status_code}")
+    return [{"item_id": str(m.get("playlistItemID")),
+             "rating_key": str(m.get("ratingKey"))}
+            for m in ((r.json().get("MediaContainer") or {}).get("Metadata") or [])]
+
+
+async def reconcile_playlist(token: str, playlist_key: str,
+                             wanted_keys: list[str]) -> bool:
+    """Edit the playlist IN PLACE (delta add/remove) so its identity —
+    ratingKey, pins, custom art — survives the weekly refresh (ported from
+    SoulSync's reconcile mode #792, MIT; our old find-delete-recreate broke
+    every client-side pin weekly). Order note: existing items keep their
+    position, new ones append — set-correctness over ranking-order, by
+    design. Returns False on any error; the caller falls back to the
+    destructive recreate exactly once."""
+    try:
+        current = await playlist_items(token, playlist_key)
+        have = {it["rating_key"] for it in current}
+        want = set(wanted_keys)
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            for it in current:
+                if it["rating_key"] not in want:
+                    await c.delete(
+                        f"{_base()}/playlists/{playlist_key}/items/{it['item_id']}",
+                        headers=_headers(token))
+            to_add = [k for k in wanted_keys if k not in have]
+            if to_add:
+                mid = await get_machine_identifier()
+                if not mid:
+                    return False
+                uri = (f"server://{mid}/com.plexapp.plugins.library"
+                       f"/library/metadata/{','.join(to_add)}")
+                r = await c.put(f"{_base()}/playlists/{playlist_key}/items",
+                                headers=_headers(token), params={"uri": uri})
+                if r.status_code not in (200, 201):
+                    return False
+        return True
+    except Exception as e:
+        logger.warning("[playlists] reconcile failed for %s: %s", playlist_key, e)
+        return False
+
+
+async def key_exists(token: str, rating_key: str) -> bool:
+    """One cheap metadata GET — the stale-key probe for the self-heal."""
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        try:
+            r = await c.get(f"{_base()}/library/metadata/{rating_key}",
+                            headers=_headers(token))
+            return r.status_code == 200
+        except Exception:
+            return False
+
+
+_VIDEO_TYPE = {"movie": "1", "show": "2", "anime": "2"}
+
+
+async def resolve_video_key(title: str, category: str) -> Optional[str]:
+    """Title → ratingKey via the category's sections (owner token — the
+    video mirror of resolve_artist_key). The self-heal for keys Plex
+    re-issued on a metadata refresh/optimize (SoulSync rescue pattern)."""
+    token = _owner_token()
+    if not token or not title:
+        return None
+    from src.database.connection import get_db_session
+    from src.database.models import LibraryConfig
+    with get_db_session() as db:
+        sections = [lc.plex_section_key for lc in
+                    db.query(LibraryConfig)
+                    .filter(LibraryConfig.media_category == category).all()]
+    t = _VIDEO_TYPE.get(category, "1")
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        for sec in sections:
+            try:
+                r = await c.get(f"{_base()}/library/sections/{sec}/all",
+                                headers=_headers(token),
+                                params={"type": t, "title": title})
+                meta = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+                if meta:
+                    return str(meta[0].get("ratingKey"))
+            except Exception as e:
+                logger.debug("[playlists] video lookup %r in %s failed: %s",
+                             title, sec, e)
+    return None
+
+
+def _heal_rec_key(user_id: int, category: str, title: str, new_key: str) -> None:
+    """Persist a re-resolved ratingKey onto the cached rec row so the next
+    push skips the live search (SoulSync heal-the-stored-id pattern)."""
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import CachedRecommendation
+        with get_db_session() as db:
+            db.query(CachedRecommendation).filter(
+                CachedRecommendation.user_id == user_id,
+                CachedRecommendation.category == category,
+                CachedRecommendation.lane == "library",
+                CachedRecommendation.title == title,
+            ).update({"plex_rating_key": new_key}, synchronize_session=False)
+            db.commit()
+    except Exception as e:
+        logger.debug("[playlists] key heal failed for %r: %s", title, e)
+
+
 async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[str]:
     """The user's next episode of a series (view state is per-account, hence
     the USER token). Falls back to the plain first leaf, then to None —
@@ -224,6 +334,22 @@ async def push_user_playlists(user) -> dict:
             if not r["key"]:
                 continue   # resolver couldn't place it — logged at cache time
             key = r["key"]
+            # Stale-key self-heal (SoulSync rescue pattern): Plex re-keys
+            # items on a metadata refresh/optimize, and the cached key then
+            # 404s — the item silently vanished from the push. Probe (≤10
+            # cheap GETs per push) and re-resolve by title, healing the
+            # cached row so the next push is fast again.
+            if not await key_exists(_owner_token() or user.plex_token, key):
+                healed = await resolve_video_key(r["title"], category)
+                if healed:
+                    logger.info("[playlists] %r: stale key %s → %s (healed)",
+                                r["title"], key, healed)
+                    _heal_rec_key(user.id, category, r["title"], healed)
+                    key = healed
+                else:
+                    logger.info("[playlists] %r: key %s stale, no re-resolve "
+                                "— skipped this push", r["title"], key)
+                    continue
             if category in ("show", "anime"):
                 # series keys expand to ALL episodes — push the user's next
                 # unwatched episode instead (their token = their view state)
@@ -237,12 +363,31 @@ async def push_user_playlists(user) -> dict:
                         user.plex_username, category)
             continue
 
-        # find-delete-recreate: duplicate titles are allowed by Plex, so a
-        # bare create would pile up copies week after week.
-        for pl in await list_video_playlists(user.plex_token):
-            if pl.get("title") == title:
+        # Reconcile-first (SoulSync #792): keep the playlist OBJECT and edit
+        # the delta — its identity (ratingKey, client pins, custom art)
+        # survives the weekly refresh. Extra same-title copies from the old
+        # delete+recreate era are removed; a failed reconcile falls back to
+        # the destructive recreate exactly once, loudly.
+        existing = [pl for pl in await list_video_playlists(user.plex_token)
+                    if pl.get("title") == title]
+        meta = None
+        if existing:
+            keep_key = str(existing[0].get("ratingKey"))
+            for pl in existing[1:]:
                 await delete_playlist(user.plex_token, str(pl.get("ratingKey")))
-        meta = await create_playlist(user.plex_token, title, keys)
+            if await reconcile_playlist(user.plex_token, keep_key, keys):
+                meta = {"ratingKey": keep_key, "leafCount": len(keys)}
+                try:
+                    meta["leafCount"] = len(
+                        await playlist_items(user.plex_token, keep_key))
+                except Exception:
+                    pass
+            else:
+                logger.warning("[playlists] reconcile failed for '%s' — "
+                               "recreating this once", title)
+                await delete_playlist(user.plex_token, keep_key)
+        if meta is None:
+            meta = await create_playlist(user.plex_token, title, keys)
         leaf = (meta or {}).get("leafCount")
         if leaf is not None and int(leaf) < len(keys):
             # restricted library sharing can silently drop items for
@@ -328,7 +473,11 @@ async def pick_album_key(user_token: str, artist_key: str,
 async def push_user_music_playlist(user) -> dict:
     """One audio playlist per user: one unheard album for each of their top
     library-lane music recommendations (album keys expand to their tracks).
-    Same freshness guard + find-delete-recreate as the video push."""
+    Same freshness guard as the video push, but DELIBERATELY still
+    find-delete-recreate: we push ALBUM keys and Plex stores TRACK items,
+    so a set-delta reconcile would compare tracks against albums and
+    remove/re-add everything anyway — identity preservation buys nothing
+    here."""
     from src.database.connection import get_db_session
     from src.database.models import CachedRecommendation
 
