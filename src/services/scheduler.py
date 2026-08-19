@@ -442,6 +442,7 @@ async def job_arr_sync():
     if _gaming():
         task_monitor.skip(task, "Game running — skipping to leave VRAM for the game")
         return
+    _dr_locked = False   # guards release: never clear a lock we don't hold
     try:
         from src.database.connection import get_db_session
         from src.database.models import User, DeletionProposal
@@ -462,6 +463,17 @@ async def job_arr_sync():
             task_monitor.skip(task, "No ARR items or ARR not configured")
             logger.info("[scheduler] ARR sync: no items or no ARR configured")
             return
+
+        # Same mutex as the manual Analyze endpoint — the two used to run
+        # CONCURRENTLY, interleaving judge calls and superseding each
+        # other's proposals. Returning False keeps the custodian task due,
+        # so the scan simply retries next tick once the manual run is done.
+        from src.services.app_state import acquire_state_lock, release_state_lock
+        if not acquire_state_lock("deletion_run"):
+            task_monitor.skip(task, "Manual deletion analysis in progress — "
+                                    "retrying next tick")
+            return False
+        _dr_locked = True
 
         # Pass 99-fu4: per-category progress ticks so the UI shows
         # movement during the long analysis loop. Pre-fu4 the task bar
@@ -508,6 +520,8 @@ async def job_arr_sync():
             )
 
         if not all_proposals:
+            release_state_lock("deletion_run")
+            _dr_locked = False
             task_monitor.done(task, "No deletion proposals generated")
             return
 
@@ -576,9 +590,17 @@ async def job_arr_sync():
             db.commit()
 
         set_state("last_arr_sync_at", datetime.utcnow().isoformat())
+        release_state_lock("deletion_run")
+        _dr_locked = False
         task_monitor.done(task, f"Complete: {added} proposals (replaced per category)")
         logger.info("[scheduler] ARR sync complete: %d proposals written", added)
     except Exception as e:
+        if _dr_locked:
+            try:
+                from src.services.app_state import release_state_lock as _rsl
+                _rsl("deletion_run")
+            except Exception:
+                pass
         task_monitor.error(task, str(e))
         logger.error("[scheduler] ARR sync failed: %s", e)
 
