@@ -67,7 +67,10 @@ APP_MAP_BLOCK = (
     "- 'Deletions' (admin): your deletion proposals, each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
     "Sonarr/Radarr/Lidarr, plus Keep/Discuss; card checkboxes + a "
-    "'Delete selected' button bulk-delete several at once.\n"
+    "'Delete selected' button bulk-delete several at once. If a card or "
+    "pitch describes the WRONG same-named title, the 'Fix match' button "
+    "pins the correct entity — the pin survives rescans and the item "
+    "re-enriches on it.\n"
     "- 'Curation' (admin) panels: 'Judge-protected titles' (what the judge "
     "KEPT, with reasoning), 'Downscale candidates' (KEPT but flagged for a "
     "lower-bitrate transcode — NOT deletion candidates), "
@@ -121,6 +124,7 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Search your library…",
     "+ Add",
     "Delete selected",
+    "Fix match",
     "Curation",
     "Report",
     "Deletions",

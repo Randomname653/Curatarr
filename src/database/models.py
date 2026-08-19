@@ -252,6 +252,40 @@ class ProtectedMedia(Base):
     )
 
 
+class MediaMatchOverride(Base):
+    """Owner-pinned entity resolution for ONE arr item — durable across
+    rescans and re-enrichments (ported from SoulSync's match-override layer,
+    MIT). The live failure class: Radarr held BOTH 2025/26 "Good Boy" films
+    and Batman Beyond's profile was confabulated from a mis-attributed
+    source — automatic resolution guards can shrink that class, only an
+    owner pin can CLOSE a case. Read at the very start of
+    fetch_and_prepare_raw: pinned external ids override whatever the arr
+    item or a title search would have produced, before any fuzzy logic.
+    Applying an override purges the item's cached raw/enriched rows and
+    flips its enrichment status, so the pipeline rebuilds on the pin."""
+    __tablename__ = "media_match_overrides"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service = Column(String(32), nullable=False)    # radarr | sonarr | lidarr
+    arr_id = Column(Integer, nullable=False)
+    category = Column(String(32), nullable=True)    # movie | show | anime | music
+    title = Column(String(512), nullable=True)      # human-readable, for the admin view
+    # The pinned ids — only the set ones override; NULL = leave resolution alone.
+    tmdb_id = Column(Integer, nullable=True)
+    tvdb_id = Column(Integer, nullable=True)
+    anilist_id = Column(Integer, nullable=True)
+    mal_id = Column(Integer, nullable=True)
+    imdb_id = Column(String(20), nullable=True)
+    mbid = Column(String(64), nullable=True)        # MusicBrainz artist id
+    note = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("service", "arr_id", name="uq_match_override_item"),
+    )
+
+
 class CuratorPrinciple(Base):
     """A generalizable curation PRINCIPLE the curator learned from a debate with
     the owner — the autonomous self-learning layer.
