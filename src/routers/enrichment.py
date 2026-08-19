@@ -909,6 +909,58 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     }
 
 
+@router.get("/cache-inventory")
+async def cache_inventory(user: User = Depends(get_current_user)):
+    """Cache transparency (owner ask 2026-08-18: 'wie viele Wikipedia/TVDB/
+    OMDb-Einträge sind gecached und wie viele davon alt?'). One SQL pass:
+    per-class rows/live/expired/MB plus field-level coverage (Wikipedia
+    significance, OMDb writer/awards, reception) inside the raw layer."""
+    import json as _json
+    from src.cache.metadata_cache import MetadataCache
+
+    def _cls(key: str) -> str:
+        parts = key.split(":", 2)
+        return parts[1] if parts[0] == "v2" and len(parts) > 1 else parts[0]
+
+    classes: dict = {}
+    cov = {"raw_total": 0, "significance_checked": 0, "significance_text": 0,
+           "reception_checked": 0, "omdb_writer": 0, "omdb_awards": 0}
+    mc = MetadataCache()
+    try:
+        for key, L, live in mc.conn.execute(
+            "SELECT cache_key, length(response), "
+            "expires_at > datetime('now') FROM api_cache"):
+            c = classes.setdefault(_cls(key), {"rows": 0, "live": 0,
+                                               "expired": 0, "mb": 0.0})
+            c["rows"] += 1
+            c["mb"] += (L or 0) / 1e6
+            c["live" if live else "expired"] += 1
+        # Field coverage inside raw rows (LIKE probes — one indexed-prefix scan)
+        for (resp,) in mc.conn.execute(
+            "SELECT response FROM api_cache WHERE cache_key LIKE 'v2:raw:%' "
+            "OR cache_key LIKE 'raw:%'"):
+            cov["raw_total"] += 1
+            if '"significance_checked"' in resp:
+                cov["significance_checked"] += 1
+            if '"significance"' in resp:
+                cov["significance_text"] += 1
+            if '"reception_checked"' in resp:
+                cov["reception_checked"] += 1
+            if '"writer"' in resp:
+                cov["omdb_writer"] += 1
+            if '"awards"' in resp:
+                cov["omdb_awards"] += 1
+    finally:
+        mc.close()
+    out = [{"name": k, "rows": v["rows"], "live": v["live"],
+            "expired": v["expired"], "mb": round(v["mb"], 1)}
+           for k, v in sorted(classes.items(), key=lambda x: -x[1]["mb"])]
+    return {"classes": out, "coverage": cov,
+            "totals": {"rows": sum(c["rows"] for c in out),
+                       "expired": sum(c["expired"] for c in out),
+                       "mb": round(sum(c["mb"] for c in out), 1)}}
+
+
 @router.post("/audit-requeue")
 async def audit_requeue_enrichments(
     dry_run: bool = True,
