@@ -159,10 +159,15 @@ async def unload_llm_models() -> list[str]:
     """
     import httpx
     ollama_url = settings.effective_ollama
+    try:
+        from src.services.embed_service import effective_embedding_model
+        _emb = effective_embedding_model()
+    except Exception:
+        _emb = settings.EMBEDDING_MODEL
     ours = [m for m in (
         settings.CURATOR_MODEL,
         settings.SUMMARIZER_MODEL,
-        settings.EMBEDDING_MODEL,
+        _emb,   # the ACTIVE profile model, not the legacy v1 default
         (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
     ) if m]
     unloaded: list[str] = []

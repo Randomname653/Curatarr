@@ -50,6 +50,15 @@ def _default_profile() -> dict:
             "prefixes": False, "num_ctx": 8192, "schema": 1}
 
 
+def effective_embedding_model() -> str:
+    """The embedding model the runtime ACTUALLY uses — the stored profile's
+    model, falling back to the legacy settings default. External eval catch:
+    tray/setup/UI kept checking settings.EMBEDDING_MODEL (v1
+    'nomic-embed-text') after the v2-moe migration flipped the profile, so
+    presence checks green-lit a model the runtime no longer uses."""
+    return get_profile().get("model") or settings.EMBEDDING_MODEL
+
+
 def get_profile() -> dict:
     """The active embedding profile (cached; set_profile invalidates)."""
     if _profile_cache["value"] is not None:

@@ -444,7 +444,13 @@ async def build_ollama_models(ollama_endpoint: str,
     # logger.warning). Pulled independently so a failure here doesn't block the
     # chat models and vice-versa.
     from src.config import settings as _settings
-    embed_model = (_settings.EMBEDDING_MODEL or "").strip()
+    # Ensure the model the runtime ACTUALLY uses (stored profile — v2-moe
+    # after the migration; settings default on a fresh install).
+    try:
+        from src.services.embed_service import effective_embedding_model
+        embed_model = (effective_embedding_model() or "").strip()
+    except Exception:
+        embed_model = (_settings.EMBEDDING_MODEL or "").strip()
     if embed_model:
         if await model_exists(ollama_endpoint, embed_model):
             print(f"  ✓  {embed_model} already present — skipping pull", flush=True)
