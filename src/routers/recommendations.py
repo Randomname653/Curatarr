@@ -347,6 +347,8 @@ def _proposal_dict(p: DeletionProposal) -> dict:
     return {
         "id": p.id, "title": p.title, "pitch": p.reason,
         "confidence": p.confidence, "service": p.service,
+        # arr item id — the "Fix match" pin needs (service, arr_id)
+        "media_id": p.media_id,
         "arr_url": p.arr_url, "size_gb": round(p.storage_mb / 1024, 2),
         "status": p.status, "user_comment": p.user_comment,
         "category": p.category, "stagnant": bool(p.stagnant),

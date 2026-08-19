@@ -2817,6 +2817,35 @@ async def fetch_and_prepare_raw(
     """
     cache = MetadataCache()
 
+    # ── OWNER MATCH OVERRIDE (highest authority, before ANY resolution) ──
+    # A pinned entity wins over arr-provided ids, MediaIdentity, and every
+    # title search below. This is what makes a "Fix match" click durable
+    # across rescans and re-enrichments (the Good-Boy-twins class — ported
+    # from SoulSync's match-override layer, MIT).
+    if plex_rating_key and ":" in str(plex_rating_key):
+        try:
+            from src.database.connection import get_db_session
+            from src.database.models import MediaMatchOverride
+            _svc, _, _aid = str(plex_rating_key).partition(":")
+            if _aid.isdigit():
+                with get_db_session() as db:
+                    ov = db.query(MediaMatchOverride).filter(
+                        MediaMatchOverride.service == _svc,
+                        MediaMatchOverride.arr_id == int(_aid)).first()
+                    if ov:
+                        tmdb_id = ov.tmdb_id or tmdb_id
+                        tvdb_id = ov.tvdb_id or tvdb_id
+                        anilist_id = ov.anilist_id or anilist_id
+                        mal_id = ov.mal_id or mal_id
+                        imdb_id = ov.imdb_id or imdb_id
+                        mbid = ov.mbid or mbid
+                        logger.info("[enricher] owner match override active "
+                                    "for %s (tmdb=%s anilist=%s mbid=%s)",
+                                    plex_rating_key, ov.tmdb_id,
+                                    ov.anilist_id, ov.mbid)
+        except Exception as _e:
+            logger.debug("[enricher] match-override lookup failed: %s", _e)
+
     # Resolve IDs from MediaIdentity
     if plex_rating_key and not all([tmdb_id, anilist_id]):
         try:

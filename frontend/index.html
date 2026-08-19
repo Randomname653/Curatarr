@@ -3783,8 +3783,10 @@ function _renderDeletionProposals(proposals) {
               <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">Save note</button>
               <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}">Discuss</button>
               <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">Reevaluate</button>
+              ${p.media_id&&p.service?`<button class="btn btn-secondary btn-sm" onclick="onFixMatch(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-category="${escAttr(p.category||'movie')}" data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}" title="Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.">Fix match</button>`:''}
               ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
             </div>
+            <div id="fixmatch-${p.id}" style="display:none;margin-top:8px"></div>
           </div>
         </div>
       </div>`;
@@ -3793,6 +3795,58 @@ function _renderDeletionProposals(proposals) {
   const master = document.getElementById('del-select-all');
   if (master) master.checked = false;
   updateDelBulkCount();
+}
+
+// ── Fix match: owner-pinned entity resolution (same-named-twins repair) ──────
+async function onFixMatch(btn) {
+  const box = document.getElementById(`fixmatch-${btn.dataset.pid}`);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = '<p class="loading" style="font-size:12px">Searching TMDB candidates…</p>';
+  const { title, category, service, mediaid } = btn.dataset;
+  try {
+    const r = await api(`/api/enrichment/match-candidates?title=${encodeURIComponent(title)}&category=${encodeURIComponent(category)}`);
+    const cands = r.candidates || [];
+    if (!cands.length) {
+      box.innerHTML = `<p style="font-size:12px;color:var(--text3)">${esc(r.error || 'No TMDB candidates found.')}</p>`;
+      return;
+    }
+    box.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--bg3)">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pick the entity this library item really is — the pin overrides every automatic match and survives rescans.</div>
+        ${cands.map(c => `
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border)">
+            <div style="flex:1;font-size:12px"><b>${esc(c.title)}</b> ${c.year ? `(${c.year})` : ''} <span style="color:var(--text3)">tmdb:${c.tmdb_id}</span>
+              <div style="color:var(--text3);font-size:11px">${esc(c.overview || '')}</div></div>
+            <button class="btn btn-secondary btn-sm" onclick="applyFixMatch(this,'${esc(service)}',${Number(mediaid)},'${esc(category)}','${escAttr(title)}',${c.tmdb_id})">Pin</button>
+          </div>`).join('')}
+        <div style="margin-top:8px"><button class="btn btn-secondary btn-sm" onclick="removeFixMatch(this,'${esc(service)}',${Number(mediaid)})" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button></div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(e.message)}</p>`;
+  }
+}
+
+async function applyFixMatch(btn, service, arrId, category, title, tmdbId) {
+  btn.disabled = true; btn.textContent = 'Pinning…';
+  try {
+    const r = await api('/api/enrichment/match-override', 'POST',
+      { service, arr_id: arrId, category, title, tmdb_id: tmdbId });
+    btn.textContent = r.success ? '✓ Pinned' : 'Failed';
+    if (r.success) {
+      btn.closest('div[id^="fixmatch-"]').innerHTML =
+        `<p style="font-size:12px;color:var(--success)">✓ ${esc(r.message || 'Pinned — re-enriches on the pinned identity.')}</p>`;
+    }
+  } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
+}
+
+async function removeFixMatch(btn, service, arrId) {
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/enrichment/match-override/${encodeURIComponent(service)}/${arrId}`, 'DELETE');
+    btn.textContent = r.success ? '✓ Unpinned' : (r.error || 'No pin found');
+  } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
 }
 
 // Pass 17: read the "🆕 Just-arrived" toggle + days dropdown from the DOM.

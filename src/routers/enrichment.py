@@ -18,7 +18,7 @@ from src.config import settings
 from src.database import get_db
 from src.database.connection import get_db_session
 from src.database.models import User, WatchHistoryEntry, EnrichmentStatus
-from src.routers.auth import get_current_user
+from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
 
 logger = logging.getLogger(__name__)
@@ -907,6 +907,164 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
         "by_reason":  by_reason,
         "zombies":    zstats,
     }
+
+
+# ── Owner match overrides (SoulSync-ported durable entity pins) ──────────────
+# The Good-Boy-twins / Batman-Beyond class: automatic guards shrink wrong-entity
+# resolutions, an owner PIN closes a case for good. The pin is read at the top
+# of fetch_and_prepare_raw (highest authority); applying it purges the item's
+# cached rows + flips enrichment status so the pipeline rebuilds on the pin.
+
+@router.get("/match-candidates")
+async def match_candidates(
+    title: str,
+    category: str = "movie",
+    year: Optional[int] = None,
+    user: User = Depends(require_admin),
+):
+    """TMDB candidate search for a manual re-match (no scoring — the owner is
+    the matcher). Returns id/title/year/overview so same-named twins are
+    distinguishable at a glance."""
+    import httpx as _hx
+    if not settings.TMDB_API_KEY:
+        return {"candidates": [], "error": "no TMDB key configured"}
+    mt = "movie" if category == "movie" else "tv"
+    params = {"api_key": settings.TMDB_API_KEY, "query": title, "page": 1}
+    if year:
+        params["year" if mt == "movie" else "first_air_date_year"] = year
+    try:
+        async with _hx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://api.themoviedb.org/3/search/{mt}", params=params)
+        results = (r.json().get("results") or [])[:8] if r.status_code == 200 else []
+    except Exception as e:
+        logger.warning("[match] candidate search failed for %r: %s", title, e)
+        return {"candidates": [], "error": "TMDB search failed"}
+    out = []
+    for res in results:
+        date = res.get("release_date") or res.get("first_air_date") or ""
+        out.append({
+            "tmdb_id": res.get("id"),
+            "title": res.get("title") or res.get("name") or "",
+            "year": int(date[:4]) if date[:4].isdigit() else None,
+            "overview": (res.get("overview") or "")[:180],
+        })
+    return {"candidates": out, "media_type": mt}
+
+
+def _purge_and_requeue_item(service: str, arr_id: int, category: str) -> dict:
+    """Delete the item's cached raw/prefetch/enriched rows (svc:id-keyed, both
+    key epochs) and flip its enrichment status so the next cycle rebuilds —
+    with the override active, on the pinned ids."""
+    from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
+    prk = f"{service}:{arr_id}"
+    purged = 0
+    mc = MetadataCache()
+    try:
+        pats = []
+        for v in ("", f"{_CACHE_VERSION}:"):
+            pats += [f"{v}raw_prefetch:{prk}",
+                     f"{v}raw:{category}:{prk}",
+                     f"{v}enriched:{category}:{prk}"]
+        for p in pats:
+            cur = mc.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (p,))
+            purged += cur.rowcount
+        mc.conn.commit()
+    finally:
+        mc.close()
+    flipped = 0
+    with get_db_session() as db:
+        flipped += db.query(EnrichmentStatus).filter(
+            EnrichmentStatus.plex_rating_key == prk,
+        ).update({"enriched": False, "enriched_at": None, "error": None},
+                 synchronize_session=False)
+        from src.database.models import ArrEnrichmentStatus as _AES
+        flipped += db.query(_AES).filter(
+            _AES.service == service, _AES.arr_id == arr_id,
+        ).update({"enriched": False, "enriched_at": None},
+                 synchronize_session=False)
+        db.commit()
+    return {"purged_cache_rows": purged, "status_rows_flipped": flipped}
+
+
+@router.get("/match-overrides")
+async def list_match_overrides(user: User = Depends(require_admin)):
+    from src.database.models import MediaMatchOverride
+    with get_db_session() as db:
+        rows = db.query(MediaMatchOverride).order_by(
+            MediaMatchOverride.created_at.desc()).limit(200).all()
+        return {"overrides": [{
+            "service": r.service, "arr_id": r.arr_id, "category": r.category,
+            "title": r.title, "tmdb_id": r.tmdb_id, "anilist_id": r.anilist_id,
+            "imdb_id": r.imdb_id, "mbid": r.mbid, "note": r.note,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in rows]}
+
+
+@router.post("/match-override")
+async def apply_match_override(
+    payload: dict,
+    user: User = Depends(require_admin),
+):
+    from src.database.models import MediaMatchOverride
+    service = str(payload.get("service") or "").strip().lower()
+    category = str(payload.get("category") or "").strip().lower()
+    try:
+        arr_id = int(payload.get("arr_id"))
+    except (TypeError, ValueError):
+        return {"success": False, "error": "arr_id required"}
+    if service not in ("radarr", "sonarr", "lidarr"):
+        return {"success": False, "error": "service must be radarr|sonarr|lidarr"}
+    ids = {}
+    for f in ("tmdb_id", "tvdb_id", "anilist_id", "mal_id"):
+        v = payload.get(f)
+        if v is not None:
+            try:
+                ids[f] = int(v)
+            except (TypeError, ValueError):
+                return {"success": False, "error": f"{f} must be numeric"}
+    for f in ("imdb_id", "mbid"):
+        if payload.get(f):
+            ids[f] = str(payload[f]).strip()
+    if not ids:
+        return {"success": False, "error": "at least one external id required"}
+    with get_db_session() as db:
+        row = db.query(MediaMatchOverride).filter(
+            MediaMatchOverride.service == service,
+            MediaMatchOverride.arr_id == arr_id).first()
+        if not row:
+            row = MediaMatchOverride(service=service, arr_id=arr_id)
+            db.add(row)
+        row.category = category or row.category
+        row.title = payload.get("title") or row.title
+        row.note = payload.get("note") or row.note
+        row.created_by = user.id
+        for f, v in ids.items():
+            setattr(row, f, v)
+        db.commit()
+    res = _purge_and_requeue_item(service, arr_id, category or "movie")
+    logger.info("[match] owner pinned %s:%s -> %s (%s)", service, arr_id, ids, res)
+    return {"success": True, **res,
+            "message": "Pinned. The item re-enriches on the pinned identity "
+                       "with the next enrichment cycle (or run one now)."}
+
+
+@router.delete("/match-override/{service}/{arr_id}")
+async def delete_match_override(
+    service: str, arr_id: int,
+    user: User = Depends(require_admin),
+):
+    from src.database.models import MediaMatchOverride
+    with get_db_session() as db:
+        row = db.query(MediaMatchOverride).filter(
+            MediaMatchOverride.service == service,
+            MediaMatchOverride.arr_id == arr_id).first()
+        if not row:
+            return {"success": False, "error": "no override for this item"}
+        category = row.category or "movie"
+        db.delete(row)
+        db.commit()
+    res = _purge_and_requeue_item(service, arr_id, category)
+    return {"success": True, **res, "message": "Unpinned — re-resolves naturally."}
 
 
 @router.get("/cache-inventory")
