@@ -131,7 +131,15 @@ def _preflight_ollama() -> str | None:
     """Returns a warning string when models are missing (server still starts)."""
     missing = []
     from src.config import settings
-    checked = [settings.CURATOR_MODEL, settings.EMBEDDING_MODEL]
+    # Check the model the runtime ACTUALLY uses (stored profile, v2-moe) —
+    # settings.EMBEDDING_MODEL is the legacy v1 default and green-lit the
+    # wrong model after the migration (external eval catch).
+    try:
+        from src.services.embed_service import effective_embedding_model
+        _emb = effective_embedding_model()
+    except Exception:
+        _emb = settings.EMBEDDING_MODEL
+    checked = [settings.CURATOR_MODEL, _emb]
     # Two-bake split: warn-only nudge when enabled but not built — the app
     # runs fine without it (deletion runs fall back to the curator bake).
     if (settings.PITCHER_MODEL or "").strip():
