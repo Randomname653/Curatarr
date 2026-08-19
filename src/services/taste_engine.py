@@ -186,7 +186,29 @@ def weighted_mean_embedding(embeddings_weights: list) -> tuple:
     return [x / pre_norm for x in avg], pre_norm
 
 
-def _cluster_centroids(pos_titled: list, max_k: int = 5) -> Optional[list]:
+def _domain_corpus_mean(category: str):
+    """Mean of the category's normalized item cloud — the anisotropy
+    reference for the cluster-separation gate below. None on a tiny or
+    unavailable corpus (callers then fall back to the raw-cosine gate)."""
+    if not category:
+        return None
+    try:
+        import numpy as np
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        embs = get_chroma_db().embeddings_for_domain(category)
+        if len(embs) < 50:
+            return None
+        m = np.asarray(embs, dtype=float)
+        norms = np.linalg.norm(m, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return (m / norms).mean(axis=0)
+    except Exception as e:
+        logger.debug("corpus mean for %s failed: %s", category, e)
+        return None
+
+
+def _cluster_centroids(pos_titled: list, max_k: int = 5,
+                       corpus_mean=None) -> Optional[list]:
     """Spherical k-means over the positive watch embeddings — the
     multi-centroid upgrade for MULTIMODAL (user, category) pairs only
     (eval 2.2 / PinnerSage: a single mean of conflicting interests lands
@@ -196,7 +218,17 @@ def _cluster_centroids(pos_titled: list, max_k: int = 5) -> Optional[list]:
     from the weight-strongest item, k ≤ 5 via a log2 ramp (MIND-style).
     Returns [{embedding, weight, share, top_titles}] sorted by weight,
     clusters under 8% mass dropped — or None when clustering degenerates.
-    """
+
+    ``corpus_mean`` (external eval catch): the near-parallel gate used to
+    compare RAW centroid cosines — but text embeddings share a common
+    cone, so genuinely different clusters still read ~0.94 raw (music:
+    0.942 raw vs 0.015 centered — five real listening clusters, among
+    them the owner's Kabarett lane, were rejected as 'one cloud' and the
+    pair fell back to a single centroid). Centroids are centered against
+    the CORPUS mean for the gate test only (stored raw — readers center
+    downstream via the blob's corpus_mean). Deliberately NOT self-centered:
+    at k=2, centroids centered by their own mean are always antiparallel
+    and the gate would never fire, breaking unimodal detection."""
     try:
         import numpy as np
         n = len(pos_titled)
@@ -251,7 +283,16 @@ def _cluster_centroids(pos_titled: list, max_k: int = 5) -> Optional[list]:
         # k-means happily splits ONE tight cloud into k halves — reject the
         # artificial split when any two centroids are near-parallel (that
         # was a unimodal taste after all; the single centroid serves it).
+        # The parallelism test runs CENTERED when a corpus mean is at hand
+        # (raw cosines sit in the anisotropy cone and reject real clusters);
+        # a centroid sitting exactly at the corpus mean is directionless —
+        # fall back to the raw-cone test then.
         cmat = np.asarray([c["embedding"] for c in out])
+        if corpus_mean is not None:
+            cen = cmat - np.asarray(corpus_mean, dtype=float)[None, :]
+            n = np.linalg.norm(cen, axis=1, keepdims=True)
+            if float(n.min()) > 1e-6:
+                cmat = cen / n
         sims = cmat @ cmat.T
         np.fill_diagonal(sims, 0.0)
         if float(sims.max()) > 0.9:
@@ -855,7 +896,8 @@ async def compute_taste_vector_for_user(
     # says so): for multimodal pairs, cluster the watch embeddings and let
     # the readers score as MAX over cluster centroids (ComiRec serving).
     cluster_centroids = (
-        _cluster_centroids(_pos_titled)
+        _cluster_centroids(_pos_titled,
+                           corpus_mean=_domain_corpus_mean(category))
         if multimodal and len(_pos) >= 40 else None)
     if cluster_centroids:
         logger.info("[taste] %s/%s: %d taste clusters: %s",
