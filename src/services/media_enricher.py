@@ -571,8 +571,15 @@ async def fetch_significance(
     landmark) as "mainstream nostalgia", and when asked directly it confidently
     INVENTED a wrong creator. Grounding the significance in a real, fetched
     source — exactly like the plot grounding — gives it the facts without the
-    hallucination. Returns a short significance string, or None when no page is
-    found / nothing notable is documented.
+    hallucination.
+
+    TRI-STATE return (the Panic-Room catch: a Fincher film sat permanently
+    significance-less because a transient failure was stamped as checked):
+      str  — documented significance,
+      ""   — DEFINITIVE nothing (no matching article, or the distiller read
+             the article and said NONE) → caller may stamp checked,
+      None — TRANSIENT failure (Wikipedia/summarizer error) → caller must
+             NOT stamp; the walker retries next pass.
     """
     hint = {"anime": "anime", "movie": "film", "show": "television series",
             "music": "band musician"}.get(media_type, "")
@@ -615,7 +622,9 @@ async def fetch_significance(
                     "action": "query", "list": "search", "srsearch": query,
                     "format": "json", "srlimit": 5,
                 })
-                hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
+                if sr.status_code != 200:
+                    return None    # transient — search itself failed
+                hits = sr.json().get("query", {}).get("search", [])
                 # Pick the first hit whose article title actually MATCHES this
                 # title — NOT a blind hits[0], which resolves same-name
                 # collisions to whatever entity Wikipedia ranks most popular.
@@ -624,7 +633,7 @@ async def fetch_significance(
                 if not page:
                     logger.debug("[significance] no Wikipedia hit matched %r (%s) — hits: %s",
                                  title, media_type, [h.get("title") for h in hits])
-                    return None
+                    return ""      # definitive — search worked, nothing matches
                 ex = await client.get("https://en.wikipedia.org/w/api.php", params={
                     "action": "query", "prop": "extracts", "explaintext": 1,
                     "redirects": 1, "titles": page, "format": "json",
@@ -634,7 +643,7 @@ async def fetch_significance(
                     extract = pdata.get("extract") or ""
                     break
             if not extract or len(extract) < 120:
-                return None
+                return ""      # definitive — page exists but has no substance
             # The blind [:7000] cut dropped the exact paragraphs significance
             # lives in: Cutthroat Island's Guinness "biggest box-office bomb"
             # sits in Reception/Legacy PAST the 7k mark of a 16k article, so
@@ -694,7 +703,7 @@ TEXT:
         logger.debug("[significance] distillation failed for %r: %s", title, e)
         return None
     if not out or out.upper().startswith("NONE") or len(out) < 20:
-        return None
+        return ""              # definitive — the distiller read it and said NONE
     return out
 
 
@@ -869,10 +878,16 @@ async def topup_significance(
         if not targets:
             return False  # nothing cached to attach to (rare after the R6 enrich)
         sig = await fetch_significance(title, media_type, year=year)
+        if sig is None:
+            # TRANSIENT failure (Wikipedia/summarizer error) — do NOT stamp.
+            # The old code stamped checked=True here, which is how Panic Room
+            # and Wild Side sat permanently significance-less: one bad moment
+            # became forever. The walker simply retries next pass.
+            return False
         added = False
         for key, raw in targets:
-            # Set even when no page is found, so we never re-query a title with
-            # no documented significance.
+            # "" = DEFINITIVE nothing — stamp so we never re-query a title
+            # with no documented significance.
             raw["significance_checked"] = True
             if sig:
                 raw["significance"] = sig
