@@ -2087,6 +2087,21 @@ _SUBVERSION_TAGS = {
     "magical girl subversion", "deconstruction",
 }
 
+# Adult-GENRE guard (the Batman Beyond catch): TVDB/arr genre lists are
+# community-editable and 'Hentai' arrived on a DCAU series via Sonarr — the
+# old curator then confabulated an explicit profile from that one word. An
+# adult genre survives the merge only when an anime-database source lists it
+# itself or the content rating (Rx/Hentai) confirms it. Deliberately NOT
+# guarding 'Ecchi' (mild, common, low poison risk) and never touching music
+# (its raw build doesn't pass through this merge).
+_ADULT_GENRES = {"hentai", "erotica"}
+_ADULT_CONFIRMING_SOURCES = {"anilist", "jikan", "mal", "anidb"}
+
+
+def _lists_adult_genre(d: dict) -> bool:
+    pool = (d.get("genres") or []) + (d.get("explicit_genres") or [])
+    return any(str(g).lower() in _ADULT_GENRES for g in pool)
+
 
 def _merge_raw_metadata(primary: dict, *supplements) -> dict:
     """
@@ -2101,6 +2116,9 @@ def _merge_raw_metadata(primary: dict, *supplements) -> dict:
     all_genres = list(primary.get("genres", []))
     extra_context = []
     tone_hints = []
+    adult_genre_confirmed = (
+        str(primary.get("source", "")).lower() in _ADULT_CONFIRMING_SOURCES
+        and _lists_adult_genre(primary))
 
     # Track all distinct plot descriptions by source name
     plot_sources: dict[str, str] = {}
@@ -2130,6 +2148,9 @@ def _merge_raw_metadata(primary: dict, *supplements) -> dict:
         for g in (sup.get("genres") or []):
             if g and g not in all_genres:
                 all_genres.append(g)
+        if (str(sup_source).lower() in _ADULT_CONFIRMING_SOURCES
+                and _lists_adult_genre(sup)):
+            adult_genre_confirmed = True
 
         # Append awards/ratings info as context
         if sup.get("awards") and sup["awards"] not in ("N/A", ""):
@@ -2160,6 +2181,7 @@ def _merge_raw_metadata(primary: dict, *supplements) -> dict:
             extra_context.append(f"Content rating: {mal_rating}")
             if "Rx" in mal_rating or "Hentai" in mal_rating:
                 tone_hints.append("Adult/explicit sexual content — do not sanitize in summary")
+                adult_genre_confirmed = True   # the content rating itself confirms
             elif "R+" in mal_rating:
                 tone_hints.append("Mature content (R+) — likely intense/dark/adult themes")
             elif mal_rating in ("G", "PG"):
@@ -2208,7 +2230,16 @@ def _merge_raw_metadata(primary: dict, *supplements) -> dict:
         merged["alt_plot_sources"] = alt_plots
 
     merged["keywords"] = list(dict.fromkeys(all_keywords))[:25]  # dedup, max 25
-    merged["genres"] = list(dict.fromkeys(all_genres))
+    genres_final = list(dict.fromkeys(all_genres))
+    if not adult_genre_confirmed:
+        _dropped = [g for g in genres_final if str(g).lower() in _ADULT_GENRES]
+        if _dropped:
+            genres_final = [g for g in genres_final
+                            if str(g).lower() not in _ADULT_GENRES]
+            logger.info("[merge] dropped unconfirmed adult genre(s) %s for %r — "
+                        "no anime-DB source or content rating backs them",
+                        _dropped, merged.get("title"))
+    merged["genres"] = genres_final
     if extra_context:
         merged["extra_context"] = " | ".join(extra_context)
     if tone_hints:
