@@ -106,7 +106,7 @@ class SetupCompleteRequest(BaseModel):
     ollama_endpoint: str = "http://localhost:11434"
     base_curator_model: str = "qwen2.5:32b"
     base_summarizer_model: str = "qwen2.5:3b"
-    embedding_model: str = "nomic-embed-text"
+    embedding_model: str = "nomic-embed-text-v2-moe"
     tmdb_api_key: str = ""
     lastfm_api_key: str = ""
     spotify_client_id: str = ""

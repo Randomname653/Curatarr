@@ -733,14 +733,21 @@ async def compute_taste_vector_for_user(
     enriched_entries = [(w, e) for w, e in top_entries
                         if cache.get_cache(f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}")]
 
-    # We only count needs_embed uniquely per plex_item_id
+    # We only count needs_embed uniquely per plex_item_id. Model-scoped key —
+    # the legacy un-scoped `emb:{pid}` rows were purged in the 2026-08-18
+    # ballast cleanup (this counter was their last reader, and only for the
+    # progress estimate; the real embed path at embed_entry() below prefers
+    # the stored chroma vector anyway).
     needs_embed = 0
     seen_pids = set()
+    from src.services.embed_service import get_profile as _cnt_profile
+    _cnt_model = _cnt_profile().get("model") or "?"
     for _, e in enriched_entries:
         pid = e.get("plex_item_id")
         if pid not in seen_pids:
             seen_pids.add(pid)
-            if cache.get_cache(f"emb:{pid}") is None or get_emb_ts(e) != (cache.get_cache(f"emb_ts:{pid}") or {}).get("response"):
+            if (cache.get_cache(f"emb:{_cnt_model}:{pid}") is None
+                    or get_emb_ts(e) != (cache.get_cache(f"emb_ts:{_cnt_model}:{pid}") or {}).get("response")):
                 needs_embed += 1
 
     logger.info("Items: %d total, %d enriched, %d need fresh embedding, %d use cache",

@@ -292,7 +292,7 @@ def write_env(config: dict) -> None:
         f"OLLAMA_ENDPOINT={config.get('ollama_endpoint', 'http://localhost:11434')}",
         f"BASE_CURATOR_MODEL={config.get('base_curator_model', 'qwen2.5:32b')}",
         f"BASE_SUMMARIZER_MODEL={config.get('base_summarizer_model', 'dolphin3')}",
-        f"EMBEDDING_MODEL={config.get('embedding_model', 'nomic-embed-text')}",
+        f"EMBEDDING_MODEL={config.get('embedding_model', 'nomic-embed-text-v2-moe')}",
         f"CURATOR_MODEL=curatarr-curator",
         f"SUMMARIZER_MODEL=curatarr-summarizer",
         # Two-bake split: fall back to the LIVE settings values (not hardcoded

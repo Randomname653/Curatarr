@@ -28,13 +28,31 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
     if not doc_id:
         return False
     try:
-        from src.cache.metadata_cache import MetadataCache
+        from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
         mc = MetadataCache()
         try:
             hit = mc.get_cache(f"raw_prefetch:{doc_id}")
+            raw = (hit or {}).get("response")
+            if not isinstance(raw, dict):
+                # STALE fallback: gone-from-arr media never refresh their
+                # prefetch, so an EXPIRED row is the final — and only —
+                # trustworthy record. get_cache filters expiry; read past it.
+                try:
+                    import json as _json
+                    for k in (f"{_CACHE_VERSION}:raw_prefetch:{doc_id}",
+                              f"raw_prefetch:{doc_id}"):
+                        row = mc.conn.execute(
+                            "SELECT response FROM api_cache WHERE cache_key=?",
+                            (k,)).fetchone()
+                        if row:
+                            cand = _json.loads(row[0])
+                            if isinstance(cand, dict):
+                                raw = cand
+                                break
+                except Exception:
+                    pass
         finally:
             mc.close()
-        raw = (hit or {}).get("response")
         if not isinstance(raw, dict):
             return False
         title = (raw.get("title") or "").strip()

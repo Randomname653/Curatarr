@@ -37,8 +37,24 @@ import src.services.embed_service as es
 import src.vector_store.chromadb_wrapper as cw
 
 
+class _FakeRow:
+    def __init__(self, v):
+        self.v = v
+
+    def fetchone(self):
+        return self.v
+
+
+class _FakeConn:
+    def execute(self, sql, params):
+        v = FakeMC.stale.get(params[0])
+        return _FakeRow((v,) if v else None)
+
+
 class FakeMC:
-    store = {}
+    store = {}     # live rows (get_cache — expiry-filtered in real life)
+    stale = {}     # raw sqlite rows incl. EXPIRED (the stale-fallback read)
+    conn = _FakeConn()
 
     def get_cache(self, key):
         return FakeMC.store.get(key)
@@ -108,6 +124,18 @@ FakeMC.store["raw_prefetch:radarr:1"] = {"response": {
     "title": "X", "overview": "short", "genres": []}}
 check("thin overview -> refuse rebuild",
       asyncio.run(cr.rebuild_doc_from_prefetch("radarr:1", "movie")) is False)
+
+# 4) EXPIRED prefetch (unreadable via get_cache) still rebuilds: gone media
+#    never refresh their prefetch — the stale row is the FINAL record.
+import json as _json
+FakeMC.stale["v2:raw_prefetch:radarr:777"] = _json.dumps({
+    "title": "Gone Movie", "year": 2019, "media_type": "movie",
+    "overview": "A perfectly serviceable plot summary that is long enough to trust.",
+    "keywords": ["heist"], "genres": ["Drama"]})
+ok = asyncio.run(cr.rebuild_doc_from_prefetch("radarr:777", "movie"))
+check("EXPIRED prefetch rebuilds via the stale fallback",
+      ok and fake_chroma.collection.added[-1][0] == "radarr:777"
+      and "Gone Movie" in fake_chroma.collection.added[-1][1])
 
 # ── wiring: the audit walks docs ─────────────────────────────────────────────
 

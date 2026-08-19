@@ -64,7 +64,10 @@ class Settings(BaseSettings):
     # Baked modelfile names (created by python build_models.py)
     CURATOR_MODEL: str = "curatarr-curator"
     SUMMARIZER_MODEL: str = "curatarr-summarizer"
-    EMBEDDING_MODEL: str = "nomic-embed-text"
+    # Legacy fallback only — the ACTIVE model lives in the app_state embedding
+    # profile (embed_service.effective_embedding_model). Default = the v2
+    # stack so a fresh install never builds the retired v1 corpus.
+    EMBEDDING_MODEL: str = "nomic-embed-text-v2-moe"
     # Route deletion proposals through the 4-pillar LLM judge
     # (src/services/pillars.py) instead of the legacy taste-mismatch pitch.
     # Off by default — the legacy path stays the fallback until flipped.

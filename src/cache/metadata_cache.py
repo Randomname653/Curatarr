@@ -47,7 +47,10 @@ class MetadataCache:
         Initialize metadata cache.
 
         Args:
-            cache_path: Path to cache database (default: data/cache/metadata.db)
+            cache_path: Path to cache database (default:
+                settings.ENRICHMENT_CACHE → data/cache/enrichment.db; the
+                'metadata.db' name in old docs was a dead artifact — two
+                0-byte files it spawned were removed 2026-08-18)
         """
         self.cache_path = Path(cache_path or settings.ENRICHMENT_CACHE)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
