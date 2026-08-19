@@ -12,12 +12,13 @@ The active configuration is an app_state "embedding profile":
     {"model": …, "collection": …, "prefixes": bool, "num_ctx": int,
      "schema": 1|2}
 
-No stored profile → the legacy default (settings.EMBEDDING_MODEL,
-media_knowledge, NO prefixes — the v1 corpus was embedded prefix-free, so
-prefixing new queries against it would mix spaces). The migration runner
-builds the v2 corpus in a parallel collection and then flips the profile
-in one set_profile() call — model, prefixes and collection switch
-together, never partially.
+No stored profile → the V2 stack (embedding_migration.V2_PROFILE). This
+WAS the legacy v1 default, but the v1 collection was dropped on
+2026-08-18 (owner ballast cleanup) — a v1 fallback would recreate an
+empty legacy collection, and a fresh install should start on today's
+stack. The migration runner builds a new corpus in a parallel collection
+and then flips the profile in one set_profile() call — model, prefixes
+and collection switch together, never partially.
 
 Endpoint: /api/embed (batched, unit-normalized, defined truncation) —
 the legacy /api/embeddings returned RAW vectors (norm ~13) and is
@@ -46,8 +47,13 @@ _profile_cache: dict = {"value": None}
 
 
 def _default_profile() -> dict:
-    return {"model": settings.EMBEDDING_MODEL, "collection": "media_knowledge",
-            "prefixes": False, "num_ctx": 8192, "schema": 1}
+    """The profile used when app_state carries none. Since 2026-08-18 this is
+    the V2 stack: the v1 collection was deliberately dropped (owner ballast
+    cleanup), so the old default would send a profile-less boot into an
+    EMPTY freshly-created v1 collection — and a genuinely fresh install
+    should start on today's stack, not migrate from a v1 it never had."""
+    from src.services.embedding_migration import V2_PROFILE
+    return dict(V2_PROFILE)
 
 
 def effective_embedding_model() -> str:

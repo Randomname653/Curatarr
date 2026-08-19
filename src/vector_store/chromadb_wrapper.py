@@ -142,15 +142,17 @@ class ChromaDBWrapper:
 
         Args:
             collection_name: Name of the collection to use. None → the
-                active embedding profile's collection (media_knowledge
-                until the migration flips it).
+                active embedding profile's collection. Fallback is the V2
+                collection: v1 was dropped 2026-08-18 (ballast cleanup),
+                so a v1 fallback would silently CREATE an empty legacy
+                collection and serve zero results.
         """
         if collection_name is None:
             try:
                 from src.services.embed_service import get_profile
-                collection_name = get_profile().get("collection") or "media_knowledge"
+                collection_name = get_profile().get("collection") or "media_knowledge_v2"
             except Exception:
-                collection_name = "media_knowledge"
+                collection_name = "media_knowledge_v2"
 
         # Ops hardening (eval package 4): the known Chroma corruption
         # pattern here was a second process / a kill during an HNSW
@@ -497,7 +499,7 @@ def get_chroma_db() -> ChromaDBWrapper:
     inst = _cached_wrapper()
     try:
         from src.services.embed_service import get_profile
-        wanted = get_profile().get("collection") or "media_knowledge"
+        wanted = get_profile().get("collection") or "media_knowledge_v2"
         if inst.collection_name != wanted:
             refresh_singleton()
             inst = _cached_wrapper()
