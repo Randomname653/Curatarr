@@ -828,6 +828,18 @@ async def get_deletion_proposals(
     # is scored against the correct taste vector and the cache is populated for
     # every individual category tab, not just a random top-10 across all types.
 
+    # ONE deletion run at a time. Live failure 2026-08-18: the owner's manual
+    # Analyze and the custodian's ARR scan ran CONCURRENTLY — two full judge
+    # runs interleaving call-by-call on the LLM gate (double wall clock), and
+    # the later batch superseding the earlier one's freshly written proposals.
+    from src.services.app_state import acquire_state_lock, release_state_lock
+    if not acquire_state_lock("deletion_run"):
+        return {"proposals": [], "total_gb": 0,
+                "message": ("A deletion analysis is already running (scheduled "
+                            "scan or another session). Its results will appear "
+                            "here when it finishes — run Analyze again after "
+                            "that if you still want a fresh pass.")}
+
     # Activity card for the manual Analyze run. The scheduler's ARR-sync path
     # already cards this work ("ARR Sync"), but the button-triggered run —
     # minutes of scoring + LLM pitches — was invisible the moment the user
@@ -855,6 +867,7 @@ async def get_deletion_proposals(
             proposals = await generate_deletion_proposals(
                 user.id, arr_items, category, monitor_task=mtask)
     except Exception as e:
+        release_state_lock("deletion_run")
         task_monitor.error(mtask, str(e))
         raise
 
@@ -869,6 +882,7 @@ async def get_deletion_proposals(
     if not enriched:
         # Generation produced nothing — keep whatever is in the DB rather than
         # wiping it, so the user still sees the last known proposals.
+        release_state_lock("deletion_run")
         task_monitor.done(mtask, "No candidates — previous proposals retained")
         return {"proposals": [], "total_gb": 0,
                 "message": "Analysis returned no candidates. Previous proposals retained."}
@@ -951,6 +965,10 @@ async def get_deletion_proposals(
             for p, row in saved
         ]
         dbs.commit()
+    # Release here, not in a finally: the response shaping below is lock-free,
+    # and a crash between generation and this line is cleared by the lifespan
+    # boot reset ("deletion_run" is on the stuck-flag list).
+    release_state_lock("deletion_run")
     task_monitor.done(mtask, f"{len(proposals_with_ids)} proposal(s) saved")
 
     # Pass 24: apply the same recent_only filter+sort the read path uses,
