@@ -100,7 +100,7 @@ async def facet_probe(constraint_vecs: list, domain: str = None,
                  "phrases": {c_idx: best_phrase}, "hits": n_constraints}}.
     A parent whose DIFFERENT facets hit DIFFERENT constraints is exactly
     the contrast-resolution stage 1 exists for."""
-    from src.vector_store.chromadb_wrapper import get_chroma_db
+    from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where
     chroma = get_chroma_db()
     out: dict = {}
     for ci, vec in enumerate(constraint_vecs):
@@ -108,7 +108,7 @@ async def facet_probe(constraint_vecs: list, domain: str = None,
             continue
         res = chroma.facets_query(
             query_embeddings=[vec], n_results=k,
-            where={"domain": domain} if domain else None)
+            where=domain_where(domain))
         docs = (res.get("documents") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         dists = (res.get("distances") or [[]])[0]

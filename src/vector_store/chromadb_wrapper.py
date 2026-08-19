@@ -26,6 +26,21 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def domain_where(domain):
+    """Chroma where-clause for a domain filter — THE one place that knows
+    about the legacy 'tv' epoch. The old Plex sync wrote series docs with
+    domain='tv' (995 docs, including everything the household actually
+    watched); the arr era writes 'show' (289). Filtering on 'show' alone
+    silently dropped the watched half from taste calibration, search and
+    facet probes (external eval catch). None stays None (no filter)."""
+    if not domain:
+        return None
+    if domain == "show":
+        return {"domain": {"$in": ["show", "tv"]}}
+    return {"domain": domain}
+
+
 # ── Ops hardening (eval package 4) ────────────────────────────────────────────
 
 _lock_handle = None            # exclusive per-process lock, held for lifetime
@@ -397,9 +412,12 @@ class ChromaDBWrapper:
         """All stored embeddings of one domain (movie/show/anime/music) —
         used by the taste rebuild to compute GLOBAL calibration anchors
         (centroid-vs-corpus cosine p10/p90) instead of per-batch anchors.
-        Returns a list of raw vectors; caller normalizes."""
+        Returns a list of raw vectors; caller normalizes. 'show' unions the
+        legacy 'tv' epoch via domain_where — the external eval measured show
+        taste calibrated against the 289-doc 'show' slice while all watched
+        series live under 'tv' (995 docs from the old Plex sync)."""
         try:
-            res = self.collection.get(where={"domain": domain},
+            res = self.collection.get(where=domain_where(domain),
                                       include=["embeddings"], limit=limit)
             emb = res.get("embeddings")
             return list(emb) if emb is not None else []

@@ -1067,6 +1067,20 @@ async def ensure_verified_data(
     return data
 
 
+def _domain_for_write(media_type, genres) -> str:
+    """Normalize a profile's media_type into one of OUR four domains before
+    it becomes a chroma quarantine key. TMDB's raw 'tv' leaked straight into
+    domain= for years and minted the 995-doc legacy epoch that starved show
+    taste calibration (external eval) — migrated once by
+    scripts/migrate_tv_domain.py; this keeps new writes clean. The anime
+    split uses the same genre heuristic as classify_sonarr_category."""
+    mt = (media_type or "movie").lower()
+    if mt != "tv":
+        return mt
+    g = genres if isinstance(genres, str) else ", ".join(genres or [])
+    return "anime" if "anime" in g.lower() else "show"
+
+
 async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     """Custodian walker: fetch Wikipedia significance for LIVE raw:* entries
     that were never significance-checked. Until now this only happened
@@ -3148,10 +3162,11 @@ async def process_and_save(raw: dict) -> Optional[dict]:
             vec = await gen.generate_embedding(text_to_embed)
             if vec:
                 doc_id = str(plex_rating_key or tmdb_id or anilist_id or title)
+                _dom = _domain_for_write(media_type, profile.get("genres"))
                 chroma_meta = {
                     "title": title,
-                    "media_type": media_type,
-                    "domain": media_type,   # hard quarantine key for gated retrieval
+                    "media_type": _dom,
+                    "domain": _dom,   # hard quarantine key for gated retrieval
                     "genres": ", ".join(profile.get("genres", [])[:6]
                                        if isinstance(profile.get("genres"), list) else []),
                     "themes": ", ".join(profile.get("themes", [])[:6]
@@ -3568,10 +3583,12 @@ async def enrich_media_item(
 
             if embedding_vector:
                 # Build the metadata payload for ChromaDB search
+                _dom = _domain_for_write(profile.get("media_type", "movie"),
+                                         profile.get("genres"))
                 chroma_metadata = {
                     "title": profile.get("title", ""),
-                    "media_type": profile.get("media_type", "movie"),
-                    "domain": profile.get("media_type", "movie"),  # hard quarantine key for gated retrieval
+                    "media_type": _dom,
+                    "domain": _dom,  # hard quarantine key for gated retrieval
                     "genres": ", ".join(profile.get("genres", [])),
                     "themes": ", ".join(profile.get("themes", [])),
                     "mood": ", ".join(profile.get("mood", [])),
