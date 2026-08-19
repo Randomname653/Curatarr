@@ -17,9 +17,20 @@ out of your real watch history, then uses that vector to:
 - **Recommend** new movies / shows / anime / music — either from your
   library or from external discovery — with a written pitch per item that
   explains *why* you'd like it.
-- **Propose deletions** for media that is clearly no longer of interest
-  (low affinity score, abandoned shows, drift from your active taste),
-  with a written reason and a discussion thread per proposal.
+- **Propose deletions** through a 4-pillar judge (owner taste, household
+  use, custodianship, resonance) that rules KEEP / CUT / STAGNANT per
+  title from *verified* evidence — with a written pitch, a discussion
+  thread per proposal, and automatic protection records for what it
+  decides to keep. Titles without enrichment data are skipped, never
+  judged blind.
+- **Search your library semantically** — "like Gleipnir but darker, more
+  fetish dynamics, mature tone" resolves the anchor, scores every
+  constraint against real metadata tags (multi-vector theme facets give
+  contrast queries resolution), cites its evidence per hit, and says
+  honestly when nothing carries the full profile.
+- **Push the results where you watch**: per-user "Curatarr Recommended"
+  Plex playlists (reconciled in place, not recreated) and rotating
+  "Curatarr ·" collection shelves designed by the curator.
 - **Send proactive messages** when the curator notices something worth
   saying — a new season for an anime you binged, a high-confidence
   pick for an evening, a check-in after a long break.
@@ -53,7 +64,24 @@ SQLite + ChromaDB.
   treated like proven dead weight.
 - **Multi-user attribution.** Plex `accountID` is tracked on every play.
   Each Plex user gets their own taste vector, their own recommendations,
-  their own deletion proposals, their own chat thread.
+  their own playlists, their own chat thread.
+- **Two-bake model split.** Chat/persona and batch deletion pitches run on
+  separately baked model tags (benchmarked head-to-head: one model wins
+  conversation, another wins the pipeline) — with residency-guarded VRAM
+  eviction so the two never thrash the GPU.
+- **A data custodian instead of a button zoo.** Debt-based maintenance
+  (anacron-style): every task carries a cadence and catches up whenever
+  the PC is on — enrichment cycles, OMDb/Wikipedia/reception walkers,
+  taste recompute, playlist pushes, facet indexing, raw-cache refresh,
+  profile audits. Every job is live in the **Activity** view with real
+  progress, and the profile audit self-heals stale entities: zombie
+  profiles requeue or rebuild, corrupt id clusters re-resolve, and an
+  implausible-mass-staleness guard keeps an unreachable service from
+  being mistaken for a deleted library.
+- **Durable entity pins.** When two same-named works collide (it happens —
+  two "Good Boy" films, both in the library), the **Fix match** button
+  pins the correct identity; the pin survives rescans and re-enrichment
+  rebuilds on it.
 - **Enrichment pipeline** that ties Plex / Radarr / Sonarr / Lidarr items
   to TMDB / OMDb / AniList / MusicBrainz / Last.fm / Spotify metadata
   with cache versioning, rule-based fallbacks, not-findable sentinels,
@@ -119,12 +147,17 @@ SQLite + ChromaDB.
 - **SQLAlchemy + SQLite** in WAL mode for transactional data
   (`data/curatarr.db`).
 - **ChromaDB** for vector embeddings of enriched items
-  (`data/chromadb/`).
+  (`data/chromadb/`): one document per title in `media_knowledge_v2`
+  plus per-theme facet points in `media_facets_v1` (multi-vector
+  retrieval for contrast queries).
 - **A second SQLite DB** for the enrichment cache (`data/cache/enrichment.db`)
   versioned by `_CACHE_VERSION` so logic bumps invalidate old entries
-  cleanly.
-- **APScheduler** drives daily/hourly jobs (Plex sync, taste recompute,
-  ARR pre-enrich, enrichment TTL refresh, weekly VACUUM, music pipeline).
+  cleanly; a Cache-Inventory panel in the UI shows per-source
+  rows/live/stale/MB.
+- **APScheduler + the Data Custodian** drive maintenance: a 30-minute
+  custodian tick runs whatever is overdue (debt-based, catches up after
+  downtime), yielding to the curator and pausing LLM work while a game
+  holds the GPU.
 
 ---
 
@@ -137,7 +170,8 @@ SQLite + ChromaDB.
     `gpt-oss:20b`, `deepseek-r1-abliterated:32b`).
   - Summariser: a smaller, faster model (e.g. `dolphin3`,
     `gpt-oss:20b`, `deepseek-r1-abliterated:8b`).
-  - Embeddings: `nomic-embed-text`.
+  - Embeddings: `nomic-embed-text-v2-moe` (CPU-only by design — the GPU
+    stays free for the curator).
 - **Plex Media Server** with an admin token.
 - **Radarr / Sonarr / Lidarr** are optional but unlock the deletion
   proposals + library-config breakdown for their respective categories.
@@ -344,14 +378,41 @@ Sequenced phases, all idempotent and resumable:
   memories drive the deletion **considerations** that protect similar titles in
   future proposals — feedback the curator *learns from*, not just stores.
 
-### 9. Scheduler (`src/services/scheduler.py`)
-Default daily/weekly cadence:
-- Plex sync — every `SYNC_INTERVAL_HOURS` (24 h default).
-- ARR pre-enrich — daily.
-- Music pipeline — daily.
-- Taste recompute — after every Plex sync that wrote rows.
-- Enrichment TTL refresh — daily, prefers un-enriched items first.
-- Weekly DB VACUUM.
+### 9. Scheduler + Data Custodian (`src/services/scheduler.py`, `src/services/data_custodian.py`)
+The scheduler keeps a handful of interval jobs (proactive messages,
+hourly source upgrades, the 30-second game watcher). Everything
+maintenance-shaped lives in the **custodian**: ~20 tasks, each with a
+cadence and a persisted last-run stamp; a tick every 30 minutes runs
+whatever is overdue, one at a time — so a machine that was off simply
+catches up (debt-based, anacron-style). Partial tasks stay due and
+continue next tick. Every task is visible in the Activity view with
+real progress; LLM tasks pause while a game holds the GPU.
+
+### 10. Curated search (`src/services/semantic_search.py`, `src/services/facet_index.py`)
+The library search parses the query once with the LLM
+(anchor / constraints), then scores deterministically: raw enrichment
+tags are the truth layer (lexical-first, concept/tone families,
+negation, demographic and comedy guards), theme facets give contrast
+queries multi-vector resolution, every hit carries per-constraint
+evidence notes, and a coverage banner says when no title carries the
+full profile.
+
+### 11. The 4-pillar judge (`src/services/pillars.py`)
+Deletion candidates are pre-ranked by score (taste-vector mismatch,
+size outliers, ratings, listening depth, drop-centroid similarity,
+learned considerations) — but the verdict is the judge's: evidence
+facts from verified data + Wikipedia significance + community
+reception + household watch state, ruled against a constitution the
+owner's learned principles extend. KEEPs persist as protections;
+thin-evidence titles skip the judge entirely.
+
+### 12. Corpus hygiene (`src/services/corpus_repair.py`, audit in `src/routers/enrichment.py`)
+The profile audit walks both the cache AND the vector corpus: incomplete
+or wrong-entity profiles requeue; zombie docs (no live profile row)
+requeue or rebuild deterministically from cached prefetch data; corrupt
+external-id clusters re-resolve; owner **Fix match** pins override
+everything and survive rescans. An implausible-mass-staleness guard
+keeps infrastructure outages from being mistaken for mass deletions.
 
 ---
 
@@ -550,3 +611,13 @@ landed for 1.0:
   trail symmetry, TTL prioritisation, DB-lock cascade fixes, cancelled-
   task status fidelity, anime taste-vector cache fallback, **unified
   per-library breakdown panel**.
+- **2026-08**: curated semantic search v3 + multi-vector theme facets,
+  the 4-pillar deletion judge with a benchmarked two-bake model split,
+  full background-job visibility (Activity cards with real progress),
+  the data-integrity sweep (tv-domain migration, significance
+  tri-state, zombie-doc self-healing, adult-genre guard), and the
+  SoulSync-ported robustness layer (owner match pins + Fix match UI,
+  playlist reconcile + stale-key self-heal, mass-staleness guard,
+  corrupt-id detector).
+
+The forward plan lives in [ROADMAP.md](ROADMAP.md).

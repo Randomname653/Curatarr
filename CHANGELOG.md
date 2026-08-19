@@ -21,6 +21,67 @@ the branch — every "Pass N" section maps to one or more commits.
 
 ---
 
+## Session — `main` (2026-08): curated search, 4-pillar judge, custodian visibility, data integrity, SoulSync ports
+
+The largest run so far (~60 commits). Five arcs:
+
+**Curated semantic search (v1 → v3 → multi-vector facets).** The library
+search grew from raw vector neighbours into a deterministic
+constraint-evidence engine: the LLM only parses the query
+(anchor / constraints); scoring runs on raw enrichment tags with
+lexical-first matching, concept/tone families, demographic and comedy
+guards, negation, per-constraint evidence notes and honest coverage
+banners ("no library title carries this full profile"). Stage 1
+multi-vector items: every title's theme phrases became individual points
+in a separate `media_facets_v1` collection (~102k facet points), so a
+contrast query ("cute pastel" + "sociopathic manipulation") can hit a
+title in BOTH regions instead of searching the meaningless middle. Nine
+owner-review rounds; every miss became a fixture (`tests/test_search_fixtures.py`).
+
+**Curator A/B + two-bake split.** A reproducible benchmark protocol
+(`tests/benchmarks/BENCHMARK_RUNBOOK.md`, 740 hand-scored pitches,
+stresstests, 66-case chat bench) settled the model question: qwen wins
+the pipeline, gemma wins chat — so deletion runs now use a dedicated
+pitcher bake while the chat persona stays on the curator bake, with
+residency-guarded model eviction around every run. Verdict pipeline
+hardened: thin-evidence gate (un-enriched titles skip the judge instead
+of feeding confabulation), listening-depth protection (a 174-play artist
+can't be pitched as "background noise"), spoken-word form guard, and a
+deletion-run mutex (manual Analyze and the scheduled scan no longer
+interleave).
+
+**Custodian visibility.** Every background job now surfaces in the
+Activity view with real inner progress (the invariant is tested: a
+runner either cards itself or feeds the wrapper card). New LLM-free
+raw-cache refresher keeps API source data warm; a cache-inventory panel
+shows per-source rows/live/stale/MB plus Wikipedia/OMDb/reception
+coverage.
+
+**Data integrity.** The legacy `tv` domain epoch was closed (995 docs
+migrated to show/anime via live Sonarr classification, writers
+normalized, reads keep a safety-net union); significance became
+tri-state so transient failures stop stamping permanent "checked"
+(11,677 wrongly-stamped rows unstamped); the audit now walks chroma docs
+themselves — zombie profiles requeue or rebuild deterministically from
+cached prefetch data (the year-old confabulated "Batman Beyond" profile
+was the smoking gun); adult genres survive the metadata merge only when
+an anime-DB source or content rating confirms them; the v1 embedding
+collection and ~373 MB of dead cache rows were removed, and fresh-start
+defaults now build the v2 stack.
+
+**SoulSync ports (MIT).** Owner match overrides — durable entity pins
+with a "Fix match" UI on deletion cards (the same-named-twins repair);
+playlist reconcile instead of find-delete-recreate (playlist identity,
+pins and art survive the weekly refresh) plus stale-ratingKey self-heal;
+an implausible-mass-staleness guard (an unreachable arr can no longer
+classify its whole corpus as deleted); and a corrupt-source-id detector
+(one external id held by differently-named entities requeues the whole
+cluster).
+
+Forward plan: see [ROADMAP.md](ROADMAP.md).
+
+---
+
 ## Session — `main` (2026-06): new environment, embeddings, concurrency, multi-user recovery
 
 A separate run on `main` (baseline `58cb319`), prompted by moving Curatarr to a new
@@ -1957,6 +2018,10 @@ This is a separate architectural pass, not a quick fix.
 
 ## Branch state
 
-Working tree is clean except for `add_col.py` (intentional). 44 modules import cleanly; 13/13 tests pass. The branch is local — has not been pushed to `origin`.
-
-When this branch lands on `main`, the live database doesn't need any manual migration. `_migrate_columns` handles the additive `ConversationMessage.thread_id` column on next startup. Existing taste vectors, watch history, memories, recommendations all carry over unchanged.
+_(Historical note from the original refactor branch; superseded.)_ The
+branch landed on `main` long since. Database migrations remain additive
+and automatic: `create_all` creates new tables, `_migrate_columns`
+handles new columns, and one-off data migrations (e.g. the 2026-08
+tv-domain migration) ship as documented scripts under `scripts/`. The
+current state of the codebase is summarized at the top of this file;
+the forward plan lives in [ROADMAP.md](ROADMAP.md).

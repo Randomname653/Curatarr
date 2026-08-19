@@ -21,7 +21,7 @@ import httpx
 from src.config import settings
 from src.services.llm_utils import clean_llm_text
 
-SRC = r"C:\Users\user\Documents\new 6.txt"
+SRC = r"C:\path	o\debate_transcript.txt"   # local-only input, set before running
 
 PROMPT = """You are analyzing a DEBATE between a USER (the OWNER of a media library — the FINAL authority on their own taste) and their AI curator, about whether to keep or delete titles.
 
