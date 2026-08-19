@@ -699,6 +699,9 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     by_reason: dict[str, int] = {}
     # each hit: (cache_key, plex_rating_key, title, category, reason)
     hits: list[tuple] = []
+    # (category, id_field, id_value) -> [(cache_key, prk, title)] — the
+    # corrupt-source-id detector's collection pass (see below).
+    _id_rows: dict[tuple, list] = {}
 
     def _prog(msg):
         if task is None:
@@ -742,6 +745,18 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
             category = parts[2] if len(parts) > 2 else (
                 (profile or {}).get("media_type")
             )
+            # Corrupt-source-id clusters (SoulSync dedupe_source_ids port,
+            # MIT): the SAME external id held by differently-named entities
+            # is poison — one wrong resolution leaked onto another item.
+            # Collected for every row; evaluated after the scan.
+            if profile:
+                for _src in ("tmdb_id", "anilist_id"):
+                    _v = profile.get(_src)
+                    if _v:
+                        _id_rows.setdefault((category, _src, str(_v)), []).append(
+                            (cache_key, profile.get("plex_rating_key"),
+                             profile.get("title") or ""))
+
             reason = _enrichment_incomplete_reason(profile or {}, category)
             if not reason and truth:
                 _arr = truth.get((profile or {}).get("plex_rating_key"))
@@ -757,6 +772,32 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 category,
                 reason,
             ))
+
+        # Resolve the id clusters: >1 genuinely different normalized title on
+        # one external id → requeue EVERY row of the cluster (re-resolution
+        # runs with today's guards + any owner pin). Similar titles (year
+        # suffixes, US/UK variants) are NOT conflicts.
+        import difflib as _dl
+        import re as _re
+
+        def _norm_ct(t: str) -> str:
+            t = _re.sub(r"\s*\(\d{4}\)\s*$", "", (t or "").lower())
+            return _re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+        for (_cat, _src, _v), _rows in _id_rows.items():
+            titles = [_norm_ct(t) for _, _, t in _rows if t]
+            distinct = list(dict.fromkeys(t for t in titles if t))
+            if len(distinct) < 2:
+                continue
+            if all(_dl.SequenceMatcher(None, distinct[0], t).ratio() >= 0.8
+                   for t in distinct[1:]):
+                continue   # same-ish name — alternate forms, not a leak
+            reason = f"id_conflict:{_src}"
+            for cache_key, prk, title in _rows:
+                by_reason[reason] = by_reason.get(reason, 0) + 1
+                hits.append((cache_key, prk, title, _cat, reason))
+            logger.warning("[audit] corrupt source id %s=%s (%s) held by %s",
+                           _src, _v, _cat, distinct[:4])
 
         if not dry_run and hits:
             for cache_key, *_ in hits:
