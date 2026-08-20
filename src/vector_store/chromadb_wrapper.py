@@ -392,7 +392,44 @@ class ChromaDBWrapper:
                 'embedding': embeddings[0] if embeddings is not None and len(embeddings) else None,
             }
         return None
-    
+
+    def get_by_ids(self, doc_ids: List[str], chunk_size: int = 1000) -> Dict[str, Dict]:
+        """Bulk fetch embeddings for many ids — one Chroma call per chunk.
+
+        Returns ``{doc_id: {'id': ..., 'embedding': ...}}``; ids Chroma
+        doesn't know are simply absent. Replacement for per-item
+        ``get_by_id`` inside thousands-wide loops (deletion scoring /
+        arr ranking), where one round-trip per item is the N+1 cost.
+
+        A failed chunk retries its ids through ``get_by_id`` so a single
+        corrupt HNSW segment costs only the genuinely unreadable ids —
+        and the per-item fallback counter (the corruption tell, see
+        ``get_by_id``) keeps counting per id, not per 1000.
+        """
+        results_map: Dict[str, Dict] = {}
+        unique_ids = list(dict.fromkeys(doc_ids))
+        for i in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[i:i + chunk_size]
+            try:
+                result = self.collection.get(ids=chunk, include=["embeddings"])
+            except Exception as e:
+                logger.debug("[chroma] get_by_ids chunk of %d failed (%s) — per-id fallback",
+                             len(chunk), e)
+                for doc_id in chunk:
+                    one = self.get_by_id(doc_id)
+                    if one is not None:
+                        results_map[one["id"]] = one
+                continue
+            if result and result.get("ids"):
+                embeddings = result.get("embeddings")
+                for j, r_id in enumerate(result["ids"]):
+                    results_map[r_id] = {
+                        "id": r_id,
+                        "embedding": embeddings[j]
+                        if embeddings is not None and len(embeddings) > j else None,
+                    }
+        return results_map
+
     def delete_by_id(self, doc_id: str) -> bool:
         """Delete document by ID."""
         self.collection.delete(ids=[doc_id])

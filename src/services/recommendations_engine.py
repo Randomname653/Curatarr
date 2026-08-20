@@ -1252,6 +1252,19 @@ async def generate_deletion_proposals(
         _u = _cmp_vec(user_vector) if user_vector else None
         user_cmps = [_u] if _u is not None else []
     drop_cmp = _cmp_vec(drop_vector) if drop_vector else None
+
+    # Bulk-prefetch item embeddings: one Chroma get per 1000 ids instead of
+    # one round-trip per item (N+1 — thousands of sequential calls per run;
+    # spotted by Jules PR #14). Deliberately UNFILTERED: mirroring the
+    # skip-filters below just to shave the fetch list is a desync trap — a
+    # filter later edited in only one copy silently costs items their
+    # embedding (neutral 0.5 mismatch, invisible); over-fetching skipped
+    # items in bulk is effectively free.
+    _prefetched_embeddings = chroma_db.get_by_ids([
+        str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
+        for it in arr_items
+    ])
+
     for item in arr_items:
         title = item.get("title")
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
@@ -1350,7 +1363,7 @@ async def generate_deletion_proposals(
         # is mapped to a 0-1 mismatch AFTER the loop, calibrated against this
         # batch's own (anisotropic, narrow) cosine distribution.
         doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or title)
-        item_vector_res = chroma_db.get_by_id(doc_id)
+        item_vector_res = _prefetched_embeddings.get(doc_id)
         item_vec = item_vector_res.get("embedding") if item_vector_res else None
         cosine = None
         drop_cos = None
@@ -2229,6 +2242,13 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         _un = _normalize_vec(user_vector) if user_vector else None
         user_vecs_n = [_un] if _un is not None else []
 
+    # Bulk-prefetch embeddings — same N+1 rationale as the deletion loop.
+    _prefetched_embeddings = chroma_db.get_by_ids([
+        str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title") or "")
+        for it in items
+        if (it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
+    ])
+
     def _vector_score(item: dict):
         """Cosine similarity (user taste vector · item ChromaDB embedding),
         or None when either side is missing."""
@@ -2242,7 +2262,7 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         if not doc_id:
             return None
         try:
-            res = chroma_db.get_by_id(doc_id)
+            res = _prefetched_embeddings.get(doc_id)
             # Pass 74: ChromaDB embeddings are numpy arrays — check
             # ``is not None``, never truthiness. ``bool(array)`` raises
             # ValueError; the old ``if res.get("embedding")`` raised inside
