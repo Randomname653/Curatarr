@@ -548,7 +548,7 @@ select option { background: var(--bg2); }
       <div id="chat-input-area">
         <button id="new-chat-btn" onclick="newChat()" title="Clear conversation history (this thread only). Memories + library stay.">+ New</button>
         <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz.">🔄 Re-fetch</button>
-        <textarea id="chat-input" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
+        <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
         <button id="send-btn" onclick="sendMessage()">Send</button>
       </div>
     </div>
@@ -597,7 +597,7 @@ select option { background: var(--bg2); }
           </div>
           <button class="btn btn-secondary" onclick="regenerateRecs()">🔄 Regenerate</button>
           <div style="display:flex;margin-left:auto">
-            <input id="lib-search" placeholder="Search your library…"
+            <input id="lib-search" aria-label="Search your library" placeholder="Search your library…"
                    style="background:var(--bg3);border:1px solid var(--border);border-right:none;color:var(--text);padding:6px 10px;border-radius:var(--radius) 0 0 var(--radius);font-size:13px;width:210px"
                    onkeydown="if(event.key==='Enter')searchLibrary()"/>
             <button class="btn btn-secondary btn-sm" style="border-radius:0 var(--radius) var(--radius) 0" onclick="searchLibrary()" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own">🔍</button>
@@ -814,18 +814,18 @@ select option { background: var(--bg2); }
           <span style="font-size:12px;color:var(--text3)">Inspect enriched metadata profiles</span>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-          <select id="profile-cat" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+          <select id="profile-cat" aria-label="Profile category" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
             <option value="movie">Movies</option>
             <option value="show">TV Shows</option>
             <option value="anime">Anime</option>
             <option value="music">Music</option>
           </select>
-          <select id="profile-source" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+          <select id="profile-source" aria-label="Profile source" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
             <option value="all">All sources</option>
             <option value="watch_history">Watch history</option>
             <option value="arr">ARR libraries</option>
           </select>
-          <input id="profile-search" placeholder="Search title…" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px;width:180px">
+          <input id="profile-search" aria-label="Search profiles by title" placeholder="Search title…" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px;width:180px">
           <button class="btn btn-secondary btn-sm" onclick="loadProfiles()">Browse</button>
         </div>
         <div id="profile-browser"></div>
@@ -2062,7 +2062,7 @@ async function renderSynopsisBrowser(svc, tabId, opts = {}) {
       <span style="color:var(--text2);font-size:12px"><strong>${data.total}</strong> items</span>
       ${cacheBadge}
       <div style="display:flex;align-items:center;gap:6px">
-        <label style="color:var(--text3);font-size:12px">Sort:</label>
+        <label for="arr-sort-${svc}-${tabId}" style="color:var(--text3);font-size:12px">Sort:</label>
         <select id="arr-sort-${svc}-${tabId}" onchange="setBrowserSort('${svc}','${tabId}', this.value)"
                 style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
           <option value="size_desc"            ${state.sort === 'size_desc' ? 'selected' : ''}>Size ↓ (biggest first)</option>
