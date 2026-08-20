@@ -228,6 +228,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Outermost (added last): stamps security headers on every response,
+# CORS preflights included. Pure ASGI — SSE-safe (see src/middleware.py).
+from src.middleware import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 # ── ROUTERS ───────────────────────────────────────────────────────────────────
 
 from src.routers import (
