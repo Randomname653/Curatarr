@@ -670,14 +670,21 @@ async def compute_taste_vector_for_user(
         enrichment_ts = {}
         enrichment_ts_by_title = {}
         music_key_by_artist = {}   # artist title → enriched-doc cache key
-        for e in db.query(EnrichmentStatus).filter(
-            EnrichmentStatus.enriched == True,
-        ).all():
-            ts_val = e.enriched_at.isoformat() if e.enriched_at else "enriched"
-            enrichment_ts[e.plex_rating_key] = ts_val
-            enrichment_ts_by_title[e.title] = ts_val
-            if e.media_category == "music" and e.plex_rating_key:
-                music_key_by_artist[e.title] = e.plex_rating_key
+        # Column tuples, not full ORM objects: instantiating tens of
+        # thousands of EnrichmentStatus rows just to read four fields is
+        # ~17x slower and holds every object in memory (Jules measured
+        # 2.7s vs 0.16s at 50k rows).
+        for plex_rating_key, title, media_category, enriched_at in db.query(
+            EnrichmentStatus.plex_rating_key,
+            EnrichmentStatus.title,
+            EnrichmentStatus.media_category,
+            EnrichmentStatus.enriched_at,
+        ).filter(EnrichmentStatus.enriched == True).all():
+            ts_val = enriched_at.isoformat() if enriched_at else "enriched"
+            enrichment_ts[plex_rating_key] = ts_val
+            enrichment_ts_by_title[title] = ts_val
+            if media_category == "music" and plex_rating_key:
+                music_key_by_artist[title] = plex_rating_key
 
     # ── MUSIC: aggregate to ARTIST level before embedding ────────────────────
     # Row-level selection made the music vector a "last few weeks" vector:
