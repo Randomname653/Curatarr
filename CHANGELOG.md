@@ -52,6 +52,45 @@ the code, then rebuilt locally instead of merged 1:1):
 The PRs themselves will be closed; the `.jules/`-notes files from the
 PRs were intentionally not taken over.
 
+**Three more Jules branches triaged and adopted adapted** (found on the
+remote after the first pass; all were 1 commit ahead of scrubbed main,
+no PII):
+
+* **Taste-engine ORM optimization:** enrichment-timestamp loading now
+  queries 4 columns as tuples instead of instantiating full
+  `EnrichmentStatus` ORM objects (~17x faster at 50k rows, far less
+  memory).
+* **Security headers:** new `src/middleware.py` stamps
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` (no iframes
+  in the frontend) and `Referrer-Policy: same-origin` on every response.
+  Adaptation: pure ASGI instead of `BaseHTTPMiddleware` (the app streams
+  SSE — chat + task monitor), HSTS dropped (HTTP-on-LAN app; browsers
+  ignore it and it could bite a future TLS setup), deprecated
+  `X-XSS-Protection` dropped.
+* **More a11y:** aria-labels for chat textarea, library-search input,
+  profile-browser selects/search; the Synopsis-Browser sort label got its
+  `for` attribute.
+
+**Public-readiness sweep fixes** (5-scanner + critic audit over the
+tracked tree):
+
+* README: prominent deletion warning/as-is disclaimer after the tagline;
+  License section now states AGPL-3.0 and links LICENSE +
+  THIRD_PARTY_LICENSES; stale `nomic-embed-text` default corrected;
+  Configuration section points at the new `.env.example`.
+* `.env.example` NEW — documents every real config var with defaults
+  (`.gitignore` got the `!.env.example` negation; the old `.env.*`
+  pattern would have ignored it).
+* `THIRD_PARTY_LICENSES.md`: data-sources section (Anime-Lists,
+  manami-project, live APIs).
+* Stale placeholder User-Agent in `music_metadata.py`
+  (`github.com/local/curatarr` → real repo URL).
+* `tests/test_embed_service.py`: two stale expectations still asserted
+  the LEGACY default profile — the 2026-08-18 ballast cleanup made a
+  profile-less boot default to the V2 stack on purpose; checks updated
+  (18/18 green).
+* ROADMAP heading de-jargonized ("next sessions" → "upcoming").
+
 ---
 
 ## Session — `main` (2026-08): curated search, 4-pillar judge, custodian visibility, data integrity, SoulSync ports

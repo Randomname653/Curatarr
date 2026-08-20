@@ -6,6 +6,8 @@
 # ==========================================
 .env
 .env.*
+# The template stays tracked (docs, no secrets) — negation must follow .env.*
+!.env.example
 *.pem
 *.key
 secret.key
