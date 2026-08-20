@@ -411,7 +411,7 @@ select option { background: var(--bg2); }
 <div id="msg-panel">
   <div class="mp-header">
     <span>Notifications</span>
-    <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px" onclick="toggleMsgPanel()">×</button>
+    <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px" onclick="toggleMsgPanel()" aria-label="Close notifications">×</button>
   </div>
   <div id="msg-list"><div id="msg-empty">No new notifications</div></div>
 </div>
@@ -435,8 +435,8 @@ select option { background: var(--bg2); }
     <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>
     Game mode
   </div>
-  <button id="msg-bell" onclick="toggleMsgPanel()" title="Curator messages">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+  <button id="msg-bell" onclick="toggleMsgPanel()" title="Curator messages" aria-label="Curator messages">
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <div id="msg-badge"></div>
   </button>
   <div id="user-pill">
@@ -600,7 +600,7 @@ select option { background: var(--bg2); }
             <input id="lib-search" placeholder="Search your library…"
                    style="background:var(--bg3);border:1px solid var(--border);border-right:none;color:var(--text);padding:6px 10px;border-radius:var(--radius) 0 0 var(--radius);font-size:13px;width:210px"
                    onkeydown="if(event.key==='Enter')searchLibrary()"/>
-            <button class="btn btn-secondary btn-sm" style="border-radius:0 var(--radius) var(--radius) 0" onclick="searchLibrary()" title="Semantic search over what you own — describe a mood, theme or 'like X but…'">🔍</button>
+            <button class="btn btn-secondary btn-sm" style="border-radius:0 var(--radius) var(--radius) 0" onclick="searchLibrary()" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own">🔍</button>
           </div>
           <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">📚 you own it, still unwatched · ✨ not in your library, worth acquiring</span>
         </div>
