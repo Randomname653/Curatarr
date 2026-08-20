@@ -1,4 +1,3 @@
-import pytest
 from src.schemas.chat import ChatMessage, DiscussContext
 def test_discuss_context():
     dc = DiscussContext(title="Test", pitch="Because.")

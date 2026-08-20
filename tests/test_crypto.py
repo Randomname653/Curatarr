@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-import pytest
 from src.crypto.encryptor import AesEncryptor
 
 def pbkdf2_sha256_reference(password: str, salt: bytes, iterations: int, dklen: int) -> bytes:
