@@ -1,6 +1,6 @@
 # Curatarr — Roadmap
 
-_Last updated: 2026-08-19. This is the working plan, not a promise — items
+_Last updated: 2026-08-20. This is the working plan, not a promise — items
 move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.md)._
 
 ---

@@ -131,6 +131,11 @@ tests/benchmarks/
 # original queries) — the suite stays local, out of the public tree.
 tests/test_search_fixtures.py
 
+# The full session-level development notebook (the pre-public CHANGELOG).
+# Public CHANGELOG.md is the condensed release history; THIS is where the
+# detailed per-session log continues to be written.
+DEVLOG.md
+
 # 9. Bundled SQLite tooling (keep on disk, not in repo)
 # ==========================================
 # Manually-downloaded sqlite CLI binaries kept in the repo root for

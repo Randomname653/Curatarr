@@ -1,4 +1,4 @@
-# Curatarr 1.0
+# Curatarr
 
 > **A personal AI media curator for your Plex + *arr stack.**
 > Watches what you actually watch, learns your taste, and acts on it —
@@ -20,103 +20,160 @@ Curatarr sits between Plex, your *arr services (Radarr / Sonarr / Lidarr),
 and a local Ollama LLM. It continuously builds a per-user **taste vector**
 out of your real watch history, then uses that vector to:
 
-- **Recommend** new movies / shows / anime / music — either from your
-  library or from external discovery — with a written pitch per item that
-  explains *why* you'd like it.
-- **Propose deletions** through a 4-pillar judge (owner taste, household
-  use, custodianship, resonance) that rules KEEP / CUT / STAGNANT per
-  title from *verified* evidence — with a written pitch, a discussion
-  thread per proposal, and automatic protection records for what it
-  decides to keep. Titles without enrichment data are skipped, never
-  judged blind.
-- **Search your library semantically** — "like Gleipnir but darker, more
-  fetish dynamics, mature tone" resolves the anchor, scores every
-  constraint against real metadata tags (multi-vector theme facets give
-  contrast queries resolution), cites its evidence per hit, and says
-  honestly when nothing carries the full profile.
+- **Recommend** new movies / shows / anime / music — from your library or
+  from external discovery — with a written pitch per item that explains
+  *why* you'd like it.
+- **Propose deletions** through a 4-pillar judge (taste, household use,
+  custodianship, resonance) that rules KEEP / CUT / STAGNANT per title
+  from *verified* evidence — with a written pitch, a discussion thread
+  per proposal, and automatic protection records for what it decides to
+  keep. Titles without enrichment data are skipped, never judged blind.
+- **Search your library semantically** — "like X but darker, more mature"
+  resolves the anchor title, scores every constraint against real
+  metadata tags, cites its evidence per hit, and says honestly when
+  nothing in your library carries the full profile.
 - **Push the results where you watch**: per-user "Curatarr Recommended"
-  Plex playlists (reconciled in place, not recreated) and rotating
+  Plex playlists (updated in place, not recreated) and rotating
   "Curatarr ·" collection shelves designed by the curator.
 - **Send proactive messages** when the curator notices something worth
-  saying — a new season for an anime you binged, a high-confidence
-  pick for an evening, a check-in after a long break.
+  saying — a new season for an anime you binged, a high-confidence pick
+  for an evening, a check-in after a long break.
 - **Hold a conversation** about any of the above. Free chat, deletion
-  discussion, and proposal discussion each have their own thread so
+  discussion, and proposal discussion each keep their own thread so
   topics don't bleed into each other.
 
-It is single-tenant by design (one Plex server, one or more Plex users on
-it), works fully offline once configured, and stores everything in local
-SQLite + ChromaDB.
+Single-tenant by design (one Plex server, one or more Plex users on it),
+fully offline once configured, everything stored in local SQLite +
+ChromaDB.
+
+## Feature highlights
+
+- **Local LLM only.** No hosted model ever sees a prompt. Bring your own
+  Ollama with two roles — a *curator* model (chat, pitches, deletion
+  reasoning) and a *summariser* model (metadata enrichment, memory
+  extraction); the setup wizard bakes both system prompts into local
+  model tags. An optional third bake serves only the deletion pipeline
+  when benchmarks favour a different model there.
+- **A grounded, learning curator.** Every judgment reasons from verified
+  data — real creators, plot, themes, awards, Wikipedia-sourced cultural
+  significance — never the model's own (often wrong) memory. Keep-feedback
+  becomes standing *considerations* that softly protect similar titles in
+  future proposals. Same-named works are disambiguated by year and
+  MusicBrainz id, and the curator knows what you've actually watched.
+- **Multi-user.** Every play is attributed to its Plex account; each user
+  gets their own taste vector, recommendations, playlists, and chat. The
+  first user is the admin and curates the shared library; everyone else
+  gets personal features without the destructive surfaces.
+- **A data custodian instead of a button zoo.** Debt-based maintenance
+  (anacron-style): ~20 tasks each carry a cadence and catch up whenever
+  the machine is on — enrichment cycles, metadata walkers, taste
+  recompute, playlist pushes, cache refresh, profile audits. Every job is
+  live in the Activity view with real progress.
+- **Self-healing library knowledge.** The profile audit walks both the
+  cache and the vector corpus: stale or wrong-entity profiles requeue,
+  orphaned documents rebuild deterministically from cached data, corrupt
+  id clusters re-resolve — and a mass-staleness guard keeps an
+  unreachable service from being mistaken for a deleted library. When two
+  same-named works collide, the **Fix match** button pins the correct
+  identity permanently.
+- **Game-mode.** When a known game process is running, the LLMs are
+  evicted from VRAM and only API pre-fetching continues; the full
+  pipeline resumes on its own when the game exits.
+- **Deep metadata enrichment.** Plex / *arr items are tied to TMDB, OMDb,
+  AniList, MusicBrainz, Last.fm and Spotify metadata with cache
+  versioning, rule-based fallbacks, not-findable sentinels and per-state
+  progress. A music pipeline imports Spotify listening exports, matches
+  them to Plex tracks, resolves MusicBrainz ids and fills genres.
+- **Library reclassification.** Audits every Sonarr series against the
+  rules for its true category (anime vs. Western animation vs. Asian
+  live-action) and moves the mis-filed ones through the Sonarr API —
+  without re-enriching them.
 
 ---
 
-## Highlights
+## Requirements
 
-- **Local LLM only.** Curatarr never sends prompts to a hosted model.
-  Bring your own Ollama with two roles: a *curator* model (for chat,
-  pitches, deletion reasoning) and a *summariser* model (for metadata
-  enrichment + memory extraction). The setup wizard bakes both system
-  prompts into local model tags so daily use is a single `ollama` pull.
-- **A grounded, learning curator.** Every deletion pitch, discussion,
-  reevaluation, recommendation and chat reasons from *verified* data — real
-  creator / plot / themes, OMDb writer + awards, and a Wikipedia-sourced
-  cultural **significance** for the "is this archive-worthy?" question — never
-  the model's own (often wrong) memory. It **learns your keep-feedback**: tell it
-  once that you value a franchise, a partner favourite, or a documentary, and
-  that *consideration* softly protects similar titles in future proposals. It
-  resolves the **right same-named work** (year + MusicBrainz id disambiguation,
-  so *Lupin III* isn't judged as a spin-off), and it knows what you've actually
-  **watched** (from Plex history) — so an unseen title you're curious about isn't
-  treated like proven dead weight.
-- **Multi-user attribution.** Plex `accountID` is tracked on every play.
-  Each Plex user gets their own taste vector, their own recommendations,
-  their own playlists, their own chat thread.
-- **Two-bake model split.** Chat/persona and batch deletion pitches run on
-  separately baked model tags (benchmarked head-to-head: one model wins
-  conversation, another wins the pipeline) — with residency-guarded VRAM
-  eviction so the two never thrash the GPU.
-- **A data custodian instead of a button zoo.** Debt-based maintenance
-  (anacron-style): every task carries a cadence and catches up whenever
-  the PC is on — enrichment cycles, OMDb/Wikipedia/reception walkers,
-  taste recompute, playlist pushes, facet indexing, raw-cache refresh,
-  profile audits. Every job is live in the **Activity** view with real
-  progress, and the profile audit self-heals stale entities: zombie
-  profiles requeue or rebuild, corrupt id clusters re-resolve, and an
-  implausible-mass-staleness guard keeps an unreachable service from
-  being mistaken for a deleted library.
-- **Durable entity pins.** When two same-named works collide (it happens —
-  two "Good Boy" films, both in the library), the **Fix match** button
-  pins the correct identity; the pin survives rescans and re-enrichment
-  rebuilds on it.
-- **Enrichment pipeline** that ties Plex / Radarr / Sonarr / Lidarr items
-  to TMDB / OMDb / AniList / MusicBrainz / Last.fm / Spotify metadata
-  with cache versioning, rule-based fallbacks, not-findable sentinels,
-  and per-state progress tracking surfaced in the UI.
-- **Music pipeline** that imports Spotify exports, matches them to local
-  Plex tracks (Phase 1), resolves MusicBrainz MBIDs (Phase 1.4), fills
-  genres from Spotify (Phase 1.5) and Last.fm (Phase 2), and feeds the
-  resulting metadata into the music taste vector.
-- **Game-mode** suspension: when a known game process is running, the
-  curator + summariser models are evicted from VRAM and only API
-  pre-fetching (no LLM) continues. The full pipeline resumes on its own
-  when the game exits.
-- **Per-library unified breakdown panel** (Pass 96) shared by the Library
-  Configuration and Enrichment Status pages: same numbers, same
-  explainers, hover any count for its source. No more cryptic
-  percentages.
-- **Standalone runners** for the heavy music phases so a multi-day
-  backlog can be cleared from a separate process while the in-app
-  enrichment keeps running.
-- **Library reclassification** (Manage → 🔀 Reclassify, admin). Audits every
-  Sonarr series against the rules for its *true* category — anime = on AniDB
-  **or** Asian-origin **and** animated — and moves the mis-filed ones: Western
-  cartoons + Japanese live-action (tokusatsu, dramas) out of the Anime
-  library, real anime back in. Moves go through the Sonarr editor API and
-  re-file each item inside Curatarr **without re-enriching** it.
-- **Admin-vs-user roles.** The first Plex user is the admin and curates the
-  shared library (deletions, library mapping, orphaned recovery, reclassify);
-  every other user gets their own taste / recs / chat but no access to the
-  shared-curation surfaces.
+- **Python 3.11+**
+- **Ollama** running locally (default `http://localhost:11434`) with at
+  least one model pulled per role. Recommended starting points:
+  - Curator: a 20B–32B reasoning-capable model (e.g. `qwen3.6:27b`).
+  - Summariser: a smaller, faster model (e.g. `granite4.1:8b`).
+  - Embeddings: `nomic-embed-text-v2-moe` (runs on CPU by design — the
+    GPU stays free for the curator).
+- **Plex Media Server** with an admin token.
+- **Radarr / Sonarr / Lidarr** — optional, but they unlock deletion
+  proposals and the library breakdown for their categories.
+- **External metadata keys** (all optional except TMDB): TMDB (movies /
+  shows), OMDb (extra ratings + awards), Last.fm (music genres),
+  Spotify Client ID + Secret (music genres, no user login). AniList and
+  MusicBrainz need no keys.
+
+A GPU is strongly recommended for the curator model; the summariser runs
+comfortably on a single-GPU desktop (12 GB+ VRAM).
+
+## Quick start
+
+**Windows**
+
+```bat
+git clone https://github.com/Randomname653/Curatarr.git curatarr
+cd curatarr
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+
+:: Ollama must be running (ollama serve), then:
+start.bat
+```
+
+`start.bat` is the dev entry: live console, hot reload, and it self-heals
+missing dependencies and Ollama model bakes. For background operation,
+**`start_tray.bat`** runs Curatarr as a tray icon with autostart toggle,
+log access and graceful shutdown; output goes to `data\logs\curatarr.log`.
+
+**Linux / macOS**
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+python build_models.py    # first run: bake the curator + summariser tags
+uvicorn src.main:app --host 0.0.0.0 --port 8000
+```
+
+Open `http://localhost:8000`. The setup wizard walks you through Plex
+(PIN-based OAuth), Ollama models, *arr connections, external API keys,
+Plex-library-to-category mapping, and the admin user. The first Plex sync
+runs on startup; enrichment queues automatically from there.
+
+## Configuration
+
+All persistent settings live in `.env` (created by the setup wizard, but
+editable). [`.env.example`](.env.example) documents the complete list
+with defaults; the most-used fields:
+
+| Env var | What it does |
+|---|---|
+| `PLEX_URL`, `PLEX_TOKEN` | Plex server URL + admin token |
+| `OLLAMA_ENDPOINT` | Default `http://localhost:11434` |
+| `BASE_CURATOR_MODEL` | Model baked into the `curatarr-curator` tag |
+| `BASE_SUMMARIZER_MODEL` | Model baked into the `curatarr-summarizer` tag |
+| `EMBEDDING_MODEL` | Default `nomic-embed-text-v2-moe` |
+| `RADARR_URL`, `RADARR_API_KEY` | (optional) Radarr connection |
+| `SONARR_URL`, `SONARR_API_KEY` | (optional) Sonarr connection |
+| `LIDARR_URL`, `LIDARR_API_KEY` | (optional) Lidarr connection |
+| `TMDB_API_KEY` | (recommended) TMDB v3 key |
+| `OMDB_API_KEY` | (optional) free key from omdbapi.com |
+| `LASTFM_API_KEY` | (optional) Last.fm API key |
+| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | (optional) Spotify Client Credentials |
+| `SYNC_INTERVAL_HOURS` | Default 24 — Plex history pull cadence |
+| `ENRICHMENT_TTL_DAYS` | Default 90 — how long an enriched profile stays fresh |
+| `EXTRA_GAME_PROCESSES` | Comma-separated `.exe` names that pause the LLM |
+| `JWT_SECRET` | Auto-generated; never commit it |
+
+The setup wizard re-writes `.env` whenever you save changes via Settings,
+so manual edits are safe but the wizard is the canonical editor.
 
 ---
 
@@ -148,278 +205,96 @@ SQLite + ChromaDB.
                             └──────────────────────────────┘
 ```
 
-- **FastAPI + uvicorn** serves the single-page frontend (`frontend/index.html`)
-  plus a JSON API. SSE is used for live task progress.
+- **FastAPI + uvicorn** serve the single-page frontend
+  (`frontend/index.html`, vanilla JS, no build step) plus a JSON API;
+  SSE streams live task progress.
 - **SQLAlchemy + SQLite** in WAL mode for transactional data
-  (`data/curatarr.db`).
-- **ChromaDB** for vector embeddings of enriched items
-  (`data/chromadb/`): one document per title in `media_knowledge_v2`
-  plus per-theme facet points in `media_facets_v1` (multi-vector
-  retrieval for contrast queries).
-- **A second SQLite DB** for the enrichment cache (`data/cache/enrichment.db`)
-  versioned by `_CACHE_VERSION` so logic bumps invalidate old entries
-  cleanly; a Cache-Inventory panel in the UI shows per-source
-  rows/live/stale/MB.
-- **APScheduler + the Data Custodian** drive maintenance: a 30-minute
-  custodian tick runs whatever is overdue (debt-based, catches up after
+  (`data/curatarr.db`), plus a second SQLite DB for the versioned
+  enrichment cache (`data/cache/enrichment.db`) — a Cache-Inventory
+  panel in the UI shows per-source rows/live/stale/size.
+- **ChromaDB** for vector embeddings (`data/chromadb/`): one document
+  per title plus per-theme facet points for multi-vector retrieval.
+- **APScheduler + the data custodian** drive maintenance: a 30-minute
+  tick runs whatever is overdue (debt-based, catches up after
   downtime), yielding to the curator and pausing LLM work while a game
   holds the GPU.
-
----
-
-## Requirements
-
-- **Python 3.11+**
-- **Ollama** running locally (default `http://localhost:11434`) with at
-  least one model pulled per role. Recommended starting points:
-  - Curator: a 20B–32B reasoning-capable model (e.g. `qwen3.6:27b`,
-    `gpt-oss:20b`, `deepseek-r1-abliterated:32b`).
-  - Summariser: a smaller, faster model (e.g. `dolphin3`,
-    `gpt-oss:20b`, `deepseek-r1-abliterated:8b`).
-  - Embeddings: `nomic-embed-text-v2-moe` (CPU-only by design — the GPU
-    stays free for the curator).
-- **Plex Media Server** with an admin token.
-- **Radarr / Sonarr / Lidarr** are optional but unlock the deletion
-  proposals + library-config breakdown for their respective categories.
-- **External metadata keys** (all optional except TMDB):
-  - **TMDB API key** — required for movies / shows.
-  - **OMDb API key** — optional, fills in ratings TMDB doesn't have.
-  - **Last.fm API key** — optional, music genre fallback.
-  - **Spotify Client ID + Secret** — optional, music genre primary
-    source via Client Credentials flow (no user login).
-  - AniList + MusicBrainz are used without keys.
-
-GPU is strongly recommended for the curator model. The summariser model
-runs comfortably on a single-GPU desktop (12 GB+ VRAM).
-
----
-
-## Quick start (Windows)
-
-```bat
-:: 1. Clone and enter the repo
-git clone <repo-url> curatarr
-cd curatarr
-
-:: 2. Create a venv (one-time)
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-
-:: 3. Start Ollama in another terminal
-ollama serve
-
-:: 4. Launch Curatarr — the bat file activates the venv, installs any
-::    missing deps, bakes Ollama models if not present, opens the browser.
-start.bat
-```
-
-### Run in the background (system tray, no console)
-
-Double-click **`start_tray.bat`** — Curatarr runs as a tray icon (the amber
-curation eye) with no console window. (The bat pins the same Python
-interpreter as `start.bat`; double-clicking `curatarr_tray.pyw` directly goes
-through the Windows py-launcher, which picks the NEWEST installed Python —
-on a multi-Python box that can be an interpreter without the dependencies.) The tray menu offers *Open Curatarr*,
-*Open logs*, *Start with Windows* (autostart toggle), *Restart* and
-*Shutdown* (graceful — same teardown as Ctrl+C). All output goes to
-`data\logs\curatarr.log`. Run `python scripts\make_icon.py` once to render
-`assets\curatarr.ico` for the autostart shortcut.
-
-`start.bat` remains the **dev entry**: live console, hot reload on `src\`
-edits, and it self-heals missing dependencies and Ollama models. If the tray
-icon disappears right after starting, check `data\logs\curatarr.log` — or run
-`start.bat` for a live console. Note: the server binds `HOST`/`PORT` from
-`.env` in tray mode (defaults `0.0.0.0:8000`); browser-facing settings
-(`PLEX_REDIRECT_URI`, `CORS_ORIGINS`) stay localhost-based and must be
-overridden together if you change `PORT`.
-
-On Linux / macOS:
-
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# First run: build the curator + summariser Ollama tags
-python build_models.py
-
-# Run the server
-uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Open `http://localhost:8000`. The setup wizard walks you through:
-
-1. **Plex** — PIN-based OAuth (no password needed).
-2. **Ollama** — endpoint + base curator + summariser models.
-3. ***arrs** — URL + API key per service you use (skip what you don't).
-4. **External APIs** — TMDB / OMDb / Last.fm / Spotify keys (pasted
-   into `.env`).
-5. **Library mapping** — assign each Plex section to a category
-   (movie / show / anime / music / ignore).
-6. **Admin user** — sets your username + password.
-
-After the wizard you'll see the dashboard. The first Plex sync runs on
-startup; enrichment is queued automatically from there.
-
----
-
-## Configuration
-
-All persistent settings live in `.env` (created by the setup wizard, but
-editable). [`.env.example`](.env.example) documents the complete list
-with defaults; the most-used fields:
-
-| Env var | What it does |
-|---|---|
-| `PLEX_URL`, `PLEX_TOKEN` | Plex server URL + admin token |
-| `OLLAMA_ENDPOINT` | Default `http://localhost:11434` |
-| `BASE_CURATOR_MODEL` | Model name pulled into `curatarr-curator` tag |
-| `BASE_SUMMARIZER_MODEL` | Model name pulled into `curatarr-summarizer` tag |
-| `EMBEDDING_MODEL` | Default `nomic-embed-text-v2-moe` |
-| `RADARR_URL`, `RADARR_API_KEY` | (optional) Radarr connection |
-| `SONARR_URL`, `SONARR_API_KEY` | (optional) Sonarr connection |
-| `LIDARR_URL`, `LIDARR_API_KEY` | (optional) Lidarr connection |
-| `TMDB_API_KEY` | (recommended) TMDB v3 key |
-| `OMDB_API_KEY` | (optional) free key from omdbapi.com |
-| `LASTFM_API_KEY` | (optional) Last.fm api key |
-| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | (optional) Spotify Client Credentials |
-| `SYNC_INTERVAL_HOURS` | Default 24 — Plex history pull cadence |
-| `ENRICHMENT_TTL_DAYS` | Default 90 — how long an enriched profile stays fresh |
-| `ENRICH_PARALLEL_SLOTS` | 0 = auto, else hard cap on concurrent enrichment workers |
-| `EXTRA_GAME_PROCESSES` | Comma-separated `.exe` names that should pause the LLM |
-| `JWT_SECRET` | Auto-generated; do not commit |
-
-The setup wizard re-writes `.env` whenever you save changes via Settings
-→ Library, so manual edits are safe but the wizard is the canonical
-editor for most users.
-
----
 
 ## How the moving parts fit
 
 ### 1. Plex sync (`src/services/plex_sync.py`)
-- Pulls `/status/sessions/history/all` with pagination, attributes each
-  row to a Plex `accountID`, dedupes by `(plex_item_id, viewed_at)`,
-  detects binges, and writes to `watch_history`.
-- Re-attribution: an admin can run "Re-attribute history" from Settings
-  → Maintenance if the Plex user mapping changes.
+Pulls watch history with pagination, attributes each row to a Plex
+account, dedupes, detects binges, and writes to `watch_history`. An
+admin can re-attribute history if the Plex user mapping changes.
 
 ### 2. Enrichment pipeline (`src/routers/enrichment.py`, `src/services/media_enricher.py`)
-- **Producer/consumer** asyncio queue. Producer fetches raw metadata
-  from TMDB / AniList / OMDb / MusicBrainz / Last.fm, writes raw to the
-  cache and a sentinel to `EnrichmentStatus`. Consumer runs the
-  summariser LLM, generates the embedding, writes ChromaDB, and updates
-  the `EnrichmentStatus` row to one of six mutually-exclusive states:
-  - **LLM-polished** — full summary written.
-  - **Rule-based** — fallback profile, LLM upgrade pending.
-  - **Awaiting LLM polish** — game-mode cached, LLM paused.
-  - **Not findable** — every API missed, 3-day TTL sentinel.
-  - **Processing error** — pipeline crashed mid-item.
-  - **Never processed** — item never reached the queue.
-- The unified per-library breakdown panel surfaces all six states with
-  explainers and denominators (Pass 96).
+Producer/consumer asyncio queue. The producer fetches raw metadata from
+TMDB / AniList / OMDb / MusicBrainz / Last.fm; the consumer runs the
+summariser LLM, generates the embedding, writes ChromaDB, and tracks one
+of six mutually-exclusive states per item (LLM-polished, rule-based,
+awaiting polish, not findable, error, never processed). A unified
+per-library breakdown panel surfaces all six with explainers.
 
 ### 3. Music pipeline (`src/services/music_matcher.py`)
-Sequenced phases, all idempotent and resumable:
-- **Phase 1 — Plex Match.** Imported Spotify plays whose track exists
-  in your Plex Music library get their `plex_item_id` rewritten from
-  `spotify:track:…` to the Plex rating key.
-- **Phase 1.4 — MBID Resolve.** Distinct still-unmatched Spotify artists
-  get a MusicBrainz MBID written via the throttled MB API (1 req/s).
-- **Phase 1.5 — Spotify genres.** Genres for unmatched plays are filled
-  via Spotify's Client Credentials API (no user login).
-- **Phase 2 — Last.fm fallback.** Anything Spotify couldn't resolve
-  gets a final try against Last.fm.
-- **Standalone runners** (`scripts/music_enricher.py`,
-  `scripts/mbid_speedrunner.py`) bypass the daily batch cap and use
-  the same `force_set_state` mutex so they can't collide with the
-  in-app pipeline.
+Sequenced, idempotent, resumable phases: match imported Spotify plays to
+Plex tracks → resolve MusicBrainz MBIDs (throttled) → fill genres from
+Spotify → Last.fm fallback. Standalone runners
+(`scripts/music_enricher.py`, `scripts/mbid_speedrunner.py`) clear
+multi-day backlogs from a separate process without colliding with the
+in-app pipeline.
 
 ### 4. Taste engine (`src/services/taste_engine.py`)
-- Reads watch history, enriched profiles, episodic memories, explicit
-  feedback. Produces a per-user/per-category embedding centroid
-  (`TasteVectorEntry` + `EncryptedTasteVector`), plus a written summary
-  line the curator uses in every prompt.
-- Recomputes on demand or after `recs_invalidate_at` is bumped (any
-  Plex sync that wrote rows, any enrichment that finished items).
+Reads watch history, enriched profiles, episodic memories and explicit
+feedback; produces per-user/per-category embedding centroids (with
+multi-centroid support for genuinely multi-modal taste) plus a written
+summary the curator uses in every prompt.
 
 ### 5. Recommendations (`src/services/recommendations_engine.py`)
-- Vector-similarity search over ChromaDB scoped to the current category
-  (`domain` metadata filter prevents cross-category bleed).
-- Optional ARR library scope (recommend only items already in
-  Radarr/Sonarr/Lidarr) or discovery scope (open-ended).
-- Each rec is rendered into a `CachedRecommendation` row with a written
-  pitch from the curator model.
+Vector-similarity search over ChromaDB scoped to the current category,
+with library scope (own it already) or discovery scope (worth
+acquiring). Each recommendation carries a written pitch from the curator.
 
-### 6. Deletion proposals (`src/routers/recommendations.py`)
-- Heuristic + taste-vector affinity score per ARR item. Items below
-  threshold are proposed for deletion with a written reason and
-  storage-saved figure.
-- Discussion thread per proposal (`thread_id="deletion_proposal:{id}"`)
-  isolates that conversation from free chat. Approve / reject / discuss
-  all write to `CuratorResolutionLog` (audit trail) and any decision
-  feeds back into the taste vector.
-- Each pitch + discussion is grounded in **verified data** — real creator /
-  plot / themes, OMDb writer + awards, and an on-demand Wikipedia **significance**
-  — and shows the candidate's **watch status** (from Plex history). Your stored
-  keep-feedback (kept franchises, partner favourites, cultural/archive value)
-  softly pulls similar titles off the list: the curator *applies* your standing
-  preferences to NEW proposals, never as a hard veto.
+### 6. Deletion proposals (`src/routers/recommendations.py`, `src/services/pillars.py`)
+Candidates are pre-ranked by score (taste mismatch, size, ratings,
+listening depth, learned considerations) — but the verdict belongs to
+the 4-pillar judge, ruling from verified evidence + significance +
+reception + household watch state against a constitution the operator's
+learned principles extend. KEEPs persist as protections; thin-evidence
+titles skip the judge entirely. Every proposal has its own discussion
+thread, and every decision feeds back into the taste vector.
 
 ### 7. Proactive messages (`src/services/proactive_messages.py`)
-- The curator polls for triggers (new season for a binged anime, idle
-  user with strong picks ready, etc.), writes `ProactiveMessage` rows,
-  and the frontend shows a badge until the user reads it. Per-trigger
-  toggles in Settings → Notifications.
+Trigger polling (new season for a binged show, strong picks waiting,
+long-break check-ins) writes inbox messages with per-trigger toggles in
+Settings.
 
 ### 8. Episodic memory (`src/services/episodic_memory.py`)
-- Every chat extraction runs a small LLM extraction pass that captures
-  explicit statements ("I love X"), feedback ("don't recommend
-  romance"), and protection intents ("keep this even if the score
-  drops"). Memories are scored, deduped, and injected into every
-  curator prompt as a `[MEMORIES]` block.
-- A **standing preference** with no specific title (e.g. "I value historical
-  documentaries") finds conflicts by *semantic similarity*, so restating it
-  reinforces it instead of quietly decaying unrelated memories. Keep/value
-  memories drive the deletion **considerations** that protect similar titles in
-  future proposals — feedback the curator *learns from*, not just stores.
+A small extraction pass over every chat captures statements, feedback
+and protection intents; memories are scored, deduped and injected into
+every curator prompt. Standing preferences match conflicts by semantic
+similarity, so restating one reinforces it, and keep/value memories
+drive the deletion considerations.
 
-### 9. Scheduler + Data Custodian (`src/services/scheduler.py`, `src/services/data_custodian.py`)
-The scheduler keeps a handful of interval jobs (proactive messages,
-hourly source upgrades, the 30-second game watcher). Everything
-maintenance-shaped lives in the **custodian**: ~20 tasks, each with a
-cadence and a persisted last-run stamp; a tick every 30 minutes runs
-whatever is overdue, one at a time — so a machine that was off simply
-catches up (debt-based, anacron-style). Partial tasks stay due and
-continue next tick. Every task is visible in the Activity view with
-real progress; LLM tasks pause while a game holds the GPU.
+### 9. Scheduler + data custodian (`src/services/scheduler.py`, `src/services/data_custodian.py`)
+A few interval jobs (proactive messages, the game watcher) plus the
+custodian: ~20 maintenance tasks with cadences and persisted last-run
+stamps, executed one at a time whenever overdue. Partial tasks stay due
+and continue next tick; everything reports live progress.
 
 ### 10. Curated search (`src/services/semantic_search.py`, `src/services/facet_index.py`)
-The library search parses the query once with the LLM
-(anchor / constraints), then scores deterministically: raw enrichment
-tags are the truth layer (lexical-first, concept/tone families,
-negation, demographic and comedy guards), theme facets give contrast
-queries multi-vector resolution, every hit carries per-constraint
-evidence notes, and a coverage banner says when no title carries the
-full profile.
+The LLM parses the query once (anchor / constraints); scoring is
+deterministic against raw enrichment tags (lexical-first, concept/tone
+families, negation, demographic and comedy guards). Theme facets give
+contrast queries multi-vector resolution; every hit carries
+per-constraint evidence notes and a coverage banner says when no title
+carries the full profile.
 
-### 11. The 4-pillar judge (`src/services/pillars.py`)
-Deletion candidates are pre-ranked by score (taste-vector mismatch,
-size outliers, ratings, listening depth, drop-centroid similarity,
-learned considerations) — but the verdict is the judge's: evidence
-facts from verified data + Wikipedia significance + community
-reception + household watch state, ruled against a constitution the
-owner's learned principles extend. KEEPs persist as protections;
-thin-evidence titles skip the judge entirely.
-
-### 12. Corpus hygiene (`src/services/corpus_repair.py`, audit in `src/routers/enrichment.py`)
-The profile audit walks both the cache AND the vector corpus: incomplete
-or wrong-entity profiles requeue; zombie docs (no live profile row)
-requeue or rebuild deterministically from cached prefetch data; corrupt
-external-id clusters re-resolve; owner **Fix match** pins override
-everything and survive rescans. An implausible-mass-staleness guard
-keeps infrastructure outages from being mistaken for mass deletions.
+### 11. Corpus hygiene (`src/services/corpus_repair.py`, audit in `src/routers/enrichment.py`)
+The profile audit walks both the cache and the vector corpus:
+incomplete or wrong-entity profiles requeue; orphaned documents rebuild
+deterministically from cached prefetch data; corrupt external-id
+clusters re-resolve; operator Fix-match pins override everything and
+survive rescans. A mass-staleness guard keeps infrastructure outages
+from being mistaken for mass deletions.
 
 ---
 
@@ -430,13 +305,13 @@ keeps infrastructure outages from being mistaken for mass deletions.
 | Re-run Plex sync now | History → "Force sync" |
 | Re-run enrichment | Knowledge Base → "Start enrichment" |
 | Recompute taste vectors | Knowledge Base → "Recompute taste vectors" |
-| Audit + requeue stale enrichments | Knowledge Base → "🔍 Audit metadata" |
+| Audit + self-heal metadata | Knowledge Base → "🔍 Audit metadata" |
 | Browse / add via ARR | Sidebar → 🎬 Movies / 📺 TV / 🎵 Music |
 | Review deletions (admin) | Sidebar → "Deletions" |
 | Reclassify anime ↔ TV (admin) | Sidebar → Manage → "🔀 Reclassify" |
 | View live tasks | Sidebar → "Activity" |
-| Per-library breakdown | Library Configuration page (or Enrichment Status page) |
-| Spotify backlog (artists not in Lidarr) | 🎵 Music → "Spotify Backlog" tab |
+| Per-library breakdown | Library Configuration page |
+| Spotify backlog | 🎵 Music → "Spotify Backlog" tab |
 | Manual music pipeline | `python run_pipeline_spotify.py` |
 | Heavy Spotify backlog clear | `python scripts/music_enricher.py` |
 | MBID backlog speedrun | `python scripts/mbid_speedrunner.py` |
@@ -444,114 +319,49 @@ keeps infrastructure outages from being mistaken for mass deletions.
 | Benchmark a candidate model | `python benchmark.py` |
 | Bulk Spotify history import | `python import_spotify.py /path/to/Streaming_History/` |
 
----
-
 ## Project layout
 
 ```
 curatarr/
 ├── src/
-│   ├── main.py                    FastAPI app + lifespan
-│   ├── config.py                  Settings (env + defaults)
-│   ├── routers/                   HTTP surface
-│   │   ├── auth.py                Plex PIN OAuth + JWT
-│   │   ├── chat.py                Free / discuss / proposal threads
-│   │   ├── history.py             Plex sync + taste read/recompute
-│   │   ├── library.py             ARR services + breakdown (Pass 96)
-│   │   ├── libraries.py           Plex section mapping
-│   │   ├── enrichment.py          Pipeline + status SSE
-│   │   ├── recommendations.py     Recs + deletion proposals
-│   │   ├── messages.py            Proactive message inbox
-│   │   ├── music.py               Music pipeline triggers + Spotify backlog
-│   │   ├── tasks.py               Task monitor SSE
-│   │   ├── process_monitor.py     Game-mode controls
-│   │   ├── setup.py               Setup wizard
-│   │   └── users.py               User management
-│   ├── services/                  Business logic
-│   │   ├── plex_sync.py           History pull + binge detect
-│   │   ├── media_enricher.py      TMDB / AniList / OMDb / MB / Last.fm
-│   │   ├── music_matcher.py       Phases 1 / 1.4 / 1.5 / 2
-│   │   ├── taste_engine.py        Per-user/category vectors
-│   │   ├── recommendations_engine.py  Vector search + LLM pitch
-│   │   ├── episodic_memory.py     Memory extraction + injection
-│   │   ├── proactive_messages.py  Trigger detection + sending
-│   │   ├── scheduler.py           APScheduler jobs
-│   │   ├── llm_priority.py        Curator/summariser priority swap
-│   │   ├── llm_utils.py           Language detection, JSON cleaning
-│   │   ├── process_monitor.py     Game-mode detection
-│   │   ├── app_state.py           DB-backed runtime flags
-│   │   ├── task_monitor.py        Live task progress / SSE source
-│   │   ├── verification_session.py  Two-step destructive-action gate
-│   │   ├── setup_wizard.py        .env writer + model baker
-│   │   ├── orphan_repair.py       Deleted-Plex-section recovery
-│   │   ├── anime_mapping.py       AniList ↔ TVDB ↔ TMDB bridge
-│   │   ├── arr_client.py          Radarr/Sonarr/Lidarr unified client
-│   │   ├── stream_tickets.py      Short-lived SSE auth tickets
-│   │   └── bg_tasks.py            Fire-and-forget GC protection
-│   ├── database/                  Models + connection
-│   │   ├── connection.py          Engine + WAL pragmas + migrations
-│   │   └── models.py              All SQLAlchemy tables
-│   ├── schemas/                   Pydantic request/response shapes
-│   ├── cache/
-│   │   └── metadata_cache.py      Versioned API cache (SQLite)
-│   ├── embeddings/
-│   │   └── embedding_generator.py nomic-embed-text wrapper
-│   ├── vector_store/
-│   │   └── chromadb_wrapper.py    ChromaDB collection API
-│   └── crypto/
-│       └── encryptor.py           AES-256-GCM for taste vectors (Phase B)
-│
-├── frontend/
-│   └── index.html                 Single-page UI (vanilla JS, no build)
-│
-├── scripts/                       Standalone runners
-│   ├── music_enricher.py          Bypass daily music-batch cap
-│   └── mbid_speedrunner.py        Bypass MB MBID-batch cap
-│
-├── tests/                         pytest suite
-│
-├── data/                          Runtime (gitignored)
-│   ├── curatarr.db                SQLite (WAL)
-│   ├── cache/enrichment.db        API cache (versioned)
-│   └── chromadb/                  Vector store
-│
-├── build_models.py                Bake curatarr-curator + curatarr-summarizer
-├── update_db.py                   Idempotent schema migration
-├── import_spotify.py              Bulk Spotify history import
-├── run_pipeline_spotify.py        Manual music pipeline trigger
-├── benchmark.py                   Ollama model throughput benchmark
-├── start.bat                      Windows launcher
-├── requirements.txt
-└── CHANGELOG.md                   Full pass-by-pass history (~100 KB)
+│   ├── main.py                FastAPI app + lifespan
+│   ├── config.py              Settings (env + defaults)
+│   ├── middleware.py          Security response headers (pure ASGI)
+│   ├── routers/               HTTP surface (auth, chat, history,
+│   │                          library, enrichment, recommendations,
+│   │                          music, tasks, setup, users, …)
+│   ├── services/              Business logic (plex_sync, media_enricher,
+│   │                          music_matcher, taste_engine,
+│   │                          recommendations_engine, pillars,
+│   │                          semantic_search, facet_index,
+│   │                          episodic_memory, data_custodian,
+│   │                          corpus_repair, llm_priority, …)
+│   ├── database/              SQLAlchemy models + WAL connection
+│   ├── schemas/               Pydantic request/response shapes
+│   ├── vector_store/          ChromaDB wrapper
+│   └── crypto/                AES-GCM encryptor (opt-in taste-vector
+│                              encryption)
+├── frontend/index.html        Single-page UI (vanilla JS, no build)
+├── scripts/                   Standalone runners
+├── tests/                     Plain-script test battery
+│                              (python tests/run_all.py — no pytest)
+├── data/                      Runtime state (gitignored)
+├── build_models.py            Bake the Ollama model tags
+├── update_db.py               Idempotent schema migration
+├── start.bat / start_tray.bat Windows launchers (console / tray)
+└── CHANGELOG.md               Condensed release history
 ```
-
-`scripts/dev/` exists locally but is gitignored — it holds ~40 one-shot
-debug / fix / repair tools written along the way. Use them on your own
-DB if you ever hit one of the scenarios they target; they're not part
-of the supported surface.
-
----
 
 ## Privacy & data
 
 - **Nothing is sent to a hosted LLM.** Every prompt goes to your own
   Ollama instance.
-- **Plex history stays on disk.** SQLite + ChromaDB live under
-  `data/` and are gitignored.
-- **Spotify history** (if imported) sits in the same DB and is
-  excluded from the per-Plex-account counts when displaying library
-  coverage so it can't inflate "% enriched".
-- **API keys** live in `.env` (gitignored).
-- **JWT secret** auto-generated on first run, never committed.
-- **Taste vectors** are stored unencrypted by default ("Phase A"). A
-  PIN-based AES-GCM encryption path exists ("Phase B") but is opt-in.
-
-The `.gitignore` is paranoid: SQLite + ChromaDB blobs, `.env*`, the
-bundled sqlite CLI, every `debug_*.py` / `fix_*.py` / `repair_*.py` /
-`scripts/dev/`, the `.claude/` worktrees folder, and `spotify_data/`
-(personal export folder) are all excluded.
-
----
+- **Watch history stays on disk.** SQLite + ChromaDB live under `data/`
+  and are gitignored, as are `.env` (API keys, tokens) and personal
+  export folders.
+- **JWT secret** is auto-generated on first run and never committed.
+- **Taste vectors** are stored unencrypted by default; an opt-in
+  PIN-based AES-GCM encryption path exists.
 
 ## Troubleshooting
 
@@ -563,30 +373,15 @@ bundled sqlite CLI, every `debug_*.py` / `fix_*.py` / `repair_*.py` /
   ```
   The same pattern works for `music_pipeline_running`.
 
-- **"Curator running on CPU" banner** — your curator model didn't fit in
+- **"Curator running on CPU" banner** — the curator model didn't fit in
   VRAM. Reduce `num_ctx`, pick a smaller `BASE_CURATOR_MODEL`, or close
   whatever else is using GPU memory.
 
-- **Lidarr 0% enriched** — fixed in Pass 91c; the music pipeline writes
-  to the general `EnrichmentStatus` table, not `ArrEnrichmentStatus`.
-  The breakdown panel now intersects Lidarr's artist set with enriched
-  music titles for a meaningful coverage number.
-
-- **Anime taste vector showing 0 enriched** — fixed in Pass 95; if you
-  had pre-`_CACHE_VERSION=v2` cache entries, the read path now falls
-  back to the un-versioned key once.
-
-- **`database is locked` flood (Windows + Syncthing)** — if `data/` lives
-  inside a Syncthing folder, Syncthing hashing the live WAL SQLite DB causes
-  lock storms (the main DB sets `busy_timeout=60s`, so a lock that outlasts
-  that is an external holder). `sync_guard` auto-excludes `data/` via the
-  folder's `.stignore` while the app runs. Syncthing creates that file
-  **Hidden**; pre-`fc5b5ce` builds failed to write it ("Permission denied")
-  so the exclusion never applied — fixed by writing the hidden file in place.
-  If you still see locks, confirm `data/` is excluded in Syncthing.
-
-- **Long debugging hunt** — check `CHANGELOG.md`. It documents every
-  Pass with rationale, what broke, what fixed it, and the commit hash.
+- **`database is locked` flood (Windows + Syncthing)** — if `data/`
+  lives inside a Syncthing folder, Syncthing hashing the live WAL DB
+  causes lock storms. Curatarr auto-excludes `data/` via the folder's
+  `.stignore` while it runs; if you still see locks, confirm the
+  exclusion in Syncthing.
 
 ---
 
@@ -597,40 +392,8 @@ work and network-hosted forks must stay open source. Components ported
 from other projects keep their original licenses — see
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) (SoulSync, MIT).
 
-Contributions: see [`CONTRIBUTING.md`](CONTRIBUTING.md). Security posture
-and vulnerability reporting: [`SECURITY.md`](SECURITY.md). The full test
-battery runs with `python tests/run_all.py` (CI runs exactly that).
+Contributions: see [`CONTRIBUTING.md`](CONTRIBUTING.md). Security
+posture and vulnerability reporting: [`SECURITY.md`](SECURITY.md).
 
----
-
-## Changelog
-
-See [`CHANGELOG.md`](CHANGELOG.md) — the full pass-by-pass history from
-the original audit through the 1.0 release. Highlights of the work that
-landed for 1.0:
-
-- **Pass 1.5 – 8**: critical-path fixes, multi-user attribution,
-  Settings sidebar, concurrency lifecycle, Spotify batch wiring.
-- **Pass 9 – 16**: music pipeline cascade, scheduler missed-job
-  replay, weekly VACUUM, ARR library cache, Synopsis Browser, Add-New
-  flow, Spotify Backlog.
-- **Pass 17 – 44**: anime mapping bridge, recommendations vector path,
-  game-mode VRAM hand-off, scheduler reliability, mechanical polish.
-- **Pass 45 – 79**: numpy/scipy correctness fixes, MediaIdentity
-  store, taste-vector embedding usage, server-side game watcher,
-  protection-intent detection.
-- **Pass 80 – 96**: music negative caching, deletion proposal
-  reevaluate, Plex user ratings into taste, MBID speedrunner, audit-
-  trail symmetry, TTL prioritisation, DB-lock cascade fixes, cancelled-
-  task status fidelity, anime taste-vector cache fallback, **unified
-  per-library breakdown panel**.
-- **2026-08**: curated semantic search v3 + multi-vector theme facets,
-  the 4-pillar deletion judge with a benchmarked two-bake model split,
-  full background-job visibility (Activity cards with real progress),
-  the data-integrity sweep (tv-domain migration, significance
-  tri-state, zombie-doc self-healing, adult-genre guard), and the
-  SoulSync-ported robustness layer (owner match pins + Fix match UI,
-  playlist reconcile + stale-key self-heal, mass-staleness guard,
-  corrupt-id detector).
-
-The forward plan lives in [ROADMAP.md](ROADMAP.md).
+Release history: [`CHANGELOG.md`](CHANGELOG.md). The forward plan lives
+in [`ROADMAP.md`](ROADMAP.md).
