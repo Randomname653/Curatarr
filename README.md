@@ -597,6 +597,10 @@ work and network-hosted forks must stay open source. Components ported
 from other projects keep their original licenses — see
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) (SoulSync, MIT).
 
+Contributions: see [`CONTRIBUTING.md`](CONTRIBUTING.md). Security posture
+and vulnerability reporting: [`SECURITY.md`](SECURITY.md). The full test
+battery runs with `python tests/run_all.py` (CI runs exactly that).
+
 ---
 
 ## Changelog
