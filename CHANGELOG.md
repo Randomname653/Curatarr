@@ -91,6 +91,32 @@ tracked tree):
   (18/18 green).
 * ROADMAP heading de-jargonized ("next sessions" → "upcoming").
 
+**Privacy untracking (owner decision):** the benchmark reports/CSVs
+(`tests/benchmarks/*.md|csv` — real library titles, watch counts, taste
+analyses) and `tests/test_search_fixtures.py` (real enrichment tags +
+the owner's original queries) left the tracked tree; both stay on disk
+locally (`.gitignore` entries added). The `num_ctx_bench.py` harness
+stays tracked — methodology, no personal data.
+
+**Test battery unified + CI (public-prep round 2):**
+
+* `tests/run_all.py` NEW — the one command CI and humans share. Handles
+  both suite styles: self-running scripts as subprocesses (failure =
+  non-zero exit OR a "N failed" summary, since some older runners never
+  set an exit code) and bare `def test_*` files via import-and-call.
+  That second mode surfaced a real gap: 5 files (chat_schemas, crypto,
+  proactive_messages, proactive_rotation, series_progress — 60+ checks)
+  were pytest-style with NO runner installed anywhere; plain execution
+  ran zero tests and exited 0 (false green). Their tests execute now;
+  the two dead `import pytest` lines are gone; `test_deletion_scoring`
+  converted to the stdlib runner. **48/48 suites green.**
+* `.github/workflows/tests.yml` NEW — compile check + `run_all.py` on
+  push/PR (first run happens on the new public repo; expect to iterate).
+* `CONTRIBUTING.md` + `SECURITY.md` NEW (dev setup, test convention,
+  style rules; LAN threat model, private vulnerability reporting).
+* `requirements.txt` pinned to the live tested versions (was loose
+  `>=` ranges).
+
 ---
 
 ## Session — `main` (2026-08): curated search, 4-pillar judge, custodian visibility, data integrity, SoulSync ports
