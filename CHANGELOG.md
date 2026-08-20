@@ -21,6 +21,39 @@ the branch — every "Pass N" section maps to one or more commits.
 
 ---
 
+## Session — `main` (2026-08-20): going public — license, Jules-PR adoption
+
+Preparation for taking the repo public.
+
+**License.** The repo is now AGPL-3.0 (`LICENSE`, canonical text) — chosen
+so derived work and hosted forks must stay open source. SoulSync-ported
+modules keep their MIT origin, documented with the full notice in
+`THIRD_PARTY_LICENSES.md`.
+
+**Jules-bot PRs #14/#15 adopted in adapted form** (both verified against
+the code, then rebuilt locally instead of merged 1:1):
+
+* **N+1 ChromaDB fix (from PR #14):** deletion scoring and arr ranking
+  called `get_by_id` once per item — thousands of sequential Chroma
+  round-trips per run. New `ChromaDBWrapper.get_by_ids` fetches
+  embeddings in 1000-id chunks; both loops now read a prefetched map.
+  Adaptation vs the PR: the prefetch is deliberately UNFILTERED (the PR
+  duplicated all skip-filters into the prefetch — a desync trap where a
+  filter edited in one copy silently costs items their embedding),
+  fetches embeddings only, and a failed chunk falls back to per-id
+  `get_by_id` so partial corruption costs only the unreadable ids and
+  the fallback counter keeps its per-item corruption-tell semantics.
+  Tests: `tests/test_get_by_ids.py` (9 checks).
+* **ARIA labels (from PR #15):** the three icon-only buttons
+  (notification close, curator bell, semantic-search 🔍) got
+  `aria-label`s; the bell SVG is `aria-hidden`. Verified these are the
+  only icon-only buttons in `frontend/index.html`.
+
+The PRs themselves will be closed; the `.jules/`-notes files from the
+PRs were intentionally not taken over.
+
+---
+
 ## Session — `main` (2026-08): curated search, 4-pillar judge, custodian visibility, data integrity, SoulSync ports
 
 The largest run so far (~60 commits). Five arcs:
