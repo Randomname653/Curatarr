@@ -5,7 +5,7 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
 
 ---
 
-## Now (in progress / next sessions)
+## Now (in progress / upcoming)
 
 **Reception & archive pillars at full strength**
 - **Trakt integration** — community ratings, votes, watched/trending stats

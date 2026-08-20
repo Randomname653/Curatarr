@@ -32,9 +32,10 @@ app_state.set_state = lambda key, value: _state.__setitem__(key, value)
 es._profile_cache["value"] = None
 
 p = es.get_profile()
-check("default profile = legacy (no prefixes, media_knowledge)",
-      p["prefixes"] is False and p["collection"] == "media_knowledge"
-      and p["schema"] == 1)
+# Ballast cleanup 2026-08-18: a profile-less boot defaults to the V2 stack
+# (a legacy default would CREATE an empty retired-v1 corpus on fresh installs).
+check("default profile = v2 stack (prefixes, media_knowledge_v2)",
+      p["prefixes"] is True and p["collection"] == "media_knowledge_v2")
 
 from src.services.embedding_migration import V2_PROFILE
 
@@ -46,8 +47,8 @@ check("set_profile flips atomically (model+prefixes+collection together)",
 
 es._profile_cache["value"] = None
 _state.clear()
-check("cleared state falls back to legacy default",
-      es.get_profile()["prefixes"] is False)
+check("cleared state falls back to the v2 default",
+      es.get_profile()["collection"] == "media_knowledge_v2")
 
 # ── prefixes, normalization, batching (faked transport) ──────────────────────
 

@@ -6,6 +6,12 @@
 > with you in plain language. Everything runs locally; nothing about your
 > library leaves the machine.
 
+> ⚠️ **This app deletes media.** Approved deletion proposals remove files
+> from your Radarr / Sonarr / Lidarr libraries — deleted media is gone.
+> Keep backups, use the dry-run/analysis views first, and treat every
+> approval as final. Provided as-is, without warranty (see
+> [LICENSE](LICENSE)); you run it at your own risk.
+
 ---
 
 ## What it does
@@ -261,7 +267,8 @@ startup; enrichment is queued automatically from there.
 ## Configuration
 
 All persistent settings live in `.env` (created by the setup wizard, but
-editable). Key fields:
+editable). [`.env.example`](.env.example) documents the complete list
+with defaults; the most-used fields:
 
 | Env var | What it does |
 |---|---|
@@ -269,7 +276,7 @@ editable). Key fields:
 | `OLLAMA_ENDPOINT` | Default `http://localhost:11434` |
 | `BASE_CURATOR_MODEL` | Model name pulled into `curatarr-curator` tag |
 | `BASE_SUMMARIZER_MODEL` | Model name pulled into `curatarr-summarizer` tag |
-| `EMBEDDING_MODEL` | Default `nomic-embed-text` |
+| `EMBEDDING_MODEL` | Default `nomic-embed-text-v2-moe` |
 | `RADARR_URL`, `RADARR_API_KEY` | (optional) Radarr connection |
 | `SONARR_URL`, `SONARR_API_KEY` | (optional) Sonarr connection |
 | `LIDARR_URL`, `LIDARR_API_KEY` | (optional) Lidarr connection |
@@ -585,8 +592,10 @@ bundled sqlite CLI, every `debug_*.py` / `fix_*.py` / `repair_*.py` /
 
 ## License
 
-Personal-use codebase by the project owner. See repo for the current
-license file.
+[GNU AGPL-3.0](LICENSE) — free to use, modify and self-host; derived
+work and network-hosted forks must stay open source. Components ported
+from other projects keep their original licenses — see
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) (SoulSync, MIT).
 
 ---
 

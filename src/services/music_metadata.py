@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 MB_BASE = "https://musicbrainz.org/ws/2"
 LASTFM_BASE = "https://ws.audioscrobbler.com/2.0"
 MB_HEADERS = {
-    "User-Agent": "Curatarr/1.0 (https://github.com/local/curatarr)",
+    "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr)",
     "Accept": "application/json",
 }
 
