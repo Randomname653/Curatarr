@@ -23,9 +23,12 @@ the commit messages.
   suites; CI (GitHub Actions) runs exactly that. Five suites that
   silently executed zero tests under the old convention now run for
   real. 48/48 green.
-- **Docs & packaging:** README restructure for a public audience,
-  `.env.example` with the complete setting list, `CONTRIBUTING.md`,
-  `SECURITY.md`, pinned `requirements.txt`.
+- **Docs & packaging:** the README became a proper project front page
+  (logo, badges, features, quick start) with the deep material moved
+  where it belongs — a new [operator guide](docs/USAGE.md) for daily
+  use and troubleshooting, and [ARCHITECTURE.md](ARCHITECTURE.md) for
+  internals. Added `.env.example` with the complete setting list,
+  `CONTRIBUTING.md`, `SECURITY.md`, and a pinned `requirements.txt`.
 
 ## 2026-08 — Curation quality: search, judge, integrity
 

@@ -1,14 +1,58 @@
 # Curatarr — Architecture & Knowledge Base
 
-> Living technical reference for anyone modifying the code. README.md is for
-> *running* Curatarr; this file is for *understanding and changing* it. It
-> captures the data flow, the non-obvious design decisions, and the tribal
-> knowledge that isn't visible from any single file — the kind of thing you'd
-> otherwise only learn by re-debugging a problem someone already solved.
+> Living technical reference for anyone modifying the code.
+> [README.md](README.md) is for *running* Curatarr and
+> [docs/USAGE.md](docs/USAGE.md) for *operating* it; this file is for
+> *understanding and changing* it. It captures the data flow, the
+> non-obvious design decisions, and the tribal knowledge that isn't visible
+> from any single file — the kind of thing you'd otherwise only learn by
+> re-debugging a problem someone already solved.
 >
-> When you change a subsystem, update the matching section here. The
-> `CHANGELOG.md` records *what* changed pass-by-pass; this file records the
+> When you change a subsystem, update the matching section here.
+> `CHANGELOG.md` records *what* changed per release; this file records the
 > *current* mental model.
+
+---
+
+## Project layout
+
+```
+curatarr/
+├── src/
+│   ├── main.py                FastAPI app + lifespan
+│   ├── config.py              Settings (env + defaults)
+│   ├── middleware.py          Security response headers (pure ASGI)
+│   ├── routers/               HTTP surface — auth, chat, history, library,
+│   │                          enrichment, recommendations, music, tasks,
+│   │                          setup, users, process_monitor
+│   ├── services/              Business logic — plex_sync, media_enricher,
+│   │                          music_matcher, taste_engine,
+│   │                          recommendations_engine, pillars,
+│   │                          semantic_search, facet_index,
+│   │                          episodic_memory, proactive_messages,
+│   │                          data_custodian, corpus_repair, scheduler,
+│   │                          llm_priority, stale_guard, embed_service
+│   ├── database/              SQLAlchemy models + WAL connection
+│   ├── schemas/               Pydantic request/response shapes
+│   ├── vector_store/          ChromaDB wrapper
+│   ├── cache/                 Versioned metadata cache (SQLite)
+│   ├── embeddings/            Embedding generation
+│   └── crypto/                AES-GCM encryptor (opt-in taste encryption)
+├── frontend/index.html        Single-page UI (vanilla JS, no build step)
+├── scripts/                   Standalone runners + icon renderer
+├── tests/                     Plain-script battery — python tests/run_all.py
+├── docs/USAGE.md              Operator guide
+├── data/                      Runtime state (gitignored)
+│   ├── curatarr.db            SQLite (WAL)
+│   ├── cache/enrichment.db    Versioned API cache
+│   └── chromadb/              Vector store
+├── build_models.py            Bake the Ollama model tags
+├── update_db.py               Idempotent schema migration
+└── start.bat / start_tray.bat Windows launchers (console / tray)
+```
+
+`scripts/dev/` exists locally but is gitignored — one-shot debug and
+repair tools written along the way, not part of the supported surface.
 
 ---
 
