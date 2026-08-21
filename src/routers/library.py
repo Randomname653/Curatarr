@@ -867,13 +867,17 @@ async def library_reenrich(
                         EnrichmentStatus.media_category == media_type,
                     ).all()
                     pids = [r.plex_rating_key for r in rows if r.plex_rating_key]
-                for pid in pids:
+                if pids:
+                    keys_to_delete = []
+                    for pid in pids:
+                        keys_to_delete.extend((f"{_CACHE_VERSION}:emb:{pid}", f"{_CACHE_VERSION}:emb_ts:{pid}"))
+
+                    placeholders = ",".join("?" for _ in keys_to_delete)
                     cache.conn.execute(
-                        "DELETE FROM api_cache WHERE cache_key IN (?, ?)",
-                        (f"{_CACHE_VERSION}:emb:{pid}",
-                         f"{_CACHE_VERSION}:emb_ts:{pid}"),
+                        f"DELETE FROM api_cache WHERE cache_key IN ({placeholders})",
+                        tuple(keys_to_delete),
                     )
-                    cleared_embs += 1
+                    cleared_embs = len(pids)
 
                 cache.conn.commit()
                 logger.info(

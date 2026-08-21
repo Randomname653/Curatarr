@@ -1,0 +1,1 @@
+- For database optimizations replacing N+1 queries with single batch executions (like `IN (...)`), ensure you adjust the metrics counters (e.g. `cleared_embs`) to match the batch length rather than iterating through a loop.
