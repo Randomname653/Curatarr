@@ -432,8 +432,13 @@ async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
     try:
         from src.services import soulsync_client
         seen = {(t or "").lower() for t in top_titles}
-        for artist in top_titles[:5]:
-            info = await soulsync_client.artist_info(artist)
+        infos = await asyncio.gather(
+            *(soulsync_client.artist_info(artist) for artist in top_titles[:5]),
+            return_exceptions=True
+        )
+        for info in infos:
+            if isinstance(info, Exception):
+                continue
             for s in (info or {}).get("similar_artists") or []:
                 if s and s.lower() not in seen and s not in names:
                     names.append(s)
