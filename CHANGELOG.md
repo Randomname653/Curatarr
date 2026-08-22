@@ -22,10 +22,20 @@ Condensed release history, newest first.
   the library had no IMDb id — anime is enriched from AniList and never
   touches TMDB — and two sources key on exactly that id. Sonarr held the id
   for 1,833 of those titles all along, from a call made on every sync.
-  Harvesting them lifted id coverage from 76% to 96%. Matching is timid on
-  purpose: a title is claimed only when exactly one library entry normalises
-  to its name, because a wrong id is not a gap but a confident statement
-  about a different work.
+  Harvesting them lifted id coverage from 76% to 96%.
+- **Deciding *which* entry a title refers to is the part worth distrusting.**
+  What an *arr says about its own entry is ground truth; matching a cached
+  title to that entry by name is not. So an id join comes first and reads no
+  title at all, the name is only consulted afterwards, and the year holds a
+  veto over it — franchises reuse names across decades. Anime is looked for
+  in Radarr as well as Sonarr, because anime films live there while the
+  series live in Sonarr. Audited against an independent anidb→tvdb mapping,
+  the name step agreed on 1,788 of 1,796 checkable titles; seven of the eight
+  disagreements were the mapping pointing at a parent series. The one real
+  error was a 2013 film wearing the id of the 1978 series of the same name —
+  the year was in both records the whole time, unused. Claims carry the rule
+  version that produced them, so tightening the rules offers the old ones for
+  re-judgement rather than freezing them.
 - **Backfill is offered where the gap is visible.** A fresh install has none
   of this metadata, and the daily tick fills it at a pace meant for a library
   that has been running for months. The Knowledge Base now shows a "Finish

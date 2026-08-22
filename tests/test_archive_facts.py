@@ -183,6 +183,93 @@ check("the stored key is unprefixed before writing back",
       _unprefixed("v2:raw:anime:x") == "raw:anime:x"
       and _unprefixed("raw:anime:x") == "raw:anime:x")
 
+# -- and the year, which decides which of two same-named works it is -------
+# Audited against an independent anidb->tvdb mapping, the name step agreed on
+# 1,788 of 1,796 checkable anime. The one true error was a cached entry dated
+# 2013 (the CGI film) claiming the id of the 1978 series of the same name.
+# Both records carried a year; nothing looked at it.
+
+from src.services.external_ids import FAMILIES, _by_id, _match, _year_ok
+
+check("a year can only veto, never invent agreement",
+      _year_ok(None, 1978) and _year_ok(2013, None) and _year_ok(None, None))
+check("a season straddling New Year still matches", _year_ok(2013, 2014))
+check("thirty-five years apart is a different work", not _year_ok(2013, 1978))
+
+_SERIES = [{"title": "Space Pirate Captain Harlock", "year": 1978,
+            "tvdbId": 80886, "imdbId": "tt0182646"}]
+_FILMS = [{"title": "Space Pirate Captain Harlock", "year": 2013,
+           "tmdbId": 149871, "imdbId": "tt2668134"}]
+
+
+def _idx(series, films):
+    return {"tv": {"by_name": _index(series), "by_id": _by_id(series)},
+            "movie": {"by_name": _index(films), "by_id": _by_id(films)}}
+
+
+BOTH, TV_ONLY = _idx(_SERIES, _FILMS), _idx(_SERIES, [])
+
+check("anime is looked for in Radarr as well as Sonarr — anime films live there",
+      FAMILIES["anime"] == ("tv", "movie") and FAMILIES["show"] == ("tv",))
+
+rec, how = _match({"title": "Space Pirate Captain Harlock", "year": 2013},
+                  BOTH, FAMILIES["anime"])
+check("the film's year picks the film, not the same-named series",
+      how == "title" and rec["imdb_id"] == "tt2668134")
+
+rec, how = _match({"title": "Space Pirate Captain Harlock", "year": 1978},
+                  BOTH, FAMILIES["anime"])
+check("...and the series' year picks the series", rec["imdb_id"] == "tt0182646")
+
+rec, how = _match({"title": "Space Pirate Captain Harlock", "year": 2013},
+                  TV_ONLY, FAMILIES["anime"])
+check("with only the wrong-year work on offer, nothing is claimed",
+      rec is None and how is None)
+
+rec, how = _match({"title": "Space Pirate Captain Harlock"},
+                  TV_ONLY, FAMILIES["anime"])
+check("an entry with no year of its own is still matched by name",
+      how == "title" and rec["imdb_id"] == "tt0182646")
+
+# ONE PIECE: the series is 1999 and the first film is 2000, so the film
+# survives the one-year slack and both candidates stand. An exact year is the
+# stronger claim and takes it.
+_OP_TV = [{"title": "ONE PIECE", "year": 1999, "tvdbId": 81797,
+           "imdbId": "tt0388629"}]
+_OP_FILM = [{"title": "ONE PIECE", "year": 2000, "tmdbId": 39121,
+             "imdbId": "tt0814243"}]
+rec, how = _match({"title": "ONE PIECE", "year": 1999},
+                  _idx(_OP_TV, _OP_FILM), FAMILIES["anime"])
+check("an exact year beats a neighbour that only survived the slack",
+      how == "title" and rec["imdb_id"] == "tt0388629")
+
+# Space Adventure Cobra is a 1982 series AND a 1982 film. Nothing separates
+# them, so nothing is claimed.
+_SAME = [{"title": "Space Adventure Cobra", "year": 1982, "tvdbId": 82971,
+          "imdbId": "tt0235138"}]
+_SAME_F = [{"title": "Space Adventure Cobra", "year": 1982, "tmdbId": 1,
+            "imdbId": "tt0163494"}]
+rec, how = _match({"title": "Space Adventure Cobra", "year": 1982},
+                  _idx(_SAME, _SAME_F), FAMILIES["anime"])
+check("two works of the same name AND the same year stay refused",
+      rec is None and how is None)
+
+rec, how = _match({"title": "A Name Nobody Files It Under", "tvdb_id": 80886},
+                  BOTH, FAMILIES["anime"])
+check("an id join needs no title at all, and is reported as exact",
+      how == "tvdb" and rec["imdb_id"] == "tt0182646")
+
+check("an id two works claim identifies nothing",
+      _by_id([{"title": "A", "tvdbId": 5, "imdbId": "tt1"},
+              {"title": "B", "tvdbId": 5, "imdbId": "tt2"}]) == {})
+
+check("how the match was made is recorded, not merely that it was",
+      'raw["ids_from_arr"] = how' in
+      (ROOT / "src/services/external_ids.py").read_text(encoding="utf-8"))
+check("claims made under the older, looser rule are re-judged",
+      "def _recheck" in
+      (ROOT / "src/services/external_ids.py").read_text(encoding="utf-8"))
+
 check("the id harvest is offered before the sources that need it",
       list(ab.SOURCES).index("external_ids") < list(ab.SOURCES).index("omdb")
       and list(ab.SOURCES).index("external_ids") < list(ab.SOURCES).index("wikidata"))
