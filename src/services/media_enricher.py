@@ -14,6 +14,7 @@ guess or hallucinate facts about a title.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -589,6 +590,33 @@ def _looks_like_cast_list(text: str) -> bool:
     return len(_CAST_LINE.findall(text or "")) >= 3
 
 
+# The distillation contract, kept as a module constant so its VERSION can be
+# derived from it. A significance value is only as good as the prompt that
+# produced it, and values were stamped "checked" forever: a title distilled
+# under an earlier, weaker version of these rules kept that answer for good.
+# Hashing the text means any future edit here retires the old answers by
+# itself, with no constant to remember to bump.
+_SIGNIFICANCE_PROMPT = """[MODE: SIGNIFICANCE EXTRACTION]
+State the documented historical / cultural significance of "{title}" using ONLY the encyclopedia text below.
+
+Significance means the text EXPLICITLY documents at least one of: awards or nominations; being a genuine first / landmark / genre-defining work; documented influence on later works; a major commercial milestone (best-selling, record-breaking, a very long run, many adaptations); canonical / "classic" status; or the work depicting / examining a serious historical atrocity or systemic injustice (genocide, colonization, residential/boarding-school systems, slavery, internment) — only when the text explicitly describes that as part of the work, and name WHAT it depicts.
+
+These are NOT significance — if the text has only these, there is none: cast or crew names; filming location, production company or funding body; premiere date or platform; a creator's debut; being called "high-profile"; or the plot.
+
+STRICT RULES:
+- Output ONLY the significant facts themselves, as plain prose. NEVER explain your reasoning, mention "the rules" / "qualifying" / "documented milestone", say what does or does not count, or narrate your own filtering (NO "but these are not listed as…", "thus the only qualifying significance is…", "per the rules…"). Just state the facts, or NONE.
+- Use ONLY facts in the text. Do NOT add evaluative words like "pioneering", "landmark", "acclaimed", "influential", "seminal" unless the text itself uses that word about THIS work.
+- Do NOT editorialise or extrapolate (no "part of a surge", "signifies investment", "marks a shift", etc.).
+- 1-3 plain sentences, prose only, no lists or headings.
+- If the text documents no real significance (only production facts, cast, or plot), output exactly: NONE
+
+TEXT:
+{extract}"""
+
+_SIG_PROMPT_VERSION = hashlib.sha1(
+    _SIGNIFICANCE_PROMPT.encode("utf-8")).hexdigest()[:8]
+
+
 async def fetch_significance(
     title: str, media_type: str = "movie", year: Optional[int] = None,
 ) -> Optional[str]:
@@ -684,22 +712,7 @@ async def fetch_significance(
         logger.debug("[significance] Wikipedia fetch failed for %r: %s", title, e)
         return None
 
-    prompt = f"""[MODE: SIGNIFICANCE EXTRACTION]
-State the documented historical / cultural significance of "{title}" using ONLY the encyclopedia text below.
-
-Significance means the text EXPLICITLY documents at least one of: awards or nominations; being a genuine first / landmark / genre-defining work; documented influence on later works; a major commercial milestone (best-selling, record-breaking, a very long run, many adaptations); canonical / "classic" status; or the work depicting / examining a serious historical atrocity or systemic injustice (genocide, colonization, residential/boarding-school systems, slavery, internment) — only when the text explicitly describes that as part of the work, and name WHAT it depicts.
-
-These are NOT significance — if the text has only these, there is none: cast or crew names; filming location, production company or funding body; premiere date or platform; a creator's debut; being called "high-profile"; or the plot.
-
-STRICT RULES:
-- Output ONLY the significant facts themselves, as plain prose. NEVER explain your reasoning, mention "the rules" / "qualifying" / "documented milestone", say what does or does not count, or narrate your own filtering (NO "but these are not listed as…", "thus the only qualifying significance is…", "per the rules…"). Just state the facts, or NONE.
-- Use ONLY facts in the text. Do NOT add evaluative words like "pioneering", "landmark", "acclaimed", "influential", "seminal" unless the text itself uses that word about THIS work.
-- Do NOT editorialise or extrapolate (no "part of a surge", "signifies investment", "marks a shift", etc.).
-- 1-3 plain sentences, prose only, no lists or headings.
-- If the text documents no real significance (only production facts, cast, or plot), output exactly: NONE
-
-TEXT:
-{extract}"""
+    prompt = _SIGNIFICANCE_PROMPT.format(title=title, extract=extract)
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(f"{settings.effective_ollama}/api/chat", json={
@@ -911,8 +924,9 @@ async def topup_significance(
             if not hit or not isinstance(hit.get("response"), dict):
                 continue
             raw = hit["response"]
-            if raw.get("significance_checked"):
-                return False  # already done for this title
+            if (raw.get("significance_checked")
+                    and raw.get("significance_v") == _SIG_PROMPT_VERSION):
+                return False  # already done, under the rules in force today
             targets.append((f"raw:{media_type}:{k}", raw))
         if not targets:
             return False  # nothing cached to attach to (rare after the R6 enrich)
@@ -928,9 +942,17 @@ async def topup_significance(
             # "" = DEFINITIVE nothing — stamp so we never re-query a title
             # with no documented significance.
             raw["significance_checked"] = True
+            # Which set of rules produced this answer. An entry stamped with an
+            # older version is not trusted: the distillation is only as good as
+            # the prompt behind it, and "checked" used to mean "never again".
+            raw["significance_v"] = _SIG_PROMPT_VERSION
             if sig:
                 raw["significance"] = sig
                 added = True
+            else:
+                # A re-check that now finds nothing must not leave the previous
+                # version's text standing next to a fresh stamp.
+                raw.pop("significance", None)
             cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
         return added
     finally:
@@ -1163,10 +1185,17 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             SELECT cache_key, response FROM api_cache
             WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
               AND expires_at > ?
-              AND response NOT LIKE '%"significance_checked"%'
-              AND response NOT LIKE '%"significance"%'
+              AND (
+                    -- never looked at
+                    (response NOT LIKE '%"significance_checked"%'
+                     AND response NOT LIKE '%"significance"%')
+                    -- or answered under an older set of distillation rules;
+                    -- without this the version stamp would never fire, because
+                    -- a checked entry was simply never offered again
+                 OR response NOT LIKE ?
+                  )
             """,
-            (datetime.now().isoformat(),),
+            (datetime.now().isoformat(), f"%{_SIG_PROMPT_VERSION}%"),
         )
         rows = cur.fetchall()
         cur.close()

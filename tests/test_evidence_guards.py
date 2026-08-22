@@ -169,5 +169,37 @@ _rec = (Path(__file__).resolve().parents[1] / "src/services/recommendations_engi
 check("reception is warmed BEFORE the verdict, not only in the discussion",
       "topup_reception" in _rec and "pre-judge warm-up" in _rec)
 
+# -- an answer is only as good as the rules that produced it ---------------
+# A cached significance value was a verbatim cast list. Re-running today's
+# prompt on the same article produced the awards three times out of three:
+# the distiller was not the problem, the entry was three months old and
+# "checked" meant "never again". Distillations now carry the version of the
+# prompt behind them, derived from its text so an edit retires old answers
+# without anyone remembering to bump a constant.
+
+from src.services.media_enricher import (
+    _SIG_PROMPT_VERSION, _SIGNIFICANCE_PROMPT)
+
+check("the version is derived from the prompt itself",
+      _SIG_PROMPT_VERSION == __import__("hashlib").sha1(
+          _SIGNIFICANCE_PROMPT.encode("utf-8")).hexdigest()[:8])
+check("editing the prompt would change the version",
+      __import__("hashlib").sha1(
+          (_SIGNIFICANCE_PROMPT + " ").encode("utf-8")).hexdigest()[:8]
+      != _SIG_PROMPT_VERSION)
+check("the template still renders both slots",
+      "{title}" in _SIGNIFICANCE_PROMPT and "{extract}" in _SIGNIFICANCE_PROMPT)
+check("...and the rules survived the extraction",
+      "NOT significance" in _SIGNIFICANCE_PROMPT
+      and "cast or crew names" in _SIGNIFICANCE_PROMPT)
+
+_me = (Path(__file__).resolve().parents[1] / "src/services/media_enricher.py").read_text(encoding="utf-8")
+check("a checked entry is re-examined when the rules have moved on",
+      'raw.get("significance_v") == _SIG_PROMPT_VERSION' in _me)
+check("the walker actually offers version-stale entries again",
+      "f\"%{_SIG_PROMPT_VERSION}%\"" in _me)
+check("a re-check that finds nothing clears the previous text",
+      'raw.pop("significance", None)' in _me)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

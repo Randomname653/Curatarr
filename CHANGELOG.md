@@ -19,6 +19,13 @@ Condensed release history, newest first.
   against a two-season total reports 25% and reads as abandonment; the same
   three were half of a self-contained first series. The evidence says which
   season the plays are in.
+- **Distilled answers now carry the rules that produced them.** A cached
+  cultural-significance value was a verbatim cast list — but re-running
+  today's prompt on the same article produced the awards, three times out of
+  three. The entry was months old, written under weaker rules, and "checked"
+  meant "never looked at again". Distillations are stamped with a version
+  derived from the prompt text, so editing the prompt retires the old
+  answers by itself; the background walker offers stale ones again.
 - **Community reception is gathered before the verdict, not after.** It was
   left to a background walker, so a title could be judged with none on file
   while the follow-up discussion — which does fetch it — argued from better
