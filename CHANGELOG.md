@@ -4,6 +4,26 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-08-22 — What the judge is given to reason from
+
+- **The source of an adaptation is now fetched.** Only the screenwriter was
+  ever read, so an adaptation of a celebrated novel looked like an anonymous
+  genre piece — the metadata said "based on a novel" without ever saying
+  whose. The novelist, playwright or original author is pulled from its own
+  credit and named separately from the adapter.
+- **Cast lists are no longer mistaken for cultural significance.** The
+  distiller occasionally returned a verbatim Wikipedia cast section, which
+  left the archive pillar reading a character list as standing. A prose rule
+  forbidding it already existed; a shape check now enforces it.
+- **Episode counts carry the season they sit in.** Three episodes measured
+  against a two-season total reports 25% and reads as abandonment; the same
+  three were half of a self-contained first series. The evidence says which
+  season the plays are in.
+- **Community reception is gathered before the verdict, not after.** It was
+  left to a background walker, so a title could be judged with none on file
+  while the follow-up discussion — which does fetch it — argued from better
+  data than the verdict it was questioning.
+
 ## 2026-08-21 — Beta hardening
 
 **Version.** The app reports `1.0.0-beta`, and says so in the UI. The

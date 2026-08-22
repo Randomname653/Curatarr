@@ -129,5 +129,45 @@ check("a film and a series with the same id land in different buckets",
       ("movie", 90) != ("tv", 90)
       and _namespace_for("movie") != _namespace_for("show"))
 
+# -- what the judge is given to reason FROM -------------------------------
+# A four-round argument to save one title traced back to three separate
+# causes, only one of which was the model: the source novelist was never
+# fetched, the significance field held a Wikipedia cast list, and the
+# engagement line measured three episodes against a two-season total.
+
+from src.services.media_enricher import _looks_like_cast_list, _SOURCE_JOBS
+
+CAST_DUMP = ("Hugh Laurie as Richard Roper, a charismatic but ruthless arms "
+             "dealer Olivia Colman as Angela Burr, head of the agency "
+             "Tom Hollander as Major Corkoran, Roper's second in command")
+check("a Wikipedia cast section is not significance",
+      _looks_like_cast_list(CAST_DUMP))
+check("prose that names one performance still counts",
+      not _looks_like_cast_list(
+          "Hugh Laurie as Richard Roper anchors it, a career-best turn."))
+check("real significance is untouched",
+      not _looks_like_cast_list(
+          "Widely regarded as a landmark of the genre; won two Primetime Emmys."))
+check("nothing claimed about empty text", not _looks_like_cast_list(""))
+
+check("the source of an adaptation has its own credit jobs",
+      "Novel" in _SOURCE_JOBS and "Theatre Play" in _SOURCE_JOBS)
+check("a novel outranks a generic story credit",
+      _SOURCE_JOBS.index("Novel") < _SOURCE_JOBS.index("Story"))
+
+_src = (Path(__file__).resolve().parents[1] / "src/services/media_enricher.py").read_text(encoding="utf-8")
+check("the novelist reaches the verified block, separate from the screenwriter",
+      'add("Creator/Writer"' in _src and "Adapted from" in _src)
+check("...and is carried through the raw -> verified mapping",
+      '"source_author":  raw.get("source_author")' in _src)
+
+_pil = (Path(__file__).resolve().parents[1] / "src/services/pillars.py").read_text(encoding="utf-8")
+check("episode counts are reported with the season they sit in",
+      "seasons_watched" in _pil and "all of the owner's plays are in season" in _pil)
+
+_rec = (Path(__file__).resolve().parents[1] / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
+check("reception is warmed BEFORE the verdict, not only in the discussion",
+      "topup_reception" in _rec and "pre-judge warm-up" in _rec)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

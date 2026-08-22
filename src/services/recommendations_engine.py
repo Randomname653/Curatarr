@@ -1693,28 +1693,41 @@ async def generate_deletion_proposals(
         # candidates about to be judged, BEFORE the gate is taken: the
         # summarizer loads once, distills the batch, then hands the GPU to
         # the curator. Cached/checked titles cost one cache read.
+        # Reception is warmed in the same pass. It used to be left to the
+        # background walker, so a title could be judged with no community
+        # reception on file at all — and the Level-2 discussion, which DOES
+        # top it up, then argued from better data than the verdict it was
+        # arguing about. Reception costs no summarizer time (plain HTTP), so
+        # there is no GPU reason to skip it here either.
         try:
             from src.services.media_enricher import topup_significance
+            from src.services.reception import topup_reception
             _warm_slice = scored_candidates[:JUDGE_CAP]
-            _warmed = 0
+            _warmed = _warmed_rec = 0
             for _c in _warm_slice:
                 _it = _c["item"]
+                _ids = dict(tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
+                            plex_rating_key=_it.get("plex_rating_key"),
+                            year=_it.get("year"))
                 try:
                     if await asyncio.wait_for(topup_significance(
-                        _it.get("title"), category,
-                        tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
-                        plex_rating_key=_it.get("plex_rating_key"),
-                        year=_it.get("year"),
-                    ), timeout=20.0):
+                            _it.get("title"), category, **_ids), timeout=20.0):
                         _warmed += 1
                 except Exception:
+                    pass
+                try:
+                    if await asyncio.wait_for(topup_reception(
+                            _it.get("title"), category, **_ids), timeout=20.0):
+                        _warmed_rec += 1
+                except Exception:
                     continue
-            if _warmed:
-                _msg(f"{category}: significance warmed for {_warmed} candidate(s)")
-                logger.info("[deletions] %s: pre-judge significance warm-up "
-                            "added %d article(s)", category, _warmed)
+            if _warmed or _warmed_rec:
+                _msg(f"{category}: warmed {_warmed} significance, "
+                     f"{_warmed_rec} reception")
+                logger.info("[deletions] %s: pre-judge warm-up added %d article(s), "
+                            "%d reception record(s)", category, _warmed, _warmed_rec)
         except Exception as _e:
-            logger.debug("[deletions] significance warm-up failed: %s", _e)
+            logger.debug("[deletions] pre-judge warm-up failed: %s", _e)
         _gate_label = f"deletion scan: {category}"
         await curator_start(_gate_label, exclusive_model=pitch_model)
         try:

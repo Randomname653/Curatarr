@@ -169,6 +169,12 @@ def _owner_watch(db, owner_id: int, item: dict, category: str) -> dict | None:
         "last": max((r.viewed_at for r in rows if r.viewed_at), default=None),
         "episodes": len({(r.season, r.episode) for r in rows
                          if r.episode is not None}),
+        # Which seasons those episodes sit in. "3 episodes of a 12-episode
+        # series" reads as 25% and a lost interest; "3 episodes, all in
+        # season 1 of 2" reads as halfway through a self-contained run —
+        # which is what it was. The count alone cannot tell them apart.
+        "seasons_watched": sorted({r.season for r in rows
+                                   if r.season is not None}),
     }
 
 
@@ -355,7 +361,16 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         # 100-episode series — join the two data sources for the judge.
         if (ow and (ow.get("episodes") or 0) >= 2
                 and isinstance(vd, dict) and vd.get("episodes_total")):
-            owner_line += f" (series total: {vd['episodes_total']} episodes)"
+            shape = f"series total: {vd['episodes_total']} episodes"
+            if vd.get("seasons"):
+                shape += f" across {vd['seasons']} seasons"
+            # Say WHERE those episodes sit. Measuring three episodes against
+            # a two-season total reports 25% and reads as abandonment, when
+            # the viewer was halfway through a self-contained first series.
+            seen = ow.get("seasons_watched") or []
+            if len(seen) == 1 and (vd.get("seasons") or 1) > 1:
+                shape += f"; all of the owner's plays are in season {seen[0]}"
+            owner_line += f" ({shape})"
     except Exception as e:
         logger.debug("[pillars] verified-data failed for %r: %s", title, e)
     if verified_text:

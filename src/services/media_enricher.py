@@ -327,6 +327,8 @@ def build_verified_data(
             "mood":           enriched.get("mood"),
             "director":       pick(enriched.get("director"), raw.get("director")),
             "writer":         raw.get("writer"),
+            "source_author":  raw.get("source_author"),
+            "source_kind":    raw.get("source_kind"),
             "cast":           pick(enriched.get("cast_top3"), raw.get("cast")),
             "rating":         pick(enriched.get("rating"), raw.get("rating")),
             "country":        raw.get("country"),
@@ -445,6 +447,13 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Year", data.get("year"))
     add("Genres", data.get("genres"))
     add("Creator/Writer", data.get("writer"))
+    # Named separately from the screenwriter on purpose: "adapted from a novel
+    # by X" is a different, and usually stronger, pedigree claim than who wrote
+    # the script. Judging an adaptation on the adapter alone reads a le Carré
+    # as an anonymous genre piece.
+    if data.get("source_author"):
+        add(f"Adapted from ({(data.get('source_kind') or 'source').lower()}) by",
+            data["source_author"])
     add("Director", data.get("director"))
     add("Director note", data.get("director_note"), cap=350)
     cast = data.get("cast")
@@ -558,6 +567,26 @@ def _significance_slice(extract: str, lead_chars: int = 2500,
         out.append(take)
         used += len(take)
     return "\n".join(out)
+
+
+# TMDB crew jobs that name the SOURCE of an adaptation, most specific first.
+# Order is the priority: "Novel" beats a generic "Story" credit when a title
+# carries both.
+_SOURCE_JOBS = ("Novel", "Book", "Graphic Novel", "Comic Book", "Short Story",
+                "Theatre Play", "Musical", "Original Story", "Story",
+                "Characters")
+
+_CAST_LINE = re.compile(r"\b[A-Z][\w.'-]+(?:\s+[A-Z][\w.'-]+)+\s+as\s+[A-Z]")
+
+
+def _looks_like_cast_list(text: str) -> bool:
+    """True when the text is a Wikipedia cast section rather than significance.
+
+    "Name Name as Character" repeated is a character list, whatever the
+    distiller called it. Three or more is not a passing mention: an article
+    that genuinely discusses a performance names one or two roles in prose.
+    """
+    return len(_CAST_LINE.findall(text or "")) >= 3
 
 
 async def fetch_significance(
@@ -704,6 +733,16 @@ TEXT:
         return None
     if not out or out.upper().startswith("NONE") or len(out) < 20:
         return ""              # definitive — the distiller read it and said NONE
+    if _looks_like_cast_list(out):
+        # The prompt already forbids returning cast or crew names, and the
+        # distiller still handed back a verbatim Wikipedia "Cast" section
+        # ("X as Character, Y as Character, …"). A prose rule cannot enforce
+        # this; a shape check can. Recorded as "checked, nothing found" so the
+        # walker does not burn the article again — the archive pillar is
+        # better off knowing it has nothing than reading a character list as
+        # cultural standing.
+        logger.info("[significance] discarded a cast list for %r", title)
+        return ""
     return out
 
 
@@ -1866,6 +1905,24 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
         if creators:
             director = creators[0].get("name")
 
+    # Source material. TMDB files the novelist / playwright under their own
+    # crew job; the flat `writer` field only ever carried the screenwriter.
+    # For an adaptation the source author is the strongest pedigree signal
+    # there is — a le Carré adaptation is not "a spy thriller by whoever
+    # wrote the screenplay" — and it was invisible to every judgment. The
+    # keyword "based on novel or book" said an adaptation existed without
+    # ever saying whose.
+    by_job = {}
+    for member in crew:
+        job = (member.get("job") or "").strip()
+        if job in _SOURCE_JOBS and member.get("name"):
+            by_job.setdefault(job, member["name"])
+    source_author = source_kind = None
+    for job in _SOURCE_JOBS:            # in priority order, not crew order
+        if job in by_job:
+            source_author, source_kind = by_job[job], job
+            break
+
     # Keywords / tags
     kw_list = keywords.get("keywords") or keywords.get("results", [])
     keyword_names = [k.get("name", "") for k in kw_list[:20]]
@@ -1901,6 +1958,8 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
         "genres": genres,
         "cast": cast,
         "director": director,
+        "source_author": source_author,
+        "source_kind": source_kind,
         "keywords": keyword_names,
         "rating": vote_avg,
         "vote_count": vote_count,
