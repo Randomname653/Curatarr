@@ -1,0 +1,3 @@
+## 2024-05-18 - [Arr Client Rate Limiter Convoy Effect]
+**Learning:** The previous implementation of `RateLimiter` in `src/services/arr_client.py` called `await asyncio.sleep(...)` while holding a lock (`asyncio.Lock`). This caused a convoy effect where all pending requests were paused until the current request finished sleeping and released the lock. Requests effectively serialized rather than waiting in parallel, crippling concurrency during bursts.
+**Action:** When implementing rate limiters or dealing with locks in `asyncio`, calculate the sleep requirement mathematically, update any internal counters or tracking variables, release the lock, and only *then* perform the actual `asyncio.sleep` outside of the lock's scope.
