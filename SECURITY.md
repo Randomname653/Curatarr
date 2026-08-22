@@ -4,7 +4,9 @@
 
 Curatarr is built for a **trusted home LAN**. It binds to `0.0.0.0` so
 household members can reach it, authenticates users via Plex OAuth + JWT,
-and keeps all data local. It is **not hardened for the open internet** —
+and keeps behavioural data local — watch history, ratings and taste vectors
+never leave, though enrichment does send titles and artist names to public
+metadata APIs. It is **not hardened for the open internet** —
 do not port-forward it or put it on a public host without adding your
 own reverse proxy, TLS and access control.
 

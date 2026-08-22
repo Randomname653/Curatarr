@@ -313,6 +313,28 @@ class MetadataCache:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def prune_expired(self) -> int:
+        """Delete rows past their expiry. Returns how many went.
+
+        Every read path — the versioned lookup, the un-versioned v1 fallback,
+        live_key_set and count_raw_with_marker — already filters on
+        expires_at, so these rows are unreachable, not merely stale. Leaving
+        them was harmless per-row and not harmless in bulk: two hot paths
+        (archive_backfill._live_raw_entries and the external-id harvest) scan
+        every raw:* row, and 13,201 of 92,474 rows had been dead for months.
+
+        Pass 48 removed the previous cleanup because nothing called it. The
+        lesson taken was to delete the method; the lesson available was to
+        call it — so this one is wired into the daily custodian tick.
+        """
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM api_cache WHERE expires_at <= ?",
+                    (datetime.now().isoformat(),))
+        removed = cur.rowcount or 0
+        self.conn.commit()
+        cur.close()
+        return removed
+
     # Pass 48: removed methods (had zero callers in src/):
     #   - ``_generate_hash`` (only used internally by set_media)
     #   - ``get_media`` / ``set_media`` (media_items dead, see _init_db)

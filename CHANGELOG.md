@@ -40,6 +40,21 @@ Condensed release history, newest first.
   version too; it used to gate on the bare "checked" flag, which is what made
   a wrong verdict permanent there.
 
+- **The privacy section said less than the code does.** "Only ids go out"
+  was already inaccurate: enrichment searches TMDB, Wikipedia, Jikan,
+  AniList, MusicBrainz and Last.fm *by name*, so those services learn which
+  titles and artists a library holds. OMDb alone is queried purely by id.
+  Corrected in the README, ARCHITECTURE and SECURITY, and stated the way it
+  actually splits: titles go out, behaviour does not — watch history,
+  ratings, the taste vector and anything typed stay on the machine. The
+  local-LLM promise is unchanged and remains true.
+- **Dead cache rows are collected again.** An earlier pass removed the
+  expired-row cleanup because nothing called it; the rows kept accumulating,
+  13,201 of 92,474 of them, on a table two hot paths scan in full. Every read
+  path already filters on expiry, so they were unreachable rather than merely
+  stale. A daily custodian tick now prunes them — the lesson taken last time
+  was to delete the method, the one available was to call it.
+
 - **Wikidata joins Wikipedia** rather than replacing it. Wikipedia is prose
   and must be distilled; Wikidata is a graph of statements, so the source of
   an adaptation and its named awards are looked up rather than summarised —

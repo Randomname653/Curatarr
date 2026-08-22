@@ -90,9 +90,11 @@ LLM. It pulls each Plex user's watch history, enriches every title with
 metadata + an LLM-written profile, embeds those profiles into a vector store,
 and uses the resulting per-user "taste vector" to (a) recommend new media,
 (b) propose deletions of media that no longer fits, and (c) hold a
-character-driven chat about any of it. Everything runs locally; no library
-data leaves the machine except the metadata-API lookups (movie/artist IDs)
-that the enrichment pipeline needs.
+character-driven chat about any of it. Every prompt runs locally; the only data that
+leaves the machine is what the enrichment pipeline asks public metadata APIs,
+and most of those are searched by NAME, not by id — so they learn which
+titles and artists the library holds. Watch history, ratings, the taste
+vector and anything typed stay on the machine.
 
 ---
 

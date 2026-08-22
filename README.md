@@ -228,8 +228,12 @@ the ones most people touch:
 - **No hosted LLM.** Every prompt goes to your own Ollama instance.
 - **Your history stays local.** SQLite and ChromaDB live under `data/`;
   that directory, `.env` and personal exports are all gitignored.
-- **Only ids go out.** The enrichment pipeline queries public metadata
-  APIs for titles and identifiers — never your viewing behaviour.
+- **Titles go out, behaviour does not.** Enrichment queries public
+  metadata APIs — TMDB, Wikipedia, Wikidata, Jikan, AniList, MusicBrainz,
+  Last.fm, Deezer, Spotify — and most are searched by *name*, so those
+  services learn which titles and artists your library holds. Only OMDb is
+  queried purely by id. What is never sent: what you watched, when, how
+  often, your ratings, your taste profile, or anything you typed.
 - **Taste vectors** are stored unencrypted by default; an opt-in
   PIN-based AES-GCM path exists.
 

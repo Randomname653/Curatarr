@@ -363,6 +363,25 @@ async def _run_collections(deep: bool = False, task=None) -> bool:
     return True
 
 
+async def _run_cache_prune(task=None) -> bool:
+    """Drop cache rows nothing can read any more.
+
+    Cheap, exact, and the only maintenance here that removes rather than
+    fetches — so it runs every day regardless of whether a game holds the GPU.
+    """
+    from src.cache.metadata_cache import MetadataCache
+    from src.services.task_monitor import task_monitor
+    cache = MetadataCache()
+    try:
+        removed = cache.prune_expired()
+    finally:
+        cache.close()
+    if task is not None:
+        task_monitor.update(task, message=f"{removed} expired rows removed")
+    logger.info("[custodian] pruned %d expired cache rows", removed)
+    return True
+
+
 @dataclass
 class Task:
     job_id: str
@@ -413,6 +432,8 @@ def _registry() -> list[Task]:
              needs_llm=True, takes_deep=True, takes_task=True),
         Task("custodian_wikidata", "On-record facts",    24.0,  _run_wikidata,
              takes_deep=True, takes_task=True),
+        Task("cache_prune",      "Expired cache rows",   24.0,  _run_cache_prune,
+             takes_task=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
              takes_deep=True, takes_task=True),
         Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,
