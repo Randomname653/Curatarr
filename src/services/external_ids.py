@@ -238,6 +238,7 @@ def _recheck(cache, index, rows) -> int:
     library, with no year check. Everything it wrote is marked, so it can be
     re-judged against the evidence it had rather than the answer it gave.
     """
+    from src.cache.metadata_cache import write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
     reverted = 0
     for key, resp in rows:
@@ -257,23 +258,26 @@ def _recheck(cache, index, rows) -> int:
         probe = _without_loose_claim(raw, old)
         rec, how = _match(probe, index, families)
         if how:
-            for field in ("imdb_id", "tvdb_id", "tmdb_id"):
-                if rec.get(field):
-                    probe[field] = rec[field]
-            probe["ids_from_arr"] = how
-            probe["ids_from_arr_v"] = MATCH_VERSION
-            raw = probe
+            fields = {f: rec[f] for f in ("imdb_id", "tvdb_id", "tmdb_id")
+                      if rec.get(f)}
+            fields["ids_from_arr"] = how
+            fields["ids_from_arr_v"] = MATCH_VERSION
+            drop = ()
         else:
-            probe.pop("ids_from_arr", None)
-            probe.pop("ids_from_arr_v", None)
-            raw = probe
+            fields = {}
+            # Exactly what the loose run supplied and nothing else.
+            drop = tuple(f for f in ("imdb_id", "tvdb_id", "tmdb_id")
+                         if f in raw and f not in probe)
+            drop += ("ids_from_arr", "ids_from_arr_v")
             reverted += 1
-        cache.set_cache(_unprefixed(key), raw, days=_RAW_CACHE_DAYS)
+        write_fields(cache, _unprefixed(key), raw, fields, drop=drop,
+                     days=_RAW_CACHE_DAYS)
     return reverted
 
 
 async def harvest(cache, *, limit: int = 0, task=None, should_stop=None) -> dict:
     """Fill missing ids on raw cache entries from the *arr libraries."""
+    from src.cache.metadata_cache import write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
 
     index = await build_arr_id_index()
@@ -318,23 +322,20 @@ async def harvest(cache, *, limit: int = 0, task=None, should_stop=None) -> dict
         rec, how = _match(raw, index, families)
         if not rec:
             continue
-        changed = False
-        for field in ("imdb_id", "tvdb_id", "tmdb_id"):
-            if rec.get(field) and not raw.get(field):
-                raw[field] = rec[field]
-                changed = True
-        if changed:
+        fields = {f: rec[f] for f in ("imdb_id", "tvdb_id", "tmdb_id")
+                  if rec.get(f) and not raw.get(f)}
+        if fields:
             # How the entry was identified, not merely that it was: an exact
             # id join and a name-with-year join are not equally trustworthy,
             # and a later audit should be able to tell them apart.
-            raw["ids_from_arr"] = how
-            raw["ids_from_arr_v"] = MATCH_VERSION
+            fields["ids_from_arr"] = how
+            fields["ids_from_arr_v"] = MATCH_VERSION
             by_how[how] = by_how.get(how, 0) + 1
-            # set_cache prefixes the cache version itself; the key read back
-            # out of the table already carries it, and passing it through
-            # unchanged writes a second copy under "v2:v2:raw:…" that nothing
-            # ever reads.
-            cache.set_cache(_unprefixed(key), raw, days=_RAW_CACHE_DAYS)
+            # The cache prefixes the version itself; the key read back out of
+            # the table already carries it, and passing it through unchanged
+            # writes a second copy under "v2:v2:raw:…" that nothing ever reads.
+            write_fields(cache, _unprefixed(key), raw, fields,
+                         days=_RAW_CACHE_DAYS)
             added += 1
         if task is not None and visited % 50 == 0:
             from src.services.task_monitor import task_monitor

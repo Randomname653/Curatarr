@@ -38,12 +38,27 @@ class FakeCache:
     def __init__(self):
         self.store = {"raw:movie:4547": {"response": {"title": "Panic Room"}}}
         self.writes = []
+        self.dropped = []
 
     def get_cache(self, key):
         return self.store.get(key)
 
     def set_cache(self, key, value, days=None):
         self.writes.append((key, dict(value)))
+
+    # Walkers write only the fields they own, so a concurrent walker's work is
+    # not discarded. The double has to model that or the code under test takes
+    # a path production never takes.
+    def patch_cache(self, key, updates, drop=(), days=None):
+        row = self.store.get(key)
+        if not row:
+            return False
+        row["response"].update(updates)
+        for field in drop:
+            row["response"].pop(field, None)
+        self.writes.append((key, dict(updates)))
+        self.dropped.append(tuple(drop))
+        return True
 
     def close(self):
         pass
@@ -61,20 +76,22 @@ def _run(sig_value):
             "Panic Room", "movie", tmdb_id=4547, cache=cache))
     finally:
         me.fetch_significance = real
-    return added, cache.writes
+    return added, cache.writes, cache.dropped
 
 
-added, writes = _run(None)
+added, writes, dropped = _run(None)
 check("TRANSIENT (None): nothing stamped, nothing written",
       added is False and writes == [])
 
-added, writes = _run("")
+added, writes, dropped = _run("")
 check("DEFINITIVE nothing (''): stamped checked, no significance text",
       added is False and len(writes) == 1
       and writes[0][1].get("significance_checked") is True
       and "significance" not in writes[0][1])
+check("...and any text a previous version left is explicitly removed",
+      dropped == [("significance",)])
 
-added, writes = _run("Nominated for two Saturn Awards.")
+added, writes, dropped = _run("Nominated for two Saturn Awards.")
 check("real significance: stamped AND stored",
       added is True and writes[0][1].get("significance") ==
       "Nominated for two Saturn Awards.")

@@ -25,7 +25,7 @@ from typing import Optional, Any
 import httpx
 
 from src.config import settings
-from src.cache.metadata_cache import MetadataCache
+from src.cache.metadata_cache import MetadataCache, write_fields
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options
 
 logger = logging.getLogger(__name__)
@@ -864,37 +864,35 @@ async def topup_omdb(
             raw = hit.get("response")
             if not isinstance(raw, dict):
                 continue
-            changed = False
+            fields = {}
             if plot not in _bad and not (raw.get("overview_extended") or "").strip():
-                raw["overview_extended"] = plot; changed = added = True
+                fields["overview_extended"] = plot; added = True
             if awards not in _bad and "Awards:" not in (raw.get("extra_context") or ""):
                 ec = (raw.get("extra_context") or "").strip()
-                raw["extra_context"] = (ec + " | " if ec else "") + f"Awards: {awards}"; changed = added = True
+                fields["extra_context"] = (ec + " | " if ec else "") + f"Awards: {awards}"; added = True
             if writer not in _bad and not (raw.get("writer") or "").strip():
-                raw["writer"] = writer; changed = added = True
+                fields["writer"] = writer; added = True
             if country not in _bad and not (raw.get("country") or "").strip():
-                raw["country"] = country; changed = True
+                fields["country"] = country
             if rt_score not in _bad and not raw.get("rt_score"):
-                raw["rt_score"] = rt_score; changed = added = True
+                fields["rt_score"] = rt_score; added = True
             if metacritic not in _bad and not raw.get("metacritic"):
-                raw["metacritic"] = metacritic; changed = added = True
+                fields["metacritic"] = metacritic; added = True
             if box_office not in _bad and not raw.get("box_office"):
-                raw["box_office"] = box_office; changed = True
+                fields["box_office"] = box_office
             # Idempotency marker: OMDb was consulted for this title. Set even
             # when OMDb had no writer/awards — many titles legitimately don't —
             # so neither the bulk backfill nor the dynamic top-up ever re-query
             # it. Without this, awardless films stayed "candidates" forever and
             # every backfill re-fetched the exact same set.
             if not raw.get("omdb_checked"):
-                raw["omdb_checked"] = True
-                changed = True
+                fields["omdb_checked"] = True
             # Ratings-era marker: docs OMDb-checked BEFORE the full-harvest fix
             # lack it, so the backfill touches them exactly once more.
             if not raw.get("ratings_checked"):
-                raw["ratings_checked"] = True
-                changed = True
-            if changed:
-                cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+                fields["ratings_checked"] = True
+            if fields:
+                write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
     finally:
         if owns:
@@ -949,19 +947,27 @@ async def topup_significance(
         for key, raw in targets:
             # "" = DEFINITIVE nothing — stamp so we never re-query a title
             # with no documented significance.
-            raw["significance_checked"] = True
-            # Which set of rules produced this answer. An entry stamped with an
-            # older version is not trusted: the distillation is only as good as
-            # the prompt behind it, and "checked" used to mean "never again".
-            raw["significance_v"] = _SIG_PROMPT_VERSION
+            fields = {
+                "significance_checked": True,
+                # Which set of rules produced this answer. An entry stamped with
+                # an older version is not trusted: the distillation is only as
+                # good as the prompt behind it, and "checked" used to mean
+                # "never again".
+                "significance_v": _SIG_PROMPT_VERSION,
+            }
+            drop = ()
             if sig:
-                raw["significance"] = sig
+                fields["significance"] = sig
                 added = True
             else:
                 # A re-check that now finds nothing must not leave the previous
                 # version's text standing next to a fresh stamp.
-                raw.pop("significance", None)
-            cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+                drop = ("significance",)
+            # Only these fields. This walker holds the GPU for a long time per
+            # title, so a whole-row write would be handing back a copy of the
+            # entry read minutes ago — discarding whatever a faster walker
+            # added in the meantime.
+            write_fields(cache, key, raw, fields, drop=drop, days=_RAW_CACHE_DAYS)
         return added
     finally:
         if owns:

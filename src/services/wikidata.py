@@ -32,7 +32,7 @@ from typing import Optional
 
 import httpx
 
-from src.cache.metadata_cache import MetadataCache
+from src.cache.metadata_cache import MetadataCache, write_fields
 
 logger = logging.getLogger(__name__)
 
@@ -166,14 +166,14 @@ async def topup_wikidata(
 
         added = False
         for key, raw in targets:
-            raw["wikidata_checked"] = True
-            raw["wikidata_v"] = _LOGIC_VERSION
+            fields = {"wikidata_checked": True, "wikidata_v": _LOGIC_VERSION}
+            drop = ()
             if facts:
-                raw["wikidata"] = facts
+                fields["wikidata"] = facts
                 added = True
             else:
-                raw.pop("wikidata", None)
-            cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+                drop = ("wikidata",)
+            write_fields(cache, key, raw, fields, drop=drop, days=_RAW_CACHE_DAYS)
         return added
     except Exception as e:
         logger.debug("[wikidata] top-up failed for %r: %s", title, e)

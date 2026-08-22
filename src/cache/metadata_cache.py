@@ -26,6 +26,22 @@ logger = logging.getLogger(__name__)
 _CACHE_VERSION = "v2"
 
 
+def write_fields(cache, cache_key: str, raw: Dict[str, Any],
+                 updates: Dict[str, Any], *, drop: tuple = (), days: int = 7):
+    """Persist only the fields a walker owns.
+
+    The one line every top-up should use instead of handing ``set_cache`` a
+    dict it read minutes ago. Falls back to a whole-row write when there is no
+    live row to patch, which is the correct behaviour for a first write.
+    """
+    if cache.patch_cache(cache_key, updates, drop=drop, days=days):
+        return
+    raw.update(updates)
+    for field in drop:
+        raw.pop(field, None)
+    cache.set_cache(cache_key, raw, days=days)
+
+
 class MetadataCache:
     """
     SQLite cache for metadata API responses.
@@ -251,7 +267,52 @@ class MetadataCache:
         )
 
         self.conn.commit()
-    
+
+    def patch_cache(self, cache_key: str, updates: Dict[str, Any], *,
+                    drop: tuple = (), days: int = 7) -> bool:
+        """Apply a partial update to a cached response, atomically.
+
+        ``set_cache`` replaces the whole row. Every top-up walker reads an
+        entire raw entry, spends seconds (HTTP) to minutes (the summariser) in
+        an ``await``, then writes the entire entry back — so two walkers
+        working on the same title at once means the later write silently
+        discards the earlier one's field. Both callers see success; the loser's
+        ``*_checked`` marker vanishes along with its value, so the work is
+        repeated rather than lost for good — but a backfill with four walkers
+        running at once can spend a large share of its API calls and GPU time
+        on results that are thrown away.
+
+        This writes only the keys the caller owns, in a single statement, so
+        there is no window in which to lose anything. The chained
+        ``json_patch`` is what gives replace-not-merge semantics: the first
+        patch removes each key (RFC 7386 reads null as a deletion), the second
+        sets the new value. Without it a nested dict would merge with its
+        predecessor and resurrect sub-keys the new answer dropped.
+
+        Returns False when there is no live row to patch — the caller should
+        fall back to ``set_cache``, which is the right thing for a first write.
+        """
+        versioned_key = f"{_CACHE_VERSION}:{cache_key}"
+        clear = {k: None for k in list(updates) + list(drop)}
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE api_cache
+               SET response   = json_patch(json_patch(response, ?), ?),
+                   expires_at = ?
+             WHERE cache_key = ? AND expires_at > ?
+            """,
+            (
+                json.dumps(clear),
+                json.dumps(updates, default=str),
+                self._expires_at(days),
+                versioned_key,
+                datetime.now().isoformat(),
+            ),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
     # Pass 48: removed methods (had zero callers in src/):
     #   - ``_generate_hash`` (only used internally by set_media)
     #   - ``get_media`` / ``set_media`` (media_items dead, see _init_db)

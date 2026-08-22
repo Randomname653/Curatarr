@@ -372,7 +372,7 @@ async def topup_reception(
     reception string was actually added."""
     if media_type not in ("anime", "movie", "show"):
         return False
-    from src.cache.metadata_cache import MetadataCache
+    from src.cache.metadata_cache import MetadataCache, write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
     owns = cache is None
     if owns:
@@ -408,20 +408,21 @@ async def topup_reception(
         for key, raw in targets:
             # Marker set even on None so titles with no community data are
             # never re-queried (same contract as significance_checked).
-            raw["reception_checked"] = True
-            raw["relations_checked"] = True
+            fields = {"reception_checked": True, "relations_checked": True}
             if rec:
-                raw["reception"] = rec
+                fields["reception"] = rec
                 added = True
             if rels:
-                raw["relations"] = rels
+                fields["relations"] = rels
             if staff:
-                raw["staff"] = staff
+                fields["staff"] = staff
             if finale:
-                raw["finale_reception"] = finale
+                fields["finale_reception"] = finale
             if anidb_tags:
-                raw["anidb_tags"] = anidb_tags
-            cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+                fields["anidb_tags"] = anidb_tags
+            # Only these fields — the entry was read before a slow fetch, and
+            # another walker may have written to it since.
+            write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
     except Exception as e:
         logger.debug("[reception] top-up failed for %r: %s", title, e)
@@ -446,7 +447,7 @@ async def topup_franchise(
     backfill query converges instead of re-touching them every tick."""
     if media_type not in ("anime", "movie", "show"):
         return False
-    from src.cache.metadata_cache import MetadataCache
+    from src.cache.metadata_cache import MetadataCache, write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
     owns = cache is None
     if owns:
@@ -481,17 +482,17 @@ async def topup_franchise(
                                        year=year or doc.get("year"))
         added = False
         for key, raw in targets:
-            raw["relations_checked"] = True
+            fields = {"relations_checked": True}
             if rels:
-                raw["relations"] = rels
+                fields["relations"] = rels
                 added = True
             if staff:
-                raw["staff"] = staff
+                fields["staff"] = staff
                 added = True
             if anidb_tags:
-                raw["anidb_tags"] = anidb_tags
+                fields["anidb_tags"] = anidb_tags
                 added = True
-            cache.set_cache(key, raw, days=_RAW_CACHE_DAYS)
+            write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
     except Exception as e:
         logger.debug("[reception] franchise top-up failed for %r: %s", title, e)
@@ -512,7 +513,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     ``task`` = the custodian's Activity card; per-title progress goes there."""
     import json as _json
     from datetime import datetime
-    from src.cache.metadata_cache import MetadataCache
+    from src.cache.metadata_cache import MetadataCache, write_fields
     from src.services.llm_priority import wait_for_curator
 
     def _gaming() -> bool:

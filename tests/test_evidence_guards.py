@@ -199,7 +199,8 @@ check("a checked entry is re-examined when the rules have moved on",
 check("the walker actually offers version-stale entries again",
       "f\"%{_SIG_PROMPT_VERSION}%\"" in _me)
 check("a re-check that finds nothing clears the previous text",
-      'raw.pop("significance", None)' in _me)
+      'drop = ("significance",)' in _me
+      and "write_fields(cache, key, raw, fields, drop=drop" in _me)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

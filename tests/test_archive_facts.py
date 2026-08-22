@@ -264,7 +264,7 @@ check("an id two works claim identifies nothing",
               {"title": "B", "tvdbId": 5, "imdbId": "tt2"}]) == {})
 
 check("how the match was made is recorded, not merely that it was",
-      'raw["ids_from_arr"] = how' in
+      'fields["ids_from_arr"] = how' in
       (ROOT / "src/services/external_ids.py").read_text(encoding="utf-8"))
 check("claims made under the older, looser rule are re-judged",
       "def _recheck" in
