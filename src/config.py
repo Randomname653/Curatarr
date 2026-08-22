@@ -3,7 +3,6 @@ Curatarr 1.0 - Configuration
 Loaded from .env (written by Setup Wizard on first run).
 """
 
-import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, HttpUrl
