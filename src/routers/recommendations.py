@@ -536,16 +536,49 @@ async def list_downscale_candidates(
         .order_by(ProtectedMedia.created_at.desc())
         .all()
     )
+    # Pre-fetch profiles to avoid N+1 queries.
+    # TMDB IDs are only unique per namespace ("movie" vs "tv").
+    def _tmdb_namespace(mt: str) -> Optional[str]:
+        if not mt: return None
+        return "movie" if mt.lower() == "movie" else "tv"
+
+    tmdb_ids, titles = set(), set()
+    for p in rows:
+        tmdb = int(p.identifier) if (p.identifier or "").isdigit() else None
+        if tmdb:
+            tmdb_ids.add(tmdb)
+        if p.title or p.identifier:
+            titles.add(p.title or p.identifier)
+
+    prof_by_id, prof_by_title = {}, {}
+    if tmdb_ids or titles:
+        from sqlalchemy import or_
+        conds = []
+        if tmdb_ids:
+            conds.append(MediaTechProfile.tmdb_id.in_(list(tmdb_ids)))
+        if titles:
+            conds.append(MediaTechProfile.title.in_(list(titles)))
+
+        for prof in db.query(MediaTechProfile).filter(or_(*conds)).all():
+            ns = _tmdb_namespace(prof.media_type)
+            if prof.tmdb_id and ns:
+                prof_by_id[(ns, prof.tmdb_id)] = prof
+            if prof.title:
+                prof_by_title[prof.title.lower()] = prof
+
     out, total_gb = [], 0.0
     for p in rows:
         tech = None
         try:
-            q = db.query(MediaTechProfile)
             tmdb = int(p.identifier) if (p.identifier or "").isdigit() else None
-            prof = (q.filter(MediaTechProfile.tmdb_id == tmdb).first() if tmdb
-                    else None) or (
-                db.query(MediaTechProfile)
-                .filter(MediaTechProfile.title == (p.title or p.identifier)).first())
+            ns = _tmdb_namespace(p.category)
+
+            prof = None
+            if tmdb and ns:
+                prof = prof_by_id.get((ns, tmdb))
+            if not prof and (p.title or p.identifier):
+                prof = prof_by_title.get((p.title or p.identifier).lower())
+
             if prof and prof.size_mb:
                 total_gb += (prof.size_mb or 0) / 1024.0
                 tech = {
