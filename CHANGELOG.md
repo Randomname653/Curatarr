@@ -18,8 +18,15 @@ Condensed release history, newest first.
   an adaptation and its named awards are looked up rather than summarised —
   no model, no key, nothing to get wrong. They sit on separate evidence
   lines so it stays obvious which was distilled and which was read.
-- **`scripts/facts_speedrunner.py`** clears the archive-source backlog with
-  no daily ceiling. `--skip-significance` leaves the GPU alone entirely.
+- **Backfill is offered where the gap is visible.** A fresh install has none
+  of this metadata, and the daily tick fills it at a pace meant for a library
+  that has been running for months. The Knowledge Base now shows a "Finish
+  the backfill" panel with coverage per source and a button each — and it
+  removes itself once a source is well covered, leaving the remainder to the
+  ordinary ticks. Titles that can never gain a source (no IMDb id, a quarter
+  of the library) count as settled rather than holding the offer open for
+  good. `scripts/facts_speedrunner.py` does the same from a terminal, with
+  `--skip-significance` for a run that never touches the GPU.
 
 - **The source of an adaptation is now fetched.** Only the screenwriter was
   ever read, so an adaptation of a celebrated novel looked like an anonymous

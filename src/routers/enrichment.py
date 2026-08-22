@@ -533,6 +533,70 @@ async def rollback_embedding(user: User = Depends(get_current_user)):
     return rollback_embedding_migration()
 
 
+# ── First-run backfill ───────────────────────────────────────────────────────
+# The archive sources are filled by daily ticks, which is the right pace for a
+# library that has been running for months and far too slow for one set up an
+# hour ago. These endpoints expose the same walkers on demand, together with
+# the coverage figure that decides whether offering them is still useful.
+
+_backfill_running: set = set()
+
+
+async def _run_backfill_bg(source: str) -> None:
+    from src.services.task_monitor import task_monitor
+    from src.services.archive_backfill import SOURCES, run_source
+    label = SOURCES[source]["label"]
+    task = task_monitor.create(name=f"Backfill: {label}", category="enrichment")
+    task_monitor.start(task)
+    try:
+        res = await run_source(source, task=task,
+                               should_stop=lambda: source not in _backfill_running)
+        task_monitor.done(task, f"{label} — {res['added']} added "
+                                f"across {res['visited']} titles")
+    except Exception as e:
+        logger.error("[backfill] %s failed: %s", source, e)
+        task_monitor.done(task, f"{label} failed: {e}")
+    finally:
+        _backfill_running.discard(source)
+
+
+@router.get("/backfill-status")
+async def backfill_status(user: User = Depends(get_current_user)):
+    """Per-source coverage of the archive metadata, and whether a manual
+    catch-up is still worth offering (see archive_backfill.THRESHOLD_PCT)."""
+    from src.services.archive_backfill import coverage
+    data = coverage()
+    for src in data["sources"]:
+        src["running"] = src["key"] in _backfill_running
+    return data
+
+
+@router.post("/backfill/{source}")
+async def start_backfill(
+    source: str,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+):
+    """Catch one metadata source up now, with no daily ceiling. Resumable:
+    stopping and starting again continues where it left off."""
+    from src.services.archive_backfill import SOURCES
+    if source not in SOURCES:
+        raise HTTPException(status_code=404, detail=f"unknown source {source!r}")
+    if source in _backfill_running:
+        raise HTTPException(status_code=409, detail="already running")
+    _backfill_running.add(source)
+    background_tasks.add_task(_run_backfill_bg, source)
+    return {"status": "started", "source": source}
+
+
+@router.post("/backfill/{source}/stop")
+async def stop_backfill(source: str, user: User = Depends(require_admin)):
+    """Ask a running backfill to stop after the current title. What it has
+    already written stays written."""
+    _backfill_running.discard(source)
+    return {"status": "stopping", "source": source}
+
+
 @router.post("/omdb-backfill")
 async def start_omdb_backfill(
     background_tasks: BackgroundTasks,

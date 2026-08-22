@@ -99,5 +99,53 @@ check("and are warmed before the verdict with the other two sources",
 check("a standalone runner exists to clear the backlog",
       (ROOT / "scripts/facts_speedrunner.py").exists())
 
+# -- the backfill offer, and when it stops being one -----------------------
+# A fresh install has none of this data and the daily tick fills it at a pace
+# suited to a library that is already running. The panel offers the walkers
+# on demand and removes itself once a source is covered, because a button for
+# a finished job is clutter.
+
+from src.services import archive_backfill as ab
+
+check("every source declares a label, a blurb and a completeness test",
+      all(set(spec) >= {"label", "blurb", "done"} for spec in ab.SOURCES.values()))
+check("the four archive sources are covered",
+      set(ab.SOURCES) == {"significance", "reception", "wikidata", "omdb"})
+
+# A title with no IMDb id can never gain OMDb or Wikidata; counting it as
+# outstanding would pin coverage below the threshold and leave a button that
+# cannot finish its own job.
+check("a title that cannot be looked up counts as settled",
+      ab.SOURCES["omdb"]["done"]({"title": "x"})
+      and ab.SOURCES["wikidata"]["done"]({"title": "x"}))
+check("...but one that CAN be looked up and has not been does not",
+      not ab.SOURCES["omdb"]["done"]({"title": "x", "imdb_id": "tt1"})
+      and not ab.SOURCES["wikidata"]["done"]({"title": "x", "imdb_id": "tt1"}))
+
+check("the threshold is a real ceiling, not 100%", 50 < ab.THRESHOLD_PCT < 100)
+
+_router = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
+for route in ("/backfill-status", "/backfill/{source}", "/backfill/{source}/stop"):
+    check(f"endpoint {route} exists", f'"{route}"' in _router)
+check("starting a backfill is admin-only",
+      "async def start_backfill" in _router and "require_admin" in _router)
+check("a running backfill can be asked to stop mid-run",
+      "should_stop=lambda: source not in _backfill_running" in _router)
+
+_html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+check("the panel exists and is refreshed with the page",
+      'id="backfill-panel"' in _html and "loadBackfillPanel();" in _html)
+check("it removes itself when nothing is worth offering",
+      "if (!d || !d.any_offer)" in _html)
+
+from src.services import app_context
+check("the curator knows the panel disappears on purpose",
+      "Finish the backfill" in app_context.APP_MAP_BLOCK
+      and "disappears on its own" in app_context.APP_MAP_BLOCK)
+
+_cust = (ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
+check("a daily tick carries the remainder for the new source",
+      "custodian_wikidata" in _cust)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

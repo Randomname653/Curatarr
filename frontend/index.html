@@ -717,6 +717,7 @@ select option { background: var(--bg2); }
       </div>
       <div class="view-body">
         <div id="custodian-bar" style="margin-bottom:14px"></div>
+        <div id="backfill-panel" style="margin-bottom:14px"></div>
         <div id="enrich-overview" style="margin-bottom:20px"></div>
 
         <details style="margin-bottom:16px">
@@ -5093,6 +5094,7 @@ async function loadEnrichStatus(forceRefresh) {
     ]);
     _renderKbOverview(ov, !!st.running, st.last_run);
     if (cust) _renderCustodianBar(cust);
+    loadBackfillPanel();
     if (st.running || (cust && cust.ticking)) setTimeout(() => loadEnrichStatus(true), 8000);
   } catch (e) {
     const el = document.getElementById('enrich-overview');
@@ -5127,6 +5129,60 @@ function _renderCustodianBar(c) {
       </div>
       <button class="btn btn-secondary btn-sm" onclick="runMaintenance(this)" ${c.ticking ? 'disabled' : ''}>Run maintenance now</button>
     </div>`;
+}
+
+// First-run backfill. The archive sources fill themselves on a daily tick,
+// which is far too slow for a library that was set up this week. This panel
+// offers the same walkers on demand and REMOVES ITSELF once a source is
+// sufficiently covered — a permanent button for a finished job is clutter.
+async function loadBackfillPanel() {
+  const el = document.getElementById('backfill-panel');
+  if (!el) return;
+  let d;
+  try { d = await api('/api/enrichment/backfill-status'); }
+  catch (e) { el.innerHTML = ''; return; }
+  if (!d || !d.any_offer) { el.innerHTML = ''; return; }   // nothing worth offering
+  const rows = d.sources.filter(s => s.offer).map(s => `
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--border)">
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:12px;font-weight:600;color:var(--text)">${esc(s.label)}</div>
+        <div style="font-size:11px;color:var(--text3)">${esc(s.blurb)}</div>
+      </div>
+      <div style="min-width:150px">
+        <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${s.pct}%"></div></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">${s.pct}% · ${s.missing.toLocaleString()} to go</div>
+      </div>
+      ${s.running
+        ? `<button class="btn btn-secondary btn-sm" onclick="stopBackfill('${s.key}',this)">Stop</button>`
+        : `<button class="btn btn-secondary btn-sm" onclick="startBackfill('${s.key}',this)">Fetch now</button>`}
+    </div>`).join('');
+  el.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px">
+      <div style="font-size:12px;color:var(--text2)">
+        <span style="font-weight:600;color:var(--text)">Finish the backfill</span>
+        · these sources feed the deletion judge. The daily tick fills them slowly;
+        fetch them now and this panel disappears above ${d.threshold_pct}% coverage.
+      </div>
+      ${rows}
+    </div>`;
+}
+
+async function startBackfill(source, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'starting…'; }
+  try {
+    await api('/api/enrichment/backfill/' + source, 'POST');
+    if (btn) btn.textContent = 'running…';
+  } catch (e) {
+    if (btn) { btn.textContent = 'failed'; btn.disabled = false; }
+  }
+  // The panel re-reads coverage, so a finished source removes its own row.
+  setTimeout(loadBackfillPanel, 1500);
+}
+
+async function stopBackfill(source, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'stopping…'; }
+  try { await api('/api/enrichment/backfill/' + source + '/stop', 'POST'); } catch (e) {}
+  setTimeout(loadBackfillPanel, 1200);
 }
 
 async function runMaintenance(btn) {

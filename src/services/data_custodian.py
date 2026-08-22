@@ -181,6 +181,17 @@ async def _run_reception(deep: bool = False, task=None) -> bool:
     return r.get("remaining", 0) == 0
 
 
+async def _run_wikidata(deep: bool = False, task=None) -> bool:
+    """Structured facts — no model, so this one never waits for the GPU."""
+    from src.services.archive_backfill import coverage, run_source
+    r = await run_source("wikidata", limit=400 if deep else 150, task=task)
+    left = next((s["missing"] for s in coverage()["sources"]
+                 if s["key"] == "wikidata"), 0)
+    logger.info("[custodian] wikidata: +%d over %d title(s), %d remaining",
+                r.get("added", 0), r.get("visited", 0), left)
+    return left == 0
+
+
 async def _run_discogs_styles(deep: bool = False, task=None) -> bool:
     """Monthly CC0 masters-dump refresh (~590 MB stream, CPU-only). The
     module itself skips when the local DB is <30 days old, so the 24h task
@@ -400,6 +411,8 @@ def _registry() -> list[Task]:
              needs_llm=True, takes_deep=True, takes_task=True),
         Task("custodian_recept", "Community reception",  24.0,  _run_reception,
              needs_llm=True, takes_deep=True, takes_task=True),
+        Task("custodian_wikidata", "On-record facts",    24.0,  _run_wikidata,
+             takes_deep=True, takes_task=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
              takes_deep=True, takes_task=True),
         Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,
