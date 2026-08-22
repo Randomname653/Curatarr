@@ -1260,36 +1260,50 @@ async def spotify_backlog(
         # Truncate to the requested page size after filtering.
         rows = rows[:limit]
 
-        # Top-3 tracks per artist (N+1 queries — N is small, queries are
-        # tiny indexed lookups).
+        # Top-3 tracks per artist (optimized from N+1 queries to a single query).
         artists = []
-        for r in rows:
-            top_tracks_rows = (
+        if rows:
+            from collections import defaultdict
+            series_titles = [r.series_title for r in rows]
+
+            # Fetch all tracks for these artists in a single query
+            all_tracks_rows = (
                 db.query(
+                    WatchHistoryEntry.series_title,
                     WatchHistoryEntry.title,
-                    func.count(WatchHistoryEntry.id).label("p"),
+                    func.count(WatchHistoryEntry.id).label("p")
                 )
                 .filter(
                     WatchHistoryEntry.user_id      == user.id,
-                    WatchHistoryEntry.series_title == r.series_title,
+                    WatchHistoryEntry.series_title.in_(series_titles),
                     WatchHistoryEntry.title.isnot(None),
                     # An artist sharing a name with a TV series would otherwise
                     # count that series' episodes as "top tracks".
                     WatchHistoryEntry.media_type == "music",
                 )
-                .group_by(WatchHistoryEntry.title)
-                .order_by(func.count(WatchHistoryEntry.id).desc())
-                .limit(3)
+                .group_by(WatchHistoryEntry.series_title, WatchHistoryEntry.title)
                 .all()
             )
-            artists.append({
-                "artist_name": r.series_title,
-                "play_count":  r.plays,
-                "mbid":        r.mbid,
-                "mbid_resolved":   bool(r.mbid),
-                "in_lidarr":       bool(r.mbid) and r.mbid in in_lidarr,  # 16o
-                "top_tracks":  [{"title": t.title, "plays": t.p} for t in top_tracks_rows],
-            })
+
+            # Group in Python
+            tracks_by_artist = defaultdict(list)
+            for row in all_tracks_rows:
+                tracks_by_artist[row.series_title].append({"title": row.title, "plays": row.p})
+
+            for r in rows:
+                artist_tracks = tracks_by_artist.get(r.series_title, [])
+                # Sort by plays desc, then limit 3
+                artist_tracks.sort(key=lambda x: x["plays"], reverse=True)
+                top_3 = artist_tracks[:3]
+
+                artists.append({
+                    "artist_name": r.series_title,
+                    "play_count":  r.plays,
+                    "mbid":        r.mbid,
+                    "mbid_resolved":   bool(r.mbid),
+                    "in_lidarr":       bool(r.mbid) and r.mbid in in_lidarr,  # 16o
+                    "top_tracks":  top_3,
+                })
 
         # Stats for the toolbar header
         total_unique = (

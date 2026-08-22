@@ -1,0 +1,1 @@
+For library optimization, N+1 querying in top_tracks lookup per artist should be replaced with a single batched query using series_title.in_() combined with collections.defaultdict for in-memory grouping.
