@@ -172,12 +172,18 @@ def pending(source: str, cache=None) -> list[dict]:
 
 
 async def run_source(source: str, *, limit: int = 0, cache=None,
-                     task=None, should_stop=None) -> dict:
+                     task=None, should_stop=None, on_progress=None) -> dict:
     """Catch one source up. ``limit=0`` means no ceiling.
 
     ``should_stop`` is polled between titles so a UI cancel or a signal lands
     within one title rather than at the end of a multi-hour run; everything
     written so far stays written, and re-running resumes.
+
+    ``on_progress(done, total, added)`` is for callers with no Activity view to
+    write to. The significance walk is seven hours long on a full library, and
+    with the app stopped — which is the right way to run it — ``task`` is None
+    and the run is completely silent. A caller that prints cannot tell a slow
+    job from a hung one; this lets it.
     """
     from src.cache.metadata_cache import MetadataCache
     from src.services.media_enricher import topup_significance, topup_omdb
@@ -193,7 +199,8 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
             # so it does not walk the per-title path below.
             from src.services.external_ids import harvest
             return await harvest(cache, limit=limit, task=task,
-                                 should_stop=should_stop)
+                                 should_stop=should_stop,
+                                 on_progress=on_progress)
         todo = pending(source, cache=cache)
         if limit:
             todo = todo[:limit]
@@ -222,10 +229,13 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
                 added += bool(ok)
             except Exception as e:
                 logger.debug("[backfill] %s failed for %r: %s", source, t["title"], e)
-            if task is not None and (i % 10 == 0 or i == len(todo)):
-                from src.services.task_monitor import task_monitor
-                task_monitor.update(task, processed=i, total=len(todo),
-                                    message=f"{t['title'][:40]} — +{added} so far")
+            if i % 10 == 0 or i == len(todo):
+                if task is not None:
+                    from src.services.task_monitor import task_monitor
+                    task_monitor.update(task, processed=i, total=len(todo),
+                                        message=f"{t['title'][:40]} — +{added} so far")
+                if on_progress is not None:
+                    on_progress(i, len(todo), added)
         return {"source": source, "visited": len(todo), "added": added}
     finally:
         if owns:

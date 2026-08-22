@@ -275,7 +275,8 @@ def _recheck(cache, index, rows) -> int:
     return reverted
 
 
-async def harvest(cache, *, limit: int = 0, task=None, should_stop=None) -> dict:
+async def harvest(cache, *, limit: int = 0, task=None, should_stop=None,
+                  on_progress=None) -> dict:
     """Fill missing ids on raw cache entries from the *arr libraries."""
     from src.cache.metadata_cache import write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
@@ -337,9 +338,12 @@ async def harvest(cache, *, limit: int = 0, task=None, should_stop=None) -> dict
             write_fields(cache, _unprefixed(key), raw, fields,
                          days=_RAW_CACHE_DAYS)
             added += 1
-        if task is not None and visited % 50 == 0:
-            from src.services.task_monitor import task_monitor
-            task_monitor.update(task, processed=visited, total=len(rows),
-                                message=f"{added} matched so far")
+        if visited % 50 == 0:
+            if task is not None:
+                from src.services.task_monitor import task_monitor
+                task_monitor.update(task, processed=visited, total=len(rows),
+                                    message=f"{added} matched so far")
+            if on_progress is not None:
+                on_progress(visited, len(rows), added)
     return {"source": "external_ids", "visited": visited, "added": added,
             "reverted": reverted, "by": by_how}

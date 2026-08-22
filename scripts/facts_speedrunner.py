@@ -55,6 +55,33 @@ def _on_signal(*_):
     print("\n  stopping after the current title — progress is already saved")
 
 
+def _reporter(t0, every: float = 60.0):
+    """A progress line, at most once a minute.
+
+    The significance walk is seven hours on a full library, and the sensible
+    way to run it is with the app stopped — which means no Activity view and,
+    before this, no output at all between the header and the summary. Seven
+    silent hours look exactly like a hang.
+
+    Throttled by time rather than by count, so a fast source does not flood the
+    terminal and a slow one still speaks.
+    """
+    state = {"last": 0.0}
+
+    def report(done, total, added):
+        now = time.monotonic()
+        if now - state["last"] < every and done != total:
+            return
+        state["last"] = now
+        elapsed = max(now - t0, 1e-9)
+        rate = done / elapsed * 60
+        eta_min = (total - done) / rate if rate else 0
+        tail = f", ~{eta_min / 60:.1f} h left" if eta_min > 90 else ""
+        print(f"   {done}/{total}  +{added}  ({rate:.0f}/min{tail})", flush=True)
+
+    return report
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0,
@@ -96,7 +123,8 @@ async def main() -> int:
             print(f"\n-- {label} --")
             t0 = time.monotonic()
             res = await run_source(key, limit=args.limit, cache=cache,
-                                   should_stop=lambda: _stop)
+                                   should_stop=lambda: _stop,
+                                   on_progress=_reporter(t0))
             secs = max(time.monotonic() - t0, 1e-9)
             print(f"   visited {res['visited']}, added {res['added']}"
                   f"  ({res['visited'] / secs * 60:.0f}/min)")
