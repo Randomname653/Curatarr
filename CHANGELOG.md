@@ -18,6 +18,14 @@ Condensed release history, newest first.
   an adaptation and its named awards are looked up rather than summarised —
   no model, no key, nothing to get wrong. They sit on separate evidence
   lines so it stays obvious which was distilled and which was read.
+- **The *arr services already knew the ids we were missing.** A quarter of
+  the library had no IMDb id — anime is enriched from AniList and never
+  touches TMDB — and two sources key on exactly that id. Sonarr held the id
+  for 1,833 of those titles all along, from a call made on every sync.
+  Harvesting them lifted id coverage from 76% to 96%. Matching is timid on
+  purpose: a title is claimed only when exactly one library entry normalises
+  to its name, because a wrong id is not a gap but a confident statement
+  about a different work.
 - **Backfill is offered where the gap is visible.** A fresh install has none
   of this metadata, and the daily tick fills it at a pace meant for a library
   that has been running for months. The Knowledge Base now shows a "Finish

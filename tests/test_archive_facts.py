@@ -109,8 +109,9 @@ from src.services import archive_backfill as ab
 
 check("every source declares a label, a blurb and a completeness test",
       all(set(spec) >= {"label", "blurb", "done"} for spec in ab.SOURCES.values()))
-check("the four archive sources are covered",
-      set(ab.SOURCES) == {"significance", "reception", "wikidata", "omdb"})
+check("every archive source is covered",
+      set(ab.SOURCES) == {"external_ids", "significance", "reception",
+                          "wikidata", "omdb"})
 
 # A title with no IMDb id can never gain OMDb or Wikidata; counting it as
 # outstanding would pin coverage below the threshold and leave a button that
@@ -146,6 +147,45 @@ check("the curator knows the panel disappears on purpose",
 _cust = (ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
 check("a daily tick carries the remainder for the new source",
       "custodian_wikidata" in _cust)
+
+# -- ids the *arr already had ---------------------------------------------
+# OMDb and Wikidata both key on the IMDb id, and a quarter of the library had
+# none: anime is enriched from AniList and never touches TMDB. Sonarr knew the
+# id for 1,833 of those titles all along. Matching is timid on purpose - a
+# wrong id is not a gap, it is a confident statement about another work.
+
+from src.services.external_ids import _index, _norm, _unprefixed
+
+check("punctuation is not identity", _norm("Re:ZERO") == _norm("Re Zero"))
+check("nothing is normalised out of nothing", _norm("") == "" and _norm(None) == "")
+
+one = _index([{"title": "Solo Leveling", "imdbId": "tt1", "tvdbId": 7}])
+check("a single library entry is claimed", one[_norm("Solo Leveling")]["imdb_id"] == "tt1")
+
+alt = _index([{"title": "Kimetsu no Yaiba", "imdbId": "tt2",
+               "alternateTitles": [{"title": "Demon Slayer"}]}])
+check("alternate titles are indexed too — anime is filed under romanisations",
+      _norm("Demon Slayer") in alt)
+
+clash = _index([{"title": "Twins", "imdbId": "tt3"}, {"title": "Twins", "imdbId": "tt4"}])
+check("two entries sharing a name are refused, not guessed",
+      _norm("Twins") not in clash)
+
+same = _index([{"title": "Solo Leveling", "imdbId": "tt1"},
+               {"title": "solo  leveling!", "imdbId": "tt1"}])
+check("...but the same work listed twice is still claimed",
+      same.get(_norm("Solo Leveling"), {}).get("imdb_id") == "tt1")
+
+check("an entry with no ids at all contributes nothing",
+      _index([{"title": "Nameless"}]) == {})
+
+check("the stored key is unprefixed before writing back",
+      _unprefixed("v2:raw:anime:x") == "raw:anime:x"
+      and _unprefixed("raw:anime:x") == "raw:anime:x")
+
+check("the id harvest is offered before the sources that need it",
+      list(ab.SOURCES).index("external_ids") < list(ab.SOURCES).index("omdb")
+      and list(ab.SOURCES).index("external_ids") < list(ab.SOURCES).index("wikidata"))
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

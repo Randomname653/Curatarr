@@ -46,6 +46,12 @@ def _has_wikidata(raw: dict) -> bool:
 
 
 SOURCES = {
+    "external_ids": {
+        "label": "External ids from your *arr",
+        "blurb": "Sonarr and Radarr already know each title's IMDb id. Two of "
+                 "the sources below cannot run without it — do this one first.",
+        "done": lambda raw: bool(raw.get("imdb_id")),
+    },
     "significance": {
         "label": "Wikipedia significance",
         "blurb": "Whether a title has documented cultural standing — the "
@@ -182,6 +188,12 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
     if owns:
         cache = MetadataCache()
     try:
+        if source == "external_ids":
+            # Bulk by nature: one library fetch answers thousands of titles,
+            # so it does not walk the per-title path below.
+            from src.services.external_ids import harvest
+            return await harvest(cache, limit=limit, task=task,
+                                 should_stop=should_stop)
         todo = pending(source, cache=cache)
         if limit:
             todo = todo[:limit]
