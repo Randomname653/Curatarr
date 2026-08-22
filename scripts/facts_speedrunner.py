@@ -91,6 +91,9 @@ async def main() -> int:
                     help="no summariser work — safe beside a game")
     ap.add_argument("--only", help="one source key: significance, reception, "
                                    "wikidata, omdb")
+    ap.add_argument("--width", type=int, default=None,
+                    help="titles in flight at once (default 2 — enough to hide "
+                         "the HTTP fetch behind the model, and no more)")
     args = ap.parse_args()
     signal.signal(signal.SIGINT, _on_signal)
 
@@ -124,7 +127,8 @@ async def main() -> int:
             t0 = time.monotonic()
             res = await run_source(key, limit=args.limit, cache=cache,
                                    should_stop=lambda: _stop,
-                                   on_progress=_reporter(t0))
+                                   on_progress=_reporter(t0),
+                                   **({"width": args.width} if args.width else {}))
             secs = max(time.monotonic() - t0, 1e-9)
             print(f"   visited {res['visited']}, added {res['added']}"
                   f"  ({res['visited'] / secs * 60:.0f}/min)")

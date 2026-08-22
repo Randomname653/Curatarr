@@ -125,7 +125,7 @@ async def topup_wikidata(
     media_type: str,
     *,
     imdb_id=None, tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
-    plex_rating_key=None, cache=None,
+    cache_id=None, plex_rating_key=None, cache=None,
 ) -> bool:
     """Attach Wikidata facts to a title's raw:* cache entries, idempotent.
 
@@ -140,7 +140,7 @@ async def topup_wikidata(
         cache = MetadataCache()
     try:
         from src.services.media_enricher import _RAW_CACHE_DAYS
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id,
+        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id,
                                plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:

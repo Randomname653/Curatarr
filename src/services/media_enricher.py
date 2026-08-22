@@ -271,7 +271,7 @@ def build_verified_data(
         # anilist_id but NOT its tvdb/tmdb), so include it as a lookup key, not
         # just for the raw_prefetch. Ordered after the hard external ids but
         # before the weak title[:40] fallback.
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
@@ -882,7 +882,7 @@ async def topup_omdb(
     *,
     imdb_id: str,
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
-    cache=None,
+    cache_id=None, cache=None,
 ) -> bool:
     """Fetch OMDb for a title that's cached but missing the OMDb-only rich fields
     (writer, awards/extra_context, extended plot) and merge them into its raw:*
@@ -916,7 +916,7 @@ async def topup_omdb(
     if owns:
         cache = MetadataCache()
     try:
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
+        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
@@ -970,7 +970,7 @@ async def topup_significance(
     *,
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None, year: Optional[int] = None,
-    cache=None,
+    cache_id=None, cache=None,
 ) -> bool:
     """Fetch the Wikipedia-sourced cultural/historical significance for a title
     (see ``fetch_significance``) and store it on its raw:* cache entry, idempotent
@@ -985,7 +985,7 @@ async def topup_significance(
     if owns:
         cache = MetadataCache()
     try:
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)

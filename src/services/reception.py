@@ -365,7 +365,7 @@ async def topup_reception(
     *,
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None, year: Optional[int] = None,
-    cache=None,
+    cache_id=None, cache=None,
 ) -> bool:
     """Fetch community reception once and store it on the title's raw:* cache
     entries, idempotent via ``reception_checked``. Returns True when a
@@ -378,7 +378,7 @@ async def topup_reception(
     if owns:
         cache = MetadataCache()
     try:
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
@@ -453,7 +453,7 @@ async def topup_franchise(
     if owns:
         cache = MetadataCache()
     try:
-        id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)

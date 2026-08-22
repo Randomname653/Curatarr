@@ -274,5 +274,44 @@ check("the id harvest is offered before the sources that need it",
       list(ab.SOURCES).index("external_ids") < list(ab.SOURCES).index("omdb")
       and list(ab.SOURCES).index("external_ids") < list(ab.SOURCES).index("wikidata"))
 
+# -- addressing a title, rather than guessing where it lives ----------------
+# Raw entries are filed under the LIBRARY's title while the stored "title" is
+# the enriched one, so "Frieren: Beyond Journey's End" holds a row titled
+# "Sousou no Frieren", and "Dan Da Dan" one titled "DAN DA DAN". Every top-up
+# rebuilt its lookup key from title[:40], missed, found no row to write, and
+# returned "nothing to do" — so the walker reported success and the title
+# stayed outstanding for ever. Measured: 342 of 400 pending Wikidata titles
+# were unreachable; carrying the key the row was READ from leaves 18.
+
+import inspect
+from src.services.media_enricher import topup_omdb, topup_significance
+from src.services.reception import topup_reception
+from src.services.wikidata import topup_wikidata
+
+check("the key a row was read from survives into the walker's work list",
+      '"cache_id": raw.get("_cache_id")' in
+      (ROOT / "src/services/archive_backfill.py").read_text(encoding="utf-8"))
+
+for fn in (topup_significance, topup_omdb, topup_reception, topup_wikidata):
+    check(f"{fn.__name__} accepts it",
+          "cache_id" in inspect.signature(fn).parameters)
+
+_ab = (ROOT / "src/services/archive_backfill.py").read_text(encoding="utf-8")
+for mod in ("src/services/media_enricher.py", "src/services/reception.py",
+            "src/services/wikidata.py"):
+    src_ = (ROOT / mod).read_text(encoding="utf-8")
+    check(f"{Path(mod).name} tries it FIRST, before any rebuilt key",
+          "(cache_id, anilist_id" in src_)
+
+# Titles carry colons — "Code Geass: Lelouch of the Rebellion" — so the split
+# that recovers the key tail has to be bounded.
+check("a key tail survives colons in the title",
+      ab._key_tail("v2:raw:anime:Code Geass: Lelouch of the Rebellion")
+      == "Code Geass: Lelouch of the Rebellion")
+check("...with or without the cache-version prefix",
+      ab._key_tail("raw:movie:Alien") == "Alien")
+check("a malformed key yields nothing rather than a wrong address",
+      ab._key_tail("raw:movie") == "" and ab._key_tail("nonsense") == "")
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

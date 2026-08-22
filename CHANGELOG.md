@@ -55,6 +55,27 @@ Condensed release history, newest first.
   stale. A daily custodian tick now prunes them — the lesson taken last time
   was to delete the method, the one available was to call it.
 
+- **A walker that could not find the row it was meant to write.** Raw cache
+  entries are filed under the *library's* title, while the `title` inside them
+  is the enriched one — so the row for "Frieren: Beyond Journey's End" is
+  titled "Sousou no Frieren", and "Dan Da Dan" holds "DAN DA DAN". Every
+  top-up rebuilt its lookup key from that inner title, missed, found nothing
+  to write and returned "nothing to do". The walker counted the title as
+  visited and moved on, so it stayed outstanding for good and coverage
+  plateaued with no error anywhere. Measured: 342 of 400 pending Wikidata
+  titles were unreachable, and 30% of pending significance titles. The key a
+  row was read from is now carried into the work list and tried first —
+  the same lesson as the *arr ids: do not re-derive an identity you are
+  already holding.
+- **The backfill keeps a couple of titles in flight.** Measured per
+  significance title: 0.6s of Wikipedia and 2.0s of model, strictly
+  alternating, so the card idled through every fetch and the network through
+  every distillation. Overlapping them is worth about 23% — which is also the
+  entire ceiling an offline Wikipedia copy could offer, at 100 GB and a
+  rewritten retrieval path. Deliberately narrow: Ollama serialises requests
+  for one model on one card, so a wider pool would only queue, and would press
+  harder on services that asked us to be gentle.
+
 - **Wikidata joins Wikipedia** rather than replacing it. Wikipedia is prose
   and must be distilled; Wikidata is a graph of statements, so the source of
   an adaptation and its named awards are looked up rather than summarised —
