@@ -239,7 +239,8 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                 if not stats:
                     return None, relations, staff, finale
                 return " ".join(x for x in (
-                    stats, tags, "Audience too small for written reviews.") if x), relations, staff
+                    stats, tags, "Audience too small for written reviews.") if x
+                    ), relations, staff, finale
             lines = [f"TITLE: {title}", stats, tags]
             for rv in al_reviews:
                 lines.append(f"\nAniList review ({rv.get('score')}/100): "
@@ -269,7 +270,14 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                      "verdict, what viewers praise, what they slam, and whether "
                      "opinion is split. Plain prose, no bullet points, no scores "
                      "invented beyond those above.")
-        return await _condense("\n".join(lines)), []
+        # Four values, like every other exit from this function. This line
+        # returned two, so the caller's `rec, rels, staff, finale = ...` raised
+        # on EVERY film and show. The exception was caught and logged at debug
+        # level, so the walker reported clean passes while writing nothing.
+        # Anime leaves through the AniList branch above and was unaffected —
+        # which is why the gap looked like an anime-first walker rather than a
+        # total failure for the other two categories.
+        return await _condense("\n".join(lines)), [], [], None
 
 
 async def _finale_reception(client: httpx.AsyncClient, al: dict,

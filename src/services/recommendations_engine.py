@@ -1702,8 +1702,9 @@ async def generate_deletion_proposals(
         try:
             from src.services.media_enricher import topup_significance
             from src.services.reception import topup_reception
+            from src.services.wikidata import topup_wikidata
             _warm_slice = scored_candidates[:JUDGE_CAP]
-            _warmed = _warmed_rec = 0
+            _warmed = _warmed_rec = _warmed_wd = 0
             for _c in _warm_slice:
                 _it = _c["item"]
                 _ids = dict(tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
@@ -1720,12 +1721,22 @@ async def generate_deletion_proposals(
                             _it.get("title"), category, **_ids), timeout=20.0):
                         _warmed_rec += 1
                 except Exception:
+                    pass
+                try:
+                    if await asyncio.wait_for(topup_wikidata(
+                            _it.get("title"), category,
+                            tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
+                            plex_rating_key=_it.get("plex_rating_key")),
+                            timeout=25.0):
+                        _warmed_wd += 1
+                except Exception:
                     continue
-            if _warmed or _warmed_rec:
+            if _warmed or _warmed_rec or _warmed_wd:
                 _msg(f"{category}: warmed {_warmed} significance, "
-                     f"{_warmed_rec} reception")
+                     f"{_warmed_rec} reception, {_warmed_wd} on-record facts")
                 logger.info("[deletions] %s: pre-judge warm-up added %d article(s), "
-                            "%d reception record(s)", category, _warmed, _warmed_rec)
+                            "%d reception record(s), %d wikidata record(s)",
+                            category, _warmed, _warmed_rec, _warmed_wd)
         except Exception as _e:
             logger.debug("[deletions] pre-judge warm-up failed: %s", _e)
         _gate_label = f"deletion scan: {category}"

@@ -354,6 +354,7 @@ def build_verified_data(
             # Wikipedia-sourced cultural/historical significance (archive pillar);
             # significance_checked stops the just-in-time top-up re-querying.
             "significance":         raw.get("significance"),
+            "wikidata":             raw.get("wikidata"),
             "significance_checked": bool(raw.get("significance_checked")),
             # Community reception (AniList/MAL/TMDB reviews, condensed);
             # reception_checked stops the just-in-time top-up re-querying.
@@ -502,6 +503,13 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Similar artists", sim[:8] if isinstance(sim, list) else sim)
     add("Bio", data.get("bio"), cap=650)
     add("Significance", data.get("significance"), cap=600)
+    # Wikidata facts sit NEXT to the distilled prose, never inside it. They are
+    # statements from a graph, so they need no summarising and carry no risk of
+    # a model rewriting them; keeping them separate also makes it obvious to a
+    # reader which line was distilled and which was simply looked up.
+    if data.get("wikidata"):
+        from src.services.wikidata import format_wikidata_line
+        add("On record", format_wikidata_line(data["wikidata"]), cap=400)
     add("Community reception", data.get("reception"), cap=900)
     add("Finale reception", data.get("finale_reception"), cap=700)
     rels = data.get("relations")

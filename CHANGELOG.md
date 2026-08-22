@@ -6,6 +6,21 @@ Condensed release history, newest first.
 
 ## 2026-08-22 — What the judge is given to reason from
 
+- **Community reception was not slow, it was broken.** One exit from the
+  reception builder returned two values where every other returned four, so
+  the caller raised on every film and show. The exception was logged at debug
+  level, which made a total failure look like a slow backfill for months —
+  anime left through a different branch and worked, which is exactly why the
+  gap read as an ordering problem. A second exit returned three. Both fixed,
+  and a test now asserts that every exit from that function agrees.
+- **Wikidata joins Wikipedia** rather than replacing it. Wikipedia is prose
+  and must be distilled; Wikidata is a graph of statements, so the source of
+  an adaptation and its named awards are looked up rather than summarised —
+  no model, no key, nothing to get wrong. They sit on separate evidence
+  lines so it stays obvious which was distilled and which was read.
+- **`scripts/facts_speedrunner.py`** clears the archive-source backlog with
+  no daily ceiling. `--skip-significance` leaves the GPU alone entirely.
+
 - **The source of an adaptation is now fetched.** Only the screenwriter was
   ever read, so an adaptation of a celebrated novel looked like an anonymous
   genre piece — the metadata said "based on a novel" without ever saying
