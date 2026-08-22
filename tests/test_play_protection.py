@@ -74,6 +74,22 @@ check("plays come from ONE grouped watch_history query (name + mbid maps)",
 check("protected artists are logged with counts",
       "listening-depth protection on" in re_src)
 
+# ── skips are not listening depth ───────────────────────────────────────────
+# 35,883 of the Spotify rows are tracks the user abandoned. Counting them as
+# plays handed protection to artists they demonstrably keep skipping: on the
+# live library 473 artists drew protection from skips alone, one of them 20.2
+# points from 28 plays of which 25 were skipped. Heavy rotation is unaffected
+# either way — log1p caps at 30 from ~148 plays on.
+from src.services.recommendations_engine import REAL_LISTEN_MS
+
+check("a real listen threshold exists and mirrors the importer's 2-minute rule",
+      REAL_LISTEN_MS == 120_000)
+check("the play map counts completed plays OR substantial ones, not every row",
+      "_or(_W.completed == True" in re_src
+      and "_W.view_offset_ms >= REAL_LISTEN_MS" in re_src)
+check("...and still scopes to this user's music",
+      "_W.media_type == \"music\"" in re_src and "_W.user_id == user_id" in re_src)
+
 pl = (root / "src/services/pillars.py").read_text(encoding="utf-8")
 check("judge evidence carries the FORM guard for spoken-word music",
       "FORM: spoken-word / cabaret" in pl and "+ form_line" in pl)

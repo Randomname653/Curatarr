@@ -212,9 +212,14 @@ def duplicate_report() -> dict:
             "total_redundant_gb": round(intra_gb + cross_gb, 1)}
 
 
-def tech_profile_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> dict:
+def tech_profile_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
+                     media_type=None) -> dict:
     """Look up a MediaTechProfile by any available id (plex key → tvdb → tmdb).
-    Returns its fields as a detached-safe plain dict, or None."""
+    Returns its fields as a detached-safe plain dict, or None.
+
+    ``media_type`` scopes the TMDB lookup to its namespace; without it a
+    colliding film/series id can return the wrong work's profile.
+    """
     tmdb_id = _coerce_int(tmdb_id)
     tvdb_id = _coerce_int(tvdb_id)
     if not (tmdb_id or tvdb_id or plex_rating_key):
@@ -228,8 +233,12 @@ def tech_profile_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> dic
             row = db.query(MediaTechProfile).filter(
                 MediaTechProfile.tvdb_id == tvdb_id).first()
         if not row and tmdb_id:
-            row = db.query(MediaTechProfile).filter(
-                MediaTechProfile.tmdb_id == tmdb_id).first()
+            q = db.query(MediaTechProfile).filter(
+                MediaTechProfile.tmdb_id == tmdb_id)
+            if media_type:
+                types = (["movie"] if media_type == "movie" else ["show", "anime"])
+                q = q.filter(MediaTechProfile.media_type.in_(types))
+            row = q.first()
         if not row:
             return None
         return {
@@ -299,20 +308,39 @@ def _dup_note(prof: dict) -> str:
 _CROSS_DUP = {"data": None}
 
 
+def _tmdb_namespace(media_type: str) -> str:
+    """TMDB numbers films and series in SEPARATE sequences, so an id alone is
+    not an identity — movie 90 is Beverly Hills Cop, series 90 is Air Crash
+    Investigation. Anime and shows share the TV sequence."""
+    return "movie" if media_type == "movie" else "tv"
+
+
 def _load_cross_dup() -> dict:
-    """{('tmdb', id)/('tvdb', id): (copies, redundant_mb)} for titles that exist as
-    MULTIPLE separate library items (same external id, different rating keys)."""
+    """{(source, namespace, id): (copies, redundant_mb)} for titles that exist as
+    MULTIPLE separate library items (same external id, different rating keys).
+
+    Keyed by TMDB NAMESPACE, not by the bare id: grouping on the number alone
+    paired every film with the unrelated series holding the same number and
+    reported it as a redundant copy. That reached the owner as "you have two
+    separate copies of this series — ~8.7 GB redundant" for a title with
+    exactly one copy, where the 8.7 GB was the size of a completely different
+    film. 88 such phantom pairs existed in a 10k-item library; scoping by
+    namespace removes all of them and keeps all 195 genuine duplicates.
+    """
     if _CROSS_DUP["data"] is None:
         from collections import defaultdict
         by = defaultdict(list)
         with get_db_session() as db:
             rows = db.query(MediaTechProfile.tmdb_id, MediaTechProfile.tvdb_id,
-                            MediaTechProfile.size_mb).all()
-        for tmdb, tvdb, smb in rows:
+                            MediaTechProfile.size_mb,
+                            MediaTechProfile.media_type).all()
+        for tmdb, tvdb, smb, mtype in rows:
+            ns = _tmdb_namespace(mtype)
             if tmdb:
-                by[("tmdb", tmdb)].append(smb or 0)
+                by[("tmdb", ns, tmdb)].append(smb or 0)
             if tvdb:
-                by[("tvdb", tvdb)].append(smb or 0)
+                # TVDB is TV-only, but keep the shape uniform.
+                by[("tvdb", "tv", tvdb)].append(smb or 0)
         idx = {}
         for k, sizes in by.items():
             if len(sizes) > 1:
@@ -322,11 +350,18 @@ def _load_cross_dup() -> dict:
     return _CROSS_DUP["data"]
 
 
-def _cross_dup_note(tmdb_id, tvdb_id) -> str:
-    """CROSS-item clause: the same title as several SEPARATE library items."""
+def _cross_dup_note(tmdb_id, tvdb_id, media_type: str = None) -> str:
+    """CROSS-item clause: the same title as several SEPARATE library items.
+
+    Without ``media_type`` a TMDB id cannot be resolved to one namespace, so
+    the film/series ambiguity is refused rather than guessed — a wrong
+    duplicate claim has talked an owner into a deletion before.
+    """
     idx = _load_cross_dup()
-    hit = (idx.get(("tmdb", _coerce_int(tmdb_id)))
-           or idx.get(("tvdb", _coerce_int(tvdb_id))))
+    hit = None
+    if media_type:
+        hit = idx.get(("tmdb", _tmdb_namespace(media_type), _coerce_int(tmdb_id)))
+    hit = hit or idx.get(("tvdb", "tv", _coerce_int(tvdb_id)))
     if hit and hit[1] >= 500:
         n, red = hit
         return (f" DUPLICATE: this title exists as {n} separate library copies — "
@@ -335,11 +370,12 @@ def _cross_dup_note(tmdb_id, tvdb_id) -> str:
 
 
 def short_size_tag(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
-                   title=None) -> str:
+                   title=None, media_type=None) -> str:
     """Compact inline size tag for the chat RAG list, e.g. '[size: 4K, normal]',
     '[size: 1080P, bloated 2.4×]', '[size: 4K, normal ·dup×2]'. '' when no profile."""
     prof = tech_profile_for(tmdb_id=tmdb_id, tvdb_id=tvdb_id,
-                            plex_rating_key=plex_rating_key)
+                            plex_rating_key=plex_rating_key,
+                            media_type=media_type)
     if not prof and title:
         prof = _tech_profile_by_title(title)
     if not prof or not prof.get("mb_per_min"):
@@ -357,19 +393,22 @@ def short_size_tag(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
     return f"[size: {res}, {o['verdict']} {o['ratio']}×{dup}]"
 
 
-def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None) -> str:
+def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
+                     media_type=None) -> str:
     """One-line SIZE CONTEXT string for the curator (pitch / discussion), or "".
 
     Translates the outlier verdict into plain language the curator weighs:
     NORMAL → don't treat size as a flaw; BLOATED → size is a legitimate argument;
     LEAN → unusually small (possible low-quality rip)."""
     prof = tech_profile_for(tmdb_id=tmdb_id, tvdb_id=tvdb_id,
-                            plex_rating_key=plex_rating_key)
+                            plex_rating_key=plex_rating_key,
+                            media_type=media_type)
     if not prof or not prof.get("mb_per_min"):
         return ""
     o = size_outlier(prof["media_type"], prof["resolution"], prof["codec"],
                      prof["mb_per_min"], is_remux=prof.get("is_remux", False))
-    dup = _dup_note(prof) + _cross_dup_note(tmdb_id, tvdb_id)
+    dup = _dup_note(prof) + _cross_dup_note(
+        tmdb_id, tvdb_id, media_type or prof.get("media_type"))
     gb = (prof["size_mb"] or 0) / 1024
     if not o:
         # No class norm yet, but a redundant duplicate is still worth flagging.

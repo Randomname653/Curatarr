@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Encrypted Taste Vector Service
+Curatarr - Encrypted Taste Vector Service
 
 AES-256-GCM encryption of taste vectors per user.
 Key derivation: PBKDF2(user_pin + plex_user_id, salt, 200000 iterations, SHA-256)

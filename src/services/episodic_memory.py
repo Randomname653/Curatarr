@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Episodic Memory Service
+Curatarr - Episodic Memory Service
 
 Gives the curator LLM the ability to actively retrieve memories
 rather than stuffing everything into context.

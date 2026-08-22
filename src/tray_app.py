@@ -107,9 +107,13 @@ def _port_in_use(port: int) -> bool:
 
 def _preflight_deps() -> bool:
     try:
-        import fastapi, uvicorn, sqlalchemy, chromadb  # noqa: F401
-        import pydantic_settings, apscheduler, psutil  # noqa: F401
-        import PIL, pystray                            # noqa: F401
+        import importlib
+        for mod in (
+            "fastapi", "uvicorn", "sqlalchemy", "chromadb",
+            "pydantic_settings", "apscheduler", "psutil",
+            "PIL", "pystray",
+        ):
+            importlib.import_module(mod)
         return True
     except Exception as e:
         logger.error("Dependency preflight failed on %s: %s", sys.executable, e)

@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Stream Ticket Service
+Curatarr - Stream Ticket Service
 
 Provides short-lived, one-time tickets for SSE streams.
 This allows us to avoid passing JWT tokens in URL query parameters.

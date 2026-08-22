@@ -42,6 +42,29 @@ tidy on its own.
 Nothing is sent to a hosted LLM. Nothing about your library leaves the
 machine except the metadata lookups the enrichment pipeline needs.
 
+## Preview
+
+![The curator answering a question about a show in the library](docs/screenshots/chat.png)
+
+*Ask about anything you own. The answer is built from your real viewing
+record — 40 episodes, scattered across two seasons, then abandoned for
+eight months — and from verified facts, not from what a model
+half-remembers about a title.*
+
+![The Knowledge Base view: enrichment coverage per library](docs/screenshots/knowledge-base.png)
+
+*Enrichment coverage per library, what each metadata source has filled
+in, the walkers still working through the backlog, and what the whole
+thing costs on disk.*
+
+<p align="center">
+  <img src="docs/screenshots/bell.png" width="330" alt="Notifications: learned curation principles awaiting review, and a proactive curator message">
+</p>
+
+*Curatarr infers curation principles from the arguments you make with it
+and puts them up for your approval before they influence any verdict —
+and it speaks up when it notices a pattern worth asking about.*
+
 ## Features
 
 - **Taste-aware recommendations** — from your own library or open-ended

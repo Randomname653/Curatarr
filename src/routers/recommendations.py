@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Recommendations & Deletions Router
+Curatarr - Recommendations & Deletions Router
 
 All endpoints are category-aware and use the LLM for pitches.
 """
@@ -517,6 +517,22 @@ async def delete_principle(
 
 # ── Downscale candidates (KEEP_WITH_FLAG — kept, but bloated) ────────────────
 
+def _namespace_for(media_type: str) -> Optional[str]:
+    """TMDB namespace for a category, or None when the category is unknown.
+
+    The movie/tv rule itself lives in size_norms — one definition, because a
+    second copy drifting from it is exactly how a film and a series with the
+    same TMDB number came to be reported as duplicates of each other.
+
+    The None case belongs to this caller: a ProtectedMedia row with no
+    category must NOT be guessed into the tv bucket, where it could collect
+    an unrelated series' resolution and bitrate. No namespace, no id match —
+    the title fallback still applies.
+    """
+    from src.services.size_norms import _tmdb_namespace
+    return _tmdb_namespace(media_type) if media_type else None
+
+
 @router.get("/downscale")
 async def list_downscale_candidates(
     user: User = Depends(require_admin),   # curation = admin only
@@ -536,16 +552,49 @@ async def list_downscale_candidates(
         .order_by(ProtectedMedia.created_at.desc())
         .all()
     )
+    # Pre-fetch profiles to avoid N+1 queries. TMDB ids are only unique per
+    # namespace ("movie" vs "tv"), so the map is keyed by both — see
+    # _namespace_for above.
+    tmdb_ids, titles = set(), set()
+    for p in rows:
+        tmdb = int(p.identifier) if (p.identifier or "").isdigit() else None
+        if tmdb:
+            tmdb_ids.add(tmdb)
+        if p.title or p.identifier:
+            titles.add(p.title or p.identifier)
+
+    prof_by_id, prof_by_title = {}, {}
+    if tmdb_ids or titles:
+        from sqlalchemy import or_
+        conds = []
+        if tmdb_ids:
+            conds.append(MediaTechProfile.tmdb_id.in_(list(tmdb_ids)))
+        if titles:
+            conds.append(MediaTechProfile.title.in_(list(titles)))
+
+        for prof in db.query(MediaTechProfile).filter(or_(*conds)).all():
+            ns = _namespace_for(prof.media_type)
+            if prof.tmdb_id and ns:
+                # Last write wins if two profiles share a key. That was
+                # equally arbitrary with the old .first(), and namespacing
+                # already removed the collisions that actually occurred.
+                prof_by_id[(ns, prof.tmdb_id)] = prof
+            if prof.title:
+                prof_by_title[prof.title.lower()] = prof
+
     out, total_gb = [], 0.0
     for p in rows:
         tech = None
         try:
-            q = db.query(MediaTechProfile)
             tmdb = int(p.identifier) if (p.identifier or "").isdigit() else None
-            prof = (q.filter(MediaTechProfile.tmdb_id == tmdb).first() if tmdb
-                    else None) or (
-                db.query(MediaTechProfile)
-                .filter(MediaTechProfile.title == (p.title or p.identifier)).first())
+            ns = _namespace_for(p.category)
+
+            prof = None
+            if tmdb and ns:
+                prof = prof_by_id.get((ns, tmdb))
+            if not prof and (p.title or p.identifier):
+                prof = prof_by_title.get((p.title or p.identifier).lower())
+
             if prof and prof.size_mb:
                 total_gb += (prof.size_mb or 0) / 1024.0
                 tech = {

@@ -1,9 +1,8 @@
 """
-Curatarr 1.0 - Configuration
+Curatarr - Configuration
 Loaded from .env (written by Setup Wizard on first run).
 """
 
-import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, HttpUrl
@@ -16,7 +15,10 @@ from src.paths import ROOT, ENV_FILE
 class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────────────────────────
     APP_NAME: str = "Curatarr"
-    VERSION: str = "1.0.0"
+    # Beta: feature-complete enough to run a household, not
+    # stable enough to promise anything. One declaration only —
+    # the file headers deliberately carry no version.
+    VERSION: str = "1.0.0-beta"
     # HOST is the BIND address only (0.0.0.0 = serve the LAN, intentional for
     # the multi-user household). It is NOT a navigable origin — browser-facing
     # defaults (PLEX_REDIRECT_URI, CORS_ORIGINS) stay localhost-based and must

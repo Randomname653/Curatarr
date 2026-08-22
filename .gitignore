@@ -12,6 +12,12 @@
 *.key
 secret.key
 
+# Coding-agent scratch notes. Bots that open PRs against this repo like to
+# commit their own "what I learned" files alongside the change; they are the
+# agent's memory, not project history.
+.jules/
+.Jules/
+
 # 2. Virtual Environments
 # ==========================================
 venv/
@@ -35,8 +41,12 @@ pip-delete-this-directory.txt
 chroma_db/
 chroma/
 .chroma/
-data/chromadb/
-data/cache/
+# Everything under data/ is runtime state: databases, vector store, caches,
+# logs and the odd multi-hundred-MB migration snapshot. Nothing in here is
+# source. (.last_sync in particular must NOT be tracked — a fresh clone would
+# get a file whose mtime is the clone time, and the first sync would be
+# skipped as "already synced".)
+data/
 
 # Spotify exports / personal data
 spotify_data/

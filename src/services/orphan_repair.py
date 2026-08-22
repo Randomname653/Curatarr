@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Orphaned Library Repair Service
+Curatarr - Orphaned Library Repair Service
 
 Finds Plex history entries whose librarySectionID no longer exists
 in the library config, and allows the user to remap them.

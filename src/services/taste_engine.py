@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Taste Engine
+Curatarr - Taste Engine
 
 Computes REAL taste vectors as weighted average embeddings in ChromaDB space.
 
@@ -60,7 +60,14 @@ DROP_PUSH_WEIGHT = 0.35
 
 def _is_drop(entry: dict) -> bool:
     """True when the user demonstrably abandoned this item early (<40%
-    watched, not completed). Music rows are always completed → never drops."""
+    watched, not completed).
+
+    Never fires for imported music: those rows carry ms_played but no
+    duration_ms, so there is nothing to take a percentage of. (The older
+    claim here — that music rows are always completed — is not true: a
+    tenth of them are tracks that were skipped. They are down-weighted by
+    completion_weight rather than pushed away as drops.)
+    """
     if entry.get("completed"):
         return False
     d, v = entry.get("duration_ms"), entry.get("view_offset_ms")

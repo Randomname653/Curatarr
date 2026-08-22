@@ -1,4 +1,4 @@
-"""Curatarr 1.0 - Proactive Messages Router"""
+"""Curatarr - Proactive Messages Router"""
 
 from fastapi import APIRouter, Depends
 from src.routers.auth import get_current_user

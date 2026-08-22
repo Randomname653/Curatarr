@@ -26,6 +26,11 @@ python tests/run_all.py          # the whole battery (CI runs exactly this)
 python tests/test_<name>.py      # one suite
 ```
 
+Stop the app before running the full battery: several suites open the
+vector store, which admits one process at a time, so they all fail together
+while it is running. The runner says so rather than printing the same
+traceback eight times.
+
 New tests follow the stdlib pattern (`check(name, cond)` counter, printed
 summary, non-zero exit on failure — see `tests/test_stale_guard.py` as a
 template). Regressions caught live become fixtures.

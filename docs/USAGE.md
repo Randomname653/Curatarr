@@ -54,6 +54,7 @@ the data custodian picks up whatever is overdue on the next run.
 | `python run_pipeline_spotify.py` | Trigger the music pipeline manually |
 | `python scripts/music_enricher.py` | Clear a large music backlog in a separate process |
 | `python scripts/mbid_speedrunner.py` | Bulk-resolve MusicBrainz ids |
+| `python scripts/dedupe_watch_history.py` | Report play rows that record one viewing twice (`--apply` to remove) |
 | `python benchmark.py` | Measure a candidate Ollama model's throughput |
 | `python scripts/make_icon.py` | Re-render the app icons |
 

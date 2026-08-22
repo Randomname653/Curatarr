@@ -496,6 +496,122 @@ def _split_negation(constraint: str):
     return c, False
 
 
+def _family_priority(tkey: str, families: list) -> int | None:
+    """Rank of the first concept-family member this tag carries, or None.
+
+    Families are curated in preference order, so the first family to match
+    wins and the member's position inside it becomes the rank — a later
+    family never outranks an earlier one.
+    """
+    for fam in families:
+        for member_rank, member in enumerate(fam):
+            if member in tkey:
+                return 1 + member_rank
+    return None
+
+
+def _lexical_evidence(ckey: str, tags: list, negated: bool,
+                      used_tags: set) -> str | None:
+    """The most PRECISE tag literally carrying this constraint, or None.
+
+    Literal containment is evidence by definition — no model involved. This
+    is the hard guarantee that a tag spelling out "Femdom" can never be
+    overlooked again. Deliberately strict: the whole constraint core as a
+    substring, ALL its words (at least one of them a carrier), or one
+    DISTINCTIVE word of >= 6 chars — never "cast" or "tone", which matched
+    Teen/Female Cast during calibration.
+
+    PRECISION decides, not tag order: round 6 had Gleipnir citing "yandere
+    romance" while its tags literally said "female antagonist femdom".
+    Direct containment wins (priority 0), then family members in their
+    curated order.
+    """
+    cwords = [w for w in ckey.split() if len(w) >= 4]
+    carriers = [w for w in cwords if w not in _GENERIC_WORDS]
+    families = _families_for(ckey)
+    best = None   # (priority, tag)
+    for t in tags:
+        tkey = _norm_tag(t)
+        if not tkey or (not negated and tkey in used_tags):
+            continue
+        # All-words counts only when at least one CARRIER word is among the
+        # matches (a tag matching nothing but scaffolding words is no evidence).
+        all_words_hit = (cwords and all(w in tkey for w in cwords)
+                         and any(w in tkey for w in carriers))
+        prio = None
+        if (len(ckey) >= 4 and (ckey in tkey or tkey in ckey))                 or all_words_hit                 or any(w in tkey for w in carriers if len(w) >= 6):
+            prio = 0
+        else:
+            prio = _family_priority(tkey, families)
+        if prio is not None and (best is None or prio < best[0]):
+            best = (prio, t)
+            if prio == 0:
+                break
+    return best[1] if best is not None else None
+
+
+def _semantic_evidence(ckey: str, tags: list, negated: bool, used_tags: set,
+                       best_sim: float, best_tag) -> tuple:
+    """Closest tag by embedding cosine — only ever IMPROVES on what lexical
+    matching already found, so a literal hit is never argued away.
+
+    Returns the incoming pair unchanged when the constraint has no vector.
+    """
+    cvec = _vec_memo.get(ckey)
+    if not cvec:
+        return best_sim, best_tag
+    c_demo = {w for w in _DEMO_WORDS if w in ckey}
+    dark_c = any(d in ckey for d in _DARK_TRIGGERS)
+    for t in tags:
+        tkey = _norm_tag(t)
+        if not negated and tkey in used_tags:
+            continue
+        # Demographic antonym guard: a DIFFERING cast-age tag is
+        # counter-evidence, not near-evidence.
+        if c_demo:
+            t_demo = {w for w in _DEMO_WORDS if w in tkey}
+            if t_demo and t_demo != c_demo:
+                continue
+        tvec = _vec_memo.get(tkey)
+        if tvec:
+            s = _dot(cvec, tvec)
+            if dark_c and not negated and any(
+                    cm in tkey for cm in _COMEDY_MARKERS):
+                s = min(s, _COMEDY_DAMP)
+            if s > best_sim:
+                best_sim, best_tag = s, t
+    return best_sim, best_tag
+
+
+def _best_constraint_match(text: str, negated: bool, tags: list,
+                           used_tags: set) -> tuple:
+    """Strongest evidence one candidate's tags offer for ONE constraint.
+
+    Lexical first (a literal match is a certainty at 1.0), then embeddings
+    for the fuzzy rest. Returns (similarity, tag | None); the caller decides
+    what that similarity is worth and records the tag as spent.
+    """
+    ckey = _norm_tag(text)
+    best_sim, best_tag = 0.0, None
+
+    lex_tag = _lexical_evidence(ckey, tags, negated, used_tags)
+    if lex_tag is not None:
+        best_sim, best_tag = 1.0, lex_tag
+
+    # Comedy dampener for dark constraints: a tag that names the darkness
+    # while laughing it off is a near-miss, not evidence. Applied before the
+    # semantic pass so a damped literal can still be beaten by a real match.
+    if (best_tag is not None and not negated
+            and any(d in ckey for d in _DARK_TRIGGERS)
+            and any(cm in _norm_tag(best_tag) for cm in _COMEDY_MARKERS)):
+        best_sim = min(best_sim, _COMEDY_DAMP)
+
+    if best_sim < 1.0:
+        best_sim, best_tag = _semantic_evidence(
+            ckey, tags, negated, used_tags, best_sim, best_tag)
+    return best_sim, best_tag
+
+
 def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
     """Deterministic fit per candidate from constraint↔tag cosine evidence.
 
@@ -534,79 +650,8 @@ def _evidence_scores(constraints: list, cand_tags: list, hits: list) -> list:
         # are exempt (a used tag can still violate an exclusion).
         used_tags: set = set()
         for text, negated in cons:
-            ckey = _norm_tag(text)
-            cvec = _vec_memo.get(ckey)
-            c_demo = {w for w in _DEMO_WORDS if w in ckey}
-            best_sim, best_tag = 0.0, None
-            # LEXICAL FIRST: literal containment is evidence by definition,
-            # no model involved — the hard guarantee that a literal "Femdom"
-            # can never be overlooked again. Deliberately strict: the whole
-            # constraint core as substring, ALL its words, or a single
-            # DISTINCTIVE word (≥6 chars — "fetish", "femdom"; not "cast"/
-            # "tone", which matched Teen/Female Cast in calibration).
-            cwords = [w for w in ckey.split() if len(w) >= 4]
-            carriers = [w for w in cwords if w not in _GENERIC_WORDS]
-            families = _families_for(ckey)
-            # Collect ALL lexical hits and pick the most precise one instead
-            # of the first in tag order — round 6: Gleipnir cited "yandere
-            # romance" while the tags literally contained "female antagonist
-            # femdom". Priority: direct constraint/carrier containment (0),
-            # then family members by their curated order (1 + index).
-            lex_best = None   # (priority, tag)
-            for t in tags:
-                tkey = _norm_tag(t)
-                if not tkey or (not negated and tkey in used_tags):
-                    continue
-                # All-words counts only when at least one CARRIER word is
-                # among the matches (a tag matching nothing but scaffolding
-                # words is no evidence).
-                all_words_hit = (cwords and all(w in tkey for w in cwords)
-                                 and any(w in tkey for w in carriers))
-                prio = None
-                if (len(ckey) >= 4 and (ckey in tkey or tkey in ckey)) \
-                        or all_words_hit \
-                        or any(w in tkey for w in carriers if len(w) >= 6):
-                    prio = 0
-                else:
-                    for fam in families:
-                        for mi, m in enumerate(fam):
-                            if m in tkey:
-                                prio = 1 + mi
-                                break
-                        if prio is not None:
-                            break
-                if prio is not None and (lex_best is None or prio < lex_best[0]):
-                    lex_best = (prio, t)
-                    if prio == 0:
-                        break
-            if lex_best is not None:
-                best_sim, best_tag = 1.0, lex_best[1]
-            # Comedy dampener for dark constraints: a tag that names the
-            # darkness while laughing it off is a near-miss, not evidence.
-            if (best_tag is not None and not negated
-                    and any(d in ckey for d in _DARK_TRIGGERS)
-                    and any(cm in _norm_tag(best_tag) for cm in _COMEDY_MARKERS)):
-                best_sim = min(best_sim, _COMEDY_DAMP)
-            if best_sim < 1.0 and cvec:
-                dark_c = any(d in ckey for d in _DARK_TRIGGERS)
-                for t in tags:
-                    tkey = _norm_tag(t)
-                    if not negated and tkey in used_tags:
-                        continue
-                    # Demographic antonym guard: a DIFFERING cast-age tag is
-                    # counter-evidence, not near-evidence.
-                    if c_demo:
-                        t_demo = {w for w in _DEMO_WORDS if w in tkey}
-                        if t_demo and t_demo != c_demo:
-                            continue
-                    tvec = _vec_memo.get(tkey)
-                    if tvec:
-                        s = _dot(cvec, tvec)
-                        if dark_c and not negated and any(
-                                cm in tkey for cm in _COMEDY_MARKERS):
-                            s = min(s, _COMEDY_DAMP)
-                        if s > best_sim:
-                            best_sim, best_tag = s, t
+            best_sim, best_tag = _best_constraint_match(
+                text, negated, tags, used_tags)
             if (not negated and best_tag is not None
                     and best_sim >= _T_LOW):
                 used_tags.add(_norm_tag(best_tag))

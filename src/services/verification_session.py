@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Taste Verification Session Service
+Curatarr - Taste Verification Session Service
 
 After enrichment, Curatarr identifies things it's uncertain about
 and generates targeted questions to ask the user — one at a time,
