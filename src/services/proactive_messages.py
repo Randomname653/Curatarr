@@ -780,6 +780,28 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
 _SERIES_TRIGGER_TYPES = {"binge_episode", "series_completion", "procrastinator"}
 
 
+def _handle_rewatch_deep_dive(td: dict, titles: set, series: dict) -> None:
+    title = td.get("title")
+    if not title:
+        return
+    if td.get("is_series") or td.get("media_type") in ("show", "anime"):
+        series.setdefault(normalize_title(title), td.get("milestone"))
+    else:
+        titles.add(normalize_title(title))
+
+
+def _handle_recommendation_followup(td: dict, titles: set, series: dict) -> None:
+    # once asked about a recommended title, never re-ask it — the
+    # detector peeks its queue and relies on THIS index for de-dup
+    title = td.get("title")
+    if not title:
+        return
+    if td.get("category") in ("show", "anime"):
+        series.setdefault(normalize_title(title), None)
+    else:
+        titles.add(normalize_title(title))
+
+
 def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     """Index WHAT the curator has already asked this user about, from the
     proactive-message history, so generation rotates to fresh subjects.
@@ -795,6 +817,7 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     tracks: set = set()
     titles: set = set()
     series: dict = {}
+
     with get_db_session() as db:
         rows = (
             db.query(ProactiveMessage.trigger_type, ProactiveMessage.trigger_data)
@@ -803,37 +826,32 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
             .limit(limit)
             .all()
         )
+
     for ttype, tdata_raw in rows:
         try:
             td = json.loads(tdata_raw) if tdata_raw else {}
         except (ValueError, TypeError):
-            td = {}
+            continue
+
         if not isinstance(td, dict):
             continue
-        if ttype == "track_obsession":
-            if td.get("track"):
-                tracks.add(normalize_title(td["track"]))
-        elif ttype in ("rewatch", "history_deep_dive"):
-            title = td.get("title")
-            if not title:
-                continue
-            if td.get("is_series") or td.get("media_type") in ("show", "anime"):
-                series.setdefault(normalize_title(title), td.get("milestone"))
-            else:
-                titles.add(normalize_title(title))
-        elif ttype in _SERIES_TRIGGER_TYPES:
-            if td.get("series"):
-                series.setdefault(normalize_title(td["series"]), td.get("milestone"))
-        elif ttype == "recommendation_followup":
-            # once asked about a recommended title, never re-ask it — the
-            # detector peeks its queue and relies on THIS index for de-dup
-            title = td.get("title")
-            if not title:
-                continue
-            if td.get("category") in ("show", "anime"):
-                series.setdefault(normalize_title(title), None)
-            else:
-                titles.add(normalize_title(title))
+
+        if ttype == "track_obsession" and td.get("track"):
+            tracks.add(normalize_title(td["track"]))
+            continue
+
+        if ttype in ("rewatch", "history_deep_dive"):
+            _handle_rewatch_deep_dive(td, titles, series)
+            continue
+
+        if ttype in _SERIES_TRIGGER_TYPES and td.get("series"):
+            series.setdefault(normalize_title(td["series"]), td.get("milestone"))
+            continue
+
+        if ttype == "recommendation_followup":
+            _handle_recommendation_followup(td, titles, series)
+            continue
+
     return {"tracks": tracks, "titles": titles, "series": series}
 
 
