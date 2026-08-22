@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Stats Router
+Curatarr - Stats Router
 
 The curation report: aggregated debate history, storage wins, stubbornness,
 redundancy and taste evolution (services/curation_stats). Admin-only —

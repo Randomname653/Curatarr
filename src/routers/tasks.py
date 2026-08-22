@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Tasks Router
+Curatarr - Tasks Router
 
 Live task monitoring via Server-Sent Events.
 """

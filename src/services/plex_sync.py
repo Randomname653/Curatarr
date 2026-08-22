@@ -10,7 +10,7 @@ import asyncio
 import calendar
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -23,6 +23,12 @@ from src.database.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# How far back a finished view may reach to claim an earlier unfinished row as
+# its own beginning. Long enough to cover "started it, finished it next
+# weekend"; short enough that an abandonment from months ago stays its own
+# piece of history instead of being rewritten as today's viewing.
+RESUME_WINDOW_DAYS = 30
 
 from src.services.task_monitor import task_monitor
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
@@ -465,6 +471,7 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
     # Write to DB
     synced = 0
     skipped = 0
+    resumed = 0   # unfinished rows promoted to the finished view
     unattributed = 0  # play events whose accountID couldn't be resolved → fell back to admin
     new_play_hits: list[dict] = []   # inserted rows, for the rec-watch matcher below
 
@@ -598,6 +605,31 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
                     existing.add(dedup_key)
                     skipped += 1
                     continue
+            else:
+                # The mirror of the case above, which was missing: an item
+                # finished LATER arrives through the separate completed-items
+                # query, where none of the in-progress merge logic runs. The
+                # partial row stayed behind and the finished view was inserted
+                # next to it, so ONE viewing became TWO rows — read downstream
+                # as a replay ("Four replays already?" for a series with none).
+                # Promote the unfinished row instead of inserting beside it.
+                # Bounded: an abandonment from months ago is real history, not
+                # the first half of today's viewing.
+                _stale = db.query(WatchHistoryEntry).filter(
+                    WatchHistoryEntry.user_id == user.id,
+                    WatchHistoryEntry.plex_item_id == rating_key,
+                    WatchHistoryEntry.completed == False,  # noqa: E712
+                    WatchHistoryEntry.viewed_at <= viewed_at,
+                    WatchHistoryEntry.viewed_at >= viewed_at - timedelta(days=RESUME_WINDOW_DAYS),
+                ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
+                if _stale is not None:
+                    existing.discard((user.id, rating_key, _stale.viewed_at))
+                    _stale.viewed_at = viewed_at
+                    _stale.view_offset_ms = int(view_offset_ms) if view_offset_ms else None
+                    _stale.completed = True
+                    existing.add(dedup_key)
+                    resumed += 1
+                    continue
 
             genres_list = [g.get("tag", "") for g in (entry.get("Genre") or [])]
             genres_str = ",".join(g for g in genres_list if g)
@@ -703,8 +735,9 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
         db.commit()
 
     logger.info(
-        "Plex sync done: %d new entries, %d skipped, %d events parked on admin (unattributed Plex accounts)",
-        synced, skipped, unattributed,
+        "Plex sync done: %d new entries, %d skipped, %d resumed-view merges, "
+        "%d events parked on admin (unattributed Plex accounts)",
+        synced, skipped, resumed, unattributed,
     )
 
     # Pass 82b: music-rating sweep. Runs after the play-history commit so the
@@ -751,6 +784,7 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
     return {
         "synced": synced,
         "skipped": skipped,
+        "resumed": resumed,
         "unattributed": unattributed,
         "total_fetched": len(all_entries),
     }

@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Main Application Entry Point
+Curatarr - Main Application Entry Point
 """
 
 import asyncio

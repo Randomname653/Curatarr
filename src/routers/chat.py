@@ -1609,7 +1609,9 @@ async def _build_discuss_context_block(
         # answer a "70 GB for THIS?!" the way the data warrants instead of blanket.
         try:
             from src.services.size_norms import size_context_for
-            _size_ctx = size_context_for(tmdb_id=proposal.tmdb_id, tvdb_id=proposal.tvdb_id)
+            _size_ctx = size_context_for(tmdb_id=proposal.tmdb_id,
+                                         tvdb_id=proposal.tvdb_id,
+                                         media_type=proposal.category)
             if _size_ctx:
                 block += _size_ctx + "\n"
         except Exception as _e:

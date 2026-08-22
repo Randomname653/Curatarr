@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Background Scheduler
+Curatarr - Background Scheduler
 
 All scheduled jobs in one place. Started at app startup.
 

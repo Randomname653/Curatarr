@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Task Monitor
+Curatarr - Task Monitor
 
 Central registry for all background tasks.
 Tasks report progress here, frontend polls via SSE.

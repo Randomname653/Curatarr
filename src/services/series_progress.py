@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Series Progress Awareness
+Curatarr - Series Progress Awareness
 
 Read-only helpers that tell the curator HOW FAR a user is through a TV/anime
 series, so proactive messages and chat can:
@@ -66,6 +66,80 @@ def _ep_sort_key(e: dict) -> tuple:
     return (s if s is not None else 0, ep if ep is not None else 0)
 
 
+# A resumed episode reaches the database as TWO rows: Plex logs the partial
+# view, then logs it again as finished once it crosses the watched threshold,
+# and nothing reconciles the first row. A historical re-sync additionally
+# re-imported viewings with a whole-hour timezone shift, which slipped past the
+# (user, item, viewed_at) dedup key. Real views of one episode this close
+# together are the same viewing, so they collapse to one.
+SAME_VIEW_WINDOW_H = 12
+
+
+def _is_real_view(e: dict) -> bool:
+    """True when the entry represents an episode actually watched through.
+
+    An abandoned start is NOT a view. Counting one inverts the signal: a show
+    the user bounced off four times without ever finishing an episode would
+    otherwise read as their most-replayed title.
+    """
+    dur = e.get("duration_ms") or 0
+    off = e.get("view_offset_ms") or 0
+    return bool(e.get("completed") or (dur > 0 and off / dur >= 0.9))
+
+
+def count_real_views(entries: list[dict]) -> int:
+    """Number of genuine viewings in a flat list of plays of ONE title.
+
+    For films, where there are no episode numbers to group on. Abandoned
+    starts do not count, and views closer together than SAME_VIEW_WINDOW_H
+    are the same viewing recorded twice.
+    """
+    stamps = sorted(e.get("viewed_at") for e in entries
+                    if _is_real_view(e) and e.get("viewed_at") is not None)
+    if not stamps:
+        return 0
+    views, last_kept = 1, stamps[0]
+    for t in stamps[1:]:
+        try:
+            far_enough = (t - last_kept).total_seconds() / 3600 >= SAME_VIEW_WINDOW_H
+        except (TypeError, AttributeError):
+            far_enough = True
+        if far_enough:
+            views += 1
+            last_kept = t
+    return views
+
+
+def _count_replays(entries: list[dict]) -> int:
+    """Real views beyond the first, per episode.
+
+    Returns 0 for a library that tags no episode numbers: without them a
+    replay is indistinguishable from simply watching the next episode.
+    """
+    by_episode: dict = {}
+    for e in entries:
+        if e.get("episode") is None or not _is_real_view(e):
+            continue
+        by_episode.setdefault((e.get("season"), e.get("episode")), []).append(
+            e.get("viewed_at"))
+
+    replays = 0
+    for times in by_episode.values():
+        stamps = sorted(t for t in times if t is not None)
+        if not stamps:
+            continue
+        last_kept = stamps[0]
+        for t in stamps[1:]:
+            try:
+                far_enough = (t - last_kept).total_seconds() / 3600 >= SAME_VIEW_WINDOW_H
+            except (TypeError, AttributeError):
+                far_enough = True      # unknown gap: trust the separate rows
+            if far_enough:
+                replays += 1
+                last_kept = t
+    return replays
+
+
 def compute_watch_progress(entries: list[dict], series_key: str) -> Optional[dict]:
     """Aggregate one series' progress from already-loaded watch-history dicts.
 
@@ -127,6 +201,10 @@ def compute_watch_progress(entries: list[dict], series_key: str) -> Optional[dic
         "distinct_episodes": distinct_episodes,
         "per_season_watched": per_season_watched,
         "total_plays": len(mine),
+        # Raw row counts above; the two below are what a "does the user
+        # rewatch this?" question must use — see _count_replays / _is_real_view.
+        "replays": _count_replays(mine),
+        "abandoned_starts": sum(1 for e in mine if not _is_real_view(e)),
         "furthest_completed": furthest_completed,
         "last_viewed_at": last_viewed_at,
     }

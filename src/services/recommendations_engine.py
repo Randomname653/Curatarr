@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Recommendations Engine
+Curatarr - Recommendations Engine
 
 Uses taste vectors + LLM to generate personalised recommendations
 with a written pitch per item, organised by category.
@@ -212,6 +212,14 @@ def _taste_section(summary_text: str, category: str) -> str:
 
 
 # ── Enrichment cache lookup for rating context ────────────────────────────────
+
+# What counts as having listened to a track, rather than having started it.
+# Mirrors the rule import_spotify.py applies when it sets ``completed``
+# ("trackdone", or not skipped and >= 2 min). Used to reject skips from the
+# listening depth below: a track abandoned repeatedly is evidence AGAINST
+# an artist, so counting it as devotion had the sign backwards.
+REAL_LISTEN_MS = 120_000
+
 
 def _play_protection(plays: int) -> float:
     """Score-side Resonance: sustained REPEATED listening protects an artist
@@ -432,13 +440,29 @@ async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
     try:
         from src.services import soulsync_client
         seen = {(t or "").lower() for t in top_titles}
-        for artist in top_titles[:5]:
-            info = await soulsync_client.artist_info(artist)
+        # Five independent lookups against a LAN neighbour — no reason to
+        # serialise them (adapted from Jules PR #1). return_exceptions keeps
+        # one unreachable artist from discarding the other four.
+        infos = await asyncio.gather(
+            *(soulsync_client.artist_info(a) for a in top_titles[:5]),
+            return_exceptions=True)
+        failed = 0
+        for info in infos:
+            if isinstance(info, BaseException):
+                failed += 1
+                continue
             for s in (info or {}).get("similar_artists") or []:
                 if s and s.lower() not in seen and s not in names:
                     names.append(s)
         names = names[:12]
-        if names:
+        if failed:
+            # Deliberately NOT cached. The sequential version aborted before
+            # the cache write when a lookup raised, so a blip meant "try again
+            # next run"; gathering makes partial success the norm, and caching
+            # it would freeze a degraded neighbour list for the full 168 h.
+            logger.debug("[music-neighbors] %d/%d lookups failed — using "
+                         "partial result without caching", failed, len(infos))
+        elif names:
             set_state(key, json.dumps(
                 {"fetched_at": datetime.utcnow().isoformat(), "names": names}))
     except Exception as e:
@@ -1436,15 +1460,22 @@ async def generate_deletion_proposals(
     _variants_fn = None
     if category == "music":
         try:
-            from sqlalchemy import func as _f
+            from sqlalchemy import func as _f, or_ as _or
             from src.database.connection import get_db_session as _gds
             from src.database.models import WatchHistoryEntry as _W
             from src.services.watch_status import _artist_variants as _variants_fn
             with _gds() as _pdb:
+                # Skipped tracks are excluded (see REAL_LISTEN_MS): they used to
+                # count as listening depth, which handed deletion protection to
+                # artists the user demonstrably keeps skipping. Only the margins
+                # move — heavy rotation is capped by _play_protection anyway —
+                # but the margins are exactly who gets pitched for deletion.
                 for _nm, _mb, _n in (_pdb.query(_f.lower(_W.series_title),
                                                 _W.artist_mbid, _f.count(_W.id))
                                      .filter(_W.user_id == user_id,
-                                             _W.media_type == "music")
+                                             _W.media_type == "music",
+                                             _or(_W.completed == True,  # noqa: E712
+                                                 _W.view_offset_ms >= REAL_LISTEN_MS))
                                      .group_by(_f.lower(_W.series_title),
                                                _W.artist_mbid)):
                     if _nm:
@@ -1993,7 +2024,8 @@ async def generate_deletion_proposals(
             from src.services.size_norms import size_context_for
             size_ctx_block = "" if category == "music" else size_context_for(
                 tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
-                plex_rating_key=item.get("plex_rating_key"))
+                plex_rating_key=item.get("plex_rating_key"),
+                media_type=category)
 
             if category == "music":
                 # Music-specific pitch: artist framing, no synopsis, no film

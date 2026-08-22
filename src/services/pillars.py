@@ -211,8 +211,11 @@ def _tech_facts(item: dict, media_type: str) -> tuple[str, bool]:
         from src.services.size_norms import tech_profile_for, size_outlier
     except Exception:
         return "", False
+    # media_type scopes the TMDB lookup: film and series ids are separate
+    # sequences, so the bare number can otherwise return another work's profile.
     prof = tech_profile_for(tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
-                            plex_rating_key=item.get("plex_rating_key"))
+                            plex_rating_key=item.get("plex_rating_key"),
+                            media_type=media_type)
     if not prof or not prof.get("mb_per_min"):
         return "", False
     res, codec, mbpm = prof.get("resolution"), prof.get("codec"), prof.get("mb_per_min")
@@ -522,6 +525,30 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                     "linguistic craft, thematic bite, delivery, replay value.\n")
         except Exception as e:
             logger.debug("[pillars] form guard failed for %r: %s", title, e)
+    elif category in ("movie", "show", "anime"):
+        # The same category error in the other medium: a documentary measured
+        # by the yardstick of prestige drama always loses. "Mayday" (genre:
+        # Documentary) was pitched for "zero narrative subversion" and "no
+        # stylistic risk" — criteria a technical air-crash series was never
+        # trying to meet. The PITCH prompt already forbids calling a known
+        # outcome predictable; the JUDGE needs the same footing, in the
+        # evidence it reasons from.
+        try:
+            from src.services.recommendations_engine import _get_cached_rating
+            _, _, _cg = _get_cached_rating(item, category)
+            _gl = "" if genres_str == "Unknown" else genres_str
+            if isinstance(_cg, list) and _cg:
+                _gl += " " + ", ".join(str(g) for g in _cg)
+            if _is_factual(_gl):
+                form_line = (
+                    "FORM: documentary / factual — judge it as NON-FICTION: "
+                    "research depth, clarity, access to its subject, whether it "
+                    "rewards a rewatch. Narrative subversion, stylistic risk, "
+                    "character arcs and 'predictability' are NOT valid criteria "
+                    "here — a known outcome is the point, and a conventional "
+                    "structure is craft, not a flaw.\n")
+        except Exception as e:
+            logger.debug("[pillars] factual guard failed for %r: %s", title, e)
 
     facts = (
         f"TITLE: {title} ({year}) — {category}, {genres_str}\n"
@@ -536,6 +563,18 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     )
     return {"title": title, "facts": facts.strip(), "flags": flags,
             "law_extra": law_extra}
+
+
+# Genres that make a work non-fiction. Deliberately narrow: reality and talk
+# formats are excluded, because the research-depth yardstick does not fit them
+# either — they need their own guard if they ever start drawing bad verdicts.
+_FACTUAL_GENRES = ("documentary", "docuseries", "docu-series")
+
+
+def _is_factual(genres: str) -> bool:
+    """True when the genre list marks this as a non-fiction work."""
+    g = (genres or "").lower()
+    return any(marker in g for marker in _FACTUAL_GENRES)
 
 
 # ── THE JUDGE ─────────────────────────────────────────────────────────────────

@@ -24,6 +24,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 
+# The vector store admits one process at a time; suites that open it fail
+# together while the app is running. Recognised so the summary can say that
+# instead of printing seven identical tracebacks.
+LOCK_HINT = "in use by another process"
+
 _BARE_MARKERS = re.compile(r"unittest\.main|sys\.exit|__main__")
 
 
@@ -58,13 +63,18 @@ def main() -> int:
         return run_bare(Path(sys.argv[2]))
 
     files = sorted(TESTS.glob("test_*.py"))
-    env = dict(**__import__("os").environ, PYTHONPATH=str(ROOT))
-    failures = []
+    # PYTHONIOENCODING: a captured child inherits the console codepage, so on a
+    # cp1252 Windows shell a suite printing an arrow or an accented title dies
+    # in print() and reads as a test failure. Pin UTF-8 so the result does not
+    # depend on which terminal launched it.
+    env = dict(**__import__("os").environ,
+               PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
+    failures, locked = [], []
     for f in files:
         cmd = ([sys.executable, __file__, "--bare", str(f)] if is_bare(f)
                else [sys.executable, str(f)])
-        r = subprocess.run(cmd, cwd=ROOT, env=env,
-                           capture_output=True, text=True)
+        r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
         out = (r.stdout or "") + (r.stderr or "")
         summary = re.search(r"(\d+) passed, (\d+) failed", out)
         bad = r.returncode != 0 or (summary and summary.group(2) != "0")
@@ -72,9 +82,18 @@ def main() -> int:
         print(f"{'FAIL' if bad else 'ok  '}  {f.name}  {tail if isinstance(tail, str) else tail[0]}")
         if bad:
             failures.append(f.name)
-            print(out[-2000:])
+            if LOCK_HINT in out:
+                locked.append(f.name)
+            else:
+                print(out[-2000:])
     print(f"\n{len(files) - len(failures)}/{len(files)} suites green"
           + (f" — FAILED: {', '.join(failures)}" if failures else ""))
+    if locked:
+        # Worth saying plainly. Several suites open the vector store, which
+        # admits one process at a time, so with the app running they all fail
+        # at once and read like a code regression — which they are not.
+        print(f"\n{len(locked)} of those never ran: the vector store is held "
+              f"by another process.\nStop the app and re-run.")
     return 1 if failures else 0
 
 

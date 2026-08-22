@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Enrichment Router
+Curatarr - Enrichment Router
 
 Category-specific metadata enrichment with progress tracking.
 """

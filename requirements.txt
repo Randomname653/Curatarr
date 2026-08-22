@@ -1,4 +1,4 @@
-# Curatarr 1.0 — Requirements
+# Curatarr — Requirements
 # Pinned 2026-08-20 to the versions of the live, fully-tested install
 # (48/48 test suites green). Bump deliberately, then re-run
 # `python tests/run_all.py`.

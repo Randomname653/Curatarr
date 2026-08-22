@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Setup Router
+Curatarr - Setup Router
 
 Handles the first-run setup wizard.
 

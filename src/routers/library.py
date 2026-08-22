@@ -867,13 +867,17 @@ async def library_reenrich(
                         EnrichmentStatus.media_category == media_type,
                     ).all()
                     pids = [r.plex_rating_key for r in rows if r.plex_rating_key]
-                for pid in pids:
+                if pids:
+                    keys_to_delete = []
+                    for pid in pids:
+                        keys_to_delete.extend((f"{_CACHE_VERSION}:emb:{pid}", f"{_CACHE_VERSION}:emb_ts:{pid}"))
+
+                    placeholders = ",".join("?" for _ in keys_to_delete)
                     cache.conn.execute(
-                        "DELETE FROM api_cache WHERE cache_key IN (?, ?)",
-                        (f"{_CACHE_VERSION}:emb:{pid}",
-                         f"{_CACHE_VERSION}:emb_ts:{pid}"),
+                        f"DELETE FROM api_cache WHERE cache_key IN ({placeholders})",
+                        tuple(keys_to_delete),
                     )
-                    cleared_embs += 1
+                    cleared_embs = len(pids)
 
                 cache.conn.commit()
                 logger.info(
@@ -1176,6 +1180,26 @@ async def library_add(
 
 # ── Pass 16g: Spotify Backlog (aggregated artists + Lidarr add) ───────────
 
+def _top_tracks_by_artist(rows, per_artist: int = 3) -> dict:
+    """Group ``(series_title, title, p)`` rows into the top tracks per artist.
+
+    Ordering is pinned to (plays desc, title asc). The per-artist queries this
+    replaces ended in ``ORDER BY count DESC LIMIT 3`` with no secondary key, so
+    tracks on equal play counts came back in whatever order the engine
+    happened to produce. Listening histories are full of tracks played exactly
+    once, which puts ties right at the third slot as a matter of course — so
+    the tie-break is spelled out rather than inherited.
+    """
+    by_artist: dict = {}
+    for row in rows:
+        by_artist.setdefault(row.series_title, []).append(
+            {"title": row.title, "plays": row.p})
+    for tracks in by_artist.values():
+        tracks.sort(key=lambda t: (-t["plays"], t["title"] or ""))
+        del tracks[per_artist:]
+    return by_artist
+
+
 @router.get("/spotify-backlog")
 async def spotify_backlog(
     limit: int = 100,
@@ -1260,35 +1284,40 @@ async def spotify_backlog(
         # Truncate to the requested page size after filtering.
         rows = rows[:limit]
 
-        # Top-3 tracks per artist (N+1 queries — N is small, queries are
-        # tiny indexed lookups).
-        artists = []
-        for r in rows:
-            top_tracks_rows = (
+        # Top tracks for the whole page in ONE grouped query. This used to be
+        # a query per artist; on a full page that is a hundred round-trips for
+        # data a single GROUP BY already has.
+        page_artists = [r.series_title for r in rows]
+        top_by_artist: dict = {}
+        if page_artists:
+            track_rows = (
                 db.query(
+                    WatchHistoryEntry.series_title,
                     WatchHistoryEntry.title,
                     func.count(WatchHistoryEntry.id).label("p"),
                 )
                 .filter(
-                    WatchHistoryEntry.user_id      == user.id,
-                    WatchHistoryEntry.series_title == r.series_title,
+                    WatchHistoryEntry.user_id == user.id,
+                    WatchHistoryEntry.series_title.in_(page_artists),
                     WatchHistoryEntry.title.isnot(None),
                     # An artist sharing a name with a TV series would otherwise
                     # count that series' episodes as "top tracks".
                     WatchHistoryEntry.media_type == "music",
                 )
-                .group_by(WatchHistoryEntry.title)
-                .order_by(func.count(WatchHistoryEntry.id).desc())
-                .limit(3)
+                .group_by(WatchHistoryEntry.series_title, WatchHistoryEntry.title)
                 .all()
             )
+            top_by_artist = _top_tracks_by_artist(track_rows)
+
+        artists = []
+        for r in rows:
             artists.append({
                 "artist_name": r.series_title,
                 "play_count":  r.plays,
                 "mbid":        r.mbid,
                 "mbid_resolved":   bool(r.mbid),
                 "in_lidarr":       bool(r.mbid) and r.mbid in in_lidarr,  # 16o
-                "top_tracks":  [{"title": t.title, "plays": t.p} for t in top_tracks_rows],
+                "top_tracks":  top_by_artist.get(r.series_title, []),
             })
 
         # Stats for the toolbar header

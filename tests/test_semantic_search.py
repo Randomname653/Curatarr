@@ -412,5 +412,37 @@ for frag in ["lib-search", "searchLibrary()", "semantic-search?q=",
              "No library title carries this full profile"]:
     check(f"frontend has {frag}", frag in html)
 
+# -- evidence helpers, now individually reachable ---------------------------
+# These were buried inside a 152-line _evidence_scores and could only be
+# exercised through the full ground-truth matrix (which needs Ollama and real
+# embeddings, so it cannot run in CI). Extracting them made the lexical half
+# testable on its own - no vectors involved, no model, no network.
+
+check("family priority: first family wins, member order is the rank",
+      ss._family_priority("dark gore", [["gore", "blood"], ["dark"]]) == 1)
+check("family priority: later member ranks lower",
+      ss._family_priority("blood", [["gore", "blood"]]) == 2)
+check("family priority: no member carried -> None",
+      ss._family_priority("pastel", [["gore", "blood"]]) is None)
+
+check("lexical: literal containment is evidence",
+      ss._lexical_evidence("zzzquux", ["Alpha", "Zzzquux Thing"], False, set())
+      == "Zzzquux Thing")
+check("lexical: a tag already spent on another constraint is skipped",
+      ss._lexical_evidence("zzzquux", ["Zzzquux Thing"], False,
+                           {"zzzquux thing"}) is None)
+check("lexical: exclusions may reuse a spent tag (a used tag still violates)",
+      ss._lexical_evidence("zzzquux", ["Zzzquux Thing"], True,
+                           {"zzzquux thing"}) == "Zzzquux Thing")
+check("lexical: nothing carried -> None",
+      ss._lexical_evidence("zzzquux", ["Alpha", "Beta"], False, set()) is None)
+
+sim, tag = ss._best_constraint_match("zzzquux", False, ["Zzzquux Thing"], set())
+check("a literal match is certainty, and cites the tag it matched",
+      sim == 1.0 and tag == "Zzzquux Thing")
+sim_none, tag_none = ss._best_constraint_match("zzzquux", False, ["Alpha"], set())
+check("no evidence and no vectors -> zero, nothing cited",
+      sim_none == 0.0 and tag_none is None)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

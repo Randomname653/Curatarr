@@ -146,5 +146,59 @@ rec = (root / "src/routers/recommendations.py").read_text(encoding="utf-8")
 check("structural-source note documents why Lidarr stays",
       "SOURCE-OF-TRUTH note" in rec and "lidarr:{id}" in rec)
 
+# -- neighbour lookups run in parallel, and a blip is not cached for a week --
+
+import src.services.app_state as _app_state          # noqa: E402
+from src.services import recommendations_engine as _re   # noqa: E402
+
+
+def _run_neighbors(responses):
+    """Drive _get_music_neighbors against fake artist_info results.
+
+    ``responses`` maps artist -> dict to return, or an Exception to raise.
+    Returns (names, written_cache_or_None, concurrent_high_water_mark).
+    """
+    live = {"now": 0, "peak": 0}
+    written = {}
+
+    async def fake_artist_info(artist):
+        live["now"] += 1
+        live["peak"] = max(live["peak"], live["now"])
+        await asyncio.sleep(0.01)          # overlap only if truly concurrent
+        live["now"] -= 1
+        r = responses[artist]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    orig = (sc.artist_info, _app_state.get_state, _app_state.set_state)
+    sc.artist_info = fake_artist_info
+    _app_state.get_state = lambda k, d=None: None      # force a cold lookup
+    _app_state.set_state = lambda k, v: written.update({k: v})
+    try:
+        names = asyncio.run(_re._get_music_neighbors(1, list(responses)))
+    finally:
+        sc.artist_info, _app_state.get_state, _app_state.set_state = orig
+    return names, (written or None), live["peak"]
+
+
+ok_names, ok_cache, peak = _run_neighbors({
+    "a": {"similar_artists": ["A1", "A2"]},
+    "b": {"similar_artists": ["B1"]},
+    "c": {"similar_artists": ["A1"]},          # duplicate, must collapse
+})
+check("neighbour lookups actually overlap", peak > 1)
+check("results merge and de-duplicate", ok_names == ["A1", "A2", "B1"])
+check("a clean run is cached", ok_cache is not None)
+
+part_names, part_cache, _ = _run_neighbors({
+    "a": {"similar_artists": ["A1"]},
+    "b": RuntimeError("soulsync unreachable"),
+    "c": {"similar_artists": ["C1"]},
+})
+check("one failed lookup does not discard the others",
+      part_names == ["A1", "C1"])
+check("a partial result is NOT frozen in the 168h cache", part_cache is None)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

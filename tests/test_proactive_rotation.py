@@ -238,3 +238,41 @@ def test_resolve_sonarr_tvdb_fallback_only_when_no_title_match():
     assert _resolve_sonarr_stats(idx, 424536, "English Name", "anime") is stats
     assert _resolve_sonarr_stats(idx, 999, "Unknown", "anime") is None
     assert _resolve_sonarr_stats(None, 424536, "X", "anime") is None
+
+
+def test_load_asked_subjects_tolerates_malformed_json():
+    from src.services.proactive_messages import _load_asked_subjects
+    from unittest.mock import patch
+
+    # Mock the DB query chain to return some rows, including malformed ones.
+    class MockQuery:
+        def __init__(self, rows):
+            self.rows = rows
+        def filter(self, *args, **kwargs): return self
+        def order_by(self, *args, **kwargs): return self
+        def limit(self, *args, **kwargs): return self
+        def all(self): return self.rows
+
+    class MockSession:
+        def __init__(self, rows):
+            self.rows = rows
+        def __enter__(self): return self
+        def __exit__(self, exc_type, exc_val, exc_tb): pass
+        def query(self, *args, **kwargs): return MockQuery(self.rows)
+
+    def mock_get_db_session():
+        rows = [
+            ("track_obsession", '{"track": "good song"}'),
+            ("track_obsession", "not json"),            # ValueError / JSONDecodeError
+            ("track_obsession", None),                  # Handled as {}
+            ("track_obsession", '{"track": "other"}'),
+            ("track_obsession", 123),                   # TypeError / not a string / not a dict later
+        ]
+        return MockSession(rows)
+
+    with patch("src.services.proactive_messages.get_db_session", mock_get_db_session):
+        result = _load_asked_subjects(1)
+
+        assert "good song" in result["tracks"]
+        assert "other" in result["tracks"]
+        assert len(result["tracks"]) == 2

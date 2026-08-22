@@ -3780,6 +3780,69 @@ def _title_match_score(query: str, found: str) -> float:
     return overlap / max(len(q_words), len(f_words))
 
 
+def _candidate_matches(
+    query: str,
+    query_clean: str,
+    is_short_query: bool,
+    query_word_count: int,
+    candidate: str,
+    threshold: float
+) -> bool:
+    if not candidate:
+        return False
+    c_clean = candidate.lower().strip()
+
+    # 1. Exact match — always wins
+    if query_clean == c_clean:
+        return True
+
+    # Short-query guard: skip substring + fuzzy paths entirely
+    if is_short_query:
+        return False
+
+    # Colon-suffix guard: candidate is "<query>: <subtitle>" → not a match
+    if ":" in c_clean:
+        base = c_clean.split(":", 1)[0].strip()
+        if base == query_clean:
+            # "King Crimson" vs "King Crimson: Deja VROOOM" — reject
+            return False
+
+    # Pass 15.2 single-word-query guard: when the query is a single word,
+    # the substring must appear at the START of the candidate (followed
+    # by a word boundary). Otherwise "Ghosts" matches "Inner Ghosts",
+    # "Old Ghosts", "Ghost Story" — fuzzy noise that lets the wrong
+    # title win the slot.
+    if query_word_count == 1 and query_clean in c_clean:
+        if not (
+            c_clean.startswith(query_clean + " ")
+            or c_clean.startswith(query_clean + ":")
+            or c_clean.startswith(query_clean + "(")
+        ):
+            # Query word appears mid-candidate, not at start → reject.
+            # Skip to the fuzzy-score path (which has its own threshold)
+            # rather than falling through to the lax substring check.
+            if _title_match_score(query, candidate) >= threshold:
+                return True
+            return False
+
+    # 2. Substring match with a length check
+    # Stops a 1-word query like "Jesus" from matching the 8-word title
+    # "Jesus Shows You the Way to the Highway".
+    if query_clean in c_clean or c_clean in query_clean:
+        q_len = len(query_clean.split())
+        c_len = len(c_clean.split())
+        # Only allow the match when the titles are close in word count,
+        # or when the fuzzy match score is high enough to carry it anyway.
+        if abs(q_len - c_len) <= 2:
+            return True
+
+    # 3. Fuzzy word-overlap (the established score)
+    if _title_match_score(query, candidate) >= threshold:
+        return True
+
+    return False
+
+
 def _titles_close_enough(query: str, candidates: list[str], threshold: float = 0.6) -> bool:
     """Sharper matcher that prevents false positives on long titles.
 
@@ -3796,59 +3859,22 @@ def _titles_close_enough(query: str, candidates: list[str], threshold: float = 0
     the band/series, not the spin-off. Reject the substring match for
     these cases.
     """
+    if not query:
+        return False
+
     query_clean = query.lower().strip()
     is_short_query = len(query_clean) <= 4
     query_word_count = len(query_clean.split())
 
     for c in candidates:
-        if not c: continue
-        c_clean = c.lower().strip()
-
-        # 1. Exact match — always wins
-        if query_clean == c_clean: return True
-
-        # Short-query guard: skip substring + fuzzy paths entirely
-        if is_short_query:
-            continue
-
-        # Colon-suffix guard: candidate is "<query>: <subtitle>" → not a match
-        if ":" in c_clean:
-            base = c_clean.split(":", 1)[0].strip()
-            if base == query_clean:
-                # "King Crimson" vs "King Crimson: Deja VROOOM" — reject
-                continue
-
-        # Pass 15.2 single-word-query guard: when the query is a single word,
-        # the substring must appear at the START of the candidate (followed
-        # by a word boundary). Otherwise "Ghosts" matches "Inner Ghosts",
-        # "Old Ghosts", "Ghost Story" — fuzzy noise that lets the wrong
-        # title win the slot.
-        if query_word_count == 1 and query_clean in c_clean:
-            if not (
-                c_clean.startswith(query_clean + " ")
-                or c_clean.startswith(query_clean + ":")
-                or c_clean.startswith(query_clean + "(")
-            ):
-                # Query word appears mid-candidate, not at start → reject.
-                # Skip to the fuzzy-score path (which has its own threshold)
-                # rather than falling through to the lax substring check.
-                if _title_match_score(query, c) >= threshold:
-                    return True
-                continue
-
-        # 2. Substring match with a length check
-        # Stops a 1-word query like "Jesus" from matching the 8-word title
-        # "Jesus Shows You the Way to the Highway".
-        if query_clean in c_clean or c_clean in query_clean:
-            q_len = len(query_clean.split())
-            c_len = len(c_clean.split())
-            # Only allow the match when the titles are close in word count,
-            # or when the fuzzy match score is high enough to carry it anyway.
-            if abs(q_len - c_len) <= 2:
-                return True
-
-        # 3. Fuzzy word-overlap (the established score)
-        if _title_match_score(query, c) >= threshold:
+        if _candidate_matches(
+            query=query,
+            query_clean=query_clean,
+            is_short_query=is_short_query,
+            query_word_count=query_word_count,
+            candidate=c,
+            threshold=threshold
+        ):
             return True
 
     return False

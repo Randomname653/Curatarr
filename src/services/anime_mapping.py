@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Anime ID Mapping Service
+Curatarr - Anime ID Mapping Service
 
 Downloads and caches the anime-lists crossref database:
   AniDB ID ↔ TVDB ID ↔ AniList ID (via AniDB)

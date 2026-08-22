@@ -1,5 +1,5 @@
 """
-Curatarr 1.0 - Proactive Messaging Service
+Curatarr - Proactive Messaging Service
 
 Generates unsolicited messages from the curator based on watch/listen patterns.
 
@@ -37,6 +37,7 @@ from src.config import settings
 from src.services.llm_utils import strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
 from src.services.series_progress import (
     compute_watch_progress,
+    count_real_views,
     get_series_progress,
     progress_milestone,
     should_reengage_series,
@@ -218,13 +219,16 @@ def detect_rewatch(entries: list[dict],
         merely watching many distinct episodes once.
     Subjects already asked about are skipped so the question doesn't repeat.
     """
-    # Movies (and any non-series, non-music titled item).
-    movie_counter: Counter = Counter()
+    # Movies (and any non-series, non-music titled item). Counting rows here
+    # would count abandoned starts and resume-duplicates as rewatches, so go
+    # through count_real_views (see series_progress for what it filters).
+    movie_plays: dict = {}
     for e in entries:
         if e["media_type"] in ("music", "show", "anime"):
             continue
-        key = e["series_title"] or e["title"]
-        movie_counter[key] += 1
+        movie_plays.setdefault(e["series_title"] or e["title"], []).append(e)
+    movie_counter: Counter = Counter(
+        {title: count_real_views(plays) for title, plays in movie_plays.items()})
 
     # Distinct series present, newest-first order preserved.
     series_keys: list[str] = []
@@ -263,7 +267,10 @@ def detect_rewatch(entries: list[dict],
         prog = compute_watch_progress(entries, key)
         if not prog:
             continue
-        replays = prog["total_plays"] - prog["distinct_episodes"]
+        # NOT total_plays - distinct_episodes: that counted an episode logged
+        # once partially and once finished as a replay, and counted four
+        # abandoned starts of episode 1 as three replays.
+        replays = prog["replays"]
         if replays < 3 or _series_recently_covered(key, entries, asked_subjects):
             continue
         sample = next(
@@ -274,7 +281,7 @@ def detect_rewatch(entries: list[dict],
         candidates.append((replays, {
             "type": "rewatch",
             "title": key,
-            "count": prog["total_plays"],
+            "count": prog["total_plays"],   # raw rows, for context only
             "replays": replays,
             "media_type": sample["media_type"],
             "genres": sample.get("genres", ""),
@@ -780,6 +787,28 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
 _SERIES_TRIGGER_TYPES = {"binge_episode", "series_completion", "procrastinator"}
 
 
+def _handle_rewatch_deep_dive(td: dict, titles: set, series: dict) -> None:
+    title = td.get("title")
+    if not title:
+        return
+    if td.get("is_series") or td.get("media_type") in ("show", "anime"):
+        series.setdefault(normalize_title(title), td.get("milestone"))
+    else:
+        titles.add(normalize_title(title))
+
+
+def _handle_recommendation_followup(td: dict, titles: set, series: dict) -> None:
+    # once asked about a recommended title, never re-ask it — the
+    # detector peeks its queue and relies on THIS index for de-dup
+    title = td.get("title")
+    if not title:
+        return
+    if td.get("category") in ("show", "anime"):
+        series.setdefault(normalize_title(title), None)
+    else:
+        titles.add(normalize_title(title))
+
+
 def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     """Index WHAT the curator has already asked this user about, from the
     proactive-message history, so generation rotates to fresh subjects.
@@ -795,6 +824,7 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     tracks: set = set()
     titles: set = set()
     series: dict = {}
+
     with get_db_session() as db:
         rows = (
             db.query(ProactiveMessage.trigger_type, ProactiveMessage.trigger_data)
@@ -803,37 +833,32 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
             .limit(limit)
             .all()
         )
+
     for ttype, tdata_raw in rows:
         try:
             td = json.loads(tdata_raw) if tdata_raw else {}
         except (ValueError, TypeError):
-            td = {}
+            continue
+
         if not isinstance(td, dict):
             continue
-        if ttype == "track_obsession":
-            if td.get("track"):
-                tracks.add(normalize_title(td["track"]))
-        elif ttype in ("rewatch", "history_deep_dive"):
-            title = td.get("title")
-            if not title:
-                continue
-            if td.get("is_series") or td.get("media_type") in ("show", "anime"):
-                series.setdefault(normalize_title(title), td.get("milestone"))
-            else:
-                titles.add(normalize_title(title))
-        elif ttype in _SERIES_TRIGGER_TYPES:
-            if td.get("series"):
-                series.setdefault(normalize_title(td["series"]), td.get("milestone"))
-        elif ttype == "recommendation_followup":
-            # once asked about a recommended title, never re-ask it — the
-            # detector peeks its queue and relies on THIS index for de-dup
-            title = td.get("title")
-            if not title:
-                continue
-            if td.get("category") in ("show", "anime"):
-                series.setdefault(normalize_title(title), None)
-            else:
-                titles.add(normalize_title(title))
+
+        if ttype == "track_obsession" and td.get("track"):
+            tracks.add(normalize_title(td["track"]))
+            continue
+
+        if ttype in ("rewatch", "history_deep_dive"):
+            _handle_rewatch_deep_dive(td, titles, series)
+            continue
+
+        if ttype in _SERIES_TRIGGER_TYPES and td.get("series"):
+            series.setdefault(normalize_title(td["series"]), td.get("milestone"))
+            continue
+
+        if ttype == "recommendation_followup":
+            _handle_recommendation_followup(td, titles, series)
+            continue
+
     return {"tracks": tracks, "titles": titles, "series": series}
 
 
