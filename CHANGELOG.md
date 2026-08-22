@@ -13,6 +13,33 @@ Condensed release history, newest first.
   anime left through a different branch and worked, which is exactly why the
   gap read as an ordering problem. A second exit returned three. Both fixed,
   and a test now asserts that every exit from that function agrees.
+- **The distiller was reading the wrong article.** Wikipedia states what a
+  subject is in its opening sentence; the plausibility check scanned 1,500
+  characters past it, far enough to reach a passing mention. So a lookup for
+  the 2013 series accepted the page on the Birmingham street gang that
+  inspired it, the distiller correctly reported no significance, and that was
+  stamped as a permanent verdict. The same held for Fargo and Alien, whose
+  disambiguation pages open "usually refers to" and "most commonly refers to"
+  while the guard knew only "may refer to". Judged on the lead sentence now,
+  with the whole family of disambiguation phrasings caught: Peaky Blinders
+  returns its National Television Award, Fargo its seven Oscar nominations,
+  Alien its Academy Award. 2,069 titles carried an empty "no significance"
+  stamp, and the ones that carried text were no safer — where the wrong
+  article had awards, another work's standing was attached to the title.
+- **A failed second fetch is no longer a permanent verdict.** The tri-state
+  return exists because a transient failure once left a title
+  significance-less for good. The search call honoured it; the follow-up
+  article fetch did not, and a rate-limited response fell through to
+  "definitively nothing". Wikipedia also gained the backoff every other
+  rate-limited source here already had — it was the only one that answered a
+  "slow down" by moving on.
+- **The stamp now covers how the article was chosen, not only what the model
+  was asked.** A perfect prompt over the wrong page yields a confident
+  nothing, so retrieval rules are part of the version hash and tightening
+  them retires the answers they produced. The just-in-time path tests that
+  version too; it used to gate on the bare "checked" flag, which is what made
+  a wrong verdict permanent there.
+
 - **Wikidata joins Wikipedia** rather than replacing it. Wikipedia is prose
   and must be distilled; Wikidata is a graph of statements, so the source of
   an adaptation and its named awards are looked up rather than summarised —

@@ -178,11 +178,17 @@ check("reception is warmed BEFORE the verdict, not only in the discussion",
 # without anyone remembering to bump a constant.
 
 from src.services.media_enricher import (
-    _SIG_PROMPT_VERSION, _SIGNIFICANCE_PROMPT)
+    _DISAMBIG, _SIG_LEAD_CHARS, _SIG_PROMPT_VERSION, _SIG_RETRIEVAL_VERSION,
+    _SIGNIFICANCE_PROMPT)
 
-check("the version is derived from the prompt itself",
+# A perfect prompt over the wrong article yields a confident "NONE" — the
+# walker read the page on the Birmingham street gang and reported that the
+# 2013 series has no documented significance. So the stamp covers the rules
+# that CHOSE the article as well, and tightening them retires those answers.
+check("the version is derived from the prompt AND the retrieval rules",
       _SIG_PROMPT_VERSION == __import__("hashlib").sha1(
-          _SIGNIFICANCE_PROMPT.encode("utf-8")).hexdigest()[:8])
+          (_SIGNIFICANCE_PROMPT + _SIG_RETRIEVAL_VERSION).encode("utf-8")
+      ).hexdigest()[:8])
 check("editing the prompt would change the version",
       __import__("hashlib").sha1(
           (_SIGNIFICANCE_PROMPT + " ").encode("utf-8")).hexdigest()[:8]
@@ -201,6 +207,45 @@ check("the walker actually offers version-stale entries again",
 check("a re-check that finds nothing clears the previous text",
       'drop = ("significance",)' in _me
       and "write_fields(cache, key, raw, fields, drop=drop" in _me)
+
+# -- choosing the right article ---------------------------------------------
+# Wikipedia states what a subject IS in its opening sentence. The old check
+# scanned 1,500 characters, far enough to reach a passing mention: the
+# street-gang article notes the gang inspired a television series, so it
+# passed as the television series.
+
+check("plausibility is judged on the lead sentence, not the whole article",
+      _SIG_LEAD_CHARS <= 400)
+_me2 = (Path(__file__).resolve().parents[1]
+        / "src/services/media_enricher.py").read_text(encoding="utf-8")
+check("the lead window is what the direct lookup actually uses",
+      "plaus.search(cand[:_SIG_LEAD_CHARS])" in _me2)
+
+# The guard knew one phrasing. Wikipedia opens disambiguation pages several
+# ways, and Fargo and Alien were both distilled as though they were the work.
+for lead in ("Alien most commonly refers to: Extraterrestrial life",
+             "Fargo usually refers to: Fargo, North Dakota",
+             "Foundation(s) or The Foundation(s) may refer to:",
+             "Cosmos can refer to the universe"):
+    check("disambiguation caught: " + repr(lead[:32]), bool(_DISAMBIG.search(lead)))
+for lead in ("Blade Runner is a 1982 science fiction film by Ridley Scott",
+             "The Peaky Blinders were a street gang based in Birmingham"):
+    check("a real article is not mistaken for one: " + repr(lead[:30]),
+          not _DISAMBIG.search(lead))
+
+# The tri-state exists because a transient failure once became a permanent
+# verdict. The search call learned that; the follow-up extracts call had not.
+check("a failed extracts fetch is transient, not definitive nothing",
+      "if ex is None or ex.status_code != 200:" in _me2)
+check("Wikipedia is given a chance to say slow down",
+      "async def _wiki_get" in _me2
+      and "Retry-After" in _me2
+      and _me2.count("await _wiki_get(client") == 3)
+
+# The walker re-offers a stale stamp; the just-in-time path used to gate on the
+# bare flag, so a verdict there kept an answer from rules since found wrong.
+check("both paths test the stamp the same way",
+      'data.get("significance_v") != _SIG_PROMPT_VERSION' in _me2)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

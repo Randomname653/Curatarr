@@ -621,8 +621,65 @@ STRICT RULES:
 TEXT:
 {extract}"""
 
+# Which article the distiller was handed matters as much as what it was told to
+# do with it: a perfect prompt over the wrong page yields a confident "NONE".
+# So the stamp covers the retrieval rules as well, and tightening them retires
+# the answers they produced — the same self-retiring trick, one layer deeper.
+_SIG_RETRIEVAL_VERSION = "2"   # 2: lead-sentence plausibility + disambig family
+
 _SIG_PROMPT_VERSION = hashlib.sha1(
-    _SIGNIFICANCE_PROMPT.encode("utf-8")).hexdigest()[:8]
+    (_SIGNIFICANCE_PROMPT + _SIG_RETRIEVAL_VERSION).encode("utf-8")
+).hexdigest()[:8]
+
+# Wikipedia states what a subject IS in its opening sentence. Scanning far past
+# it was the whole bug: the article on the Birmingham street gang mentions the
+# television series it inspired somewhere in its first 1,500 characters, so a
+# search for the 2013 show accepted a page about Victorian criminals, and the
+# distiller — correctly — reported no significance.
+_SIG_LEAD_CHARS = 300
+
+# The guard only knew "may refer to". Wikipedia's disambiguation pages also open
+# "usually refers to" (Fargo) and "most commonly refers to" (Alien), both of
+# which sailed through and were distilled as though they were the work.
+_DISAMBIG = re.compile(
+    r"\b(?:may|can|usually|commonly|most commonly|also)\s+refers?\s+to\b", re.I)
+
+
+_WIKI_API = "https://en.wikipedia.org/w/api.php"
+
+
+async def _wiki_get(client, params: dict, *, tries: int = 3):
+    """One Wikipedia API call that respects being told to slow down.
+
+    Every other rate-limited service in this file has a throttle — TMDB raises
+    a transient error carrying Retry-After, AniList holds a shared backoff
+    timestamp. Wikipedia had none, which was survivable while one walker asked
+    one question at a time and stops being so the moment several backfills run
+    at once. A 429 answered without waiting is not a miss, and must never be
+    read as one.
+
+    Returns the last response, so callers keep their own status handling; a
+    network-level failure returns None, which they already treat as transient.
+    """
+    delay = 1.0
+    for attempt in range(tries):
+        try:
+            r = await client.get(_WIKI_API, params=params)
+        except Exception:
+            if attempt == tries - 1:
+                return None
+            await asyncio.sleep(delay)
+            delay *= 2
+            continue
+        if r.status_code not in (429, 503) or attempt == tries - 1:
+            return r
+        try:
+            wait = float(r.headers.get("Retry-After", "") or delay)
+        except ValueError:
+            wait = delay
+        await asyncio.sleep(min(wait, 30.0))
+        delay *= 2
+    return None
 
 
 async def fetch_significance(
@@ -670,24 +727,25 @@ async def fetch_significance(
             # search — the hint pushed the actual article out of the top 5
             # while the exact page sat there all along.
             extract = ""
-            ex0 = await client.get("https://en.wikipedia.org/w/api.php", params={
+            ex0 = await _wiki_get(client, {
                 "action": "query", "prop": "extracts", "explaintext": 1,
                 "redirects": 1, "titles": title, "format": "json",
             })
-            if ex0.status_code == 200:
+            if ex0 is not None and ex0.status_code == 200:
                 for _pid, pdata in (ex0.json().get("query", {}).get("pages", {})).items():
                     cand = pdata.get("extract") or ""
                     if (len(cand) >= 300
-                            and "may refer to" not in cand[:200].lower()
-                            and (plaus is None or plaus.search(cand[:1500]))):
+                            and not _DISAMBIG.search(cand[:200])
+                            and (plaus is None
+                                 or plaus.search(cand[:_SIG_LEAD_CHARS]))):
                         extract = cand
                     break
             if not extract:
-                sr = await client.get("https://en.wikipedia.org/w/api.php", params={
+                sr = await _wiki_get(client, {
                     "action": "query", "list": "search", "srsearch": query,
                     "format": "json", "srlimit": 5,
                 })
-                if sr.status_code != 200:
+                if sr is None or sr.status_code != 200:
                     return None    # transient — search itself failed
                 hits = sr.json().get("query", {}).get("search", [])
                 # Pick the first hit whose article title actually MATCHES this
@@ -699,11 +757,18 @@ async def fetch_significance(
                     logger.debug("[significance] no Wikipedia hit matched %r (%s) — hits: %s",
                                  title, media_type, [h.get("title") for h in hits])
                     return ""      # definitive — search worked, nothing matches
-                ex = await client.get("https://en.wikipedia.org/w/api.php", params={
+                ex = await _wiki_get(client, {
                     "action": "query", "prop": "extracts", "explaintext": 1,
                     "redirects": 1, "titles": page, "format": "json",
                 })
-                pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
+                if ex is None or ex.status_code != 200:
+                    # The tri-state was built because a transient failure once
+                    # stamped Panic Room significance-less for good. The search
+                    # leg above learned that; this leg had not — a 429 here fell
+                    # through to the "no substance" return below and became a
+                    # permanent verdict.
+                    return None
+                pages = ex.json().get("query", {}).get("pages", {})
                 for _pid, pdata in pages.items():
                     extract = pdata.get("extract") or ""
                     break
@@ -1039,8 +1104,12 @@ async def ensure_verified_data(
     # title?" from REAL facts instead of dismissing landmarks it knows nothing
     # about (the Cat's Eye case). Time-boxed + best-effort + idempotent. Runs
     # regardless of OMDb state — the OMDb early-return below must not skip it.
+    # The walker re-offers an entry whose stamp predates the current rules
+    # (archive_backfill._has_significance); this path used to gate on the bare
+    # "checked" flag, so a verdict reached here kept an answer produced under
+    # retrieval rules that have since been found wrong. Same test, both paths.
     if (allow_summarizer and data and not data.get("significance")
-            and not data.get("significance_checked")):
+            and data.get("significance_v") != _SIG_PROMPT_VERSION):
         try:
             if await asyncio.wait_for(topup_significance(
                 title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
