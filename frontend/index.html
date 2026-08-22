@@ -978,10 +978,10 @@ select option { background: var(--bg2); }
                   in a follow-up release.
                 </p>
                 <div id="settings-pin-form-set" style="display:none">
-                  <label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">New PIN (≥ 6 chars)</label>
+                  <label for="pin-new" style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">New PIN (≥ 6 chars)</label>
                   <input type="password" id="pin-new" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
-                  <label style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm PIN</label>
+                  <label for="pin-new-confirm" style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm PIN</label>
                   <input type="password" id="pin-new-confirm" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
                   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -990,13 +990,13 @@ select option { background: var(--bg2); }
                   </div>
                 </div>
                 <div id="settings-pin-form-change" style="display:none">
-                  <label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">Current PIN</label>
+                  <label for="pin-current" style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">Current PIN</label>
                   <input type="password" id="pin-current" autocomplete="current-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
-                  <label style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">New PIN (≥ 6 chars)</label>
+                  <label for="pin-change-new" style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">New PIN (≥ 6 chars)</label>
                   <input type="password" id="pin-change-new" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
-                  <label style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm new PIN</label>
+                  <label for="pin-change-confirm" style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm new PIN</label>
                   <input type="password" id="pin-change-confirm" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
                   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1141,12 +1141,12 @@ const SETUP_CONTENT = {
   plex: () => `
     <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Plex Connection</h2>
     <div class="form-group">
-      <label>Plex Server URL</label>
+      <label for="s-plex-url">Plex Server URL</label>
       <input id="s-plex-url" placeholder="http://192.168.1.100:32400" value="${setupData.plex_url||''}">
       <div class="hint">The local IP address of your Plex server.</div>
     </div>
     <div class="form-group">
-      <label>Plex Auth Token</label>
+      <label for="s-plex-token">Plex Auth Token</label>
       <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${setupData.plex_token||''}">
       <div class="hint">Settings → Troubleshooting → "Show XML" → copy the X-Plex-Token from the URL.</div>
     </div>
@@ -1156,23 +1156,23 @@ const SETUP_CONTENT = {
   ollama: () => `
     <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Ollama — Local AI</h2>
     <div class="form-group">
-      <label>Ollama Endpoint</label>
+      <label for="s-ollama">Ollama Endpoint</label>
       <input id="s-ollama" placeholder="http://localhost:11434" value="${setupData.ollama_endpoint||'http://localhost:11434'}">
     </div>
     <button class="btn btn-secondary btn-sm" onclick="testConn('ollama')">Detect models</button>
     <div id="test-ollama-result" style="margin:8px 0"></div>
     <div class="form-group" style="margin-top:12px">
-      <label>Curator model (large — for chat & recommendations)</label>
+      <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
       <select id="s-curator-model"><option value="qwen2.5:32b">qwen2.5:32b (recommended)</option></select>
       <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
     </div>
     <div class="form-group">
-      <label>Summarizer model (small — for metadata processing)</label>
+      <label for="s-summarizer-model">Summarizer model (small — for metadata processing)</label>
       <select id="s-summarizer-model"><option value="qwen2.5:3b">qwen2.5:3b (recommended)</option></select>
       <div class="hint">Fast model used to structure metadata. Runs thousands of times during enrichment.</div>
     </div>
     <div class="form-group">
-      <label>Embedding model</label>
+      <label for="s-embed-model">Embedding model</label>
       <select id="s-embed-model"><option value="nomic-embed-text">nomic-embed-text (recommended)</option></select>
     </div>`,
 
@@ -1180,24 +1180,24 @@ const SETUP_CONTENT = {
     <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Metadata APIs</h2>
     <p style="font-size:12px;color:var(--text2);margin-bottom:16px">These are optional but significantly improve recommendation quality. Skip any you don't need.</p>
     <div class="form-group">
-      <label>TMDB API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
+      <label for="s-tmdb">TMDB API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
       <input id="s-tmdb" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.tmdb_api_key||''}">
       <div class="hint">Free at <a href="https://www.themoviedb.org/settings/api" style="color:var(--amber)" target="_blank">themoviedb.org/settings/api</a>. Needed for movie and TV metadata, cast, themes.</div>
     </div>
     <div class="form-group">
-      <label>Last.fm API Key <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <label for="s-lastfm">Last.fm API Key <span class="badge muted" style="font-size:10px">Music only</span></label>
       <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.lastfm_api_key||''}">
       <div class="hint">Free at last.fm/api. Adds music tags, similar artists, and bio. MusicBrainz works without a key.</div>
       <div class="used-for">Skip if you don't use Curatarr for music.</div>
     </div>
     <div class="form-group">
-      <label>Spotify Client ID <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <label for="s-spotify-id">Spotify Client ID <span class="badge muted" style="font-size:10px">Music only</span></label>
       <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.spotify_client_id||''}">
       <div class="hint">Free at <a href="https://developer.spotify.com/dashboard" style="color:var(--amber)" target="_blank">developer.spotify.com</a> → Create App. Enables genre enrichment via Client Credentials — no user login needed.</div>
       <div class="used-for">Skip if you don't use Curatarr for music.</div>
     </div>
     <div class="form-group">
-      <label>Spotify Client Secret</label>
+      <label for="s-spotify-secret">Spotify Client Secret</label>
       <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.spotify_client_secret||''}">
       <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="testConn('spotify')">Test Spotify</button>
       <div id="test-spotify-result" style="margin-top:4px;font-size:12px"></div>
@@ -1215,11 +1215,11 @@ const SETUP_CONTENT = {
           <span class="badge muted" style="font-size:10px">${what}</span>
         </div>
         <div class="form-group" style="margin-bottom:8px">
-          <label>URL</label>
+          <label for="s-${id}-url">URL</label>
           <input id="s-${id}-url" placeholder="http://192.168.1.100:${port}" value="${setupData[id+'_url']||''}">
         </div>
         <div class="form-group" style="margin-bottom:8px">
-          <label>API Key</label>
+          <label for="s-${id}-key">API Key</label>
           <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${setupData[id+'_api_key']||''}">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="testConn('${id}')">Test ${name}</button>
@@ -3078,10 +3078,10 @@ function renderArrCard(svc, info) {
       ${info.configured ? lastBadge : '<span style="color:var(--amber);font-size:11px">⚠ not configured</span>'}
     </div>
     <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;align-items:center;font-size:12px;margin-bottom:12px">
-      <label style="color:var(--text3)">URL</label>
+      <label for="arr-url-${svc}" style="color:var(--text3)">URL</label>
       <input type="text" id="arr-url-${svc}" value="${esc(info.url || '')}" placeholder="http://localhost:${svc==='sonarr'?'8989':svc==='radarr'?'7878':'8686'}"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px;font-family:inherit"/>
-      <label style="color:var(--text3)">API key</label>
+      <label for="arr-key-${svc}" style="color:var(--text3)">API key</label>
       <input type="password" id="arr-key-${svc}" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px;font-family:inherit"/>
     </div>
@@ -3159,7 +3159,7 @@ async function loadArrProfiles(svc) {
     if (svc === 'sonarr') {
       // Pass 16b.1: language profiles dropped — Sonarr v4 doesn't have them.
       extra += `
-        <label style="color:var(--text3)">Series type</label>
+        <label for="arr-series-type-${svc}" style="color:var(--text3)">Series type</label>
         <select id="arr-series-type-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           <option value="standard" ${cur.series_type === 'standard' ? 'selected' : ''}>Standard</option>
           <option value="anime" ${cur.series_type === 'anime' ? 'selected' : ''}>Anime</option>
@@ -3169,11 +3169,11 @@ async function loadArrProfiles(svc) {
     }
     if (svc === 'lidarr' && profiles.metadata_profiles) {
       extra += `
-        <label style="color:var(--text3)">Metadata profile</label>
+        <label for="arr-meta-${svc}" style="color:var(--text3)">Metadata profile</label>
         <select id="arr-meta-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${(profiles.metadata_profiles || []).map(m => `<option value="${m.id}" ${cur.metadata_profile_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
-        <label style="color:var(--text3)">Monitor option</label>
+        <label for="arr-monitor-${svc}" style="color:var(--text3)">Monitor option</label>
         <select id="arr-monitor-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${['all','future','missing','existing','first','latest','none'].map(m => `<option value="${m}" ${cur.monitor_option === m ? 'selected' : ''}>${m}</option>`).join('')}
         </select>
@@ -3181,11 +3181,11 @@ async function loadArrProfiles(svc) {
     }
     target.innerHTML = `
       <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 10px;align-items:center;font-size:12px;margin-bottom:10px">
-        <label style="color:var(--text3)">Root folder</label>
+        <label for="arr-root-${svc}" style="color:var(--text3)">Root folder</label>
         <select id="arr-root-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${rootFolderOptions || '<option value="">(none configured in arr)</option>'}
         </select>
-        <label style="color:var(--text3)">Quality profile</label>
+        <label for="arr-quality-${svc}" style="color:var(--text3)">Quality profile</label>
         <select id="arr-quality-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${qualityOptions || '<option value="">(none configured)</option>'}
         </select>
@@ -5470,7 +5470,7 @@ async function loadLibraryConfig() {
             </div>` : ''}
           </div>
           <div>
-            <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
+            <label for="libcat-${s.key}" style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
             <select id="libcat-${s.key}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:13px">
               ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${cat===o?'selected':''}>${catIcon(o)} ${o}</option>`).join('')}
             </select>
