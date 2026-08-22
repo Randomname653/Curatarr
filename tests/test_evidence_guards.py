@@ -247,5 +247,30 @@ check("Wikipedia is given a chance to say slow down",
 check("both paths test the stamp the same way",
       'data.get("significance_v") != _SIG_PROMPT_VERSION' in _me2)
 
+# -- every name of the work gets a turn -------------------------------------
+# The cache row for "Frieren: Beyond Journey's End" (the library's title, which
+# IS the Wikipedia article's name) carries the romanised "Sousou no Frieren"
+# inside. The search ran on the inner name, the exact-match guard rightly
+# refused to bridge two different names, and one of the defining anime of the
+# decade was stamped "no documented significance". Verified live after the fix:
+# it returns the Manga Taisho and Tezuka Prize.
+
+_me2 = (Path(__file__).resolve().parents[1]
+        / "src/services/media_enricher.py").read_text(encoding="utf-8")
+import inspect as _inspect
+from src.services.media_enricher import fetch_significance as _fs
+check("fetch_significance accepts the work's other names",
+      "also_known_as" in _inspect.signature(_fs).parameters)
+check("the library's title is handed over as one",
+      "also_known_as=aka" in _me2 and 'aka = (str(cache_id),)' in _me2)
+check("...but a numeric cache id is an id, not a name",
+      "isdigit()" in _me2.split("aka = (str(cache_id),)")[0][-300:])
+check("names of OTHER works are never candidates — similar_titles is a "
+      "recommendation list, not an alias list",
+      "similar_titles" not in _me2.split("def fetch_significance")[1]
+                                  .split("def fetch_wikipedia_summary")[0])
+check("the search-hit guard accepts a match on ANY of the work's names",
+      'any(_wiki_hit_matches(n, h["title"], media_type)' in _me2)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

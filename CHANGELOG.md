@@ -55,6 +55,20 @@ Condensed release history, newest first.
   stale. A daily custodian tick now prunes them — the lesson taken last time
   was to delete the method, the one available was to call it.
 
+- **Every name of a work gets a Wikipedia turn.** The library files
+  "Frieren: Beyond Journey's End" — which is the article's name — while the
+  enriched record inside says "Sousou no Frieren", and the search ran on the
+  inner name alone. The exact-match guard then rightly refused to bridge two
+  different names, so one of the defining anime of the decade was stamped
+  "no documented significance"; in a sample of the affected class, Wikipedia
+  had the article for 8 of 13. The library's title now rides along as a
+  known alias and the direct lookup and the search try each name in turn.
+  Recommendation lists (`similar_titles`) are explicitly never aliases —
+  those are other works, and using them would attach a neighbour's fame.
+  What remains empty after this is mostly honest: a mid-tier seasonal anime
+  has no English Wikipedia article, and its standing evidence comes from the
+  reception and on-record sources instead.
+
 - **A walker that could not find the row it was meant to write.** Raw cache
   entries are filed under the *library's* title, while the `title` inside them
   is the enriched one — so the row for "Frieren: Beyond Journey's End" is

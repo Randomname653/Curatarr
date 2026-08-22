@@ -68,7 +68,7 @@ def _run(sig_value):
     cache = FakeCache()
     real = me.fetch_significance
 
-    async def _fake(title, media_type, year=None):
+    async def _fake(title, media_type, year=None, also_known_as=()):
         return sig_value
     me.fetch_significance = _fake
     try:
@@ -102,7 +102,7 @@ check("fetch_significance distinguishes definitive '' from transient None",
       and "return None    # transient" in src)
 check("no-match after a SUCCESSFUL search is definitive; failed search is not",
       'return ""      # definitive — search worked, nothing matches' in src
-      and "transient — search itself failed" in src)
+      and "transient — no search attempt succeeded" in src)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

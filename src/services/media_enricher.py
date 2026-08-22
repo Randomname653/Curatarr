@@ -625,7 +625,9 @@ TEXT:
 # do with it: a perfect prompt over the wrong page yields a confident "NONE".
 # So the stamp covers the retrieval rules as well, and tightening them retires
 # the answers they produced — the same self-retiring trick, one layer deeper.
-_SIG_RETRIEVAL_VERSION = "2"   # 2: lead-sentence plausibility + disambig family
+_SIG_RETRIEVAL_VERSION = "3"   # 2: lead-sentence plausibility + disambig family
+                               # 3: the library's title searched alongside the
+                               #    enriched one
 
 _SIG_PROMPT_VERSION = hashlib.sha1(
     (_SIGNIFICANCE_PROMPT + _SIG_RETRIEVAL_VERSION).encode("utf-8")
@@ -684,6 +686,7 @@ async def _wiki_get(client, params: dict, *, tries: int = 3):
 
 async def fetch_significance(
     title: str, media_type: str = "movie", year: Optional[int] = None,
+    also_known_as: tuple = (),
 ) -> Optional[str]:
     """Fetch a title's CULTURAL / HISTORICAL significance from Wikipedia and
     distil it by SUMMARISING the fetched text — never from model memory.
@@ -705,7 +708,19 @@ async def fetch_significance(
     """
     hint = {"anime": "anime", "movie": "film", "show": "television series",
             "music": "band musician"}.get(media_type, "")
-    query = f"{title} {hint}".strip()
+    # The name a title is enriched under is not the name Wikipedia files it
+    # under. Anime especially: the cache row for "Frieren: Beyond Journey's
+    # End" (the library's title, which IS the article's name) carries the
+    # romanised "Sousou no Frieren" inside — and the exact-match guard below
+    # rightly refuses to bridge two different names, so the search could never
+    # succeed. Every known name of THIS work gets a turn; names of OTHER works
+    # (recommendations, franchise siblings) must never be passed here.
+    def _nkey(n):
+        return "".join(c for c in n.lower() if c.isalnum())
+    names = [title]
+    for aka in also_known_as:
+        if aka and aka.strip() and _nkey(aka) not in {_nkey(n) for n in names}:
+            names.append(aka.strip())
     # medium plausibility for the DIRECT-title lookup below: the exact page
     # exists but could be a same-named stranger, so its opening must read
     # like the right kind of entity before we trust it.
@@ -725,13 +740,16 @@ async def fetch_significance(
         }) as client:
             # DIRECT title lookup first: coded names ("C418") drown in keyword
             # search — the hint pushed the actual article out of the top 5
-            # while the exact page sat there all along.
+            # while the exact page sat there all along. Each known name of the
+            # work gets a turn before falling back to search.
             extract = ""
-            ex0 = await _wiki_get(client, {
-                "action": "query", "prop": "extracts", "explaintext": 1,
-                "redirects": 1, "titles": title, "format": "json",
-            })
-            if ex0 is not None and ex0.status_code == 200:
+            for name in names:
+                ex0 = await _wiki_get(client, {
+                    "action": "query", "prop": "extracts", "explaintext": 1,
+                    "redirects": 1, "titles": name, "format": "json",
+                })
+                if ex0 is None or ex0.status_code != 200:
+                    continue
                 for _pid, pdata in (ex0.json().get("query", {}).get("pages", {})).items():
                     cand = pdata.get("extract") or ""
                     if (len(cand) >= 300
@@ -740,38 +758,51 @@ async def fetch_significance(
                                  or plaus.search(cand[:_SIG_LEAD_CHARS]))):
                         extract = cand
                     break
-            if not extract:
-                sr = await _wiki_get(client, {
-                    "action": "query", "list": "search", "srsearch": query,
-                    "format": "json", "srlimit": 5,
-                })
-                if sr is None or sr.status_code != 200:
-                    return None    # transient — search itself failed
-                hits = sr.json().get("query", {}).get("search", [])
-                # Pick the first hit whose article title actually MATCHES this
-                # title — NOT a blind hits[0], which resolves same-name
-                # collisions to whatever entity Wikipedia ranks most popular.
-                page = next((h["title"] for h in hits
-                             if _wiki_hit_matches(title, h["title"], media_type)), None)
-                if not page:
-                    logger.debug("[significance] no Wikipedia hit matched %r (%s) — hits: %s",
-                                 title, media_type, [h.get("title") for h in hits])
-                    return ""      # definitive — search worked, nothing matches
-                ex = await _wiki_get(client, {
-                    "action": "query", "prop": "extracts", "explaintext": 1,
-                    "redirects": 1, "titles": page, "format": "json",
-                })
-                if ex is None or ex.status_code != 200:
-                    # The tri-state was built because a transient failure once
-                    # stamped Panic Room significance-less for good. The search
-                    # leg above learned that; this leg had not — a 429 here fell
-                    # through to the "no substance" return below and became a
-                    # permanent verdict.
-                    return None
-                pages = ex.json().get("query", {}).get("pages", {})
-                for _pid, pdata in pages.items():
-                    extract = pdata.get("extract") or ""
+                if extract:
                     break
+            if not extract:
+                searched = False
+                for name in names:
+                    sr = await _wiki_get(client, {
+                        "action": "query", "list": "search",
+                        "srsearch": f"{name} {hint}".strip(),
+                        "format": "json", "srlimit": 5,
+                    })
+                    if sr is None or sr.status_code != 200:
+                        continue
+                    searched = True
+                    hits = sr.json().get("query", {}).get("search", [])
+                    # Pick the first hit whose article title actually MATCHES
+                    # one of this work's names — NOT a blind hits[0], which
+                    # resolves same-name collisions to whatever entity
+                    # Wikipedia ranks most popular.
+                    page = next((h["title"] for h in hits
+                                 if any(_wiki_hit_matches(n, h["title"], media_type)
+                                        for n in names)), None)
+                    if not page:
+                        continue
+                    ex = await _wiki_get(client, {
+                        "action": "query", "prop": "extracts", "explaintext": 1,
+                        "redirects": 1, "titles": page, "format": "json",
+                    })
+                    if ex is None or ex.status_code != 200:
+                        # The tri-state was built because a transient failure
+                        # once stamped Panic Room significance-less for good.
+                        # The search leg above learned that; this leg had not —
+                        # a 429 here fell through to the "no substance" return
+                        # below and became a permanent verdict.
+                        return None
+                    for _pid, pdata in (ex.json().get("query", {}).get("pages", {})).items():
+                        extract = pdata.get("extract") or ""
+                        break
+                    if extract:
+                        break
+                if not searched:
+                    return None    # transient — no search attempt succeeded
+                if not extract:
+                    logger.debug("[significance] no Wikipedia hit matched %r (%s)",
+                                 names, media_type)
+                    return ""      # definitive — search worked, nothing matches
             if not extract or len(extract) < 120:
                 return ""      # definitive — page exists but has no substance
             # The blind [:7000] cut dropped the exact paragraphs significance
@@ -1001,7 +1032,14 @@ async def topup_significance(
             targets.append((f"raw:{media_type}:{k}", raw))
         if not targets:
             return False  # nothing cached to attach to (rare after the R6 enrich)
-        sig = await fetch_significance(title, media_type, year=year)
+        # The cache id is the LIBRARY's name for the work — for anime usually
+        # the English one Wikipedia files the article under, while ``title`` is
+        # the enriched (often romanised) one. A numeric id is an id, not a name.
+        aka = ()
+        if cache_id and not str(cache_id).isdigit():
+            aka = (str(cache_id),)
+        sig = await fetch_significance(title, media_type, year=year,
+                                       also_known_as=aka)
         if sig is None:
             # TRANSIENT failure (Wikipedia/summarizer error) — do NOT stamp.
             # The old code stamped checked=True here, which is how Panic Room
