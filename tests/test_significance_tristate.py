@@ -68,7 +68,7 @@ def _run(sig_value):
     cache = FakeCache()
     real = me.fetch_significance
 
-    async def _fake(title, media_type, year=None, also_known_as=()):
+    async def _fake(title, media_type, year=None, also_known_as=(), imdb_id=None):
         return sig_value
     me.fetch_significance = _fake
     try:

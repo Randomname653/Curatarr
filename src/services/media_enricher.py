@@ -625,9 +625,11 @@ TEXT:
 # do with it: a perfect prompt over the wrong page yields a confident "NONE".
 # So the stamp covers the retrieval rules as well, and tightening them retires
 # the answers they produced — the same self-retiring trick, one layer deeper.
-_SIG_RETRIEVAL_VERSION = "3"   # 2: lead-sentence plausibility + disambig family
+_SIG_RETRIEVAL_VERSION = "4"   # 2: lead-sentence plausibility + disambig family
                                # 3: the library's title searched alongside the
                                #    enriched one
+                               # 4: the article resolved from the IMDb id via
+                               #    its Wikidata sitelink, before any name
 
 _SIG_PROMPT_VERSION = hashlib.sha1(
     (_SIGNIFICANCE_PROMPT + _SIG_RETRIEVAL_VERSION).encode("utf-8")
@@ -686,7 +688,7 @@ async def _wiki_get(client, params: dict, *, tries: int = 3):
 
 async def fetch_significance(
     title: str, media_type: str = "movie", year: Optional[int] = None,
-    also_known_as: tuple = (),
+    also_known_as: tuple = (), imdb_id: Optional[str] = None,
 ) -> Optional[str]:
     """Fetch a title's CULTURAL / HISTORICAL significance from Wikipedia and
     distil it by SUMMARISING the fetched text — never from model memory.
@@ -738,12 +740,38 @@ async def fetch_significance(
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
-            # DIRECT title lookup first: coded names ("C418") drown in keyword
+            extract = ""
+            # The strongest identity first: the IMDb id names the Wikidata
+            # entity and the entity names its article. No guessing, so none of
+            # the name guards below apply — a sitelinked article cannot be a
+            # same-named stranger. This is what finds "The Fall Guy (2024
+            # film)" and "Stick (TV series)", which no name lookup can guess.
+            # Measured: 72 of 120 titles the name path had stamped empty had
+            # their article reachable this way.
+            if imdb_id:
+                from src.services.wikidata import resolve_enwiki_article
+                article = await resolve_enwiki_article(imdb_id)
+                if article:
+                    exa = await _wiki_get(client, {
+                        "action": "query", "prop": "extracts", "explaintext": 1,
+                        "redirects": 1, "titles": article, "format": "json",
+                    })
+                    if exa is None or exa.status_code != 200:
+                        return None    # transient — the article exists, we know it
+                    for _pid, pdata in (exa.json().get("query", {})
+                                        .get("pages", {})).items():
+                        extract = pdata.get("extract") or ""
+                        break
+                # article == "" (no entity / no enwiki page) falls through to
+                # the name path — a page can exist without a sitelink; None
+                # (transient) falls through too rather than failing the title.
+            # DIRECT title lookup next: coded names ("C418") drown in keyword
             # search — the hint pushed the actual article out of the top 5
             # while the exact page sat there all along. Each known name of the
             # work gets a turn before falling back to search.
-            extract = ""
             for name in names:
+                if extract:
+                    break
                 ex0 = await _wiki_get(client, {
                     "action": "query", "prop": "extracts", "explaintext": 1,
                     "redirects": 1, "titles": name, "format": "json",
@@ -1038,8 +1066,12 @@ async def topup_significance(
         aka = ()
         if cache_id and not str(cache_id).isdigit():
             aka = (str(cache_id),)
+        # The raw entries themselves know the IMDb id (96% of the library
+        # since the *arr harvest) — the strongest article resolver there is.
+        imdb = next((raw.get("imdb_id") for _k, raw in targets
+                     if raw.get("imdb_id")), None)
         sig = await fetch_significance(title, media_type, year=year,
-                                       also_known_as=aka)
+                                       also_known_as=aka, imdb_id=imdb)
         if sig is None:
             # TRANSIENT failure (Wikipedia/summarizer error) — do NOT stamp.
             # The old code stamped checked=True here, which is how Panic Room

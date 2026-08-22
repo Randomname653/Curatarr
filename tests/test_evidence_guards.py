@@ -240,7 +240,7 @@ check("a failed extracts fetch is transient, not definitive nothing",
 check("Wikipedia is given a chance to say slow down",
       "async def _wiki_get" in _me2
       and "Retry-After" in _me2
-      and _me2.count("await _wiki_get(client") == 3)
+      and _me2.count("await _wiki_get(client") == 4)
 
 # The walker re-offers a stale stamp; the just-in-time path used to gate on the
 # bare flag, so a verdict there kept an answer from rules since found wrong.
@@ -271,6 +271,35 @@ check("names of OTHER works are never candidates — similar_titles is a "
                                   .split("def fetch_wikipedia_summary")[0])
 check("the search-hit guard accepts a match on ANY of the work's names",
       'any(_wiki_hit_matches(n, h["title"], media_type)' in _me2)
+
+# -- the article resolved by identity, not by name --------------------------
+# Wikidata's sitelink turns the IMDb id into the exact article title, which is
+# what finds "The Fall Guy (2024 film)" and "Stick (TV series)" — names no
+# lookup can guess. Measured on 120 titles the name path had stamped empty:
+# 72 had their English article reachable this way, 6 had only a Japanese one,
+# 0 only German, 42 none anywhere — so the fix for "we only use English
+# Wikipedia" turned out to be identity, not language.
+
+_me2 = (Path(__file__).resolve().parents[1]
+        / "src/services/media_enricher.py").read_text(encoding="utf-8")
+_wd = (Path(__file__).resolve().parents[1]
+       / "src/services/wikidata.py").read_text(encoding="utf-8")
+check("a sitelink resolver exists with the module's tri-state contract",
+      "async def resolve_enwiki_article" in _wd
+      and "return None" in _wd.split("async def resolve_enwiki_article")[1][:2400])
+check("the entity's claim is verified, not trusted from search",
+      'if imdb_id not in claimed:' in _wd)
+check("an all-zero placeholder id joins nothing — tt0000000 exists ON "
+      "Wikidata, attached to a real film",
+      'if not digits.strip("0"):' in _wd)
+check("significance tries the id join before any name",
+      "resolve_enwiki_article" in _me2.split("def fetch_significance")[1]
+                                      .split("for name in names")[0])
+check("...and a resolved article skips the name guards on purpose — "
+      "identity came from the id",
+      'This is what finds "The Fall Guy' in _me2)
+check("the id rides in from the raw entries the topup already holds",
+      'imdb = next((raw.get("imdb_id")' in _me2)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -55,6 +55,19 @@ Condensed release history, newest first.
   stale. A daily custodian tick now prunes them — the lesson taken last time
   was to delete the method, the one available was to call it.
 
+- **The article is resolved by identity, and only then by name.** Asked why
+  only English Wikipedia is used, the measurement answered a different
+  question: of 120 titles stamped "no significance" that carry an IMDb id, 72
+  had an English article the name search could not reach — filed under
+  disambiguators like "The Fall Guy (2024 film)" — while only 6 had solely a
+  Japanese article and 0 only a German one. The bottleneck was never the
+  language; it was guessing names. The IMDb id now resolves the exact article
+  through its Wikidata sitelink before any name is tried, with the entity's
+  claim verified rather than trusted from search — tt0000000 exists on
+  Wikidata as someone's placeholder, attached to a real film, so all-zero ids
+  join nothing. A sitelinked article needs none of the name guards: identity
+  came from the id.
+
 - **Every name of a work gets a Wikipedia turn.** The library files
   "Frieren: Beyond Journey's End" — which is the article's name — while the
   enriched record inside says "Sousou no Frieren", and the search ran on the

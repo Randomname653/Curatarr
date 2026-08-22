@@ -74,6 +74,73 @@ def _is_major(award: str) -> bool:
     return any(marker in a for marker in _MAJOR_AWARDS)
 
 
+WD_API = "https://www.wikidata.org/w/api.php"
+
+
+async def resolve_enwiki_article(imdb_id: str, *,
+                                 timeout: float = 15.0) -> Optional[str]:
+    """The English Wikipedia article title for an IMDb id, via the sitelink.
+
+    This is an identity JOIN, not a search: the id names the entity and the
+    entity names its article. Measured on 120 titles the name-based search had
+    stamped "no significance": 72 had an English article all along — filed
+    under a disambiguator ("The Fall Guy (2024 film)", "Stick (TV series)")
+    the name path cannot guess.
+
+    Tri-state, same contract as everything else in this module:
+      str   — the article title,
+      ""    — DEFINITIVE nothing (entity unknown, or it has no enwiki page),
+      None  — transient failure; the caller falls back / retries.
+
+    Two plain API calls, no SPARQL — the query service asks for gentleness
+    and this path runs once per title in a backfill.
+    """
+    if not imdb_id:
+        return ""
+    # tt0000000 exists ON WIKIDATA as someone's placeholder, attached to a
+    # real film — a join on a corrupt local id would confidently fetch a
+    # stranger's article. All-zero ids are the placeholder idiom.
+    digits = str(imdb_id).replace("tt", "")
+    if not digits.strip("0"):
+        return ""
+    try:
+        async with httpx.AsyncClient(
+                timeout=timeout, headers={"User-Agent": USER_AGENT}) as client:
+            r = await client.get(WD_API, params={
+                "action": "query", "list": "search",
+                "srsearch": f"haswbstatement:P345={imdb_id}",
+                "srnamespace": 0, "srlimit": 1, "format": "json",
+            })
+            if r.status_code != 200:
+                return None
+            hits = r.json().get("query", {}).get("search", [])
+            if not hits:
+                return ""          # no entity carries this id
+            entity = hits[0].get("title") or ""
+            if not entity.startswith("Q"):
+                return ""
+            r = await client.get(WD_API, params={
+                "action": "wbgetentities", "ids": entity,
+                "props": "sitelinks|claims", "sitefilter": "enwiki",
+                "format": "json",
+            })
+            if r.status_code != 200:
+                return None
+            ent = r.json().get("entities", {}).get(entity, {})
+            # The search found the entity BECAUSE of the claim, but verify it
+            # anyway: full-text search is allowed to be fuzzy, an identity
+            # join is not.
+            claimed = {c.get("mainsnak", {}).get("datavalue", {}).get("value")
+                       for c in ent.get("claims", {}).get("P345", [])}
+            if imdb_id not in claimed:
+                return ""
+            links = ent.get("sitelinks", {})
+            return (links.get("enwiki") or {}).get("title") or ""
+    except Exception as e:
+        logger.debug("[wikidata] sitelink lookup failed for %s: %s", imdb_id, e)
+        return None
+
+
 async def fetch_wikidata_facts(imdb_id: str, *, timeout: float = 25.0) -> Optional[dict]:
     """Structured facts for one IMDb id, or None on a transient failure.
 
