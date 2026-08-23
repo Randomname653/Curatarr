@@ -313,5 +313,45 @@ check("...with or without the cache-version prefix",
 check("a malformed key yields nothing rather than a wrong address",
       ab._key_tail("raw:movie") == "" and ab._key_tail("nonsense") == "")
 
+# -- silence is not emptiness ----------------------------------------------
+# A TMDB 429 and "this film has no reviews" both arrived as an empty list, and
+# an outage was stamped as a permanent "no community data": 1,148 of 4,570
+# checked titles carried nothing at all, indistinguishably. OMDb had the
+# INVERSE bug: "Movie not found!" (definitive) was treated as transient, so
+# the title stayed pending for ever and was re-queried on every walk.
+
+from src.services.reception import (
+    RECEPTION_LOGIC_V, TransientSourceError, _reception_settled)
+
+check("a checked entry with content is settled",
+      _reception_settled({"reception_checked": True, "reception": "x"}))
+check("a checked-but-empty entry from before the distinction is re-offered",
+      not _reception_settled({"reception_checked": True}))
+check("...but only once — the version stamp settles it",
+      _reception_settled({"reception_checked": True,
+                          "reception_v": RECEPTION_LOGIC_V}))
+check("an unchecked entry is simply open", not _reception_settled({}))
+check("the backfill's done-test IS the settled-test",
+      ab.SOURCES["reception"]["done"] is ab._has_reception
+      and not ab.SOURCES["reception"]["done"]({"reception_checked": True}))
+
+_rc = (ROOT / "src/services/reception.py").read_text(encoding="utf-8")
+check("a source that did not answer raises instead of returning emptiness",
+      _rc.count("raise TransientSourceError") >= 3)
+check("...and the top-up does not stamp on it",
+      "except TransientSourceError" in _rc)
+check("the condenser being busy is not an answer either",
+      'TransientSourceError("condenser did not answer")' in _rc)
+check("every stamp now carries the logic version",
+      '"reception_v": RECEPTION_LOGIC_V' in _rc)
+
+_me3 = (ROOT / "src/services/media_enricher.py").read_text(encoding="utf-8")
+check("OMDb 'not found' is definitive and gets stamped",
+      '"not found" in err' in _me3)
+check("OMDb quota exhaustion is transient and does not",
+      "return None            # transient — quota, bad key, anything else" in _me3)
+check("the top-up distinguishes None from {}",
+      "if omdb is None:" in _me3)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

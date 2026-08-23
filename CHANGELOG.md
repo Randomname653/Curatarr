@@ -55,6 +55,18 @@ Condensed release history, newest first.
   stale. A daily custodian tick now prunes them — the lesson taken last time
   was to delete the method, the one available was to call it.
 
+- **Silence is no longer mistaken for emptiness.** A TMDB 429 and "this
+  film has no reviews" both arrived as an empty list, so an outage was
+  stamped as a permanent "no community data" — 1,148 of 4,570 checked titles
+  carried nothing at all, indistinguishably. Every reception fetcher now
+  answers three ways (data, definitively nothing, did-not-answer), a source
+  that did not answer raises instead of stamping, and a busy condenser counts
+  as not answering. Checked-but-empty entries from before the distinction
+  are offered exactly once more. OMDb had the inverse bug: "Movie not
+  found!" — a definitive answer — was treated as transient, so the title
+  stayed pending forever and was re-queried on every walk; found-nothing now
+  stamps, quota exhaustion still never does.
+
 - **The article is resolved by identity, and only then by name.** Asked why
   only English Wikipedia is used, the measurement answered a different
   question: of 120 titles stamped "no significance" that carry an IMDb id, 72

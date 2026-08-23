@@ -956,8 +956,8 @@ async def topup_omdb(
     if not imdb_id:
         return False
     omdb = await fetch_omdb_data(imdb_id)
-    if not omdb:
-        return False
+    if omdb is None:
+        return False               # transient — do not stamp, the walker retries
 
     plot   = omdb.get("plot_full") or omdb.get("overview")
     awards = omdb.get("awards")
@@ -1009,6 +1009,8 @@ async def topup_omdb(
             # so neither the bulk backfill nor the dynamic top-up ever re-query
             # it. Without this, awardless films stayed "candidates" forever and
             # every backfill re-fetched the exact same set.
+            # omdb == {} carries no data on purpose: the id has no OMDb
+            # record, and the marker below is the whole point of the write.
             if not raw.get("omdb_checked"):
                 fields["omdb_checked"] = True
             # Ratings-era marker: docs OMDb-checked BEFORE the full-harvest fix
@@ -2176,7 +2178,17 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             return None
         d = r.json()
         if d.get("Response") == "False":
-            return None
+            # OMDb answers "False" for two OPPOSITE reasons, and they must not
+            # share a value. "Movie not found!" is a definitive statement about
+            # the id — treating it as transient meant the title stayed pending
+            # for ever, was re-queried on every walk, and the backfill button
+            # could never finish its own job. "Request limit reached!" is a
+            # statement about TODAY, and stamping it would freeze a quota
+            # hiccup into a permanent "nothing there".
+            err = (d.get("Error") or "").lower()
+            if "not found" in err or "incorrect imdb" in err:
+                return {}          # definitive — this id has no OMDb record
+            return None            # transient — quota, bad key, anything else
 
         # Extract Rotten Tomatoes and Metacritic scores
         ratings = {}

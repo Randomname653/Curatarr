@@ -41,6 +41,11 @@ def _has_significance(raw: dict) -> bool:
     return raw.get("significance_v") == _SIG_PROMPT_VERSION
 
 
+def _has_reception(raw: dict) -> bool:
+    from src.services.reception import _reception_settled
+    return _reception_settled(raw)
+
+
 def _has_wikidata(raw: dict) -> bool:
     from src.services.wikidata import _LOGIC_VERSION
     if raw.get("wikidata_v") == _LOGIC_VERSION:
@@ -70,7 +75,9 @@ SOURCES = {
         "label": "Community reception",
         "blurb": "What audiences actually said. Plain HTTP plus a short "
                  "summarisation.",
-        "done": lambda raw: bool(raw.get("reception_checked")),
+        # the settled-test, not the bare marker: a checked-but-empty entry
+        # from before the transient/empty distinction is offered once more
+        "done": _has_reception,
     },
     "wikidata": {
         "label": "On-record facts",

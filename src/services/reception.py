@@ -102,6 +102,24 @@ _CONDENSE_SYS = (
 )
 
 
+class TransientSourceError(Exception):
+    """A source did not answer — as opposed to answering "nothing".
+
+    Raised inside build_reception when AniList, Jikan, TMDB or the condenser
+    FAILED, so the caller knows not to stamp reception_checked. Before this,
+    a TMDB 429 and "this film has no reviews" both arrived as an empty list,
+    and an outage was stamped as a permanent "no community data" — 1,148 of
+    4,570 checked titles carried nothing at all, indistinguishably.
+    """
+
+
+# Stamped beside reception_checked by code that distinguishes a failed source
+# from an empty one. A checked-but-empty entry WITHOUT this stamp predates the
+# distinction and is offered again exactly once; re-checking a legitimately
+# empty title costs one pass, trusting a stamped outage costs the evidence.
+RECEPTION_LOGIC_V = "2"
+
+
 def _clip(s: Optional[str], n: int) -> str:
     s = re.sub(r"\s+", " ", s or "").strip()
     return s[:n] + ("…" if len(s) > n else "")
@@ -117,12 +135,12 @@ async def _anilist_media(client: httpx.AsyncClient, *, anilist_id=None,
                               json={"query": q, "variables": {"id": int(anilist_id)}})
         if r.status_code == 200:
             return (r.json().get("data") or {}).get("Media") or {}
-        return {}
+        return None    # transient — a 429 is not "this anime does not exist"
     q = ("query($search:String){ Page(perPage:5){ media(search:$search, type:ANIME)"
          "{ %s } } }" % _ANILIST_FIELDS)
     r = await client.post(ANILIST_URL, json={"query": q, "variables": {"search": search}})
     if r.status_code != 200:
-        return {}
+        return None    # transient
     media = ((r.json().get("data") or {}).get("Page") or {}).get("media") or []
     if not media:
         return {}
@@ -133,12 +151,14 @@ async def _anilist_media(client: httpx.AsyncClient, *, anilist_id=None,
     return scored[0] if abs((scored[0].get("seasonYear") or 0) - year) <= 1 else {}
 
 
-async def _jikan(client: httpx.AsyncClient, path: str) -> dict:
+async def _jikan(client: httpx.AsyncClient, path: str):
+    """A dict on 200, None on anything else — Jikan rate-limits aggressively
+    and its silence must stay distinguishable from an empty answer."""
     try:
         r = await client.get(f"{JIKAN_URL}{path}")
-        return r.json() if r.status_code == 200 else {}
+        return r.json() if r.status_code == 200 else None
     except Exception:
-        return {}
+        return None
 
 
 async def _tmdb_reviews(client: httpx.AsyncClient, tmdb_id, media_type: str) -> list[dict]:
@@ -150,9 +170,9 @@ async def _tmdb_reviews(client: httpx.AsyncClient, tmdb_id, media_type: str) -> 
             f"https://api.themoviedb.org/3/{kind}/{tmdb_id}/reviews",
             params={"api_key": settings.TMDB_API_KEY, "language": "en-US"},
         )
-        return (r.json().get("results") or []) if r.status_code == 200 else []
+        return (r.json().get("results") or []) if r.status_code == 200 else None
     except Exception:
-        return []
+        return None    # transient — TMDB 429s under load, and that is not "no reviews"
 
 
 # ── condensation ─────────────────────────────────────────────────────────────
@@ -213,8 +233,10 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
         if media_type == "anime":
             al = await _anilist_media(client, anilist_id=anilist_id,
                                       search=title, year=year)
+            if al is None:
+                raise TransientSourceError("anilist did not answer")
             if not al:
-                return None, [], [], None
+                return None, [], [], None    # answered: no such anime
             relations = _extract_relations(al)
             # multi-season awareness: the finale's reviews live on the LAST
             # season's entry — fetch and condense them once per title
@@ -227,9 +249,13 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             mal_stats, mal_reviews = {}, []
             if al.get("idMal"):
                 core = await _jikan(client, f"/anime/{al['idMal']}")
-                mal_stats = core.get("data") or {}
                 await asyncio.sleep(_JIKAN_PAUSE_S)
                 revs = await _jikan(client, f"/anime/{al['idMal']}/reviews")
+                if core is None or revs is None:
+                    # Jikan rate-limits hard; one silent pass here used to
+                    # stamp the title as "checked" with MAL's half missing.
+                    raise TransientSourceError("jikan did not answer")
+                mal_stats = core.get("data") or {}
                 mal_reviews = (revs.get("data") or [])[:_MAX_REVIEWS]
             stats = _anime_stats_line(al, mal_stats)
             tags = _anime_tags_line(al)
@@ -260,8 +286,10 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
 
         # movies / shows: TMDB reviews (ratings already live on the raw doc)
         reviews = await _tmdb_reviews(client, tmdb_id, media_type)
+        if reviews is None:
+            raise TransientSourceError("tmdb reviews did not answer")
         if not reviews:
-            return None, [], [], None
+            return None, [], [], None    # answered: this title has no reviews
         lines = [f"TITLE: {title}"]
         for rv in reviews[:_MAX_REVIEWS]:
             rating = (rv.get("author_details") or {}).get("rating")
@@ -277,7 +305,13 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
         # Anime leaves through the AniList branch above and was unaffected —
         # which is why the gap looked like an anime-first walker rather than a
         # total failure for the other two categories.
-        return await _condense("\n".join(lines)), [], [], None
+        verdict = await _condense("\n".join(lines))
+        if not verdict:
+            # Reviews exist but the condenser was unavailable (busy GPU, game
+            # mode). Stamping now would freeze "checked, nothing there" onto a
+            # title that HAS a community verdict waiting.
+            raise TransientSourceError("condenser did not answer")
+        return verdict, [], [], None
 
 
 async def _finale_reception(client: httpx.AsyncClient, al: dict,
@@ -310,7 +344,7 @@ async def _finale_reception(client: httpx.AsyncClient, al: dict,
     if last.get("idMal"):
         await asyncio.sleep(_JIKAN_PAUSE_S)
         revs = await _jikan(client, f"/anime/{last['idMal']}/reviews")
-        mal_reviews = (revs.get("data") or [])[:_MAX_REVIEWS]
+        mal_reviews = ((revs or {}).get("data") or [])[:_MAX_REVIEWS]
     al_reviews = (last.get("reviews") or {}).get("nodes") or []
     if not mal_reviews and not al_reviews:
         if last.get("averageScore"):
@@ -359,6 +393,23 @@ def _offline_tags(title: str, media_type: str, *, anilist_id=None,
 
 # ── raw-doc top-up (mirrors topup_significance) ──────────────────────────────
 
+def _reception_settled(raw: dict) -> bool:
+    """Is this entry's reception genuinely concluded?
+
+    A checked entry that carries content is settled. A checked entry that
+    carries NOTHING and predates the transient/empty distinction (no
+    ``reception_v``) is offered once more — it may be an outage that was
+    stamped as an answer. 1,148 of 4,570 checked titles were in that state,
+    indistinguishably.
+    """
+    if not raw.get("reception_checked"):
+        return False
+    if raw.get("reception_v"):
+        return True
+    return any(raw.get(f) for f in ("reception", "relations", "staff",
+                                    "finale_reception", "anidb_tags"))
+
+
 async def topup_reception(
     title: str,
     media_type: str,
@@ -388,7 +439,7 @@ async def topup_reception(
             if not hit or not isinstance(hit.get("response"), dict):
                 continue
             raw = hit["response"]
-            if raw.get("reception_checked"):
+            if _reception_settled(raw):
                 return False  # already done for this title
             targets.append((f"raw:{media_type}:{k}", raw))
         if not targets:
@@ -408,7 +459,8 @@ async def topup_reception(
         for key, raw in targets:
             # Marker set even on None so titles with no community data are
             # never re-queried (same contract as significance_checked).
-            fields = {"reception_checked": True, "relations_checked": True}
+            fields = {"reception_checked": True, "relations_checked": True,
+                      "reception_v": RECEPTION_LOGIC_V}
             if rec:
                 fields["reception"] = rec
                 added = True
@@ -424,6 +476,12 @@ async def topup_reception(
             # another walker may have written to it since.
             write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
+    except TransientSourceError as e:
+        # A source (or the condenser) did not answer. Nothing is stamped; the
+        # walker offers the title again next pass. This is the whole reason
+        # the fetchers distinguish silence from emptiness.
+        logger.debug("[reception] transient for %r: %s", title, e)
+        return False
     except Exception as e:
         logger.debug("[reception] top-up failed for %r: %s", title, e)
         return False
