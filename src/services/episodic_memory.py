@@ -717,7 +717,7 @@ async def _run_memory_extraction(
             )
         if r.status_code != 200:
             logger.warning(f"⚠️ [MEMORY EXTRACTION] API returned status code {r.status_code}")
-            return
+            return False
 
         raw_text = r.json().get("message", {}).get("content", "").strip()
         logger.debug(f"🤖 [MEMORY EXTRACTION] LLM Raw Output: {raw_text}")
@@ -735,7 +735,7 @@ async def _run_memory_extraction(
         stripped = (text or "").strip()
         if stripped in ("", "null", "[]"):
             logger.debug("[memory extraction] no memory to extract (output=%r) — treating as []", stripped)
-            return
+            return True    # the model answered; its answer was "nothing"
         try:
             facts = json.loads(text)
         except json.JSONDecodeError as je:
@@ -743,7 +743,7 @@ async def _run_memory_extraction(
                 "[memory extraction] JSON parse failed (likely model went off-rails): %s. Raw: %r",
                 je, text[:200],
             )
-            return
+            return False
 
         if isinstance(facts, dict):
             # Empty dict / "no extractable memory" cases — silently skip.
@@ -754,7 +754,7 @@ async def _run_memory_extraction(
             # hides actual problems.
             if not facts:
                 logger.debug("[memory] LLM returned empty dict — nothing to extract")
-                return
+                return True
 
             # Wrapper shapes: {"facts": [...]}, {"memories": [...]}, etc.
             for wrapper_key in ("facts", "memories", "items", "data",
@@ -764,7 +764,7 @@ async def _run_memory_extraction(
                     if not inner:
                         # {"facts": []} → also a "nothing to extract" signal
                         logger.debug("[memory] LLM returned empty list under %r", wrapper_key)
-                        return
+                        return True
                     facts = inner
                     break
             else:
@@ -779,16 +779,16 @@ async def _run_memory_extraction(
                         "[memory] LLM returned dict with unknown shape; keys=%s; skipping",
                         list(facts.keys())[:8],
                     )
-                    return
+                    return True
 
         if not isinstance(facts, list):
             logger.debug("[memory] LLM did not return a list; type=%s; skipping",
                          type(facts).__name__)
-            return
+            return True
 
         if not facts:
             logger.debug("[memory] LLM returned empty list — nothing to extract")
-            return
+            return True
 
         for fact in facts[:2]: # Max 2 Items verarbeiten
             if fact.get("content"):
@@ -834,6 +834,7 @@ async def _run_memory_extraction(
                         new_content=fact["content"],
                         metadata={"title": fact.get("title", "")}
                     )
+        return True
     except Exception as e:
         # Pass 14.13: include exception class — httpx timeouts often have
         # an empty str(e), making logs unhelpful ("ERROR: 💥 [...]: " with
@@ -842,6 +843,7 @@ async def _run_memory_extraction(
             "💥 [MEMORY EXTRACTION ERROR]: %s: %s",
             type(e).__name__, e or "(no message)",
         )
+        return False
 
 
 # ── DEBOUNCED THREAD-LEVEL MEMORY EXTRACTION (Pass 61) ───────────────────────
@@ -1045,10 +1047,19 @@ JSON:"""
                               task_id=f"memx-{user_id}-{thread_id}")
     task_monitor.start(_mt)
     try:
-        await _run_memory_extraction(user_id, prompt, media_category=media_category)
+        ok = await _run_memory_extraction(user_id, prompt,
+                                          media_category=media_category)
     except Exception as e:
         task_monitor.error(_mt, str(e))
         raise
+    if not ok:
+        # The runner converts every failure — API non-200, JSON that would
+        # not parse, an Ollama outage — into a normal return, so "no
+        # exception" never meant "successful run". Leaving the cursor put
+        # re-offers this window on the next flush; advancing it would
+        # silently drop these messages from memory extraction for ever.
+        task_monitor.error(_mt, "extraction failed — window will be retried")
+        return
     task_monitor.done(_mt, f"{len(user_msgs)} new message(s) analyzed")
 
     # Advance the cursor only AFTER a successful run — a crash mid-extract

@@ -93,9 +93,17 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
                     break
     except Exception as e:
         logger.debug("MB→Deezer resolve failed for mbid %s: %s", mbid, e)
+        cache.close()
+        return None            # transient — do not freeze a hiccup for 60 days
+
+    if r.status_code != 200:
+        cache.close()
+        return None            # transient — MB throttled or down
 
     # Cache the outcome — including a None result, so linkless artists
-    # don't trigger a fresh rate-limited MB call on every batch.
+    # don't trigger a fresh rate-limited MB call on every batch. Only a
+    # DEFINITIVE answer lands here: MB answered 200 and either had the
+    # Deezer link or provably does not.
     cache.set_cache(cache_key, deezer_id, days=60)
     cache.close()
     return deezer_id
@@ -348,11 +356,14 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
             # know — the old code dropped that on the floor and re-queried
             # forever on every retry tick (same hammer-loop as MB above).
             if r.status_code != 200:
-                cache.set_cache(cache_key, None, days=7)
+                # 429/5xx is Last.fm having a moment, not "no such artist" —
+                # freezing it for 7 days starves tags/similar/bio downstream.
                 cache.close()
                 return None
             data = r.json().get("artist", {})
             if not data:
+                # 200 with an empty body IS the definitive no-record answer
+                # (Pass 80) — that one stays cached.
                 cache.set_cache(cache_key, None, days=7)
                 cache.close()
                 return None

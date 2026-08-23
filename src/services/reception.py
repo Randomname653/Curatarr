@@ -496,7 +496,7 @@ async def topup_franchise(
     *,
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None, year: Optional[int] = None,
-    cache=None,
+    cache_id=None, cache=None,
 ) -> bool:
     """Light catch-up for docs that were reception-checked BEFORE relations
     existed: one AniList call (no LLM) + a local snapshot read. Idempotent
@@ -521,7 +521,10 @@ async def topup_franchise(
             if not hit or not isinstance(hit.get("response"), dict):
                 continue
             raw = hit["response"]
-            if raw.get("relations_checked"):
+            if raw.get("relations_checked") and (
+                    raw.get("relations_v")
+                    or any(raw.get(f) for f in ("relations", "staff",
+                                                "anidb_tags"))):
                 return False
             targets.append((f"raw:{media_type}:{k}", raw))
         if not targets:
@@ -533,6 +536,11 @@ async def topup_franchise(
             async with httpx.AsyncClient(timeout=25) as client:
                 al = await _anilist_media(client, anilist_id=al_id,
                                           search=title, year=year or doc.get("year"))
+            if al is None:
+                # AniList did not answer. Stamping now would permanently
+                # freeze "no franchise graph" onto a title whose relations
+                # simply were not fetchable this minute.
+                raise TransientSourceError("anilist did not answer")
             rels = _extract_relations(al) if al else []
             staff = _extract_staff(al) if al else []
             anidb_tags = _offline_tags(title, media_type, anilist_id=al_id,
@@ -540,7 +548,8 @@ async def topup_franchise(
                                        year=year or doc.get("year"))
         added = False
         for key, raw in targets:
-            fields = {"relations_checked": True}
+            fields = {"relations_checked": True,
+                      "relations_v": RECEPTION_LOGIC_V}
             if rels:
                 fields["relations"] = rels
                 added = True
@@ -552,6 +561,9 @@ async def topup_franchise(
                 added = True
             write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
+    except TransientSourceError as e:
+        logger.debug("[reception] franchise transient for %r: %s", title, e)
+        return False
     except Exception as e:
         logger.debug("[reception] franchise top-up failed for %r: %s", title, e)
         return False

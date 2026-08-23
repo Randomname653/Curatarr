@@ -301,5 +301,77 @@ check("...and a resolved article skips the name guards on purpose — "
 check("the id rides in from the raw entries the topup already holds",
       'imdb = next((raw.get("imdb_id")' in _me2)
 
+# -- the transient-as-permanent family, hunted across the codebase ----------
+# After reception and OMDb, an audit found four more instances of the same
+# class. Each stamped or negative-cached a one-time failure as a permanent
+# answer: studio/director notes for TEN years, Last.fm for 7 days on a 429,
+# the Deezer resolver for 60 days on a thrown request, and the memory
+# extractor advanced its cursor past windows the model never processed.
+
+import ast as _ast
+
+# The regression that motivates this block: a patch used cache_id inside
+# topup_franchise without adding the parameter, and every call raised
+# NameError — swallowed at DEBUG, invisible to the battery. Pin it the
+# general way: any function in reception.py that reads cache_id declares it.
+_rc_tree = _ast.parse((Path(__file__).resolve().parents[1]
+                       / "src/services/reception.py").read_text(encoding="utf-8"))
+for fn in _ast.walk(_rc_tree):
+    if not isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+        continue
+    used = {n.id for n in _ast.walk(fn) if isinstance(n, _ast.Name)}
+    if "cache_id" not in used:
+        continue
+    params = {a.arg for a in fn.args.args + fn.args.kwonlyargs}
+    assigned = {t.id for n in _ast.walk(fn) if isinstance(n, _ast.Assign)
+                for t in n.targets if isinstance(t, _ast.Name)}
+    check(f"{fn.name} declares the cache_id it uses",
+          "cache_id" in params | assigned)
+
+from src.services.reception import topup_franchise as _tf
+import inspect as _ins
+check("topup_franchise takes cache_id",
+      "cache_id" in _ins.signature(_tf).parameters)
+
+_rc2 = (Path(__file__).resolve().parents[1]
+        / "src/services/reception.py").read_text(encoding="utf-8")
+check("franchise: AniList silence raises instead of stamping",
+      _rc2.split("async def topup_franchise")[1].count("TransientSourceError") >= 2)
+check("franchise: stamps carry the logic version",
+      '"relations_v": RECEPTION_LOGIC_V' in _rc2)
+check("franchise: checked-but-empty docs from the stamped era are re-offered",
+      'raw.get("relations_v")' in _rc2)
+
+_sn = (Path(__file__).resolve().parents[1]
+       / "src/services/studio_notes.py").read_text(encoding="utf-8")
+check("studio/director notes: Wikipedia silence is not \"no article\"",
+      _sn.count('return "" if answered else None') == 2)
+check("studio/director notes: a busy condenser is not \"NONE\"",
+      _sn.count("return None    # transient") >= 2
+      and 'return ""      # definitive' in _sn)
+
+from src.services.studio_notes import _norm as _sn_norm
+check("romanisation variants are one person",
+      _sn_norm("Akiyuki Shinbou") == _sn_norm("Akiyuki Shinbo")
+      and _sn_norm("Gisaburou Sugii") == _sn_norm("Gisaburō Sugii"))
+check("...different people stay different",
+      _sn_norm("Mamoru Hosoda") != _sn_norm("Mamoru Oshii"))
+
+_mm = (Path(__file__).resolve().parents[1]
+       / "src/services/music_metadata.py").read_text(encoding="utf-8")
+check("Last.fm: a non-200 is never negative-cached",
+      "not \"no such artist\"" in _mm)
+check("Deezer resolver: only a definitive MB answer is cached",
+      "do not freeze a hiccup for 60 days" in _mm
+      and "transient — MB throttled or down" in _mm)
+
+_em = (Path(__file__).resolve().parents[1]
+       / "src/services/episodic_memory.py").read_text(encoding="utf-8")
+check("memory extraction reports failure instead of returning quietly",
+      _em.count("return False") >= 3)
+check("...and the cursor only advances past a window the model processed",
+      "if not ok:" in _em
+      and "extraction failed — window will be retried" in _em)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

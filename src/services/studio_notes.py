@@ -62,7 +62,15 @@ _NAME_SENTINELS = {"unknown", "n a", "na", "none", "various", "tba", "tbd",
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+    s = (s or "").lower()
+    # Fold romanisation variants before comparing: credits arrive
+    # wapuro-style ("shinbou", "gorou") while Wikipedia files modified
+    # Hepburn ("Shinbo", "Goro" with a macron the ascii-fold below strips) —
+    # the exact-name guard permanently rejected the very people it was built
+    # to find. Macrons first, then long vowels collapse.
+    s = s.translate(str.maketrans("āēīōū", "aeiou"))
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    return re.sub(r"(ou|oo|uu)", lambda m: m.group(1)[0], s)
 
 
 def _cache_key(studio: str) -> str:
@@ -85,6 +93,7 @@ async def _wiki_studio_lead(studio: str) -> str:
     must contain the studio name (proto: 'A-1 Pictures' -> 'Sony Pictures
     Animation' and 'Felix Film' -> 'Felix the Cat' were exactly this trap)."""
     want = _norm(studio)
+    answered = False
     async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
         for query in (studio, f"{studio} animation studio"):
             try:
@@ -93,6 +102,7 @@ async def _wiki_studio_lead(studio: str) -> str:
                     "srsearch": query, "srlimit": 5})
                 hits = (sr.json().get("query", {}).get("search", [])
                         if sr.status_code == 200 else [])
+                answered = answered or sr.status_code == 200
             except Exception:
                 hits = []
             for h in hits[:4]:
@@ -110,7 +120,7 @@ async def _wiki_studio_lead(studio: str) -> str:
                 low = extract.lower()
                 if ("studio" in low or "animation" in low) and len(extract) > 200:
                     return extract
-    return ""
+    return "" if answered else None    # silence is not "no article"
 
 
 async def _condense(studio: str, extract: str,
@@ -135,11 +145,11 @@ async def _condense(studio: str, extract: str,
                 r.json().get("message", {}).get("content", "") or "")).strip()
             out = re.sub(r"\s{2,}", " ", out.replace("**", "")).strip()
             if not out or out.upper().startswith("NONE") or len(out) < 25:
-                return None
+                return ""      # definitive — the model read it and said NONE
             return out
         except Exception as e:
             logger.debug("[studio-note] condense via %s failed: %s", model, e)
-    return None
+    return None                # transient — no model answered
 
 
 def get_director_note_cached(name: str, cache) -> Optional[str]:
@@ -157,6 +167,7 @@ async def _wiki_person_lead(name: str) -> str:
     """Lead extract of a film person's article, homonym-guarded (title must
     contain the name, lead must read like a film person)."""
     want = _norm(name)
+    answered = False
     async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
         for query in (name, f"{name} film director"):
             try:
@@ -165,6 +176,7 @@ async def _wiki_person_lead(name: str) -> str:
                     "srsearch": query, "srlimit": 5})
                 hits = (sr.json().get("query", {}).get("search", [])
                         if sr.status_code == 200 else [])
+                answered = answered or sr.status_code == 200
             except Exception:
                 hits = []
             for h in hits[:4]:
@@ -185,7 +197,7 @@ async def _wiki_person_lead(name: str) -> str:
                     continue
                 if _PERSON_HINT.search(extract) and len(extract) > 200:
                     return extract
-    return ""
+    return "" if answered else None    # silence is not "no article"
 
 
 async def ensure_director_note(name: str, cache=None) -> Optional[str]:
@@ -206,8 +218,15 @@ async def ensure_director_note(name: str, cache=None) -> Optional[str]:
         if hit and isinstance(hit.get("response"), dict):
             return hit["response"].get("note")
         extract = await _wiki_person_lead(name)
-        note = (await _condense(name, extract, sys_prompt=_DIRECTOR_SYS,
-                                label="DIRECTOR") if extract else None)
+        if extract is None:
+            return None        # transient — Wikipedia never answered; no stamp
+        note = None
+        if extract:
+            out = await _condense(name, extract, sys_prompt=_DIRECTOR_SYS,
+                                  label="DIRECTOR")
+            if out is None:
+                return None    # transient — no model answered; no stamp
+            note = out or None
         cache.set_cache(key, {"checked": True, "note": note}, days=_NOTE_CACHE_DAYS)
         if note:
             logger.info("[director-note] %s: %s", name, note[:100])
@@ -235,7 +254,14 @@ async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
         if hit and isinstance(hit.get("response"), dict):
             return hit["response"].get("note")
         extract = await _wiki_studio_lead(studio)
-        note = await _condense(studio, extract) if extract else None
+        if extract is None:
+            return None        # transient — Wikipedia never answered; no stamp
+        note = None
+        if extract:
+            out = await _condense(studio, extract)
+            if out is None:
+                return None    # transient — no model answered; no stamp
+            note = out or None
         cache.set_cache(_cache_key(studio), {"checked": True, "note": note},
                         days=_NOTE_CACHE_DAYS)
         if note:

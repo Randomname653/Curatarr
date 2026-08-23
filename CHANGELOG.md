@@ -55,6 +55,31 @@ Condensed release history, newest first.
   stale. A daily custodian tick now prunes them — the lesson taken last time
   was to delete the method, the one available was to call it.
 
+- **The same class, hunted across the codebase.** Four more instances of
+  transient-as-permanent, each fixed the same way: studio and director notes
+  cached "NONE" for *ten years* when Wikipedia or the summariser merely
+  failed to answer (394 poisoned rows purged; they re-resolve on demand);
+  Last.fm negative-cached a 429 as "no such artist" for a week; the
+  MusicBrainz→Deezer resolver froze a thrown request as "no link" for 60
+  days; and the chat-memory extractor advanced its cursor past message
+  windows the model never processed, permanently dropping them from
+  personalisation. Director names are also matched with romanisation folding
+  now — the credits say "Shinbou" where Wikipedia writes "Shinbo", and the
+  exact-name guard permanently rejected the very people it was built to
+  find.
+- **A silent regression, caught by its own class.** The cache-addressing
+  patch used `cache_id` inside `topup_franchise` without adding the
+  parameter, so every call raised NameError — swallowed at debug level,
+  invisible to the test battery. Fixed, with the transient guard the
+  function never had (an AniList rate-limit no longer stamps "no franchise
+  graph" permanently), and a test now walks the AST to assert every function
+  declares the names it uses.
+- **The setup wizard no longer eats hand-added settings.** Re-running it
+  rebuilt `.env` from its template alone, silently destroying every key
+  outside it — ten of thirty-three on the reference install, including the
+  SoulSync connection. Unknown keys are carried over verbatim into a
+  preserved section.
+
 - **Silence is no longer mistaken for emptiness.** A TMDB 429 and "this
   film has no reviews" both arrived as an empty list, so an outage was
   stamped as a permanent "no community data" — 1,148 of 4,570 checked titles

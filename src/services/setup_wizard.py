@@ -329,6 +329,24 @@ def write_env(config: dict) -> None:
         "BINGE_SERIES_PERCENT=0.5",
     ]
 
+    # Keys the operator added by hand — SOULSYNC_URL, PILLARS_ENABLED,
+    # ENRICH_PARALLEL_SLOTS and friends — are not the wizard's to delete. A
+    # re-run used to rebuild the file from this template alone, silently
+    # destroying every line outside it (10 of 33 keys on the reference
+    # install). Everything unknown is carried over verbatim.
+    template_keys = {l.split("=", 1)[0] for l in lines if "=" in l}
+    preserved = []
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            if stripped.split("=", 1)[0].strip() not in template_keys:
+                preserved.append(line)
+    if preserved:
+        lines += ["", "# Preserved from the previous .env (not managed by the wizard)"]
+        lines += preserved
+
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     # Restrict to owner-only on POSIX so the file (which contains JWT_SECRET,
     # API keys, and Plex tokens) isn't world-readable on shared hosts.
