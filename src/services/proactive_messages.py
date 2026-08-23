@@ -371,32 +371,33 @@ def detect_genre_absence(entries: list[dict], now: datetime) -> Optional[dict]:
     if not entries:
         return None
 
-    # Count genre frequency across all history
     genre_counter: Counter = Counter()
+    recent_genres: set = set()
+    cutoff_30d = now - timedelta(days=30)
+
+    # Performance optimization: Single O(N) pass to count overall genre
+    # frequency and identify recent genres, avoiding multiple iterations
+    # and duplicate string splits.
     for e in entries:
-        for g in (e.get("genres") or "").split(","):
+        genres = e.get("genres")
+        if not genres:
+            continue
+
+        viewed_at = e.get("viewed_at")
+        is_recent = viewed_at and viewed_at >= cutoff_30d
+
+        for g in genres.split(","):
             g = g.strip()
             if g:
                 genre_counter[g] += 1
+                if is_recent:
+                    recent_genres.add(g)
 
     if not genre_counter:
         return None
 
-    top_genres = [g for g, _ in genre_counter.most_common(5)]
-    cutoff_30d = now - timedelta(days=30)
-
-    # Find which of those genres appeared in recent 30d
-    recent_genres: set = set()
-    for e in entries:
-        if e["viewed_at"] and e["viewed_at"] >= cutoff_30d:
-            for g in (e.get("genres") or "").split(","):
-                g = g.strip()
-                if g:
-                    recent_genres.add(g)
-
-    for genre in top_genres:
+    for genre, total in genre_counter.most_common(5):
         if genre not in recent_genres:
-            total = genre_counter[genre]
             return {
                 "type": "genre_absence",
                 "genre": genre,
