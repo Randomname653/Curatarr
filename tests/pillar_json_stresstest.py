@@ -32,6 +32,11 @@ import urllib.error
 
 # ── Config (matches .env + the baked curatarr-curator Modelfile) ─────────────
 OLLAMA           = "http://localhost:11434"          # .env OLLAMA_ENDPOINT
+# NOTE 2026-08: the OWNER TASTE fixture lines were re-flavored to a FICTIONAL
+# owner (the real profile is per-user data and left the repo). The expected
+# verdicts are pillar-structure-driven and each case keeps its lever, but the
+# gate's calibration should be re-confirmed with one live run before the
+# stress_gate column is trusted for a new model.
 MODELS           = [
     "gemma4:31b",        # incumbent base (clean)
     "curatarr-curator",  # persona-baked incumbent
@@ -58,7 +63,7 @@ PILLAR III — HOUSEHOLD (highest). The server serves every household user, not 
 
 PILLAR II — CUSTODIAN. The server is also an archive of film history. A title of genuine objective stature — a landmark or masterwork of its form, or a rare/obscure work at real risk of being lost — is preserved EVEN IF it clashes with the owner's taste. High critical acclaim (Rotten Tomatoes / Metacritic) and major awards are your evidence; use judgment, not a fixed number. Mere competence or popularity is not enough.
 
-PILLAR I — EGO (lowest). For everything else — titles that exist only for the owner's own taste — apply the owner's elite, uncompromising profile: strong personal resonance, specific thematic depth, unique stylistic elements. Generic, low-effort, or superficial works are CUT.
+PILLAR I — EGO (lowest). For everything else — titles that exist only for the owner's own taste — the OWNER TASTE line in the evidence is the sole taste authority; this constitution carries none of its own. A title that actively provides what that line rewards survives; generic, low-effort work that provides none of it is CUT.
 
 BITRATE is a SEPARATE axis from retention. A kept title may be FLAGGED if its file is a clear bitrate outlier for its visual complexity — but bitrate alone never deletes a title, and never touches a Pillar III title.
 
@@ -93,7 +98,7 @@ OWNER: not watched.
 OTHER HOUSEHOLD USERS: none have watched or requested it.
 ACCLAIM: Rotten Tomatoes 100%, Metacritic 100, 3 award wins; routinely ranked among the greatest films ever made (Sight & Sound #1, 2012).
 CONTENT TAGS: quiet domestic drama, intergenerational conflict, aging, tradition vs modernity, melancholic, contemplative, static cinematography, minimalist.
-OWNER TASTE: craves deep narrative complexity and stylistic intensity; dismisses generic drama.
+OWNER TASTE: craves kinetic formal experimentation and paranoid systems-fiction; explicitly dismisses quiet domestic drama as inert.
 TECH: 1080p h264, 23 GB, 173 MB/min — 2.4x the median bitrate for its class (clear outlier).""",
      "KEEP_WITH_FLAG"),
 
@@ -102,7 +107,7 @@ OWNER: not watched.
 OTHER HOUSEHOLD USERS: User 2 (the owner's partner) watched it to completion (100%), rates the saga highly, and rewatches it.
 ACCLAIM: Rotten Tomatoes 49%, Metacritic 56, no major awards.
 CONTENT TAGS: teen paranormal romance, melodrama, sanitized.
-OWNER TASTE: craves complex themes; dismisses formulaic melodrama.
+OWNER TASTE: craves kinetic formal experimentation; dismisses sanitized teen melodrama outright.
 TECH: 1080p h264, 9 GB, 78 MB/min — within the normal range for its class.""",
      "HARD_KEEP"),
 
@@ -111,7 +116,7 @@ OWNER: sampled, did not finish; flagged it as lazy fan-service.
 OTHER HOUSEHOLD USERS: none have watched or requested it.
 ACCLAIM: no notable critical scores or awards; low audience ratings.
 CONTENT TAGS: ecchi, heavy fan-service, thin plot, exploitative, no narrative backbone.
-OWNER TASTE: rewards thematic depth and stylistic brilliance.
+OWNER TASTE: rewards formal daring and thematic depth; rejects lazy fan-service outright.
 TECH: 1080p h264, 12 GB, ~80 MB/min — normal for its class.""",
      "CUT"),
 
@@ -120,7 +125,7 @@ OWNER: not watched.
 OTHER HOUSEHOLD USERS: User 2 (partner) watched 2 of 12 episodes, then stopped two months ago; no rating, no rewatch.
 ACCLAIM: no notable critical scores or awards.
 CONTENT TAGS: sports comedy, episodic, light, conventional.
-OWNER TASTE: craves complex themes and stylistic brilliance; no interest in light episodic sports comedy.
+OWNER TASTE: craves paranoid systems-fiction and formal daring; no interest in light episodic sports comedy.
 TECH: 1080p h264, 8 GB, ~75 MB/min — normal for its class.""",
      "CUT"),
 
@@ -129,7 +134,7 @@ OWNER: watched all 4 seasons to completion; ranks it among their favourites; rew
 OTHER HOUSEHOLD USERS: none.
 ACCLAIM: Rotten Tomatoes 93%, Metacritic 79, Golden Globe and Emmy wins.
 CONTENT TAGS: hacker thriller, mental illness, unreliable narrator, anti-capitalist, psychological friction, subversive structure.
-OWNER TASTE: craves complex themes and specific stylistic intensity — a core taste match.
+OWNER TASTE: craves paranoid systems-thrillers, unreliable narration and formal daring — a core taste match.
 TECH: 1080p h265, 45 GB across 4 seasons, ~70 MB/min — normal for its class.""",
      "HARD_KEEP"),
 ]

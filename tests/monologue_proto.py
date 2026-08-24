@@ -3,7 +3,7 @@
 Prototype v3 of the monologue prompt: characterize the title on ITS OWN terms,
 feed the pillar finding as INTERNAL reasoning only ("don't quote it"), and forbid
 reciting the user's tastes back at them — the source of the "you demand… /
-incompatible with your appetite for industrial rave" boilerplate.
+incompatible with your appetite for <genre>" boilerplate.
 
 Hand-constructed inputs (3 music + 2 video) so music — the worst repetition — is
 tested with realistic facts instead of being starved by a title-only DB lookup.
@@ -75,14 +75,14 @@ CASES = [
      "OTHER HOUSEHOLD USERS:\n  none.\nACCLAIM & METADATA:\n  Nu-metal / heavy band "
      "out of Flint, Michigan; bleak, violent street imagery, mid-tempo riff-driven.",
      {"verdict": "CUT", "pillar_1_ego": "Nu-metal's plodding heaviness clashes with "
-      "the owner's specific musical tastes."}),
+      "the owner's taste for austere, high-tempo electronic minimalism."}),
 
     ("TITLE: Sisqó — music, R&B / Contemporary R&B / Hip Hop / Pop\nOWNER: not watched.\n"
      "OTHER HOUSEHOLD USERS:\n  none.\nACCLAIM & METADATA:\n  Late-90s/early-2000s "
      "R&B-pop solo singer (ex-Dru Hill); glossy melismatic vocals, romantic ballads, "
      "the 'Thong Song' novelty hit.",
      {"verdict": "CUT", "pillar_1_ego": "Glossy late-90s R&B-pop clashes with the "
-      "owner's specific musical tastes."}),
+      "owner's taste for austere, high-tempo electronic minimalism."}),
 
     ("TITLE: Coconut Hen — music, Dance / Pop\nOWNER: not watched.\n"
      "OTHER HOUSEHOLD USERS:\n  none.\nACCLAIM & METADATA:\n  Swedish viral novelty "

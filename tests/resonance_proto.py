@@ -31,7 +31,7 @@ PILLAR I — RESONANCE (Expansion). This protects the QUIET intellect — sublim
   3. RIGOR — Mastery, not Competence: is its slowness intentional and masterful (pacing, craft, insight), rather than a generic formula any studio could produce?
 A title that FAILS the litmus is filler and drops to Pillar 0.
 
-PILLAR 0 — EGO (lowest, the Edge). The owner's elite, uncompromising taste: strong personal resonance, specific thematic depth, unique stylistic elements. OFFENSIVE, not defensive: a title must ACTIVELY provide intellectual or stylistic stimulation to survive here — not merely "not be bad". Beware PREMISE vs EXECUTION: a work whose premise CLAIMS depth (dark themes, high-concept) but whose EXECUTION is populist, manipulative, or generic does NOT pass — darkness is not depth. Generic, low-effort, or superficial works are CUT.
+PILLAR 0 — EGO (lowest, the Edge). The owner's own taste — whose CONTENT lives in the OWNER TASTE line of the evidence, never in this constitution. OFFENSIVE, not defensive: a title must ACTIVELY provide what the OWNER TASTE line rewards to survive here — not merely "not be bad". Beware PREMISE vs EXECUTION: a claimed quality is not a delivered one. Generic, low-effort work that provides nothing the owner's profile rewards is CUT.
 
 BITRATE is a SEPARATE axis from retention: a kept title that is a clear bitrate outlier may be flagged for downscaling; bitrate alone never deletes.
 
@@ -59,10 +59,9 @@ SCHEMA = {
                  "pillar_0_ego", "verdict"],
 }
 
-TASTE = ("OWNER TASTE: craves psychological friction, calculating 'polite-monster' "
-         "intelligence, taboo-breaking, stylistic/kinetic intensity, dystopian/cerebral "
-         "sci-fi; rejects sanitized kitsch, sentimental comfort and 'narrative flaccidity'. "
-         "Music: industrial / aggressive / underground.")
+TASTE = ("OWNER TASTE: craves kinetic formal experimentation, paranoid systems-fiction, "
+         "unreliable narration, dystopian/cerebral sci-fi; rejects sanitized kitsch and "
+         "sentimental comfort viewing. Music: austere, high-tempo electronic minimalism.")
 
 CASES = [
     ("Tokyo Story", "expect KEEP (II masterwork; bloated → FLAG)",

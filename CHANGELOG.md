@@ -6,6 +6,20 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **The owner's taste left the constitution.** A Jules security pass
+  noticed what every local sweep had missed: the deletion judge's Pillar-0
+  text hardcoded the owner's personal taste profile — including verbatim
+  personal phrasings — into the public code, which was both a privacy leak
+  and a correctness bug, since every other install inherited that taste as
+  law. Thought through to the end: taste is per-user DATA, and production
+  already injects each user's own profile as the OWNER TASTE evidence line,
+  so the constitution is now deliberately taste-blind and defers to that
+  line (with an explicit rule that an absent line cannot condemn). Test
+  fixtures keep a pointed owner — a fictional one, with every case's
+  decisive lever intact rather than the diluted wording the bot proposed;
+  the live verdict gate should be re-confirmed once before the next model
+  swap.
+
 - **Three more Jules deliveries, harvested mid-flight.** The chat send
   button and input now disable while a message is processing and re-enable
   in a `finally` (no more double-sends, no lockout on error), missing
