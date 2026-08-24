@@ -16,7 +16,7 @@ python-jose[cryptography]==3.5.0
 
 # HTTP client
 httpx==0.28.1
-aiohttp==3.14.1
+aiohttp==3.14.3
 
 # System / process monitoring
 psutil==7.2.2
