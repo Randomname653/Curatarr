@@ -26,7 +26,7 @@ chromadb==1.5.9
 
 # Settings
 pydantic==2.13.4
-pydantic-settings==2.14.1
+pydantic-settings==2.14.2
 python-dotenv==1.2.2
 
 # Data
