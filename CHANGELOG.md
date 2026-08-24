@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **Three more Jules branches landed as authored.** The title-match
+  scorer's regex and stop-word set are hoisted to module level (~25% faster
+  in the nested matching loops), the SQLite files under `data/` get the
+  same `0600` treatment as `.env` on POSIX, and the unauthenticated PIN
+  rate-limiter is capped at 1,000 buckets with amortised eviction — the
+  one genuinely reachable memory-DoS surface, closed. A fourth branch
+  duplicated the German-string translation already adopted from its
+  predecessor PR and was skipped.
+
 - **The taste-vector "encryption" was removed instead of shipped.** The
   README offered "an opt-in PIN-based AES-GCM path"; in reality two parallel
   implementations existed and neither had a single caller — the table named
