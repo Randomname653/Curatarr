@@ -67,13 +67,14 @@ Condensed release history, newest first.
   now — the credits say "Shinbou" where Wikipedia writes "Shinbo", and the
   exact-name guard permanently rejected the very people it was built to
   find.
-- **A silent regression, caught by its own class.** The cache-addressing
-  patch used `cache_id` inside `topup_franchise` without adding the
-  parameter, so every call raised NameError — swallowed at debug level,
-  invisible to the test battery. Fixed, with the transient guard the
-  function never had (an AniList rate-limit no longer stamps "no franchise
-  graph" permanently), and a test now walks the AST to assert every function
-  declares the names it uses.
+- **A silent regression, caught three times by its own class.** The
+  cache-addressing patch used `cache_id` inside functions that never got the
+  parameter: `topup_franchise` (every call a NameError, swallowed at debug
+  level) and `build_verified_data`, where the chat's deletion discussion
+  surfaced it as a 500. Both fixed; `topup_franchise` also gained the
+  transient guard it never had (an AniList rate-limit no longer stamps "no
+  franchise graph" permanently). A test now walks the AST of the whole tree
+  and asserts every function declares the names it uses.
 - **The setup wizard no longer eats hand-added settings.** Re-running it
   rebuilt `.env` from its template alone, silently destroying every key
   outside it — ten of thirty-three on the reference install, including the

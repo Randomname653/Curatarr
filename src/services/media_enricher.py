@@ -253,7 +253,7 @@ def build_verified_data(
     *,
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None,
-    cache=None,
+    cache_id=None, cache=None,
 ) -> Optional[dict]:
     """Assemble the full VERIFIED dataset for a title from cache — NO LLM, no
     live fetch. Merges the polished ``enriched:*`` profile (themes, keywords,

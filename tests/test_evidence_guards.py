@@ -312,21 +312,28 @@ import ast as _ast
 
 # The regression that motivates this block: a patch used cache_id inside
 # topup_franchise without adding the parameter, and every call raised
-# NameError — swallowed at DEBUG, invisible to the battery. Pin it the
-# general way: any function in reception.py that reads cache_id declares it.
-_rc_tree = _ast.parse((Path(__file__).resolve().parents[1]
-                       / "src/services/reception.py").read_text(encoding="utf-8"))
-for fn in _ast.walk(_rc_tree):
-    if not isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
-        continue
-    used = {n.id for n in _ast.walk(fn) if isinstance(n, _ast.Name)}
-    if "cache_id" not in used:
-        continue
-    params = {a.arg for a in fn.args.args + fn.args.kwonlyargs}
-    assigned = {t.id for n in _ast.walk(fn) if isinstance(n, _ast.Assign)
-                for t in n.targets if isinstance(t, _ast.Name)}
-    check(f"{fn.name} declares the cache_id it uses",
-          "cache_id" in params | assigned)
+# NameError — swallowed at DEBUG, invisible to the battery. It then bit a
+# THIRD time in build_verified_data, where the chat path surfaced it as a
+# 500. Pinned the general way, over the whole tree: any function that reads
+# cache_id declares it, receives it, or builds it.
+_nameerror_hits = []
+for _pyf in (Path(__file__).resolve().parents[1] / "src").rglob("*.py"):
+    _t = _ast.parse(_pyf.read_text(encoding="utf-8"))
+    for fn in _ast.walk(_t):
+        if not isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        used = {n.id for n in _ast.walk(fn)
+                if isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Load)}
+        if "cache_id" not in used:
+            continue
+        params = {a.arg for a in fn.args.args + fn.args.kwonlyargs
+                  + fn.args.posonlyargs}
+        stored = {n.id for n in _ast.walk(fn)
+                  if isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Store)}
+        if "cache_id" not in params | stored:
+            _nameerror_hits.append(f"{_pyf.name}:{fn.lineno} {fn.name}")
+check(f"every function declares the cache_id it uses (offenders: "
+      f"{_nameerror_hits or 'none'})", not _nameerror_hits)
 
 from src.services.reception import topup_franchise as _tf
 import inspect as _ins
