@@ -1437,61 +1437,50 @@ async def handle_protection_intent(
     return None
 
 
-async def detect_and_handle_protection(
-    user_id: int,
+def _fetch_recent_thread_turns(user_id: int, thread_id: str) -> str:
+    """
+    Pass 66: the last few turns of this thread, so the classifier can judge
+    consensus vs override against the actual back-and-forth — the curator's
+    settled stance may have been set a turn or two before the exchange we
+    were handed. Best-effort: a failed fetch just means the classifier
+    works off the single exchange like it did pre-Pass-66.
+    """
+    try:
+        from src.database.models import ConversationMessage
+        with get_db_session() as db:
+            q = db.query(
+                ConversationMessage.role, ConversationMessage.content
+            ).filter(ConversationMessage.user_id == user_id)
+            # "general" also covers legacy rows written before thread_id.
+            if thread_id == "general":
+                q = q.filter(
+                    (ConversationMessage.thread_id == "general")
+                    | (ConversationMessage.thread_id.is_(None))
+                )
+            else:
+                q = q.filter(ConversationMessage.thread_id == thread_id)
+            rows = q.order_by(ConversationMessage.id.desc()).limit(6).all()
+        if rows:
+            turns = [
+                f"{role.upper()}: {(content or '').strip()[:280]}"
+                for role, content in reversed(rows)
+            ]
+            return (
+                "\nRECENT CONVERSATION (oldest → newest — use this to judge\n"
+                "consensus vs override; the LAST exchange is the one to classify):\n"
+                + "\n".join(turns) + "\n"
+            )
+    except Exception as e:
+        logger.debug("[protection] recent-thread fetch failed: %s", e)
+    return ""
+
+
+def _build_protection_prompt(
     user_message: str,
     assistant_response: str,
-    anchor_title: Optional[str] = None,
-    anchor_category: Optional[str] = None,
-    thread_id: Optional[str] = None,
-) -> Optional[str]:
-    """
-    Ask the summarizer model whether the user wants to protect a title from
-    deletion — and, when they do, HOW the keep was reached (Pass 66).
-
-    Pass 23: ``anchor_title`` is the title currently being discussed in the
-    chat thread (e.g. the deletion-proposal target). When the user says
-    "I'm keeping it" / "we are keeping this show" without naming the title,
-    the anchor resolves the pronoun.
-
-    Pass 66 (override logging): the detector no longer treats "the curator is
-    still arguing for deletion" as an automatic NO_ACTION. That conflated two
-    very different situations:
-      * the USER is still arguing (rhetorical, reframing, "hear me out") —
-        genuinely unsettled, still NO_ACTION;
-      * the user has DECISIVELY settled on keep while the curator never
-        conceded — that is not an open negotiation, it is an OVERRIDE, and
-        recording it is the whole point of this feature.
-    So protect-vs-no-action now hinges on whether the USER issued a decisive
-    keep-directive; the curator's stance only decides whether the keep is
-    logged as ``consensus`` or ``override``. ``thread_id`` lets us pull the
-    last few turns so the classifier judges that with the real back-and-forth
-    in view, not one isolated exchange. ``anchor_category`` is threaded
-    through to the resolution-log row (state vs history — see
-    ``CuratorResolutionLog``).
-    """
-    # Deterministic pre-gate: an information request is never a directive.
-    # "kill la kill tell me all you know" fired PROTECT twice in a row — the
-    # 8B classifier read the ASSISTANT's "we've already aligned on its value"
-    # from the recent-turns block as a settled keep. No keep-verb in the
-    # user's own words + question shape -> skip the classifier entirely.
-    _msg = (user_message or "").strip().lower()
-    _keep_verbs = ("keep", "behalt", "stays", "bleibt", "protect", "schütz",
-                   "nicht löschen", "don't delete", "dont delete",
-                   "do not delete", "hände weg")
-    if not any(v in _msg for v in _keep_verbs):
-        _info_starts = ("tell me", "what", "why", "how", "who", "when",
-                        "give me", "show me", "explain", "erzähl", "was ",
-                        "wie ", "warum", "wer ", "kennst", "zeig")
-        if (_msg.endswith("?")
-                or any(_msg.startswith(s) for s in _info_starts)
-                or any(f" {s}" in _msg[:48] for s in _info_starts)):
-            logger.debug("[protection] info-request pre-gate — NO_ACTION for %r",
-                         user_message[:60])
-            return None
-
-    logger.info(f"🛡️ [PROTECTION CHECK] Scanning for protection intents (anchor=%r)...", anchor_title)
-
+    anchor_title: Optional[str],
+    recent_block: str,
+) -> str:
     # Anchor block — only injected when we actually have one. Free-chat
     # turns without an anchor still require the literal title in the
     # message (no false positives from "I keep all my files").
@@ -1504,42 +1493,7 @@ async def detect_and_handle_protection(
         f"  ACTION: PROTECT_MEDIA | TITLE: {anchor_title} | REASON: ...)\n"
     ) if anchor_title else ""
 
-    # Pass 66: the last few turns of this thread, so the classifier can judge
-    # consensus vs override against the actual back-and-forth — the curator's
-    # settled stance may have been set a turn or two before the exchange we
-    # were handed. Best-effort: a failed fetch just means the classifier
-    # works off the single exchange like it did pre-Pass-66.
-    recent_block = ""
-    if thread_id:
-        try:
-            from src.database.models import ConversationMessage
-            with get_db_session() as db:
-                q = db.query(
-                    ConversationMessage.role, ConversationMessage.content
-                ).filter(ConversationMessage.user_id == user_id)
-                # "general" also covers legacy rows written before thread_id.
-                if thread_id == "general":
-                    q = q.filter(
-                        (ConversationMessage.thread_id == "general")
-                        | (ConversationMessage.thread_id.is_(None))
-                    )
-                else:
-                    q = q.filter(ConversationMessage.thread_id == thread_id)
-                rows = q.order_by(ConversationMessage.id.desc()).limit(6).all()
-            if rows:
-                turns = [
-                    f"{role.upper()}: {(content or '').strip()[:280]}"
-                    for role, content in reversed(rows)
-                ]
-                recent_block = (
-                    "\nRECENT CONVERSATION (oldest → newest — use this to judge\n"
-                    "consensus vs override; the LAST exchange is the one to classify):\n"
-                    + "\n".join(turns) + "\n"
-                )
-        except Exception as e:
-            logger.debug("[protection] recent-thread fetch failed: %s", e)
-
-    prompt = f"""[MODE: PROTECTION INTENT SCANNER]
+    return f"""[MODE: PROTECTION INTENT SCANNER]
 Analyze the user's message and determine if they DECISIVELY direct a
 specific title to be protected from deletion / kept in their library — and
 if so, HOW that keep was reached.
@@ -1663,10 +1617,14 @@ Assistant said: {assistant_response[:300]}
 
 Output:"""
 
-    # Pass 14.13: yield to any active curator before hammering the
-    # summarizer. Background protection scan was ReadTimeout-ing at 20s
-    # because the curator was still streaming and the summarizer was
-    # contesting the same 14GB VRAM slot.
+
+async def _call_protection_classifier(prompt: str) -> Optional[str]:
+    """
+    Pass 14.13: yield to any active curator before hammering the
+    summarizer. Background protection scan was ReadTimeout-ing at 20s
+    because the curator was still streaming and the summarizer was
+    contesting the same 14GB VRAM slot.
+    """
     try:
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
@@ -1689,53 +1647,123 @@ Output:"""
         if r.status_code != 200:
              return None
 
-        llm_output = strip_think_tags(r.json().get("message", {}).get("content", "").strip())
-
-        # Pass 79: user-side delete-intent VETO. Symmetric to the Pass-50
-        # curator-side backstop. If the user's message contains an explicit
-        # delete-intent token AND the classifier still emitted PROTECT_MEDIA,
-        # the classification is wrong — the user is agreeing to delete, not
-        # asking to keep. Real misfire from the log: user wrote "hell no
-        # away with this", LLM returned PROTECT_MEDIA + override, deletion
-        # proposal got auto-rejected. With this veto, the bogus PROTECT is
-        # dropped before ``handle_protection_intent`` writes any row.
-        if "ACTION: PROTECT_MEDIA" in llm_output:
-            user_lower = (user_message or "").lower()
-            if any(tok in user_lower for tok in _USER_DELETE_INTENT_TOKENS):
-                logger.info(
-                    "[protection] user_message has explicit delete-intent — "
-                    "vetoing PROTECT_MEDIA (anchor=%r). Snippet: %r",
-                    anchor_title, (user_message or "")[:120],
-                )
-                return None
-
-        # Pass 66: the Pass 50 guard is repurposed. It used to VETO the whole
-        # protection when the curator's same-turn reply was a hard delete
-        # verdict ("the negotiation isn't resolved"). But a decisive user
-        # keep-directive against a curator that just held the delete line is
-        # exactly an OVERRIDE — vetoing it would drop the headline case this
-        # feature exists to capture. So the guard no longer blocks; it just
-        # forces the resolution classification to ``override``: a curator
-        # that verdicted "delete" THIS turn demonstrably did not concede, so
-        # any "consensus" the classifier emitted for this exchange is wrong.
-        # See ``_ASSISTANT_DELETE_STANCE_TOKENS`` for the gated token set.
-        assistant_held_delete_line = any(
-            tok in (assistant_response or "").lower()
-            for tok in _ASSISTANT_DELETE_STANCE_TOKENS
-        )
-
-        return await handle_protection_intent(
-            user_id, llm_output,
-            category=anchor_category,
-            assistant_held_delete_line=assistant_held_delete_line,
-        )
-
+        return strip_think_tags(r.json().get("message", {}).get("content", "").strip())
     except Exception as e:
         logger.error(
             "💥 [PROTECTION CHECK ERROR]: %s: %s",
             type(e).__name__, e or "(no message)",
         )
     return None
+
+
+def _check_protection_pre_gate(user_message: str) -> bool:
+    """
+    Deterministic pre-gate: an information request is never a directive.
+    "kill la kill tell me all you know" fired PROTECT twice in a row — the
+    8B classifier read the ASSISTANT's "we've already aligned on its value"
+    from the recent-turns block as a settled keep. No keep-verb in the
+    user's own words + question shape -> skip the classifier entirely.
+    """
+    _msg = (user_message or "").strip().lower()
+    _keep_verbs = ("keep", "behalt", "stays", "bleibt", "protect", "schütz",
+                   "nicht löschen", "don't delete", "dont delete",
+                   "do not delete", "hände weg")
+    if not any(v in _msg for v in _keep_verbs):
+        _info_starts = ("tell me", "what", "why", "how", "who", "when",
+                        "give me", "show me", "explain", "erzähl", "was ",
+                        "wie ", "warum", "wer ", "kennst", "zeig")
+        if (_msg.endswith("?")
+                or any(_msg.startswith(s) for s in _info_starts)
+                or any(f" {s}" in _msg[:48] for s in _info_starts)):
+            logger.debug("[protection] info-request pre-gate — NO_ACTION for %r",
+                         user_message[:60])
+            return True
+    return False
+
+
+async def detect_and_handle_protection(
+    user_id: int,
+    user_message: str,
+    assistant_response: str,
+    anchor_title: Optional[str] = None,
+    anchor_category: Optional[str] = None,
+    thread_id: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Ask the summarizer model whether the user wants to protect a title from
+    deletion — and, when they do, HOW the keep was reached (Pass 66).
+
+    Pass 23: ``anchor_title`` is the title currently being discussed in the
+    chat thread (e.g. the deletion-proposal target). When the user says
+    "I'm keeping it" / "we are keeping this show" without naming the title,
+    the anchor resolves the pronoun.
+
+    Pass 66 (override logging): the detector no longer treats "the curator is
+    still arguing for deletion" as an automatic NO_ACTION. That conflated two
+    very different situations:
+      * the USER is still arguing (rhetorical, reframing, "hear me out") —
+        genuinely unsettled, still NO_ACTION;
+      * the user has DECISIVELY settled on keep while the curator never
+        conceded — that is not an open negotiation, it is an OVERRIDE, and
+        recording it is the whole point of this feature.
+    So protect-vs-no-action now hinges on whether the USER issued a decisive
+    keep-directive; the curator's stance only decides whether the keep is
+    logged as ``consensus`` or ``override``. ``thread_id`` lets us pull the
+    last few turns so the classifier judges that with the real back-and-forth
+    in view, not one isolated exchange. ``anchor_category`` is threaded
+    through to the resolution-log row (state vs history — see
+    ``CuratorResolutionLog``).
+    """
+    if _check_protection_pre_gate(user_message):
+        return None
+
+    logger.info(f"🛡️ [PROTECTION CHECK] Scanning for protection intents (anchor=%r)...", anchor_title)
+
+    recent_block = _fetch_recent_thread_turns(user_id, thread_id) if thread_id else ""
+    prompt = _build_protection_prompt(user_message, assistant_response, anchor_title, recent_block)
+
+    llm_output = await _call_protection_classifier(prompt)
+    if not llm_output:
+        return None
+
+    # Pass 79: user-side delete-intent VETO. Symmetric to the Pass-50
+    # curator-side backstop. If the user's message contains an explicit
+    # delete-intent token AND the classifier still emitted PROTECT_MEDIA,
+    # the classification is wrong — the user is agreeing to delete, not
+    # asking to keep. Real misfire from the log: user wrote "hell no
+    # away with this", LLM returned PROTECT_MEDIA + override, deletion
+    # proposal got auto-rejected. With this veto, the bogus PROTECT is
+    # dropped before ``handle_protection_intent`` writes any row.
+    if "ACTION: PROTECT_MEDIA" in llm_output:
+        user_lower = (user_message or "").lower()
+        if any(tok in user_lower for tok in _USER_DELETE_INTENT_TOKENS):
+            logger.info(
+                "[protection] user_message has explicit delete-intent — "
+                "vetoing PROTECT_MEDIA (anchor=%r). Snippet: %r",
+                anchor_title, (user_message or "")[:120],
+            )
+            return None
+
+    # Pass 66: the Pass 50 guard is repurposed. It used to VETO the whole
+    # protection when the curator's same-turn reply was a hard delete
+    # verdict ("the negotiation isn't resolved"). But a decisive user
+    # keep-directive against a curator that just held the delete line is
+    # exactly an OVERRIDE — vetoing it would drop the headline case this
+    # feature exists to capture. So the guard no longer blocks; it just
+    # forces the resolution classification to ``override``: a curator
+    # that verdicted "delete" THIS turn demonstrably did not concede, so
+    # any "consensus" the classifier emitted for this exchange is wrong.
+    # See ``_ASSISTANT_DELETE_STANCE_TOKENS`` for the gated token set.
+    assistant_held_delete_line = any(
+        tok in (assistant_response or "").lower()
+        for tok in _ASSISTANT_DELETE_STANCE_TOKENS
+    )
+
+    return await handle_protection_intent(
+        user_id, llm_output,
+        category=anchor_category,
+        assistant_held_delete_line=assistant_held_delete_line,
+    )
 
 
 # ── NEW: DELETION COMMENT ANALYSIS (Replaces Frontend Regex) ─────────────────
