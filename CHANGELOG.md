@@ -6,6 +6,28 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **Spotify listening history imports through the GUI.** Drop the extended
+  streaming history (single files or the whole `my_spotify_data.zip`) into
+  the new Setup → Import step or the Admin view, pick whose listening it
+  is, done — progress in the Activity view, duplicate-safe, and the basic
+  export is refused with an explanation because it lacks the completion
+  signal replay counting depends on. The old script survives as a headless
+  wrapper over the same engine.
+- **The setup wizard catches up with the app.** It now asks for everything
+  the app can use: OMDb — which the wizard's request model silently
+  DROPPED until now, so a key entered there was never saved — and the
+  optional SoulSync neighbour. Model pickers fall back to the benchmarked
+  pair instead of two generations of stale recommendations, and a test now
+  asserts the schema's three homes (field list, request model, frontend
+  form) agree, which is the drift that hid the OMDb bug.
+- **The five auto-generated PRs the force-push closed were read and
+  adopted** where they held up: keyboard `:focus-visible` styles, `for=`
+  attributes on form labels, the rate limiter no longer sleeps while
+  holding its lock (a convoy that serialized every burst) and refills on a
+  monotonic clock, the genre-absence detector runs in one pass, and the
+  last German strings left the UI — a deletion-protection button and the
+  game-detection toast my earlier sweep missed.
+
 - **The model benchmarks are in the repo.** Five candidates, 740
   hand-scored pitches, a JSON stress gate and a 33-case chat bench —
   method, verdict and raw data in [docs/BENCHMARKS.md](docs/BENCHMARKS.md),

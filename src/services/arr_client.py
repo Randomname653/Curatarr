@@ -6,6 +6,7 @@ Provides unified async interface with rate limiting, caching, and error handling
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from enum import Enum
@@ -45,28 +46,41 @@ class RateLimiter:
     """Token bucket rate limiter."""
 
     def __init__(self, requests_per_minute: int):
-        self.capacity = requests_per_minute
-        self.tokens = requests_per_minute
-        self.refill_rate = requests_per_minute / 60  # tokens per second
-        self.last_refill = datetime.now()
+        self.capacity = float(requests_per_minute)
+        self.tokens = float(requests_per_minute)
+        self.refill_rate = requests_per_minute / 60.0  # tokens per second
+        self.last_refill = time.monotonic()
         self.lock = asyncio.Lock()
 
     async def acquire(self):
-        """Wait until token available."""
+        """Wait until a token is available.
+
+        The sleep happens OUTSIDE the lock (Jules PR #18): sleeping while
+        holding it made every other caller queue behind this one's wait —
+        a convoy where requests serialized instead of waiting in parallel.
+        Inside the lock only the arithmetic happens; the token balance may
+        go negative, which is the bucket's debt ledger for callers already
+        committed to sleeping. Monotonic clock, because a wall-clock jump
+        (NTP, DST) must not mint or destroy tokens.
+        """
         async with self.lock:
-            elapsed = (datetime.now() - self.last_refill).total_seconds()
+            now = time.monotonic()
+            elapsed = now - self.last_refill
             self.tokens = min(
                 self.capacity,
                 self.tokens + elapsed * self.refill_rate
             )
-            self.last_refill = datetime.now()
+            self.last_refill = now
 
-            if self.tokens < 1:
-                wait_time = (1 - self.tokens) / self.refill_rate
-                await asyncio.sleep(wait_time)
-                self.tokens = 0
-            else:
+            if self.tokens >= 1:
                 self.tokens -= 1
+                wait_time = 0.0
+            else:
+                wait_time = (1.0 - self.tokens) / self.refill_rate
+                self.tokens -= 1.0
+
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
 
 
 class ServiceType(str, Enum):

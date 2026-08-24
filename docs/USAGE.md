@@ -50,7 +50,7 @@ the data custodian picks up whatever is overdue on the next run.
 | `python tests/run_all.py` | Full test battery (what CI runs) |
 | `python update_db.py` | Idempotent schema migration — run after pulling |
 | `python build_models.py` | (Re-)bake the Ollama model tags from `.env` |
-| `python import_spotify.py <dir>` | Bulk-import a Spotify streaming-history export |
+| `python import_spotify.py <dir> [--user N]` | Headless Spotify import — the GUI path (Setup → Import, or Admin → Spotify history import) is the same engine |
 | `python run_pipeline_spotify.py` | Trigger the music pipeline manually |
 | `python scripts/music_enricher.py` | Clear a large music backlog in a separate process |
 | `python scripts/mbid_speedrunner.py` | Bulk-resolve MusicBrainz ids |

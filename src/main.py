@@ -247,7 +247,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 from src.routers import (
     setup, auth, users, chat, history, libraries,
-    recommendations, messages, enrichment, tasks,
+    recommendations, messages, enrichment, tasks, imports,
 )
 from src.routers import process_monitor
 from src.routers import music
@@ -278,6 +278,7 @@ app.include_router(music.router,           prefix="/api/music",           tags=[
 app.include_router(library.router,         prefix="/api/library",         tags=["library"])
 app.include_router(image_proxy.router,     prefix="/api/image",           tags=["image"])
 app.include_router(stats.router,           prefix="/api/stats",           tags=["stats"])
+app.include_router(imports.router,         prefix="/api/import",          tags=["import"])
 
 # ── SYSTEM ────────────────────────────────────────────────────────────────────
 

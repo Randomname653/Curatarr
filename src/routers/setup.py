@@ -104,10 +104,16 @@ class SetupCompleteRequest(BaseModel):
     plex_url: str
     plex_token: str
     ollama_endpoint: str = "http://localhost:11434"
-    base_curator_model: str = "qwen2.5:32b"
-    base_summarizer_model: str = "qwen2.5:3b"
+    base_curator_model: str = "gemma4:31b"
+    base_summarizer_model: str = "granite4.1:8b"
     embedding_model: str = "nomic-embed-text-v2-moe"
     tmdb_api_key: str = ""
+    # omdb was in SETUP_FIELDS and in the .env template from the start, but
+    # never in this request model — pydantic silently dropped the value, so
+    # the wizard could not actually save an OMDb key. The schema lives in
+    # three places (SETUP_FIELDS, this model, the frontend forms); a test
+    # now asserts the three agree.
+    omdb_api_key: str = ""
     lastfm_api_key: str = ""
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
@@ -117,6 +123,8 @@ class SetupCompleteRequest(BaseModel):
     sonarr_api_key: str = ""
     lidarr_url: str = ""
     lidarr_api_key: str = ""
+    soulsync_url: str = ""
+    soulsync_api_key: str = ""
 
 
 @router.post("/complete")

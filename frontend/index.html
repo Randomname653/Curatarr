@@ -279,6 +279,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .form-group input, .form-group select { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: var(--radius); font-size: 13px; font-family: inherit; }
 /* Amber focus everywhere — one interaction language for every input */
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--amber); }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: var(--radius); }
 .form-group input:focus-visible, .form-group select:focus-visible { outline: none; border-color: var(--amber); }
 .form-group .hint { font-size: 11px; color: var(--text3); margin-top: 4px; line-height: 1.5; }
 .form-group .used-for { font-size: 11px; color: var(--amber); margin-top: 3px; }
@@ -385,7 +386,8 @@ select option { background: var(--bg2); }
       <div class="setup-step-dot" id="step-dot-1">Ollama</div>
       <div class="setup-step-dot" id="step-dot-2">Metadata</div>
       <div class="setup-step-dot" id="step-dot-3">*arr Services</div>
-      <div class="setup-step-dot" id="step-dot-4">Done</div>
+      <div class="setup-step-dot" id="step-dot-4">Import</div>
+      <div class="setup-step-dot" id="step-dot-5">Done</div>
     </div>
     <div class="setup-body" id="setup-body"></div>
     <div class="setup-nav">
@@ -548,7 +550,7 @@ select option { background: var(--bg2); }
       </div>
       <div id="chat-input-area">
         <button id="new-chat-btn" onclick="newChat()" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat">+ New</button>
-        <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz.">🔄 Re-fetch</button>
+        <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata">🔄 Re-fetch</button>
         <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
         <button id="send-btn" onclick="sendMessage()">Send</button>
       </div>
@@ -938,6 +940,16 @@ select option { background: var(--bg2); }
       <div class="view-body">
         <button class="btn btn-secondary" onclick="loadUsers()" style="margin-bottom:16px">Refresh</button>
         <div class="user-list-target" id="user-list"></div>
+        <div style="border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-top:24px">
+          <h3 style="margin:0 0 6px;font-size:14px">Spotify history import</h3>
+          <p class="hint" style="margin:0 0 12px">Drop a Spotify extended streaming history (json or the whole zip), pick whose listening it is, import. Duplicate-safe — re-importing the same files adds nothing twice.</p>
+          <div id="adm-sp-zone"></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+            <label style="font-size:12px;color:var(--text2)">Attach to user</label>
+            <select id="adm-sp-user" style="min-width:160px"></select>
+            <button class="btn btn-primary btn-sm" onclick="runSpotifyImport('adm-sp')">Import</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1115,7 +1127,7 @@ let lastJobId = null;
 let libraryCfg = [];
 let setupData = {};
 let setupStep = 0;
-const SETUP_STEPS = ['plex','ollama','metadata','arr','done'];
+const SETUP_STEPS = ['plex','ollama','metadata','arr','import','done'];
 const CAT_LABELS = {music:'🎵 Music', movie:'🎬 Movies', show:'📺 TV Shows', anime:'⛩️ Anime'};
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
@@ -1143,12 +1155,12 @@ const SETUP_CONTENT = {
   plex: () => `
     <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Plex Connection</h2>
     <div class="form-group">
-      <label>Plex Server URL</label>
+      <label for="s-plex-url">Plex Server URL</label>
       <input id="s-plex-url" placeholder="http://192.168.1.100:32400" value="${setupData.plex_url||''}">
       <div class="hint">The local IP address of your Plex server.</div>
     </div>
     <div class="form-group">
-      <label>Plex Auth Token</label>
+      <label for="s-plex-token">Plex Auth Token</label>
       <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${setupData.plex_token||''}">
       <div class="hint">Settings → Troubleshooting → "Show XML" → copy the X-Plex-Token from the URL.</div>
     </div>
@@ -1158,51 +1170,65 @@ const SETUP_CONTENT = {
   ollama: () => `
     <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Ollama — Local AI</h2>
     <div class="form-group">
-      <label>Ollama Endpoint</label>
+      <label for="s-ollama">Ollama Endpoint</label>
       <input id="s-ollama" placeholder="http://localhost:11434" value="${setupData.ollama_endpoint||'http://localhost:11434'}">
     </div>
     <button class="btn btn-secondary btn-sm" onclick="testConn('ollama')">Detect models</button>
     <div id="test-ollama-result" style="margin:8px 0"></div>
     <div class="form-group" style="margin-top:12px">
-      <label>Curator model (large — for chat & recommendations)</label>
-      <select id="s-curator-model"><option value="qwen2.5:32b">qwen2.5:32b (recommended)</option></select>
+      <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
+      <select id="s-curator-model"><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
       <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
     </div>
     <div class="form-group">
-      <label>Summarizer model (small — for metadata processing)</label>
-      <select id="s-summarizer-model"><option value="qwen2.5:3b">qwen2.5:3b (recommended)</option></select>
+      <label for="s-summarizer-model">Summarizer model (small — for metadata processing)</label>
+      <select id="s-summarizer-model"><option value="granite4.1:8b">granite4.1:8b (recommended)</option></select>
       <div class="hint">Fast model used to structure metadata. Runs thousands of times during enrichment.</div>
     </div>
     <div class="form-group">
-      <label>Embedding model</label>
-      <select id="s-embed-model"><option value="nomic-embed-text">nomic-embed-text (recommended)</option></select>
+      <label for="s-embed-model">Embedding model</label>
+      <select id="s-embed-model"><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe (recommended)</option></select>
     </div>`,
 
   metadata: () => `
     <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Metadata APIs</h2>
     <p style="font-size:12px;color:var(--text2);margin-bottom:16px">These are optional but significantly improve recommendation quality. Skip any you don't need.</p>
     <div class="form-group">
-      <label>TMDB API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
+      <label for="s-tmdb">TMDB API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
       <input id="s-tmdb" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.tmdb_api_key||''}">
       <div class="hint">Free at <a href="https://www.themoviedb.org/settings/api" style="color:var(--amber)" target="_blank">themoviedb.org/settings/api</a>. Needed for movie and TV metadata, cast, themes.</div>
     </div>
     <div class="form-group">
-      <label>Last.fm API Key <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <label for="s-omdb">OMDb API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
+      <input id="s-omdb" placeholder="xxxxxxxx" value="${setupData.omdb_api_key||''}">
+      <div class="hint">Free at <a href="https://www.omdbapi.com/apikey.aspx" style="color:var(--amber)" target="_blank">omdbapi.com</a> (1,000 req/day). Adds Rotten Tomatoes / Metacritic scores, awards, richer plots.</div>
+    </div>
+    <div class="form-group">
+      <label for="s-lastfm">Last.fm API Key <span class="badge muted" style="font-size:10px">Music only</span></label>
       <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.lastfm_api_key||''}">
       <div class="hint">Free at last.fm/api. Adds music tags, similar artists, and bio. MusicBrainz works without a key.</div>
       <div class="used-for">Skip if you don't use Curatarr for music.</div>
     </div>
     <div class="form-group">
-      <label>Spotify Client ID <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <label for="s-spotify-id">Spotify Client ID <span class="badge muted" style="font-size:10px">Music only</span></label>
       <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.spotify_client_id||''}">
       <div class="hint">Free at <a href="https://developer.spotify.com/dashboard" style="color:var(--amber)" target="_blank">developer.spotify.com</a> → Create App. Enables genre enrichment via Client Credentials — no user login needed.</div>
       <div class="used-for">Skip if you don't use Curatarr for music.</div>
     </div>
     <div class="form-group">
-      <label>Spotify Client Secret</label>
+      <label for="s-spotify-secret">Spotify Client Secret</label>
       <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${setupData.spotify_client_secret||''}">
       <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="testConn('spotify')">Test Spotify</button>
       <div id="test-spotify-result" style="margin-top:4px;font-size:12px"></div>
+    </div>
+    <div class="form-group">
+      <label for="s-soulsync-url">SoulSync URL <span class="badge muted" style="font-size:10px">Optional · Music</span></label>
+      <input id="s-soulsync-url" placeholder="http://192.168.1.100:12279" value="${setupData.soulsync_url||''}">
+      <div class="hint">A SoulSync instance on your LAN adds a second music-metadata opinion. Read-only — Curatarr never triggers its downloads. Skip if you don't run one.</div>
+    </div>
+    <div class="form-group">
+      <label for="s-soulsync-key">SoulSync API Key</label>
+      <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${setupData.soulsync_api_key||''}">
     </div>`,
 
   arr: () => `
@@ -1217,17 +1243,31 @@ const SETUP_CONTENT = {
           <span class="badge muted" style="font-size:10px">${what}</span>
         </div>
         <div class="form-group" style="margin-bottom:8px">
-          <label>URL</label>
+          <label for="s-${id}-url">URL</label>
           <input id="s-${id}-url" placeholder="http://192.168.1.100:${port}" value="${setupData[id+'_url']||''}">
         </div>
         <div class="form-group" style="margin-bottom:8px">
-          <label>API Key</label>
+          <label for="s-${id}-key">API Key</label>
           <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${setupData[id+'_api_key']||''}">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="testConn('${id}')">Test ${name}</button>
         <div id="test-${id}-result"></div>
       </div>`;
     }).join('')}`,
+
+  import: () => `
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Listening history import</h2>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:16px">
+      Optional. If you have a Spotify <strong>extended streaming history</strong>
+      (privacy.spotify.com → Download your data → extended streaming history),
+      drop it here — years of listening give the music curator a head start.
+      The files wait until after the first sync; you then attach them to a user
+      under <strong>Admin → Spotify history import</strong>.
+    </p>
+    ${spotifyDropZone('su-sp')}
+    <p style="font-size:11px;color:var(--text3);margin-top:12px">
+      Nothing yet? Skip this — you can always do it later from the Admin view.
+    </p>`,
 
   done: () => `
     <div style="text-align:center;padding:20px 0">
@@ -1260,6 +1300,7 @@ function renderSetupStep(step) {
   if (key === 'ollama' && setupData.ollama_endpoint) {
     testConn('ollama');
   }
+  if (key === 'import') refreshSpotifyPending('su-sp');
 }
 
 function collectStep() {
@@ -1269,11 +1310,14 @@ function collectStep() {
     setupData.plex_token = document.getElementById('s-plex-token')?.value?.trim() || '';
   } else if (key === 'ollama') {
     setupData.ollama_endpoint = document.getElementById('s-ollama')?.value?.trim() || 'http://localhost:11434';
-    setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'qwen2.5:32b';
-    setupData.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'qwen2.5:3b';
-    setupData.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text';
+    setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'gemma4:31b';
+    setupData.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'granite4.1:8b';
+    setupData.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text-v2-moe';
   } else if (key === 'metadata') {
     setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
+    setupData.omdb_api_key = document.getElementById('s-omdb')?.value?.trim() || '';
+    setupData.soulsync_url = document.getElementById('s-soulsync-url')?.value?.trim() || '';
+    setupData.soulsync_api_key = document.getElementById('s-soulsync-key')?.value?.trim() || '';
     setupData.lastfm_api_key = document.getElementById('s-lastfm')?.value?.trim() || '';
     setupData.spotify_client_id = document.getElementById('s-spotify-id')?.value?.trim() || '';
     setupData.spotify_client_secret = document.getElementById('s-spotify-secret')?.value?.trim() || '';
@@ -1340,6 +1384,75 @@ async function testConn(service) {
     }
   } catch(e) {
     if (resultEl) resultEl.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+  }
+}
+
+// ── SPOTIFY HISTORY IMPORT (shared by the setup step and the admin card) ──
+function spotifyDropZone(p) {
+  return `
+    <div id="${p}-drop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:26px;text-align:center;cursor:pointer"
+         ondragover="event.preventDefault();this.style.borderColor='var(--amber)'"
+         ondragleave="this.style.borderColor='var(--border)'"
+         ondrop="handleSpotifyDrop(event,'${p}')"
+         onclick="document.getElementById('${p}-file').click()">
+      <div style="font-size:26px;margin-bottom:6px">🎧</div>
+      <div style="font-size:13px">Drop your Spotify extended history here</div>
+      <div class="hint" style="margin-top:4px">Streaming_History_Audio_*.json, endsong_*.json or the whole my_spotify_data.zip — or click to browse</div>
+    </div>
+    <input id="${p}-file" type="file" multiple accept=".json,.zip" style="display:none" onchange="uploadSpotify(this.files,'${p}')">
+    <div id="${p}-result" style="margin-top:8px"></div>
+    <div id="${p}-pending" class="hint" style="margin-top:4px"></div>`;
+}
+
+function handleSpotifyDrop(ev, p) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--border)';
+  uploadSpotify(ev.dataTransfer.files, p);
+}
+
+async function refreshSpotifyPending(p) {
+  try {
+    const headers = token ? {Authorization: 'Bearer ' + token} : {};
+    const r = await fetch('/api/import/spotify/status', {headers});
+    const d = await r.json();
+    const el = document.getElementById(p + '-pending');
+    if (el) el.textContent = d.pending?.length
+      ? `${d.pending.length} file(s) waiting: ${d.pending.map(f => f.name).join(', ')}`
+      : '';
+    return d;
+  } catch { return null; }
+}
+
+async function uploadSpotify(files, p) {
+  if (!files || !files.length) return;
+  const el = document.getElementById(p + '-result');
+  if (el) el.innerHTML = '<div class="test-status">Uploading…</div>';
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  const headers = token ? {Authorization: 'Bearer ' + token} : {};
+  try {
+    const r = await fetch('/api/import/spotify/files', {method: 'POST', body: fd, headers});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'upload failed');
+    if (el) el.innerHTML = [
+      d.saved.length ? `<div class="test-status ok">✓ ${d.saved.length} file(s) accepted</div>` : '',
+      ...d.rejected.map(x => `<div class="test-status err">✗ ${esc(x.name)}: ${esc(x.reason)}</div>`),
+    ].join('');
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+  }
+  refreshSpotifyPending(p);
+}
+
+async function runSpotifyImport(p) {
+  const uid = parseInt(document.getElementById(p + '-user')?.value);
+  const el = document.getElementById(p + '-result');
+  if (!uid) { if (el) el.innerHTML = '<div class="test-status err">✗ pick a user first</div>'; return; }
+  try {
+    await api('/api/import/spotify/run', 'POST', {user_id: uid});
+    if (el) el.innerHTML = '<div class="test-status ok">✓ Import started — watch the Activity view. The music matcher resolves the tracks afterwards.</div>';
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
   }
 }
 
@@ -3913,7 +4026,7 @@ async function loadJudgeProtections() {
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
-            <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Schutz aufheben</button>
+            <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Lift protection</button>
           </div>
         </div>
         <div class="panel-item-sub" style="white-space:pre-line">${esc(p.reason || '')}</div>
@@ -5617,6 +5730,12 @@ async function loadUsers() {
   if (!targets.length) return;
   try {
     const users = await api('/api/users/');
+    const zone = document.getElementById('adm-sp-zone');
+    if (zone && !zone.innerHTML) zone.innerHTML = spotifyDropZone('adm-sp');
+    const sel = document.getElementById('adm-sp-user');
+    if (sel) sel.innerHTML = users.map(u =>
+      `<option value="${u.id}">${esc(u.plex_username)}</option>`).join('');
+    refreshSpotifyPending('adm-sp');
     const html = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
       ${users.map(u=>`<tr>
         <td>${esc(u.plex_username)}</td>
@@ -5927,11 +6046,11 @@ function _showProcessToast(name) {
   const toast = document.createElement('div');
   toast.className = 'game-toast';
   toast.innerHTML = `
-    <div class="game-toast-title">Unbekannter Prozess erkannt</div>
+    <div class="game-toast-title">Unknown process detected</div>
     <div class="game-toast-name">${esc(name)}</div>
     <div class="game-toast-actions">
-      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">🎮 Ja, Spiel</button>
-      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">✕ Ignorieren</button>
+      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">🎮 Yes, game</button>
+      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">✕ Ignore</button>
     </div>`;
   container.appendChild(toast);
 }
