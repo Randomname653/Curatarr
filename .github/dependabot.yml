@@ -1,0 +1,27 @@
+# Dependabot configuration — inert until Dependabot is enabled in the repo
+# settings (Settings → Code security → Dependabot). Security updates use this
+# the moment they are switched on; version updates follow the schedules below.
+#
+# requirements.txt is fully pinned on purpose, so version PRs are meaningful
+# diffs rather than range shuffles. Minor and patch bumps arrive grouped in
+# one PR per week; majors come alone, because a major deserves its own read.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies"]

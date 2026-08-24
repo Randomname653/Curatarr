@@ -1,0 +1,24 @@
+name: Feature request
+description: An idea for the curator
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem it solves
+      description: >-
+        What can't you do today, or what does the curator get wrong? Concrete
+        examples beat abstractions.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >-
+        Including "do nothing" — check ROADMAP.md first; some ideas are
+        deliberately parked there with reasoning.

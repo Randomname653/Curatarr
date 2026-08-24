@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **The repo is armed for public operation.** Dependabot config (pinned
+  pip deps, grouped minor/patch bumps, actions updates), a CodeQL workflow
+  that stays dormant until the repo is public (schedule + manual trigger;
+  push trigger documented for arming), issue forms that ask for scrubbed
+  logs, and a PR template whose checklist is the house rules — battery
+  green, behaviour changes carry tests, no personal data, rebase onto the
+  rewritten main. All inert until the corresponding switches are flipped
+  in the repo settings.
+
 - **Three more Jules branches landed as authored.** The title-match
   scorer's regex and stop-word set are hoisted to module level (~25% faster
   in the nested matching loops), the SQLite files under `data/` get the
