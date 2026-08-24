@@ -15,11 +15,11 @@ Architecture (inspired by EM-LLM but simpler and local):
   FORGET: Old, low-importance, superseded memories decay over time
 
 Memory types:
-  - taste_observation   "User binged 8 episodes of X — seems to be in a dark mood"
-  - explicit_statement  "User said they hate slow-burn dramas"
-  - feedback            "User gave thumbs down to Y recommendation because Z"
-  - viewing_pattern     "User watches anime at 2am on weekends"
-  - preference_shift    "User's metal listening dropped 40% this week vs avg"
+  - taste_observation   "User rapidly consumed a series — suggesting high engagement"
+  - explicit_statement  "User explicitly expressed disinterest in a specific genre"
+  - feedback            "User provided negative feedback on a recommendation with a specific reason"
+  - viewing_pattern     "User exhibits a distinct temporal viewing habit"
+  - preference_shift    "User's listening for a specific genre dropped 40% this week vs avg"
   - conversation        "User asked about similar shows to X, liked suggestions"
 """
 
@@ -111,7 +111,7 @@ _USER_DELETE_INTENT_TOKENS: tuple[str, ...] = (
 # ── IMPORTANCE SCORING ────────────────────────────────────────────────────────
 
 IMPORTANCE_WEIGHTS = {
-    "explicit_statement": 1.0,   # "I hate X" — always important
+    "explicit_statement": 1.0,   # "I strongly dislike X" — always important
     "feedback":           0.9,   # thumbs down with reason
     "taste_observation":  0.7,   # inferred from behavior
     "preference_shift":   0.8,   # significant change
@@ -1519,7 +1519,7 @@ Output NO_ACTION when the user has NOT settled — they are still negotiating:
   re-examine X as transgressive art." Making a CASE is not a directive.
 - Reframings of the title's themes: "this is actually about X, not Y".
 - "Tell me about X" / "what about X?" — questions.
-- "I like X", "X is great" — a preference, not a keep-directive.
+- "I enjoy X", "X is great" — a preference, not a keep-directive.
 - "Add X to my library" — an addition request, not protection.
 
 Output NO_ACTION when the user POSTPONES the decision — parking is not

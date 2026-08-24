@@ -75,14 +75,14 @@ CASES = [
      "OTHER HOUSEHOLD USERS:\n  none.\nACCLAIM & METADATA:\n  Nu-metal / heavy band "
      "out of Flint, Michigan; bleak, violent street imagery, mid-tempo riff-driven.",
      {"verdict": "CUT", "pillar_1_ego": "Nu-metal's plodding heaviness clashes with "
-      "the owner's taste for high-velocity European hardcore / industrial rave."}),
+      "the owner's specific musical tastes."}),
 
     ("TITLE: Sisqó — music, R&B / Contemporary R&B / Hip Hop / Pop\nOWNER: not watched.\n"
      "OTHER HOUSEHOLD USERS:\n  none.\nACCLAIM & METADATA:\n  Late-90s/early-2000s "
      "R&B-pop solo singer (ex-Dru Hill); glossy melismatic vocals, romantic ballads, "
      "the 'Thong Song' novelty hit.",
      {"verdict": "CUT", "pillar_1_ego": "Glossy late-90s R&B-pop clashes with the "
-      "owner's appetite for abrasive industrial / underground rave."}),
+      "owner's specific musical tastes."}),
 
     ("TITLE: Coconut Hen — music, Dance / Pop\nOWNER: not watched.\n"
      "OTHER HOUSEHOLD USERS:\n  none.\nACCLAIM & METADATA:\n  Swedish viral novelty "
