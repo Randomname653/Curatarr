@@ -313,8 +313,28 @@ def _migrate_deletion_proposals_autoincrement() -> None:
             )
 
 
+def _secure_db_files() -> None:
+    """Ensure SQLite files in data/ are 0600 (POSIX only)."""
+    import os
+    import stat
+    import logging as _logging
+    from src.paths import DATA_DIR
+
+    _mig_log = _logging.getLogger(__name__)
+    if not DATA_DIR.exists():
+        return
+
+    for ext in ("*.db", "*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm", "*.db-wal", "*.db-shm"):
+        for p in DATA_DIR.rglob(ext):
+            try:
+                os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
+            except Exception as e:
+                _mig_log.debug("Could not chmod %s (likely Windows): %s", p, e)
+
+
 def init_db():
     """Create all tables and migrate any new columns."""
     Base.metadata.create_all(bind=engine)
     _migrate_columns()
     _migrate_deletion_proposals_autoincrement()
+    _secure_db_files()
