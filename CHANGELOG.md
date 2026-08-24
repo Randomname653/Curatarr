@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **Three more Jules deliveries, harvested mid-flight.** The chat send
+  button and input now disable while a message is processing and re-enable
+  in a `finally` (no more double-sends, no lockout on error), missing
+  aria-labels landed on the *arr settings and bulk-delete inputs, and two
+  approved structural refactors arrived exactly as specified — including
+  the `_store_taste_blobs` name where the old encryption fiction was
+  vetoed. Its bundled dev scaffolding (`run_uvicorn.sh`, a verify script)
+  was dropped at the door.
+
 - **The repo is armed for public operation.** Dependabot config (pinned
   pip deps, grouped minor/patch bumps, actions updates), a CodeQL workflow
   that stays dormant until the repo is public (schedule + manual trigger;
