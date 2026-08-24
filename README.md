@@ -143,11 +143,13 @@ decisions and the invariants learned the hard way — lives in
 | **TMDB API key** | recommended — the primary movie/show metadata source |
 | **OMDb / Last.fm / Spotify keys** | optional — extra ratings, awards and music genres |
 
-Recommended models: a 20–32 B reasoning-capable model as the *curator*
-(e.g. `qwen3.6:27b`), something small and fast as the *summariser*
-(e.g. `granite4.1:8b`), and `nomic-embed-text-v2-moe` for embeddings —
-which runs on CPU by design, so the GPU stays free for the curator.
-AniList and MusicBrainz need no keys.
+Recommended models: `gemma4:31b` as the *curator* — it won a five-model
+benchmark on chat character and metadata faithfulness
+([docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the full data) —
+`granite4.1:8b` as the fast *summariser*, and `nomic-embed-text-v2-moe`
+for embeddings, which runs on CPU by design so the GPU stays free for the
+curator. Any Ollama model can be substituted; the benchmark scripts ship
+with the repo. AniList and MusicBrainz need no keys.
 
 ### Installation
 
@@ -216,6 +218,7 @@ the ones most people touch:
 | Document | What's in it |
 |---|---|
 | [Usage guide](docs/USAGE.md) | Day-to-day operations, maintenance commands, troubleshooting |
+| [Benchmarks](docs/BENCHMARKS.md) | How the models were chosen — method, data, and the raw scores |
 | [Architecture](ARCHITECTURE.md) | Data flow, subsystem internals, design decisions, hard-won invariants |
 | [Configuration reference](.env.example) | Every setting with defaults and comments |
 | [Roadmap](ROADMAP.md) | What's planned and what's deliberately parked |

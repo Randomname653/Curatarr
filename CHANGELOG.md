@@ -4,6 +4,28 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-08-25 — The benchmarks go public, and the docs stop lying
+
+- **The model benchmarks are in the repo.** Five candidates, 740
+  hand-scored pitches, a JSON stress gate and a 33-case chat bench —
+  method, verdict and raw data in [docs/BENCHMARKS.md](docs/BENCHMARKS.md),
+  with the score CSVs, the August report, the owner spot-check and the
+  harness scripts checked in so the reasoning can be audited or rerun
+  against your own model. Headline finding worth publishing on its own:
+  the pipeline winner and the chat winner were different models, and the
+  pipeline's +0.2 quality at 2.4× speed lost to a sycophancy collapse the
+  moment the metadata anchor was removed.
+- **The docs recommended a model our own benchmark disqualified.** The
+  README suggested the curator base that the August run timed out into
+  600-second stalls (VRAM starvation at 16k context on 24 GB); the setup
+  wizard's defaults were a model generation older still. README, wizard,
+  config defaults and ARCHITECTURE now all name the benchmarked production
+  pair, and every command, setting and troubleshooting claim in the usage
+  guide was verified against the code — one stale claim fixed: the
+  Syncthing exclusion is permanent, not per-run.
+- **Commit identity moved to GitHub's noreply address**, and the history
+  was rewritten once to scrub the personal address from past commits.
+
 ## 2026-08-22 — What the judge is given to reason from
 
 - **Community reception was not slow, it was broken.** One exit from the

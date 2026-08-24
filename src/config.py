@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     PRINCIPLE_AUTO_ACTIVATE: bool = False
     # Primary models — .env is the single source of truth.
     # Defaults here are only used when .env has no entry.
-    BASE_CURATOR_MODEL: str = "qwen3.6:27b"        # chat + recommendations
+    BASE_CURATOR_MODEL: str = "gemma4:31b"         # chat + recommendations
     BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"   # enrichment + memory extraction
     # Two-bake split (2026-08 benchmark, tests/benchmarks/model_baselines.csv):
     # qwen3.8:27b won the pipeline bench (metadata-anchored pitches, collision
@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     BACKUP_CURATOR_MODEL: str = "laguna-xs.2:q4_K_M"
     BACKUP_SUMMARIZER_MODEL: str = "granite4.1:3b"   # speed fallback / VRAM-constrained mode
     # When True, <think>...</think> blocks are stripped from LLM responses.
-    # Set False — current models (granite4.1:8b, qwen3.6:27b) do not emit think blocks.
+    # Set False — current models (granite4.1:8b, gemma4:31b) do not emit think blocks.
     # Keep this flag so switching to a reasoning model only requires an .env change.
     LLM_THINK_TAGS: bool = False
     # Max concurrent big-model (curator) generations across the WHOLE server.

@@ -55,6 +55,7 @@ the data custodian picks up whatever is overdue on the next run.
 | `python scripts/music_enricher.py` | Clear a large music backlog in a separate process |
 | `python scripts/mbid_speedrunner.py` | Bulk-resolve MusicBrainz ids |
 | `python scripts/dedupe_watch_history.py` | Report play rows that record one viewing twice (`--apply` to remove) |
+| `python scripts/facts_speedrunner.py` | Clear the archive-metadata backlog in one go (`--skip-significance` leaves the GPU alone) |
 | `python benchmark.py` | Measure a candidate Ollama model's throughput |
 | `python scripts/make_icon.py` | Re-render the app icons |
 
@@ -101,8 +102,9 @@ slowly.
 
 If `data/` sits inside a synced folder, the sync client hashing a live
 WAL database causes lock storms. Curatarr writes an exclusion into the
-folder's `.stignore` while it runs — if locks persist, confirm `data/`
-is actually excluded in your sync client.
+folder's `.stignore` at startup and leaves it in place — a live database
+is never safe to file-sync, running or not. If locks persist, confirm
+`data/` is actually excluded in your sync client.
 
 **A title is enriched as the wrong work**
 

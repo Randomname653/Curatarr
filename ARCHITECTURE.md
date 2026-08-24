@@ -603,7 +603,7 @@ wall-clock catches up.
 
 Curatarr runs two Ollama model roles that compete for VRAM:
 
-- **Curator** (`curatarr-curator`, large — `qwen3.6:27b` — chat,
+- **Curator** (`curatarr-curator`, large — `gemma4:31b` — chat,
   recommendations, deletion pitches)
 - **Summariser** (`curatarr-summarizer`, small+fast — `granite4.1:8b` —
   enrichment polish, memory extraction; backup `granite4.1:3b`)
@@ -917,7 +917,7 @@ without understanding why they exist.
 `.env` (written by setup wizard). Key knobs:
 
 - `PLEX_URL` / `PLEX_TOKEN`, `OLLAMA_ENDPOINT`
-- `BASE_CURATOR_MODEL` (`qwen3.6:27b`) / `BASE_SUMMARIZER_MODEL`
+- `BASE_CURATOR_MODEL` (`gemma4:31b`) / `BASE_SUMMARIZER_MODEL`
   (`granite4.1:8b`, backup `granite4.1:3b`) / `EMBEDDING_MODEL`. The summariser
   is the enrichment-throughput bottleneck — it was switched gpt-oss:20b →
   granite4.1:8b (≈3.9× faster, *more* accurate, see §15). After changing it:
