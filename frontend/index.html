@@ -2845,8 +2845,11 @@ async function correctChatAnchor() {
 
 async function sendMessage() {
   const inp = document.getElementById('chat-input');
+  const btn = document.getElementById('send-btn');
   const text = inp.value.trim(); if (!text) return;
   inp.value = ''; inp.style.height = 'auto';
+  inp.disabled = true;
+  btn.disabled = true;
   addMsg(text, 'user');
   const thinking = addThinkingMsg();
 
@@ -3004,6 +3007,10 @@ async function sendMessage() {
 
   } catch(e) {
     thinking.textContent = '⚠️ ' + e.message;
+  } finally {
+    inp.disabled = false;
+    btn.disabled = false;
+    inp.focus();
   }
 }
 
@@ -3194,10 +3201,10 @@ function renderArrCard(svc, info) {
     </div>
     <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;align-items:center;font-size:12px;margin-bottom:12px">
       <label style="color:var(--text3)">URL</label>
-      <input type="text" id="arr-url-${svc}" value="${esc(info.url || '')}" placeholder="http://localhost:${svc==='sonarr'?'8989':svc==='radarr'?'7878':'8686'}"
+      <input type="text" id="arr-url-${svc}" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${svc==='sonarr'?'8989':svc==='radarr'?'7878':'8686'}"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px;font-family:inherit"/>
       <label style="color:var(--text3)">API key</label>
-      <input type="password" id="arr-key-${svc}" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}"
+      <input type="password" id="arr-key-${svc}" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px;font-family:inherit"/>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
@@ -4532,7 +4539,7 @@ function showBulkDeleteConfirmModal(count, gb) {
       <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
       <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${count} items · ${gb} GB</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:16px;line-height:1.5">This removes them from your *arr libraries and deletes the files.<br>This cannot be undone.</div>
-      <input id="_bulk_reason" placeholder="Shared reason (optional — Curatarr will learn)" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px;margin-bottom:16px"/>
+      <input id="_bulk_reason" aria-label="Shared reason for bulk deletion" placeholder="Shared reason (optional — Curatarr will learn)" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px;margin-bottom:16px"/>
       <div style="font-size:36px;font-weight:700;color:var(--danger);margin-bottom:16px;min-height:44px" id="_del_countdown">3</div>
       <div style="display:flex;gap:10px;justify-content:center">
         <button id="_del_confirm" class="btn btn-danger" disabled style="min-width:140px">Delete ${count} (3)</button>
