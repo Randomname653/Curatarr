@@ -75,6 +75,14 @@ Condensed release history, newest first.
   transient guard it never had (an AniList rate-limit no longer stamps "no
   franchise graph" permanently). A test now walks the AST of the whole tree
   and asserts every function declares the names it uses.
+- **Shutdown frees the GPU instead of abandoning a timer.** Stopping the
+  app inside the curator's 10-60s idle window tore the event loop down under
+  a sleeping evict task ("Task was destroyed but it is pending!") — and the
+  eviction it was about to perform never ran, so the model squatted in VRAM
+  until Ollama's own keep_alive expired, on the machine whose GPU the app
+  was most likely closed to free. The lifespan teardown now cancels the
+  timer and evicts curator and pitcher immediately, best-effort.
+
 - **The setup wizard no longer eats hand-added settings.** Re-running it
   rebuilt `.env` from its template alone, silently destroying every key
   outside it — ten of thirty-three on the reference install, including the

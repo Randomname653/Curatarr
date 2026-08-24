@@ -395,6 +395,32 @@ async def resolve_pitcher_model() -> str:
     return fallback
 
 
+async def shutdown_evict() -> None:
+    """Called from the app's lifespan teardown.
+
+    The idle-evict timer is cancelled by new chat activity but nothing ever
+    cancelled it on shutdown — stop the app inside its 10-60s window and the
+    loop tears down under a sleeping task ("Task was destroyed but it is
+    pending!"), and the eviction it was going to do never happens, so the
+    curator squats in VRAM until Ollama's own keep_alive expires. Closing
+    the app is the strongest "user is done" signal there is: cancel the
+    timer and evict immediately, best-effort.
+    """
+    global _curator_evict_task
+    if _curator_evict_task and not _curator_evict_task.done():
+        _curator_evict_task.cancel()
+        _curator_evict_task = None
+    from src.config import settings
+    for model in (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL,
+                  (settings.PITCHER_MODEL or "").strip()):
+        if not model:
+            continue
+        try:
+            await asyncio.wait_for(_evict_model(model), timeout=5)
+        except Exception as e:
+            logger.debug("[shutdown] evict of %s skipped: %s", model, e)
+
+
 async def _scheduled_curator_evict() -> None:
     """Background task: wait for an idle window, then evict the curator.
 

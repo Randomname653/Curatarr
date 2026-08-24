@@ -380,5 +380,21 @@ check("...and the cursor only advances past a window the model processed",
       "if not ok:" in _em
       and "extraction failed — window will be retried" in _em)
 
+# -- the idle-evict timer dies WITH the app ---------------------------------
+# Stopping the app inside the 10-60s idle window tore the loop down under a
+# sleeping task, and the eviction it was about to do never ran — the curator
+# squatted in VRAM until Ollama's own keep_alive expired, on the machine
+# whose GPU the app was likely closed to free.
+
+_lp = (Path(__file__).resolve().parents[1]
+       / "src/services/llm_priority.py").read_text(encoding="utf-8")
+check("a shutdown hand exists that cancels the timer and evicts now",
+      "async def shutdown_evict" in _lp
+      and "_curator_evict_task.cancel()" in
+          _lp.split("async def shutdown_evict")[1][:900])
+check("...and the lifespan teardown actually calls it",
+      "await shutdown_evict()" in
+      (Path(__file__).resolve().parents[1] / "src/main.py").read_text(encoding="utf-8"))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

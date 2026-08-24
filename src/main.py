@@ -129,6 +129,16 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Cancel the idle-evict timer and free the VRAM on the way out — the
+    # most common reason this app gets closed is that the GPU is wanted for
+    # a game, and leaving gemma sitting in 20 GB of VRAM until Ollama's own
+    # keep_alive expires defeats exactly that.
+    try:
+        from src.services.llm_priority import shutdown_evict
+        await shutdown_evict()
+    except Exception as e:
+        logger.debug("[shutdown] evict pass failed: %s", e)
+
     # Pass 100: re-enable Syncthing for data/ now that the DB is released, so
     # the database can sync between machines while Curatarr is stopped. Done
     # last, after all shutdown DB writes above have completed.
