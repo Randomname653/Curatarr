@@ -129,6 +129,16 @@ def _enforce_poll_rate_limit(pin_id: int) -> None:
     for stale_id in [k for k, v in poll_rate_limit.items() if v and now - v[-1] >= 60]:
         poll_rate_limit.pop(stale_id, None)
 
+    # Cap the dictionary at 1000 entries to prevent memory exhaustion DoS
+    if len(poll_rate_limit) > 1000:
+        # Sort by the most recent timestamp in the bucket, drop the oldest half
+        sorted_items = sorted(
+            poll_rate_limit.items(),
+            key=lambda item: item[1][-1] if item[1] else 0
+        )
+        for k, _ in sorted_items[:500]:
+            poll_rate_limit.pop(k, None)
+
 
 async def _bootstrap_user_data(user_id: int) -> None:
     """Auto-onboard a freshly-arrived user — no admin button required.
