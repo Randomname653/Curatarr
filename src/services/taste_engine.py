@@ -998,51 +998,7 @@ async def compute_taste_vector_for_user(
     }
 
 
-async def compute_all_taste_vectors(user_id: int, categories: list = None,
-                                    skip_summaries: bool = False):
-    """
-    Compute taste vectors for the given categories (default: all).
-    Stores in TasteVectorEntry (plain text for chat context)
-    and EncryptedTasteVector (AES-256 encrypted embeddings).
-    """
-    if not categories:
-        categories = ["music", "movie", "show", "anime"]
-    all_results = {}
-
-    for cat in categories:
-        logger.info("Computing taste vector for %s...", cat)
-        result = await compute_taste_vector_for_user(user_id, category=cat)
-        if result.get("watch_count", 0) >= 5:
-            all_results[cat] = result
-
-    if not all_results:
-        logger.warning("No taste data for user %d", user_id)
-        return
-
-    # Generate LLM summaries per category. skip_summaries=True (the
-    # embedding-migration rebuild) recomputes only vectors/stats — the
-    # persist block below merges per-category summaries from the EXISTING
-    # row, so the curator-written texts survive untouched and no GPU/LLM
-    # call happens.
-    from src.services.plex_sync import _generate_taste_summary, TYPE_LABELS
-    summary_parts = []
-    for cat, res in ({} if skip_summaries else all_results).items():
-        summary = await _generate_taste_summary(
-            user_id=user_id,
-            media_type=cat,
-            genre_affinity=res["genre_affinity"],
-            themes=list(res["theme_affinity"].keys())[:8],
-            moods=list(res["mood_affinity"].keys())[:5],
-            top_titles=res["top_titles"][:15],
-            watch_count=res["watch_count"],
-            avg_completion=res["avg_completion"],
-            genre_aversion=res.get("genre_aversion", {}),
-            dropped_titles=res.get("dropped_titles", [])[:5],
-            binges=res.get("binges", [])[-3:],
-        )
-        summary_parts.append(f"[{cat.upper()}] {summary}")
-
-    # Store plain stats in TasteVectorEntry
+def _update_plain_taste_stats(user_id: int, all_results: dict, summary_parts: list) -> str:
     type_summaries = {}
     top_titles_by_type = {}
     themes_by_type = {}
@@ -1118,9 +1074,12 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
         else:
             db.add(TasteVectorEntry(user_id=user_id, **data))
         db.commit()
+    return summary_text
 
-    # Store encrypted embeddings in EncryptedTasteVector
-    # (requires user PIN — stored as unencrypted for now, PIN flow in v1.1)
+
+def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, summary_text: str):
+    # Store plain-text embeddings in EncryptedTasteVector
+    # (the model is called EncryptedTasteVector but it currently stores plain JSON)
     try:
         from src.database.models import EncryptedTasteVector
         with get_db_session() as db:
@@ -1250,3 +1209,55 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
         logger.info("Summary preview: %s", summary_text[:200] if summary_text else "(empty)")
     except Exception as e:
         logger.warning("Could not store EncryptedTasteVector: %s", e)
+
+
+async def _generate_summaries(user_id: int, all_results: dict, skip_summaries: bool) -> list:
+    # Generate LLM summaries per category. skip_summaries=True (the
+    # embedding-migration rebuild) recomputes only vectors/stats — the
+    # persist block below merges per-category summaries from the EXISTING
+    # row, so the curator-written texts survive untouched and no GPU/LLM
+    # call happens.
+    from src.services.plex_sync import _generate_taste_summary
+    summary_parts = []
+    for cat, res in ({} if skip_summaries else all_results).items():
+        summary = await _generate_taste_summary(
+            user_id=user_id,
+            media_type=cat,
+            genre_affinity=res["genre_affinity"],
+            themes=list(res["theme_affinity"].keys())[:8],
+            moods=list(res["mood_affinity"].keys())[:5],
+            top_titles=res["top_titles"][:15],
+            watch_count=res["watch_count"],
+            avg_completion=res["avg_completion"],
+            genre_aversion=res.get("genre_aversion", {}),
+            dropped_titles=res.get("dropped_titles", [])[:5],
+            binges=res.get("binges", [])[-3:],
+        )
+        summary_parts.append(f"[{cat.upper()}] {summary}")
+    return summary_parts
+
+
+async def compute_all_taste_vectors(user_id: int, categories: list = None,
+                                    skip_summaries: bool = False):
+    """
+    Compute taste vectors for the given categories (default: all).
+    Stores in TasteVectorEntry (plain text for chat context)
+    and EncryptedTasteVector (JSON plain text embeddings).
+    """
+    if not categories:
+        categories = ["music", "movie", "show", "anime"]
+    all_results = {}
+
+    for cat in categories:
+        logger.info("Computing taste vector for %s...", cat)
+        result = await compute_taste_vector_for_user(user_id, category=cat)
+        if result.get("watch_count", 0) >= 5:
+            all_results[cat] = result
+
+    if not all_results:
+        logger.warning("No taste data for user %d", user_id)
+        return
+
+    summary_parts = await _generate_summaries(user_id, all_results, skip_summaries)
+    summary_text = _update_plain_taste_stats(user_id, all_results, summary_parts)
+    _store_taste_blobs(user_id, all_results, summary_parts, summary_text)
