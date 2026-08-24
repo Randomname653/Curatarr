@@ -548,7 +548,7 @@ select option { background: var(--bg2); }
       </div>
       <div id="chat-input-area">
         <button id="new-chat-btn" onclick="newChat()" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat">+ New</button>
-        <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz.">🔄 Re-fetch</button>
+        <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata">🔄 Re-fetch</button>
         <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
         <button id="send-btn" onclick="sendMessage()">Send</button>
       </div>
@@ -3912,7 +3912,7 @@ async function loadJudgeProtections() {
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
-            <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Schutz aufheben</button>
+            <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Lift protection</button>
           </div>
         </div>
         <div class="panel-item-sub" style="white-space:pre-line">${esc(p.reason || '')}</div>
@@ -5871,11 +5871,11 @@ function _showProcessToast(name) {
   const toast = document.createElement('div');
   toast.className = 'game-toast';
   toast.innerHTML = `
-    <div class="game-toast-title">Unbekannter Prozess erkannt</div>
+    <div class="game-toast-title">Unknown process detected</div>
     <div class="game-toast-name">${esc(name)}</div>
     <div class="game-toast-actions">
-      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">🎮 Ja, Spiel</button>
-      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">✕ Ignorieren</button>
+      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">🎮 Yes, game</button>
+      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">✕ Ignore</button>
     </div>`;
   container.appendChild(toast);
 }
