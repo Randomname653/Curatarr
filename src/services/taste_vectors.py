@@ -1,93 +1,31 @@
 """
-Curatarr - Encrypted Taste Vector Service
+Curatarr — Taste Vector Service
 
-AES-256-GCM encryption of taste vectors per user.
-Key derivation: PBKDF2(user_pin + plex_user_id, salt, 200000 iterations, SHA-256)
+Concurrency-safe blob updates, temporal viewing patterns, and feedback
+merging for the per-user taste vector.
 
-The PIN never leaves the client — the server only stores the encrypted blob.
-Even if the DB is stolen, taste vectors are unreadable without the PIN.
-
-Positive and negative vectors are stored separately.
-Binge patterns and temporal patterns (time-of-day, day-of-week) are tracked.
+A note on the table this writes to: it is named ``encrypted_taste_vectors``
+and its column ``encrypted_blob`` holds plain JSON. The encryption the name
+promises was designed (PIN-derived AES-GCM, "Phase B") and then never wired,
+for a structural reason rather than lack of time: the key would derive from
+a PIN the user types, but the taste vector's consumers are BACKGROUND jobs —
+the nightly recommendation refresh, deletion proposals, proactive messages —
+which run precisely when nobody is present to type it. Either the server
+caches the derived key, which unmakes the encryption, or every background
+feature dies for opted-in users. On top of that, the vector is derived from
+``watch_history``, which sits in the same database in plaintext — encrypting
+the summary while the diary stays open is theater. The dead cipher code was
+removed 2026-08; disk-level encryption (BitLocker / LUKS) is the honest tool
+for the at-rest threat, and SECURITY.md says so. The table name stays to
+spare a migration.
 """
 
-import hashlib
 import json
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from src.config import settings
-
 logger = logging.getLogger(__name__)
-
-
-# ── KEY DERIVATION ────────────────────────────────────────────────────────────
-
-def derive_key(pin: str, plex_user_id: str, salt: bytes) -> bytes:
-    """Derive AES-256 key from PIN + Plex user ID using PBKDF2."""
-    material = f"{pin}:{plex_user_id}".encode("utf-8")
-    return hashlib.pbkdf2_hmac(
-        "sha256",
-        material,
-        salt,
-        settings.PBKDF2_ITERATIONS,
-        dklen=32,
-    )
-
-
-# ── AES-256-GCM ENCRYPTION ────────────────────────────────────────────────────
-
-def encrypt_vector(data: dict, key: bytes) -> dict:
-    """Encrypt a dict using AES-256-GCM. Returns {ciphertext, nonce, tag} as hex."""
-    try:
-        from Crypto.Cipher import AES
-        nonce = os.urandom(12)
-        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-        plaintext = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        ciphertext, tag = cipher.encrypt_and_digest(plaintext)
-        return {
-            "ciphertext": ciphertext.hex(),
-            "nonce": nonce.hex(),
-            "tag": tag.hex(),
-            "version": 1,
-        }
-    except ImportError:
-        logger.warning("pycryptodome not installed — storing unencrypted (dev mode)")
-        return {"plaintext": json.dumps(data), "version": 0}
-
-
-def decrypt_vector(blob: dict, key: bytes) -> Optional[dict]:
-    """Decrypt an AES-256-GCM blob. Returns None on failure.
-
-    v0 note (eval 1.9): the blobs the app ACTUALLY writes in Phase A store
-    their fields top-level ({"embedding": …, "version": 0}) — only the
-    dev-mode encrypt fallback ever produced the {"plaintext": …} wrapper.
-    Parse both, and never let a shape mismatch raise instead of the
-    documented None."""
-    if blob.get("version") == 0:
-        try:
-            if "plaintext" in blob:
-                return json.loads(blob["plaintext"])
-            return blob
-        except Exception as e:
-            logger.warning("v0 blob parse failed: %s", e)
-            return None
-    try:
-        from Crypto.Cipher import AES
-        cipher = AES.new(
-            key, AES.MODE_GCM,
-            nonce=bytes.fromhex(blob["nonce"]),
-        )
-        plaintext = cipher.decrypt_and_verify(
-            bytes.fromhex(blob["ciphertext"]),
-            bytes.fromhex(blob["tag"]),
-        )
-        return json.loads(plaintext.decode("utf-8"))
-    except Exception as e:
-        logger.warning("Vector decryption failed: %s", e)
-        return None
 
 
 # ── TASTE BLOB CONCURRENCY ────────────────────────────────────────────────────

@@ -13,7 +13,6 @@ sqlalchemy==2.0.50
 
 # Auth & security
 python-jose[cryptography]==3.5.0
-pycryptodome==3.23.0
 
 # HTTP client
 httpx==0.28.1

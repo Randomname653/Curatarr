@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.database.models import Base, EncryptedTasteVector
-from src.services.taste_vectors import cas_update_blob, decrypt_vector
+from src.services.taste_vectors import cas_update_blob
 
 PASS = FAIL = 0
 
@@ -58,16 +58,10 @@ db.commit()
 blob = json.loads(db.query(EncryptedTasteVector).get(etv_id).encrypted_blob)
 check("second write lands, rev=2", blob["a"] == 3 and blob["rev"] == 2)
 
-# ── decrypt_vector v0 shapes (eval 1.9) ──────────────────────────────────────
 
-top_level = {"version": 0, "embedding": [1, 2], "explicit_feedback": []}
-check("real v0 blob (fields top-level) parses",
-      decrypt_vector(top_level, b"x" * 32) == top_level)
-wrapped = {"version": 0, "plaintext": json.dumps({"a": 1})}
-check("dev-mode v0 wrapper still parses",
-      decrypt_vector(wrapped, b"x" * 32) == {"a": 1})
-check("corrupt v0 returns None instead of raising",
-      decrypt_vector({"version": 0, "plaintext": "{not json"}, b"x" * 32) is None)
+# The decrypt-path checks that lived here tested the cipher that was
+# removed as unshippable theater (taste_vectors.py's docstring has the
+# reasoning) — the blob is, and always was, plain JSON.
 
 # ── wiring asserts ───────────────────────────────────────────────────────────
 

@@ -237,8 +237,11 @@ the ones most people touch:
   services learn which titles and artists your library holds. Only OMDb is
   queried purely by id. What is never sent: what you watched, when, how
   often, your ratings, your taste profile, or anything you typed.
-- **Taste vectors** are stored unencrypted by default; an opt-in
-  PIN-based AES-GCM path exists.
+- **Data at rest is not encrypted by the app.** Watch history, taste
+  vectors and chat live in plain SQLite under `data/` — on a trusted
+  machine, by design. If disk theft is in your threat model, use OS disk
+  encryption (BitLocker / LUKS); it protects everything at once, which no
+  per-table scheme can.
 
 ## Contributing
 

@@ -37,7 +37,6 @@ curatarr/
 │   ├── vector_store/          ChromaDB wrapper
 │   ├── cache/                 Versioned metadata cache (SQLite)
 │   ├── embeddings/            Embedding generation
-│   └── crypto/                AES-GCM encryptor (opt-in taste encryption)
 ├── frontend/index.html        Single-page UI (vanilla JS, no build step)
 ├── scripts/                   Standalone runners + icon renderer
 ├── tests/                     Plain-script battery — python tests/run_all.py
@@ -133,7 +132,7 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 | `arr_enrichment_status` | ARR-side enrichment mirror | written for items that have an `arr_id`+`service` |
 | `media_identity` | Cross-ref ID store | `plex_rating_key` → tmdb/tvdb/anilist/anidb/mal/imdb. Canonical ID override for the enricher. |
 | `taste_vectors` | Per-user taste (legacy/plain) | genre/actor/director affinity JSON + `summary_text` |
-| `encrypted_taste_vectors` | Per-user **per-category** taste | the active one. `encrypted_blob` is plain JSON in "Phase A" (unencrypted); PIN-based AES-GCM is "Phase B" (opt-in, mostly unwired). One row per `(user, media_category)`. |
+| `encrypted_taste_vectors` | Per-user **per-category** taste | the active one. `encrypted_blob` is plain JSON — the name is historical; the planned PIN-based encryption was removed as unworkable (background jobs need the vector when no user is present to supply a PIN) and disk-level encryption is the honest answer for at-rest. One row per `(user, media_category)`. |
 | `deletion_proposals` | Deletion candidates | `id` is AUTOINCREMENT (Pass 90c — never reuse ROWIDs, see §15). `status` pending/approved/rejected/deleted/superseded. |
 | `cached_recommendations` | Generated recs | wiped + replaced per category on regen |
 | `proactive_messages` | Curator-initiated nudges | `trigger_type`, `read` flag |

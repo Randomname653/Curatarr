@@ -6,6 +6,17 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **The taste-vector "encryption" was removed instead of shipped.** The
+  README offered "an opt-in PIN-based AES-GCM path"; in reality two parallel
+  implementations existed and neither had a single caller — the table named
+  `encrypted_taste_vectors` holds plain JSON. The design cannot work here:
+  the key derives from a PIN the user types, but the vector's consumers are
+  background jobs that run precisely when nobody is present to type it, and
+  the watch history the vector derives from sits in the same database in
+  plaintext anyway. Dead cipher code, its config knobs, its dependency and
+  its tests are gone; README and SECURITY now say the honest thing — data at
+  rest is unencrypted, use disk encryption if the disk is your threat model.
+
 - **Spotify listening history imports through the GUI.** Drop the extended
   streaming history (single files or the whole `my_spotify_data.zip`) into
   the new Setup → Import step or the Admin view, pick whose listening it

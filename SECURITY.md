@@ -10,6 +10,14 @@ metadata APIs. It is **not hardened for the open internet** —
 do not port-forward it or put it on a public host without adding your
 own reverse proxy, TLS and access control.
 
+**Data at rest is not encrypted by the app.** An early design encrypted
+taste vectors with a PIN-derived key; it was removed rather than shipped,
+because the vector's consumers are background jobs that run when nobody is
+present to type a PIN — the server would have to cache the key, which
+unmakes the scheme — and because the source data (watch history) sits in
+the same database regardless. Use OS disk encryption if the disk itself is
+in your threat model.
+
 Defaults that matter:
 
 - `/api/docs` (Swagger) is **off** by default (`ENABLE_DOCS=false`) — it

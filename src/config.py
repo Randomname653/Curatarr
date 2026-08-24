@@ -30,8 +30,6 @@ class Settings(BaseSettings):
 
     # ── Security ─────────────────────────────────────────────────────────────
     JWT_SECRET: Optional[SecretStr] = None
-    PBKDF2_ITERATIONS: int = 1_000_000
-    AES_KEY_SIZE: int = 32
 
     # ── Database ─────────────────────────────────────────────────────────────
     # Anchored to the repo/app root (src/paths.py) so the app works from ANY
