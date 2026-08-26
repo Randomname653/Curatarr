@@ -408,10 +408,18 @@ from src.services.pillars import _monologue_violations as _mv
 for leak in ("the narrative tension you consistently demand",
              "a palate that demands high-stakes friction",
              "incompatible with your appetite for slow cinema",
-             "its 86-episode footprint on your disk"):
+             "its 86-episode footprint on your disk",
+             # the SECOND live batch's two survivors — "seek" was missing
+             # from the verb list, and space-clearing talk from the size one
+             "the sharp, resonant punch you typically seek",
+             "serves no purpose beyond occupying space"):
     check(f"leak caught: {leak[:44]!r}", bool(_mv(leak, "CUT")))
 for ok_text in ("justify its presence in your library",
-                "a passive, low-stakes watch with zero narrative challenge"):
+                "a passive, low-stakes watch with zero narrative challenge",
+                # arguing DOWN cited acclaim is the custodian rule at work,
+                # and a premise may demand things — only the OWNER may not
+                "The 94% Rotten Tomatoes score is a red herring",
+                "the sharp, dark satire the premise demands"):
     check(f"honest phrasing passes: {ok_text[:40]!r}", not _mv(ok_text, "CUT"))
 check("the bitrate note stays legal on a flag verdict",
       not _mv("Bitrate: 173 MB/min, 2.4x the class median", "KEEP_WITH_FLAG")

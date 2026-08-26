@@ -717,13 +717,15 @@ _MONOLOGUE_STANCE = {
 # no-size rule leaks as "footprint on your disk". A prose rule cannot
 # enforce this; a shape check can (the cast-list lesson).
 _RECITATION = __import__("re").compile(
-    r"\byou(?:r)?\s+(?:consistently\s+|actually\s+|typically\s+)?"
-    r"(?:demand|crave|require|palate|appetite|tastes?\b|preferences?\b)"
+    r"\byou(?:r)?\s+(?:consistently\s+|actually\s+|typically\s+|usually\s+)?"
+    r"(?:demand|crave|require|seek|prioriti[sz]e|prize|expect|value"
+    r"|palate|appetite|tastes?\b|preferences?\b)"
     r"|\byour (?:typical|specific) (?:preferences|tastes)"
     r"|\ba palate that\b|incompatible with your", __import__("re").I)
 _SIZE_TALK = __import__("re").compile(
     r"\b(?:gigabytes?|\d+(?:\.\d+)?\s*[GM]B|footprint on your dis[kc]"
-    r"|disk space|storage space)\b", __import__("re").I)
+    r"|disk space|storage space|occupy(?:ing)? space|clear space"
+    r"|free up space|make room)\b", __import__("re").I)
 
 
 def _monologue_violations(text: str, verdict_kind: str) -> list:

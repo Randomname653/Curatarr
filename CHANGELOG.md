@@ -16,7 +16,12 @@ Condensed release history, newest first.
   leaking as "footprint on your disk". A prose rule cannot enforce this; a
   shape check can: recitation and size-talk are detected on the output,
   regenerated once with the violation named, and logged if the retry still
-  fails. Verified against the five real leaks from the live batch.
+  fails. Calibrated against two live batches: the first supplied the five
+  leak shapes, the second — run through the check — got recitation down
+  from five pitches to one and surfaced the two survivors ("you typically
+  seek", "occupying space") that widened the patterns. The same batch also
+  showed the constitution working: acclaim is now argued down explicitly
+  rather than ignored, which the check deliberately leaves legal.
 
 - **The owner's taste left the constitution.** A Jules security pass
   noticed what every local sweep had missed: the deletion judge's Pillar-0
