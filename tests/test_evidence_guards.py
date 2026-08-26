@@ -396,5 +396,30 @@ check("...and the lifespan teardown actually calls it",
       "await shutdown_evict()" in
       (Path(__file__).resolve().parents[1] / "src/main.py").read_text(encoding="utf-8"))
 
+# -- the monologue cannot recite the owner back at them ---------------------
+# OWNER TASTE is stripped from the monologue's facts, but the judge's
+# governing finding rides along "for reasoning only" — soaked in taste
+# language, because Pillar 0 argues against the taste line. The model obeys
+# the letter (no quoting) and breaks the spirit (paraphrase: "you
+# consistently demand…"), and the no-size rule leaked as "footprint on your
+# disk". Shape check + one named retry, the cast-list lesson again.
+
+from src.services.pillars import _monologue_violations as _mv
+for leak in ("the narrative tension you consistently demand",
+             "a palate that demands high-stakes friction",
+             "incompatible with your appetite for slow cinema",
+             "its 86-episode footprint on your disk"):
+    check(f"leak caught: {leak[:44]!r}", bool(_mv(leak, "CUT")))
+for ok_text in ("justify its presence in your library",
+                "a passive, low-stakes watch with zero narrative challenge"):
+    check(f"honest phrasing passes: {ok_text[:40]!r}", not _mv(ok_text, "CUT"))
+check("the bitrate note stays legal on a flag verdict",
+      not _mv("Bitrate: 173 MB/min, 2.4x the class median", "KEEP_WITH_FLAG")
+      and bool(_mv("padded to 12 GB of filler", "CUT")))
+check("a violation triggers exactly one named retry",
+      "Your previous attempt was rejected" in
+      (Path(__file__).resolve().parents[1]
+       / "src/services/pillars.py").read_text(encoding="utf-8"))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

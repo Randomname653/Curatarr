@@ -6,6 +6,18 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **The pitch can no longer recite the owner back at themselves.** The
+  first proposal batch after the taste-as-data change proved the pipeline
+  (adaptation credits, ratings and episode counts argued from evidence; no
+  confabulated facts across ten pitches) and exposed the last leak: OWNER
+  TASTE is stripped from the monologue's inputs, but the judge's governing
+  finding rides along "for reasoning only" — and the model paraphrased its
+  taste language back as "you consistently demand…", with the no-size rule
+  leaking as "footprint on your disk". A prose rule cannot enforce this; a
+  shape check can: recitation and size-talk are detected on the output,
+  regenerated once with the violation named, and logged if the retry still
+  fails. Verified against the five real leaks from the live batch.
+
 - **The owner's taste left the constitution.** A Jules security pass
   noticed what every local sweep had missed: the deletion judge's Pillar-0
   text hardcoded the owner's personal taste profile — including verbatim

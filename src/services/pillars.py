@@ -708,6 +708,33 @@ _MONOLOGUE_STANCE = {
 }
 
 
+# The monologue prompt forbids reciting the user's tastes and (on a CUT)
+# mentioning storage — and the model obeys the letter while breaking the
+# spirit: OWNER TASTE is stripped from its facts, but the judge's governing
+# finding rides along "for reasoning only", soaked in taste language because
+# Pillar 0 argues against the taste line. The model doesn't quote it; it
+# PARAPHRASES it — "you consistently demand…", "your palate…" — and the
+# no-size rule leaks as "footprint on your disk". A prose rule cannot
+# enforce this; a shape check can (the cast-list lesson).
+_RECITATION = __import__("re").compile(
+    r"\byou(?:r)?\s+(?:consistently\s+|actually\s+|typically\s+)?"
+    r"(?:demand|crave|require|palate|appetite|tastes?\b|preferences?\b)"
+    r"|\byour (?:typical|specific) (?:preferences|tastes)"
+    r"|\ba palate that\b|incompatible with your", __import__("re").I)
+_SIZE_TALK = __import__("re").compile(
+    r"\b(?:gigabytes?|\d+(?:\.\d+)?\s*[GM]B|footprint on your dis[kc]"
+    r"|disk space|storage space)\b", __import__("re").I)
+
+
+def _monologue_violations(text: str, verdict_kind: str) -> list:
+    hits = []
+    if _RECITATION.search(text or ""):
+        hits.append("recites the user's tastes back at them")
+    if verdict_kind != "KEEP_WITH_FLAG" and _SIZE_TALK.search(text or ""):
+        hits.append("mentions file size / storage on a non-flag verdict")
+    return hits
+
+
 async def write_monologue(evidence_facts: str, verdict: dict, *,
                           lang_directive: str = "", model: str = None,
                           skip_priority: bool = False) -> str:
@@ -769,13 +796,32 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
                 f"{settings.effective_ollama}/api/chat", json=payload)
         resp.raise_for_status()
         return resp
-    try:
+    async def _generate() -> str:
         if skip_priority:
             r = await _post()
         else:
             async with curator_priority("pillar monologue", exclusive_model=model):
                 r = await _post()
         return clean_llm_text((r.json().get("message") or {}).get("content", "") or "")
+
+    try:
+        text = await _generate()
+        violations = _monologue_violations(text, v)
+        if violations:
+            # One named retry: the model broke the spirit of a rule it was
+            # given in prose — tell it exactly which one and regenerate.
+            payload["messages"] = [{
+                "role": "user",
+                "content": prompt + "\n\nYour previous attempt was rejected "
+                "because it " + " and ".join(violations) + ". Rewrite it "
+                "without doing that — argue from the title's own specifics.",
+            }]
+            retry = await _generate()
+            if retry.strip() and not _monologue_violations(retry, v):
+                return retry
+            logger.info("[pillars] monologue kept with violations (%s) after "
+                        "one retry", ", ".join(violations))
+        return text
     except Exception as e:
         logger.warning("[pillars] monologue failed: %s", e)
         return ""
