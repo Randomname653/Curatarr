@@ -118,6 +118,14 @@ class MetadataCache:
             )
         """)
 
+        # Performance optimization: Covering index for queries that filter by expires_at
+        # and optionally cache_key (e.g. live_key_set, _live_raw_entries, count_raw_with_marker).
+        # Without this, expires_at checks cause full table scans.
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_cache_expires
+            ON api_cache(expires_at, cache_key)
+        """)
+
         self.conn.commit()
 
     def _expires_at(self, days: int = 7) -> str:
