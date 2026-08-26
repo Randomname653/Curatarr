@@ -19,9 +19,16 @@ Condensed release history, newest first.
   fails. Calibrated against two live batches: the first supplied the five
   leak shapes, the second — run through the check — got recitation down
   from five pitches to one and surfaced the two survivors ("you typically
-  seek", "occupying space") that widened the patterns. The same batch also
-  showed the constitution working: acclaim is now argued down explicitly
-  rather than ignored, which the check deliberately leaves legal.
+  seek", "occupying space") that widened the patterns. A third batch then
+  routed around the word list entirely ("you consistently reward", "your
+  library demands", "your viewing standard") and settled the design: the
+  check now matches the SHAPE — a second-person possessive reaching a
+  taste-noun, or you/your-library carrying a claim-verb — instead of
+  enumerating phrasings, and the retry instruction bans attributing
+  anything to the reader in any wording. "In your library", "your
+  attention" and "your time" carry neither form and stay legal, as does
+  arguing down cited acclaim — the constitution working, never a
+  violation.
 
 - **The owner's taste left the constitution.** A Jules security pass
   noticed what every local sweep had missed: the deletion judge's Pillar-0

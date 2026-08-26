@@ -412,14 +412,24 @@ for leak in ("the narrative tension you consistently demand",
              # the SECOND live batch's two survivors — "seek" was missing
              # from the verb list, and space-clearing talk from the size one
              "the sharp, resonant punch you typically seek",
-             "serves no purpose beyond occupying space"):
+             "serves no purpose beyond occupying space",
+             # the THIRD batch routed around the word list and forced the
+             # check onto the SHAPE: possessive+taste-noun, you+claim-verb
+             "the psychological interplay you consistently reward",
+             "defines your preferred viewing patterns",
+             "the atmospheric tension your library demands",
+             "defines your viewing standard",
+             "a complete waste of space in a curated collection"):
     check(f"leak caught: {leak[:44]!r}", bool(_mv(leak, "CUT")))
 for ok_text in ("justify its presence in your library",
                 "a passive, low-stakes watch with zero narrative challenge",
                 # arguing DOWN cited acclaim is the custodian rule at work,
                 # and a premise may demand things — only the OWNER may not
                 "The 94% Rotten Tomatoes score is a red herring",
-                "the sharp, dark satire the premise demands"):
+                "the sharp, dark satire the premise demands",
+                "required to hold your attention",
+                "filler that does not respect your time",
+                "a complete waste of screen time"):
     check(f"honest phrasing passes: {ok_text[:40]!r}", not _mv(ok_text, "CUT"))
 check("the bitrate note stays legal on a flag verdict",
       not _mv("Bitrate: 173 MB/min, 2.4x the class median", "KEEP_WITH_FLAG")

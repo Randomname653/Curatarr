@@ -717,15 +717,23 @@ _MONOLOGUE_STANCE = {
 # no-size rule leaks as "footprint on your disk". A prose rule cannot
 # enforce this; a shape check can (the cast-list lesson).
 _RECITATION = __import__("re").compile(
-    r"\byou(?:r)?\s+(?:consistently\s+|actually\s+|typically\s+|usually\s+)?"
-    r"(?:demand|crave|require|seek|prioriti[sz]e|prize|expect|value"
-    r"|palate|appetite|tastes?\b|preferences?\b)"
-    r"|\byour (?:typical|specific) (?:preferences|tastes)"
-    r"|\ba palate that\b|incompatible with your", __import__("re").I)
+    # The SHAPE of taste-recitation, not an enumeration of phrasings — the
+    # model routes around word lists ("you require" became "you consistently
+    # reward", then "your library demands", then "your viewing standard").
+    # Two forms cover them all: a second-person possessive reaching a
+    # taste-noun, and you/your-library carrying a claim-verb. "in your
+    # library", "your attention" and "your time" carry neither and stay
+    # legal on purpose.
+    r"\byour\s+(?:\w+\s+){0,2}"
+    r"(?:standards?|preferences?|patterns?|sensibilit\w*|palate|appetite|tastes?)\b"
+    r"|\b(?:you|your library|a palate that)\s+(?:\w+ly\s+)?"
+    r"(?:demands?|requires?|craves?|seeks?|rewards?|prizes?|expects?"
+    r"|values?|prioriti[sz]es?|favou?rs?|prefers?)"
+    r"|incompatible with your", __import__("re").I)
 _SIZE_TALK = __import__("re").compile(
     r"\b(?:gigabytes?|\d+(?:\.\d+)?\s*[GM]B|footprint on your dis[kc]"
     r"|disk space|storage space|occupy(?:ing)? space|clear space"
-    r"|free up space|make room)\b", __import__("re").I)
+    r"|free up space|make room|waste of space)\b", __import__("re").I)
 
 
 def _monologue_violations(text: str, verdict_kind: str) -> list:
@@ -815,8 +823,10 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
             payload["messages"] = [{
                 "role": "user",
                 "content": prompt + "\n\nYour previous attempt was rejected "
-                "because it " + " and ".join(violations) + ". Rewrite it "
-                "without doing that — argue from the title's own specifics.",
+                "because it " + " and ".join(violations) + ". Rewrite it: "
+                "attribute NOTHING to the reader — no sentence may say what "
+                "they demand, reward, prefer, or hold as a standard, in any "
+                "wording. Argue entirely from what the title itself is.",
             }]
             retry = await _generate()
             if retry.strip() and not _monologue_violations(retry, v):
