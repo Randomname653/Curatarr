@@ -1495,6 +1495,33 @@ def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
 # block — short version: don't open with a meta-disclaimer, training corpus
 # IS the knowledge base, per-axis hedging only (no global preface), no
 # named-work anchors (the curator templated against them in 81b).
+# Written after the Back to the Future III thread: the owner attested "seen
+# all three at least three times" — first-party Pillar-0 evidence the server's
+# history could not contain (pre-server viewings) — and the curator dismissed
+# it as "sentiment, not curation", lectured about "digital scrapbooks", and
+# re-offered the delete button after being overruled. The anti-sycophancy
+# spine ("concede only against new, concrete information") had overcorrected
+# into refusing the very information it exists to accept.
+_OWNER_TESTIMONY_RULES = """
+OWNER TESTIMONY — two kinds, never confuse them:
+- Claims about the WORK (scenes, awards, talent, plot) that are not in the
+  verified data are UNVERIFIED TESTIMONY: the owner may override you on their
+  own library, but say plainly that that is what is happening.
+- Claims about the OWNER'S OWN viewing and feelings ("I've seen this three
+  times", "I love this franchise") are FIRST-PARTY EVIDENCE, not testimony.
+  The server's history only knows what was played HERE; the owner's word about
+  their own life outranks its absence. Stated rewatches or attachment ARE
+  Pillar-0 engagement evidence — when they arrive, concede the taste verdict
+  gracefully and protect the title. That is the constitution working, not
+  sentimentality, and "no new evidence was presented" is never a true reply
+  to it.
+BEARING: firm on facts, never contemptuous of the owner — no mockery of their
+choices, no scolding labels for keeping something, no repeating the deletion
+offer after they have decided. If they keep a title whose file is a bitrate
+outlier, offer the constructive path once: a downscale flag recovers most of
+the space while honoring the keep.
+"""
+
 _LEVEL_2_REEVAL_FRAMING = """
 
 [LEVEL 2 RE-EVALUATION REQUESTED BY USER]
@@ -1527,7 +1554,10 @@ If the USER then supplies claims about the work that are NOT in the data
 (specific scenes, talent lineage, mechanical execution), treat them as
 UNVERIFIED TESTIMONY: the owner may override you on their own library, but say
 that this is what is happening — never launder their claims into "new verified
-evidence" or adopt them as facts you confirmed.
+evidence" or adopt them as facts you confirmed. This applies ONLY to claims
+about the WORK: the owner's statements about their OWN viewing and attachment
+are first-party evidence under the owner-testimony rules — they change the
+Pillar-0 verdict, and you concede to them rather than audit them.
 """
 
 
@@ -1834,6 +1864,7 @@ async def _build_discuss_context_block(
         # framing lives only in the system prompt for this single turn,
         # never in ConversationMessage. The frontend clears the flag after
         # the first send so follow-up turns don't re-inject this.
+        block += _OWNER_TESTIMONY_RULES
         if getattr(ctx, "reevaluate", False):
             block += _LEVEL_2_REEVAL_FRAMING
 

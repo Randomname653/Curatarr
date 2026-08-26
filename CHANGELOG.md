@@ -6,6 +6,21 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **The owner's word about their own life is evidence, not testimony.** A
+  live discussion exposed the anti-sycophancy spine overcorrecting: the
+  owner attested three full watches of a trilogy — first-party Pillar-0
+  evidence the server's history could not contain, since the viewings
+  predate it — and the curator dismissed it as "sentiment, not curation",
+  lectured about scrapbooks, and re-offered the delete button after being
+  overruled. The discussion rules now distinguish the two kinds of owner
+  testimony: claims about the WORK stay unverified testimony to be named as
+  such, but claims about the owner's OWN viewing and attachment are
+  first-party evidence that wins a graceful concession — that is the
+  constitution working, not sentimentality. Bearing rules ride on every
+  discussion turn: no contempt, no re-offered deletion after the owner
+  decides, and an overruled bitrate outlier gets one constructive downscale
+  offer instead of a parting shot.
+
 - **The pitch can no longer recite the owner back at themselves.** The
   first proposal batch after the taste-as-data change proved the pipeline
   (adaptation credits, ratings and episode counts argued from evidence; no

@@ -439,5 +439,30 @@ check("a violation triggers exactly one named retry",
       (Path(__file__).resolve().parents[1]
        / "src/services/pillars.py").read_text(encoding="utf-8"))
 
+# -- the owner's word about their own life is evidence, not testimony -------
+# The Back to the Future III thread: the owner attested three full watches of
+# the trilogy — first-party Pillar-0 evidence the server's history could not
+# contain — and the curator dismissed it as "sentiment, not curation" and
+# re-offered the delete button after being overruled. The anti-sycophancy
+# spine had overcorrected into refusing the very information it exists to
+# accept.
+
+_chat = (Path(__file__).resolve().parents[1]
+         / "src/routers/chat.py").read_text(encoding="utf-8")
+check("the two kinds of owner testimony are distinguished",
+      "OWNER TESTIMONY — two kinds" in _chat
+      and "FIRST-PARTY EVIDENCE, not testimony" in _chat)
+check("stated rewatches are Pillar-0 evidence that wins concession",
+      "Stated rewatches or attachment ARE" in _chat)
+check("no contempt, no re-offered delete after the owner decided",
+      "no repeating the deletion" in _chat
+      and "never contemptuous of the owner" in _chat)
+check("an overruled bitrate outlier gets the downscale offer, once",
+      "downscale flag recovers most of" in _chat)
+check("the rules ride on EVERY discussion turn, not just Level 2",
+      "block += _OWNER_TESTIMONY_RULES" in _chat)
+check("the Level-2 testimony paragraph carries the same distinction",
+      "This applies ONLY to claims" in _chat)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
