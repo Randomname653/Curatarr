@@ -107,37 +107,56 @@ def _running_process_names() -> list[str]:
     return names
 
 
+_cached_targets: Optional[frozenset[str]] = None
+_cached_time: float = 0
+
+
 def is_game_running() -> bool:
     """Return True when a known game or game-launcher signal is detected."""
+    import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
-    running = set(_running_process_names())
+    global _cached_targets, _cached_time
+    now = time.time()
 
-    # Tier 1: launcher signals
-    if running & GAME_LAUNCHER_SIGNALS:
-        return True
+    # Refresh cache every 60 seconds
+    if _cached_targets is None or now - _cached_time > 60:
+        targets = set(GAME_LAUNCHER_SIGNALS)
+        try:
+            with get_db_session() as db:
+                games = {
+                    row.process_name.lower()
+                    for row in db.query(GameProcess)
+                    .filter(GameProcess.is_game == True)
+                    .all()
+                }
+                targets.update(games)
+        except Exception as e:
+            logger.debug("process_monitor DB read failed: %s", e)
 
-    # Tier 2: DB-classified user games
-    try:
-        with get_db_session() as db:
-            games = {
-                row.process_name.lower()
-                for row in db.query(GameProcess)
-                .filter(GameProcess.is_game == True)
-                .all()
-            }
-        if running & games:
-            return True
-    except Exception as e:
-        logger.debug("process_monitor DB read failed: %s", e)
+        extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
+        if extra:
+            targets.update(p.strip().lower() for p in extra.split(",") if p.strip())
 
-    # Tier 3: .env EXTRA_GAME_PROCESSES
-    extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
-    if extra:
-        extra_set = {p.strip().lower() for p in extra.split(",") if p.strip()}
-        if running & extra_set:
-            return True
+        _cached_targets = frozenset(targets)
+        _cached_time = now
+
+    targets = _cached_targets
+
+    # ⚡ Bolt: Fast path - avoid iterating running processes if we have no targets
+    if not targets:
+        return False
+
+    # ⚡ Bolt: Early stop - check targets during iteration rather than
+    # building a full set of all running process names first
+    for proc in psutil.process_iter(["name"]):
+        try:
+            name = proc.info.get("name")
+            if name and name.lower() in targets:
+                return True
+        except Exception:
+            continue
 
     return False
 
