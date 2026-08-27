@@ -20,6 +20,15 @@ from src.services.kb_overview import build_overview, _STATES
 
 
 def main() -> int:
+    # On a fresh clone (CI, a new install) no database exists yet — the app
+    # creates its schema at startup, so the test does the same. Locally this
+    # is an idempotent no-op and the invariants run against the LIVE data as
+    # designed; on CI they run against an empty schema, where every
+    # denominator is zero and the joins must still hold. This exact line was
+    # missing while the local battery said 55/55 and CI said red: the test
+    # silently depended on the developer's own data/ directory.
+    from src.database.connection import init_db
+    init_db()
     p = asyncio.run(build_overview())
     failures = []
     print(f"{'cat':7} {'total':>6} {'dl':>6} " +
