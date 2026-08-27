@@ -378,6 +378,9 @@ async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
             return n if ":" in n else f"{n}:latest"
         target = _norm(model_name)
         return target in [_norm(m) for m in local]
+    except httpx.ConnectError:
+        print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
+        return False
     except Exception:
         return False
 
@@ -438,6 +441,9 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
                         return True
 
         return True
+    except httpx.ConnectError:
+        print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
+        return False
     except Exception as e:
         logger.error("Failed to pull %s: %s", model_name, e)
         return False
@@ -530,6 +536,9 @@ async def build_ollama_models(ollama_endpoint: str,
                         except Exception:
                             continue
             return True
+        except httpx.ConnectError:
+            print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
+            return False
         except Exception as e:
             logger.error("Failed to create %s: %s", name, e)
             return False
