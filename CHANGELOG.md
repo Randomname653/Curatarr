@@ -6,6 +6,20 @@ Condensed release history, newest first.
 
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
+- **Disagreement got a register, and unknown categories get learned.** A
+  discussion showed the previous fix half-landing: the curator now defers
+  and offers the downscale, but still scolds — "hoarding", "storage tax",
+  "stop romanticizing mediocrity". Prose bearing-rules lose to an
+  "uncompromising" persona, so the forbidden register is now named
+  verbatim, the curator may disagree exactly once before presenting the
+  paths neutrally, and weak attachment ("I kinda like it") counts as
+  attachment. Deeper fix: when the owner invokes a retention category the
+  constitution lacks — camp, "so bad it's good", curiosity value — the
+  correct move is not to deny the category exists (it is recognised
+  aesthetics, Sontag onward) but to offer recording it as a learned
+  curation principle, which the debate-learning loop was built for. The
+  argument becomes the system learning instead of the system winning.
+
 - **The owner's word about their own life is evidence, not testimony.** A
   live discussion exposed the anti-sycophancy spine overcorrecting: the
   owner attested three full watches of a trilogy — first-party Pillar-0

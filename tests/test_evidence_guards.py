@@ -464,5 +464,25 @@ check("the rules ride on EVERY discussion turn, not just Level 2",
 check("the Level-2 testimony paragraph carries the same distinction",
       "This applies ONLY to claims" in _chat)
 
+# -- disagreement has a register, and unknown categories are learned --------
+# The Hancock thread: the mechanics of the new rules landed (deference, the
+# downscale offer, "first-party evidence" language) while the register did
+# not — "hoarding", "storage tax", "stop romanticizing mediocrity". Prose
+# loses to persona when the two collide, so the forbidden register is named
+# verbatim, weak attachment is declared sufficient, and a category the
+# constitution lacks (camp, curiosity value) triggers a learned-principle
+# offer instead of a denial that the category exists.
+
+check("the forbidden register is named, not implied",
+      'FORBIDDEN REGISTER' in _chat and '"hoarding"' in _chat
+      and '"storage tax"' in _chat)
+check("disagree once, then present the paths neutrally",
+      "You may disagree ONCE" in _chat)
+check("weak attachment is still attachment",
+      "WEAK ATTACHMENT IS STILL ATTACHMENT" in _chat)
+check("an unknown retention category becomes a principle offer, not a denial",
+      "CATEGORIES YOU DO NOT HAVE ARE CATEGORIES TO LEARN" in _chat
+      and "OFFER to record it as a learned curation" in _chat)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
