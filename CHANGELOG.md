@@ -6,6 +6,38 @@ Condensed release history, newest first.
 
 ## 2026-08-28 — No verdict on data we don't have
 
+- **A batch of agent-written tests, kept only where they bite.** Thirteen
+  bot PRs landed at once; each was reviewed against its brief, run, and
+  then mutation-tested — the production function it covers was broken on
+  purpose to see whether the test noticed. Seven new suites survived
+  (anime mapping, SoulSync album payloads, tasks router, studio and
+  director note caches, Spotify backoff, watch status, history router),
+  taking the battery from 57 to 64 suites. Two findings were worth more
+  than the tests themselves: the watch-status early-exit test passed even
+  with its guard removed, because the call then fell through to a real
+  database session whose failure the function's own except turned back
+  into `None` — a green test quietly hitting the live DB. Its fix had to
+  raise a `BaseException`, since the obvious `AssertionError` would have
+  been swallowed by that same except. And the playlist test asserted
+  nothing about the change it shipped with: removing the threaded
+  argument left it green at 14/14. Both now fail when they should.
+
+- **Playlist pushes resolve their Plex sections once, not per item.** The
+  artist and video key resolvers each opened a database session and
+  re-read `LibraryConfig` on every call. The push now resolves it once
+  and hands it down; passing nothing keeps the old behaviour, so no other
+  call site changes. Deliberately not a TTL cache — that config is edited
+  during onboarding and in Settings, where a stale window is a real bug.
+  Honest scope: every resolve also does an HTTP round-trip to Plex that
+  dominates the database read, so this removes redundant work, not
+  user-visible latency.
+
+- **Spotify: a ban seen on the retry is remembered too.** The first 429
+  read `retry-after` and persisted a long backoff across restarts; the
+  retried request's 429 only counted and bailed, so a quota ban that
+  surfaced one request later was forgotten on the next start and we went
+  back to knocking — which can restart the 24-hour window.
+
 - **A declared intention to watch now ACTS.** "Sounds promising, I
   shall put it on my watchlist" ends a deletion discussion in favour of
   keeping — and the backend now does what the curator announces: the
