@@ -20,7 +20,7 @@ import src.services.app_state as app_state
 import src.services.plex_playlists as pp
 import src.services.recommendations_engine as eng
 import src.services.soulsync_client as ss
-from src.database.models import Base, CachedRecommendation
+from src.database.models import Base, CachedRecommendation, LibraryConfig
 
 PASS = FAIL = 0
 
@@ -84,6 +84,12 @@ for i, artist in enumerate(["SikTh", "Ion Dissonance", "Ghost Artist"]):
                                      title=artist, reason="x",
                                      confidence=0.9 - i * 0.1,
                                      cached_at=datetime(2026, 8, 13, 10, 0)))
+# One music section on file: what push_user_music_playlist resolves ONCE
+# and hands to every resolve_artist_key call (the per-item config read this
+# replaced). Without a row here the threaded value would be [] either way,
+# and the assertion below could not tell the wiring from a no-op.
+_shared.add(LibraryConfig(plex_section_key="9", plex_section_title="Music",
+                          plex_section_type="artist", media_category="music"))
 _shared.commit()
 
 snapshots = {}
@@ -91,7 +97,11 @@ pp._load_snapshot = lambda uid: dict(snapshots.get(uid) or {})
 pp._save_snapshot = lambda uid, snap: snapshots.__setitem__(uid, snap)
 
 
-async def fake_resolve(name):
+resolve_calls = []
+
+
+async def fake_resolve(name, sections=None):
+    resolve_calls.append((name, sections))
     return {"SikTh": "111", "Ion Dissonance": "222"}.get(name)   # Ghost -> None
 
 
@@ -141,6 +151,11 @@ check("existing same-title playlist deleted first (find-delete-recreate)",
       deleted == ["756000"])
 check("snapshot records artists",
       snapshots[42]["music"]["titles"] == ["SikTh", "Ion Dissonance"])
+# The point of the sections parameter: resolved once by the caller, handed
+# to every lookup. A regression that drops the argument leaves None here and
+# each lookup silently re-queries LibraryConfig for itself.
+check("music sections resolved once and threaded into every lookup",
+      bool(resolve_calls) and all(c[1] == ["9"] for c in resolve_calls))
 
 created.clear()
 res2 = asyncio.run(pp.push_user_music_playlist(user))
