@@ -1262,6 +1262,7 @@ async def handle_protection_intent(
         return None
 
     protected_titles = []
+    watchlist_titles = []
     try:
         from src.database.models import ProtectedMedia, DeletionProposal, CuratorResolutionLog
         with get_db_session() as db:
@@ -1286,6 +1287,7 @@ async def handle_protection_intent(
                 resolution_type = ""
                 curator_stance = ""
                 override_reason = ""
+                watchlist_flag = False
                 for extra in parts[3:]:
                     key, _, val = extra.partition(":")
                     key = key.strip().upper()
@@ -1296,6 +1298,8 @@ async def handle_protection_intent(
                         curator_stance = val
                     elif key == "OVERRIDE_REASON":
                         override_reason = val
+                    elif key == "WATCHLIST":
+                        watchlist_flag = val.lower() == "yes"
                 if resolution_type not in ("consensus", "override"):
                     resolution_type = ""   # unrecognised → don't log a guess
                 # A curator that verdicted "delete" THIS turn did not concede —
@@ -1312,6 +1316,20 @@ async def handle_protection_intent(
                 if curator_stance in ("-", "—"):
                     curator_stance = ""
 
+                # The downscale flag the curator ANNOUNCES in a discussion
+                # must be the flag the work list actually shows. Before
+                # this, discussion keeps wrote verdict=NULL and the
+                # /downscale list (KEEP_WITH_FLAG only) never saw them —
+                # "I am flagging X for a downscale" was pure prose.
+                # Deterministic: the tech profile decides, never the LLM.
+                bloated = False
+                try:
+                    from src.services.size_norms import is_bloated_by_title
+                    bloated = is_bloated_by_title(title, media_type=category)
+                except Exception as _be:
+                    logger.debug("[protection] bloat probe failed for %r: %s",
+                                 title, _be)
+
                 # Avoid duplicate entries — update reason if already protected
                 existing = db.query(ProtectedMedia).filter(
                     ProtectedMedia.user_id == user_id,
@@ -1322,11 +1340,17 @@ async def handle_protection_intent(
                     db.add(ProtectedMedia(
                         user_id=user_id,
                         identifier=title,
+                        title=title,
+                        category=category,
                         reason=reason,
+                        source="discussion",
+                        verdict="KEEP_WITH_FLAG" if bloated else None,
                     ))
                     logger.info(f"🛡️ [PROTECTED MEDIA ADDED] User {user_id} protected '{title}'. Reason: {reason}")
                 else:
                     existing.reason = reason
+                    if bloated and not existing.verdict:
+                        existing.verdict = "KEEP_WITH_FLAG"
                     logger.info(f"🛡️ [PROTECTED MEDIA UPDATED] User {user_id} updated protection for '{title}'. New Reason: {reason}")
 
                 # Pass 35: mark pending deletion proposals as REJECTED
@@ -1415,13 +1439,43 @@ async def handle_protection_intent(
                         )
                 
                 protected_titles.append(title)
+                if watchlist_flag:
+                    watchlist_titles.append(title)
             
             db.commit()
+
+        # DECLARED intention to watch -> the title actually lands on THIS
+        # user's plex.tv watchlist (their own OAuth token, so it shows in
+        # their Plex clients). Outside the db session - it's a network
+        # call - and strictly best-effort: a Discover miss or a missing
+        # token is logged and reported, never raised, and the protection
+        # above stands regardless.
+        watchlisted, watchlist_fails = [], []
+        for wtitle in watchlist_titles:
+            try:
+                from src.services.plex_watchlist import add_to_watchlist
+                res = await add_to_watchlist(user_id, wtitle,
+                                             media_type=category)
+                if res.get("ok"):
+                    watchlisted.append(res.get("matched") or wtitle)
+                else:
+                    watchlist_fails.append((wtitle, res.get("error", "")))
+                    logger.info("[watchlist] %r not added: %s",
+                                wtitle, res.get("error"))
+            except Exception as we:
+                watchlist_fails.append((wtitle, str(we)))
+                logger.debug("[watchlist] add failed for %r: %s", wtitle, we)
 
         if protected_titles:
             titles_str = "', '".join(protected_titles)
             count_word = "is" if len(protected_titles) == 1 else "are"
-            return f"✅ '{titles_str}' {count_word} now permanently protected."
+            msg = f"✅ '{titles_str}' {count_word} now permanently protected."
+            if watchlisted:
+                msg += " Watchlisted: " + ", ".join(watchlisted) + "."
+            if watchlist_fails:
+                msg += " Watchlist failed: " + "; ".join(
+                    f"{t} ({err})" for t, err in watchlist_fails) + "."
+            return msg
             
         return None
 
@@ -1512,6 +1566,13 @@ Output PROTECT_MEDIA only when BOTH hold:
 2. A SPECIFIC TITLE — named in the user message OR resolved from the
    CURRENT DISCUSSION ANCHOR above.
 
+A DECLARED INTENTION TO WATCH is a decisive keep-directive: "I shall put
+it on my watchlist", "I want to watch this", "I'll give it a shot", "den
+will ich sehen", "kommt auf die Watchlist" — the user has settled the
+deletion question in favour of watching. Emit PROTECT_MEDIA with
+WATCHLIST: yes. (A mere preference — "I enjoy X", "X sounds interesting" —
+or a QUESTION — "is it worth watching?" — is still NOT a directive.)
+
 Output NO_ACTION when the user has NOT settled — they are still negotiating:
 - Rhetorical questions: "doesn't X fit my philosophy?", "isn't this
   transgressive?", "wouldn't you agree X is good?".
@@ -1565,10 +1626,13 @@ a free-text quote. Pick the closest:
   Other                — a real reason that fits none of the above
 On consensus, write OVERRIDE_REASON: -
 
+WATCHLIST — yes ONLY when the keep came via a declared intention to watch
+(the watchlist/watch-it declaration above); every other keep writes -.
+
 OUTPUT FORMAT
 - NO_ACTION                → exactly: NO_ACTION
 - a protected title        → one line per title, all fields, pipe-separated:
-ACTION: PROTECT_MEDIA | TITLE: <title> | REASON: <short why> | RESOLUTION: <consensus|override> | CURATOR_STANCE: <short> | OVERRIDE_REASON: <category or ->
+ACTION: PROTECT_MEDIA | TITLE: <title> | REASON: <short why> | RESOLUTION: <consensus|override> | CURATOR_STANCE: <short> | OVERRIDE_REASON: <category or -> | WATCHLIST: <yes or ->
 
 EXAMPLES
 
@@ -1597,6 +1661,10 @@ Assistant: "Knight Rider is dated filler. Deleting it would be a mercy."
 
 User: "what about Inception"
 → NO_ACTION  (question)
+
+User: "sounds promising, i shall put it on my watchlist"  (anchor: School-Live!; curator's scan conceded a taste fit)
+Assistant: "That is a declared intention. The deletion proposal is dead."
+→ ACTION: PROTECT_MEDIA | TITLE: School-Live! | REASON: declared intention to watch | RESOLUTION: consensus | CURATOR_STANCE: conceded — strong taste-fit case | OVERRIDE_REASON: - | WATCHLIST: yes
 
 User: "hell no away with this"
 Assistant: "Then delete it."

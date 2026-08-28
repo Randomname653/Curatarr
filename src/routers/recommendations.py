@@ -546,8 +546,13 @@ async def list_downscale_candidates(
     from src.database.models import ProtectedMedia, MediaTechProfile
     rows = (
         db.query(ProtectedMedia)
+        # Verdict-gated, NOT source-gated: judge-granted flags and
+        # discussion-reached keeps whose file is a bitrate outlier both
+        # belong on this list (a discussion "I am flagging X for a
+        # downscale" used to be pure prose - the row said verdict=NULL
+        # and never surfaced here). Manual whitelist rows carry no
+        # verdict and stay out.
         .filter(ProtectedMedia.user_id == user.id,
-                ProtectedMedia.source == "judge",
                 ProtectedMedia.verdict == "KEEP_WITH_FLAG")
         .order_by(ProtectedMedia.created_at.desc())
         .all()

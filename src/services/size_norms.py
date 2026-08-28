@@ -369,6 +369,24 @@ def _cross_dup_note(tmdb_id, tvdb_id, media_type: str = None) -> str:
     return ""
 
 
+def is_bloated_by_title(title: str, media_type=None) -> bool:
+    """True when the title's tech profile marks a genuine bitrate outlier.
+
+    Deterministic check for the discussion→action hook: a keep reached in a
+    deletion discussion gets its DOWNSCALE flag from THIS, never from the
+    curator's prose — the flag the curator announces must be the flag the
+    work list actually shows. Missing profile / no class norm → False
+    (no flag on unknown data)."""
+    # The discussion hook only has the title — the id-keyed lookup
+    # (tech_profile_for) has nothing to key on here.
+    prof = _tech_profile_by_title(title)
+    if not prof or not prof.get("mb_per_min"):
+        return False
+    o = size_outlier(prof["media_type"], prof["resolution"], prof["codec"],
+                     prof["mb_per_min"], is_remux=prof.get("is_remux", False))
+    return bool(o and o.get("verdict") == "bloated")
+
+
 def short_size_tag(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
                    title=None, media_type=None) -> str:
     """Compact inline size tag for the chat RAG list, e.g. '[size: 4K, normal]',

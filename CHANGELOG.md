@@ -6,6 +6,26 @@ Condensed release history, newest first.
 
 ## 2026-08-28 — No verdict on data we don't have
 
+- **A declared intention to watch now ACTS.** "Sounds promising, I
+  shall put it on my watchlist" ends a deletion discussion in favour of
+  keeping — and the backend now does what the curator announces: the
+  post-turn protection scanner recognises watch-declarations as
+  keep-directives, protects the title, and adds it to the DISCUSSING
+  user's own plex.tv watchlist (their OAuth token, so it appears in
+  their Plex apps — per user, never the server owner's). Resolution is
+  deliberately cautious: word-multiset title match against Plex
+  Discover, expected media type, year as tiebreaker — same-name twins
+  without a year are refused, never guessed. The chat LLM still executes
+  nothing; a deterministic hook does. En route, an honesty bug died: the
+  curator's announced "I am flagging X for a downscale" never reached
+  the downscale work list (discussion keeps wrote no verdict and the
+  list only showed judge rows). The flag is now decided by the tech
+  profile — never by the LLM's prose — written as KEEP_WITH_FLAG on the
+  discussion keep, and the work list is verdict-gated so judge-granted
+  and discussion-reached flags both surface. The curator's discussion
+  rules say exactly what the backend does, and that it may announce
+  that and nothing beyond it.
+
 - **The setup wizard learned what fits your GPU.** The Ollama step now
   probes the host GPU on request (nvidia-smi, with a manual VRAM picker
   for remote Ollama boxes) and recommends models from a bench-verified
