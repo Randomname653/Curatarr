@@ -53,7 +53,7 @@ except Exception:
     pass
 
 # Machine-independent: this script lives at curatarr/tests/benchmarks/, so the
-# repo root is two parents up. (Was a hardcoded C:\Users\lucky\... path that only
+# repo root is two parents up. (Was a hardcoded absolute path that only
 # ran on the author's machine.)
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))

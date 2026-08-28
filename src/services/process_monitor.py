@@ -249,7 +249,10 @@ def get_unknown_processes() -> list[dict]:
     seen: set[str] = set()
     unknown: list[dict] = []
     try:
-        for proc in psutil.process_iter(["name", "pid", "exe"]):
+        # No "exe" in the attrs: the loop filters on the NAME alone, and
+        # resolving each process's executable path is an extra OS call per
+        # process that nothing here reads.
+        for proc in psutil.process_iter(["name", "pid"]):
             name = proc.info.get("name")
             if not name:
                 continue
