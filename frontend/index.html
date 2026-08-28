@@ -634,7 +634,7 @@ select option { background: var(--bg2); }
             <input type="checkbox" id="del-recent-only" onchange="toggleRecentOnly(this.checked)"/>
             🆕 Just-arrived only
           </label>
-          <select id="del-recent-days" onchange="loadDeletions(currentDelCategory)"
+          <select id="del-recent-days" aria-label="Recent days to show" onchange="loadDeletions(currentDelCategory)"
                   style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px;display:none">
             <option value="7" selected>last 7 days</option>
             <option value="14">last 14 days</option>
@@ -946,7 +946,7 @@ select option { background: var(--bg2); }
           <div id="adm-sp-zone"></div>
           <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
             <label style="font-size:12px;color:var(--text2)">Attach to user</label>
-            <select id="adm-sp-user" style="min-width:160px"></select>
+            <select id="adm-sp-user" aria-label="Select user to attach history" style="min-width:160px"></select>
             <button class="btn btn-primary btn-sm" onclick="runSpotifyImport('adm-sp')">Import</button>
           </div>
         </div>
@@ -1591,7 +1591,7 @@ async function renderOnboardingStep(step) {
         ${discoverSections.map(s=>`<tr>
           <td style="font-weight:500">${esc(s.title)}</td>
           <td style="color:var(--text3);font-size:12px">${esc(s.type)}</td>
-          <td><select id="ob-libcat-${s.key}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+          <td><select id="ob-libcat-${s.key}" aria-label="Select category for library" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
             ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${o}</option>`).join('')}
           </select></td>
         </tr>`).join('')}
@@ -5648,7 +5648,7 @@ async function loadLibraryConfig() {
           </div>
           <div>
             <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
-            <select id="libcat-${s.key}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:13px">
+            <select id="libcat-${s.key}" aria-label="Select category for library" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:13px">
               ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${cat===o?'selected':''}>${catIcon(o)} ${o}</option>`).join('')}
             </select>
           </div>
@@ -5692,7 +5692,7 @@ async function checkOrphans() {
             <td style="font-family:monospace;color:var(--text3)">${esc(s.section_id)}</td>
             <td>${s.count}</td>
             <td style="font-size:12px;color:var(--text2)">${s.sample_titles.slice(0,4).map(esc).join(' · ')}</td>
-            <td><select id="orphan-cat-${s.section_id}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+            <td><select id="orphan-cat-${s.section_id}" aria-label="Assign orphaned entries to category" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
               ${['anime','music','movie','show','ignore'].map(o=>`
                 <option value="${o}" ${o===s.suggested_category?'selected':''}>${o}</option>
               `).join('')}
