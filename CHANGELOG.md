@@ -38,6 +38,14 @@ Condensed release history, newest first.
   the delete button in the same breath. Unclear which it was? Ask, one
   sentence, no pressure.
 
+- **Bot harvest + one real PII catch.** Three waiting bot branches
+  landed as direct commits: the unused `exe` attribute is gone from the
+  process scan (an OS path lookup per process, read by nothing),
+  five unlabeled `<select>`s got aria-labels, and one branch pointed at
+  actual PII the frozen-directory sweep had skipped — a benchmark comment
+  still naming the author's Windows user in the very sentence describing
+  the hardcoded path it replaced.
+
 - **The law is one law at every site.** An adversarial consistency sweep
   across the four prompt-law sites found the size-license bug had a
   surviving twin: the legacy pitch prompt (the `PILLARS_ENABLED=false`
