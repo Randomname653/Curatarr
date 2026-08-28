@@ -83,7 +83,7 @@ PILLAR_FRAMEWORK = f"""CURATION FRAMEWORK — judge this title's fate within Cur
 
 {_PILLARS_BODY}
 
-So: a household-claimed title or an objective masterwork STAYS even against the owner's taste; a quiet / meditative title stays only if it passes the Resonance litmus (Intent, Awe, Rigor); a clear bitrate outlier is a DOWNSCALE note, never a reason to delete. Argue from the specific facts of THIS title, in fresh words."""
+So: a household-claimed title or an objective masterwork STAYS even against the owner's taste; a quiet / meditative title stays only if it passes the Resonance litmus (Intent, Awe, Rigor); a clear bitrate outlier is a DOWNSCALE note on a keep — never a reason, tiebreaker, or "most importantly" for deletion, and never "delete now, re-acquire leaner later" (the downscale flag IS that path: it replaces the file; deletion loses the work) — nor does an outlier LOWER a verdict tier: a hard keep does not become "gray zone" because the file is fat. Argue from the specific facts of THIS title, in fresh words."""
 
 # The structured Chain-of-Thought shape. Forcing all FOUR pillar fields BEFORE
 # the verdict is what stops the model tunnel-visioning on taste and ignoring

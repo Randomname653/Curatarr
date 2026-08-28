@@ -398,8 +398,9 @@ def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
     """One-line SIZE CONTEXT string for the curator (pitch / discussion), or "".
 
     Translates the outlier verdict into plain language the curator weighs:
-    NORMAL → don't treat size as a flaw; BLOATED → size is a legitimate argument;
-    LEAN → unusually small (possible low-quality rip)."""
+    NORMAL → don't treat size as a flaw; BLOATED → evidence for the DOWNSCALE
+    flag (never a deletion argument); LEAN → unusually small (possible
+    low-quality rip)."""
     prof = tech_profile_for(tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                             plex_rating_key=plex_rating_key,
                             media_type=media_type)
@@ -438,8 +439,11 @@ def size_context_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
         return (f"SIZE CONTEXT: {gb:.0f} GB — {res} {codec}{eps}, "
                 f"{o['mb_per_min']:.0f} MB/min vs {klass} median {o['median']:.0f} "
                 f"({ratio:.1f}×, ~{waste_gb:.0f} GB reclaimable above the {klass} norm) "
-                f"— GENUINELY oversized for its class. Size is a fair SECONDARY "
-                f"argument here (cite the figure), never the lead.{dup}")
+                f"— GENUINELY oversized for its class. This argues a DOWNSCALE of "
+                f"the FILE on a keep, never deletion of the WORK — not a reason, "
+                f"tiebreaker, or closer for a delete, and 'delete now, re-acquire "
+                f"leaner later' is not a path to offer: the downscale flag IS the "
+                f"lean path.{dup}")
     # Trivial waste, or normal/lean → flag ONLY a duplicate if present; never a
     # size verdict the curator could misframe as "waste" on a small file.
     return f"SIZE CONTEXT: {gb:.0f} GB.{dup}" if dup else ""

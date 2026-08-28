@@ -6,6 +6,44 @@ Condensed release history, newest first.
 
 ## 2026-08-28 — No verdict on data we don't have
 
+- **File size argues the file, never the work.** A Level-2 scan conceded a
+  title was a documented landmark AND a genuine taste fit — both pillars
+  keep — then closed with "most importantly, the file is a disaster" and
+  recommended deletion on bitrate. Root cause was a law conflict we
+  shipped ourselves: the pillar framework said a bitrate outlier is a
+  downscale note, never a delete reason, while the injected SIZE CONTEXT
+  line licensed size as "a fair secondary argument" — and the fresher,
+  number-bearing license won. The source line now says what size may
+  argue: a downscale of the file on a keep, never deletion of the work,
+  never a tiebreaker, and "delete now, re-acquire leaner later" is not a
+  path to offer — the downscale flag IS the lean path. The Level-2 rules
+  gained the missing spine: a scan whose own findings concede a keep under
+  any pillar must move its verdict (re-anchoring on extra-pillar grounds
+  like file size or unwatched status is a broken scan), a STAGNANT verdict
+  is a hand-off to the owner's judgment rather than a delete verdict to
+  defend, expressed interest mid-discussion ("that actually sounds worth
+  watching") is live first-party keep evidence that ends deletion
+  pressure, and the forbidden-contempt register is banned by shape — fresh
+  coinages like "digital landfill" violate it the same as the listed
+  phrases.
+
+- **The law is one law at every site.** An adversarial consistency sweep
+  across the four prompt-law sites found the size-license bug had a
+  surviving twin: the legacy pitch prompt (the `PILLARS_ENABLED=false`
+  path — the `.env.example` default, so live on every fresh install) still
+  told the model to make size "a brief secondary point" in a deletion
+  pitch; it now carries the same downscale-only doctrine. Also closed:
+  the analytical-integrity rule listed only three valid reversal grounds,
+  giving the persona verbatim cover to dismiss the owner's first-party
+  word as "emotional language" — first-party evidence is now the fourth
+  ground and explicitly overrides the hold-your-position default; the
+  neutral three-path close no longer re-lists delete after the owner has
+  decided or expressed interest; a keep conceded in a thread binds every
+  later turn of it; ambiguous owner signals read as the stronger one; a
+  bitrate outlier can no longer demote a hard keep to "gray zone"; and
+  the always-on size rule in chat carries the doctrine even outside title
+  discussions.
+
 - **Reordered romanised names are the same work.** A drama with a reachable
   13,000-character Wikipedia article scanned as "lean data" because three
   individually sound guards composed into blindness: the entity had no

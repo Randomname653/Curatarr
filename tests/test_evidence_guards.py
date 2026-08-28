@@ -543,5 +543,79 @@ check("the deletion loop defers an unchecked candidate instead of judging",
 check("deferrals are surfaced in the run report",
       "significance unchecked" in _re2)
 
+# -- the Last Seduction case: size argues the file, never the work ----------
+# A Level-2 scan conceded landmark status (Pillar II) AND a perfect taste fit
+# (Pillar 0) — both pillars keep — then closed "Most importantly, the file is
+# a disaster … easy purge". Root cause was a LAW CONFLICT we shipped: the
+# pillar framework said "downscale note, never a reason to delete" while the
+# injected SIZE CONTEXT line licensed size as "a fair SECONDARY argument";
+# the fresher, number-bearing license won and escalated. The curator also
+# defended a STAGNANT hand-off as a Delete verdict, pushed deletion AFTER the
+# owner said "that actually sounds worth watching" (live first-party Pillar-0
+# evidence), and coined fresh contempt around the verbatim register list
+# ("digital landfill", "technical eyesore", "clear the clutter").
+
+_sn = (Path(__file__).resolve().parents[1]
+       / "src/services/size_norms.py").read_text(encoding="utf-8")
+_pl2 = (Path(__file__).resolve().parents[1]
+        / "src/services/pillars.py").read_text(encoding="utf-8")
+_ch2 = (Path(__file__).resolve().parents[1]
+        / "src/routers/chat.py").read_text(encoding="utf-8")
+check("the size line no longer licenses size as a deletion argument",
+      "fair SECONDARY" not in _sn
+      and "DOWNSCALE of " in _sn and "never deletion of the WORK" in _sn)
+check("'delete now, re-acquire leaner later' is named as a forbidden path",
+      "re-acquire" in _sn and "downscale flag IS the" in _sn)
+check("the framework names the tiebreaker/most-importantly dodges",
+      "never a reason, tiebreaker" in _pl2
+      and "deletion loses the work" in _pl2)
+check("Level 2: the scan's own concessions move the verdict",
+      "VERDICT FOLLOWS FINDINGS" in _ch2
+      and "Re-anchoring the old verdict on grounds outside the" in _ch2)
+check("Level 2: STAGNANT is a hand-off, not a delete verdict to defend",
+      "STAGNANT verdict" in _ch2 and "hand-off to the owner" in _ch2)
+check("expressed interest mid-discussion is a keep signal",
+      "EXPRESSED INTEREST IS A KEEP SIGNAL" in _ch2
+      and "Renewing deletion pressure" in _ch2)
+check("the register ban is the register, not the word list",
+      '"digital\nlandfill"' in _ch2 or '"digital landfill"' in _ch2)
+check("...and fresh coinages in the same voice are named as violations",
+      "fresh coinages in the same voice" in _ch2)
+
+# -- the consistency sweep: the law is one law at every site ----------------
+# An adversarial cross-check of the four law sites found the size-license bug
+# had a surviving TWIN: the legacy pitch prompt (PILLARS_ENABLED=false — the
+# .env.example DEFAULT, so live on every fresh install) still told the model
+# to make size "a brief SECONDARY point" in a deletion pitch. It also found
+# rule 7 (analytical integrity) listing only three reversal grounds — giving
+# the persona verbatim cover to dismiss first-party owner evidence as
+# "emotional language" — plus the BEARING boilerplate re-listing delete after
+# expressed interest, the Level-2 spine evaporating after its single
+# reevaluate turn, and size demoting keeps to "gray zone" without ever
+# arguing "for deletion".
+
+_re3 = (Path(__file__).resolve().parents[1]
+        / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
+_ch3 = (Path(__file__).resolve().parents[1]
+        / "src/routers/chat.py").read_text(encoding="utf-8")
+_pl3 = (Path(__file__).resolve().parents[1]
+        / "src/services/pillars.py").read_text(encoding="utf-8")
+check("the legacy pitch no longer licenses size as a pitch point",
+      "SECONDARY & ONLY IF FLAGGED" not in _re3
+      and "DOWNSCALE NOTE, NEVER A DELETE REASON" in _re3)
+check("rule 7 knows first-party owner evidence as a reversal ground",
+      "FIRST-PARTY word about their OWN viewing" in _ch3
+      and "never 'emotional language'" in _ch3)
+check("after a decision or expressed interest, delete leaves the close",
+      "the delete path leaves the table" in _ch3)
+check("the unconditional SIZE SENSE rule carries the downscale-only law",
+      "size decides WHICH FILE to keep; the pillars decide WHETHER" in _ch3)
+check("a conceded keep binds later turns of the thread",
+      "CONCESSIONS ARE DURABLE" in _ch3)
+check("ambiguous owner signals read as the stronger one",
+      "read it as the STRONGER signal" in _ch3)
+check("a bitrate outlier cannot demote a verdict tier",
+      "nor does an outlier LOWER a verdict tier" in _pl3)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
