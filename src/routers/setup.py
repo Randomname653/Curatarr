@@ -100,6 +100,52 @@ async def test_connection(
     return result
 
 
+@router.get("/gpu")
+async def gpu_probe(_gate=Depends(require_admin_or_first_run)):
+    """User-triggered nvidia-smi probe of the Curatarr host (wizard button)."""
+    from src.services.setup_wizard import detect_gpu
+    return await detect_gpu()
+
+
+class RecommendRequest(BaseModel):
+    ollama_endpoint: Optional[str] = None
+    vram_gb: Optional[float] = None
+
+
+@router.post("/recommend")
+async def recommend(req: RecommendRequest,
+                    _gate=Depends(require_admin_or_first_run)):
+    """VRAM-aware model recommendations from the bench-verified catalog.
+
+    Also returns the Ollama server's installed tags so the wizard can mark
+    zero-download choices and still offer everything already pulled.
+    """
+    from src.services.model_catalog import recommend_models
+    installed: set = set()
+    endpoint = req.ollama_endpoint or settings.effective_ollama
+    tags = await test_ollama(endpoint)
+    if tags.get("ok"):
+        installed = set(tags.get("models") or [])
+    result = recommend_models(req.vram_gb, installed)
+    result["installed"] = sorted(installed)
+    result["ollama_ok"] = bool(tags.get("ok"))
+    return result
+
+
+class WarmupRequest(BaseModel):
+    ollama_endpoint: Optional[str] = None
+    model: str
+
+
+@router.post("/warmup")
+async def warmup(req: WarmupRequest,
+                 _gate=Depends(require_admin_or_first_run)):
+    """Post-bake reality check: GPU residency + generation speed."""
+    from src.services.setup_wizard import warmup_check
+    endpoint = req.ollama_endpoint or settings.effective_ollama
+    return await warmup_check(endpoint, req.model)
+
+
 class SetupCompleteRequest(BaseModel):
     plex_url: str
     plex_token: str

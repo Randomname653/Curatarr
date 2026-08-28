@@ -365,6 +365,101 @@ def write_env(config: dict) -> None:
 
 # ── MODELFILE BUILDER ─────────────────────────────────────────────────────────
 
+async def detect_gpu() -> dict:
+    """Probe the Curatarr HOST's GPU via nvidia-smi (user-triggered only).
+
+    Only meaningful when Ollama runs on this same machine — the wizard says
+    so and offers a manual VRAM picker for remote Ollama boxes. Returns
+    ``{"ok": True, "gpus": [{"name", "vram_gb"}], "vram_gb": <largest>}`` or
+    ``{"ok": False, "error": str}`` — never raises.
+    """
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "nvidia-smi", "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=8)
+        if proc.returncode != 0:
+            msg = (err or out).decode(errors="replace").strip()
+            return {"ok": False, "error": msg or "nvidia-smi failed"}
+        gpus = []
+        for line in out.decode(errors="replace").splitlines():
+            if "," not in line:
+                continue
+            name, mem = line.rsplit(",", 1)
+            try:
+                gpus.append({"name": name.strip(),
+                             "vram_gb": round(float(mem.strip()) / 1024, 1)})
+            except ValueError:
+                continue
+        if not gpus:
+            return {"ok": False, "error": "nvidia-smi reported no GPU"}
+        return {"ok": True, "gpus": gpus,
+                "vram_gb": max(g["vram_gb"] for g in gpus)}
+    except FileNotFoundError:
+        return {"ok": False, "error": "nvidia-smi not found — no NVIDIA "
+                "driver on this host (or a non-NVIDIA GPU). Pick the VRAM "
+                "manually."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def warmup_check(ollama_endpoint: str, model: str) -> dict:
+    """Generate a few tokens, then read /api/ps: does the model actually run
+    on the GPU, and how fast?
+
+    A model that does not quite fit VRAM runs silently part-on-CPU and the
+    whole app just feels broken-slow — this is the enforcement behind the
+    catalog's approximate size figures. Verdicts: ``ok`` / ``cpu_spill``
+    (>10% of the weights off-GPU) / ``slow`` (fully resident but under
+    5 tok/s). The first call includes model LOAD time, reported separately
+    so a one-off 60s load is not misread as generation speed.
+    """
+    import time
+    try:
+        timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            t0 = time.monotonic()
+            r = await client.post(f"{ollama_endpoint}/api/generate", json={
+                "model": model,
+                "prompt": "Reply with the single word: ready",
+                "stream": False,
+                "options": {"num_predict": 8},
+            })
+            r.raise_for_status()
+            wall_s = round(time.monotonic() - t0, 1)
+            d = r.json()
+            tok_s = None
+            if d.get("eval_count") and d.get("eval_duration"):
+                tok_s = round(d["eval_count"] / (d["eval_duration"] / 1e9), 1)
+            load_s = round((d.get("load_duration") or 0) / 1e9, 1)
+
+            cpu_percent = None
+            ps = await client.get(f"{ollama_endpoint}/api/ps")
+            for m in (ps.json().get("models") or []):
+                mname = m.get("name") or m.get("model") or ""
+                if mname == model or mname.startswith(model + ":"):
+                    size, vram = m.get("size") or 0, m.get("size_vram") or 0
+                    if size:
+                        cpu_percent = max(0, round(100 * (1 - vram / size)))
+                    break
+
+            verdict = "ok"
+            if cpu_percent is not None and cpu_percent > 10:
+                verdict = "cpu_spill"
+            elif tok_s is not None and tok_s < 5:
+                verdict = "slow"
+            return {"ok": True, "verdict": verdict, "cpu_percent": cpu_percent,
+                    "tokens_per_s": tok_s, "load_s": load_s,
+                    "first_response_s": wall_s}
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        return {"ok": False, "error": f"Could not connect to Ollama at "
+                f"{ollama_endpoint}. Is it running?"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
     """Return True if *model_name* is already present in the local Ollama registry."""
     try:

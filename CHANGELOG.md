@@ -6,6 +6,21 @@ Condensed release history, newest first.
 
 ## 2026-08-28 — No verdict on data we don't have
 
+- **The setup wizard learned what fits your GPU.** The Ollama step now
+  probes the host GPU on request (nvidia-smi, with a manual VRAM picker
+  for remote Ollama boxes) and recommends models from a bench-verified
+  catalog instead of a hardcoded default: entries carry honest fit
+  verdicts (weights + context headroom — the lesson of a 22 GB model
+  starving its KV cache on a 24 GB card), already-installed models are
+  marked as zero-download choices, anything else on the server stays
+  selectable but labeled untested, and below the verified floor the
+  wizard says so instead of pretending. After the bake, a warm-up check
+  loads the curator once and reads Ollama's own GPU-residency report — a
+  model that silently spills onto the CPU is flagged right there, not on
+  the user's first crawling conversation. The catalog is enforced against
+  the benchmark CSV by its own test suite, so a future bench run that
+  re-roles a model must be reflected deliberately.
+
 - **File size argues the file, never the work.** A Level-2 scan conceded a
   title was a documented landmark AND a genuine taste fit — both pillars
   keep — then closed with "most importantly, the file is a disaster" and

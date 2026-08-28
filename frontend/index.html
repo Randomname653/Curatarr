@@ -1176,6 +1176,23 @@ const SETUP_CONTENT = {
     <button class="btn btn-secondary btn-sm" onclick="testConn('ollama')">Detect models</button>
     <div id="test-ollama-result" style="margin:8px 0"></div>
     <div class="form-group" style="margin-top:12px">
+      <label>GPU / VRAM</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="detectGpu()">Detect GPU (nvidia-smi)</button>
+        <select id="s-vram" style="width:auto" onchange="refreshModelRecs()">
+          <option value="">VRAM: pick manually…</option>
+          <option value="8">8 GB</option>
+          <option value="12">12 GB</option>
+          <option value="16">16 GB</option>
+          <option value="24">24 GB</option>
+          <option value="32">32+ GB</option>
+        </select>
+      </div>
+      <div id="gpu-result" style="margin-top:6px"></div>
+      <div class="hint">Detection runs on the Curatarr host. If Ollama runs on a different machine, pick that machine's VRAM manually — the model recommendations below follow it.</div>
+    </div>
+    <div id="model-recs" style="margin:8px 0"></div>
+    <div class="form-group" style="margin-top:12px">
       <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
       <select id="s-curator-model"><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
       <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
@@ -1313,6 +1330,7 @@ function collectStep() {
     setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'gemma4:31b';
     setupData.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'granite4.1:8b';
     setupData.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text-v2-moe';
+    setupData.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || setupData.vram_gb || null;
   } else if (key === 'metadata') {
     setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
     setupData.omdb_api_key = document.getElementById('s-omdb')?.value?.trim() || '';
@@ -1373,18 +1391,87 @@ async function testConn(service) {
       ? `<div class="test-status ok">✓ Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
       : `<div class="test-status err">✗ ${esc(r.error)}</div>`) + warnBlock;
 
-    // Populate Ollama model dropdowns
+    // Feed the recommendation panel. This used to overwrite the three
+    // selects with the RAW installed-model list, wiping the recommended
+    // defaults; the catalog-driven renderer merges bench-verified
+    // recommendations with what's installed instead.
     if (service==='ollama' && r.ok && r.models) {
-      ['s-curator-model','s-summarizer-model','s-embed-model'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        const cur = sel.value;
-        sel.innerHTML = r.models.map(m=>`<option value="${esc(m)}" ${m===cur?'selected':''}>${esc(m)}</option>`).join('');
-      });
+      setupData._detected_models = r.models;
+      refreshModelRecs();
     }
   } catch(e) {
     if (resultEl) resultEl.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
   }
+}
+
+// ── GPU DETECTION + MODEL RECOMMENDATIONS (setup wizard, Ollama step) ────────
+async function detectGpu() {
+  const el = document.getElementById('gpu-result');
+  if (el) el.innerHTML = '<div class="test-status">Probing GPU…</div>';
+  try {
+    const r = await api('/api/setup/gpu');
+    if (!r.ok) {
+      if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(r.error)}</div>`;
+      return;
+    }
+    const names = r.gpus.map(g => `${g.name} (${g.vram_gb} GB)`).join(', ');
+    if (el) el.innerHTML = `<div class="test-status ok">✓ ${esc(names)}</div>`;
+    setupData.vram_gb = r.vram_gb;
+    const sel = document.getElementById('s-vram');
+    if (sel) {
+      [...sel.options].filter(o => o.dataset.detected).forEach(o => o.remove());
+      const opt = document.createElement('option');
+      opt.value = r.vram_gb; opt.textContent = `${r.vram_gb} GB (detected)`;
+      opt.dataset.detected = '1'; opt.selected = true;
+      sel.appendChild(opt);
+    }
+    refreshModelRecs();
+  } catch(e) {
+    if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+  }
+}
+
+async function refreshModelRecs() {
+  const vsel = document.getElementById('s-vram');
+  if (vsel && vsel.value) setupData.vram_gb = parseFloat(vsel.value);
+  const endpoint = document.getElementById('s-ollama')?.value?.trim() || setupData.ollama_endpoint || '';
+  const panel = document.getElementById('model-recs');
+  try {
+    const r = await api('/api/setup/recommend', 'POST',
+                        {ollama_endpoint: endpoint, vram_gb: setupData.vram_gb ?? null});
+    renderRecSelect('s-curator-model', r.curator, r.installed);
+    renderRecSelect('s-summarizer-model', r.summarizer, r.installed);
+    renderRecSelect('s-embed-model', r.embedding, r.installed);
+    if (panel) panel.innerHTML = r.floor_note
+      ? `<div class="test-status" style="color:var(--amber)">⚠️ ${esc(r.floor_note)}</div>`
+      : '';
+  } catch(e) {
+    if (panel) panel.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+  }
+}
+
+function renderRecSelect(id, entries, installed) {
+  const sel = document.getElementById(id);
+  if (!sel || !entries) return;
+  const cur = sel.value;
+  const catalogNames = entries.map(e => e.model);
+  const opts = entries.map(e => {
+    const tags = [];
+    if (e.installed) tags.push('installed — no download');
+    if (e.fits === false) tags.push(`needs ~${Math.round(e.vram_gb + 3)} GB`);
+    else if (e.tight) tags.push('tight fit');
+    const suffix = tags.length ? ` · ${tags.join(' · ')}` : '';
+    const unfit = e.fits === false ? 'data-unfit="1"' : '';
+    return `<option value="${esc(e.model)}" ${unfit}>${esc(e.model)} — ${esc(e.label)}${esc(suffix)}</option>`;
+  });
+  // Everything else on the server stays reachable — labeled honestly.
+  const extra = (installed || []).filter(m => !catalogNames.includes(m))
+    .map(m => `<option value="${esc(m)}">${esc(m)} — untested (installed on server)</option>`);
+  sel.innerHTML = opts.concat(extra).join('');
+  // Keep the user's pick unless it no longer fits; the list is
+  // preference-ordered (fitting + installed first), so index 0 is the call.
+  const kept = cur && [...sel.options].find(o => o.value === cur && !o.dataset.unfit);
+  if (kept) sel.value = cur;
 }
 
 // ── SPOTIFY HISTORY IMPORT (shared by the setup step and the admin card) ──
@@ -1719,8 +1806,25 @@ async function buildOnboardingModels() {
   try {
     const r = await api('/api/setup/build-models','POST');
     if (r.curator && r.summarizer) {
-      el.innerHTML = '<p style="color:var(--success)">✅ curatarr-curator and curatarr-summarizer created!</p>';
-      setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; }, 1500);
+      const okLine = '<p style="color:var(--success)">✅ curatarr-curator and curatarr-summarizer created!</p>';
+      el.innerHTML = okLine + '<p class="loading">Warm-up check: loading the curator once to verify it runs on the GPU…</p>';
+      // A model that doesn't quite fit VRAM runs silently part-on-CPU and
+      // the whole app just feels broken-slow. Catch that HERE, not on the
+      // user's first real conversation.
+      let warm = null;
+      try { warm = await api('/api/setup/warmup','POST',{model:'curatarr-curator'}); } catch {}
+      let verdict = '';
+      if (warm && warm.ok) {
+        if (warm.verdict === 'cpu_spill')
+          verdict = `<p style="color:var(--amber)">⚠️ ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
+        else if (warm.verdict === 'slow')
+          verdict = `<p style="color:var(--amber)">⚠️ Generation is slow (${warm.tokens_per_s} tok/s) despite full GPU residency.</p>`;
+        else
+          verdict = `<p style="color:var(--success)">✓ Fully on GPU${warm.tokens_per_s ? ` · ${warm.tokens_per_s} tok/s` : ''}${warm.load_s ? ` (one-time load ${warm.load_s}s)` : ''}</p>`;
+      }
+      el.innerHTML = okLine + verdict;
+      setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; },
+                 warm && warm.ok && warm.verdict !== 'ok' ? 7000 : 1500);
     } else {
       let msg = '';
       if (!r.curator) msg += `❌ curatarr-curator failed<br>`;
