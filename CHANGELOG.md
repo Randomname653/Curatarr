@@ -4,6 +4,35 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-08-28 — No verdict on data we don't have
+
+- **Reordered romanised names are the same work.** A drama with a reachable
+  13,000-character Wikipedia article scanned as "lean data" because three
+  individually sound guards composed into blindness: the entity had no
+  English sitelink (true), the franchise article's manga-first lead failed
+  the direct path's plausibility gate, and the search returned the article
+  under a title with the Japanese surname/given-name order swapped — which
+  the order-sensitive equality guard called a different work. The hit guard
+  now accepts word-multiset equality (same words, any order) while
+  different words and cross-medium disambiguators still reject. The fix
+  heals both the significance scan and the deletion discussion's deep-read
+  path, which shared the guard; the retrieval version bump re-offers every
+  title stamped empty under the old rule.
+
+- **The judge defers titles whose data isn't there yet.** The thin-evidence
+  gate caught "no enrichment at all", but partial enrichment dodged it: a
+  silently absent significance line read as "no documented stature" and
+  condemned titles our own pipeline simply hadn't fetched. The cache's
+  tri-state now reaches the judge — significance never successfully checked
+  defers the candidate (it re-enters next scan; the pre-judge warm-up
+  retries the fetch), while checked-and-definitively-empty remains
+  judgeable, because that IS evidence. When a block is built anyway, the
+  gap is named as missing data instead of left silent.
+
+- **The fuller plot wins, whoever wrote it.** The verified block preferred
+  OMDb's "full" plot by source, so a one-line OMDb entry displaced a rich
+  TMDB overview. The longer of the two API texts is used now.
+
 ## 2026-08-25 — The benchmarks go public, and the docs stop lying
 
 - **Disagreement got a register, and unknown categories get learned.** A

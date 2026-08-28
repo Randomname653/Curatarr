@@ -312,17 +312,25 @@ def build_verified_data(
                     return v
             return None
 
+        def _longer_text(*vals):
+            best = ""
+            for v in vals:
+                if isinstance(v, str) and len(v.strip()) > len(best):
+                    best = v.strip()
+            return best or None
+
         return {
             "media_type":     media_type,
             "title":          pick(enriched.get("title"), raw.get("title"), title),
             "year":           pick(enriched.get("year"), raw.get("year")),
             "genres":         pick(enriched.get("genres"), raw.get("genres")),
-            # Prefer the fuller OMDb plot, then the LLM plot_summary, then the
-            # short TMDB overview.
-            "plot":           pick(raw.get("overview_extended"), enriched.get("plot_summary"), raw.get("overview")),
+            # Prefer whichever API plot is FULLER — OMDb's "full" plot is
+            # sometimes a one-liner that would displace a rich TMDB overview
+            # if trusted by source alone — then the LLM plot_summary.
+            "plot":           pick(_longer_text(raw.get("overview_extended"), raw.get("overview")), enriched.get("plot_summary")),
             # Alias so the dict is also consumable by chat._build_hidden_context
             # (which reads plot_summary/overview) when cached as a thread anchor.
-            "plot_summary":   pick(raw.get("overview_extended"), enriched.get("plot_summary"), raw.get("overview")),
+            "plot_summary":   pick(_longer_text(raw.get("overview_extended"), raw.get("overview")), enriched.get("plot_summary")),
             "themes":         enriched.get("themes"),
             "keywords":       pick(enriched.get("keywords"), raw.get("keywords")),
             "mood":           enriched.get("mood"),
@@ -533,9 +541,22 @@ def _wiki_hit_matches(query_title: str, hit_title: str, media_type: str) -> bool
     import re as _re
     def _norm(s: str) -> str:
         s = _re.sub(r"\s*\([^)]*\)\s*$", "", s or "")          # drop trailing (disambiguator)
-        return _re.sub(r"[^a-z0-9]+", "", s.lower())
-    if not _norm(query_title) or _norm(query_title) != _norm(hit_title):
+        # keep word boundaries: the reorder check below compares word
+        # multisets, which needs words to survive normalisation
+        return _re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+    nq, nh = _norm(query_title), _norm(hit_title)
+    if not nq:
         return False
+    if nq != nh:
+        # Same words, different order, still the same work: the English
+        # localisation of Japanese titles swaps surname/given-name order —
+        # the library says "Thus Spoke Kishibe Rohan", Wikipedia files
+        # "Thus Spoke Rohan Kishibe", and an order-sensitive equality kept
+        # a reachable article invisible to significance AND to the deletion
+        # discussion's deep read. Word-multiset equality accepts the
+        # reorder while different words still fail.
+        if sorted(nq.split()) != sorted(nh.split()):
+            return False
     m = _re.search(r"\(([^)]*)\)\s*$", hit_title or "")
     disambig = (m.group(1).lower() if m else "")
     cross = {
@@ -625,7 +646,7 @@ TEXT:
 # do with it: a perfect prompt over the wrong page yields a confident "NONE".
 # So the stamp covers the retrieval rules as well, and tightening them retires
 # the answers they produced — the same self-retiring trick, one layer deeper.
-_SIG_RETRIEVAL_VERSION = "4"   # 2: lead-sentence plausibility + disambig family
+_SIG_RETRIEVAL_VERSION = "5"   # 5: word-order-tolerant hit match (JP name reorder)
                                # 3: the library's title searched alongside the
                                #    enriched one
                                # 4: the article resolved from the IMDb id via

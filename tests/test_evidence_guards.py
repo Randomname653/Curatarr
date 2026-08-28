@@ -484,5 +484,64 @@ check("an unknown retention category becomes a principle offer, not a denial",
       "CATEGORIES YOU DO NOT HAVE ARE CATEGORIES TO LEARN" in _chat
       and "OFFER to record it as a learned curation" in _chat)
 
+# -- the Rohan case: three sound guards, one invisible article --------------
+# "Thus Spoke Kishibe Rohan" (NHK drama) had a reachable 13k-char article and
+# still scanned as "lean data": the drama's Wikidata entity has no enwiki
+# sitelink (true), the franchise article's lead is manga-first so the direct
+# path's plausibility gate refused it for 'show', and the search returned it
+# as hit #1 under "Thus Spoke ROHAN KISHIBE" — the English localisation swaps
+# the Japanese surname/given-name order, and an order-sensitive equality
+# guard called the same four words a different work. The deep-read path of
+# the deletion discussion uses the same guard, so the owner had to argue the
+# NHK broadcast from memory. Word-multiset equality accepts the reorder;
+# different words and cross-medium disambiguators still fail.
+
+from src.services.media_enricher import _wiki_hit_matches as _whm
+check("reordered romanised names are the same work",
+      _whm("Thus Spoke Kishibe Rohan", "Thus Spoke Rohan Kishibe", "show"))
+check("...also with a disambiguator attached",
+      _whm("Thus Spoke Kishibe Rohan", "Thus Spoke Rohan Kishibe (manga)", "anime"))
+check("different words are still a different work",
+      not _whm("Momoiro Sisters", "Momoiro Clover Z", "anime"))
+check("cross-medium disambiguators still reject",
+      not _whm("Thriller", "Thriller (album)", "movie"))
+
+_me3 = (Path(__file__).resolve().parents[1]
+        / "src/services/media_enricher.py").read_text(encoding="utf-8")
+check("the reorder rule changed retrieval, so the version stamp moved",
+      '_SIG_RETRIEVAL_VERSION = "5"' in _me3)
+
+# The sibling find: OMDb's one-line "full" plot displaced the richer TMDB
+# overview in the verified block because the pick trusted the SOURCE order.
+# The fuller of the two API plots wins now, whoever wrote it.
+check("the verified block's plot is the fuller API text, not the OMDb-first pick",
+      '_longer_text(raw.get("overview_extended"), raw.get("overview"))' in _me3
+      and "def _longer_text" in _me3)
+
+# -- no verdict on data we don't have yet -----------------------------------
+# The thin gate catches "no enrichment at all", but PARTIAL enrichment dodged
+# it: significance silently absent read as "no stature" and condemned titles
+# whose article our own pipeline simply hadn't fetched (Rohan, C418). The
+# cache's tri-state (checked-empty vs never-checked) now reaches the judge:
+# never-checked defers the candidate (it re-enters next scan, the warm-up
+# retries the fetch), and if a block is built anyway the gap is named as
+# missing data, not evidence. Checked-and-empty remains judgeable — that IS
+# evidence.
+
+_pl = (Path(__file__).resolve().parents[1]
+       / "src/services/pillars.py").read_text(encoding="utf-8")
+_re2 = (Path(__file__).resolve().parents[1]
+        / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
+check("build_evidence distinguishes never-checked from checked-empty",
+      '"significance_unchecked"' in _pl
+      and 'vd.get("significance_checked")' in _pl)
+check("the gap is named in the evidence, not silent",
+      "NOT YET CHECKED" in _pl and "missing" in _pl)
+check("the deletion loop defers an unchecked candidate instead of judging",
+      'significance_unchecked' in _re2
+      and "not judging" in _re2)
+check("deferrals are surfaced in the run report",
+      "significance unchecked" in _re2)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

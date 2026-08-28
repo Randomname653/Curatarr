@@ -257,7 +257,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
 
     flags = {"owner_watched": False, "other_user_engaged": False,
              "bitrate_outlier": False, "acclaim_present": False,
-             "owner_signal": False, "evidence_thin": False}
+             "owner_signal": False, "evidence_thin": False,
+             "significance_unchecked": False}
 
     # ── OWNER watch ──
     try:
@@ -373,9 +374,22 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             owner_line += f" ({shape})"
     except Exception as e:
         logger.debug("[pillars] verified-data failed for %r: %s", title, e)
+    # The cache's tri-state ("checked: definitively nothing" vs "never
+    # successfully checked") must reach the judge, or silence gets read as
+    # "no stature" and condemns a title whose article simply hasn't been
+    # fetched yet — the Kishibe Rohan failure: partial enrichment dodged the
+    # thin gate, the significance line was silently absent, and the owner had
+    # to argue the NHK broadcast from memory against a "lean data" verdict.
+    if (isinstance(vd, dict) and not (vd.get("significance") or "").strip()
+            and not vd.get("significance_checked")):
+        flags["significance_unchecked"] = True
     if verified_text:
         if any(m in verified_text for m in ("RT:", "METACRITIC", "Awards:", " wins", "Significance:")):
             flags["acclaim_present"] = True
+        if flags["significance_unchecked"]:
+            verified_text += ("\n  Significance: NOT YET CHECKED — missing "
+                              "data, not evidence of absence; no verdict may "
+                              "be built on the lack of documented stature.")
         meta_block = verified_text
     else:
         # P5: data-starved candidate — ensure_verified_data returned nothing (no

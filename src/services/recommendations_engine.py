@@ -1682,6 +1682,7 @@ async def generate_deletion_proposals(
         TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
         thin_skipped = 0
+        unchecked_skipped = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
         # PRE-JUDGE SIGNIFICANCE WARM-UP: the judge's own JIT is summarizer-
@@ -1779,6 +1780,23 @@ async def generate_deletion_proposals(
                                     "enrichment on file yet (thin-evidence "
                                     "gate)", category, item.get("title"))
                         continue
+                    # UNCHECKED-SIGNIFICANCE GATE: the same principle one
+                    # layer deeper. Partial enrichment dodges the thin gate,
+                    # but if significance was never SUCCESSFULLY checked the
+                    # Custodian pillar is blind and "no documented stature"
+                    # is an artifact of our own pipeline, not a fact about
+                    # the work. The warm-up above just tried to fetch it; a
+                    # definitive "no article exists" stamps checked and IS
+                    # judgeable — only the transient/unfetched case defers,
+                    # and the title re-enters the funnel next scan.
+                    if (ev.get("flags") or {}).get("significance_unchecked"):
+                        unchecked_skipped += 1
+                        judged -= 1
+                        logger.info("[deletions] %s: deferring %r — "
+                                    "significance never checked; not judging "
+                                    "a title on data we don't have yet",
+                                    category, item.get("title"))
+                        continue
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
@@ -1838,6 +1856,8 @@ async def generate_deletion_proposals(
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged"
              + (f" ({thin_skipped} skipped: not yet enriched)" if thin_skipped else "")
+             + (f" ({unchecked_skipped} deferred: significance unchecked)"
+                if unchecked_skipped else "")
              + ".")
         return final_proposals
 
