@@ -629,7 +629,7 @@ select option { background: var(--bg2); }
           <button class="btn btn-primary" onclick="loadDeletions(currentDelCategory,null,true)">Analyse library</button>
           <button class="btn btn-secondary" onclick="loadDeletions(currentDelCategory)">Show cached</button>
           <!-- Pass 17: incoming-audit filter — flips proposal sort to "newest activity" -->
-          <label style="display:flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;margin-left:8px;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)"
+          <label for="del-recent-only" style="display:flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;margin-left:8px;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)"
                  title="Show only items whose latest file/episode/track was imported recently. Useful for catching auto-grabbed seasons or spurious downloads.">
             <input type="checkbox" id="del-recent-only" onchange="toggleRecentOnly(this.checked)"/>
             🆕 Just-arrived only
@@ -641,7 +641,7 @@ select option { background: var(--bg2); }
             <option value="30">last 30 days</option>
             <option value="60">last 60 days</option>
           </select>
-          <label style="display:flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)"
+          <label for="del-select-all" style="display:flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)"
                  title="Select every visible proposal for bulk deletion">
             <input type="checkbox" id="del-select-all" onchange="delToggleAll(this)"/>
             Select all
@@ -727,16 +727,16 @@ select option { background: var(--bg2); }
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:10px 0 16px">
           <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Enrich by category</h3>
           <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-movie" checked> Movies</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-show" checked> TV Shows</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-anime" checked> Anime</label>
+            <label for="enrich-cat-music" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
+            <label for="enrich-cat-movie" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-movie" checked> Movies</label>
+            <label for="enrich-cat-show" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-show" checked> TV Shows</label>
+            <label for="enrich-cat-anime" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-anime" checked> Anime</label>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
             <span style="font-size:12px;color:var(--text3)">Source:</span>
-            <label style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="watch_history" checked> Watch History Only</label>
-            <label style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="arr"> Arr Library Only</label>
-            <label style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="both"> Both</label>
+            <label for="enrich-src-history" style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="watch_history" id="enrich-src-history" checked> Watch History Only</label>
+            <label for="enrich-src-arr" style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="arr" id="enrich-src-arr"> Arr Library Only</label>
+            <label for="enrich-src-both" style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="both" id="enrich-src-both"> Both</label>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="startEnrichNew()">Start Enrichment</button>
@@ -788,7 +788,7 @@ select option { background: var(--bg2); }
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <label style="font-size:12px;color:var(--text2)" title="Cap unique tracks per enrichment phase per run. Applies to BOTH Spotify and Last.fm. Tracks not covered this run carry over to the next.">Batch (per phase):
+            <label for="music-batch-input" style="font-size:12px;color:var(--text2)" title="Cap unique tracks per enrichment phase per run. Applies to BOTH Spotify and Last.fm. Tracks not covered this run carry over to the next.">Batch (per phase):
               <input id="music-batch-input" type="number" min="50" max="2000" value="300"
                 style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);width:70px;font-size:12px;margin-left:4px">
             </label>
@@ -945,7 +945,7 @@ select option { background: var(--bg2); }
           <p class="hint" style="margin:0 0 12px">Drop a Spotify extended streaming history (json or the whole zip), pick whose listening it is, import. Duplicate-safe — re-importing the same files adds nothing twice.</p>
           <div id="adm-sp-zone"></div>
           <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
-            <label style="font-size:12px;color:var(--text2)">Attach to user</label>
+            <label for="adm-sp-user" style="font-size:12px;color:var(--text2)">Attach to user</label>
             <select id="adm-sp-user" aria-label="Select user to attach history" style="min-width:160px"></select>
             <button class="btn btn-primary btn-sm" onclick="runSpotifyImport('adm-sp')">Import</button>
           </div>
@@ -992,10 +992,10 @@ select option { background: var(--bg2); }
                   in a follow-up release.
                 </p>
                 <div id="settings-pin-form-set" style="display:none">
-                  <label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">New PIN (≥ 6 chars)</label>
+                  <label for="pin-new" style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">New PIN (≥ 6 chars)</label>
                   <input type="password" id="pin-new" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
-                  <label style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm PIN</label>
+                  <label for="pin-new-confirm" style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm PIN</label>
                   <input type="password" id="pin-new-confirm" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
                   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1004,13 +1004,13 @@ select option { background: var(--bg2); }
                   </div>
                 </div>
                 <div id="settings-pin-form-change" style="display:none">
-                  <label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">Current PIN</label>
+                  <label for="pin-current" style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px">Current PIN</label>
                   <input type="password" id="pin-current" autocomplete="current-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
-                  <label style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">New PIN (≥ 6 chars)</label>
+                  <label for="pin-change-new" style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">New PIN (≥ 6 chars)</label>
                   <input type="password" id="pin-change-new" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
-                  <label style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm new PIN</label>
+                  <label for="pin-change-confirm" style="display:block;font-size:12px;color:var(--text3);margin:10px 0 4px">Confirm new PIN</label>
                   <input type="password" id="pin-change-confirm" minlength="6" autocomplete="new-password"
                          style="width:100%;max-width:280px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px"/>
                   <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2015,7 +2015,7 @@ function reclassifyCard(it, mode) {
     ? `<img src="/api/image/proxy?src=${encodeURIComponent(it.poster)}" onerror="this.style.display='none'" style="width:48px;height:72px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
     : `<div style="width:48px;height:72px;border-radius:4px;background:var(--bg3);flex-shrink:0"></div>`;
   const link = it.sonarr_link
-    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" title="Open in Sonarr" style="color:var(--amber);font-size:11px;text-decoration:none">↗</a>` : '';
+    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(it.title)} in Sonarr" title="Open in Sonarr" style="color:var(--amber);font-size:11px;text-decoration:none">↗</a>` : '';
   const card = (inner) => `<div class="rc-card" style="display:flex;gap:9px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">${inner}</div>`;
 
   if (mode === 'uncertain') {
@@ -2297,7 +2297,7 @@ async function renderSynopsisBrowser(svc, tabId, opts = {}) {
                onchange="setBrowserFilter('${svc}','${tabId}', this.checked)"/>
         Only items needing enrichment
       </label>
-      <input type="text" id="arr-search-${svc}-${tabId}" value="${escAttr(state.search || '')}"
+      <input type="text" id="arr-search-${svc}-${tabId}" aria-label="Search items" value="${escAttr(state.search || '')}"
              placeholder="Search title…"
              oninput="setBrowserSearch('${svc}','${tabId}', this.value)"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:var(--radius);font-size:12px;width:200px"/>
@@ -2431,6 +2431,7 @@ function renderAddNew(svc) {
     <div style="display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;gap:8px;align-items:center">
         <input type="text" id="add-search-${svc}"
+               aria-label="Search title"
                placeholder="${esc(placeholder)}"
                oninput="debouncedAddSearch('${svc}')"
                style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:var(--radius);font-size:13px;font-family:inherit"/>
@@ -3304,10 +3305,10 @@ function renderArrCard(svc, info) {
       ${info.configured ? lastBadge : '<span style="color:var(--amber);font-size:11px">⚠ not configured</span>'}
     </div>
     <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;align-items:center;font-size:12px;margin-bottom:12px">
-      <label style="color:var(--text3)">URL</label>
+      <label for="arr-url-${svc}" style="color:var(--text3)">URL</label>
       <input type="text" id="arr-url-${svc}" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${svc==='sonarr'?'8989':svc==='radarr'?'7878':'8686'}"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px;font-family:inherit"/>
-      <label style="color:var(--text3)">API key</label>
+      <label for="arr-key-${svc}" style="color:var(--text3)">API key</label>
       <input type="password" id="arr-key-${svc}" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}"
              style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px;font-family:inherit"/>
     </div>
@@ -3385,7 +3386,7 @@ async function loadArrProfiles(svc) {
     if (svc === 'sonarr') {
       // Pass 16b.1: language profiles dropped — Sonarr v4 doesn't have them.
       extra += `
-        <label style="color:var(--text3)">Series type</label>
+        <label for="arr-series-type-${svc}" style="color:var(--text3)">Series type</label>
         <select id="arr-series-type-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           <option value="standard" ${cur.series_type === 'standard' ? 'selected' : ''}>Standard</option>
           <option value="anime" ${cur.series_type === 'anime' ? 'selected' : ''}>Anime</option>
@@ -3395,11 +3396,11 @@ async function loadArrProfiles(svc) {
     }
     if (svc === 'lidarr' && profiles.metadata_profiles) {
       extra += `
-        <label style="color:var(--text3)">Metadata profile</label>
+        <label for="arr-meta-${svc}" style="color:var(--text3)">Metadata profile</label>
         <select id="arr-meta-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${(profiles.metadata_profiles || []).map(m => `<option value="${m.id}" ${cur.metadata_profile_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
-        <label style="color:var(--text3)">Monitor option</label>
+        <label for="arr-monitor-${svc}" style="color:var(--text3)">Monitor option</label>
         <select id="arr-monitor-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${['all','future','missing','existing','first','latest','none'].map(m => `<option value="${m}" ${cur.monitor_option === m ? 'selected' : ''}>${m}</option>`).join('')}
         </select>
@@ -3407,11 +3408,11 @@ async function loadArrProfiles(svc) {
     }
     target.innerHTML = `
       <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 10px;align-items:center;font-size:12px;margin-bottom:10px">
-        <label style="color:var(--text3)">Root folder</label>
+        <label for="arr-root-${svc}" style="color:var(--text3)">Root folder</label>
         <select id="arr-root-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${rootFolderOptions || '<option value="">(none configured in arr)</option>'}
         </select>
-        <label style="color:var(--text3)">Quality profile</label>
+        <label for="arr-quality-${svc}" style="color:var(--text3)">Quality profile</label>
         <select id="arr-quality-${svc}" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12px">
           ${qualityOptions || '<option value="">(none configured)</option>'}
         </select>
@@ -4010,7 +4011,7 @@ function _renderDeletionProposals(proposals) {
               <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}">Discuss</button>
               <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">Reevaluate</button>
               ${p.media_id&&p.service?`<button class="btn btn-secondary btn-sm" onclick="onFixMatch(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-category="${escAttr(p.category||'movie')}" data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}" title="Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.">Fix match</button>`:''}
-              ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
+              ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" aria-label="Open ${escAttr(p.title)} in ${esc(p.service)}" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
             </div>
             <div id="fixmatch-${p.id}" style="display:none;margin-top:8px"></div>
           </div>
@@ -4136,7 +4137,7 @@ async function loadJudgeProtections() {
           <div><strong>${esc(p.title || '—')}</strong> ${badge}
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
-            ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
+            ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
             <button class="btn btn-secondary" onclick="liftProtection(${p.id})">Lift protection</button>
           </div>
         </div>
@@ -4320,7 +4321,7 @@ async function loadDownscale() {
           <div><strong>${esc(p.title || '—')}</strong> ${tech}
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
-            ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
+            ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
             <button class="btn btn-secondary" onclick="downscaleDone(${p.id})" title="File has been transcoded — protection stays (HARD_KEEP); leaves this list">Done</button>
           </div>
         </div>
@@ -4373,9 +4374,9 @@ async function loadRedundancy() {
     const ARR = { movie: 'radarr', show: 'sonarr', anime: 'sonarr', music: 'lidarr' };
     const links = (e) => {
       const plex = r.plex_web_base && e.plex_rating_key
-        ? `<a href="${esc(r.plex_web_base + encodeURIComponent('/library/metadata/' + e.plex_rating_key))}" target="_blank" class="btn btn-secondary btn-sm">Open in Plex</a>` : '';
+        ? `<a href="${esc(r.plex_web_base + encodeURIComponent('/library/metadata/' + e.plex_rating_key))}" aria-label="Open ${escAttr(e.title || 'media')} in Plex" target="_blank" class="btn btn-secondary btn-sm">Open in Plex</a>` : '';
       const arr = e.arr_url
-        ? `<a href="${esc(e.arr_url)}" target="_blank" class="btn btn-secondary btn-sm">Open in ${esc(ARR[e.media_type] || 'arr')}</a>` : '';
+        ? `<a href="${esc(e.arr_url)}" target="_blank" aria-label="Open ${escAttr(e.title || 'media')} in ${esc(ARR[e.media_type] || 'arr')}" class="btn btn-secondary btn-sm">Open in ${esc(ARR[e.media_type] || 'arr')}</a>` : '';
       return plex + arr;
     };
     const techBadge = (e) => `<span class="badge muted">${esc(e.resolution || '?')}${e.is_remux ? ' remux' : ''}${e.codec ? ' ' + esc(e.codec) : ''} · ${e.size_gb} GB</span>`;
@@ -5751,7 +5752,7 @@ async function loadLibraryConfig() {
             </div>` : ''}
           </div>
           <div>
-            <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
+            <label for="libcat-${s.key}" style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
             <select id="libcat-${s.key}" aria-label="Select category for library" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:13px">
               ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${cat===o?'selected':''}>${catIcon(o)} ${o}</option>`).join('')}
             </select>
@@ -5916,7 +5917,7 @@ async function startTaskStream() {
       const el = document.getElementById('tasks-list');
       if (el) el.innerHTML = `<p class="loading" style="color:var(--danger)">
         ⚠ Task stream disconnected — 
-        <a href="#" onclick="location.reload()" style="color:var(--amber)">reload page</a>
+        <a href="#" onclick="location.reload();return false;" aria-label="Reload page to reconnect" style="color:var(--amber)">reload page</a>
         to reconnect.
       </p>`;
       taskStreamRetries = 0; // reset so reload works
