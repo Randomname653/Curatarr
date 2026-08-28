@@ -10,7 +10,7 @@ sys.modules['src.database.models'] = MagicMock()
 sys.modules['src.config'] = MagicMock()
 
 from datetime import datetime, timedelta
-from src.services.proactive_messages import detect_night_owl
+from src.services.proactive_messages import detect_night_owl, detect_series_completion
 
 def test_detect_night_owl_happy_path():
     now = datetime(2024, 1, 15, 12, 0)
@@ -57,4 +57,28 @@ def test_detect_night_owl_missing_timestamp():
     now = datetime(2024, 1, 15, 12, 0)
     entries = [{"title": "No Time"}] # missing last_viewed_at
     result = detect_night_owl(entries, now)
+    assert result is None
+
+def test_detect_series_completion_empty_history():
+    now = datetime(2024, 1, 15, 12, 0)
+    entries = []
+    result = detect_series_completion(entries, now)
+    assert result is None
+
+def test_detect_series_completion_only_movies():
+    now = datetime(2024, 1, 15, 12, 0)
+    entries = [
+        {"title": "Movie 1", "series_title": None, "media_type": "movie", "viewed_at": now, "episode": None},
+        {"title": "Movie 2", "series_title": None, "media_type": "movie", "viewed_at": now, "episode": None},
+    ]
+    result = detect_series_completion(entries, now)
+    assert result is None
+
+def test_detect_series_completion_under_threshold():
+    now = datetime(2024, 1, 15, 12, 0)
+    entries = [
+        {"title": "Show A", "series_title": "Show A", "media_type": "show", "viewed_at": now, "episode": i}
+        for i in range(1, 8)  # 7 episodes
+    ]
+    result = detect_series_completion(entries, now)
     assert result is None

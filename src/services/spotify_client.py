@@ -189,6 +189,9 @@ async def _batch_get(
                                 results.extend(item for item in items if item)
                     elif r2.status_code == 429:
                         consecutive_429 += 1
+                        retry_after = float(r2.headers.get("retry-after", "30")) + 2
+                        if retry_after > _PERSIST_THRESHOLD:
+                            _persist_backoff(retry_after)
                         logger.warning(
                             "[spotify] retry also 429 (%d consecutive) — bailing",
                             consecutive_429,
