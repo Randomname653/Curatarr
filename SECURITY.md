@@ -27,6 +27,18 @@ Defaults that matter:
 - Deletion actions require an authenticated session; proposals are never
   executed without an explicit user approval in the UI.
 
+## Known dependency advisories
+
+The pinned `chromadb` release carries four open advisories
+(GHSA-f4j7-r4q5-qw2c, GHSA-36p7-vc44-83pf, GHSA-2wm9-hf6c-p5cr,
+GHSA-xph7-9rjv-w5fr — pre-auth code injection and tenant-RBAC bypasses).
+**All four target the ChromaDB HTTP server** (`/api/v2/...` endpoints and
+its server-side authorization providers). Curatarr embeds
+`chromadb.PersistentClient` in-process and never starts the Chroma
+server, so that API surface does not exist in any Curatarr deployment —
+the vulnerable code path is unused. No patched ChromaDB release exists
+yet; the pin will move once one does.
+
 ## Reporting a vulnerability
 
 Please use GitHub's **private vulnerability reporting** on this
