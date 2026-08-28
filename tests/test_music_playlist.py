@@ -91,7 +91,7 @@ pp._load_snapshot = lambda uid: dict(snapshots.get(uid) or {})
 pp._save_snapshot = lambda uid, snap: snapshots.__setitem__(uid, snap)
 
 
-async def fake_resolve(name):
+async def fake_resolve(name, sections=None):
     return {"SikTh": "111", "Ion Dissonance": "222"}.get(name)   # Ghost -> None
 
 
