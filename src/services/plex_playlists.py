@@ -199,19 +199,22 @@ async def key_exists(token: str, rating_key: str) -> bool:
 _VIDEO_TYPE = {"movie": "1", "show": "2", "anime": "2"}
 
 
-async def resolve_video_key(title: str, category: str) -> Optional[str]:
+async def resolve_video_key(title: str, category: str, sections: Optional[list[str]] = None) -> Optional[str]:
     """Title → ratingKey via the category's sections (owner token — the
     video mirror of resolve_artist_key). The self-heal for keys Plex
     re-issued on a metadata refresh/optimize (SoulSync rescue pattern)."""
     token = _owner_token()
     if not token or not title:
         return None
-    from src.database.connection import get_db_session
-    from src.database.models import LibraryConfig
-    with get_db_session() as db:
-        sections = [lc.plex_section_key for lc in
-                    db.query(LibraryConfig)
-                    .filter(LibraryConfig.media_category == category).all()]
+
+    if sections is None:
+        from src.database.connection import get_db_session
+        from src.database.models import LibraryConfig
+        with get_db_session() as db:
+            sections = [lc.plex_section_key for lc in
+                        db.query(LibraryConfig)
+                        .filter(LibraryConfig.media_category == category).all()]
+
     t = _VIDEO_TYPE.get(category, "1")
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
         for sec in sections:
@@ -328,6 +331,12 @@ async def push_user_playlists(user) -> dict:
             except Exception:
                 pass
 
+        from src.database.models import LibraryConfig
+        with get_db_session() as db:
+            video_sections = [lc.plex_section_key for lc in
+                              db.query(LibraryConfig)
+                              .filter(LibraryConfig.media_category == category).all()]
+
         keys: list[str] = []
         titles: list[str] = []
         for r in rows:
@@ -340,7 +349,7 @@ async def push_user_playlists(user) -> dict:
             # cheap GETs per push) and re-resolve by title, healing the
             # cached row so the next push is fast again.
             if not await key_exists(_owner_token() or user.plex_token, key):
-                healed = await resolve_video_key(r["title"], category)
+                healed = await resolve_video_key(r["title"], category, sections=video_sections)
                 if healed:
                     logger.info("[playlists] %r: stale key %s → %s (healed)",
                                 r["title"], key, healed)
@@ -412,7 +421,7 @@ MUSIC_PLAYLIST_TITLE = "Curatarr Recommended · Music"
 _MAX_MUSIC_ARTISTS = 5
 
 
-async def resolve_artist_key(name: str) -> Optional[str]:
+async def resolve_artist_key(name: str, sections: Optional[list[str]] = None) -> Optional[str]:
     """Artist name → Plex artist ratingKey via the music sections' title
     filter (owner token — the library is shared). Music rec rows carry no
     plex_rating_key (artists live outside MediaTechProfile), hence by-name.
@@ -420,12 +429,15 @@ async def resolve_artist_key(name: str) -> Optional[str]:
     token = _owner_token()
     if not token or not name:
         return None
-    from src.database.connection import get_db_session
-    from src.database.models import LibraryConfig
-    with get_db_session() as db:
-        sections = [lc.plex_section_key for lc in
-                    db.query(LibraryConfig)
-                    .filter(LibraryConfig.media_category == "music").all()]
+
+    if sections is None:
+        from src.database.connection import get_db_session
+        from src.database.models import LibraryConfig
+        with get_db_session() as db:
+            sections = [lc.plex_section_key for lc in
+                        db.query(LibraryConfig)
+                        .filter(LibraryConfig.media_category == "music").all()]
+
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
         for sec in sections:
             try:
@@ -510,9 +522,15 @@ async def push_user_music_playlist(user) -> dict:
         except Exception:
             pass
 
+    from src.database.models import LibraryConfig
+    with get_db_session() as db:
+        music_sections = [lc.plex_section_key for lc in
+                          db.query(LibraryConfig)
+                          .filter(LibraryConfig.media_category == "music").all()]
+
     keys, titles = [], []
     for a in artists:
-        artist_key = await resolve_artist_key(a["title"])
+        artist_key = await resolve_artist_key(a["title"], sections=music_sections)
         if not artist_key:
             logger.info("[playlists] %s/music: %r not found in Plex — skipped.",
                         user.plex_username, a["title"])
