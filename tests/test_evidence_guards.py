@@ -574,9 +574,16 @@ check("Level 2: the scan's own concessions move the verdict",
       and "Re-anchoring the old verdict on grounds outside the" in _ch2)
 check("Level 2: STAGNANT is a hand-off, not a delete verdict to defend",
       "STAGNANT verdict" in _ch2 and "hand-off to the owner" in _ch2)
-check("expressed interest mid-discussion is a keep signal",
-      "EXPRESSED INTEREST IS A KEEP SIGNAL" in _ch2
-      and "Renewing deletion pressure" in _ch2)
+check("a DECLARED intention to watch closes the deletion talk",
+      "EXPRESSED INTEREST — DECLARATION vs QUESTION" in _ch2
+      and "renewing deletion pressure after a declaration is forbidden" in _ch2)
+check("a question is answered honestly, not counted as a keep signal",
+      "NOT a keep\nsignal" in _ch2 and '"no,\nthe pitch stands" is a legitimate answer' in _ch2)
+check("the curator's own 'worth your time' answer binds its close",
+      "YOUR ANSWER BINDS YOU" in _ch2
+      and "never a recommendation and a delete offer in the same" in _ch2)
+check("question-vs-declaration ambiguity resolves by asking",
+      "resolves by asking" in _ch2)
 check("the register ban is the register, not the word list",
       '"digital\nlandfill"' in _ch2 or '"digital landfill"' in _ch2)
 check("...and fresh coinages in the same voice are named as violations",
@@ -605,15 +612,18 @@ check("the legacy pitch no longer licenses size as a pitch point",
       and "DOWNSCALE NOTE, NEVER A DELETE REASON" in _re3)
 check("rule 7 knows first-party owner evidence as a reversal ground",
       "FIRST-PARTY word about their OWN viewing" in _ch3
-      and "never 'emotional language'" in _ch3)
+      and "never 'emotional " in _ch3)
+check("rule 7: a question is not evidence, but the answer moves the position",
+      "A QUESTION about whether a title is worth watching is " in _ch3
+      and "your position has " in _ch3)
 check("after a decision or expressed interest, delete leaves the close",
       "the delete path leaves the table" in _ch3)
 check("the unconditional SIZE SENSE rule carries the downscale-only law",
       "size decides WHICH FILE to keep; the pillars decide WHETHER" in _ch3)
 check("a conceded keep binds later turns of the thread",
       "CONCESSIONS ARE DURABLE" in _ch3)
-check("ambiguous owner signals read as the stronger one",
-      "read it as the STRONGER signal" in _ch3)
+check("attachment-strength ambiguity still reads owner-favouring",
+      "attachment strengths still reads as the stronger" in _ch3)
 check("a bitrate outlier cannot demote a verdict tier",
       "nor does an outlier LOWER a verdict tier" in _pl3)
 

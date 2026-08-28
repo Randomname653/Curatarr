@@ -21,11 +21,22 @@ Condensed release history, newest first.
   any pillar must move its verdict (re-anchoring on extra-pillar grounds
   like file size or unwatched status is a broken scan), a STAGNANT verdict
   is a hand-off to the owner's judgment rather than a delete verdict to
-  defend, expressed interest mid-discussion ("that actually sounds worth
-  watching") is live first-party keep evidence that ends deletion
-  pressure, and the forbidden-contempt register is banned by shape — fresh
+  defend, and the forbidden-contempt register is banned by shape — fresh
   coinages like "digital landfill" violate it the same as the listed
   phrases.
+
+- **A declaration closes the talk; a question earns an honest answer.**
+  First cut of the interest rule treated any spark of curiosity as a keep
+  signal — dangerous the other way, as the owner pointed out: every
+  question would become a self-fulfilling keep, and the mandatory steelman
+  (which is supposed to be strong enough to spark curiosity) would neuter
+  the funnel it serves. Calibrated: a DECLARED intention ("I want to watch
+  this") is first-party evidence and closes the deletion talk; a QUESTION
+  ("is this worth watching?") mandates nothing and may honestly be
+  answered "no, the pitch stands" — but the answer binds the answerer:
+  a curator that tells the owner a title is worth their time cannot offer
+  the delete button in the same breath. Unclear which it was? Ask, one
+  sentence, no pressure.
 
 - **The law is one law at every site.** An adversarial consistency sweep
   across the four prompt-law sites found the size-license bug had a
