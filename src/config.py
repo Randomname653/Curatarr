@@ -70,14 +70,17 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "nomic-embed-text-v2-moe"
     # Route deletion proposals through the 4-pillar LLM judge
     # (src/services/pillars.py) instead of the legacy taste-mismatch pitch.
-    # Off by default — the legacy path stays the fallback until flipped.
-    PILLARS_ENABLED: bool = False
+    # ON by default — this is the intended mode; the legacy pitch is only a
+    # fallback for constrained setups (the wizard's write_env doesn't emit
+    # this key, so a fresh install gets THIS value, not .env.example's).
+    PILLARS_ENABLED: bool = True
     # Autonomous self-learning: capture generalizable curation principles from
     # the owner's DEBATES with the curator (shadow), novelty-check them, and
-    # inject the ACTIVE ones into the judge. Off by default — a captured
+    # inject the ACTIVE ones into the judge. On by default — a captured
     # principle stays 'shadow' (surfaced, not affecting judgments) until the
-    # owner promotes it. See src/services/curator_principles.py.
-    PRINCIPLES_ENABLED: bool = False
+    # owner promotes it, so this is safe on a fresh install. See
+    # src/services/curator_principles.py.
+    PRINCIPLES_ENABLED: bool = True
     # Once you trust the shadow captures, flip this on to let NEW / REFINEMENT
     # principles activate AUTOMATICALLY (a CONTRADICTION always waits for you).
     # Off by default — the supervised shadow rollout comes first.
