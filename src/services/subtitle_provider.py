@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 25.0
 
+# A single episode's subtitles are tens of kilobytes; a feature's are under a
+# few hundred. Measured against a real service, one response came back at
+# 19.5 MB — whatever that file is, it is not one episode's dialogue, and
+# parsing it would cost far more than it could ever be worth. Refused by
+# Content-Length before the body is read, so the bandwidth is never spent.
+_MAX_BYTES = 4_000_000
+
 
 def _plain(v):
     return v.get_secret_value() if hasattr(v, "get_secret_value") else v
@@ -113,8 +120,18 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT,
                                      follow_redirects=True) as c:
-            r = await c.get(f"{base}/subs/best", headers=_headers(),
-                            params=params)
+            # Streamed so an implausibly large file can be refused on its
+            # headers rather than downloaded and then discarded.
+            async with c.stream("GET", f"{base}/subs/best", headers=_headers(),
+                                params=params) as resp:
+                size = int(resp.headers.get("content-length") or 0)
+                if size > _MAX_BYTES:
+                    logger.info("[subtitle-provider] refusing a %.1f MB "
+                                "response for %s — not one episode's dialogue",
+                                size / 1e6, params)
+                    return ""          # definitive: this is not usable data
+                await resp.aread()
+            r = resp
             # A 404 that returns an HTML error PAGE is a misconfigured base
             # URL, not an answer about this title. Treating it as "definitively
             # no subtitles" would stamp the whole library on the strength of a
@@ -137,6 +154,10 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
                 return None
             r.raise_for_status()
             txt = r.text or ""
+            if len(txt) > _MAX_BYTES:      # server sent no Content-Length
+                logger.info("[subtitle-provider] discarding a %.1f MB body "
+                            "for %s", len(txt) / 1e6, params)
+                return ""
             # A byte-order mark trips naive parsers; strip it defensively even
             # though a well-behaved service already does.
             if txt.startswith("﻿"):
