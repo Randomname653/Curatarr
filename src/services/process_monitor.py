@@ -94,19 +94,6 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
 })
 
 
-def _running_process_names() -> list[str]:
-    """Return lowercase exe names for all running processes."""
-    names = []
-    try:
-        for proc in psutil.process_iter(["name"]):
-            n = proc.info.get("name")
-            if n:
-                names.append(n.lower())
-    except Exception:
-        pass
-    return names
-
-
 _cached_targets: Optional[frozenset[str]] = None
 _cached_time: float = 0
 
@@ -150,12 +137,12 @@ def is_game_running() -> bool:
 
     # ⚡ Bolt: Early stop - check targets during iteration rather than
     # building a full set of all running process names first
-    for proc in psutil.process_iter(["name"]):
+    for proc in psutil.process_iter():
         try:
-            name = proc.info.get("name")
+            name = proc.name()
             if name and name.lower() in targets:
                 return True
-        except Exception:
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
     return False
@@ -252,18 +239,21 @@ def get_unknown_processes() -> list[dict]:
         # No "exe" in the attrs: the loop filters on the NAME alone, and
         # resolving each process's executable path is an extra OS call per
         # process that nothing here reads.
-        for proc in psutil.process_iter(["name", "pid"]):
-            name = proc.info.get("name")
-            if not name:
+        for proc in psutil.process_iter():
+            try:
+                name = proc.name()
+                if not name:
+                    continue
+                nl = name.lower()
+                if nl in known or nl in seen:
+                    continue
+                # Only surface .exe files (Windows executables, not background helpers)
+                if not nl.endswith(".exe"):
+                    continue
+                seen.add(nl)
+                unknown.append({"name": name, "pid": proc.pid})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-            nl = name.lower()
-            if nl in known or nl in seen:
-                continue
-            # Only surface .exe files (Windows executables, not background helpers)
-            if not nl.endswith(".exe"):
-                continue
-            seen.add(nl)
-            unknown.append({"name": name, "pid": proc.info.get("pid")})
     except Exception as e:
         logger.debug("get_unknown_processes scan failed: %s", e)
 
