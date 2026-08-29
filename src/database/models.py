@@ -652,6 +652,46 @@ class MediaTechProfile(Base):
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class MediaSubtitleProfile(Base):
+    """Execution signals read off a title's subtitle track — the first data in
+    this system that touches the WORK rather than metadata about it.
+
+    Deliberately a sibling of MediaTechProfile rather than columns on it: the
+    tech sync is a 12h full-library bulk scrape that rewrites every field it
+    knows, while these numbers are fetched per candidate, may legitimately be
+    absent, and need their own "we looked and found nothing" stamp. Bolting
+    them onto that table would leave the next author one omission away from
+    silently clobbering them.
+
+    ``checked`` + ``metrics_v`` carry the tri-state the enrichment layer uses
+    everywhere: a row with checked=True and no numbers means "definitively no
+    usable track" (forced-only, none on file); a transient failure writes no
+    row at all so the next pass retries.
+    """
+    __tablename__ = "media_subtitle_profiles"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    plex_rating_key = Column(String(64), unique=True, nullable=False, index=True)
+    media_type      = Column(String(20), nullable=False)
+    title           = Column(String(512), nullable=True)
+    tmdb_id         = Column(Integer, nullable=True, index=True)
+    tvdb_id         = Column(Integer, nullable=True, index=True)
+    # Which track was measured, and what kind it was.
+    source          = Column(String(24), nullable=True)   # plex_sidecar | opensubtitles
+    language        = Column(String(16), nullable=True)   # the track's own tag
+    is_sdh          = Column(Boolean, default=False)
+    # The numbers themselves.
+    words_per_min   = Column(Float, nullable=True)
+    silent_min      = Column(Float, nullable=True)
+    silent_share    = Column(Float, nullable=True)
+    mattr           = Column(Float, nullable=True)        # NOT raw TTR (length-biased)
+    total_words     = Column(Integer, nullable=True)
+    coverage        = Column(Float, nullable=True)        # cue span / runtime
+    checked         = Column(Boolean, default=False)
+    metrics_v       = Column(String(16), nullable=True)
+    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class MediaSizeNorm(Base):
     """Learned MB-per-minute distribution for a media class, recomputed after each
     tech sync. ``class_key`` encodes the grouping granularity with ``*`` wildcards

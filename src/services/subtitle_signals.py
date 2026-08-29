@@ -1,0 +1,492 @@
+"""Execution signals derived from a title's subtitle track.
+
+The judge reasons only from metadata about a work — synopsis, genres, ratings,
+awards, significance. It has never seen a line of the work itself. That creates
+a contradiction we built ourselves: the constitution DEMANDS the premise /
+execution distinction ("a work whose premise CLAIMS the qualities the owner
+rewards but whose EXECUTION is generic does NOT pass"), while the no-invention
+rule FORBIDS any execution verdict without evidence. It is asked to judge
+exactly what it is blind to. Hardest hit is the RESONANCE pillar, whose litmus
+asks whether a work "hums rather than screams" — with no rhythm evidence at all.
+
+This module turns a subtitle track into a few cheap numbers that speak to that.
+It is deliberately small, deterministic and LLM-free.
+
+WHAT THESE NUMBERS ARE NOT
+--------------------------
+They describe the SUBTITLE TRACK, not the work:
+
+* Subtitles are condensed BY DESIGN. Professional style guides cap reading
+  speed (Netflix: 20 characters/second for adults) and instruct authors to
+  "favor text reduction, deletion and condensing". A word count therefore
+  systematically UNDERCOUNTS spoken dialogue.
+* A track may be a translation, in which case its rhythm is the translator's
+  as much as the writer's.
+* Timestamps drift — frame-rate conversion, regional cuts, ad-break retiming.
+* Forced tracks carry only foreign lines and signage; measuring one would
+  report near-silence for a talkative film. They are detected and refused.
+* SDH tracks add bracketed sound cues, ALL-CAPS signage and ♪-marked lyrics —
+  non-dialogue tokens that are stripped before anything is counted.
+
+Reported correlations between dialogue density and anything meaningful are real
+but weak (published genre classifiers reach ~0.7 F1). So: these are INDICATIVE,
+never decisive, and every consumer of them must say so. The measured spread on
+this library is nonetheless large enough to matter — 42 words/min for a
+contemplative drama against 125 for a dialogue piece.
+
+DELIBERATELY ABSENT: sentiment "narrative arcs". The six-basic-shapes result
+that popularised them was shown to be a low-pass-filter artifact of the
+method (Swafford's critique, conceded by the tool's own author). We do not
+build on a debunked method.
+"""
+from __future__ import annotations
+
+import logging
+import re
+import unicodedata
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Bump when a formula below changes, so stamped rows re-offer themselves.
+METRICS_VERSION = "1"
+
+# A dialogue gap longer than this counts as "no dialogue". Twenty seconds is
+# long enough that ordinary conversational pauses never qualify, short enough
+# that a genuinely wordless sequence registers.
+_SILENCE_GAP_S = 20.0
+
+# Below this, a track cannot be a full dialogue transcript for a feature — a
+# forced/signage track typically lands in the tens.
+_MIN_CUES = 120
+
+# Cues must span at least this fraction of the runtime. A forced track clusters
+# around the few foreign-language scenes and fails here even when it has many
+# cues; a real track covers the whole film (measured: 94-98% on real files).
+_MIN_COVERAGE = 0.5
+
+_TS = re.compile(
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})"
+)
+_TAGS = re.compile(r"<[^>]+>|\{\\[^}]*\}")           # HTML + ASS override tags
+_BRACKETED = re.compile(r"\[[^\]]*\]|\([^)]*\)")      # [door slams] / (sighs)
+_LYRIC = re.compile(r"[♪♫#]+[^\n]*")
+_SPEAKER = re.compile(r"^\s*[-–—]?\s*[A-ZÄÖÜ][A-ZÄÖÜ .'-]{1,24}:\s*", re.M)
+_ALLCAPS_LINE = re.compile(r"^[^a-zäöüß\n]{8,}$", re.M)
+# Apostrophes stay INSIDE the word: splitting "don't" into two tokens
+# inflates English tracks against German ones, and the whole point of a
+# words-per-minute figure is that it is comparable across a library.
+_WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*", re.UNICODE)
+
+# Markers in a track's own name that say it is not plain dialogue.
+_SDH_NAME = re.compile(r"\bsdh\b|hearing[ _-]?impaired|\bcc\b", re.I)
+_FORCED_NAME = re.compile(r"\bforced\b|\bsigns?\b|songs?\s*&?\s*signs?", re.I)
+
+
+def parse_cues(text: str) -> list[tuple[float, float, str]]:
+    """Parse SRT/VTT into ``(start_s, end_s, text)``.
+
+    Hand-rolled on purpose: the format is two regexes' worth of work, and
+    requirements.txt is a short pinned list the owner installs by hand — a
+    dependency for this would cost more than it saves. Malformed blocks are
+    skipped rather than raised on; real-world subtitle files are messy and a
+    single bad timestamp must not lose the other 1,400 cues.
+    """
+    out: list[tuple[float, float, str]] = []
+    if not text:
+        return out
+    # Normalise line endings; VTT differs from SRT only in a header and dots.
+    blocks = re.split(r"\r?\n\r?\n+", text.replace("\r\n", "\n").strip())
+    for block in blocks:
+        m = _TS.search(block)
+        if not m:
+            continue
+        try:
+            h1, m1, s1, ms1, h2, m2, s2, ms2 = (int(g) for g in m.groups())
+        except (TypeError, ValueError):
+            continue
+        start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+        end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+        if end < start:
+            continue
+        body = block[m.end():].strip("\n")
+        # Drop a leading cue number if it survived the split.
+        body = re.sub(r"^\s*\d+\s*\n", "", body)
+        out.append((start, end, body.strip()))
+    return out
+
+
+def strip_non_dialogue(text: str) -> str:
+    """Remove everything in a cue that is not spoken dialogue.
+
+    Uploader tagging is unreliable, so this runs on every track regardless of
+    how it was labelled: bracketed sound cues, ♪-marked lyrics, ALL-CAPS
+    signage lines, speaker prefixes ("MARY: ") and markup. Measured effect on
+    a real SDH track: 98 such markers, all removed; a plain track loses nothing.
+    """
+    if not text:
+        return ""
+    t = _TAGS.sub(" ", text)
+    t = _LYRIC.sub(" ", t)
+    t = _BRACKETED.sub(" ", t)
+    t = _ALLCAPS_LINE.sub(" ", t)
+    t = _SPEAKER.sub("", t)
+    return t
+
+
+def count_sdh_markers(text: str) -> int:
+    """How many non-dialogue markers the RAW text carries — the signal that a
+    track is SDH even when nothing in its name says so."""
+    if not text:
+        return 0
+    return (len(_BRACKETED.findall(text))
+            + len(_LYRIC.findall(text))
+            + len(_ALLCAPS_LINE.findall(text)))
+
+
+def script_of(text: str) -> str:
+    """``latin`` / ``cjk`` / ``other`` — decided from the TEXT, never a tag.
+
+    Language tags on real files are not trustworthy: this library carries a
+    track tagged ``hi`` (Hindi) containing no Devanagari at all, and one tagged
+    ``ja`` whose whitespace-separated word count would be impossible for real
+    Japanese. It matters because Chinese/Japanese/Korean do not separate words
+    with spaces — a words-per-minute figure computed there is meaningless, so
+    the caller must be able to refuse it.
+    """
+    letters = [c for c in (text or "") if c.isalpha()]
+    if not letters:
+        return "other"
+    cjk = 0
+    for c in letters[:4000]:
+        try:
+            name = unicodedata.name(c)
+        except ValueError:
+            continue
+        if ("CJK" in name or "HIRAGANA" in name
+                or "KATAKANA" in name or "HANGUL" in name):
+            cjk += 1
+    return "cjk" if cjk / min(len(letters), 4000) > 0.15 else "latin"
+
+
+def tokenize(text: str) -> list[str]:
+    """Lowercased word tokens. Digits and punctuation are not words."""
+    return [w.lower() for w in _WORD.findall(text or "")]
+
+
+def mattr(tokens: list[str], window: int = 100) -> Optional[float]:
+    """Moving-Average Type-Token Ratio — lexical diversity that survives a
+    length comparison.
+
+    Plain type-token ratio CANNOT be used here: vocabulary grows sublinearly
+    while tokens grow linearly, so raw TTR falls purely as a text gets longer
+    and a 220-minute epic would look "less varied" than a short film by
+    construction. MATTR averages the ratio over a fixed-size sliding window,
+    which removes that dependence. (MTLD is the other validated correction;
+    MATTR is chosen for being deterministic and small enough to verify by eye.)
+
+    Returns ``None`` below one window's worth of tokens — a figure from less
+    than that is not comparable to anything.
+    """
+    if not tokens or len(tokens) < window:
+        return None
+    total = 0.0
+    n = 0
+    for i in range(len(tokens) - window + 1):
+        total += len(set(tokens[i:i + window])) / window
+        n += 1
+    return round(total / n, 3) if n else None
+
+
+def looks_forced(cues: list, duration_min: float) -> bool:
+    """True when a track cannot be a full dialogue transcript.
+
+    Forced tracks render only foreign lines and signage. Measuring one would
+    report a talkative film as nearly silent — worse than having no number at
+    all. Two independent tests: too few cues, or cues that do not span the
+    runtime (real tracks covered 94-98% of it on every file measured).
+    """
+    if not cues:
+        return True
+    if len(cues) < _MIN_CUES:
+        return True
+    if duration_min and duration_min > 0:
+        span_min = (cues[-1][1] - cues[0][0]) / 60.0
+        if span_min / duration_min < _MIN_COVERAGE:
+            return True
+    return False
+
+
+def subtitle_metrics(cues: list, duration_min: float,
+                     *, track_name: str = "") -> dict:
+    """Reduce parsed cues to the numbers the judge sees. Never raises.
+
+    Returns ``{}`` when the track is unusable (forced, empty, or a script
+    without word boundaries) — the caller stamps that as "checked, nothing
+    here" rather than retrying forever.
+    """
+    if not cues or not duration_min or duration_min <= 0:
+        return {}
+    if looks_forced(cues, duration_min):
+        return {}
+
+    raw = "\n".join(c[2] for c in cues)
+    sdh_markers = count_sdh_markers(raw)
+    clean = strip_non_dialogue(raw)
+    script = script_of(clean)
+    if script == "cjk":
+        # No whitespace word boundaries — a words-per-minute figure would be an
+        # artifact of the writing system, not of the film.
+        return {}
+
+    toks = tokenize(clean)
+    if not toks:
+        return {}
+
+    gaps = 0.0
+    for (s1, e1, _), (s2, _e2, _t) in zip(cues, cues[1:]):
+        gap = s2 - e1
+        if gap > _SILENCE_GAP_S:
+            gaps += gap
+    span_min = (cues[-1][1] - cues[0][0]) / 60.0
+
+    name = track_name or ""
+    return {
+        "words_per_min": round(len(toks) / duration_min, 1),
+        "silent_min": round(gaps / 60.0, 1),
+        "silent_share": round(min(1.0, (gaps / 60.0) / duration_min), 3),
+        "mattr": mattr(toks),
+        "total_words": len(toks),
+        "coverage": round(min(1.0, span_min / duration_min), 3),
+        "cue_count": len(cues),
+        "is_sdh": bool(_SDH_NAME.search(name)) or sdh_markers >= 25,
+        "duration_min": round(duration_min, 1),
+        "metrics_v": METRICS_VERSION,
+    }
+
+
+def format_dialogue_line(m: dict, lang: str = "") -> str:
+    """The one line that reaches the judge, or "" when there is nothing to say.
+
+    Silence is the default: a missing line is honest, a guessed one is not
+    (the same rule ``size_context_for`` follows). The caveat travels WITH the
+    number, unconditionally — the file-size lesson was that a bare figure in an
+    evidence block gets promoted to a verdict by the model, so the sentence
+    that forbids that has to sit next to it, every time.
+    """
+    if not m or not m.get("words_per_min"):
+        return ""
+    lang_part = f"{lang} " if lang else ""
+    sdh = ", SDH track" if m.get("is_sdh") else ""
+    div = (f", lexical diversity {m['mattr']}" if m.get("mattr") is not None
+           else "")
+    return (
+        f"DIALOGUE: {m['words_per_min']:.0f} words/min, "
+        f"{m['silent_min']:.0f} of {m['duration_min']:.0f} min without dialogue"
+        f"{div} ({lang_part}subtitle track{sdh}).\n"
+        f"  Describes the SUBTITLE TRACK, which is condensed by design and may "
+        f"be a translation — indicative, never decisive. A low word rate means "
+        f"SPARSE DIALOGUE, not a thin work: visually-driven cinema is not "
+        f"penalised here.\n"
+    )
+
+
+# ── ACQUISITION ──────────────────────────────────────────────────────────────
+# Plex sidecar only, for now. Embedded tracks are NOT reachable: the stream
+# endpoint answers 501, the part endpoint 503 and the transcoder 400 (all
+# measured on the live server), and this host has neither filesystem access to
+# the media nor ffmpeg. That caps reach at ~70% of movies but only ~12-23% of
+# series and anime — an honest gap, not a silent one: a title with no reachable
+# track simply gets no line, exactly as size_context_for stays silent rather
+# than guessing.
+
+def _plex() -> tuple:
+    from src.config import settings
+    return settings.effective_plex_url, settings.effective_plex_token
+
+
+def pick_subtitle_stream(streams: list):
+    """Choose the track to measure, or None.
+
+    Only sidecar streams (those carrying a ``key``) can be fetched at all.
+    Among them, a track whose name says forced/signage is refused outright —
+    measuring one would report a talkative film as nearly silent. A plain
+    track is preferred over an SDH one, since SDH needs heavier stripping;
+    SDH is still accepted when it is all there is.
+    """
+    subs = [s for s in (streams or [])
+            if s.get("streamType") == 3 and s.get("key")]
+    if not subs:
+        return None
+
+    def _name(s):
+        return " ".join(str(s.get(k) or "") for k in
+                        ("title", "displayTitle", "extendedDisplayTitle"))
+
+    usable = [s for s in subs
+              if not s.get("forced") and not _FORCED_NAME.search(_name(s))]
+    if not usable:
+        return None
+    plain = [s for s in usable if not _SDH_NAME.search(_name(s))]
+    return (plain or usable)[0]
+
+
+async def fetch_subtitle_metrics(plex_rating_key: str):
+    """Measure one title's subtitle track. TRI-STATE, like fetch_significance:
+
+      dict — measured numbers,
+      {}   — DEFINITIVELY nothing usable (no sidecar track, forced-only, a
+             script without word boundaries) -> caller may stamp checked,
+      None — TRANSIENT failure (Plex unreachable, 5xx) -> caller must NOT
+             stamp; the next pass retries.
+
+    The distinction is the whole point: a stamped "nothing" that was really a
+    network blip would hide a title's evidence forever — the Panic-Room bug
+    that made this contract necessary in the significance path.
+    """
+    import httpx
+    base, token = _plex()
+    if not base or not token or not plex_rating_key:
+        return {}
+    headers = {"X-Plex-Token": token, "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as c:
+            r = await c.get(base + "/library/metadata/" + str(plex_rating_key),
+                            headers=headers)
+            if r.status_code == 404:
+                return {}          # item is gone from Plex — definitive
+            r.raise_for_status()
+            meta = (r.json().get("MediaContainer", {}).get("Metadata") or [])
+            if not meta:
+                return {}
+            md = meta[0]
+            duration_min = (md.get("duration") or 0) / 60000.0
+            media = (md.get("Media") or [{}])[0]
+            part = (media.get("Part") or [{}])[0]
+            stream = pick_subtitle_stream(part.get("Stream") or [])
+            if not stream:
+                return {}          # nothing reachable — definitive, stamp it
+            txt = (await c.get(base + stream["key"],
+                               headers={"X-Plex-Token": token})).text
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+        return None
+    except httpx.HTTPStatusError as e:
+        # 5xx is the server having a bad moment; 4xx means this track really
+        # is not there.
+        return None if e.response.status_code >= 500 else {}
+    except Exception as e:
+        logger.debug("[subtitles] %s: unexpected failure: %s",
+                     plex_rating_key, e)
+        return None
+
+    name = " ".join(str(stream.get(k) or "") for k in
+                    ("title", "displayTitle", "extendedDisplayTitle"))
+    m = subtitle_metrics(parse_cues(txt), duration_min, track_name=name)
+    if not m:
+        return {}
+    m["language"] = stream.get("languageTag") or stream.get("language") or ""
+    m["source"] = "plex_sidecar"
+    return m
+
+
+def _resolve_plex_key(media_type: str, tmdb_id=None, tvdb_id=None):
+    """The REAL Plex ratingKey for a candidate.
+
+    Never read ``item["plex_rating_key"]`` for this: on a deletion candidate
+    that field holds the enrichment-pipeline key ("radarr:1234"), not a Plex
+    key, so a Plex call built from it 404s every time.
+    """
+    from src.services.size_norms import tech_profile_for
+    prof = tech_profile_for(tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                            media_type=media_type)
+    return (prof or {}).get("plex_rating_key"), (prof or {}).get("duration_min")
+
+
+async def topup_subtitle_metrics(title: str, media_type: str, *,
+                                 tmdb_id=None, tvdb_id=None) -> bool:
+    """Fetch and persist metrics for one title. True only when numbers landed.
+
+    Idempotent via ``checked`` + ``metrics_v``, the convention every top-up in
+    this codebase follows: a version bump re-offers rows stamped under the old
+    formula, and a transient failure writes nothing so the next pass retries.
+    Never raises — the caller is a warm-up loop that one title must not derail.
+    """
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import MediaSubtitleProfile
+
+        rk, _dur = _resolve_plex_key(media_type, tmdb_id, tvdb_id)
+        if not rk:
+            return False
+        rk = str(rk)
+
+        with get_db_session() as db:
+            row = (db.query(MediaSubtitleProfile)
+                   .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
+            if row and row.checked and row.metrics_v == METRICS_VERSION:
+                return False
+
+        m = await fetch_subtitle_metrics(rk)
+        if m is None:
+            return False                      # transient — do NOT stamp
+
+        with get_db_session() as db:
+            row = (db.query(MediaSubtitleProfile)
+                   .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
+            if not row:
+                row = MediaSubtitleProfile(plex_rating_key=rk,
+                                           media_type=media_type)
+                db.add(row)
+            row.title = title
+            row.tmdb_id = tmdb_id
+            row.tvdb_id = tvdb_id
+            row.checked = True
+            row.metrics_v = METRICS_VERSION
+            if m:
+                row.source = m.get("source")
+                row.language = m.get("language")
+                row.is_sdh = bool(m.get("is_sdh"))
+                row.words_per_min = m.get("words_per_min")
+                row.silent_min = m.get("silent_min")
+                row.silent_share = m.get("silent_share")
+                row.mattr = m.get("mattr")
+                row.total_words = m.get("total_words")
+                row.coverage = m.get("coverage")
+            db.commit()
+        return bool(m)
+    except Exception as e:
+        logger.debug("[subtitles] top-up failed for %r: %s", title, e)
+        return False
+
+
+def subtitle_facts(item: dict, media_type: str) -> str:
+    """The evidence line for one candidate, or "".
+
+    Pure DB read — no network, no LLM — so it is safe inside the judge funnel,
+    which already holds the GPU gate.
+    """
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import MediaSubtitleProfile
+
+        rk, dur = _resolve_plex_key(media_type, item.get("tmdb_id"),
+                                    item.get("tvdb_id"))
+        if not rk:
+            return ""
+        with get_db_session() as db:
+            row = (db.query(MediaSubtitleProfile)
+                   .filter(MediaSubtitleProfile.plex_rating_key == str(rk))
+                   .first())
+            if not row or not row.words_per_min:
+                return ""
+            return format_dialogue_line({
+                "words_per_min": row.words_per_min,
+                "silent_min": row.silent_min or 0.0,
+                "duration_min": dur or 0.0,
+                "mattr": row.mattr,
+                "is_sdh": bool(row.is_sdh),
+            }, lang=row.language or "")
+    except Exception as e:
+        logger.debug("[subtitles] facts lookup failed: %s", e)
+        return ""

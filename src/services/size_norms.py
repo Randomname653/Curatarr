@@ -248,6 +248,12 @@ def tech_profile_for(*, tmdb_id=None, tvdb_id=None, plex_rating_key=None,
             "hdr": row.hdr, "item_count": row.item_count, "title": row.title,
             "versions": row.versions or 1, "redundant_mb": row.redundant_mb or 0,
             "is_remux": bool(row.is_remux),
+            # The REAL Plex ratingKey. Deletion candidates carry an ARR doc id
+            # ("radarr:1234") in their own ``plex_rating_key`` field — the
+            # enrichment-pipeline key, not a Plex key — so anything that needs
+            # to call the Plex API for an item has to resolve it from HERE,
+            # by tmdb/tvdb. Additive: existing callers ignore it.
+            "plex_rating_key": row.plex_rating_key,
         }
 
 

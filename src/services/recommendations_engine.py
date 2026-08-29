@@ -1704,8 +1704,9 @@ async def generate_deletion_proposals(
             from src.services.media_enricher import topup_significance
             from src.services.reception import topup_reception
             from src.services.wikidata import topup_wikidata
+            from src.services.subtitle_signals import topup_subtitle_metrics
             _warm_slice = scored_candidates[:JUDGE_CAP]
-            _warmed = _warmed_rec = _warmed_wd = 0
+            _warmed = _warmed_rec = _warmed_wd = _warmed_sub = 0
             for _c in _warm_slice:
                 _it = _c["item"]
                 _ids = dict(tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
@@ -1723,6 +1724,18 @@ async def generate_deletion_proposals(
                         _warmed_rec += 1
                 except Exception:
                     pass
+                # Dialogue metrics: one Plex read per candidate, no LLM, no GPU.
+                # Cheap enough to sit here, and this is the only place that can
+                # fetch them — build_evidence runs inside the gate and may only
+                # read what is already on disk.
+                try:
+                    if await asyncio.wait_for(topup_subtitle_metrics(
+                            _it.get("title"), category,
+                            tmdb_id=_it.get("tmdb_id"),
+                            tvdb_id=_it.get("tvdb_id")), timeout=25.0):
+                        _warmed_sub += 1
+                except Exception:
+                    pass
                 try:
                     if await asyncio.wait_for(topup_wikidata(
                             _it.get("title"), category,
@@ -1732,9 +1745,10 @@ async def generate_deletion_proposals(
                         _warmed_wd += 1
                 except Exception:
                     continue
-            if _warmed or _warmed_rec or _warmed_wd:
+            if _warmed or _warmed_rec or _warmed_wd or _warmed_sub:
                 _msg(f"{category}: warmed {_warmed} significance, "
-                     f"{_warmed_rec} reception, {_warmed_wd} on-record facts")
+                     f"{_warmed_rec} reception, {_warmed_wd} on-record facts, "
+                     f"{_warmed_sub} dialogue profiles")
                 logger.info("[deletions] %s: pre-judge warm-up added %d article(s), "
                             "%d reception record(s), %d wikidata record(s)",
                             category, _warmed, _warmed_rec, _warmed_wd)

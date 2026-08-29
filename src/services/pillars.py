@@ -53,6 +53,7 @@ PILLAR I — RESONANCE (Expansion). This protects the QUIET intellect — sublim
   2. AWE, not Comfort: does it evoke awe (fear + respect + wonder; feeling small in a stimulating way), rather than mere soothing comfort / the absence of tension?
   3. RIGOR — Mastery, not Competence: is its slowness intentional and masterful (pacing, craft, insight), rather than a generic formula any studio could produce?
 A title that FAILS the litmus is filler and drops to Pillar 0.
+A DIALOGUE line, when present, is weak supporting evidence for this litmus and NOTHING else: a low word rate and long wordless stretches are what a patient, observational work looks like from the outside — they can support INTENT and RIGOR, they can never establish them, and they are NEVER a defect. Sparse dialogue is not thin writing; visually-driven cinema is precisely what this pillar exists to protect. A high word rate is likewise not evidence of populism. The figures describe a subtitle track that is condensed by design and may be a translation, so they may never carry a verdict on their own, and their absence means nothing at all.
 
 PILLAR 0 — EGO (lowest, the Edge). The owner's own taste — whose CONTENT lives in the OWNER TASTE line of the evidence, never in this constitution: that line is per-user data, and the law here is deliberately taste-blind. OFFENSIVE, not defensive: a title must ACTIVELY provide what the OWNER TASTE line rewards to survive here — not merely "not be bad". Beware PREMISE vs EXECUTION: a work whose premise CLAIMS the qualities the owner rewards but whose EXECUTION is populist, manipulative, or generic does NOT pass — a claimed quality is not a delivered one. Generic, low-effort work that provides nothing the owner's profile rewards is CUT. Without an OWNER TASTE line in the evidence, this pillar cannot condemn — fall back to the objective pillars above.
 
@@ -258,7 +259,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     flags = {"owner_watched": False, "other_user_engaged": False,
              "bitrate_outlier": False, "acclaim_present": False,
              "owner_signal": False, "evidence_thin": False,
-             "significance_unchecked": False}
+             "significance_unchecked": False, "dialogue_signal": False}
 
     # ── OWNER watch ──
     try:
@@ -579,6 +580,18 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         except Exception as e:
             logger.debug("[pillars] factual guard failed for %r: %s", title, e)
 
+    # Execution evidence from the work itself — the only signal here that is
+    # not metadata ABOUT the title. Pure DB read (the fetch happens in the
+    # pre-judge warm-up, outside the GPU gate), and silent when there is no
+    # reachable subtitle track: no line beats a guessed one.
+    dialogue_line = ""
+    try:
+        from src.services.subtitle_signals import subtitle_facts
+        dialogue_line = subtitle_facts(item, media_type)
+        flags["dialogue_signal"] = bool(dialogue_line)
+    except Exception as e:
+        logger.debug("[pillars] dialogue signal failed for %r: %s", title, e)
+
     facts = (
         f"TITLE: {title} ({year}) — {category}, {genres_str}\n"
         + form_line
@@ -589,6 +602,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         + feedback_line
         + owner_signals
         + (f"TECH: {tech_line}\n" if tech_line else "TECH: no technical profile on record.\n")
+        + dialogue_line
     )
     return {"title": title, "facts": facts.strip(), "flags": flags,
             "law_extra": law_extra}

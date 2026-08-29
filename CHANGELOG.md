@@ -6,6 +6,39 @@ Condensed release history, newest first.
 
 ## 2026-08-28 — No verdict on data we don't have
 
+- **The curator can finally hear the film.** Until now it judged only
+  metadata *about* a work and had never seen a line of the work itself —
+  while the constitution demanded it separate premise from execution and
+  the no-invention rule forbade any execution verdict without evidence. It
+  was asked to judge what it was blind to. Deletion candidates now carry a
+  DIALOGUE line derived from their subtitle track: words per minute, how
+  much of the runtime passes without dialogue, and lexical diversity. The
+  measured spread on this library is a factor of three — a contemplative
+  drama at 42 words/min against a dialogue piece at 125 — which is exactly
+  the distinction the Resonance pillar's litmus had to guess at, having no
+  rhythm evidence at all.
+
+  What it deliberately is *not*: raw type-token ratio is mathematically
+  length-biased and would rank a long film as less varied by construction,
+  so the code uses a moving-average measure and a test proves the
+  difference by doubling a text. Sentiment "narrative arcs" are absent
+  because the six-shapes result that popularised them was shown to be an
+  artifact of the filtering, conceded by the tool's own author. And the
+  numbers describe a *subtitle track* — condensed by professional style
+  guides, often a translation, timed imprecisely — so the caveat travels
+  with the figure every single time, and the law states plainly that
+  sparse dialogue is not thin writing: visually-driven cinema is what the
+  Resonance pillar exists to protect, not something it may punish.
+
+  Forced tracks (signage only) are detected and refused rather than
+  measured, since one would report a talkative film as nearly silent; SDH
+  sound cues, lyrics and speaker labels are stripped before counting; and
+  CJK scripts are refused outright because a words-per-minute figure
+  without word boundaries is an artifact of the writing system. Language
+  is read from the text, never the track's tag — this library carries a
+  track tagged Hindi containing no Devanagari at all. Where no reachable
+  track exists the line is simply absent: silence beats a guess.
+
 - **A batch of agent-written tests, kept only where they bite.** Thirteen
   bot PRs landed at once; each was reviewed against its brief, run, and
   then mutation-tested — the production function it covers was broken on
