@@ -635,3 +635,30 @@ def test_provider_believes_an_explicit_permanent_flag():
     # permanent -> settled (empty), retryable -> None, and in that order
     perm_at = src.index('if err.get("permanent"):')
     assert src.index('return ""', perm_at) < src.index("return None", perm_at)
+
+
+def test_a_subtitle_longer_than_its_runtime_is_refused():
+    """The one-sided check that let a wrong file through.
+
+    A 22-minute episode came back with a subtitle spanning 52 minutes —
+    someone else's file. Every word in it was divided by the episode's
+    runtime, producing 243 words/min, nearly double anything else measured.
+    Too little coverage was already refused; too much was not.
+    """
+    # 740 cues spread across 52 minutes, measured against a 22-minute episode
+    overlong = [(i * 4.2, i * 4.2 + 2.0, "words") for i in range(740)]
+    assert looks_forced(overlong, duration_min=22.4)
+    assert subtitle_metrics(overlong, 22.4) == {}
+    # a normal track running slightly past the last frame is still fine
+    ok = [(i * 2.0, i * 2.0 + 1.5, "words") for i in range(700)]
+    assert not looks_forced(ok, duration_min=22.4)
+
+
+def test_coverage_is_reported_unclamped():
+    # Capping at 1.0 made a 2.3x mismatch look like a perfect fit.
+    cues = [(i * 3.0, i * 3.0 + 1.0, "a word") for i in range(600)]
+    m = subtitle_metrics(cues, 40.0)
+    assert m, "this one should be measurable"
+    assert m["coverage"] <= 1.31
+    src = (_SRC / "services" / "subtitle_signals.py").read_text(encoding="utf-8")
+    assert 'round(min(1.0, span_min / duration_min), 3)' not in src

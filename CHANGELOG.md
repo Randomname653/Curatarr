@@ -65,6 +65,17 @@ Condensed release history, newest first.
   data is transient by definition and logs which URL it came from, and a
   bare host gets the default path prefix appended instead of failing.
 
+- **A subtitle longer than its own episode is somebody else's file.** The
+  coverage check was one-sided: too FEW cues over the runtime meant a
+  signage-only track and was refused, but too MANY was accepted without
+  question. A 22-minute episode came back with a subtitle spanning 52
+  minutes, every word of it divided by the episode's runtime — 243
+  words per minute, nearly double anything else in the library, from a
+  file that simply belonged to something else. The stored coverage was
+  additionally clamped to 1.0, so the mismatch was invisible even in the
+  data. Both fixed: coverage above 1.3 is refused, and the figure is
+  recorded as measured.
+
 - **An optional subtitle service of your own — and a bug worth the whole
   integration.** Anime is where dialogue evidence is thinnest: only about
   a quarter of it carries a subtitle file Plex will hand out, and public

@@ -65,6 +65,15 @@ _MIN_CUES = 120
 # cues; a real track covers the whole film (measured: 94-98% on real files).
 _MIN_COVERAGE = 0.5
 
+# ...and no more than this. The check was one-sided at first, which let a
+# genuinely wrong file through: a 22-minute episode was measured against a
+# subtitle spanning 52 minutes (coverage 2.34), and every word in it was
+# divided by the episode's runtime — 243 words/min, nearly double anything
+# else in the library, from a file that simply belonged to something else.
+# A little slack above 1.0 is normal (end cards, timing drift, a track that
+# runs past the last frame); 30% is not.
+_MAX_COVERAGE = 1.3
+
 _TS = re.compile(
     r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
     r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})"
@@ -341,7 +350,8 @@ def looks_forced(cues: list, duration_min: float) -> bool:
         return True
     if duration_min and duration_min > 0:
         span_min = (cues[-1][1] - cues[0][0]) / 60.0
-        if span_min / duration_min < _MIN_COVERAGE:
+        cov = span_min / duration_min
+        if cov < _MIN_COVERAGE or cov > _MAX_COVERAGE:
             return True
     return False
 
@@ -386,7 +396,9 @@ def subtitle_metrics(cues: list, duration_min: float,
         "silent_share": round(min(1.0, (gaps / 60.0) / duration_min), 3),
         "mattr": mattr(toks),
         "total_words": len(toks),
-        "coverage": round(min(1.0, span_min / duration_min), 3),
+        # NOT capped at 1.0 — the capping is what hid a 2.34 mismatch behind
+        # a reassuring "1.0" while the words-per-minute figure was inflated.
+        "coverage": round(span_min / duration_min, 3),
         "cue_count": len(cues),
         "is_sdh": bool(_SDH_NAME.search(name)) or sdh_markers >= 25,
         "duration_min": round(duration_min, 1),
