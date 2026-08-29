@@ -387,3 +387,93 @@ def test_sidecar_is_preferred_over_the_paid_fallback():
     src = _SIGNALS.split("async def acquire_subtitle_text")[1]
     assert "pick_subtitle_stream" in src and "fetch_opensubtitles" in src
     assert src.index("pick_subtitle_stream") < src.index("fetch_opensubtitles")
+
+
+# -- ASS/SSA: the format anime actually ships in -----------------------------
+# Not "SRT with different punctuation": field ORDER is declared per file,
+# timestamps are centiseconds, and one file carries parallel tracks — the
+# dialogue plus translated signs plus opening karaoke. Measuring the signs
+# track reports a talkative episode as nearly silent, the same damage a
+# forced track does.
+
+ASS = r"""[Script Info]
+Title: Fansub
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize
+Style: Default,Arial,20
+Style: Signs,Arial,20
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:38.62,0:00:40.24,Default,,0,0,0,,Hello there, old friend.
+Dialogue: 0,0:00:41.00,0:00:43.50,Default,Ken,0,0,0,,{\i1}You look well.{\i0}
+Dialogue: 0,0:00:44.00,0:00:46.00,Default,,0,0,0,,Line one\NLine two
+Comment: 0,0:00:47.00,0:00:48.00,Default,,0,0,0,,translator note, ignore me
+Dialogue: 0,0:00:50.00,0:00:52.00,Signs,,0,0,0,,{\pos(120,50)}TOKYO STATION
+Dialogue: 0,0:00:53.00,0:00:55.00,OP-Karaoke,,0,0,0,,{\k30}na{\k22}mi
+Dialogue: 0,0:00:56.00,0:00:58.00,Default,,0,0,0,,{\p1}m 0 0 l 100 0 100 100{\p0}
+"""
+
+
+def test_ass_is_recognised_and_timed_in_centiseconds():
+    cues = parse_cues(ASS)
+    assert cues, "ASS must not fall through to the SRT path"
+    # 0:00:38.62 is 38.62 seconds — reading .62 as milliseconds would give
+    # 38.00062 and every duration would collapse.
+    assert abs(cues[0][0] - 38.62) < 0.01, cues[0]
+    assert abs(cues[0][1] - 40.24) < 0.01
+
+
+def test_ass_skips_comments_signs_and_karaoke():
+    texts = " ".join(c[2] for c in parse_cues(ASS))
+    assert "ignore me" not in texts, "Comment: events are not rendered"
+    assert "TOKYO" not in texts, "a signs style is not dialogue"
+    assert "{\\k30}" not in texts, "karaoke styles are not dialogue"
+    assert "old friend" in texts and "You look well" in texts
+
+
+def test_ass_line_breaks_and_drawings():
+    cues = parse_cues(ASS)
+    joined = " ".join(c[2] for c in cues)
+    assert "Line one Line two" in joined, "\\N is a line break, not a word"
+    # A cue that was only a vector drawing must not count as speech.
+    assert all(strip_non_dialogue(c[2]).strip() for c in cues)
+
+
+def test_ass_reads_its_own_field_order():
+    # Groups do reorder the Format line; a hardcoded index would read the
+    # style name as a timestamp and silently drop everything.
+    reordered = ("[Events]\n"
+                 "Format: Start, End, Style, Text\n"
+                 "Dialogue: 0:01:00.00,0:01:02.00,Default,Reordered works.\n")
+    cues = parse_cues(reordered)
+    assert len(cues) == 1 and abs(cues[0][0] - 60.0) < 0.01
+    assert "Reordered works." in cues[0][2]
+
+
+def test_ass_commas_inside_dialogue_survive():
+    # The text field is the last one, so the split must be bounded — an
+    # unbounded split would truncate at the first comma in the line.
+    one = ("[Events]\n"
+           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+           "MarginV, Effect, Text\n"
+           "Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,"
+           "Wait, stop, listen to me.\n")
+    cues = parse_cues(one)
+    assert len(cues) == 1
+    assert cues[0][2] == "Wait, stop, listen to me.", cues[0][2]
+
+
+def test_ass_metrics_run_end_to_end():
+    # Same pipeline the judge uses, on an ASS source.
+    body = ["[Events]",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+            "MarginV, Effect, Text"]
+    for i in range(400):
+        t = i * 6
+        body.append(f"Dialogue: 0,0:{t // 60:02d}:{t % 60:02d}.00,"
+                    f"0:{(t + 2) // 60:02d}:{(t + 2) % 60:02d}.00,"
+                    f"Default,,0,0,0,,some spoken words here now")
+    m = subtitle_metrics(parse_cues("\n".join(body)), 40.0)
+    assert m and m["words_per_min"] > 0 and m["cue_count"] == 400

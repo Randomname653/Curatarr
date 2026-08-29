@@ -39,6 +39,22 @@ Condensed release history, newest first.
   track tagged Hindi containing no Devanagari at all. Where no reachable
   track exists the line is simply absent: silence beats a guess.
 
+- **ASS subtitles, the format anime actually ships in.** The parser read
+  SRT and WebVTT, which covers films and western series and almost no
+  anime: fansubs are ASS, and ASS is not SRT with different punctuation.
+  Its events are comma-separated records whose field ORDER each file
+  declares for itself, its timestamps count centiseconds, and a single
+  file routinely carries parallel tracks — the dialogue, the translated
+  signs, the opening karaoke. Reading the signs track would report a
+  talkative episode as nearly silent, exactly the damage a forced track
+  does, so styles named for signs, songs, karaoke, credits or typesetting
+  are skipped; `Comment:` events are skipped as they are never rendered;
+  the ASS line-break escape is treated as the break it is rather than a
+  word; and an event that was only a vector drawing no longer counts as
+  speech. The field order is read from each file's own `Format:` line,
+  because groups do reorder it and a hardcoded index would quietly parse
+  a style name as a timestamp.
+
 - **And in a discussion, it can read the dialogue itself.** The batch judge
   only ever sees the derived numbers — one feature's dialogue is around
   13,000 tokens against a 16k context — but pressing "look deeper" on a

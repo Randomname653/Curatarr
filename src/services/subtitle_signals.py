@@ -79,9 +79,85 @@ _ALLCAPS_LINE = re.compile(r"^[^a-zäöüß\n]{8,}$", re.M)
 # words-per-minute figure is that it is comparable across a library.
 _WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*", re.UNICODE)
 
+# ASS/SSA. Anime subtitles are overwhelmingly this format, and it is not SRT
+# with different punctuation: events are comma-separated records whose field
+# ORDER is declared by a "Format:" line, timestamps run H:MM:SS.cc, and a
+# single file routinely carries several parallel tracks — the dialogue, the
+# translated signs, and karaoke for the opening. Measuring the signs track
+# would report a talkative episode as nearly silent, the same failure mode
+# forced tracks cause, so styles are filtered by name.
+_ASS_EVENT = re.compile(r"^(Dialogue|Comment)\s*:\s*(.*)$", re.M | re.I)
+_ASS_FORMAT = re.compile(r"^Format\s*:\s*(.+)$", re.M | re.I)
+_ASS_TIME = re.compile(r"^(\d+):(\d{2}):(\d{2})[.,](\d{1,3})$")
+# Style names that mark a non-dialogue layer. A negative list on purpose:
+# dialogue styles are named anything ("Default", "Main", "Deutsch"), while
+# the extras are named remarkably consistently across fansub groups.
+_ASS_NON_DIALOGUE = re.compile(
+    r"sign|song|karaok|lyric|\bop\b|\bed\b|opening|ending|credit|title|"
+    r"typeset|note|caption|staff", re.I)
+# Vector drawing commands ({\p1}m 0 0 l 100 0 …) are graphics, not words.
+_ASS_DRAWING = re.compile(r"\{[^}]*\\p[1-9][^}]*\}[^{]*")
+_ASS_BREAKS = re.compile(r"\\[Nnh]")
+
+
 # Markers in a track's own name that say it is not plain dialogue.
 _SDH_NAME = re.compile(r"\bsdh\b|hearing[ _-]?impaired|\bcc\b", re.I)
 _FORCED_NAME = re.compile(r"\bforced\b|\bsigns?\b|songs?\s*&?\s*signs?", re.I)
+
+
+def _ass_seconds(v: str):
+    """H:MM:SS.cc -> seconds. ASS counts CENTIseconds, not milliseconds."""
+    m = _ASS_TIME.match((v or "").strip())
+    if not m:
+        return None
+    h, mi, sec, frac = m.groups()
+    scale = 100.0 if len(frac) <= 2 else 1000.0
+    return int(h) * 3600 + int(mi) * 60 + int(sec) + int(frac) / scale
+
+
+def parse_ass(text: str) -> list:
+    """Parse the dialogue events of an ASS/SSA file.
+
+    Field order is read from the section's own ``Format:`` line rather than
+    assumed — groups do reorder it, and a hardcoded index would silently read
+    the style name as a timestamp. ``Comment:`` events are skipped (they are
+    not rendered), as are styles whose name marks them as signs, karaoke or
+    credits.
+    """
+    out = []
+    fields = ["layer", "start", "end", "style", "name", "marginl", "marginr",
+              "marginv", "effect", "text"]
+    fm = _ASS_FORMAT.search(text or "")
+    if fm:
+        parsed = [f.strip().lower() for f in fm.group(1).split(",")]
+        if "start" in parsed and "text" in parsed:
+            fields = parsed
+    i_start, i_end = fields.index("start"), fields.index("end")
+    i_text = fields.index("text")
+    i_style = fields.index("style") if "style" in fields else None
+
+    for kind, body in _ASS_EVENT.findall(text or ""):
+        if kind.lower() != "dialogue":
+            continue
+        # The text field itself may contain commas, so the split is bounded.
+        parts = body.split(",", len(fields) - 1)
+        if len(parts) <= max(i_start, i_end, i_text):
+            continue
+        start = _ass_seconds(parts[i_start])
+        end = _ass_seconds(parts[i_end])
+        if start is None or end is None or end < start:
+            continue
+        if i_style is not None and _ASS_NON_DIALOGUE.search(parts[i_style]):
+            continue
+        body_txt = _ASS_DRAWING.sub(" ", parts[i_text])
+        body_txt = _ASS_BREAKS.sub(" ", body_txt)
+        # A cue that was ONLY a vector drawing carries no dialogue; keeping it
+        # would count as speech for the silence arithmetic.
+        if not _TAGS.sub(" ", body_txt).strip():
+            continue
+        out.append((start, end, body_txt.strip()))
+    out.sort(key=lambda c: c[0])
+    return out
 
 
 def parse_cues(text: str) -> list[tuple[float, float, str]]:
@@ -96,6 +172,10 @@ def parse_cues(text: str) -> list[tuple[float, float, str]]:
     out: list[tuple[float, float, str]] = []
     if not text:
         return out
+    # ASS/SSA is a different container entirely — anime subtitles are almost
+    # always this, and its events carry no "-->" for the SRT path to find.
+    if "[Events]" in text or _ASS_EVENT.search(text):
+        return parse_ass(text)
     # Normalise line endings; VTT differs from SRT only in a header and dots.
     blocks = re.split(r"\r?\n\r?\n+", text.replace("\r\n", "\n").strip())
     for block in blocks:
@@ -127,7 +207,8 @@ def strip_non_dialogue(text: str) -> str:
     """
     if not text:
         return ""
-    t = _TAGS.sub(" ", text)
+    t = _ASS_BREAKS.sub(" ", text)
+    t = _TAGS.sub(" ", t)
     t = _LYRIC.sub(" ", t)
     t = _BRACKETED.sub(" ", t)
     t = _ALLCAPS_LINE.sub(" ", t)
