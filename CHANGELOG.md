@@ -55,6 +55,16 @@ Condensed release history, newest first.
   because groups do reorder it and a hardcoded index would quietly parse
   a style name as a timestamp.
 
+- **A misconfigured URL must not be mistaken for a verdict.** First
+  connection to a real service caught the failure mode this whole
+  tri-state exists for: the base URL was missing its path prefix, every
+  request came back 404 — and a 404 was read as "this title genuinely
+  has no subtitles" and would have been stamped as checked. One typo
+  would have marked an entire library subtitle-less, permanently and
+  silently. Now a response that is an HTML page rather than subtitle
+  data is transient by definition and logs which URL it came from, and a
+  bare host gets the default path prefix appended instead of failing.
+
 - **An optional subtitle service of your own — and a bug worth the whole
   integration.** Anime is where dialogue evidence is thinnest: only about
   a quarter of it carries a subtitle file Plex will hand out, and public

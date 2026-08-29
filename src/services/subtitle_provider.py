@@ -52,9 +52,20 @@ def _plain(v):
     return v.get_secret_value() if hasattr(v, "get_secret_value") else v
 
 
+# Default path prefix. An operator may configure a bare host ("http://box:1234")
+# or a full base including its own prefix; both must work, because getting this
+# wrong is not a harmless mistake — see the HTML check in fetch_best.
+_DEFAULT_PREFIX = "/api/v1"
+
+
 def _conf() -> tuple:
     from src.config import settings
-    return (str(_plain(getattr(settings, "SUBTITLE_PROVIDER_URL", "")) or "").rstrip("/"),
+    base = str(_plain(getattr(settings, "SUBTITLE_PROVIDER_URL", "")) or "").rstrip("/")
+    if base:
+        from urllib.parse import urlsplit
+        if not urlsplit(base).path.strip("/"):
+            base += _DEFAULT_PREFIX
+    return (base,
             str(_plain(getattr(settings, "SUBTITLE_PROVIDER_API_KEY", "")) or ""))
 
 
@@ -104,6 +115,19 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
                                      follow_redirects=True) as c:
             r = await c.get(f"{base}/subs/best", headers=_headers(),
                             params=params)
+            # A 404 that returns an HTML error PAGE is a misconfigured base
+            # URL, not an answer about this title. Treating it as "definitively
+            # no subtitles" would stamp the whole library on the strength of a
+            # typo — so anything that smells like a web page is transient, and
+            # says so loudly enough to be found.
+            ctype = (r.headers.get("content-type") or "").lower()
+            if "html" in ctype or r.text[:200].lstrip().lower().startswith(
+                    ("<!doctype", "<html")):
+                logger.warning("[subtitle-provider] %s returned an HTML page, "
+                               "not subtitle data — is SUBTITLE_PROVIDER_URL "
+                               "(%s) pointing at the right base path?",
+                               r.status_code, base)
+                return None
             if r.status_code in (404, 204):
                 return ""              # asked and answered: nothing on file
             if r.status_code in (401, 403):
