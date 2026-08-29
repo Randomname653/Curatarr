@@ -55,6 +55,29 @@ Condensed release history, newest first.
   because groups do reorder it and a hardcoded index would quietly parse
   a style name as a timestamp.
 
+- **An optional subtitle service of your own — and a bug worth the whole
+  integration.** Anime is where dialogue evidence is thinnest: only about
+  a quarter of it carries a subtitle file Plex will hand out, and public
+  sources have little for the catalogue titles that dominate deletion
+  candidates. Operators who run their own subtitle service can now point
+  Curatarr at it. Nothing is bundled, no service is named, and none is
+  assumed: the module documents an HTTP contract and stays completely
+  inert when unset — no connection is opened, and an absent service is
+  reported as transient rather than stamped, so a stranger's install can
+  never mark its whole library as subtitle-less on the strength of a
+  service it was never going to have. Order of preference: the local file
+  first (free, instant, matches the cut on disk), then the operator's own
+  service, then the public fallback that costs quota.
+
+  The integration paid for itself before it was even connected. The
+  service author found that their track-name filter matched `title`
+  without a word boundary — which matches *Subtitles*, the commonest name
+  a dialogue track has. The same pattern was in our ASS style filter: a
+  fansub whose dialogue style is named `Subtitles` would have had every
+  line discarded, fallen under the forced-track threshold, and been
+  recorded as having no usable subtitles — silently, with no error
+  anywhere. Every alternative is word-bounded now, on both sides.
+
 - **And in a discussion, it can read the dialogue itself.** The batch judge
   only ever sees the derived numbers — one feature's dialogue is around
   13,000 tokens against a 16k context — but pressing "look deeper" on a

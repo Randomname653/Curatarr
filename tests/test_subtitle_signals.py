@@ -477,3 +477,115 @@ def test_ass_metrics_run_end_to_end():
                     f"Default,,0,0,0,,some spoken words here now")
     m = subtitle_metrics(parse_cues("\n".join(body)), 40.0)
     assert m and m["words_per_min"] > 0 and m["cue_count"] == 400
+
+
+def test_style_filter_never_eats_a_dialogue_style():
+    """The bug that would have cost the most, caught on the serving side.
+
+    "Subtitles" is the commonest name a dialogue style carries. An unbounded
+    "title" alternative matches inside it, so every line of the file would be
+    dropped, the cue count would fall under the forced-track threshold, and a
+    talkative episode would be reported as having no usable subtitles — with
+    no error anywhere.
+    """
+    from src.services.subtitle_signals import _ASS_NON_DIALOGUE as R
+    for keep in ("Default", "Main", "Dialog", "Deutsch", "Subtitle",
+                 "Subtitles", "Sub-Default", "Design", "Italics"):
+        assert not R.search(keep), f"{keep!r} is dialogue and must be kept"
+    for drop in ("Signs", "Sign-Top", "OP-Karaoke", "ED", "Songs", "Lyrics",
+                 "Credits", "Title", "Typesetting", "Notes", "Staff"):
+        assert R.search(drop), f"{drop!r} is not dialogue and must be dropped"
+
+
+def test_dialogue_style_named_subtitles_survives_end_to_end():
+    body = ["[Events]",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+            "MarginV, Effect, Text"]
+    for i in range(300):
+        t = i * 8
+        body.append(f"Dialogue: 0,0:{t // 60:02d}:{t % 60:02d}.00,"
+                    f"0:{(t + 2) // 60:02d}:{(t + 2) % 60:02d}.00,"
+                    f"Subtitles,,0,0,0,,they are still talking here")
+    cues = parse_cues("\n".join(body))
+    assert len(cues) == 300, f"lost dialogue to the style filter: {len(cues)}"
+    assert subtitle_metrics(cues, 40.0), "metrics must not refuse a real track"
+
+
+# -- the optional self-hosted provider ---------------------------------------
+# It must be genuinely optional: this repo ships no provider, and the one the
+# author runs is private. Somebody cloning Curatarr has no such service, so an
+# unset provider has to be silent, free, and above all must never be recorded
+# as "this title has no subtitles" — otherwise a stranger's install would
+# permanently stamp its whole anime library on the strength of a service it
+# was never going to have.
+
+from src.services import subtitle_provider as _prov
+
+
+def test_provider_is_inert_when_unconfigured():
+    orig = _prov._conf
+    _prov._conf = lambda: ("", "")
+    try:
+        assert _prov.configured() is False
+        # transient, NOT a verdict — nothing may be stamped from this
+        assert _run(_prov.fetch_best(anidb_id=15648)) is None
+    finally:
+        _prov._conf = orig
+
+
+def test_provider_never_opens_a_connection_when_unset():
+    import httpx
+    calls = []
+    orig_conf, orig_client = _prov._conf, httpx.AsyncClient
+    _prov._conf = lambda: ("", "")
+
+    class _Tripwire(orig_client):
+        def __init__(self, *a, **k):
+            calls.append(1)
+            super().__init__(*a, **k)
+
+    httpx.AsyncClient = _Tripwire
+    try:
+        _run(_prov.fetch_best(anidb_id=15648))
+        assert not calls, "an unset provider must cost nothing at all"
+    finally:
+        _prov._conf, httpx.AsyncClient = orig_conf, orig_client
+
+
+def test_provider_without_any_id_is_definitive_not_transient():
+    orig = _prov._conf
+    _prov._conf = lambda: ("http://example.invalid", "k")
+    try:
+        # No id to ask with — asking again later cannot help.
+        assert _run(_prov.fetch_best()) == ""
+    finally:
+        _prov._conf = orig
+
+
+def test_provider_sends_one_id_and_the_bearer_key():
+    src = (_SRC / "services" / "subtitle_provider.py").read_text(encoding="utf-8")
+    assert 'f"Bearer {key}"' in src
+    assert "anidb_id" in src and "anilist_id" in src and "tvdb_id" in src
+    assert "break" in src, "one id is enough; the service resolves the rest"
+    # episode stays optional: we measure ONE representative episode anyway
+    assert "episode: Optional[int] = None" in src
+
+
+def test_provider_names_no_particular_service():
+    # The repo must not read as a client for anyone's archive: it documents an
+    # HTTP contract an operator may implement, nothing more.
+    src = (_SRC / "services" / "subtitle_provider.py").read_text(encoding="utf-8").lower()
+    for forbidden in ("animetosho", "tosho", "nyaa", "anidb.net/api",
+                      "opensubtitles.org"):
+        assert forbidden not in src, f"{forbidden!r} must not appear here"
+
+
+def test_local_file_still_outranks_every_remote_source():
+    src = _SIGNALS.split("async def acquire_subtitle_text")[1]
+    sidecar = src.index("pick_subtitle_stream")
+    provider = src.index("subtitle_provider")
+    public = src.index("fetch_opensubtitles")
+    assert sidecar < provider < public, (
+        "order must be: local file, then the operator's own service, then the "
+        "public one — the local file is free, instant and matches the cut on "
+        "disk; the public one costs quota")

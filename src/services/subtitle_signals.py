@@ -92,9 +92,17 @@ _ASS_TIME = re.compile(r"^(\d+):(\d{2}):(\d{2})[.,](\d{1,3})$")
 # Style names that mark a non-dialogue layer. A negative list on purpose:
 # dialogue styles are named anything ("Default", "Main", "Deutsch"), while
 # the extras are named remarkably consistently across fansub groups.
+# EVERY alternative is word-bounded, and that is not cosmetic: an unbounded
+# "title" matches "Subtitles" — the single most common name a dialogue style
+# has — and would silently discard the entire dialogue of any file that used
+# it, leaving too few cues to pass the forced-track check. The result would
+# have been a talkative episode reported as having no subtitles at all. Same
+# trap for "sign" inside "Design". (Found on the serving side first; the same
+# pattern was in here.)
 _ASS_NON_DIALOGUE = re.compile(
-    r"sign|song|karaok|lyric|\bop\b|\bed\b|opening|ending|credit|title|"
-    r"typeset|note|caption|staff", re.I)
+    r"\bsigns?\b|\bsongs?\b|\bkaraoke?\b|\blyrics?\b|\bop\b|\bed\b|"
+    r"\bopening\b|\bending\b|\bcredits?\b|\btitles?\b|\btypeset\w*\b|"
+    r"\bnotes?\b|\bcaptions?\b|\bstaff\b", re.I)
 # Vector drawing commands ({\p1}m 0 0 l 100 0 …) are graphics, not words.
 _ASS_DRAWING = re.compile(r"\{[^}]*\\p[1-9][^}]*\}[^{]*")
 _ASS_BREAKS = re.compile(r"\\[Nnh]")
@@ -413,7 +421,7 @@ def pick_subtitle_stream(streams: list):
     return (plain or usable)[0]
 
 
-async def fetch_subtitle_metrics(plex_rating_key: str):
+async def fetch_subtitle_metrics(plex_rating_key: str, hints: dict = None):
     """Measure one title's dialogue. TRI-STATE, like fetch_significance:
 
       dict — measured numbers,
@@ -426,7 +434,7 @@ async def fetch_subtitle_metrics(plex_rating_key: str):
     one and the OpenSubtitles fallback when it does not — most series here
     only have embedded tracks, which no Plex endpoint will hand out.
     """
-    got = await acquire_subtitle_text(str(plex_rating_key))
+    got = await acquire_subtitle_text(str(plex_rating_key), **(hints or {}))
     if got is None:
         return None
     if not got or not isinstance(got, tuple):
@@ -478,7 +486,9 @@ async def topup_subtitle_metrics(title: str, media_type: str, *,
             if row and row.checked and row.metrics_v == METRICS_VERSION:
                 return False
 
-        m = await fetch_subtitle_metrics(rk)
+        m = await fetch_subtitle_metrics(rk, hints={
+            "title_hint": title, "media_hint": media_type,
+            "tmdb_hint": tmdb_id, "tvdb_hint": tvdb_id})
         if m is None:
             return False                      # transient — do NOT stamp
 
@@ -694,7 +704,9 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
         return None
 
 
-async def acquire_subtitle_text(plex_rating_key: str):
+async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
+                                media_hint: str = "", tmdb_hint=None,
+                                tvdb_hint=None):
     """Raw subtitle text for a title: sidecar first, OpenSubtitles second.
 
     Returns ``(text, meta)`` where meta carries language/source/track name,
@@ -770,6 +782,32 @@ async def acquire_subtitle_text(plex_rating_key: str):
     except Exception as e:
         logger.debug("[subtitles] %s: plex read failed: %s", plex_rating_key, e)
         return None
+
+    # An operator's own service comes before the public one: better coverage
+    # for the catalogue titles that dominate deletion candidates, no daily
+    # quota, and no third party involved. Unconfigured, it answers None in a
+    # microsecond and we fall through.
+    try:
+        from src.services import subtitle_provider as _sp
+        if _sp.configured():
+            ids = _sp.anime_ids_for(title_hint, tmdb_id=tmdb_hint,
+                                    tvdb_id=tvdb_hint) if media_hint == "anime" else {}
+            if ids or media_hint == "anime":
+                txt = await _sp.fetch_best(
+                    anidb_id=ids.get("anidb_id"),
+                    anilist_id=ids.get("anilist_id"),
+                    tvdb_id=ids.get("tvdb_id") or tvdb_hint,
+                    episode=(episode_ref[1] if episode_ref else None))
+                if txt:
+                    return (txt, {"language": "", "source": "provider",
+                                  "track_name": "",
+                                  "duration_min": duration_min,
+                                  "episode_ref": episode_ref})
+                # "" means the service genuinely has nothing; None means it
+                # could not answer. Neither is a reason to skip the public
+                # fallback, so we simply carry on.
+    except Exception as e:
+        logger.debug("[subtitles] provider leg failed: %s", e)
 
     if not imdb_id:
         return {}                        # no id to ask with — definitive

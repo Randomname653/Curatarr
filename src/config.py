@@ -147,6 +147,12 @@ class Settings(BaseSettings):
     # claim an account's quota: with the key alone you get the anonymous tier.
     # Keep the daily budget BELOW the account's real cap so a second consumer
     # (Bazarr et al.) sharing the account cannot be starved by us.
+    # Optional self-hosted subtitle service (see subtitle_provider.py for the
+    # HTTP contract). Nothing is bundled and no public archive is contacted —
+    # leave unset unless you run one yourself; Curatarr works fine without it,
+    # titles simply carry no dialogue line.
+    SUBTITLE_PROVIDER_URL: Optional[str] = None
+    SUBTITLE_PROVIDER_API_KEY: Optional[str] = None
     OPENSUBTITLES_API_KEY: Optional[str] = None
     OPENSUBTITLES_USERNAME: Optional[str] = None
     OPENSUBTITLES_PASSWORD: Optional[str] = None
