@@ -108,6 +108,16 @@ _ASS_DRAWING = re.compile(r"\{[^}]*\\p[1-9][^}]*\}[^{]*")
 _ASS_BREAKS = re.compile(r"\\[Nnh]")
 
 
+# Subtitle formats that actually contain TEXT. Deliberately a positive list:
+# VobSub, PGS and DVB subtitles are BITMAPS — pictures of words, megabytes
+# each, with nothing to parse. Measured on a real service, those were exactly
+# the 18 MB "subtitles" that dominated download time. Plex exposes them too
+# (pgs, vobsub, eia_608 all appear in this library), and while none of them
+# happens to carry a download key today, that is a property of the library,
+# not a guarantee.
+_TEXT_CODECS = {"srt", "subrip", "ass", "ssa", "vtt", "webvtt", "mov_text",
+                "text", "utf-8", "microdvd", "subviewer"}
+
 # Markers in a track's own name that say it is not plain dialogue.
 _SDH_NAME = re.compile(r"\bsdh\b|hearing[ _-]?impaired|\bcc\b", re.I)
 _FORCED_NAME = re.compile(r"\bforced\b|\bsigns?\b|songs?\s*&?\s*signs?", re.I)
@@ -168,6 +178,35 @@ def parse_ass(text: str) -> list:
     return out
 
 
+def looks_binary(text: str) -> bool:
+    """True when this is a picture-based subtitle, not text.
+
+    Bitmap formats (VobSub, PGS) declare themselves badly and travel under
+    the same names as text ones, so the content decides: NUL bytes and
+    replacement characters do not occur in a real subtitle file, and a track
+    with almost no letters cannot be dialogue. Cheap enough to run on every
+    fetched file, and it protects every source at once — the local sidecar,
+    an operator's service, and the public fallback.
+    """
+    if not text:
+        return True
+    head = text[:4000]
+    if "\x00" in head or head.count("\ufffd") > 20:
+        return True
+    # Tab, newline and carriage return are the only control codes a
+    # subtitle file has any business containing.
+    ctrl = sum(1 for c in head if ord(c) < 32 and ord(c) not in (9, 10, 13))
+    if ctrl > len(head) * 0.02:
+        return True
+    # The soft signal, and only where it means something: a SHORT file may
+    # be mostly timestamps and still be perfectly valid (a three-cue VTT is
+    # 23% letters), so the letter ratio is judged on substantial files only.
+    if len(head) < 500:
+        return False
+    letters = sum(1 for c in head if c.isalpha())
+    return letters < len(head) * 0.12
+
+
 def parse_cues(text: str) -> list[tuple[float, float, str]]:
     """Parse SRT/VTT into ``(start_s, end_s, text)``.
 
@@ -178,7 +217,7 @@ def parse_cues(text: str) -> list[tuple[float, float, str]]:
     single bad timestamp must not lose the other 1,400 cues.
     """
     out: list[tuple[float, float, str]] = []
-    if not text:
+    if not text or looks_binary(text):
         return out
     # ASS/SSA is a different container entirely — anime subtitles are almost
     # always this, and its events carry no "-->" for the SRT path to find.
@@ -405,7 +444,8 @@ def pick_subtitle_stream(streams: list):
     SDH is still accepted when it is all there is.
     """
     subs = [s for s in (streams or [])
-            if s.get("streamType") == 3 and s.get("key")]
+            if s.get("streamType") == 3 and s.get("key")
+            and (s.get("codec") or "").lower() in _TEXT_CODECS]
     if not subs:
         return None
 

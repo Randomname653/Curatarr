@@ -589,3 +589,37 @@ def test_local_file_still_outranks_every_remote_source():
         "order must be: local file, then the operator's own service, then the "
         "public one — the local file is free, instant and matches the cut on "
         "disk; the public one costs quota")
+
+
+# -- bitmap subtitles are pictures of words, not words -----------------------
+# VobSub and PGS carry images: megabytes each, nothing to parse, and they
+# travel under the same file names and stream types as text tracks. On a real
+# service these were the 18 MB responses that dominated download time.
+
+def test_binary_subtitle_is_recognised_not_parsed():
+    from src.services.subtitle_signals import looks_binary
+    vobsub = "\x00\x00\x01\xba" + "\x00" * 400          # MPEG program stream
+    pgs = "PG" + "\x00\x12\x34" * 300
+    assert looks_binary(vobsub)
+    assert looks_binary(pgs)
+    assert looks_binary("")
+    # ...and real subtitles are not mistaken for binary
+    assert not looks_binary(SRT)
+    assert not looks_binary(ASS)
+
+
+def test_binary_input_yields_no_cues_instead_of_garbage():
+    assert parse_cues("\x00\x00\x01\xba" + "\x00" * 500) == []
+
+
+def test_only_text_codecs_are_downloadable_candidates():
+    from src.services.subtitle_signals import pick_subtitle_stream
+    streams = [
+        {"streamType": 3, "key": "/x/1", "codec": "pgs", "title": "English"},
+        {"streamType": 3, "key": "/x/2", "codec": "vobsub", "title": "German"},
+        {"streamType": 3, "key": "/x/3", "codec": "srt", "title": "English"},
+    ]
+    picked = pick_subtitle_stream(streams)
+    assert picked and picked["codec"] == "srt", picked
+    # nothing but bitmaps on offer -> refuse rather than download megabytes
+    assert pick_subtitle_stream(streams[:2]) is None
