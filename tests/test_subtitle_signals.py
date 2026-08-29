@@ -169,7 +169,7 @@ def test_forced_track_detection():
 
 def test_script_detection_reads_text_not_tags():
     assert script_of("Hello there, old friend") == "latin"
-    assert script_of("こんにちは、元気ですか") == "cjk"
+    assert script_of("こんにちは、元気ですか") == "unspaced"
     assert script_of("") == "other"
     assert script_of("12345 !!! ...") == "other"
 
@@ -662,3 +662,29 @@ def test_coverage_is_reported_unclamped():
     assert m["coverage"] <= 1.31
     src = (_SRC / "services" / "subtitle_signals.py").read_text(encoding="utf-8")
     assert 'round(min(1.0, span_min / duration_min), 3)' not in src
+
+
+def test_scripts_without_word_spacing_are_all_refused():
+    """Thai came back as a 480-cue track carrying 74 whitespace "words" —
+    an almost silent episode, purely as an artifact of the writing system.
+    CJK was handled from the start; the others were not."""
+    from src.services.subtitle_signals import script_of
+    assert script_of("こんにちは、元気ですか") == "unspaced"          # Japanese
+    assert script_of("กิลดาซเหรอ ก่อนหน้านั้นก็ลูกผู้ชาย") == "unspaced"   # Thai
+    assert script_of("ສະບາຍດີ ເຈົ້າສະບາຍດີບໍ") == "unspaced"          # Lao
+    assert script_of("សួស្តី តើអ្នកសុខសប្បាយទេ") == "unspaced"        # Khmer
+    assert script_of("Hello there, old friend") == "latin"
+
+
+def test_unspaced_track_produces_no_metrics():
+    cues = _synthetic_cues(600, step=10.0, text="กิลดาซเหรอก่อนหน้านั้น")
+    assert subtitle_metrics(cues, 100.0) == {}
+
+
+def test_a_track_with_no_words_per_cue_is_refused():
+    # The backstop for scripts the detector does not know: many cues, almost
+    # no tokens. A real dialogue track runs 4-8 words per cue.
+    sparse = [(i * 3.0, i * 3.0 + 1.0, "-") for i in range(400)]
+    assert subtitle_metrics(sparse, 24.0) == {}
+    real = [(i * 3.0, i * 3.0 + 1.0, "four whole words here") for i in range(400)]
+    assert subtitle_metrics(real, 24.0)

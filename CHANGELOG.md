@@ -65,6 +65,17 @@ Condensed release history, newest first.
   data is transient by definition and logs which URL it came from, and a
   bare host gets the default path prefix appended instead of failing.
 
+- **Thai is not a quiet film.** Asking the provider for German returned a
+  Thai track — 480 cues carrying 74 whitespace-separated "words", which
+  the metric read as an almost silent episode. Thai, like Chinese and
+  Japanese, writes without spaces between words, so counting them
+  measures the writing system rather than the dialogue. CJK was refused
+  from the start; Thai, Lao, Khmer, Burmese and Tibetan were not, and now
+  are. A second guard catches whatever the script detector does not know:
+  a real dialogue track averages four to eight words per cue, and a
+  fraction of a word per cue means the text is not being read as language
+  at all.
+
 - **A subtitle longer than its own episode is somebody else's file.** The
   coverage check was one-sided: too FEW cues over the runtime meant a
   signage-only track and was refused, but too MANY was accepted without

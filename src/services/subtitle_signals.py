@@ -282,8 +282,17 @@ def count_sdh_markers(text: str) -> int:
             + len(_ALLCAPS_LINE.findall(text)))
 
 
+# Scripts that do not put spaces between words. Counting whitespace-separated
+# "words" in any of these measures the writing system, not the dialogue: a
+# real Thai episode track came back as 480 cues carrying 74 "words", which
+# read as an almost silent film. CJK was covered from the start; Thai, Lao,
+# Khmer, Burmese and Tibetan work the same way and were not.
+_NO_WORD_BREAK = ("CJK", "HIRAGANA", "KATAKANA", "HANGUL", "THAI", "LAO",
+                  "KHMER", "MYANMAR", "TIBETAN")
+
+
 def script_of(text: str) -> str:
-    """``latin`` / ``cjk`` / ``other`` — decided from the TEXT, never a tag.
+    """``latin`` / ``unspaced`` / ``other`` — decided from the TEXT, never a tag.
 
     Language tags on real files are not trustworthy: this library carries a
     track tagged ``hi`` (Hindi) containing no Devanagari at all, and one tagged
@@ -295,16 +304,15 @@ def script_of(text: str) -> str:
     letters = [c for c in (text or "") if c.isalpha()]
     if not letters:
         return "other"
-    cjk = 0
+    unspaced = 0
     for c in letters[:4000]:
         try:
             name = unicodedata.name(c)
         except ValueError:
             continue
-        if ("CJK" in name or "HIRAGANA" in name
-                or "KATAKANA" in name or "HANGUL" in name):
-            cjk += 1
-    return "cjk" if cjk / min(len(letters), 4000) > 0.15 else "latin"
+        if any(marker in name for marker in _NO_WORD_BREAK):
+            unspaced += 1
+    return "unspaced" if unspaced / min(len(letters), 4000) > 0.15 else "latin"
 
 
 def tokenize(text: str) -> list[str]:
@@ -373,13 +381,19 @@ def subtitle_metrics(cues: list, duration_min: float,
     sdh_markers = count_sdh_markers(raw)
     clean = strip_non_dialogue(raw)
     script = script_of(clean)
-    if script == "cjk":
+    if script == "unspaced":
         # No whitespace word boundaries — a words-per-minute figure would be an
         # artifact of the writing system, not of the film.
         return {}
 
     toks = tokenize(clean)
     if not toks:
+        return {}
+    # Second line of defence, for scripts the check above does not know: a
+    # real dialogue track averages several words per cue (measured: 4-8 on
+    # this library). A fraction of a word per cue means the text is not
+    # being tokenised as language at all — or the track is signage.
+    if len(toks) / len(cues) < 1.0:
         return {}
 
     gaps = 0.0
