@@ -333,65 +333,35 @@ def pick_subtitle_stream(streams: list):
 
 
 async def fetch_subtitle_metrics(plex_rating_key: str):
-    """Measure one title's subtitle track. TRI-STATE, like fetch_significance:
+    """Measure one title's dialogue. TRI-STATE, like fetch_significance:
 
       dict — measured numbers,
-      {}   — DEFINITIVELY nothing usable (no sidecar track, forced-only, a
+      {}   — DEFINITIVELY nothing usable (no track anywhere, forced-only, a
              script without word boundaries) -> caller may stamp checked,
-      None — TRANSIENT failure (Plex unreachable, 5xx) -> caller must NOT
-             stamp; the next pass retries.
+      None — TRANSIENT (Plex or OpenSubtitles unreachable, quota spent) ->
+             caller must NOT stamp; the next pass retries.
 
-    The distinction is the whole point: a stamped "nothing" that was really a
-    network blip would hide a title's evidence forever — the Panic-Room bug
-    that made this contract necessary in the significance path.
+    Goes through acquire_subtitle_text, so it gets the sidecar when Plex has
+    one and the OpenSubtitles fallback when it does not — most series here
+    only have embedded tracks, which no Plex endpoint will hand out.
     """
-    import httpx
-    base, token = _plex()
-    if not base or not token or not plex_rating_key:
+    got = await acquire_subtitle_text(str(plex_rating_key))
+    if got is None:
+        return None
+    if not got or not isinstance(got, tuple):
         return {}
-    headers = {"X-Plex-Token": token, "Accept": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as c:
-            r = await c.get(base + "/library/metadata/" + str(plex_rating_key),
-                            headers=headers)
-            if r.status_code == 404:
-                return {}          # item is gone from Plex — definitive
-            r.raise_for_status()
-            meta = (r.json().get("MediaContainer", {}).get("Metadata") or [])
-            if not meta:
-                return {}
-            md = meta[0]
-            duration_min = (md.get("duration") or 0) / 60000.0
-            media = (md.get("Media") or [{}])[0]
-            part = (media.get("Part") or [{}])[0]
-            stream = pick_subtitle_stream(part.get("Stream") or [])
-            if not stream:
-                return {}          # nothing reachable — definitive, stamp it
-            txt = (await c.get(base + stream["key"],
-                               headers={"X-Plex-Token": token})).text
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
-        return None
-    except httpx.HTTPStatusError as e:
-        # 5xx is the server having a bad moment; 4xx means this track really
-        # is not there.
-        return None if e.response.status_code >= 500 else {}
-    except Exception as e:
-        logger.debug("[subtitles] %s: unexpected failure: %s",
-                     plex_rating_key, e)
-        return None
-
-    name = " ".join(str(stream.get(k) or "") for k in
-                    ("title", "displayTitle", "extendedDisplayTitle"))
-    m = subtitle_metrics(parse_cues(txt), duration_min, track_name=name)
+    txt, meta = got
+    m = subtitle_metrics(parse_cues(txt), meta.get("duration_min") or 0,
+                         track_name=meta.get("track_name") or "")
     if not m:
         return {}
-    m["language"] = stream.get("languageTag") or stream.get("language") or ""
-    m["source"] = "plex_sidecar"
+    m["language"] = meta.get("language") or ""
+    m["source"] = meta.get("source") or ""
     return m
 
 
 def _resolve_plex_key(media_type: str, tmdb_id=None, tvdb_id=None):
-    """The REAL Plex ratingKey for a candidate.
+    """The REAL Plex ratingKey for a candidate, plus its runtime.
 
     Never read ``item["plex_rating_key"]`` for this: on a deletion candidate
     that field holds the enrichment-pipeline key ("radarr:1234"), not a Plex
@@ -567,7 +537,8 @@ async def _os_login(client, api_key: str, user: str, pw: str):
         return None
 
 
-async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de"):
+async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
+                              episode_ref=None):
     """Best subtitle text for an IMDb id, or the tri-state signals.
 
     ``None`` = transient (no key, budget spent, network/5xx) — never stamped.
@@ -590,13 +561,21 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de"):
             jwt = await _os_login(c, api_key, user, pw)
             if jwt:
                 head["Authorization"] = "Bearer " + jwt
-            r = await c.get(_OS_BASE + "/subtitles", headers=head, params={
-                "imdb_id": int(imdb), "languages": languages,
+            params = {"languages": languages,
                 # Let the service exclude what we would otherwise have to strip
                 # or refuse: sound-cue tracks and signage-only tracks.
                 "hearing_impaired": "exclude", "foreign_parts_only": "exclude",
-                "order_by": "download_count", "order_direction": "desc",
-            })
+                "order_by": "download_count", "order_direction": "desc"}
+            if episode_ref:
+                # A series' IMDb id belongs to the SERIES; the subtitle we want
+                # belongs to one episode, so it is looked up as a child.
+                params["parent_imdb_id"] = int(imdb)
+                params["season_number"] = int(episode_ref[0])
+                params["episode_number"] = int(episode_ref[1])
+            else:
+                params["imdb_id"] = int(imdb)
+            r = await c.get(_OS_BASE + "/subtitles", headers=head,
+                            params=params)
             if r.status_code == 429:
                 return None
             r.raise_for_status()
@@ -649,6 +628,7 @@ async def acquire_subtitle_text(plex_rating_key: str):
     headers = {"X-Plex-Token": token, "Accept": "application/json"}
     imdb_id = ""
     duration_min = 0.0
+    episode_ref = None          # (season, episode) when we measured an episode
     try:
         async with httpx.AsyncClient(timeout=20.0) as c:
             r = await c.get(base + "/library/metadata/" + str(plex_rating_key),
@@ -660,12 +640,35 @@ async def acquire_subtitle_text(plex_rating_key: str):
             if not meta:
                 return {}
             md = meta[0]
-            duration_min = (md.get("duration") or 0) / 60000.0
+            # The series entry carries the IMDb id but NO Media/Part/Stream —
+            # subtitles live on the episodes. Read the id here, then descend to
+            # one representative episode and measure THAT: its runtime, its
+            # track. Using the series' aggregated duration would divide one
+            # episode's words by the whole season and report near-silence.
             for g in (md.get("Guid") or []):
                 gid = str(g.get("id") or "")
                 if gid.startswith("imdb://"):
                     imdb_id = gid.split("//", 1)[1]
                     break
+            if md.get("type") == "show" or not md.get("Media"):
+                lv = await c.get(base + "/library/metadata/"
+                                 + str(plex_rating_key) + "/allLeaves",
+                                 headers=headers,
+                                 params={"X-Plex-Container-Size": 1})
+                leaves = (lv.json().get("MediaContainer", {}).get("Metadata")
+                          or []) if lv.status_code == 200 else []
+                if not leaves:
+                    return {}
+                ep = await c.get(base + "/library/metadata/"
+                                 + str(leaves[0]["ratingKey"]), headers=headers)
+                ep.raise_for_status()
+                ep_meta = (ep.json().get("MediaContainer", {}).get("Metadata")
+                           or [])
+                if not ep_meta:
+                    return {}
+                md = ep_meta[0]
+                episode_ref = (md.get("parentIndex") or 1, md.get("index") or 1)
+            duration_min = (md.get("duration") or 0) / 60000.0
             media = (md.get("Media") or [{}])[0]
             part = (media.get("Part") or [{}])[0]
             stream = pick_subtitle_stream(part.get("Stream") or [])
@@ -677,7 +680,8 @@ async def acquire_subtitle_text(plex_rating_key: str):
                 return (txt, {"language": stream.get("languageTag")
                               or stream.get("language") or "",
                               "source": "plex_sidecar", "track_name": name,
-                              "duration_min": duration_min})
+                              "duration_min": duration_min,
+                              "episode_ref": episode_ref})
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
         return None
     except httpx.HTTPStatusError as e:
@@ -688,14 +692,15 @@ async def acquire_subtitle_text(plex_rating_key: str):
 
     if not imdb_id:
         return {}                        # no id to ask with — definitive
-    got = await fetch_opensubtitles(imdb_id)
+    got = await fetch_opensubtitles(imdb_id, episode_ref=episode_ref)
     if got is None:
         return None
     if not got:
         return {}
     txt, lang = got
     return (txt, {"language": lang, "source": "opensubtitles",
-                  "track_name": "", "duration_min": duration_min})
+                  "track_name": "", "duration_min": duration_min,
+                  "episode_ref": episode_ref})
 
 
 async def fetch_subtitle_transcript(plex_rating_key: str,
