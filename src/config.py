@@ -140,6 +140,17 @@ class Settings(BaseSettings):
 
     # ── Metadata APIs ────────────────────────────────────────────────────────
     TMDB_API_KEY: Optional[str] = None
+    # OpenSubtitles (api.opensubtitles.com v1) — the fallback when a title has
+    # no downloadable sidecar track. Free tiers are tiny (5/day anonymous,
+    # 10-20 with a login); a VIP account raises it to 1000/day, which is what
+    # makes this usable for whole scans. USERNAME/PASSWORD are only needed to
+    # claim an account's quota: with the key alone you get the anonymous tier.
+    # Keep the daily budget BELOW the account's real cap so a second consumer
+    # (Bazarr et al.) sharing the account cannot be starved by us.
+    OPENSUBTITLES_API_KEY: Optional[str] = None
+    OPENSUBTITLES_USERNAME: Optional[str] = None
+    OPENSUBTITLES_PASSWORD: Optional[str] = None
+    OPENSUBTITLES_DAILY_BUDGET: int = 400
     OMDB_API_KEY: Optional[str] = None   # optional — free at omdbapi.com, 1000 req/day
     LASTFM_API_KEY: Optional[str] = None         # music tags + similar artists (optional)
     SPOTIFY_CLIENT_ID: Optional[str] = None      # Client Credentials — no user login needed

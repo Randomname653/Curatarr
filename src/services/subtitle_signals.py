@@ -490,3 +490,238 @@ def subtitle_facts(item: dict, media_type: str) -> str:
     except Exception as e:
         logger.debug("[subtitles] facts lookup failed: %s", e)
         return ""
+
+
+# ── OPENSUBTITLES FALLBACK ───────────────────────────────────────────────────
+# Only ~70% of movies and far less of the series here carry a downloadable
+# sidecar track, and embedded tracks are unreachable through the Plex API. This
+# closes that gap for anything with an IMDb id — which Plex hands us directly in
+# the item's Guid list, so there is no title matching to get wrong.
+#
+# Quota is the whole design constraint: the anonymous tier is 5 downloads/day
+# and a free login 10-20, against up to 60 candidates in a single scan. A VIP
+# account raises it to 1000/day, which is what makes batch use viable at all.
+# We therefore keep our own conservative day counter and stop BEFORE calling
+# out, so a shared account is never drained by us — and an exhausted budget is
+# reported as TRANSIENT, never stamped, because it resolves itself tomorrow.
+
+_OS_BASE = "https://api.opensubtitles.com/api/v1"
+_OS_UA = "Curatarr/1.0"
+_os_token: dict = {"jwt": None, "at": None}
+
+
+def _os_conf():
+    from src.config import settings
+
+    def _plain(v):
+        return v.get_secret_value() if hasattr(v, "get_secret_value") else v
+
+    return (_plain(getattr(settings, "OPENSUBTITLES_API_KEY", None)) or "",
+            _plain(getattr(settings, "OPENSUBTITLES_USERNAME", None)) or "",
+            _plain(getattr(settings, "OPENSUBTITLES_PASSWORD", None)) or "",
+            int(getattr(settings, "OPENSUBTITLES_DAILY_BUDGET", 0) or 0))
+
+
+def _os_budget_key() -> str:
+    from datetime import datetime, timezone
+    return "subs_os_dl_" + datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def os_spent_today() -> int:
+    """Downloads charged to today. Date-scoped, so it resets by itself."""
+    try:
+        from src.services import app_state
+        return int(app_state.get_state(_os_budget_key()) or 0)
+    except Exception:
+        return 0
+
+
+def _os_charge() -> None:
+    try:
+        from src.services import app_state
+        app_state.set_state(_os_budget_key(), str(os_spent_today() + 1))
+    except Exception as e:
+        logger.debug("[subtitles] could not record quota use: %s", e)
+
+
+async def _os_login(client, api_key: str, user: str, pw: str):
+    """Trade credentials for a JWT — only needed to claim an account's larger
+    quota. Cached for the day; failure is not fatal, we fall back to the
+    anonymous tier."""
+    import time
+    if _os_token["jwt"] and _os_token["at"] and time.time() - _os_token["at"] < 43200:
+        return _os_token["jwt"]
+    if not (user and pw):
+        return None
+    try:
+        r = await client.post(_OS_BASE + "/login",
+                              headers={"Api-Key": api_key, "User-Agent": _OS_UA,
+                                       "Content-Type": "application/json"},
+                              json={"username": user, "password": pw})
+        r.raise_for_status()
+        tok = (r.json() or {}).get("token")
+        _os_token["jwt"], _os_token["at"] = tok, time.time()
+        return tok
+    except Exception as e:
+        logger.debug("[subtitles] OpenSubtitles login failed: %s", e)
+        return None
+
+
+async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de"):
+    """Best subtitle text for an IMDb id, or the tri-state signals.
+
+    ``None`` = transient (no key, budget spent, network/5xx) — never stamped.
+    ``""``   = the service genuinely has nothing for this title.
+    """
+    import httpx
+    api_key, user, pw, budget = _os_conf()
+    if not api_key:
+        return None                      # not configured — retry if it ever is
+    if budget and os_spent_today() >= budget:
+        logger.info("[subtitles] OpenSubtitles daily budget (%d) reached", budget)
+        return None                      # transient by design: tomorrow works
+
+    imdb = str(imdb_id or "").lower().replace("tt", "").lstrip("0")
+    if not imdb.isdigit():
+        return ""
+    head = {"Api-Key": api_key, "User-Agent": _OS_UA}
+    try:
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as c:
+            jwt = await _os_login(c, api_key, user, pw)
+            if jwt:
+                head["Authorization"] = "Bearer " + jwt
+            r = await c.get(_OS_BASE + "/subtitles", headers=head, params={
+                "imdb_id": int(imdb), "languages": languages,
+                # Let the service exclude what we would otherwise have to strip
+                # or refuse: sound-cue tracks and signage-only tracks.
+                "hearing_impaired": "exclude", "foreign_parts_only": "exclude",
+                "order_by": "download_count", "order_direction": "desc",
+            })
+            if r.status_code == 429:
+                return None
+            r.raise_for_status()
+            data = (r.json() or {}).get("data") or []
+            file_id = None
+            lang = ""
+            for hit in data:
+                attrs = hit.get("attributes") or {}
+                files = attrs.get("files") or []
+                if files and files[0].get("file_id"):
+                    file_id = files[0]["file_id"]
+                    lang = attrs.get("language") or ""
+                    break
+            if not file_id:
+                return ""                # nothing on file for this title
+
+            d = await c.post(_OS_BASE + "/download", headers={
+                **head, "Content-Type": "application/json"},
+                json={"file_id": file_id})
+            if d.status_code == 429:
+                return None
+            d.raise_for_status()
+            link = (d.json() or {}).get("link")
+            if not link:
+                return None
+            _os_charge()
+            txt = (await c.get(link, headers={"User-Agent": _OS_UA})).text
+            return (txt, lang)
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+        return None
+    except httpx.HTTPStatusError as e:
+        return None if e.response.status_code >= 500 else ""
+    except Exception as e:
+        logger.debug("[subtitles] OpenSubtitles failed for %s: %s", imdb_id, e)
+        return None
+
+
+async def acquire_subtitle_text(plex_rating_key: str):
+    """Raw subtitle text for a title: sidecar first, OpenSubtitles second.
+
+    Returns ``(text, meta)`` where meta carries language/source/track name,
+    or the tri-state ``{}`` / ``None`` as everywhere else in this module.
+    The local file always wins — it is free, instant, and matches the exact
+    cut on disk, which a downloaded track need not.
+    """
+    import httpx
+    base, token = _plex()
+    if not base or not token or not plex_rating_key:
+        return {}
+    headers = {"X-Plex-Token": token, "Accept": "application/json"}
+    imdb_id = ""
+    duration_min = 0.0
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as c:
+            r = await c.get(base + "/library/metadata/" + str(plex_rating_key),
+                            headers=headers)
+            if r.status_code == 404:
+                return {}
+            r.raise_for_status()
+            meta = (r.json().get("MediaContainer", {}).get("Metadata") or [])
+            if not meta:
+                return {}
+            md = meta[0]
+            duration_min = (md.get("duration") or 0) / 60000.0
+            for g in (md.get("Guid") or []):
+                gid = str(g.get("id") or "")
+                if gid.startswith("imdb://"):
+                    imdb_id = gid.split("//", 1)[1]
+                    break
+            media = (md.get("Media") or [{}])[0]
+            part = (media.get("Part") or [{}])[0]
+            stream = pick_subtitle_stream(part.get("Stream") or [])
+            if stream:
+                txt = (await c.get(base + stream["key"],
+                                   headers={"X-Plex-Token": token})).text
+                name = " ".join(str(stream.get(k) or "") for k in
+                                ("title", "displayTitle", "extendedDisplayTitle"))
+                return (txt, {"language": stream.get("languageTag")
+                              or stream.get("language") or "",
+                              "source": "plex_sidecar", "track_name": name,
+                              "duration_min": duration_min})
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+        return None
+    except httpx.HTTPStatusError as e:
+        return None if e.response.status_code >= 500 else {}
+    except Exception as e:
+        logger.debug("[subtitles] %s: plex read failed: %s", plex_rating_key, e)
+        return None
+
+    if not imdb_id:
+        return {}                        # no id to ask with — definitive
+    got = await fetch_opensubtitles(imdb_id)
+    if got is None:
+        return None
+    if not got:
+        return {}
+    txt, lang = got
+    return (txt, {"language": lang, "source": "opensubtitles",
+                  "track_name": "", "duration_min": duration_min})
+
+
+async def fetch_subtitle_transcript(plex_rating_key: str,
+                                    max_chars: int = 12000):
+    """Cleaned dialogue text for ONE title — the Level-2 deep read.
+
+    Never used by the batch judge: a feature runs ~13,000 tokens, and the
+    curator's whole context is 16k. Even here the text is sampled rather than
+    truncated — beginning, middle and end in equal parts — because a blind
+    head-cut hides exactly the late shift in register a discussion is usually
+    about (the lesson the significance slicer already encodes).
+    """
+    got = await acquire_subtitle_text(str(plex_rating_key))
+    if not got or not isinstance(got, tuple):
+        return ""
+    txt, meta = got
+    cues = parse_cues(txt)
+    if not cues or looks_forced(cues, meta.get("duration_min") or 0):
+        return ""
+    clean = " ".join(
+        ln.strip() for ln in strip_non_dialogue(
+            "\n".join(c[2] for c in cues)).splitlines() if ln.strip())
+    if len(clean) <= max_chars:
+        return clean
+    third = max_chars // 3
+    n = len(clean)
+    return (clean[:third]
+            + "\n[…]\n" + clean[n // 2 - third // 2: n // 2 + third // 2]
+            + "\n[…]\n" + clean[-third:])

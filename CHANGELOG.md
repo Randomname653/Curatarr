@@ -39,6 +39,27 @@ Condensed release history, newest first.
   track tagged Hindi containing no Devanagari at all. Where no reachable
   track exists the line is simply absent: silence beats a guess.
 
+- **And in a discussion, it can read the dialogue itself.** The batch judge
+  only ever sees the derived numbers — one feature's dialogue is around
+  13,000 tokens against a 16k context — but pressing "look deeper" on a
+  single title now also pulls the cleaned dialogue text into the
+  conversation, the same trade the Wikipedia deep read already makes. It is
+  sampled beginning, middle and end rather than truncated, because a blind
+  head-cut hides exactly the late shift in register a discussion tends to
+  turn on, and it is labelled for what it is: evidence of register and
+  texture, not a transcript of record.
+
+  Where Plex has no downloadable track — which is most series and a quarter
+  of the films — OpenSubtitles now fills the gap, matched by the IMDb id
+  Plex hands over directly, so there is no title guessing. Quota is the
+  entire design constraint: the anonymous tier allows five downloads a day
+  and a free login ten to twenty, against up to sixty candidates in one
+  scan. A daily budget is therefore checked *before* any connection is
+  opened, and exhausting it reports as transient rather than being stamped —
+  otherwise a busy day would mark a title as having no subtitles forever.
+  The local file always wins when it exists: free, instant, and guaranteed
+  to match the cut on disk.
+
 - **A batch of agent-written tests, kept only where they bite.** Thirteen
   bot PRs landed at once; each was reviewed against its brief, run, and
   then mutation-tested — the production function it covers was broken on

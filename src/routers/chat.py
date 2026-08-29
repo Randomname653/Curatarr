@@ -1728,6 +1728,33 @@ async def _build_discuss_context_block(
             except (asyncio.TimeoutError, Exception) as _e:
                 logger.debug("[chat] level-2 topups failed for %r: %s",
                              proposal.title, _e)
+            # THE WORK ITSELF, not metadata about it. A feature's dialogue is
+            # ~13,000 tokens against a 16k context, so the batch judge only ever
+            # sees the derived numbers — but here it is ONE title and the owner
+            # pressed "look deeper", which is exactly the trade the Wikipedia
+            # deep read already makes. Sampled beginning/middle/end rather than
+            # truncated, so a late shift in register stays visible.
+            try:
+                from src.services.subtitle_signals import (
+                    fetch_subtitle_transcript)
+                from src.services.size_norms import tech_profile_for
+                _prof = tech_profile_for(tmdb_id=proposal.tmdb_id,
+                                         tvdb_id=proposal.tvdb_id,
+                                         media_type=proposal.category or "movie")
+                _rk = (_prof or {}).get("plex_rating_key")
+                if _rk:
+                    _tx = await asyncio.wait_for(
+                        fetch_subtitle_transcript(str(_rk)), timeout=45.0)
+                    if _tx:
+                        block += (
+                            f"\nDIALOGUE EXCERPT from '{proposal.title}' "
+                            f"(subtitle track, sampled beginning/middle/end; "
+                            f"condensed by design and possibly a translation — "
+                            f"read it as evidence of REGISTER and TEXTURE, not "
+                            f"as a transcript of record):\n{_tx}\n")
+            except (asyncio.TimeoutError, Exception) as _e:
+                logger.debug("[chat] level-2 transcript failed for %r: %s",
+                             proposal.title, _e)
         verified_payload = await ensure_verified_data(
             proposal.title, proposal.category or "movie",
             tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,

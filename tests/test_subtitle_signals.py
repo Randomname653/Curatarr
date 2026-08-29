@@ -286,3 +286,104 @@ def test_tri_state_contract_is_documented_and_distinguished():
     assert "TRI-STATE" in _SIGNALS
     assert "do NOT stamp" in _SIGNALS or "must NOT\n    stamp" in _SIGNALS
     assert "if m is None:" in _SIGNALS
+
+
+# -- the OpenSubtitles fallback: quota is the design constraint --------------
+# The anonymous tier allows 5 downloads a day and a free login 10-20, against
+# up to 60 candidates in one scan; only a VIP account (1000/day) makes batch
+# use viable. So the budget is checked BEFORE any network call, and running
+# out must read as TRANSIENT — stamping it would mark a title "has no
+# subtitles" forever because we happened to be busy that day.
+
+import asyncio as _asyncio
+
+import src.services.subtitle_signals as _ss
+
+
+def _run(coro):
+    return _asyncio.run(coro)
+
+
+def test_no_api_key_is_transient_not_a_verdict():
+    orig = _ss._os_conf
+    _ss._os_conf = lambda: ("", "", "", 400)
+    try:
+        assert _run(_ss.fetch_opensubtitles("tt0096734")) is None
+    finally:
+        _ss._os_conf = orig
+
+
+def test_exhausted_budget_never_touches_the_network():
+    calls = []
+    orig_conf, orig_spent = _ss._os_conf, _ss.os_spent_today
+    _ss._os_conf = lambda: ("key", "", "", 10)
+    _ss.os_spent_today = lambda: 10          # budget already used up
+    import httpx
+    orig_client = httpx.AsyncClient
+
+    class _Tripwire(orig_client):
+        def __init__(self, *a, **k):
+            calls.append(1)
+            super().__init__(*a, **k)
+
+    httpx.AsyncClient = _Tripwire
+    try:
+        assert _run(_ss.fetch_opensubtitles("tt0096734")) is None
+        assert not calls, "budget gate must stop BEFORE opening a connection"
+    finally:
+        _ss._os_conf, _ss.os_spent_today = orig_conf, orig_spent
+        httpx.AsyncClient = orig_client
+
+
+def test_non_numeric_imdb_id_is_definitive_not_transient():
+    orig = _ss._os_conf
+    _ss._os_conf = lambda: ("key", "", "", 400)
+    try:
+        # No usable id to ask with — asking again tomorrow cannot help.
+        assert _run(_ss.fetch_opensubtitles("")) == ""
+        assert _run(_ss.fetch_opensubtitles("not-an-id")) == ""
+    finally:
+        _ss._os_conf = orig
+
+
+def test_budget_counter_is_day_scoped():
+    # The key carries the date, so yesterday's spend can never block today.
+    from datetime import datetime, timezone
+    assert datetime.now(timezone.utc).strftime("%Y%m%d") in _ss._os_budget_key()
+
+
+# -- the level-2 transcript: sampled, capped, and out of the batch path ------
+
+def test_transcript_samples_rather_than_truncates():
+    # A blind head-cut hides a late shift in register, which is often exactly
+    # what a discussion turns on.
+    src = _SIGNALS.split("async def fetch_subtitle_transcript")[1][:1600]
+    assert "max_chars" in src
+    assert "[…]" in src or "\\u2026" in src
+    assert "n // 2" in src, "middle third must be sampled, not just head+tail"
+
+
+def test_transcript_reaches_only_the_discussion():
+    chat = (_SRC / "routers" / "chat.py").read_text(encoding="utf-8")
+    assert "fetch_subtitle_transcript" in chat
+    # Never the batch judge: one feature is ~13k tokens against a 16k context.
+    assert "fetch_subtitle_transcript" not in _PILLARS
+    assert "fetch_subtitle_transcript" not in _ENGINE
+    # ...and only behind the explicit "look deeper" gate.
+    gate = chat.index('if getattr(ctx, "reevaluate", False):')
+    assert chat.index("fetch_subtitle_transcript") > gate
+
+
+def test_transcript_excerpt_declares_what_it_is():
+    chat = (_SRC / "routers" / "chat.py").read_text(encoding="utf-8")
+    seg = " ".join(chat.split("DIALOGUE EXCERPT")[1][:600].split())
+    assert "condensed by design" in seg
+    assert "transcript of record" in seg
+
+
+def test_sidecar_is_preferred_over_the_paid_fallback():
+    # The local file is free, instant, and matches the cut on disk — the
+    # download is only for what Plex cannot give us.
+    src = _SIGNALS.split("async def acquire_subtitle_text")[1]
+    assert "pick_subtitle_stream" in src and "fetch_opensubtitles" in src
+    assert src.index("pick_subtitle_stream") < src.index("fetch_opensubtitles")
