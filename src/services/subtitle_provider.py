@@ -34,9 +34,13 @@ never a requirement. The service is expected to prefer a full dialogue track
 over signs/songs/karaoke tracks — Curatarr filters those itself as well, since
 neither side can be sure the other got it right.
 
-Failures are TRANSIENT by contract: an unreachable or unconfigured service
-must never be recorded as "this title has no subtitles", or a weekend of
-downtime would permanently blind the judge to part of the library.
+Failures are TRANSIENT by default: an unreachable or unconfigured service must
+never be recorded as "this title has no subtitles", or a weekend of downtime
+would permanently blind the judge to part of the library. A service that knows
+better may say so — an error body carrying ``{"permanent": true}`` is taken at
+its word and settles the question for good, while ``false`` (or no body at
+all) means ask again later. That flag is believed over the status code, which
+is the cruder signal.
 """
 from __future__ import annotations
 
@@ -145,6 +149,20 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
                                "(%s) pointing at the right base path?",
                                r.status_code, base)
                 return None
+            # A well-behaved service says whether a failure is worth retrying;
+            # believe it over the status code, which is the cruder signal and
+            # can be re-mapped later without meaning to change semantics.
+            if r.status_code >= 400 and "json" in ctype:
+                try:
+                    err = r.json()
+                except Exception:
+                    err = {}
+                if isinstance(err, dict) and "permanent" in err:
+                    if err.get("permanent"):
+                        return ""      # settled: never ask about this again
+                    logger.debug("[subtitle-provider] retryable: %s",
+                                 err.get("error") or r.status_code)
+                    return None
             if r.status_code in (404, 204):
                 return ""              # asked and answered: nothing on file
             if r.status_code in (401, 403):

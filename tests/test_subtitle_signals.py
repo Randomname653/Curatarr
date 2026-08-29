@@ -623,3 +623,15 @@ def test_only_text_codecs_are_downloadable_candidates():
     assert picked and picked["codec"] == "srt", picked
     # nothing but bitmaps on offer -> refuse rather than download megabytes
     assert pick_subtitle_stream(streams[:2]) is None
+
+
+def test_provider_believes_an_explicit_permanent_flag():
+    """A service that distinguishes 'never ask again' from 'ask later' is more
+    trustworthy than a status code, and the distinction decides whether a
+    title is stamped or retried forever."""
+    src = (_SRC / "services" / "subtitle_provider.py").read_text(encoding="utf-8")
+    assert '"permanent" in err' in src
+    assert 'if err.get("permanent"):' in src
+    # permanent -> settled (empty), retryable -> None, and in that order
+    perm_at = src.index('if err.get("permanent"):')
+    assert src.index('return ""', perm_at) < src.index("return None", perm_at)
