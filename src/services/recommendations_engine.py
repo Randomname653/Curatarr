@@ -1750,8 +1750,10 @@ async def generate_deletion_proposals(
                      f"{_warmed_rec} reception, {_warmed_wd} on-record facts, "
                      f"{_warmed_sub} dialogue profiles")
                 logger.info("[deletions] %s: pre-judge warm-up added %d article(s), "
-                            "%d reception record(s), %d wikidata record(s)",
-                            category, _warmed, _warmed_rec, _warmed_wd)
+                            "%d reception record(s), %d wikidata record(s), "
+                            "%d dialogue profile(s)",
+                            category, _warmed, _warmed_rec, _warmed_wd,
+                            _warmed_sub)
         except Exception as _e:
             logger.debug("[deletions] pre-judge warm-up failed: %s", _e)
         _gate_label = f"deletion scan: {category}"

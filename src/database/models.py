@@ -687,6 +687,11 @@ class MediaSubtitleProfile(Base):
     mattr           = Column(Float, nullable=True)        # NOT raw TTR (length-biased)
     total_words     = Column(Integer, nullable=True)
     coverage        = Column(Float, nullable=True)        # cue span / runtime
+    # The runtime these figures were computed against. For a series that is ONE
+    # episode, never the season total — MediaTechProfile aggregates every
+    # episode, and rendering "2 of 115 min without dialogue" from an episode's
+    # silence and a season's length reads as nonsense.
+    duration_min    = Column(Float, nullable=True)
     checked         = Column(Boolean, default=False)
     metrics_v       = Column(String(16), nullable=True)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

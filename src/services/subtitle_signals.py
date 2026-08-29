@@ -431,7 +431,11 @@ def format_dialogue_line(m: dict, lang: str = "") -> str:
     """
     if not m or not m.get("words_per_min"):
         return ""
-    lang_part = f"{lang} " if lang else ""
+    # The track's own language tag is demonstrably unreliable here (a track
+    # labelled Hindi contained no Devanagari; one labelled German was Thai),
+    # so it is only shown when the metrics were computed at all — and never
+    # presented as a fact about the work.
+    lang_part = f"{lang} " if lang and len(lang) <= 5 else ""
     sdh = ", SDH track" if m.get("is_sdh") else ""
     div = (f", lexical diversity {m['mattr']}" if m.get("mattr") is not None
            else "")
@@ -580,6 +584,7 @@ async def topup_subtitle_metrics(title: str, media_type: str, *,
                 row.mattr = m.get("mattr")
                 row.total_words = m.get("total_words")
                 row.coverage = m.get("coverage")
+                row.duration_min = m.get("duration_min")
             db.commit()
         return bool(m)
     except Exception as e:
@@ -610,7 +615,9 @@ def subtitle_facts(item: dict, media_type: str) -> str:
             return format_dialogue_line({
                 "words_per_min": row.words_per_min,
                 "silent_min": row.silent_min or 0.0,
-                "duration_min": dur or 0.0,
+                # The runtime we MEASURED against — for a series one episode,
+                # not the season total the tech profile carries.
+                "duration_min": row.duration_min or dur or 0.0,
                 "mattr": row.mattr,
                 "is_sdh": bool(row.is_sdh),
             }, lang=row.language or "")

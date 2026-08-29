@@ -78,6 +78,9 @@ def _migrate_columns() -> None:
     """Add columns introduced after initial schema creation (SQLite-safe)."""
     from sqlalchemy import text
     new_cols = [
+        # Subtitle metrics: the episode runtime they were measured against
+        # (MediaTechProfile holds the SERIES total, which is a different number)
+        ("media_subtitle_profiles", "duration_min", "FLOAT"),
         ("deletion_proposals",    "category",    "TEXT"),
         ("deletion_proposals",    "poster_url",  "TEXT"),
         ("deletion_proposals",    "synopsis",    "TEXT"),
