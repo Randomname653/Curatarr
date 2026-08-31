@@ -84,6 +84,12 @@ and it speaks up when it notices a pattern worth asking about.*
 - **Grounded, never hallucinated** — judgments reason from cached facts
   (TMDB, OMDb, AniList, MusicBrainz, Last.fm, Wikipedia), not from the
   model's own memory of a title.
+- **It can hear the film** — deletion candidates carry measured dialogue
+  signals from the actual subtitle track (words per minute, share of the
+  runtime without dialogue, lexical variety), so the judge has evidence
+  about *execution*, not just metadata — and a law that sparse dialogue
+  is never thin writing. A discussion can pull the cleaned dialogue text
+  itself into the conversation.
 - **Multi-user** — every play is attributed to its Plex account; each
   user gets their own taste vector, recommendations, playlists and chat.
 - **Writes back to Plex** — per-user "Curatarr Recommended" playlists
@@ -234,9 +240,15 @@ the ones most people touch:
 - **Titles go out, behaviour does not.** Enrichment queries public
   metadata APIs — TMDB, Wikipedia, Wikidata, Jikan, AniList, MusicBrainz,
   Last.fm, Deezer, Spotify — and most are searched by *name*, so those
-  services learn which titles and artists your library holds. Only OMDb is
-  queried purely by id. What is never sent: what you watched, when, how
-  often, your ratings, your taste profile, or anything you typed.
+  services learn which titles and artists your library holds. OMDb and
+  OpenSubtitles are queried purely by id. What is never sent: what you
+  watched, when, how often, your ratings, your taste profile, or anything
+  you typed.
+- **Subtitle sources are opt-in.** Dialogue signals come from the file
+  Plex already holds whenever one exists. OpenSubtitles is only contacted
+  if you configure a key, matched by IMDb id (no title guessing), under a
+  daily budget you set. A self-hosted subtitle service can be slotted in
+  between the two; nothing is bundled and none is assumed.
 - **Data at rest is not encrypted by the app.** Watch history, taste
   vectors and chat live in plain SQLite under `data/` — on a trusted
   machine, by design. If disk theft is in your threat model, use OS disk

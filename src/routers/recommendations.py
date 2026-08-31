@@ -207,6 +207,19 @@ async def _fetch_tmdb(
         return None, None
     media_type = "movie" if category == "movie" else "tv"
 
+    # Pass 62: the arr's tmdbId is a SECONDARY cross-reference and Sonarr's
+    # comes from TheTVDB, where it is sometimes mistyped — "Museum of Life"
+    # (BBC documentary) carried 4054 instead of 40545 and this function
+    # cheerfully returned the poster and plot of a 1999 Japanese melodrama.
+    # TMDB's own tvdb index is the primary record; consult it first.
+    if tvdb_id and media_type == "tv":
+        try:
+            from src.services.media_enricher import authoritative_tv_tmdb_id
+            tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id)
+        except Exception as e:
+            logger.debug("[recs] tvdb id authority check failed for %r: %s",
+                         title, e)
+
     def _from_entry(data: dict) -> tuple:
         """Pull (poster, synopsis) out of a full TMDB movie/tv object."""
         poster = (
@@ -215,6 +228,32 @@ async def _fetch_tmdb(
         )
         synopsis = (data.get("overview") or "").strip() or None
         return poster, synopsis
+
+    def _wrong_work(data: dict) -> bool:
+        """The entry we fetched by ID cannot be this title.
+
+        ``year`` was passed in all along but only ever used to disambiguate
+        the title SEARCH — the by-ID path took whatever came back, which is
+        how a 2010 documentary ended up wearing a 1999 melodrama's plot on
+        its deletion card. The enricher has carried this same delta-check
+        since 0e0453f; the card path never got it. Returning nothing here is
+        the right answer: _enrich_proposal then falls back to the ARR
+        overview, which is correct for this exact entry by construction.
+        """
+        if not year:
+            return False
+        d = data.get("release_date") or data.get("first_air_date") or ""
+        try:
+            got = int(str(d)[:4])
+        except (TypeError, ValueError):
+            return False
+        if not got or abs(got - int(year)) <= 5:
+            return False
+        logger.warning("[recs] TMDB id %s is %r (%s) but the arr says %r (%s) "
+                       "— refusing the mismatched entry",
+                       tmdb_id, data.get("name") or data.get("title"), got,
+                       title, year)
+        return True
 
     try:
         async with httpx.AsyncClient(timeout=8) as client:
@@ -226,7 +265,10 @@ async def _fetch_tmdb(
                 )
                 if r.status_code != 200:
                     return None, None
-                poster, synopsis = _from_entry(r.json())
+                _entry = r.json()
+                if _wrong_work(_entry):
+                    return None, None
+                poster, synopsis = _from_entry(_entry)
                 _TMDB_CACHE[cache_key] = (poster, synopsis, time.monotonic())
                 return poster, synopsis
 

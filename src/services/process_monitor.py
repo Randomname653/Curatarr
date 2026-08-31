@@ -94,19 +94,6 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
 })
 
 
-def _running_process_names() -> list[str]:
-    """Return lowercase exe names for all running processes."""
-    names = []
-    try:
-        for proc in psutil.process_iter(["name"]):
-            n = proc.info.get("name")
-            if n:
-                names.append(n.lower())
-    except Exception:
-        pass
-    return names
-
-
 _cached_targets: Optional[frozenset[str]] = None
 _cached_time: float = 0
 

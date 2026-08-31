@@ -13,13 +13,17 @@ its own custodian task).
 Candidate order per tick (budgeted):
   1. Discovery recommendations without a live raw row (cards the owner
      is actively being shown).
-  2. Expired raw_prefetch rows — read STALE on purpose: the stored ids
-     (tmdb/anilist/mbid) let us re-fetch even for media long gone from
-     the arrs (the zombie-rebuild source stays current).
+  2. Expired raw_prefetch rows. Each is re-resolved from the item's LIVE
+     arr record (title, ids, year) so a wrong match gets corrected instead
+     of renewed — a refresh that reads its inputs out of the blob it is
+     refreshing can only ever re-confirm that blob. For media long gone
+     from the arrs there is no such record, and the stored ids are read
+     STALE on purpose so the zombie-rebuild source stays current.
 Cursor in app_state; the custodian re-runs it daily.
 """
 
 import json
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -43,30 +47,80 @@ def _prog(task, message=None, processed=None, total=None):
         pass
 
 
-async def _refresh_one(raw: dict) -> bool:
-    """Re-fetch one item's raw data from the ids stored in its old row and
-    write it back under the same keys. Returns True on a fresh write."""
+def _norm(t: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+
+
+async def _refresh_one(raw: dict, arr: dict = None) -> bool:
+    """Re-fetch one item's raw data and write it back under the same keys.
+    Returns True on a fresh write.
+
+    ``arr`` is the item's live record in Radarr / Sonarr / Lidarr, and when we
+    have one it — not the stored blob — is what we re-fetch from.
+
+    A refresh that reads its inputs out of the blob it is refreshing cannot
+    correct anything: it re-fetches by the ids the last resolution produced and
+    then lets ``fetch_and_prepare_raw`` check the result's year against the
+    blob's own year, which always agrees. A wrong match therefore renews its
+    30-day TTL forever. *Museum of Life* resolved to *Forbidden Love* in May
+    and was still being refreshed as *Forbidden Love*, under the documentary's
+    own key, in August. The arr record is the only independent anchor we have.
+    """
     from src.services.media_enricher import fetch_and_prepare_raw
     from src.cache.metadata_cache import MetadataCache
 
-    title = (raw.get("title") or "").strip()
+    prk = raw.get("_plex_rating_key") or raw.get("plex_rating_key")
     media_type = raw.get("media_type") or raw.get("_media_type") or "movie"
     if media_type == "tv":
         media_type = "show"
+    extra = {}
+    if arr:
+        blob_title = (raw.get("title") or "").strip()
+        title = (arr.get("title") or blob_title).strip()
+        media_type = arr.get("media_type") or media_type
+        extra["sonarr_series_type"] = arr.get("sonarr_series_type")
+        misfiled = bool(blob_title and title
+                        and _norm(blob_title) != _norm(title))
+        if misfiled:
+            logger.warning(
+                "[raw-refresh] %s holds %r but the arr says %r — re-resolving "
+                "from the arr record", prk, blob_title[:60], title[:60])
+        # The arr owns tmdb / tvdb / imdb / mbid, so those come from it. It
+        # does NOT carry anilist / anidb / mal — for anime those are often the
+        # only good handle, so keep the blob's, but only while the blob still
+        # looks like this item. A blob whose title has drifted gets resolved
+        # from scratch; letting it keep its own ids is what made the old
+        # refresh a closed loop.
+        ids = {
+            "tmdb_id": arr.get("tmdb_id"),
+            "tvdb_id": arr.get("tvdb_id"),
+            "imdb_id": arr.get("imdb_id"),
+            "mbid": arr.get("mbid") or arr.get("musicbrainz_id"),
+            "anilist_id": None if misfiled else raw.get("anilist_id") or raw.get("_anilist_id"),
+            "anidb_id": None if misfiled else raw.get("anidb_id"),
+            "mal_id": None if misfiled else raw.get("mal_id"),
+        }
+        year = arr.get("year")
+    else:
+        title = (raw.get("title") or "").strip()
+        ids = {
+            "tmdb_id": raw.get("tmdb_id") or raw.get("_tmdb_id"),
+            "anilist_id": raw.get("anilist_id") or raw.get("_anilist_id"),
+            "anidb_id": raw.get("anidb_id"),
+            "tvdb_id": raw.get("tvdb_id"),
+            "imdb_id": raw.get("imdb_id"),
+            "mal_id": raw.get("mal_id"),
+            "mbid": raw.get("mbid") or raw.get("musicbrainz_id"),
+        }
+        year = raw.get("year")
     if not title:
         return False
     fresh = await fetch_and_prepare_raw(
         title, media_type,
-        tmdb_id=raw.get("tmdb_id") or raw.get("_tmdb_id"),
-        anilist_id=raw.get("anilist_id") or raw.get("_anilist_id"),
-        anidb_id=raw.get("anidb_id"),
-        tvdb_id=raw.get("tvdb_id"),
-        imdb_id=raw.get("imdb_id"),
-        mal_id=raw.get("mal_id"),
-        mbid=raw.get("mbid") or raw.get("musicbrainz_id"),
-        plex_rating_key=raw.get("_plex_rating_key") or raw.get("plex_rating_key"),
-        year=raw.get("year"),
+        plex_rating_key=prk,
+        year=year,
         fast_only=True,
+        **ids, **{k: v for k, v in extra.items() if v},
     )
     if not isinstance(fresh, dict):
         return False
@@ -121,7 +175,22 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
     except Exception as e:
         logger.debug("[raw-refresh] discovery pass failed: %s", e)
 
-    # ── 2. expired raw_prefetch rows (stale-read → re-fetch by stored ids) ───
+    # ── 2. expired raw_prefetch rows (stale-read → re-resolve from the arr) ──
+    # One arr sweep per run, not per item: the doc-id → item map is what lets
+    # each refresh anchor on the library's ground truth instead of on the blob
+    # it is about to overwrite. Best-effort — an unreachable arr degrades to
+    # the old blob-anchored behaviour rather than stalling the custodian.
+    truth: dict = {}
+    try:
+        from src.routers.enrichment import _collect_arr_items
+        for _it in await _collect_arr_items(["movie", "show", "anime", "music"]):
+            _prk = _it.get("plex_rating_key")
+            if _prk:
+                truth[_prk] = _it
+    except Exception as e:
+        logger.warning("[raw-refresh] arr ground truth unavailable (%s) — "
+                       "refreshing from stored ids only", e)
+
     try:
         cursor = int(get_state(_CURSOR_KEY) or 0)
     except Exception:
@@ -150,7 +219,8 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
             continue
         _prog(task, message=f"Raw refresh: {raw.get('title', key)}",
               processed=done, total=budget)
-        if await _refresh_one(raw):
+        _prk = raw.get("_plex_rating_key") or raw.get("plex_rating_key")
+        if await _refresh_one(raw, truth.get(_prk)):
             done += 1
     try:
         set_state(_CURSOR_KEY, "0" if drained and len(rows) < budget * 3

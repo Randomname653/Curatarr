@@ -84,7 +84,8 @@ yet. Until those sections are rewritten, this is the map:
 
 Curatarr is a single-tenant FastAPI app that sits between a Plex server, the
 *arr stack (Radarr/Sonarr/Lidarr), external metadata APIs (TMDB, OMDb,
-AniList, MusicBrainz, Last.fm, Spotify, Jikan), and a locally-hosted Ollama
+AniList, MusicBrainz, Last.fm, Spotify, Jikan — plus OpenSubtitles, by id
+only and only when a key is configured), and a locally-hosted Ollama
 LLM. It pulls each Plex user's watch history, enriches every title with
 metadata + an LLM-written profile, embeds those profiles into a vector store,
 and uses the resulting per-user "taste vector" to (a) recommend new media,

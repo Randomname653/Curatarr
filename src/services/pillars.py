@@ -57,6 +57,8 @@ A DIALOGUE line, when present, is weak supporting evidence for this litmus and N
 
 PILLAR 0 — EGO (lowest, the Edge). The owner's own taste — whose CONTENT lives in the OWNER TASTE line of the evidence, never in this constitution: that line is per-user data, and the law here is deliberately taste-blind. OFFENSIVE, not defensive: a title must ACTIVELY provide what the OWNER TASTE line rewards to survive here — not merely "not be bad". Beware PREMISE vs EXECUTION: a work whose premise CLAIMS the qualities the owner rewards but whose EXECUTION is populist, manipulative, or generic does NOT pass — a claimed quality is not a delivered one. Generic, low-effort work that provides nothing the owner's profile rewards is CUT. Without an OWNER TASTE line in the evidence, this pillar cannot condemn — fall back to the objective pillars above.
 
+RECORDS vs WORK. If the facts in front of you describe a DIFFERENT work than the title names — a plot that contradicts the stated genre, a year that cannot belong to it, a summary of something else entirely — that is a fault in OUR records, never a property of the title. Say so plainly and reach NO verdict: a misfiled record is not evidence of anything, and "the metadata is wrong, so remove it" is the one argument you may never make. Deleting a work because we filed it badly destroys the work and leaves the bad filing in place.
+
 BITRATE is a SEPARATE axis from retention: a kept title that is a clear bitrate outlier may be flagged for downscaling; bitrate alone never deletes."""
 
 PILLAR_CONSTITUTION = f"""You are the curation court for Curatarr, deciding whether ONE title stays on a shared 105 TB home server. Judge it against FOUR pillars in STRICT priority — a higher pillar's protection can NEVER be overruled by a lower one. Base every word ONLY on the FACTS given; never invent data. Default to demanding EXCELLENCE: a title EARNS its place; it is never kept merely for "not being bad".
@@ -241,6 +243,33 @@ def _tech_facts(item: dict, media_type: str) -> tuple[str, bool]:
 
 # ── THE CLERK ─────────────────────────────────────────────────────────────────
 
+def _profile_is_another_work(item: dict, vd: dict) -> bool:
+    """True when a loaded profile is a different work than the library item.
+
+    Same two tests the enrichment audit uses (``_entity_divergence_reason``),
+    but requiring BOTH: a diverging title on its own is usually just an
+    alternate romanisation or an English release name, while a diverging title
+    together with a diverging year has, on this library, meant a genuinely
+    wrong entity every time.
+    """
+    import re
+    from difflib import SequenceMatcher
+
+    def _n(t):
+        return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+
+    a_title, p_title = item.get("title") or "", vd.get("title") or ""
+    if not (a_title and p_title):
+        return False
+    if SequenceMatcher(None, _n(a_title), _n(p_title)).ratio() >= 0.5:
+        return False
+    try:
+        ay, py = int(item.get("year") or 0), int(vd.get("year") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(ay and py and abs(ay - py) > 1)
+
+
 async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     """Assemble the full FACTS block + cheap flags for ONE title. Makes NO verdict.
 
@@ -259,7 +288,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     flags = {"owner_watched": False, "other_user_engaged": False,
              "bitrate_outlier": False, "acclaim_present": False,
              "owner_signal": False, "evidence_thin": False,
-             "significance_unchecked": False, "dialogue_signal": False}
+             "significance_unchecked": False, "dialogue_signal": False,
+             "evidence_mismatched": False}
 
     # ── OWNER watch ──
     try:
@@ -356,8 +386,25 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
             anilist_id=item.get("anilist_id"), anidb_id=item.get("anidb_id"),
             plex_rating_key=item.get("plex_rating_key"),
+            year=item.get("year"),
             allow_summarizer=False,
         )
+        # Does the profile we just loaded actually BELONG to this title? The
+        # id we resolved through can be wrong at the source — Sonarr carried
+        # tmdbId 4054 for the BBC documentary "Museum of Life" (correct: 40545)
+        # and every lookup returned "Forbidden Love", a 1999 melodrama. The
+        # judge got that plot as VERIFIED DATA, noticed it contradicted the
+        # genre, and then proposed deleting the documentary BECAUSE the
+        # metadata was wrong. Both conditions are required: title alone flags
+        # ~50 harmless anime romanisations ("Heavenly Delusion" / "Tengoku
+        # Daimakyo"), title AND year together flagged 8 profiles on this
+        # library and all 8 really were another work.
+        if isinstance(vd, dict) and _profile_is_another_work(item, vd):
+            flags["evidence_mismatched"] = True
+            logger.warning(
+                "[pillars] %r (%s) carries the profile of %r (%s) — refusing "
+                "to judge on a misfiled record",
+                title, item.get("year"), vd.get("title"), vd.get("year"))
         verified_text = format_verified_block(vd) or ""
         # "9 episodes played" means something different for a 12- vs a
         # 100-episode series — join the two data sources for the judge.

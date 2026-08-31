@@ -2459,6 +2459,7 @@ async def send_message(
                                 tmdb_id=enrichment_data.get("tmdb_id"),
                                 tvdb_id=enrichment_data.get("tvdb_id"),
                                 anilist_id=enrichment_data.get("anilist_id"),
+                                year=enrichment_data.get("year"),
                             )
                         except Exception as _e:
                             logger.debug("[chat] significance pre-warm failed: %s", _e)

@@ -1,0 +1,7 @@
+# Route everything through the forms — a blank issue invites exactly the
+# unscrubbed log paste the bug form's required checkbox exists to prevent.
+blank_issues_enabled: false
+contact_links:
+  - name: Question / discussion
+    url: https://github.com/Randomname653/Curatarr/discussions
+    about: Setup help, model questions, curation-behaviour debates — anything that isn't a reproducible bug or a concrete feature.

@@ -1138,6 +1138,7 @@ async def ensure_verified_data(
     *,
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None,
+    year: Optional[int] = None,
     cache=None,
     allow_summarizer: bool = True,
 ) -> Optional[dict]:
@@ -1174,6 +1175,11 @@ async def ensure_verified_data(
                     title=title, media_type=media_type, tmdb_id=tmdb_id,
                     tvdb_id=tvdb_id, anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, skip_llm_summary=True,
+                    # Without the year the wrong-entity delta-check inside
+                    # enrich_media_item has nothing to compare against and
+                    # silently passes everything. It is the judge's own path
+                    # that runs here, so this is exactly where it must bite.
+                    year=year,
                 ),
                 timeout=8.0,
             )
@@ -2069,6 +2075,117 @@ async def _tmdb_get(client: httpx.AsyncClient, path: str, params: dict = None) -
     # 4xx other than 429 — real "not found" / "bad request". Caller can
     # interpret an empty result as "TMDB really doesn't have this".
     return {}
+
+
+def _match_override_ids(plex_rating_key) -> dict:
+    """The owner's pinned entity for an arr item, or ``{}``.
+
+    Highest authority in the whole resolution chain — a "Fix match" click
+    outranks arr-provided ids, MediaIdentity and every title search. Lifted
+    out of ``fetch_and_prepare_raw`` so the on-demand path (``enrich_media_item``,
+    which the judge and the chat reach through ``ensure_verified_data``) honours
+    the pin too. It did not: a pinned title stayed pinned in the nightly walk
+    and silently reverted whenever the curator enriched it live.
+    """
+    if not (plex_rating_key and ":" in str(plex_rating_key)):
+        return {}
+    _svc, _, _aid = str(plex_rating_key).partition(":")
+    if not _aid.isdigit():
+        return {}
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import MediaMatchOverride
+        with get_db_session() as db:
+            ov = db.query(MediaMatchOverride).filter(
+                MediaMatchOverride.service == _svc,
+                MediaMatchOverride.arr_id == int(_aid)).first()
+            if not ov:
+                return {}
+            pin = {k: v for k, v in (
+                ("tmdb_id", ov.tmdb_id), ("tvdb_id", ov.tvdb_id),
+                ("anilist_id", ov.anilist_id), ("mal_id", ov.mal_id),
+                ("imdb_id", ov.imdb_id), ("mbid", ov.mbid),
+            ) if v}
+    except Exception as _e:
+        logger.debug("[enricher] match-override lookup failed: %s", _e)
+        return {}
+    if pin:
+        logger.info("[enricher] owner match override active for %s (%s)",
+                    plex_rating_key,
+                    " ".join(f"{k}={v}" for k, v in pin.items()))
+    return pin
+
+
+# How long a tvdb -> tmdb mapping stays cached. The mapping is a fact about
+# two catalogue entries, not about the file, so it is stable for a long time;
+# a month keeps the nightly walk down to one lookup per series per month.
+_TVDB2TMDB_TTL_DAYS = 30
+
+
+async def authoritative_tv_tmdb_id(tvdb_id, tmdb_id=None, *, cache=None):
+    """Return the TMDB id that TMDB itself maps ``tvdb_id`` to.
+
+    Sonarr is TVDB-native: its ``tmdbId`` is a hand-maintained cross-reference
+    living on TheTVDB's side, and it is sometimes simply mistyped. *Museum of
+    Life*, a BBC nature documentary, carried ``tmdbId 4054``; the correct entry
+    is ``40545``, one digit longer. Every lookup therefore returned *Forbidden
+    Love*, a 1999 Japanese melodrama, that plot was cached under the
+    documentary's keys, and the curator proposed deleting the documentary
+    *because* the plot on file contradicted its own genre.
+
+    ``/find?external_source=tvdb_id`` reads the cross-reference stored on the
+    TMDB entry itself. Measured over the whole series library (2960 carrying
+    both ids): identical for 2929, no mapping for 20, and in all 11
+    disagreements the /find answer was the right work — five of those eleven
+    arr ids were literal truncations of the correct one (4054/40545,
+    3472/34724, 11541/115413, 21022/210220, 448/44893). So when the two
+    disagree, TMDB wins.
+
+    Falls back to ``tmdb_id`` unchanged when there is no mapping, no API key,
+    or the lookup fails: a TMDB outage must never silently re-point an entry.
+    An owner pin outranks this — callers skip the check when the id is pinned.
+    """
+    try:
+        tvdb = int(tvdb_id or 0)
+    except (TypeError, ValueError):
+        tvdb = 0
+    if not tvdb or not settings.TMDB_API_KEY:
+        return tmdb_id
+
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        ck = f"tvdb2tmdb:{tvdb}"
+        hit = cache.get_cache(ck)
+        if hit:
+            return (hit.get("response") or {}).get("tmdb_id") or tmdb_id
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                data = await _tmdb_get(client, f"/find/{tvdb}",
+                                       {"external_source": "tvdb_id"})
+        except Exception as e:
+            # Transient by contract — do NOT cache, do NOT re-point.
+            logger.debug("[enricher] tvdb->tmdb lookup deferred for %s: %s", tvdb, e)
+            return tmdb_id
+        results = (data or {}).get("tv_results") or []
+        found = results[0].get("id") if results else None
+        cache.set_cache(ck, {"tmdb_id": found}, days=_TVDB2TMDB_TTL_DAYS)
+        if not found:
+            return tmdb_id
+        try:
+            disagrees = tmdb_id and int(tmdb_id) != int(found)
+        except (TypeError, ValueError):
+            disagrees = False
+        if disagrees:
+            logger.warning(
+                "[enricher] arr tmdb_id %s contradicts TMDB's own tvdb %s "
+                "mapping (-> %s %r) — trusting TMDB",
+                tmdb_id, tvdb, found, (results[0].get("name") or "")[:60])
+        return found
+    finally:
+        if owns:
+            cache.close()
 
 
 async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
@@ -3096,29 +3213,14 @@ async def fetch_and_prepare_raw(
     # title search below. This is what makes a "Fix match" click durable
     # across rescans and re-enrichments (the Good-Boy-twins class — ported
     # from SoulSync's match-override layer, MIT).
-    if plex_rating_key and ":" in str(plex_rating_key):
-        try:
-            from src.database.connection import get_db_session
-            from src.database.models import MediaMatchOverride
-            _svc, _, _aid = str(plex_rating_key).partition(":")
-            if _aid.isdigit():
-                with get_db_session() as db:
-                    ov = db.query(MediaMatchOverride).filter(
-                        MediaMatchOverride.service == _svc,
-                        MediaMatchOverride.arr_id == int(_aid)).first()
-                    if ov:
-                        tmdb_id = ov.tmdb_id or tmdb_id
-                        tvdb_id = ov.tvdb_id or tvdb_id
-                        anilist_id = ov.anilist_id or anilist_id
-                        mal_id = ov.mal_id or mal_id
-                        imdb_id = ov.imdb_id or imdb_id
-                        mbid = ov.mbid or mbid
-                        logger.info("[enricher] owner match override active "
-                                    "for %s (tmdb=%s anilist=%s mbid=%s)",
-                                    plex_rating_key, ov.tmdb_id,
-                                    ov.anilist_id, ov.mbid)
-        except Exception as _e:
-            logger.debug("[enricher] match-override lookup failed: %s", _e)
+    _pin = _match_override_ids(plex_rating_key)
+    if _pin:
+        tmdb_id = _pin.get("tmdb_id") or tmdb_id
+        tvdb_id = _pin.get("tvdb_id") or tvdb_id
+        anilist_id = _pin.get("anilist_id") or anilist_id
+        mal_id = _pin.get("mal_id") or mal_id
+        imdb_id = _pin.get("imdb_id") or imdb_id
+        mbid = _pin.get("mbid") or mbid
 
     # Resolve IDs from MediaIdentity
     if plex_rating_key and not all([tmdb_id, anilist_id]):
@@ -3146,6 +3248,12 @@ async def fetch_and_prepare_raw(
             # fast-path returns nothing. Log so persistent DB issues
             # don't hide behind the silent swallow.
             logger.debug("[enricher] MediaIdentity merge failed: %s", _e)
+
+    # The arr handed us a tmdbId; TMDB's own tvdb index is the primary record
+    # of that cross-reference and overrules it. Not for a pinned entity — the
+    # owner's word is above every catalogue.
+    if media_type != "movie" and tvdb_id and not _pin.get("tmdb_id"):
+        tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id, cache=cache)
 
     is_anime = (
         media_type == "anime"
@@ -3586,6 +3694,19 @@ async def enrich_media_item(
     """
     cache = MetadataCache()
 
+    # The owner's pin outranks everything here too. Without this the on-demand
+    # path silently undid a "Fix match": the nightly walk resolved the pinned
+    # entity, the next live enrich (judge, chat, re-eval) resolved the arr's
+    # wrong id again, and whichever ran last won.
+    _pin = _match_override_ids(plex_rating_key)
+    if _pin:
+        tmdb_id = _pin.get("tmdb_id") or tmdb_id
+        tvdb_id = _pin.get("tvdb_id") or tvdb_id
+        anilist_id = _pin.get("anilist_id") or anilist_id
+        mal_id = _pin.get("mal_id") or mal_id
+        imdb_id = _pin.get("imdb_id") or imdb_id
+        mbid = _pin.get("mbid") or mbid
+
     # If we have a plex_rating_key, look up all known IDs from MediaIdentity
     if plex_rating_key and not all([tmdb_id, anilist_id]):
         try:
@@ -3612,6 +3733,11 @@ async def enrich_media_item(
             # fast-path returns nothing. Log so persistent DB issues
             # don't hide behind the silent swallow.
             logger.debug("[enricher] MediaIdentity merge failed: %s", _e)
+
+    # Same id authority as the bulk path — otherwise the two disagree about
+    # which work this is, and the cache key they write under disagrees with it.
+    if media_type != "movie" and tvdb_id and not _pin.get("tmdb_id"):
+        tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id, cache=cache)
 
     # Cache key: prefer stable IDs, fall back to title
     # Determine if this is anime first — needed for cache key and routing

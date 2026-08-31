@@ -1176,7 +1176,7 @@ const SETUP_CONTENT = {
     <button class="btn btn-secondary btn-sm" onclick="testConn('ollama')">Detect models</button>
     <div id="test-ollama-result" style="margin:8px 0"></div>
     <div class="form-group" style="margin-top:12px">
-      <label>GPU / VRAM</label>
+      <label for="s-vram">GPU / VRAM</label>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" onclick="detectGpu()">Detect GPU (nvidia-smi)</button>
         <select id="s-vram" style="width:auto" onchange="refreshModelRecs()">

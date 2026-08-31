@@ -677,6 +677,7 @@ async def generate_recommendations(
                         tmdb_id=i.get("tmdb_id"), tvdb_id=i.get("tvdb_id"),
                         anilist_id=i.get("anilist_id"),
                         plex_rating_key=i.get("plex_rating_key"),
+                        year=i.get("year"),
                         allow_summarizer=False,
                     )
                 except Exception:
@@ -1682,6 +1683,7 @@ async def generate_deletion_proposals(
         TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
         thin_skipped = 0
+        misfiled_skipped = 0
         unchecked_skipped = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
@@ -1796,6 +1798,22 @@ async def generate_deletion_proposals(
                                     "enrichment on file yet (thin-evidence "
                                     "gate)", category, item.get("title"))
                         continue
+                    # MISFILED-RECORD GATE: the profile on file belongs to a
+                    # different work (Sonarr's tmdbId for the BBC documentary
+                    # "Museum of Life" was one digit short and resolved to a
+                    # 1999 Japanese melodrama). The judge WILL notice the
+                    # contradiction — and then reason from it, which is how a
+                    # documentary came to be proposed for deletion because its
+                    # own metadata was wrong. Skip; the re-resolution runs with
+                    # the tvdb-authoritative id and it re-enters next scan.
+                    if (ev.get("flags") or {}).get("evidence_mismatched"):
+                        misfiled_skipped += 1
+                        judged -= 1
+                        logger.warning("[deletions] %s: skipping %r — the "
+                                       "profile on file is another work "
+                                       "(misfiled-record gate)",
+                                       category, item.get("title"))
+                        continue
                     # UNCHECKED-SIGNIFICANCE GATE: the same principle one
                     # layer deeper. Partial enrichment dodges the thin gate,
                     # but if significance was never SUCCESSFULLY checked the
@@ -1872,6 +1890,8 @@ async def generate_deletion_proposals(
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged"
              + (f" ({thin_skipped} skipped: not yet enriched)" if thin_skipped else "")
+             + (f" ({misfiled_skipped} skipped: profile is another work)"
+                if misfiled_skipped else "")
              + (f" ({unchecked_skipped} deferred: significance unchecked)"
                 if unchecked_skipped else "")
              + ".")
@@ -2050,6 +2070,7 @@ async def generate_deletion_proposals(
                     anilist_id=item.get("anilist_id"),
                     anidb_id=item.get("anidb_id"),
                     plex_rating_key=item.get("plex_rating_key"),
+                    year=item.get("year"),
                     allow_summarizer=False,
                 )
             )

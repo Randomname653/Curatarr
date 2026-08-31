@@ -4,6 +4,40 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-08-31 — The record and the work
+
+- **A documentary is not condemned for wearing another film's plot.**
+  Sonarr carried `tmdbId 4054` for *Museum of Life*, a BBC nature
+  documentary; the correct entry is `40545` — one digit longer. Every
+  lookup therefore returned a 1999 Japanese melodrama, its plot was
+  cached under the documentary's own keys, and the deletion judge —
+  which correctly noticed the plot contradicted the "Documentary"
+  genre — proposed deleting the documentary *because* its metadata was
+  wrong. Four guards had to fail together, and all four are fixed:
+  nothing outranked the arr's mistyped id (TMDB's own tvdb→tmdb index
+  is now the authority for series — measured across 2,960 series it
+  disagreed 11 times and was right all 11, five of them literal digit
+  truncations; an owner's pinned match still outranks everything, and a
+  TMDB outage never re-points an entry); the monthly refresher
+  re-fetched from the very blob it was refreshing, so a wrong match
+  renewed its own TTL forever (it anchors on the live arr record now);
+  the judge's path called the enricher without a year, starving the
+  wrong-entity delta-check that had existed all along; and no law said
+  a misfiled record cannot be a deletion argument — now one does, and a
+  gate skips such candidates before the judge ever sees them (title
+  *and* year must diverge: on this library that flagged exactly the 8
+  genuinely wrong profiles and none of the ~50 harmless
+  romanisations). The owner's "Fix match" pin also now holds on the
+  live-enrichment path, where it used to silently revert. The 8
+  poisoned profiles were purged and re-enrich under the new authority.
+
+- **The last two bot deliveries, sorted.** The dead
+  `_running_process_names` helper is gone and the GPU/VRAM picker got
+  its label association; the proposed switch away from psutil's
+  batched attrs form was declined — on Windows a per-process accessor
+  opens a handle per process, which is the opposite of the optimization
+  it claimed to be.
+
 ## 2026-08-28 — No verdict on data we don't have
 
 - **The curator can finally hear the film.** Until now it judged only
