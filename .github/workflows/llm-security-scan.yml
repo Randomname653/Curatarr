@@ -1,262 +1,198 @@
+# LLM-based security scan (GPT-4o via the operator's OPENAI_API_KEY secret).
+#
+# Reworked from the uploaded template, which had two remote-code-execution
+# vectors and silently discarded its own findings:
+#   - it executed .github/scripts/llm_security_scanner.py FROM THE PR CHECKOUT,
+#     so any pull request editing that file ran arbitrary code on the runner
+#     (with the OpenAI key in env for same-repo PRs). PR runs now execute the
+#     scanner from the PR's BASE commit — the reviewed, trusted copy.
+#   - it interpolated changed-file names into a `run:` block via ${{ }}, the
+#     classic script-injection pattern; filenames now travel NUL-delimited
+#     through a file and are never parsed by a shell.
+#   - tj-actions/changed-files@v40 (CVE-2025-30066: tags repointed to a
+#     secret-dumping commit in March 2025) is replaced by two lines of git.
+#   - every push to main ran a paid full-repo scan (~63 min of GPT-4o); pushes
+#     are covered by CodeQL for free, so the full scan now runs weekly and on
+#     manual dispatch only.
+#
+# Fork PRs get no secrets by GitHub policy: the scan is skipped with a notice
+# instead of failing red or — worse — passing green having scanned nothing.
 name: LLM Security Scan
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
-    # Run weekly on Monday at 8:00 AM UTC
-    - cron: '0 8 * * 1'
+    - cron: "0 8 * * 1"   # Mondays, 08:00 UTC — full scan
+  workflow_dispatch:
+
+concurrency:
+  group: llm-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   security-scan:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      issues: write
-    
+    env:
+      HAS_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+      # PR diffs are small — spend the good model there. The weekly sweep
+      # walks ~200 files, so it runs on the cheap tier; findings it surfaces
+      # can always be re-checked by hand or by a dispatch run with PR_MODEL.
+      PR_MODEL: gpt-4o
+      FULL_MODEL: gpt-4o-mini
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
-      
+          python-version: "3.12"
+
       - name: Install dependencies
+        if: env.HAS_KEY == 'true'
+        run: pip install openai anthropic
+
+      - name: No API key — skip scan
+        if: env.HAS_KEY != 'true'
         run: |
-          python -m pip install --upgrade pip
-          pip install openai anthropic
-      
-      - name: Find changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v40
-        with:
-          files: |
-            **/*.py
-            **/*.js
-            **/*.ts
-            **/*.java
-            **/*.c
-            **/*.cpp
-            **/*.go
-            **/*.php
-            **/*.rb
-      
-      - name: Install security scanner
-        run: |
-          # Copy the scanner script from the repo
-          cp ${{ github.workspace }}/.github/scripts/llm_security_scanner.py .
-          chmod +x llm_security_scanner.py
-      
-      # Only run the scan on changed files in pull requests
-      - name: LLM Security Scan (PR)
-        if: github.event_name == 'pull_request' && steps.changed-files.outputs.all_changed_files != ''
+          echo "::notice::OPENAI_API_KEY is not available (fork PRs never receive secrets) — LLM scan skipped."
+
+      # PR path: scan only the files this PR changes, with the scanner taken
+      # from the base commit. Filenames are attacker-controlled input on a
+      # public repo: they go NUL-delimited into a file the scanner reads
+      # itself, so no shell ever word-splits or interprets them.
+      - name: LLM Security Scan (PR — changed files)
+        if: github.event_name == 'pull_request' && env.HAS_KEY == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Uncomment if using Anthropic's Claude
-          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           mkdir -p scan-results
-          echo "Scanning changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
-          
-          # Scan each changed file
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            echo "Scanning file: $file"
-            python llm_security_scanner.py --file "$file" --model gpt-4o --output-format markdown --output-file "scan-results/$(basename $file).md"
-          done
-          
-          # Combine results
-          echo "# LLM Security Scan Results" > scan-results/combined-results.md
-          echo "## Changed Files" >> scan-results/combined-results.md
-          echo "" >> scan-results/combined-results.md
-          cat scan-results/*.md >> scan-results/combined-results.md
-      
-      # Run full scan on schedule or push to main
+          if ! git cat-file -e "$BASE_SHA:.github/scripts/llm_security_scanner.py" 2>/dev/null; then
+            echo "::notice::scanner does not exist on the base commit yet — skipping (it must land on main before it scans PRs)."
+            exit 0
+          fi
+          git show "$BASE_SHA:.github/scripts/llm_security_scanner.py" > /tmp/trusted_scanner.py
+          git diff -z --name-only --diff-filter=ACMR "$BASE_SHA"...HEAD -- \
+            '*.py' '*.js' '*.ts' '*.java' '*.c' '*.cpp' '*.go' '*.php' '*.rb' \
+            > /tmp/changed-files.z
+          if [ ! -s /tmp/changed-files.z ]; then
+            echo "No scannable files changed."
+            exit 0
+          fi
+          python /tmp/trusted_scanner.py \
+            --file-list /tmp/changed-files.z --max-files 40 \
+            --model "$PR_MODEL" \
+            --output-format markdown --output-file scan-results/results.md \
+            --json-output-file scan-results/results.json
+
+      # Full sweep: weekly and on manual dispatch. Deliberately NOT on push —
+      # CodeQL already runs there for free, and a full GPT-4o pass over the
+      # repo costs real money and the better part of an hour.
       - name: LLM Security Scan (Full)
-        if: github.event_name == 'push' || github.event_name == 'schedule'
+        if: github.event_name != 'pull_request' && env.HAS_KEY == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Uncomment if using Anthropic's Claude
-          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           mkdir -p scan-results
-          echo "Running full security scan"
-          
-          # Scan the entire repository
-          python llm_security_scanner.py --directory "${{ github.workspace }}" --model gpt-4o --output-format markdown --output-file "scan-results/full-scan-results.md"
-      
-      # Parse the results and create GitHub issues for vulnerabilities
+          python .github/scripts/llm_security_scanner.py \
+            --directory . \
+            --exclude-dirs .git node_modules venv __pycache__ .env scan-results .github \
+            --model "$FULL_MODEL" \
+            --output-format markdown --output-file scan-results/results.md \
+            --json-output-file scan-results/results.json
+
+      # Issues only from the trusted full sweep, read from the JSON report
+      # (the template parsed its own markdown back apart with a state machine
+      # that misattributed nearly every finding's file). Deduplicated against
+      # open security-labeled issues, capped per run.
       - name: Create GitHub Issues for Vulnerabilities
-        if: success()
+        if: github.event_name != 'pull_request' && env.HAS_KEY == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const path = require('path');
-            
-            // Function to parse markdown content for vulnerabilities
-            function parseVulnerabilities(content) {
-              const vulnerabilities = [];
-              const lines = content.split('\n');
-              
-              let currentVuln = null;
-              let inFixExample = false;
-              let fixExampleContent = '';
-              
-              for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                
-                // Start of a new vulnerability
-                if (line.startsWith('#### ')) {
-                  if (currentVuln) {
-                    if (inFixExample) {
-                      currentVuln.fixExample = fixExampleContent.trim();
-                      inFixExample = false;
-                      fixExampleContent = '';
-                    }
-                    vulnerabilities.push(currentVuln);
-                  }
-                  
-                  currentVuln = {
-                    type: line.replace('#### ', '').trim(),
-                    file: '',
-                    severity: '',
-                    lineNumbers: '',
-                    description: '',
-                    impact: '',
-                    recommendation: '',
-                    fixExample: ''
-                  };
-                }
-                // Get file name
-                else if (line.startsWith('### ')) {
-                  if (currentVuln) {
-                    currentVuln.file = line.replace('### ', '').trim();
-                  }
-                }
-                // Get vulnerability details
-                else if (line.startsWith('- **Severity**:')) {
-                  if (currentVuln) {
-                    currentVuln.severity = line.replace('- **Severity**: ', '').trim();
-                  }
-                }
-                else if (line.startsWith('- **Line Numbers**:')) {
-                  if (currentVuln) {
-                    currentVuln.lineNumbers = line.replace('- **Line Numbers**: ', '').trim();
-                  }
-                }
-                else if (line.startsWith('- **Description**:')) {
-                  if (currentVuln) {
-                    currentVuln.description = line.replace('- **Description**: ', '').trim();
-                  }
-                }
-                else if (line.startsWith('- **Impact**:')) {
-                  if (currentVuln) {
-                    currentVuln.impact = line.replace('- **Impact**: ', '').trim();
-                  }
-                }
-                else if (line.startsWith('- **Recommendation**:')) {
-                  if (currentVuln) {
-                    currentVuln.recommendation = line.replace('- **Recommendation**: ', '').trim();
-                  }
-                }
-                // Handle fix example
-                else if (line.startsWith('**Fix Example**:')) {
-                  inFixExample = true;
-                }
-                else if (inFixExample && line.startsWith('```')) {
-                  // Skip the code fence lines
-                  continue;
-                }
-                else if (inFixExample) {
-                  fixExampleContent += line + '\n';
-                }
-              }
-              
-              // Add the last vulnerability if there is one
-              if (currentVuln) {
-                if (inFixExample) {
-                  currentVuln.fixExample = fixExampleContent.trim();
-                }
-                vulnerabilities.push(currentVuln);
-              }
-              
-              return vulnerabilities;
+            const path = 'scan-results/results.json';
+            if (!fs.existsSync(path)) {
+              core.info('No scan report — nothing to file.');
+              return;
             }
-            
-            // Read scan results
-            const resultsDir = path.join(process.env.GITHUB_WORKSPACE, 'scan-results');
-            const files = fs.readdirSync(resultsDir);
-            
-            let allVulnerabilities = [];
-            
-            for (const file of files) {
-              if (file.endsWith('.md')) {
-                const content = fs.readFileSync(path.join(resultsDir, file), 'utf8');
-                const vulnerabilities = parseVulnerabilities(content);
-                allVulnerabilities = allVulnerabilities.concat(vulnerabilities);
+            const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+
+            const wanted = new Set(['medium', 'high', 'critical']);
+            const vulns = [];
+            for (const result of report.results || []) {
+              if (result.status !== 'completed') continue;
+              for (const v of result.vulnerabilities || []) {
+                const sev = String(v.severity || '').trim().toLowerCase();
+                if (!wanted.has(sev)) continue;
+                vulns.push({ ...v, file: result.file, sev });
               }
             }
-            
-            console.log(`Found ${allVulnerabilities.length} vulnerabilities`);
-            
-            // Create GitHub issues for each vulnerability
-            for (const vuln of allVulnerabilities) {
-              // Only create issues for medium, high, and critical vulnerabilities
-              if (!['Medium', 'High', 'Critical'].includes(vuln.severity)) {
-                console.log(`Skipping ${vuln.severity} severity vulnerability in ${vuln.file}`);
+            core.info(`${vulns.length} medium+ findings in the report.`);
+            if (!vulns.length) return;
+
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'security', per_page: 100,
+            });
+            const known = new Set(existing.map(i => i.title));
+
+            const CAP = 10;
+            let created = 0;
+            for (const v of vulns) {
+              const sevLabel = v.sev.charAt(0).toUpperCase() + v.sev.slice(1);
+              const title = `[${sevLabel}] ${v.vulnerability_type || 'Security finding'} in ${v.file}`;
+              if (known.has(title)) {
+                core.info(`Already filed: ${title}`);
                 continue;
               }
-              
-              const issueTitle = `[${vuln.severity}] ${vuln.type} in ${vuln.file}`;
-              
-              const issueBody = `
-            ## Security Vulnerability: ${vuln.type}
-            
-            **File:** ${vuln.file}
-            **Severity:** ${vuln.severity}
-            **Line Numbers:** ${vuln.lineNumbers}
-            
-            ### Description
-            ${vuln.description}
-            
-            ### Impact
-            ${vuln.impact}
-            
-            ### Recommendation
-            ${vuln.recommendation}
-            
-            ${vuln.fixExample ? `### Fix Example\n\`\`\`\n${vuln.fixExample}\n\`\`\`` : ''}
-            
-            ---
-            *This issue was automatically created by the LLM Security Scanner.*
-            `;
-              
-              // Create GitHub issue
+              if (created >= CAP) {
+                core.warning(`Issue cap (${CAP}) reached — remaining findings stay in the artifact.`);
+                break;
+              }
+              const lines = Array.isArray(v.line_numbers) ? v.line_numbers.join(', ') : String(v.line_numbers ?? '');
+              const body = [
+                `## Security Finding: ${v.vulnerability_type || 'Unknown'}`,
+                '',
+                `**File:** \`${v.file}\``,
+                `**Severity:** ${sevLabel}`,
+                `**Line Numbers:** ${lines}`,
+                '',
+                '### Description', v.description || '_none provided_',
+                '',
+                '### Impact', v.impact || '_none provided_',
+                '',
+                '### Recommendation', v.recommendation || '_none provided_',
+                '',
+                v.fix_example ? `### Fix Example\n\`\`\`\n${v.fix_example}\n\`\`\`` : '',
+                '',
+                '---',
+                '*Filed automatically by the LLM security scan. Findings are model-generated — verify before acting.*',
+              ].join('\n');
               try {
                 const issue = await github.rest.issues.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  title: issueTitle,
-                  body: issueBody,
-                  labels: ['security', `severity:${vuln.severity.toLowerCase()}`]
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  title, body, labels: ['security', `severity:${v.sev}`],
                 });
-                
-                console.log(`Created issue #${issue.data.number}: ${issueTitle}`);
-              } catch (error) {
-                console.error(`Error creating issue for ${vuln.file}: ${error.message}`);
+                known.add(title);
+                created++;
+                core.info(`Created #${issue.data.number}: ${title}`);
+              } catch (e) {
+                core.error(`Failed to create issue for ${v.file}: ${e.message}`);
               }
             }
-            
+
       - name: Upload Scan Results
-        if: success()
+        if: env.HAS_KEY == 'true' && hashFiles('scan-results/**') != ''
         uses: actions/upload-artifact@v4
         with:
           name: security-scan-results
