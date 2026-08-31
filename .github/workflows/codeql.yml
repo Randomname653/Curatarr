@@ -1,16 +1,12 @@
-# CodeQL static analysis — ready to arm.
-#
-# Deliberately NOT triggered on push/PR yet: on a private repo CodeQL needs
-# GitHub Advanced Security and would fail red on every push. The weekly
-# schedule and the manual trigger below run free once the repo is public.
-# To arm fully, uncomment the push/pull_request block.
+# CodeQL static analysis. Armed since the repo went public (2026-08-31) —
+# on a private repo this needs GitHub Advanced Security and fails red.
 name: CodeQL
 
 on:
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "14 4 * * 1"   # Mondays, 04:14 UTC
   workflow_dispatch:
