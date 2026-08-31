@@ -68,7 +68,7 @@ jobs:
           # Scan each changed file
           for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
             echo "Scanning file: $file"
-            python llm_security_scanner.py --file "$file" --output-format markdown --output-file "scan-results/$(basename $file).md"
+            python llm_security_scanner.py --file "$file" --model gpt-4o --output-format markdown --output-file "scan-results/$(basename $file).md"
           done
           
           # Combine results
@@ -89,7 +89,7 @@ jobs:
           echo "Running full security scan"
           
           # Scan the entire repository
-          python llm_security_scanner.py --directory "${{ github.workspace }}" --output-format markdown --output-file "scan-results/full-scan-results.md"
+          python llm_security_scanner.py --directory "${{ github.workspace }}" --model gpt-4o --output-format markdown --output-file "scan-results/full-scan-results.md"
       
       # Parse the results and create GitHub issues for vulnerabilities
       - name: Create GitHub Issues for Vulnerabilities
