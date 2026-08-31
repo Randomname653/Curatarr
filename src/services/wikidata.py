@@ -27,6 +27,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import urllib.parse
 from typing import Optional
 
@@ -148,7 +149,13 @@ async def fetch_wikidata_facts(imdb_id: str, *, timeout: float = 25.0) -> Option
     definitive answer, distinct from "the endpoint was unreachable", so the
     caller can stamp one and retry the other.
     """
-    if not imdb_id or not str(imdb_id).startswith("tt"):
+    # Canonical shape only. The id is substituted into a quoted SPARQL string,
+    # and ids arrive from the arrs — which, as the Museum-of-Life episode
+    # proved, can carry arbitrary garbage. A quote in a malformed id would not
+    # execute anything, but it WOULD rewrite the query and confidently fetch a
+    # stranger's facts, which is exactly the failure class this module exists
+    # to prevent.
+    if not re.fullmatch(r"tt\d{5,10}", str(imdb_id or "")):
         return {}
     url = f"{SPARQL_URL}?format=json&query={urllib.parse.quote(_QUERY % imdb_id)}"
     try:
