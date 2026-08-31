@@ -219,6 +219,11 @@ class CodeSecurityScanner:
         """
 
     def _analyze_with_openai(self, prompt: str) -> List[Dict[str, Any]]:
+        kwargs: Dict[str, Any] = {}
+        # The gpt-5 / o-series reasoning models REJECT a temperature parameter
+        # ("unsupported parameter"); only the gpt-4 family accepts it.
+        if self.model.startswith("gpt-4"):
+            kwargs["temperature"] = 0.0
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -226,7 +231,7 @@ class CodeSecurityScanner:
                     {"role": "system", "content": "You are a cybersecurity expert that analyzes code for security vulnerabilities."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.0,
+                **kwargs,
             )
         except Exception as e:
             time.sleep(2)  # ease off in case this was a rate limit
@@ -388,7 +393,7 @@ def main():
 
     model = args.model
     if not model:
-        model = 'gpt-4o' if args.provider == 'openai' else 'claude-opus-5'
+        model = 'gpt-5.6-terra' if args.provider == 'openai' else 'claude-opus-5'
 
     scanner = CodeSecurityScanner(api_key=api_key, model=model, provider=args.provider)
 

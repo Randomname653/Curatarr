@@ -39,11 +39,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAS_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
-      # PR diffs are small — spend the good model there. The weekly sweep
-      # walks ~200 files, so it runs on the cheap tier; findings it surfaces
-      # can always be re-checked by hand or by a dispatch run with PR_MODEL.
-      PR_MODEL: gpt-4o
-      FULL_MODEL: gpt-4o-mini
+      # PR diffs are small — spend the flagship there (sol is ~25ct per PR).
+      # The weekly sweep walks ~200 files, so it runs on the current-gen cheap
+      # tier (~40ct per sweep). For a one-off specialist deep-dive, dispatch
+      # manually with gpt-daybreak-red-latest (OpenAI's security line, ~$25).
+      PR_MODEL: gpt-5.6-sol
+      FULL_MODEL: gpt-5.6-luna
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
