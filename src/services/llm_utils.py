@@ -340,6 +340,17 @@ _DE_TOKENS = (
     "ja nein bitte vielleicht denke meine"
 ).split()
 
+# The English mirror of _DE_TOKENS. Umlauts alone are NOT the un-fakeable
+# German signal the first cut assumed: a German keyboard puts ö next to l,
+# so an English sentence ending "…at aöö" (meant: "at all") carries two
+# umlauts — and band names do it on purpose (Motörhead, Blue Öyster Cult).
+# Only function words that are not also German words; "was"/"man"/"die"
+# style collisions are deliberately absent.
+_EN_TOKENS = (
+    "the and you that this what but not have with "
+    "they from your does are of it is to did"
+).split()
+
 
 def detect_user_language(user_id: int, db, thread_id: str = None,
                          current_message: str = None) -> str:
@@ -359,16 +370,22 @@ def detect_user_language(user_id: int, db, thread_id: str = None,
     German cognates ("die", "ist", "ich") buried in 11 K of English text.
     Real-world case: a user with one German sentence ("hier ist die liste
     an titeln dazu") in months of English chat got German pitches on every
-    deletion proposal. New logic trips ``de`` only when ONE of:
+    deletion proposal. Current logic trips ``de`` only when ONE of:
 
-      - 2+ umlauts (very strong DE signal, hard to false-positive)
+      - 2+ umlauts AND the text doesn't read as English around them
+        (a German token present, or at most one English function word)
       - 1+ umlaut AND 2+ tokens (umlaut + corroborator)
       - 5+ distinct tokens AND density >= 1 / 1000 chars
 
-    The density floor stops a brief German line in a long English context
-    from tripping; the 5-token floor protects against random 1-2 cognate
-    hits in any-length English text. Umlauts stay the strongest signal —
-    they're nearly impossible to encounter accidentally in English.
+    The umlaut rule was unconditional once ("hard to false-positive") and
+    the false positive arrived promptly: an English sentence ending in the
+    typo "aöö" — l and ö are neighbours on a German keyboard — flipped a
+    live discussion to German mid-thread, and the model then invented a
+    reason for the switch when the user asked. English evidence now vetoes
+    stray umlauts; genuine German keeps at least one function word or
+    carries no English ones. The density floor stops a brief German line
+    in a long English context from tripping; the 5-token floor protects
+    against random 1-2 cognate hits in any-length English text.
     """
     from src.database.models import ConversationMessage
 
@@ -382,7 +399,16 @@ def detect_user_language(user_id: int, db, thread_id: str = None,
         padded = f" {text} "
         de_chars = sum(text.count(c) for c in "äöüß")
         de_words = sum(1 for w in _DE_TOKENS if f" {w} " in padded)
-        if de_chars >= 2:
+        en_words = sum(1 for w in _EN_TOKENS if f" {w} " in padded)
+        # Umlauts decide only when the text doesn't read as English around
+        # them. Live failure (Supervixens discussion): an English sentence
+        # ending in the typo "aöö" (l/ö adjacency on a German keyboard) hit
+        # the old unconditional 2-umlaut rule, flipped one reply to German,
+        # and poisoned the thread fallback for the short follow-up — after
+        # which the curator, asked why it switched, invented a motive from
+        # the taste profile. Genuine German with umlauts virtually always
+        # carries a German function word, or at least no English ones.
+        if de_chars >= 2 and (de_words >= 1 or en_words <= 1):
             return "de"
         if de_chars >= 1 and de_words >= 2:
             return "de"
@@ -455,6 +481,8 @@ def language_directive(code: str) -> str:
     return (
         f"LANGUAGE: Respond in {name} — but if the user writes in a different "
         f"language, follow THEIR language instead of this default; never argue "
-        f"about language. "
+        f"about language. This default mirrors the user's own recent messages — "
+        f"if asked why the language changed, say exactly that; never invent a "
+        f"motive for it. "
         f"Keep proper nouns, ratings, tags, and identifiers in their original form."
     )
