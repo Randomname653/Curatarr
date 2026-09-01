@@ -160,6 +160,35 @@ class ProactiveMessage(Base):
     message = Column(Text, nullable=False)
     read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # A bubble the user ignores is not a message, it is a nag. Unclicked
+    # messages expire (TTL set at creation) and every surfacing counts —
+    # past the impression cap the queue moves on without them.
+    expires_at = Column(DateTime, nullable=True)
+    impressions = Column(Integer, default=0)
+
+
+class ChatStarter(Base):
+    """Pooled conversation starters for the chat landing view.
+
+    Generated in background batches (custodian task, LLM-phrased from
+    deterministic watch-history facts), then consumed like the proactive
+    pool: rotation per page load, retired on click, on TTL expiry, or
+    after sitting unclicked through too many impressions. ``form`` and
+    ``daypart`` exist so selection can enforce variety and fit the hour —
+    the anti-sameness rules live in code, not in the prompt.
+    """
+    __tablename__ = "chat_starters"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    text = Column(String(300), nullable=False)
+    form = Column(String(24), nullable=True)     # question|observation|challenge|callback|tonight_pick
+    daypart = Column(String(12), nullable=True)  # morning|day|evening|night|any
+    fact_used = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+    impressions = Column(Integer, default=0)
+    used_at = Column(DateTime, nullable=True)
 
 
 class EncryptedTasteVector(Base):

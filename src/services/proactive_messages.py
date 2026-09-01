@@ -1431,6 +1431,10 @@ async def check_and_generate_messages(user_id: int) -> int:
                 message=message,
                 read=False,
                 created_at=now + timedelta(seconds=generated),
+                # A week is the whole shelf life: a nudge about last
+                # weekend's binge is stale by the next one, and the same
+                # trigger can re-fire fresh after the cooldown anyway.
+                expires_at=now + timedelta(days=7),
             ))
             db.commit()
 
@@ -1452,6 +1456,25 @@ async def get_unread_messages(user_id: int) -> dict:
     """
     now = datetime.utcnow()
     with get_db_session() as db:
+        # Ignored bubbles decay: a message past its TTL, or surfaced past
+        # the impression cap without ever being clicked, is retired (marked
+        # read) instead of squatting at the head of the queue for days —
+        # the owner's words: the same bubble he hasn't clicked in three
+        # days serves nobody.
+        stale = (
+            db.query(ProactiveMessage)
+            .filter(ProactiveMessage.user_id == user_id,
+                    ProactiveMessage.read == False)
+            .filter((ProactiveMessage.expires_at != None)
+                    & (ProactiveMessage.expires_at < now)
+                    | (ProactiveMessage.impressions >= 40))
+            .all()
+        )
+        for m in stale:
+            m.read = True
+        if stale:
+            db.commit()
+
         all_unread = (
             db.query(ProactiveMessage)
             .filter(ProactiveMessage.user_id == user_id, ProactiveMessage.read == False)
@@ -1463,6 +1486,8 @@ async def get_unread_messages(user_id: int) -> dict:
             return {"message": None, "total": 0}
 
         m = all_unread[0]
+        m.impressions = (m.impressions or 0) + 1
+        db.commit()
         return {
             "message": {
                 "id": m.id,

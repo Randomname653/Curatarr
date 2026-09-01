@@ -81,6 +81,9 @@ def _migrate_columns() -> None:
         # Subtitle metrics: the episode runtime they were measured against
         # (MediaTechProfile holds the SERIES total, which is a different number)
         ("media_subtitle_profiles", "duration_min", "FLOAT"),
+        # Proactive-message TTL: ignored bubbles expire instead of nagging
+        ("proactive_messages",    "expires_at",  "DATETIME"),
+        ("proactive_messages",    "impressions", "INTEGER DEFAULT 0"),
         ("deletion_proposals",    "category",    "TEXT"),
         ("deletion_proposals",    "poster_url",  "TEXT"),
         ("deletion_proposals",    "synopsis",    "TEXT"),

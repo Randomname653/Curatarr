@@ -1162,6 +1162,48 @@ about the title in this conversation.
 """
 
 
+# ── Conversation starters (landing-page chips) ────────────────────────────
+# Pool-consumed like proactive messages: GET rotates fresh ones (counting
+# the impression), a click retires the starter. When the pool runs thin the
+# custodian task refills it in the background — never on this request path,
+# and never while a game holds the GPU (is_game_running: the same gate all
+# LLM maintenance uses). The frontend keeps its static three as fallback
+# whenever this returns fewer.
+_starter_gen_running: set[int] = set()
+
+
+@router.get("/starters")
+async def get_starters(user: User = Depends(get_current_user)):
+    from src.services.chat_starters import (pick_starters, pool_fresh_count,
+                                            generate_starters, POOL_TARGET)
+    picks = pick_starters(user.id)
+    try:
+        from src.services.process_monitor import is_game_running
+        if (pool_fresh_count(user.id) < POOL_TARGET // 2
+                and user.id not in _starter_gen_running
+                and not is_game_running()):
+            _starter_gen_running.add(user.id)
+
+            async def _refill(uid: int):
+                try:
+                    await generate_starters(uid)
+                except Exception as _e:
+                    logger.debug("[starters] background refill failed: %s", _e)
+                finally:
+                    _starter_gen_running.discard(uid)
+
+            asyncio.create_task(_refill(user.id))
+    except Exception as _e:
+        logger.debug("[starters] refill check failed: %s", _e)
+    return {"starters": picks}
+
+
+@router.post("/starters/{starter_id}/used")
+async def starter_used(starter_id: int, user: User = Depends(get_current_user)):
+    from src.services.chat_starters import mark_used
+    return {"ok": mark_used(user.id, starter_id)}
+
+
 def _thread_id_for(ctx) -> str:
     """Derive a stable thread id from a discuss context.
 

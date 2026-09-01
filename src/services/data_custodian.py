@@ -382,6 +382,34 @@ async def _run_cache_prune(task=None) -> bool:
     return True
 
 
+async def _run_chat_starters(task=None) -> str:
+    """Top up every active user's conversation-starter pool.
+
+    needs_llm gates it off while a game holds the GPU; the per-user skip
+    below keeps it from regenerating pools that are still healthy, so a
+    normal tick is one cheap COUNT per user and no model call at all.
+    """
+    from src.database.connection import get_db_session
+    from src.database.models import User
+    from src.services.chat_starters import (generate_starters,
+                                            pool_fresh_count, POOL_TARGET)
+    from src.services.task_monitor import task_monitor
+
+    with get_db_session() as db:
+        users = [u.id for u in db.query(User).filter_by(is_active=True).all()]
+    if task:
+        task_monitor.update(task, total=len(users))
+    made = skipped = 0
+    for i, uid in enumerate(users):
+        if pool_fresh_count(uid) >= POOL_TARGET:
+            skipped += 1
+        else:
+            made += await generate_starters(uid)
+        if task:
+            task_monitor.update(task, processed=i + 1)
+    return f"{made} starters generated ({skipped} pools already full)"
+
+
 @dataclass
 class Task:
     job_id: str
@@ -432,6 +460,8 @@ def _registry() -> list[Task]:
              needs_llm=True, takes_deep=True, takes_task=True),
         Task("custodian_wikidata", "On-record facts",    24.0,  _run_wikidata,
              takes_deep=True, takes_task=True),
+        Task("chat_starters",    "Conversation starters", 12.0, _run_chat_starters,
+             needs_llm=True, takes_task=True),
         Task("cache_prune",      "Expired cache rows",   24.0,  _run_cache_prune,
              takes_task=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
