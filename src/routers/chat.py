@@ -1697,6 +1697,23 @@ async def _build_discuss_context_block(
         except Exception as _e:
             logger.debug("[chat] size context failed: %s", _e)
 
+        # The measured DIALOGUE line — a pure DB read, so it rides on EVERY
+        # discussion turn. The batch judge has carried it since the feature
+        # landed, but the discussion only ever attempted the full transcript
+        # (reevaluate-gated, quota-bound, 45s): when that fetch failed, the
+        # curator told the owner it had "no subtitle word rates" for a title
+        # whose 42.7 words/min sat measured in the DB the entire time — and
+        # deduced the pacing from mood tags instead.
+        try:
+            from src.services.subtitle_signals import subtitle_facts
+            _dline = subtitle_facts(
+                {"tmdb_id": proposal.tmdb_id, "tvdb_id": proposal.tvdb_id},
+                proposal.category or "movie")
+            if _dline:
+                block += _dline if _dline.endswith("\n") else _dline + "\n"
+        except Exception as _e:
+            logger.debug("[chat] dialogue line failed: %s", _e)
+
         # Attach the FULL verified dataset (creator/writer, extended plot,
         # themes, keywords, awards) — assembled cache-only with NO LLM and no
         # live fetch — so a Level-2 self-check and any discussion reason from

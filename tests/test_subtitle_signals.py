@@ -688,3 +688,22 @@ def test_a_track_with_no_words_per_cue_is_refused():
     assert subtitle_metrics(sparse, 24.0) == {}
     real = [(i * 3.0, i * 3.0 + 1.0, "four whole words here") for i in range(400)]
     assert subtitle_metrics(real, 24.0)
+
+
+def test_the_discussion_carries_the_measured_numbers_not_just_the_transcript():
+    """Given (2021) sat in the DB at 42.7 words/min, measured — and the
+    discussion told the owner it had "no subtitle word rates" and deduced the
+    pacing from mood tags (wrongly: 8 of 148 min without dialogue is a
+    murmuring show, not a static one). The chat path only ever attempted the
+    full transcript, which is reevaluate-gated, quota-bound and 45s-capped;
+    the derived numbers are a pure DB read and must ride on EVERY discussion
+    turn, exactly as they ride on every batch verdict."""
+    chat = (_SRC / "routers" / "chat.py").read_text(encoding="utf-8")
+    assert "subtitle_facts(" in chat, "discussion must attach the DIALOGUE line"
+    # ...unconditionally, not inside the reevaluate-only transcript block:
+    attach = chat.index("subtitle_facts(")
+    reeval = chat.index('if getattr(ctx, "reevaluate", False):')
+    assert attach < reeval, "the numbers line must not be reevaluate-gated"
+    # and the judge's own path keeps it too
+    assert "subtitle_facts(item, media_type)" in (
+        _SRC / "services" / "pillars.py").read_text(encoding="utf-8")
