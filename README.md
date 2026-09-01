@@ -157,6 +157,9 @@ for embeddings, which runs on CPU by design so the GPU stays free for the
 curator. Any Ollama model can be substituted; the benchmark scripts ship
 with the repo. AniList and MusicBrainz need no keys.
 
+Sonarr and Radarr have stable API´s Lidarr is a bit of a hit or miss. Sometimes it works sometimes it even responds to our calls.
+So please be patient with the backend when it tries to fetch anything from Lidarr. I am still trying to get the API to a more stable state but as the other two run fine it might just not be fixable on my end.
+
 ### Installation
 
 **Windows**
