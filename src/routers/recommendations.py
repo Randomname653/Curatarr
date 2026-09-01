@@ -146,7 +146,7 @@ async def _run_cache_refresh(user_id: int):
 # ── POSTER / SYNOPSIS FETCHING ───────────────────────────────────────────────
 
 async def _fetch_poster(title: str, category: str) -> Optional[str]:
-    """Fetch poster URL from TMDB (w300). Returns URL or None."""
+    """Fetch poster URL from TMDB (w500). Returns URL or None."""
     poster, _ = await _fetch_tmdb(title, category)
     return poster
 
@@ -222,8 +222,12 @@ async def _fetch_tmdb(
 
     def _from_entry(data: dict) -> tuple:
         """Pull (poster, synopsis) out of a full TMDB movie/tv object."""
+        # w500, not w92: the UI moved to large poster cards, and a 92px
+        # source upscaled to card size is mush. One size for every consumer
+        # (recs, deletions, add-new, recent-history) — this is the only
+        # place in src/ that renders a TMDB image path into a URL.
         poster = (
-            f"https://image.tmdb.org/t/p/w92{data['poster_path']}"
+            f"https://image.tmdb.org/t/p/w500{data['poster_path']}"
             if data.get("poster_path") else None
         )
         synopsis = (data.get("overview") or "").strip() or None
