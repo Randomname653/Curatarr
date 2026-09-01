@@ -229,3 +229,92 @@ def test_get_taste_no_context():
             assert r.json()["detail"] == "No taste vector yet. Run /api/history/sync first."
     finally:
         app.dependency_overrides.clear()
+
+
+# ── posters on small pages (the recent-widget contract) ─────────────────────
+
+def _poster_db():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    mk = lambda i, **kw: WatchHistoryEntry(
+        id=i, user_id=1, viewed_at=now, completed=True, genres="",
+        season=kw.pop("season", None), episode=kw.pop("episode", None), **kw)
+    return MockSession([
+        mk(1, title="Ep 1", series_title="Breaking Bad", media_type="show",
+           season=1, episode=1, tmdb_id=1396),
+        mk(2, title="Ep 2", series_title="Breaking Bad", media_type="show",
+           season=1, episode=2, tmdb_id=1396),
+        mk(3, title="The Matrix", series_title=None, media_type="movie",
+           tmdb_id=603),
+    ])
+
+
+def test_small_pages_carry_posters_deduped_and_id_first():
+    """limit=8 (the widget's call) resolves posters — one lookup per SERIES,
+    not per episode, and the stored tmdb_id rides along so franchise titles
+    resolve deterministically instead of by title search."""
+    import src.routers.recommendations as recs
+    calls = []
+
+    async def fake_fetch(title, category, tmdb_id=None, year=None,
+                         tvdb_id=None, mbid=None):
+        calls.append((title, category, tmdb_id, mbid))
+        return f"https://img/{title}.jpg", None
+
+    app.dependency_overrides[get_current_user] = get_mock_user
+    app.dependency_overrides[get_db] = _poster_db
+    orig = recs._fetch_tmdb
+    recs._fetch_tmdb = fake_fetch
+    try:
+        r = client.get("/api/history/recent?limit=8")
+        assert r.status_code == 200
+        e = r.json()["entries"]
+        assert e[0]["poster_url"] == "https://img/Breaking Bad.jpg"
+        assert e[1]["poster_url"] == "https://img/Breaking Bad.jpg"
+        assert e[2]["poster_url"] == "https://img/The Matrix.jpg"
+        # two Breaking Bad episodes -> ONE lookup; ids passed through
+        assert len(calls) == 2
+        assert ("Breaking Bad", "show", 1396, None) in calls
+        assert ("The Matrix", "movie", 603, None) in calls
+    finally:
+        recs._fetch_tmdb = orig
+        app.dependency_overrides.clear()
+
+
+def test_large_pages_never_resolve_posters():
+    """The classic 100-row history view stays as cheap as it was: no lookup
+    is even attempted, the field is present but None."""
+    import src.routers.recommendations as recs
+
+    async def explode(*a, **k):
+        raise BaseException("poster lookup attempted on a large page")
+
+    app.dependency_overrides[get_current_user] = get_mock_user
+    app.dependency_overrides[get_db] = _poster_db
+    orig = recs._fetch_tmdb
+    recs._fetch_tmdb = explode
+    try:
+        r = client.get("/api/history/recent")          # default limit=100
+        assert r.status_code == 200
+        assert all(e["poster_url"] is None for e in r.json()["entries"])
+    finally:
+        recs._fetch_tmdb = orig
+        app.dependency_overrides.clear()
+
+
+def test_a_failed_poster_lookup_never_breaks_the_page():
+    import src.routers.recommendations as recs
+
+    async def flaky(title, category, **kw):
+        raise RuntimeError("TMDB down")
+
+    app.dependency_overrides[get_current_user] = get_mock_user
+    app.dependency_overrides[get_db] = _poster_db
+    orig = recs._fetch_tmdb
+    recs._fetch_tmdb = flaky
+    try:
+        r = client.get("/api/history/recent?limit=8")
+        assert r.status_code == 200
+        assert all(e["poster_url"] is None for e in r.json()["entries"])
+    finally:
+        recs._fetch_tmdb = orig
+        app.dependency_overrides.clear()

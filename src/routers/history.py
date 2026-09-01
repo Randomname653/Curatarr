@@ -128,6 +128,11 @@ async def get_taste(
     return {"taste_context": ctx}
 
 
+# Posters ride along only on small pages — the frontend's recent-widget asks
+# for 8; the classic 100-row history view stays exactly as cheap as it was.
+_POSTER_PAGE_MAX = 12
+
+
 @router.get("/recent")
 async def recent_history(
     limit: int = Query(default=100, le=500),
@@ -136,11 +141,43 @@ async def recent_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return recent watch history, optionally filtered by category."""
+    """Return recent watch history, optionally filtered by category.
+
+    For small pages (limit <= 12) each entry also carries ``poster_url``,
+    resolved through the recommendations poster path (24h in-memory cache,
+    id-first: a stored tmdb_id / artist_mbid beats a title search — the
+    franchise lesson). Deduped per series, so a binge of one show costs one
+    lookup. Large pages skip resolution entirely and return ``None``.
+    """
     q = db.query(WatchHistoryEntry).filter(WatchHistoryEntry.user_id == user.id)
     if category and category != "all":
         q = q.filter(WatchHistoryEntry.media_type == category)
     entries = q.order_by(WatchHistoryEntry.viewed_at.desc()).offset(offset).limit(limit).all()
+
+    poster_by_key: dict = {}
+    if entries and limit <= _POSTER_PAGE_MAX:
+        import asyncio
+        from src.routers.recommendations import _fetch_tmdb
+
+        lookups = {}
+        for e in entries:
+            key = (e.series_title or e.title, e.media_type)
+            lookups.setdefault(key, (e.tmdb_id, e.artist_mbid))
+
+        async def _one(key, ids):
+            lookup_title, cat = key
+            try:
+                poster, _ = await _fetch_tmdb(lookup_title, cat or "movie",
+                                              tmdb_id=ids[0], mbid=ids[1])
+                return key, poster
+            except Exception as _e:
+                logger.debug("[history] poster lookup failed for %r: %s",
+                             lookup_title, _e)
+                return key, None
+
+        poster_by_key = dict(await asyncio.gather(
+            *(_one(k, v) for k, v in lookups.items())))
+
     return {
         "offset": offset,
         "limit": limit,
@@ -154,6 +191,8 @@ async def recent_history(
                 "genres": e.genres,
                 "season": e.season,
                 "episode": e.episode,
+                "poster_url": poster_by_key.get(
+                    (e.series_title or e.title, e.media_type)),
             }
             for e in entries
         ],
