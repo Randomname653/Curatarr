@@ -69,6 +69,12 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
 - **Tautulli importer** — full historical watch attribution for setups
   that have it.
 - Extend the music enrichment so the Curatarr actually knows about music
+- **Per-episode knowledge** — TMDB carries per-episode data (titles,
+  overviews, air dates), but everything here is enriched per SERIES today.
+  Watch history is already per episode, so discussions can state the
+  episode FACT ("S2E5, last night") while honestly disclaiming episode-
+  level plot knowledge. Real per-episode enrichment (its own cache layer,
+  its own staleness, ~20x the rows) is a project of its own.
 
 ## Standing principles
 

@@ -11,10 +11,22 @@ class DiscussContext(BaseModel):
     action) are kept Optional for short-term frontend backward compat but
     ignored when ``kind`` + the matching ID are present.
     """
-    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle"
+    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle" | "watched_title"
+    type: Optional[str] = None         # alias spelling for `kind` (last-played contract uses it)
     proposal_id: Optional[int] = None  # FK → DeletionProposal.id
     message_id: Optional[int] = None   # FK → ProactiveMessage.id
     principle_id: Optional[int] = None # FK → CuratorPrinciple.id (learned-principle review)
+
+    # watched_title (last-played strip click): hints for resolving the user's
+    # OWN watch-history row. All optional — the backend anchors on the row it
+    # finds for THIS user and never trusts the client's copies of the facts.
+    history_id: Optional[int] = None   # FK → WatchHistoryEntry.id (preferred when known)
+    series_title: Optional[str] = None
+    plex_rating_key: Optional[str] = None
+    tmdb_id: Optional[int] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    viewed_at: Optional[str] = None
 
     # Pass 81d: ONE-SHOT flag set by the frontend 🔍 Reevaluate button. The
     # frontend sends a short user-visible message ("Run a Level 2 thematic

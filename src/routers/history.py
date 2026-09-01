@@ -183,6 +183,10 @@ async def recent_history(
         "limit": limit,
         "entries": [
             {
+                # id lets the frontend hand a precise watched_title
+                # discuss-context anchor back (history_id) instead of
+                # title-matching hints.
+                "id": e.id,
                 "title": e.title,
                 "series_title": e.series_title,
                 "media_type": e.media_type,

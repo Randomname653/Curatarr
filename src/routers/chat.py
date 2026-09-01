@@ -6,6 +6,7 @@ Streaming Ollama with RAG, taste context, and persistent conversation memory.
 import asyncio
 import json
 import logging
+import re
 from collections import OrderedDict
 from datetime import datetime
 from typing import AsyncGenerator
@@ -1172,13 +1173,24 @@ def _thread_id_for(ctx) -> str:
     """
     if not ctx:
         return "general"
-    kind = ctx.kind or ctx.action  # back-compat with legacy `action`
+    # `type` is the alias the last-played contract uses; `action` is legacy.
+    kind = ctx.kind or getattr(ctx, "type", None) or ctx.action
     if (kind == "deletion_proposal" or kind == "deletion") and ctx.proposal_id:
         return f"deletion_proposal:{ctx.proposal_id}"
     if kind == "proactive_message" and ctx.message_id:
         return f"proactive_message:{ctx.message_id}"
     if kind == "principle" and getattr(ctx, "principle_id", None):
         return f"principle:{ctx.principle_id}"
+    if kind == "watched_title":
+        # One thread per WORK, not per episode: clicking S2E5 tonight and
+        # S2E6 tomorrow continues the same conversation. tmdb_id when the
+        # frontend has it, else the normalised title (no DB in here).
+        if getattr(ctx, "tmdb_id", None):
+            return f"watched:tmdb:{ctx.tmdb_id}"
+        _t = re.sub(r"[^a-z0-9]+", "-",
+                    (ctx.series_title or ctx.title or "").lower()).strip("-")
+        if _t:
+            return f"watched:{_t[:80]}"
     return "general"
 
 
@@ -1630,7 +1642,7 @@ async def _build_discuss_context_block(
     if not ctx:
         return "", "", None
 
-    kind = ctx.kind or ctx.action  # back-compat: legacy `action` field
+    kind = ctx.kind or getattr(ctx, "type", None) or ctx.action
     domain = ctx.category
 
     # ── Deletion-proposal discussion ─────────────────────────────────────────
@@ -1963,6 +1975,109 @@ async def _build_discuss_context_block(
             block += _LEVEL_2_REEVAL_FRAMING
 
         return block, proposal.title, proposal.category or domain
+
+    # ── Watched-title discussion (last-played strip click) ──────────────────
+    # The anchor is the user's OWN watch-history row — resolved server-side,
+    # never the client's copies of the facts (same trust model as proposals).
+    # This is a conversation about a title they just watched, NOT a deletion
+    # flow: no verdict machinery, no delete-button talk.
+    if kind == "watched_title":
+        from src.database.models import WatchHistoryEntry
+
+        q = db.query(WatchHistoryEntry).filter(
+            WatchHistoryEntry.user_id == user_id)
+        if getattr(ctx, "history_id", None):
+            q = q.filter(WatchHistoryEntry.id == ctx.history_id)
+        else:
+            names = [n for n in (ctx.series_title, ctx.title) if n]
+            from sqlalchemy import or_
+            crit = []
+            for n in names:
+                crit += [WatchHistoryEntry.series_title == n,
+                         WatchHistoryEntry.title == n]
+            if getattr(ctx, "tmdb_id", None):
+                crit.append(WatchHistoryEntry.tmdb_id == ctx.tmdb_id)
+            if not crit:
+                return "", "", domain
+            q = q.filter(or_(*crit))
+            if ctx.category:
+                q = q.filter(WatchHistoryEntry.media_type == ctx.category)
+        row = q.order_by(WatchHistoryEntry.viewed_at.desc()).first()
+        if not row:
+            logger.info("Discuss context: watched_title %r has no history row "
+                        "for user %d", ctx.series_title or ctx.title, user_id)
+            return "", "", domain
+
+        series = row.series_title or row.title
+        domain = ctx.category or row.media_type or domain
+
+        when = row.viewed_at.strftime("%Y-%m-%d %H:%M") if row.viewed_at else "?"
+        if row.season is not None and row.episode is not None:
+            watched_line = (f"S{row.season}E{row.episode}"
+                            + (f" ('{row.title}')" if row.title != series else "")
+                            + f", played {when}"
+                            + (", completed" if row.completed else ", not finished"))
+        else:
+            watched_line = (f"played {when}"
+                            + (", completed" if row.completed else ", not finished"))
+
+        block = (
+            "[CURRENT DISCUSSION CONTEXT]\n"
+            f"The user clicked '{series}' in their recently-played strip — "
+            "they want to TALK about it. This is a conversation, not a "
+            "deletion review: no verdict, no deletion or downscale talk "
+            "unless the user raises it themselves.\n"
+            f"LAST PLAYED: {watched_line}.\n"
+            "EPISODE HONESTY: the line above is a per-episode FACT from the "
+            "watch log; your knowledge of the WORK is series-level. Never "
+            "claim episode-specific plot — ask the user about specifics "
+            "instead.\n\n"
+        )
+
+        # Watch depth + verified facts, same helpers the proposal path uses.
+        try:
+            if domain == "music":
+                from src.services.watch_status import (music_listening_stats,
+                                                       format_listening_line)
+                _ls = music_listening_stats(user_id, series, row.artist_mbid)
+                block += (f"OWNER LISTENING RECORD for '{series}': "
+                          f"{format_listening_line(_ls)}\n")
+            else:
+                _st = _watched_lookup(user_id, [series],
+                                      category=domain).get(series)
+                if _st:
+                    block += (f"USER WATCH STATUS for '{series}': "
+                              f"{_watch_tag(_st)}\n")
+                from src.services.watch_status import viewing_pattern
+                _vp = viewing_pattern(user_id, series, category=domain)
+                if _vp:
+                    block += f"VIEWING PATTERN: {_vp}\n"
+        except Exception as _e:
+            logger.debug("[chat] watched-title watch stats failed: %s", _e)
+
+        _vd_payload = None
+        try:
+            from src.services.media_enricher import (ensure_verified_data,
+                                                     format_verified_block)
+            _vd_payload = await ensure_verified_data(
+                series, domain or "movie", tmdb_id=row.tmdb_id)
+            _vb = format_verified_block(_vd_payload)
+            if _vb:
+                block += "\n" + _vb + "\n"
+        except Exception as _e:
+            logger.debug("[chat] watched-title verified data failed: %s", _e)
+
+        try:
+            from src.services.subtitle_signals import subtitle_facts
+            _dl = subtitle_facts({"tmdb_id": row.tmdb_id}, domain or "movie")
+            if _dl:
+                block += _dl if _dl.endswith("\n") else _dl + "\n"
+        except Exception as _e:
+            logger.debug("[chat] watched-title dialogue line failed: %s", _e)
+
+        _set_thread_active_title(_thread_id_for(ctx),
+                                 (series, _vd_payload, domain or "movie"))
+        return block, series, domain
 
     # ── Proactive-message discussion ─────────────────────────────────────────
     if kind == "proactive_message" and ctx.message_id:
