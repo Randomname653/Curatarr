@@ -241,8 +241,13 @@ app.add_middleware(
 # Slow-request telemetry: logs any endpoint taking >300ms to response
 # start, so "the page feels slow" can be answered from the log instead of
 # guessed at. Time-to-first-byte, so SSE streams don't count as slow.
-from src.middleware import SecurityHeadersMiddleware, SlowRequestLogMiddleware
+from src.middleware import (SecurityHeadersMiddleware, SlowRequestLogMiddleware,
+                            TokenRefreshMiddleware)
 app.add_middleware(SlowRequestLogMiddleware)
+
+# Sliding sessions: a used session never expires mid-click; an idle one
+# dies after 7 days. See TokenRefreshMiddleware.
+app.add_middleware(TokenRefreshMiddleware)
 
 # Outermost (added last): stamps security headers on every response,
 # CORS preflights included. Pure ASGI — SSE-safe (see src/middleware.py).

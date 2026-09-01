@@ -56,6 +56,54 @@ class SlowRequestLogMiddleware:
         await self.app(scope, receive, send_timed)
 
 
+class TokenRefreshMiddleware:
+    """Silently reissue a JWT that is past 1/7th of its life.
+
+    JWTs are stateless, so "sliding expiry" has to happen in band: when a
+    request carries a valid token older than a day, the response gains an
+    ``x-curatarr-refreshed-token`` header with a fresh 7-day token. The
+    frontend's api() helper swaps it into localStorage; a client that
+    ignores the header simply keeps its fixed 7-day expiry. Invalid or
+    absent tokens pass through untouched — 401 handling stays where it is.
+    """
+
+    REFRESH_AFTER_S = 24 * 3600
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        fresh: bytes | None = None
+        auth = next((v for k, v in scope.get("headers", [])
+                     if k == b"authorization"), b"")
+        if auth.startswith(b"Bearer "):
+            try:
+                from jose import jwt
+                from src.config import settings
+                payload = jwt.decode(auth[7:].decode(),
+                                     settings.effective_jwt_secret,
+                                     algorithms=["HS256"])
+                iat = int(payload.get("iat", 0))
+                if iat and (time.time() - iat) > self.REFRESH_AFTER_S:
+                    from src.routers.auth import _create_jwt
+                    fresh = _create_jwt(int(payload["sub"]),
+                                        bool(payload.get("admin"))).encode()
+            except Exception:
+                pass          # expired/garbage → the endpoint 401s as before
+
+        async def send_with_token(message):
+            if fresh and message["type"] == "http.response.start":
+                message.setdefault("headers", []).append(
+                    (b"x-curatarr-refreshed-token", fresh))
+            await send(message)
+
+        await self.app(scope, receive, send_with_token)
+
+
 class SecurityHeadersMiddleware:
     HEADERS = [
         (b"x-content-type-options", b"nosniff"),

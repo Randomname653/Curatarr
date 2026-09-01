@@ -182,7 +182,7 @@ async def proxy_image(
     cached = _find_existing(src)
     if cached:
         ct = _CT_FOR_EXT.get(cached.suffix, "application/octet-stream")
-        return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     # 3. Single-flight: if another coroutine is already fetching this URL,
     #    wait on its lock and then serve from cache.
@@ -193,7 +193,7 @@ async def proxy_image(
         cached = _find_existing(src)
         if cached:
             ct = _CT_FOR_EXT.get(cached.suffix, "application/octet-stream")
-            return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
+            return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
         # 4. Fetch upstream — disable auto-redirect so the whitelist is
         #    enforced on every hop. With ``follow_redirects=True`` a
@@ -266,4 +266,4 @@ async def proxy_image(
                             headers={"Cache-Control": "no-store"})
 
     _inflight.pop(src, None)
-    return FileResponse(path, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(path, media_type=ct, headers={"Cache-Control": "public, max-age=31536000, immutable"})

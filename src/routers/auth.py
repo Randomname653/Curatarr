@@ -41,7 +41,13 @@ def _create_jwt(user_id: int, is_admin: bool) -> str:
     payload = {
         "sub": str(user_id),
         "admin": is_admin,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        # 7 days, not 24h: the old value logged the owner out mid-click
+        # exactly one day after each login (observed live: a 200 and a 401
+        # six seconds apart on the same connection). Paired with the
+        # rolling-refresh middleware, a session now lives as long as it is
+        # USED and dies after a week idle — the right shape for a trusted-
+        # LAN household app.
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, settings.effective_jwt_secret, algorithm="HS256")
