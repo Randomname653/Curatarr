@@ -2587,7 +2587,12 @@ async def send_message(
                                     _alb["title"], active_title)
         except Exception as _e:
             logger.debug("[chat] album dossier failed: %s", _e)
-    taste_context = await get_user_taste_context(user.id, query=message.message)
+    # In an active discussion the item's category is known — scope the taste
+    # profile to it instead of keyword-guessing from the user's reply (whose
+    # fallback is ALL categories: that is how a movie discussion got the
+    # music profile). Free chat keeps the cross-category behaviour.
+    taste_context = await get_user_taste_context(
+        user.id, query=message.message, category=discuss_domain)
     # When a discussion is active, anchor the RAG / memory queries on the
     # actual title under discussion — using the user's free-form reply ("lets
     # actually discuss this") as the embedding query was pulling in random

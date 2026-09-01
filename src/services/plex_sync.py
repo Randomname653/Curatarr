@@ -1653,11 +1653,22 @@ CRITICAL RULES (YOU MUST OBEY):
     )
 
 
-async def get_user_taste_context(user_id: int, query: str = "") -> str:
+async def get_user_taste_context(user_id: int, query: str = "",
+                                 category: str = None) -> str:
     """
     Return taste context for the LLM system prompt.
     When a query is provided, injects only the relevant categories
     to save tokens and reduce noise.
+
+    ``category`` pins the scope outright and skips the keyword guess. A
+    deletion discussion KNOWS what it is about; the keyword detector only
+    sees the user's reply — and a reply like "but they have gigantic
+    titties" names no category, so the fallback handed a movie discussion
+    the full profile, music included. That music section then supplied the
+    material for an invented motive when the curator was asked about an
+    unrelated language switch. The judge has been category-scoped all
+    along (pillars builds its OWNER TASTE line per category); a discussion
+    defending the judge's verdict reasons from the same base.
     """
     with get_db_session() as db:
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
@@ -1670,8 +1681,12 @@ async def get_user_taste_context(user_id: int, query: str = "") -> str:
         watch_count = tv.watch_count or 0
         computed_at = tv.computed_at
 
-    # Detect which categories are relevant to the query
-    relevant_cats = _detect_relevant_categories(query, type_data)
+    # Detect which categories are relevant to the query — unless the caller
+    # already knows (an active discussion carries its item's category).
+    if category and category in type_data:
+        relevant_cats = [category]
+    else:
+        relevant_cats = _detect_relevant_categories(query, type_data)
 
     type_labels = {
         "music": "🎵 Music", "movie": "🎬 Movies",
