@@ -140,9 +140,19 @@ check("manual deletion analysis creates a curation card",
 check("manual analysis feeds the card into generate_deletion_proposals "
       "(phase/per-pitch progress)", rr.count("monitor_task=mtask") == 2)
 
+# The 2026-09 prettification removed the per-category emoji map (TASK_ICONS)
+# on purpose: a task's identity is its backend-sent NAME, rendered verbatim
+# into every activity row — which makes any NEW category visible by default,
+# where the old map needed a manual entry per category. What must hold now:
+# the row renders the name, and no half-removed icon map lingers.
 fe = (root / "frontend/index.html").read_text(encoding="utf-8")
-for cat in ("custodian", "curation", "recs", "memory", "music", "maintenance"):
-    check(f"frontend has an icon for category '{cat}'", f"{cat}: '" in fe)
+check("activity rows render the task's backend-sent name",
+      "${esc(t.name)}" in fe)
+check("the old per-category icon map is fully gone, not half-removed",
+      "TASK_ICONS" not in fe)
+check("every status the backend emits has a color and a label",
+      all(f"{s}:" in fe.split("STATUS_COLORS")[1][:220]
+          for s in ("running", "done", "error", "pending", "skipped")))
 
 # ── 4. inner progress inside the wrapper runners (the 0%-until-done fix) ─────
 

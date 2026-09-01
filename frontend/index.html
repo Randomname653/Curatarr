@@ -57,6 +57,7 @@
   --radius: 8px;
   --radius-lg: 12px;
   --sidebar-w: 220px;
+  --sidebar-w-collapsed: 56px;
 }
 /* Slim dark scrollbars — the stock ones break the dark surface on Windows */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -68,9 +69,16 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 
 /* ── TOPBAR ── */
 #topbar { height: 46px; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 12px; flex-shrink: 0; z-index: 10; }
+#sb-hamburger { display: none; background: none; border: none; color: var(--text2); padding: 6px; margin-right: 2px; border-radius: var(--radius); cursor: pointer; }
+#sb-hamburger:hover { color: var(--amber); }
 #logo { font-size: 15px; font-weight: 700; color: var(--amber); letter-spacing: .5px; margin-right: 4px; }
 #logo span { color: var(--text2); font-weight: 400; font-size: 11px; margin-left: 4px; }
 .tb-spacer { flex: 1; }
+#topbar-search-form { display: flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; width: 220px; color: var(--text3); transition: border-color .15s, color .15s; }
+#topbar-search-form:focus-within { border-color: var(--amber); color: var(--text2); }
+#topbar-search-form svg { flex-shrink: 0; }
+#topbar-search { background: none; border: none; outline: none; color: var(--text); font-size: 12px; width: 100%; min-width: 0; }
+#topbar-search::placeholder { color: var(--text3); }
 #msg-bell { position: relative; cursor: pointer; background: none; border: none; color: var(--text2); padding: 6px; border-radius: var(--radius); transition: color .15s; }
 #msg-bell:hover { color: var(--amber); }
 #msg-badge { position: absolute; top: 2px; right: 2px; background: var(--amber); color: #000; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 3px; }
@@ -83,10 +91,14 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 #layout { display: flex; flex: 1; overflow: hidden; }
 
 /* ── SIDEBAR ── */
-#sidebar { width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
+#sidebar { width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow-x: hidden; transition: width .15s ease; }
+/* Scrolls independently of .sb-footer, which sits outside it -- so the
+   footer (sign out / shutdown / collapse) stays pinned at a fixed spot
+   instead of riding up and down with however tall the nav list is. */
+.sb-nav { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
 .sb-section { padding: 8px 0; }
-.sb-label { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; padding: 8px 16px 4px; }
-.sb-item { display: flex; align-items: center; gap: 10px; padding: 8px 16px; cursor: pointer; color: var(--text2); border-left: 2px solid transparent; transition: all .12s; user-select: none; }
+.sb-label { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; padding: 8px 16px 4px; white-space: nowrap; }
+.sb-item { display: flex; align-items: center; gap: 10px; padding: 8px 16px; cursor: pointer; color: var(--text2); border-left: 2px solid transparent; transition: all .12s; user-select: none; white-space: nowrap; }
 .sb-item:hover { background: var(--bg3); color: var(--text); }
 .sb-item.active { background: var(--amber-dim); color: var(--amber); border-left-color: var(--amber); }
 .sb-item svg { flex-shrink: 0; opacity: .7; }
@@ -94,9 +106,52 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 /* Pass 25: pulse-dot shown when a background analysis is running for this entry */
 .sb-pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); margin-left: auto; flex-shrink: 0; animation: sb-pulse 1.2s ease-in-out infinite; box-shadow: 0 0 6px rgba(229,160,13,.55); }
 @keyframes sb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(.75); } }
-.sb-footer { margin-top: auto; padding: 12px; border-top: 1px solid var(--border); }
-.sb-footer button { width: 100%; background: none; border: 1px solid var(--border); color: var(--text2); padding: 7px; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
+.sb-footer { flex-shrink: 0; padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.sb-footer button { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: 1px solid var(--border); color: var(--text2); padding: 7px; border-radius: var(--radius); cursor: pointer; font-size: 12px; white-space: nowrap; }
 .sb-footer button:hover { border-color: var(--danger); color: var(--danger); }
+#sb-collapse-toggle:hover { border-color: var(--amber); color: var(--amber); }
+/* Icon-rail mode — labels, section headers and live-status extras collapse
+   away; the SVG + a native title="" tooltip carry the meaning instead. */
+#sidebar.collapsed { width: var(--sidebar-w-collapsed); }
+#sidebar.collapsed .sb-label { display: none; }
+#sidebar.collapsed .sb-item { justify-content: center; padding: 8px; }
+#sidebar.collapsed .sb-text { display: none; }
+#sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge { display: none !important; }
+#sidebar.collapsed .sb-footer button { justify-content: center; padding: 7px; }
+#sidebar.collapsed #sb-collapse-icon { transform: rotate(180deg); }
+#sb-backdrop { display: none; }
+
+/* ── RESPONSIVE (Pass: sidebar-as-drawer below tablet width) ──
+   Below 768px the sidebar can no longer just sit there at 220px eating
+   most of a phone/tablet's width -- it becomes an off-canvas drawer:
+   hidden by default, slides over the content (not pushing it) via the
+   hamburger button, closes on backdrop click or on picking a view. The
+   desktop expand/collapse toggle doesn't apply here so it's hidden too. */
+@media (max-width: 768px) {
+  #sb-hamburger { display: block; }
+  /* Topbar's too tight for the search box + hamburger both — reachable via
+     the Recommendations view's own (identical) search box instead. */
+  #topbar-search-form { display: none; }
+  #sidebar, #sidebar.collapsed {
+    position: fixed; top: 46px; bottom: 0; left: 0; z-index: 30;
+    width: min(80vw, 260px);
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    box-shadow: 2px 0 16px rgba(0,0,0,.35);
+  }
+  #sidebar.mobile-open { transform: translateX(0) !important; }
+  #sidebar.collapsed .sb-label,
+  #sidebar.collapsed .sb-text { display: block; }
+  #sidebar.collapsed .sb-item { justify-content: flex-start; padding: 8px 16px; }
+  #sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge { display: flex !important; }
+  #sb-collapse-toggle { display: none; }
+  #sb-backdrop.show {
+    display: block; position: fixed; inset: 46px 0 0 0; z-index: 25;
+    background: rgba(0,0,0,.5);
+  }
+  .view-body { padding: 14px 16px; }
+  .tbl-wrap { overflow-x: auto; }
+}
 
 /* ── CONTENT ── */
 #content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
@@ -133,7 +188,25 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 #messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
 .msg { max-width: 72%; line-height: 1.6; font-size: 13px; }
 .msg.user { align-self: flex-end; background: var(--amber); color: #000; padding: 10px 14px; border-radius: 12px 12px 3px 12px; font-weight: 500; }
-.msg.assistant { align-self: flex-start; background: var(--bg3); border: 1px solid var(--border); padding: 10px 14px; border-radius: 12px 12px 12px 3px; }
+.msg.assistant { align-self: flex-start; background: var(--bg3); border: 1px solid var(--border); padding: 10px 14px; border-radius: 12px 12px 12px 3px; position: relative; margin-left: 28px; }
+/* Gives the curator's messages a small identity marker, same circular-badge
+   language as the user's own #user-avatar -- pure CSS so it applies
+   uniformly to every .msg.assistant however it was created (static
+   greeting, addMsg, streaming replies, thinking placeholder), no
+   per-call-site changes needed. The mark itself is the exact favicon SVG
+   (see the <link rel="icon"> data-URI up top) reused as a background-image
+   -- same brand asset, not a second one invented for this spot. A
+   background-image data-URI can't reference CSS custom properties, so its
+   colors stay the favicon's own hardcoded amber rather than var(--amber);
+   that's the one accepted exception to the token rule, same as the
+   favicon itself already is. */
+.msg.assistant::before {
+  content: ''; position: absolute; left: -28px; top: 4px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background-color: var(--amber-dim); border: 1px solid var(--amber);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%23f7c14a'/%3E%3Cstop%20offset='1'%20stop-color='%23e5a00d'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg%20stroke='url(%23g)'%20stroke-width='9'%20fill='none'%3E%3Cpath%20d='M%2048.9%2017.9%20A%2022%2022%200%200%200%2018.2%2014.9'/%3E%3Cpath%20d='M%2014.9%2018.2%20A%2022%2022%200%200%200%2014.9%2045.8'/%3E%3Cpath%20d='M%2018.2%2049.1%20A%2022%2022%200%200%200%2048.9%2046.1'/%3E%3C/g%3E%3Cpath%20d='M%2040.5%2023.5%20A%2012%2012%200%201%200%2040.5%2040.5'%20fill='none'%20stroke='%23f0b93a'%20stroke-width='3.6'%20stroke-linecap='round'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='5'%20fill='url(%23g)'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='2'%20fill='%23ffd873'/%3E%3C/svg%3E");
+  background-size: 62%; background-repeat: no-repeat; background-position: center;
+}
 .msg.assistant p { margin-bottom: 12px; }
 .msg.assistant p:last-child { margin-bottom: 0; }
 /* The accent must not depend on WHICH markdown the model happens to emit:
@@ -163,7 +236,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 }
 /* Pass 14.9: status subnote shown alongside the thinking dots so the user
    sees what the backend is doing during the pre-stream phase
-   ("🔍 Looking up X", "✓ Found in tv", "🧠 Loading memories", "💭 Thinking"). */
+   ("Looking up X", "Found in tv", "Loading memories", "Thinking"). */
 .thinking-status {
   font-size: 11px;
   color: var(--text2);
@@ -261,6 +334,28 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .stat-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .stat-box .num { font-size: 24px; font-weight: 700; color: var(--amber); }
 .stat-box .lbl { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.lp-heading { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; margin: 4px 0 8px; }
+.lp-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
+.lp-chip { flex-shrink: 0; width: 72px; cursor: pointer; }
+.lp-chip:hover .lp-title { color: var(--amber); }
+.lp-title { font-size: 11px; color: var(--text2); margin-top: 5px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sp-chip { background: var(--bg2); border: 1px solid var(--border); color: var(--text2); padding: 6px 14px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: border-color .15s, color .15s; }
+.sp-chip:hover { border-color: var(--amber); color: var(--amber); }
+/* Shared frame for every title-card poster (Recommendations, Deletions,
+   Add-New) -- same soft-shadow edge ("Rand blurren" instead of a hard
+   1px border, warms to amber on hover) so all three read as one visual
+   language. .selectable just adds the pointer cursor; the actual
+   click-to-select/checkmark-overlay behavior below is Deletions-only
+   (nothing ever adds .selected or a .del-poster-check child on the
+   other two, so the rules are inert there, not dead code). */
+.poster-frame { position: relative; flex-shrink: 0; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.45); transition: box-shadow .15s, transform .15s; }
+.poster-frame:hover { box-shadow: 0 6px 22px rgba(229,160,13,.3); transform: translateY(-1px); }
+.poster-frame.selectable { cursor: pointer; }
+.poster-frame > *:first-child { transition: filter .15s, opacity .15s; }
+.poster-frame.selected > *:first-child { filter: blur(1.5px); opacity: .5; }
+.del-poster-check { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: rgba(229,160,13,.3); }
+.poster-frame.selected .del-poster-check { display: flex; }
+.del-poster-check svg { filter: drop-shadow(0 1px 4px rgba(0,0,0,.7)); color: #fff; }
 
 /* ── BUTTONS ── */
 .btn { padding: 7px 14px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: all .12s; }
@@ -343,6 +438,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 
 /* ── MISC ── */
 .loading { color: var(--text3); font-style: italic; font-size: 13px; }
+.load-err { color: var(--danger); font-style: normal; font-size: 13px; }
 .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .inline-flex { display: flex; align-items: center; gap: 8px; }
 .ml-auto { margin-left: auto; }
@@ -378,7 +474,7 @@ select option { background: var(--bg2); }
 <div id="setup-overlay">
   <div id="setup-box">
     <div class="setup-header">
-      <h1>⚙️ Curatarr Setup</h1>
+      <h1>Curatarr Setup</h1>
       <p>Let's connect your services. You only need to fill in what you actually use.</p>
     </div>
     <div class="setup-steps">
@@ -432,8 +528,15 @@ select option { background: var(--bg2); }
 
 <!-- APP -->
 <div id="topbar">
+  <button id="sb-hamburger" onclick="toggleMobileSidebar()" title="Menu" aria-label="Open menu">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
   <span id="logo">Curatarr <span>beta</span></span>
   <div class="tb-spacer"></div>
+  <form id="topbar-search-form" onsubmit="topbarSearch(event)" role="search">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input id="topbar-search" type="text" placeholder="Search your library…" aria-label="Search your library" title="Search your library (Ctrl+K)">
+  </form>
   <div id="game-indicator" title="Game detected — LLM paused, API pre-fetching only">
     <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>
     Game mode
@@ -449,82 +552,95 @@ select option { background: var(--bg2); }
 </div>
 
 <div id="layout">
+  <div id="sb-backdrop" onclick="toggleMobileSidebar(false)"></div>
   <nav id="sidebar">
+   <div class="sb-nav">
     <div class="sb-section">
       <div class="sb-label">Main</div>
-      <div class="sb-item active" onclick="showView('chat',this)">
+      <div class="sb-item active" onclick="showView('chat',this)" title="Chat">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Chat
+        <span class="sb-text">Chat</span>
       </div>
-      <div class="sb-item" onclick="showView('history',this)">
+      <div class="sb-item" onclick="showView('history',this)" title="History & Taste">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        History & Taste
+        <span class="sb-text">History & Taste</span>
       </div>
-      <div class="sb-item" onclick="showView('recs',this)">
+      <div class="sb-item" onclick="showView('recs',this)" title="Recommendations">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        Recommendations
+        <span class="sb-text">Recommendations</span>
       </div>
-      <div class="sb-item admin-only" id="sb-deletions" onclick="showView('deletions',this)" style="display:none">
+      <div class="sb-item admin-only" id="sb-deletions" onclick="showView('deletions',this)" style="display:none" title="Deletions">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-        Deletions
+        <span class="sb-text">Deletions</span>
         <span id="sb-deletions-pulse" class="sb-pulse-dot" style="display:none" title="Deletion analysis running…"></span>
       </div>
-      <div class="sb-item admin-only" onclick="showView('curation',this)" style="display:none">
+      <div class="sb-item admin-only" onclick="showView('curation',this)" style="display:none" title="Curation">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Curation
+        <span class="sb-text">Curation</span>
       </div>
-      <div class="sb-item admin-only" onclick="showView('report',this)" style="display:none">
+      <div class="sb-item admin-only" onclick="showView('report',this)" style="display:none" title="Report">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        Report
+        <span class="sb-text">Report</span>
       </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">Manage</div>
-      <div class="sb-item" onclick="showView('arr-sonarr',this)">
+      <div class="sb-item" onclick="showView('arr-sonarr',this)" title="TV Shows">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-        TV Shows
+        <span class="sb-text">TV Shows</span>
       </div>
-      <div class="sb-item" onclick="showView('arr-radarr',this)">
+      <div class="sb-item" onclick="showView('arr-radarr',this)" title="Movies">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        Movies
+        <span class="sb-text">Movies</span>
       </div>
-      <div class="sb-item" onclick="showView('arr-lidarr',this)">
+      <div class="sb-item" onclick="showView('arr-lidarr',this)" title="Music">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-        Music
+        <span class="sb-text">Music</span>
       </div>
-      <div class="sb-item admin-only" onclick="showView('reclassify',this)" style="display:none">
+      <div class="sb-item admin-only" onclick="showView('reclassify',this)" style="display:none" title="Reclassify">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-        Reclassify
+        <span class="sb-text">Reclassify</span>
       </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">System</div>
-      <div class="sb-item" onclick="showView('enrich',this)">
+      <div class="sb-item" onclick="showView('enrich',this)" title="Knowledge Base">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
-        Knowledge Base
+        <span class="sb-text">Knowledge Base</span>
       </div>
-      <div class="sb-item" onclick="showView('tasks',this)" id="tasks-nav">
+      <div class="sb-item" onclick="showView('tasks',this)" id="tasks-nav" title="Activity">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        Activity
+        <span class="sb-text">Activity</span>
         <span id="tasks-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none">0</span>
       </div>
-      <div class="sb-item admin-only" onclick="showView('libraries',this)" style="display:none">
+      <div class="sb-item admin-only" onclick="showView('libraries',this)" style="display:none" title="Libraries">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        Libraries
+        <span class="sb-text">Libraries</span>
       </div>
-      <div class="sb-item admin-only" onclick="showView('admin',this)" style="display:none">
+      <div class="sb-item admin-only" onclick="showView('admin',this)" style="display:none" title="Users">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        Users
+        <span class="sb-text">Users</span>
       </div>
-      <div class="sb-item" onclick="showView('settings',this); openSettingsPane('account')">
+      <div class="sb-item" onclick="showView('settings',this); openSettingsPane('account')" title="Settings">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        Settings
+        <span class="sb-text">Settings</span>
       </div>
     </div>
+   </div>
     <div class="sb-footer">
-      <button onclick="logout()">Sign out</button>
+      <button onclick="logout()" title="Sign out">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span class="sb-text">Sign out</span>
+      </button>
       <button class="admin-action-row" onclick="shutdownServer()" style="display:none;color:var(--danger)"
-              title="Gracefully stop the Curatarr server (running jobs are finalized)">⏻ Shutdown</button>
+              title="Gracefully stop the Curatarr server (running jobs are finalized)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        <span class="sb-text">Shutdown</span>
+      </button>
+      <button id="sb-collapse-toggle" onclick="toggleSidebar()" title="Collapse sidebar">
+        <svg id="sb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform .15s"><polyline points="15 18 9 12 15 6"/></svg>
+        <span class="sb-text">Collapse</span>
+      </button>
     </div>
   </nav>
 
@@ -538,7 +654,7 @@ select option { background: var(--bg2); }
            Deletions view. Hidden by default; _setDiscussBanner reveals it
            only for kind === 'deletion_proposal'. -->
       <div id="discuss-banner" style="display:none;background:var(--amber-dim);border-bottom:1px solid rgba(229,160,13,.3);padding:8px 16px;font-size:12px;color:var(--text2);align-items:center;gap:10px">
-        <span style="font-size:14px">🔴</span>
+        <span class="sb-pulse-dot" style="margin-left:0"></span>
         <span id="discuss-banner-text" style="flex:1"></span>
         <button id="discuss-delete-btn" onclick="deleteFromDiscussion()" style="display:none;background:rgba(229,83,83,.15);border:1px solid rgba(229,83,83,.5);color:var(--danger);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Delete &amp; exit</button>
         <button onclick="exitDiscussion()" style="background:transparent;border:1px solid rgba(229,160,13,.4);color:var(--amber);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Exit discussion</button>
@@ -547,10 +663,17 @@ select option { background: var(--bg2); }
         <div class="msg assistant">
           Hey! I'm Curatarr — your personal media curator. Ask me what to watch, how to clean up your library, or anything about your taste.
         </div>
+        <div id="glance-panel"></div>
+        <div id="last-played-panel"></div>
+        <div id="suggested-prompts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+          <button class="sp-chip" onclick="fillPrompt('What should I watch tonight?')">What should I watch tonight?</button>
+          <button class="sp-chip" onclick="fillPrompt('What can I clean up in my library?')">What can I clean up in my library?</button>
+          <button class="sp-chip" onclick="fillPrompt('What does my watch history say about my taste?')">What does my watch history say about my taste?</button>
+        </div>
       </div>
       <div id="chat-input-area">
         <button id="new-chat-btn" onclick="newChat()" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat">+ New</button>
-        <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata">🔄 Re-fetch</button>
+        <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata">Re-fetch</button>
         <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
         <button id="send-btn" onclick="sendMessage()">Send</button>
       </div>
@@ -564,10 +687,10 @@ select option { background: var(--bg2); }
       </div>
       <div class="view-body">
         <div class="inline-flex" style="margin-bottom:16px;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary" onclick="syncHistory(false)">🔄 Sync Plex</button>
-          <button class="btn btn-secondary" onclick="syncHistory(true)">⚡ Force sync</button>
+          <button class="btn btn-primary" onclick="syncHistory(false)">Sync Plex</button>
+          <button class="btn btn-secondary" onclick="syncHistory(true)">Force sync</button>
           <button class="btn btn-secondary" onclick="loadHistoryStatus()">Refresh</button>
-          <button class="btn btn-secondary" onclick="recomputeTaste()">🧠 Recompute taste</button>
+          <button class="btn btn-secondary" onclick="recomputeTaste()">Recompute taste</button>
           <button class="btn btn-secondary" onclick="showView('libraries',document.querySelector('.sb-item[onclick*=libraries]'))">Library Config</button>
         </div>
         <div id="history-stats" style="margin-bottom:20px"></div>
@@ -587,25 +710,25 @@ select option { background: var(--bg2); }
       <div class="view-body">
         <div class="cat-tabs">
           <button class="cat-tab active" onclick="loadRecs(null,this)">All</button>
-          <button class="cat-tab" onclick="loadRecs('movie',this)">🎬 Movies</button>
-          <button class="cat-tab" onclick="loadRecs('show',this)">📺 TV Shows</button>
-          <button class="cat-tab" onclick="loadRecs('anime',this)">⛩️ Anime</button>
-          <button class="cat-tab" onclick="loadRecs('music',this)">🎵 Music</button>
+          <button class="cat-tab" onclick="loadRecs('movie',this)">Movies</button>
+          <button class="cat-tab" onclick="loadRecs('show',this)">TV Shows</button>
+          <button class="cat-tab" onclick="loadRecs('anime',this)">Anime</button>
+          <button class="cat-tab" onclick="loadRecs('music',this)">Music</button>
         </div>
         <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
             <button id="lane-all-btn" class="btn btn-primary btn-sm" style="border-radius:0;border:none" onclick="setRecLane('all',this)">All</button>
-            <button id="lane-lib-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('library',this)">📚 In Library</button>
-            <button id="lane-disc-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('discovery',this)">✨ Discover new</button>
+            <button id="lane-lib-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('library',this)">In Library</button>
+            <button id="lane-disc-btn" class="btn btn-secondary btn-sm" style="border-radius:0;border:none;border-left:1px solid var(--border)" onclick="setRecLane('discovery',this)">Discover new</button>
           </div>
-          <button class="btn btn-secondary" onclick="regenerateRecs()">🔄 Regenerate</button>
+          <button class="btn btn-secondary" onclick="regenerateRecs()">Regenerate</button>
           <div style="display:flex;margin-left:auto">
             <input id="lib-search" aria-label="Search your library" placeholder="Search your library…"
                    style="background:var(--bg3);border:1px solid var(--border);border-right:none;color:var(--text);padding:6px 10px;border-radius:var(--radius) 0 0 var(--radius);font-size:13px;width:210px"
                    onkeydown="if(event.key==='Enter')searchLibrary()"/>
-            <button class="btn btn-secondary btn-sm" style="border-radius:0 var(--radius) var(--radius) 0" onclick="searchLibrary()" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own">🔍</button>
+            <button class="btn btn-secondary btn-sm" style="border-radius:0 var(--radius) var(--radius) 0" onclick="searchLibrary()" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
           </div>
-          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">📚 you own it, still unwatched · ✨ not in your library, worth acquiring</span>
+          <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">you own it, still unwatched · not in your library, worth acquiring</span>
         </div>
         <div id="recs-content"><p class="loading">Click "Get recommendations" to load…</p></div>
       </div>
@@ -620,10 +743,10 @@ select option { background: var(--bg2); }
       <div class="view-body">
         <div class="cat-tabs">
           <button class="cat-tab active" data-cat="" onclick="loadDeletions(null,this)">All</button>
-          <button class="cat-tab" data-cat="movie" onclick="loadDeletions('movie',this)">🎬 Movies</button>
-          <button class="cat-tab" data-cat="show" onclick="loadDeletions('show',this)">📺 TV Shows</button>
-          <button class="cat-tab" data-cat="anime" onclick="loadDeletions('anime',this)">⛩️ Anime</button>
-          <button class="cat-tab" data-cat="music" onclick="loadDeletions('music',this)">🎵 Music</button>
+          <button class="cat-tab" data-cat="movie" onclick="loadDeletions('movie',this)">Movies</button>
+          <button class="cat-tab" data-cat="show" onclick="loadDeletions('show',this)">TV Shows</button>
+          <button class="cat-tab" data-cat="anime" onclick="loadDeletions('anime',this)">Anime</button>
+          <button class="cat-tab" data-cat="music" onclick="loadDeletions('music',this)">Music</button>
         </div>
         <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-primary" onclick="loadDeletions(currentDelCategory,null,true)">Analyse library</button>
@@ -632,7 +755,7 @@ select option { background: var(--bg2); }
           <label for="del-recent-only" style="display:flex;align-items:center;gap:6px;color:var(--text2);font-size:12px;cursor:pointer;margin-left:8px;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)"
                  title="Show only items whose latest file/episode/track was imported recently. Useful for catching auto-grabbed seasons or spurious downloads.">
             <input type="checkbox" id="del-recent-only" onchange="toggleRecentOnly(this.checked)"/>
-            🆕 Just-arrived only
+            Just-arrived only
           </label>
           <select id="del-recent-days" aria-label="Recent days to show" onchange="loadDeletions(currentDelCategory)"
                   style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px;display:none">
@@ -663,35 +786,35 @@ select option { background: var(--bg2); }
       </div>
       <div class="view-body">
         <details class="cur-section" ontoggle="if (this.open) loadJudgeProtections()">
-          <summary>🛡️ Judge-protected titles
+          <summary>Judge-protected titles
             <span class="panel-hint">Titles the pillar judge kept — with its reasoning. Lift a protection to re-judge it on the next scan.</span>
           </summary>
           <div class="cur-body"><div id="protections-content"></div></div>
         </details>
 
         <details class="cur-section" ontoggle="if (this.open) loadDownscale()">
-          <summary>📉 Downscale candidates
+          <summary>Downscale candidates
             <span class="panel-hint">Kept, but bitrate outliers — reclaim storage without deleting. Click "Done" after transcoding.</span>
           </summary>
           <div class="cur-body"><div id="downscale-content"></div></div>
         </details>
 
         <details class="cur-section" ontoggle="if (this.open) loadUpgrades()">
-          <summary>⬆️ Upgrade candidates
+          <summary>Upgrade candidates
             <span class="panel-hint">The inverse of downscale: titles you demonstrably love sitting on weak files (below 1080p or a lean bitrate). Acting on it is your click in the arr — nothing is re-grabbed automatically.</span>
           </summary>
           <div class="cur-body"><div id="upgrade-content"></div></div>
         </details>
 
         <details class="cur-section" ontoggle="if (this.open) loadRedundancy()">
-          <summary>🧬 Redundant storage
+          <summary>Redundant storage
             <span class="panel-hint">Duplicate versions of the same title (4K Remux + 1080p) and the same id kept as separate items — the GB you could reclaim without losing anything.</span>
           </summary>
           <div class="cur-body"><div id="redundancy-content"></div></div>
         </details>
 
         <details class="cur-section" ontoggle="if (this.open) loadPrinciples()">
-          <summary>🧠 Learned principles
+          <summary>Learned principles
             <span class="panel-hint">Rules the curator extracted from your debates. <strong>Shadow</strong> = captured but not yet applied; <strong>activate</strong> to inject it into the judge. contradiction = your call.</span>
           </summary>
           <div class="cur-body"><div id="principles-content"></div></div>
@@ -864,7 +987,7 @@ select option { background: var(--bg2); }
     <!-- LIBRARY MANAGER — Sonarr / Radarr / Lidarr (Pass 16c skeleton) -->
     <div class="view" id="arr-sonarr-view">
       <div class="view-header">
-        <h1>📺 TV Shows <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">via Sonarr</span></h1>
+        <h1>TV Shows <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">via Sonarr</span></h1>
         <p>Browse, add, and curate your Sonarr library.</p>
       </div>
       <div class="view-body">
@@ -877,7 +1000,7 @@ select option { background: var(--bg2); }
 
     <div class="view" id="arr-radarr-view">
       <div class="view-header">
-        <h1>🎬 Movies <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">via Radarr</span></h1>
+        <h1>Movies <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">via Radarr</span></h1>
         <p>Browse, add, and curate your Radarr library.</p>
       </div>
       <div class="view-body">
@@ -890,7 +1013,7 @@ select option { background: var(--bg2); }
 
     <div class="view" id="arr-lidarr-view">
       <div class="view-header">
-        <h1>🎵 Music <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">via Lidarr</span></h1>
+        <h1>Music <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">via Lidarr</span></h1>
         <p>Browse, add, and curate your Lidarr library.</p>
       </div>
       <div class="view-body">
@@ -904,12 +1027,12 @@ select option { background: var(--bg2); }
     <!-- RECLASSIFY (anime ↔ TV library sorting) -->
     <div class="view" id="reclassify-view">
       <div class="view-header">
-        <h1>🔀 Reclassify <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">anime ↔ TV</span></h1>
+        <h1>Reclassify <span style="font-size:13px;color:var(--text3);font-weight:400;margin-left:8px">anime ↔ TV</span></h1>
         <p>Series filed in the wrong Sonarr library. Review and move — nothing happens until you confirm.</p>
       </div>
       <div class="view-body">
         <div style="margin-bottom:14px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
-          <button class="btn btn-secondary" onclick="loadReclassify()">🔄 Re-scan</button>
+          <button class="btn btn-secondary" onclick="loadReclassify()">Re-scan</button>
           <button class="btn btn-primary" id="reclassify-move-btn" onclick="moveReclassify()" disabled>Move selected (0) →</button>
           <span id="reclassify-summary" style="color:var(--text3);font-size:13px"></span>
         </div>
@@ -964,11 +1087,11 @@ select option { background: var(--bg2); }
 
           <!-- LEFT SUB-NAV -->
           <nav class="settings-nav" style="flex:0 0 200px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:8px">
-            <button class="settings-tab active" data-pane="account" onclick="openSettingsPane('account', this)">👤 Account</button>
+            <button class="settings-tab active" data-pane="account" onclick="openSettingsPane('account', this)">Account</button>
             <button class="settings-tab" data-pane="notifications" onclick="openSettingsPane('notifications', this)">Notifications</button>
-            <button class="settings-tab admin-action-row" data-pane="library" onclick="openSettingsPane('library', this); loadLibrarySettings()" style="display:none">🗂️ Library</button>
-            <button class="settings-tab admin-action-row" data-pane="maintenance" onclick="openSettingsPane('maintenance', this)" style="display:none">🛠️ Maintenance</button>
-            <button class="settings-tab admin-action-row" data-pane="users" onclick="openSettingsPane('users', this); loadUsers()" style="display:none">👥 Users</button>
+            <button class="settings-tab admin-action-row" data-pane="library" onclick="openSettingsPane('library', this); loadLibrarySettings()" style="display:none">Library</button>
+            <button class="settings-tab admin-action-row" data-pane="maintenance" onclick="openSettingsPane('maintenance', this)" style="display:none">Maintenance</button>
+            <button class="settings-tab admin-action-row" data-pane="users" onclick="openSettingsPane('users', this); loadUsers()" style="display:none">Users</button>
           </nav>
 
           <!-- RIGHT PANES -->
@@ -1052,17 +1175,17 @@ select option { background: var(--bg2); }
 
               <div style="display:flex;flex-direction:column;gap:12px">
                 <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)">
-                  <h4 style="margin:0 0 4px;font-size:13px">🔄 Plex sync</h4>
+                  <h4 style="margin:0 0 4px;font-size:13px">Plex sync</h4>
                   <p style="color:var(--text3);font-size:11px;margin:0 0 8px">Pull new watch history from Plex and recompute taste vectors.</p>
                   <div class="inline-flex" style="gap:8px;flex-wrap:wrap">
-                    <button class="btn btn-secondary" onclick="syncHistory(false)">🔄 Sync</button>
-                    <button class="btn btn-secondary" onclick="syncHistory(true)">⚡ Force sync</button>
-                    <button class="btn btn-secondary" onclick="recomputeTaste()">🧠 Recompute taste</button>
+                    <button class="btn btn-secondary" onclick="syncHistory(false)">Sync</button>
+                    <button class="btn btn-secondary" onclick="syncHistory(true)">Force sync</button>
+                    <button class="btn btn-secondary" onclick="recomputeTaste()">Recompute taste</button>
                   </div>
                 </div>
 
                 <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)">
-                  <h4 style="margin:0 0 4px;font-size:13px">🔁 Re-attribute history</h4>
+                  <h4 style="margin:0 0 4px;font-size:13px">Re-attribute history</h4>
                   <p style="color:var(--text3);font-size:11px;margin:0 0 8px;line-height:1.5">
                     Re-pulls Plex's play history and fixes per-user attribution on existing rows. Run after a new user logs in via Plex OAuth so their pre-existing plays move from admin to their account. Idempotent.<br>
                     Note: Plex only retains a limited window of play events. Plays older than that retention horizon stay attributed to admin — that's expected, not a failure. Going forward, every new sync attributes correctly per Plex account from the start.
@@ -1074,7 +1197,7 @@ select option { background: var(--bg2); }
                 </div>
 
                 <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)">
-                  <h4 style="margin:0 0 4px;font-size:13px">🧹 Cleanup orphans</h4>
+                  <h4 style="margin:0 0 4px;font-size:13px">Cleanup orphans</h4>
                   <p style="color:var(--text3);font-size:11px;margin:0 0 8px">Delete watch_history rows pointing to media that's no longer in any Plex library. Spotify entries are preserved. Aborts safely if any library section can't be read. <strong style="color:var(--amber)">Destructive.</strong></p>
                   <div class="inline-flex" style="gap:8px;flex-wrap:wrap">
                     <button class="btn btn-secondary" onclick="cleanupOrphans()">Run cleanup</button>
@@ -1128,7 +1251,91 @@ let libraryCfg = [];
 let setupData = {};
 let setupStep = 0;
 const SETUP_STEPS = ['plex','ollama','metadata','arr','import','done'];
-const CAT_LABELS = {music:'🎵 Music', movie:'🎬 Movies', show:'📺 TV Shows', anime:'⛩️ Anime'};
+const CAT_LABELS = {music:'Music', movie:'Movies', show:'TV Shows', anime:'Anime'};
+// Small inline status glyphs — reuse the sidebar's stroke-icon language
+// (currentColor so they follow whatever text color already wraps them)
+// instead of platform emoji, which render inconsistently across OSes.
+const SVG_WARN = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;flex-shrink:0"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+const SVG_CHECK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-2px;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>';
+const SVG_X = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-2px;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const SVG_TRASH = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+const SVG_STAR = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;flex-shrink:0"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>';
+
+// A failed api() call throws the raw response body as e.message -- for a
+// FastAPI error that's a JSON blob like {"detail":"..."}. Pull the human
+// part out instead of dumping that JSON straight into the UI.
+function _errMsg(e) {
+  try {
+    const j = JSON.parse(e?.message || '');
+    if (j?.detail) return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+  } catch {}
+  return e?.message || 'Something went wrong';
+}
+// Standard "this view failed to load" block: reuses the .loading slot's
+// layout but marks it as an error, and always offers a way back in instead
+// of leaving the view stuck on a bare "Loading…" forever.
+function _errHtml(e, retryFn) {
+  const retry = retryFn ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="${esc(retryFn)}">Retry</button>` : '';
+  return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${retry}`;
+}
+
+// Shared poster/cover-art thumbnail. Every card that puts a title next to
+// a small image (library rows, add-new results, recs, deletion proposals)
+// used to hand-roll this with slightly different sizes and a slightly
+// different "no image" fallback (an empty box, a "?" box, or nothing at
+// all, depending which one you were looking at). One helper now owns the
+// sizing, the proxyImg() routing, and the music round-crop.
+function _posterImg(url, w, h, isMusic) {
+  const radius = isMusic ? '50%' : '4px';
+  if (!url) {
+    return `<div style="width:${w}px;height:${h}px;background:var(--bg3);border-radius:${radius};flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:${Math.round(w*0.4)}px">?</div>`;
+  }
+  return `<img src="${esc(proxyImg(url))}" alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`;
+}
+
+// ── SIDEBAR COLLAPSE ─────────────────────────────────────────────────────────
+function toggleSidebar() {
+  const collapsed = document.getElementById('sidebar').classList.toggle('collapsed');
+  localStorage.setItem('curatarr_sidebar_collapsed', collapsed ? '1' : '0');
+  document.getElementById('sb-collapse-toggle').title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+// Below 768px the sidebar is an off-canvas drawer (see the responsive
+// media query) instead of the desktop expand/collapse rail. `force` lets
+// callers state intent (nav click closes, hamburger toggles); harmless
+// no-op above the breakpoint since the drawer classes have no visual
+// effect there.
+function toggleMobileSidebar(force) {
+  const open = typeof force === 'boolean' ? force : !document.getElementById('sidebar').classList.contains('mobile-open');
+  document.getElementById('sidebar').classList.toggle('mobile-open', open);
+  document.getElementById('sb-backdrop').classList.toggle('show', open);
+}
+
+// ── TOPBAR SEARCH ────────────────────────────────────────────────────────────
+// Reuses Recommendations' own semantic search wholesale (same input id, same
+// render target) instead of re-implementing result rendering here — jump to
+// that view, hand it the query, let searchLibrary() do what it already does.
+function topbarSearch(ev) {
+  if (ev) ev.preventDefault();
+  const box = document.getElementById('topbar-search');
+  const q = box.value.trim();
+  if (q.length < 2) return;
+  showView('recs', document.querySelector(".sb-item[onclick*=\"'recs'\"]"));
+  const libInput = document.getElementById('lib-search');
+  if (libInput) libInput.value = q;
+  box.value = '';
+  box.blur();
+  searchLibrary();
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    document.getElementById('topbar-search')?.focus();
+  }
+});
+if (localStorage.getItem('curatarr_sidebar_collapsed') === '1') {
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.getElementById('sb-collapse-toggle').title = 'Expand sidebar';
+}
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 window.onload = async () => {
@@ -1144,8 +1351,17 @@ window.onload = async () => {
     try {
       const r = await api('/api/auth/status');
       if (r.authenticated) { setUser(r); showApp(); return; }
-    } catch {}
-    token = ''; localStorage.removeItem('curatarr_token');
+    } catch (e) {
+      // Only a genuine rejection (401/403) means the token itself is bad.
+      // Anything else here (500, server mid-reload, network hiccup) used to
+      // wipe a perfectly valid session and force a full Plex re-login for a
+      // failure that had nothing to do with the token — now it just shows
+      // the login screen for this load; the stored token survives so the
+      // next successful check logs the user back in without Plex again.
+      if (e.status === 401 || e.status === 403) {
+        token = ''; localStorage.removeItem('curatarr_token');
+      }
+    }
   }
   document.getElementById('auth-overlay').classList.remove('hidden');
 };
@@ -1288,7 +1504,6 @@ const SETUP_CONTENT = {
 
   done: () => `
     <div style="text-align:center;padding:20px 0">
-      <div style="font-size:40px;margin-bottom:16px">🎬</div>
       <h2 style="font-size:16px;font-weight:600;color:var(--amber);margin-bottom:8px">Ready to launch!</h2>
       <p style="font-size:13px;color:var(--text2);line-height:1.6;max-width:380px;margin:0 auto 20px">
         Curatarr will save your configuration, build the AI models with <code>ollama create</code>, 
@@ -1372,9 +1587,9 @@ async function testConn(service) {
     try {
       const r = await api('/api/setup/test', 'POST', {service, client_id: clientId, client_secret: clientSecret});
       if (resultEl) resultEl.innerHTML = r.ok
-        ? `<div class="test-status ok">✓ Spotify credentials valid</div>`
-        : `<div class="test-status err">✗ ${esc(r.error)}</div>`;
-    } catch(e) { if (resultEl) resultEl.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`; }
+        ? `<div class="test-status ok">Spotify credentials valid</div>`
+        : `<div class="test-status err">${esc(r.error)}</div>`;
+    } catch(e) { if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`; }
     return;
   }
 
@@ -1385,11 +1600,11 @@ async function testConn(service) {
     // yellow banner under the connection result. Doesn't block the user
     // from continuing — informational only.
     const warnBlock = r.privacy_warning
-      ? `<div class="test-status" style="color:var(--amber);margin-top:4px">⚠️ ${esc(r.privacy_warning)}</div>`
-      : '';
+      ? `<div class="test-status" style="color:var(--amber);margin-top:4px">${SVG_WARN} ${esc(r.privacy_warning)}</div>`
+  : '';
     if (resultEl) resultEl.innerHTML = (r.ok
-      ? `<div class="test-status ok">✓ Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
-      : `<div class="test-status err">✗ ${esc(r.error)}</div>`) + warnBlock;
+      ? `<div class="test-status ok">Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
+      : `<div class="test-status err">${esc(r.error)}</div>`) + warnBlock;
 
     // Feed the recommendation panel. This used to overwrite the three
     // selects with the RAW installed-model list, wiping the recommended
@@ -1400,7 +1615,7 @@ async function testConn(service) {
       refreshModelRecs();
     }
   } catch(e) {
-    if (resultEl) resultEl.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+    if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
 }
 
@@ -1411,11 +1626,11 @@ async function detectGpu() {
   try {
     const r = await api('/api/setup/gpu');
     if (!r.ok) {
-      if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(r.error)}</div>`;
+      if (el) el.innerHTML = `<div class="test-status err">${esc(r.error)}</div>`;
       return;
     }
     const names = r.gpus.map(g => `${g.name} (${g.vram_gb} GB)`).join(', ');
-    if (el) el.innerHTML = `<div class="test-status ok">✓ ${esc(names)}</div>`;
+    if (el) el.innerHTML = `<div class="test-status ok">${esc(names)}</div>`;
     setupData.vram_gb = r.vram_gb;
     const sel = document.getElementById('s-vram');
     if (sel) {
@@ -1427,7 +1642,7 @@ async function detectGpu() {
     }
     refreshModelRecs();
   } catch(e) {
-    if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+    if (el) el.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
 }
 
@@ -1443,10 +1658,10 @@ async function refreshModelRecs() {
     renderRecSelect('s-summarizer-model', r.summarizer, r.installed);
     renderRecSelect('s-embed-model', r.embedding, r.installed);
     if (panel) panel.innerHTML = r.floor_note
-      ? `<div class="test-status" style="color:var(--amber)">⚠️ ${esc(r.floor_note)}</div>`
+      ? `<div class="test-status" style="color:var(--amber)">${SVG_WARN} ${esc(r.floor_note)}</div>`
       : '';
   } catch(e) {
-    if (panel) panel.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+    if (panel) panel.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
 }
 
@@ -1482,7 +1697,6 @@ function spotifyDropZone(p) {
          ondragleave="this.style.borderColor='var(--border)'"
          ondrop="handleSpotifyDrop(event,'${p}')"
          onclick="document.getElementById('${p}-file').click()">
-      <div style="font-size:26px;margin-bottom:6px">🎧</div>
       <div style="font-size:13px">Drop your Spotify extended history here</div>
       <div class="hint" style="margin-top:4px">Streaming_History_Audio_*.json, endsong_*.json or the whole my_spotify_data.zip — or click to browse</div>
     </div>
@@ -1522,11 +1736,11 @@ async function uploadSpotify(files, p) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'upload failed');
     if (el) el.innerHTML = [
-      d.saved.length ? `<div class="test-status ok">✓ ${d.saved.length} file(s) accepted</div>` : '',
-      ...d.rejected.map(x => `<div class="test-status err">✗ ${esc(x.name)}: ${esc(x.reason)}</div>`),
+      d.saved.length ? `<div class="test-status ok">${d.saved.length} file(s) accepted</div>` : '',
+      ...d.rejected.map(x => `<div class="test-status err">${esc(x.name)}: ${esc(x.reason)}</div>`),
     ].join('');
   } catch (e) {
-    if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+    if (el) el.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
   refreshSpotifyPending(p);
 }
@@ -1534,12 +1748,12 @@ async function uploadSpotify(files, p) {
 async function runSpotifyImport(p) {
   const uid = parseInt(document.getElementById(p + '-user')?.value);
   const el = document.getElementById(p + '-result');
-  if (!uid) { if (el) el.innerHTML = '<div class="test-status err">✗ pick a user first</div>'; return; }
+  if (!uid) { if (el) el.innerHTML = '<div class="test-status err">pick a user first</div>'; return; }
   try {
     await api('/api/import/spotify/run', 'POST', {user_id: uid});
-    if (el) el.innerHTML = '<div class="test-status ok">✓ Import started — watch the Activity view. The music matcher resolves the tracks afterwards.</div>';
+    if (el) el.innerHTML = '<div class="test-status ok">Import started — watch the Activity view. The music matcher resolves the tracks afterwards.</div>';
   } catch (e) {
-    if (el) el.innerHTML = `<div class="test-status err">✗ ${esc(e.message)}</div>`;
+    if (el) el.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
 }
 
@@ -1549,10 +1763,10 @@ async function finishSetup() {
   el.textContent = 'Saving configuration…';
   try {
     const r = await api('/api/setup/complete', 'POST', setupData);
-    el.innerHTML = '✅ Saved! Building Ollama models in background… <strong>Please close and reopen Curatarr.</strong>';
+    el.innerHTML = 'Saved! Building Ollama models in background… <strong>Please close and reopen Curatarr.</strong>';
     setTimeout(()=>location.reload(), 5000);
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">Error: ${esc(e.message)}</span>`;
+    el.innerHTML = `<span style="color:var(--danger)">Error: ${esc(_errMsg(e))}</span>`;
   }
 }
 
@@ -1638,6 +1852,8 @@ async function showApp() {
 
   loadLibraryConfig();
   loadHistoryStatus();
+  loadGlancePanel();
+  loadLastPlayed();
   startTaskStream();
   // Process monitor polls the admin-only /api/processes router — only start it
   // for admins so a normal user doesn't spam 403s in the background.
@@ -1666,7 +1882,7 @@ async function renderOnboardingStep(step) {
   const sub = document.getElementById('onboarding-sub');
 
   if (step === 'libraries') {
-    title.textContent = '📚 Step 1 — Configure your Plex libraries';
+    title.textContent = 'Step 1 — Configure your Plex libraries';
     sub.textContent = 'Tell Curatarr what each Plex library contains so it can handle them correctly.';
     
     const disc = await api('/api/libraries/discover').catch(()=>({sections:[]}));
@@ -1690,7 +1906,7 @@ async function renderOnboardingStep(step) {
   }
 
   else if (step === 'sync') {
-    title.textContent = '🔄 Step 2 — Initial sync';
+    title.textContent = 'Step 2 — Initial sync';
     sub.textContent = 'Curatarr will now pull your complete watch history from Plex and compute your taste profile. This takes a moment.';
     body.innerHTML = `
       <div id="ob-sync-status" style="margin-bottom:20px">
@@ -1703,7 +1919,7 @@ async function renderOnboardingStep(step) {
   }
 
   else if (step === 'models') {
-    title.textContent = '🤖 Step 3 — Build AI models';
+    title.textContent = 'Step 3 — Build AI models';
     sub.textContent = 'Curatarr will bake its personality into the Ollama models. This only happens once.';
     body.innerHTML = `
       <p style="font-size:13px;color:var(--text2);margin-bottom:16px">
@@ -1720,11 +1936,10 @@ async function renderOnboardingStep(step) {
   }
 
   else if (step === 'done') {
-    title.textContent = '🎬 All set!';
+    title.textContent = 'All set!';
     sub.textContent = 'Curatarr is ready. Your taste profile has been computed.';
     body.innerHTML = `
       <div style="text-align:center;padding:20px 0">
-        <div style="font-size:48px;margin-bottom:16px">✅</div>
         <p style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:24px">
           Watch history synced and taste vectors computed.<br>
           You can now chat with your curator, get recommendations, and manage your library.
@@ -1783,7 +1998,7 @@ async function startOnboardingSync() {
         if (entries > 0) bar.style.width = '60%';
         if (s.taste_vector?.computed) {
           bar.style.width = '100%';
-          lbl.textContent = `✅ ${entries.toLocaleString()} entries · taste profile computed`;
+          lbl.textContent = `${entries.toLocaleString()} entries · taste profile computed`;
           _stopOnboardingPoll();
           setTimeout(() => {
             renderOnboardingStep('models');
@@ -1794,7 +2009,7 @@ async function startOnboardingSync() {
     }, 3000);
   } catch(e) {
     _stopOnboardingPoll();
-    if (lbl) lbl.textContent = `Error: ${esc(e.message)}`;
+    if (lbl) lbl.textContent = `Error: ${_errMsg(e)}`;
     if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
   }
 }
@@ -1806,7 +2021,7 @@ async function buildOnboardingModels() {
   try {
     const r = await api('/api/setup/build-models','POST');
     if (r.curator && r.summarizer) {
-      const okLine = '<p style="color:var(--success)">✅ curatarr-curator and curatarr-summarizer created!</p>';
+      const okLine = '<p style="color:var(--success)">curatarr-curator and curatarr-summarizer created!</p>';
       el.innerHTML = okLine + '<p class="loading">Warm-up check: loading the curator once to verify it runs on the GPU…</p>';
       // A model that doesn't quite fit VRAM runs silently part-on-CPU and
       // the whole app just feels broken-slow. Catch that HERE, not on the
@@ -1816,24 +2031,24 @@ async function buildOnboardingModels() {
       let verdict = '';
       if (warm && warm.ok) {
         if (warm.verdict === 'cpu_spill')
-          verdict = `<p style="color:var(--amber)">⚠️ ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
+          verdict = `<p style="color:var(--amber)">${SVG_WARN} ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
         else if (warm.verdict === 'slow')
-          verdict = `<p style="color:var(--amber)">⚠️ Generation is slow (${warm.tokens_per_s} tok/s) despite full GPU residency.</p>`;
+          verdict = `<p style="color:var(--amber)">${SVG_WARN} Generation is slow (${warm.tokens_per_s} tok/s) despite full GPU residency.</p>`;
         else
-          verdict = `<p style="color:var(--success)">✓ Fully on GPU${warm.tokens_per_s ? ` · ${warm.tokens_per_s} tok/s` : ''}${warm.load_s ? ` (one-time load ${warm.load_s}s)` : ''}</p>`;
+          verdict = `<p style="color:var(--success)">Fully on GPU${warm.tokens_per_s ? ` · ${warm.tokens_per_s} tok/s` : ''}${warm.load_s ? ` (one-time load ${warm.load_s}s)` : ''}</p>`;
       }
       el.innerHTML = okLine + verdict;
       setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; },
                  warm && warm.ok && warm.verdict !== 'ok' ? 7000 : 1500);
     } else {
       let msg = '';
-      if (!r.curator) msg += `❌ curatarr-curator failed<br>`;
-      if (!r.summarizer) msg += `❌ curatarr-summarizer failed<br>`;
+      if (!r.curator) msg += `${SVG_X} curatarr-curator failed<br>`;
+      if (!r.summarizer) msg += `${SVG_X} curatarr-summarizer failed<br>`;
       msg += '<br>Make sure base models are pulled in Ollama.';
       el.innerHTML = `<div style="color:var(--danger);font-size:13px">${msg}</div>`;
     }
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger)">${esc(e.message)}</div>`;
+    el.innerHTML = `<div style="color:var(--danger)">${esc(_errMsg(e))}</div>`;
   }
 }
 
@@ -1847,7 +2062,7 @@ async function api(path, method='GET', body=null) {
   if (token) opts.headers['Authorization']='Bearer '+token;
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API+path, opts);
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) { const err = new Error(await r.text()); err.status = r.status; throw err; }
   return r.json();
 }
 
@@ -1857,6 +2072,7 @@ function showView(name, btn) {
   // require_admin endpoints: never render the shell for a non-admin, even via a
   // stray programmatic call. (Library config + orphaned + deletions = curation.)
   if (!currentUser?.is_admin && ['deletions','curation','libraries','admin','reclassify','report'].includes(name)) return;
+  toggleMobileSidebar(false); // picking a view closes the mobile drawer
   document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   // Clear all views — remove active class AND reset any inline display styles
@@ -1892,7 +2108,7 @@ async function loadReport() {
   el.innerHTML = '<p class="loading">Crunching the curation ledger…</p>';
   let d;
   try { d = await api('/api/stats/curation?months=12'); }
-  catch (e) { el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load report')}</p>`; return; }
+  catch (e) { el.innerHTML = _errHtml(e, 'loadReport()'); return; }
   const t = d.totals || {};
   const resTotal = (t.consensus || 0) + (t.overrides || 0);
   const maxAct = Math.max(1, ...(d.months || []).map(m => m.deleted + m.kept));
@@ -1915,7 +2131,7 @@ async function loadReport() {
       <span>${esc(m.month)}</span>
       <div title="${m.deleted} deleted / ${m.kept} kept">${_repBar(100 * act / maxAct, 'var(--amber)')}</div>
       <div title="${m.gb_freed} GB freed">${_repBar(100 * (m.gb_freed || 0) / maxGb, 'var(--success)')}</div>
-      <span>${act ? `${m.deleted}✕ ${m.kept}✓` : ''}${m.gb_freed ? ` · ${m.gb_freed} GB` : ''}</span>
+      <span>${act ? `${m.deleted} deleted · ${m.kept} kept` : ''}${m.gb_freed ? ` · ${m.gb_freed} GB` : ''}</span>
     </div>`;
   }).join('');
 
@@ -1929,7 +2145,7 @@ async function loadReport() {
     </div>` : '';
 
   const stubborn = (d.stubbornness || []).length ? `
-    <h3 style="font-size:14px;margin:20px 0 8px">🪨 Stubbornness Index <span style="font-weight:400;color:var(--text3);font-size:12px">kept over the curator's objection, untouched ${(d.stubbornness || []).length ? '90+' : ''} days</span></h3>
+    <h3 style="font-size:14px;margin:20px 0 8px">Stubbornness Index <span style="font-weight:400;color:var(--text3);font-size:12px">kept over the curator's objection, untouched ${(d.stubbornness || []).length ? '90+' : ''} days</span></h3>
     ${d.stubbornness.map(s => `<div class="panel-item">
       <div class="panel-item-head"><div><strong>${esc(s.title)}</strong>
         <span class="badge muted">${esc(s.category || '')}</span>
@@ -1938,7 +2154,7 @@ async function loadReport() {
     </div>`).join('')}` : '';
 
   const taste = (d.taste_evolution || []).length ? `
-    <h3 style="font-size:14px;margin:20px 0 8px">🧭 Taste evolution <span style="font-weight:400;color:var(--text3);font-size:12px">your latest recorded verdicts</span></h3>
+    <h3 style="font-size:14px;margin:20px 0 8px">Taste evolution <span style="font-weight:400;color:var(--text3);font-size:12px">your latest recorded verdicts</span></h3>
     ${d.taste_evolution.map(f => `<div class="panel-item">
       <div class="panel-item-head"><div><strong>${esc(f.title || '')}</strong>
         <span class="badge ${f.sentiment === 'positive' ? 'amber' : 'muted'}">${esc(f.sentiment || '')}${f.weight > 1 ? ' ·×' + f.weight : ''}</span>
@@ -1947,7 +2163,7 @@ async function loadReport() {
     </div>`).join('')}` : '';
 
   const narrative = `
-    <h3 style="font-size:14px;margin:20px 0 8px">📜 Yearly review</h3>
+    <h3 style="font-size:14px;margin:20px 0 8px">Yearly review</h3>
     <div class="card" style="padding:14px">
       <div id="report-narrative" style="font-size:13px;line-height:1.7;color:var(--text2)">${d.narrative ? esc(d.narrative) : '<span style="color:var(--text3)">Not written yet.</span>'}</div>
       <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="writeYearlyReview(this)">${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>
@@ -1980,15 +2196,15 @@ async function loadReclassify() {
   if (sum) sum.textContent = '';
   let res;
   try { res = await api('/api/library/reclassify/scan'); }
-  catch (e) { el.innerHTML = `<p style="color:var(--danger)">Scan failed: ${esc(e.message || 'unknown')}</p>`; return; }
+  catch (e) { el.innerHTML = _errHtml(e, 'loadReclassify()'); return; }
   if (res.error) { el.innerHTML = `<p style="color:var(--danger)">${esc(res.error)}</p>`; return; }
   const c = res.counts || {};
   if (sum) sum.textContent = `${c.to_tv||0} → TV · ${c.to_anime||0} → Anime · ${c.fix_settings||0} settings · ${c.uncertain||0} uncertain`;
   const sections = [
-    ['🎬 Western cartoons in Anime → move to TV', res.to_tv, 'fix'],
-    ['🎌 Anime in the TV library → move to Anime', res.to_anime, 'fix'],
-    ['⚙️ Right library, wrong settings → fix in place', res.fix_settings, 'fix'],
-    ['❓ Uncertain — pick a direction, or leave it', res.uncertain, 'uncertain'],
+    ['Western cartoons in Anime → move to TV', res.to_tv, 'fix'],
+    ['Anime in the TV library → move to Anime', res.to_anime, 'fix'],
+    ['Right library, wrong settings → fix in place', res.fix_settings, 'fix'],
+    ['Uncertain — pick a direction, or leave it', res.uncertain, 'uncertain'],
   ];
   let html = '';
   for (const [label, items, mode] of sections) {
@@ -1999,21 +2215,19 @@ async function loadReclassify() {
     for (const it of items) html += reclassifyCard(it, mode);
     html += '</div>';
   }
-  el.innerHTML = html || '<p style="color:var(--text3)">✓ Everything is correctly filed and configured.</p>';
+  el.innerHTML = html || '<p style="color:var(--text3)">Everything is correctly filed and configured.</p>';
   updateReclassifyCount();
 }
 
 // One settings row: greyed when unchanged, struck-through → green when it's an issue.
-function _rcRow(icon, from, to, changed) {
-  if (!changed) return `<div style="font-size:11px;color:var(--text3)">${icon} ${esc(from || '—')}</div>`;
-  return `<div style="font-size:11px">${icon} <span style="color:var(--danger);text-decoration:line-through">${esc(from || '—')}</span> <span style="color:var(--text3)">→</span> <span style="color:#3fb950;font-weight:600">${esc(to || '—')}</span></div>`;
+function _rcRow(from, to, changed) {
+  if (!changed) return `<div style="font-size:11px;color:var(--text3)">${esc(from || '—')}</div>`;
+  return `<div style="font-size:11px"><span style="color:var(--danger);text-decoration:line-through">${esc(from || '—')}</span> <span style="color:var(--text3)">→</span> <span style="color:#3fb950;font-weight:600">${esc(to || '—')}</span></div>`;
 }
 
 function reclassifyCard(it, mode) {
   const cu = it.current, ex = it.expected || {}, iss = it.issues || [];
-  const poster = it.poster
-    ? `<img src="/api/image/proxy?src=${encodeURIComponent(it.poster)}" onerror="this.style.display='none'" style="width:48px;height:72px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)">`
-    : `<div style="width:48px;height:72px;border-radius:4px;background:var(--bg3);flex-shrink:0"></div>`;
+  const poster = _posterImg(it.poster, 48, 72, false);
   const link = it.sonarr_link
     ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(it.title)} in Sonarr" title="Open in Sonarr" style="color:var(--amber);font-size:11px;text-decoration:none">↗</a>` : '';
   const card = (inner) => `<div class="rc-card" style="display:flex;gap:9px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px">${inner}</div>`;
@@ -2028,14 +2242,14 @@ function reclassifyCard(it, mode) {
       ${poster}
       <div style="min-width:0;flex:1">
         <div style="font-weight:600;font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}</div>
-        <div style="font-size:11px;color:var(--text3)">📁 ${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>
+        <div style="font-size:11px;color:var(--text3)">${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>
         <div style="margin-top:6px;display:flex;gap:5px">${dirBtn('tv', '→ TV')}${dirBtn('anime', '→ Anime')}${dirBtn('skip', 'skip')}</div>
       </div>`);
   }
 
-  const body = _rcRow('📁', cu.library, ex.library, iss.includes('root'))
-             + _rcRow('🏷️', cu.series_type, ex.series_type, iss.includes('type'))
-             + _rcRow('⚙️', cu.profile, ex.profile, iss.includes('profile'));
+  const body = _rcRow(cu.library, ex.library, iss.includes('root'))
+             + _rcRow(cu.series_type, ex.series_type, iss.includes('type'))
+             + _rcRow(cu.profile, ex.profile, iss.includes('profile'));
   const moveTag = (it.fix && it.fix.moveFiles)
     ? ` <span style="font-size:9px;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:0 3px;white-space:nowrap">move files</span>` : '';
   return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">
@@ -2094,7 +2308,7 @@ async function moveReclassify() {
     const res = await api('/api/library/reclassify/apply', 'POST',
       { items: items.map(i => ({ sonarr_id: i.sonarr_id, fix: i.fix })) });
     const fails = (res.results || []).filter(r => !r.ok);
-    let out = `✓ Applied ${res.applied || 0}` + (res.failed ? `, ${res.failed} failed` : '') + '.';
+    let out = `Applied ${res.applied || 0}` + (res.failed ? `, ${res.failed} failed` : '') + '.';
     if (fails.length) out += `\n\nFailed:\n` + fails.slice(0, 12).map(f => `• ${f.title || f.sonarr_id}: ${f.error || '?'}`).join('\n');
     alert(out);
     loadReclassify();   // re-scan so the lists reflect the new state
@@ -2130,7 +2344,7 @@ const ARR_TABS = {
   lidarr: [
     { id: 'all',    label: 'All Artists' },
     { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'backlog', label: '🎯 Spotify Backlog' },
+    { id: 'backlog', label: 'Spotify Backlog' },
     { id: 'add',    label: '+ Add New' },
   ],
 };
@@ -2403,7 +2617,7 @@ async function reEnrich(svc, arrId, mode, btn) {
     btn.textContent = 'queued';
     btn.style.color = 'var(--success)';
   } catch (e) {
-    btn.textContent = '✗ ' + (e.message || 'failed').slice(0, 30);
+    btn.textContent = (e.message || 'failed').slice(0, 30);
     btn.style.color = 'var(--danger)';
   } finally {
     setTimeout(() => {
@@ -2485,7 +2699,7 @@ async function addSearchExec(svc) {
     if (!r.ok) {
       const err = await r.json().catch(() => ({detail: r.statusText}));
       stat.style.color = 'var(--danger)';
-      stat.textContent = '✗ ' + (err.detail || 'failed');
+      stat.textContent = (err.detail || 'failed');
       out.innerHTML = '';
       return;
     }
@@ -2501,7 +2715,7 @@ async function addSearchExec(svc) {
   } catch (e) {
     if (e.name === 'AbortError') return;   // newer request superseded us
     stat.style.color = 'var(--danger)';
-    stat.textContent = '✗ ' + (e.message || 'failed');
+    stat.textContent = (e.message || 'failed');
   }
 }
 
@@ -2512,22 +2726,21 @@ function renderAddCard(svc, m, idx) {
   const alreadyBadge = m.already_added
     ? `<span style="color:var(--text3);font-size:11px;font-style:italic">already in your library</span>`
     : `<button class="btn btn-primary btn-sm" onclick="addArrItem('${svc}',${idx},this)">+ Add to ${svc}</button>`;
-  const poster = m.poster
-    ? `<img src="${esc(proxyImg(m.poster))}" alt="" style="width:60px;height:90px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'"/>`
-    : `<div style="width:60px;height:90px;background:var(--bg3);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:24px">?</div>`;
+  const isMusic = svc === 'lidarr';
+  const poster = `<div class="poster-frame">${_posterImg(m.poster, 174, isMusic?174:261, isMusic)}</div>`;
   return `
-    <div style="display:flex;gap:12px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)">
+    <div class="card" style="display:flex;gap:18px;margin-bottom:16px">
       ${poster}
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
           <div>
-            <strong style="font-size:14px">${esc(m.title)}</strong>
+            <strong style="font-size:16px">${esc(m.title)}</strong>
             ${yearStr ? `<span style="color:var(--text3);font-size:12px;margin-left:6px">${yearStr}</span>` : ''}
             ${status}
           </div>
           ${alreadyBadge}
         </div>
-        ${overview ? `<p style="color:var(--text2);font-size:12px;margin:6px 0 0;line-height:1.45">${overview}</p>` : ''}
+        ${overview ? `<p style="color:var(--text2);font-size:12.5px;margin:8px 0 0;line-height:1.55">${overview}</p>` : ''}
       </div>
     </div>
   `;
@@ -2549,14 +2762,14 @@ async function addArrItem(svc, idx, btn) {
       mbid: m.mbid,
     };
     const r = await api('/api/library/add', 'POST', body);
-    btn.textContent = '✓ added — searching';
+    btn.textContent = 'added — searching';
     btn.style.background = 'var(--success)';
     btn.style.color = '#000';
     // Mark "already added" in local state so the user can't double-click
     m.already_added = true;
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = '✗ ' + (e.message || 'failed').slice(0, 40);
+    btn.textContent = (e.message || 'failed').slice(0, 40);
     btn.style.background = 'var(--danger)';
     btn.style.color = '#fff';
     setTimeout(() => {
@@ -2628,7 +2841,7 @@ async function renderSpotifyBacklog(svc) {
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
         <div>
-          <h3 style="margin:0 0 4px;font-size:15px">🎯 Spotify Backlog</h3>
+          <h3 style="margin:0 0 4px;font-size:15px">Spotify Backlog</h3>
           <p style="color:var(--text3);font-size:12px;margin:0;line-height:1.5">
             Artists you stream on Spotify but <em>don't own locally</em>.
             One-click adds them to Lidarr with your saved defaults + the <code>curatarr</code> tag.
@@ -2697,15 +2910,15 @@ function renderBacklogCard(svc, a, idx) {
        </div>`
     : '';
   const mbidBadge = a.mbid_resolved
-    ? `<span style="color:var(--success);font-size:10px" title="MusicBrainz ID resolved by Phase 1.4">✓ MBID</span>`
-    : `<span style="color:var(--amber);font-size:10px" title="Pending — Phase 1.4 hasn't resolved this artist yet">⏳ pending</span>`;
+    ? `<span style="color:var(--success);font-size:10px" title="MusicBrainz ID resolved by Phase 1.4">MBID</span>`
+    : `<span style="color:var(--amber);font-size:10px" title="Pending — Phase 1.4 hasn't resolved this artist yet">pending</span>`;
 
   // Pass 16o: cross-check against the cached Lidarr library so we don't
   // surface a clickable "Add" button for an artist already in Lidarr.
   // Falls back to the previous behaviour if the cache hasn't loaded yet.
   let addBtn;
   if (a.in_lidarr) {
-    addBtn = `<span style="color:var(--success);font-size:11px;font-style:italic" title="Already in your Lidarr library">✓ in Lidarr</span>`;
+    addBtn = `<span style="color:var(--success);font-size:11px;font-style:italic" title="Already in your Lidarr library">in Lidarr</span>`;
   } else if (a.mbid_resolved) {
     addBtn = `<button class="btn btn-primary btn-sm" onclick="addBacklogArtist('${svc}',${idx},this)">+ Add to Lidarr</button>`;
   } else {
@@ -2755,7 +2968,7 @@ async function addBacklogArtist(svc, idx, btn) {
       title:   a.artist_name,
       mbid:    a.mbid,
     });
-    btn.textContent = '✓ added';
+    btn.textContent = 'added';
     btn.style.background = 'var(--success)';
     btn.style.color = '#000';
     // The artist now lives in Lidarr; mark MBID-resolved card as "added"
@@ -2763,7 +2976,7 @@ async function addBacklogArtist(svc, idx, btn) {
     // auto-refresh — user might want to chain several adds in one go.
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = '✗ ' + (e.message || 'failed').slice(0, 40);
+    btn.textContent = (e.message || 'failed').slice(0, 40);
     btn.style.background = 'var(--danger)';
     btn.style.color = '#fff';
     setTimeout(() => {
@@ -2896,12 +3109,22 @@ async function newChat() {
     await api('/api/chat/history?thread_id=general', 'DELETE');
     const msgs = document.getElementById('messages');
     if (msgs) {
-      msgs.innerHTML = '';
-      // Re-add the welcome line
-      const welcome = document.createElement('div');
-      welcome.className = 'msg assistant';
-      welcome.textContent = "👋 Fresh chat. Ask me anything.";
-      msgs.appendChild(welcome);
+      // Pass: + New is the explicit "start over" action, so it's also the
+      // right moment to bring the glance/last-played/suggested-prompts
+      // panels back -- they only die on send (see sendMessage()), not on
+      // every view switch, so without this a user would see them exactly
+      // once per page load and never again for the rest of the session.
+      msgs.innerHTML = `
+        <div class="msg assistant">Fresh chat. Ask me anything.</div>
+        <div id="glance-panel"></div>
+        <div id="last-played-panel"></div>
+        <div id="suggested-prompts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+          <button class="sp-chip" onclick="fillPrompt('What should I watch tonight?')">What should I watch tonight?</button>
+          <button class="sp-chip" onclick="fillPrompt('What can I clean up in my library?')">What can I clean up in my library?</button>
+          <button class="sp-chip" onclick="fillPrompt('What does my watch history say about my taste?')">What does my watch history say about my taste?</button>
+        </div>`;
+      loadGlancePanel();
+      loadLastPlayed();
     }
     // Pass 27: + New also exits any active discussion thread — sticky
     // discuss-context shouldn't survive a chat reset.
@@ -2924,7 +3147,7 @@ async function correctChatAnchor() {
   if (!btn || btn.disabled) return;
   const original = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '⏳ clearing…';
+  btn.textContent = 'clearing…';
   try {
     const r = await api('/api/chat/correct-anchor', 'POST', { thread_id: 'general' });
     // Inject a small system note into the chat so the user sees what happened
@@ -2935,8 +3158,8 @@ async function correctChatAnchor() {
       note.className = 'msg assistant';
       note.style.cssText = 'border-left:3px solid var(--amber);padding-left:10px;font-size:12px;color:var(--text2);font-style:italic';
       note.textContent = r.ok
-        ? `🔄 ${r.message || `Cleared cache for '${r.title}'. Your next question will re-fetch fresh metadata.`}`
-        : `ⓘ ${r.reason || 'No active topic to clear yet.'}`;
+        ? `${r.message || `Cleared cache for '${r.title}'. Your next question will re-fetch fresh metadata.`}`
+        : `${r.reason || 'No active topic to clear yet.'}`;
       msgs.appendChild(note);
       msgs.scrollTop = msgs.scrollHeight;
     }
@@ -2955,6 +3178,9 @@ async function sendMessage() {
   inp.value = ''; inp.style.height = 'auto';
   inp.disabled = true;
   btn.disabled = true;
+  document.getElementById('glance-panel')?.remove();
+  document.getElementById('last-played-panel')?.remove();
+  document.getElementById('suggested-prompts')?.remove();
   addMsg(text, 'user');
   const thinking = addThinkingMsg();
 
@@ -2998,7 +3224,7 @@ async function sendMessage() {
       const detail = Array.isArray(err.detail)
         ? err.detail.map(e => e.msg || JSON.stringify(e)).join('; ')
         : (err.detail || resp.statusText);
-      thinking.textContent = '⚠️ ' + detail;
+      thinking.textContent = detail;
       return;
     }
 
@@ -3111,12 +3337,125 @@ async function sendMessage() {
     }
 
   } catch(e) {
-    thinking.textContent = '⚠️ ' + e.message;
+    thinking.textContent = e.message;
   } finally {
     inp.disabled = false;
     btn.disabled = false;
     inp.focus();
   }
+}
+
+// ── CHAT EMPTY-STATE "AT A GLANCE" PANEL ────────────────────────────────────
+// Fires once after login, before the first message. Every source is fetched
+// independently (Promise.allSettled) so one failing endpoint just means one
+// missing tile, not a blank panel -- and each tile jumps straight to the
+// view it summarizes. Gone the moment the user actually sends something
+// (see sendMessage()); the point is a landing glance, not a permanent
+// dashboard competing with the conversation.
+async function loadGlancePanel() {
+  const el = document.getElementById('glance-panel');
+  if (!el) return;
+  const isAdmin = !!currentUser?.is_admin;
+
+  const [enrich, recs, dels, tasks] = await Promise.allSettled([
+    api('/api/enrichment/status?quick=true'),
+    api('/api/recommendations/?source=cache&limit=1'),
+    isAdmin ? api('/api/recommendations/deletions?refresh=false') : Promise.resolve(null),
+    api('/api/tasks/history'),
+  ]);
+
+  const tiles = [];
+
+  if (enrich.status === 'fulfilled') {
+    let done = 0, total = 0;
+    for (const c of Object.values(enrich.value.categories || {})) {
+      done += c?.states?.enriched_live || 0;
+      total += c?.denominator?.downloaded || 0;
+    }
+    if (total) tiles.push({num: Math.round(100 * done / total) + '%', lbl: 'Enriched', view: 'enrich'});
+  }
+
+  if (recs.status === 'fulfilled' && recs.value.recommendations) {
+    tiles.push({num: recs.value.recommendations.length, lbl: 'Recommendations ready', view: 'recs'});
+  }
+
+  if (isAdmin && dels.status === 'fulfilled' && dels.value) {
+    const n = (dels.value.proposals || []).length;
+    tiles.push({num: n, lbl: n === 1 ? 'Deletion proposal' : 'Deletion proposals', view: 'deletions'});
+  }
+
+  if (tasks.status === 'fulfilled') {
+    const latest = Object.values(tasks.value.last_runs || {})
+      .filter(r => r.at).sort((a, b) => (b.at || '').localeCompare(a.at || ''))[0];
+    if (latest) {
+      const mins = Math.round((Date.now() - new Date(latest.at).getTime()) / 60000);
+      const when = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
+      tiles.push({num: when, lbl: 'Last activity', view: 'tasks', small: true});
+    }
+  }
+
+  if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
+
+  el.innerHTML = `<div class="stat-row" style="margin:16px 0 4px">` + tiles.map(t => `
+    <div class="stat-box" style="cursor:pointer" onclick="showView('${t.view}')">
+      <div class="num"${t.small ? ' style="font-size:16px"' : ''}>${esc(String(t.num))}</div>
+      <div class="lbl">${esc(t.lbl)}</div>
+    </div>`).join('') + `</div>`;
+}
+
+// ── CHAT EMPTY-STATE "LAST PLAYED" STRIP ────────────────────────────────────
+// Same lifecycle as the glance panel (loaded once at boot, gone once the
+// user sends anything -- see sendMessage()). poster_url isn't in
+// /api/history/recent's response yet (verified against
+// src/routers/history.py before writing this) -- _posterImg() already
+// degrades that to a "?" tile with zero special-casing here, so this ships
+// now and just gets prettier the day that field lands.
+let _lastPlayedEntries = [];
+async function loadLastPlayed() {
+  const el = document.getElementById('last-played-panel');
+  if (!el) return;
+  try {
+    // Per-category, not just "the last N overall" -- a music-heavy stretch
+    // would otherwise crowd out movies/shows/anime entirely (seen live: 8
+    // straight music entries, nothing else). 2 per category, interleaved
+    // back to newest-first so it still reads as "recent" as a whole.
+    const cats = ['movie', 'show', 'anime', 'music'];
+    const results = await Promise.allSettled(
+      cats.map(c => api(`/api/history/recent?limit=2&category=${c}`))
+    );
+    _lastPlayedEntries = results
+      .flatMap(r => r.status === 'fulfilled' ? (r.value.entries || []) : [])
+      .sort((a, b) => (b.viewed_at || '').localeCompare(a.viewed_at || ''));
+    if (!_lastPlayedEntries.length) return;
+    el.innerHTML = `<div class="lp-heading">Last played</div><div class="lp-row">` +
+      _lastPlayedEntries.map((e, i) => {
+        const isMusic = e.media_type === 'music';
+        let title = e.title;
+        if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
+        else if ((e.media_type === 'anime' || e.media_type === 'show') && e.series_title) title = `${e.series_title}: ${e.title}`;
+        return `<div class="lp-chip" onclick="discussLastPlayed(${i})">
+          ${_posterImg(e.poster_url, 72, isMusic ? 72 : 108, isMusic)}
+          <div class="lp-title">${esc(title)}</div>
+        </div>`;
+      }).join('') + `</div>`;
+  } catch {} // best-effort nicety, not core functionality -- fail silent
+}
+// Unlike discussLastPlayed()/discussInChat(), this only fills + focuses --
+// no auto-send -- since a suggested prompt is a starting point the user is
+// expected to tweak, not a specific-title primer that's already complete.
+function fillPrompt(text) {
+  const inp = document.getElementById('chat-input');
+  inp.value = text;
+  inp.focus();
+}
+function discussLastPlayed(i) {
+  const e = _lastPlayedEntries[i];
+  if (!e) return;
+  const isMusic = e.media_type === 'music';
+  let title = e.title;
+  if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
+  else if ((e.media_type === 'anime' || e.media_type === 'show') && e.series_title) title = `${e.series_title}: ${e.title}`;
+  discussInChat('custom', {message: `I recently ${isMusic ? 'listened to' : 'watched'} "${title}" — what do you think about it, or what should I know?`});
 }
 
 function addMsg(text,role) {
@@ -3144,7 +3483,7 @@ function addThinkingMsg() {
 async function recomputeTaste() {
   const el = document.getElementById('history-stats');
   const orig = el.innerHTML;
-  el.innerHTML += '<p style="color:var(--amber);font-size:12px;margin-top:8px">🧠 Recomputing taste vectors…</p>';
+  el.innerHTML += '<p style="color:var(--amber);font-size:12px;margin-top:8px">Recomputing taste vectors…</p>';
   try {
     await api('/api/history/recompute-taste','POST');
     setTimeout(() => {
@@ -3155,7 +3494,7 @@ async function recomputeTaste() {
       }
     }, 8000);
   } catch(e) {
-    el.innerHTML = orig + `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = orig + _errHtml(e);
   }
 }
 
@@ -3164,9 +3503,9 @@ async function syncHistory(force=false) {
   el.innerHTML='<p class="loading">' + (force?'Force syncing…':'Syncing Plex history…') + '</p>';
   try {
     const r=await api('/api/history/sync?force='+(force?'true':'false'),'POST');
-    el.innerHTML=`<div style="color:var(--success);font-size:13px">✅ ${esc(r.message)}</div>`;
+    el.innerHTML=`<div style="color:var(--success);font-size:13px">${esc(r.message)}</div>`;
     setTimeout(loadHistoryStatus,5000);
-  } catch(e){el.innerHTML=`<p class="loading">${esc(e.message)}</p>`;}
+  } catch(e){el.innerHTML=_errHtml(e, `syncHistory(${force})`);}
 }
 
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
@@ -3176,18 +3515,18 @@ async function reattributeHistory() {
   status.style.whiteSpace = 'pre-wrap';
   status.style.fontSize = '11px';
   status.style.lineHeight = '1.5';
-  status.textContent = '🔁 Re-attributing…';
+  status.textContent = 'Re-attributing…';
   try {
     const r = await api('/api/history/admin/re-attribute', 'POST');
     if (r.error) {
       status.style.color = 'var(--danger,#e66)';
-      status.textContent = '❌ ' + r.error;
+      status.textContent = r.error;
       return;
     }
 
     // Build a calmer summary that explains what each bucket actually means.
     const lines = [];
-    lines.push('✅ Done.');
+    lines.push('Done.');
 
     if (r.updated > 0) {
       lines.push(`• ${r.updated.toLocaleString()} row${r.updated === 1 ? '' : 's'} (re)assigned to a different Plex account.`);
@@ -3205,14 +3544,14 @@ async function reattributeHistory() {
 
     if (typeof r.plex_history_events !== 'undefined') {
       lines.push('');
-      lines.push(`📊 Plex returned ${r.plex_history_events.toLocaleString()} play events covering ${r.plex_history_rating_keys.toLocaleString()} unique items. Your library has ${(r.local_rks_in_plex_history + r.local_rks_missing_from_plex_history).toLocaleString()} distinct watched items in total.`);
+      lines.push(`Plex returned ${r.plex_history_events.toLocaleString()} play events covering ${r.plex_history_rating_keys.toLocaleString()} unique items. Your library has ${(r.local_rks_in_plex_history + r.local_rks_missing_from_plex_history).toLocaleString()} distinct watched items in total.`);
     }
 
     status.style.color = 'var(--success,#5c5)';
     status.textContent = lines.join('\n');
   } catch (e) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ ' + (e.message || 'Failed');
+    status.textContent = (e.message || 'Failed');
   }
 }
 
@@ -3224,23 +3563,23 @@ async function cleanupOrphans() {
   )) return;
   const status = document.getElementById('admin-action-status');
   status.style.color = 'var(--amber)';
-  status.textContent = '🧹 Cleaning orphans…';
+  status.textContent = 'Cleaning orphans…';
   try {
     const r = await api('/api/history/admin/cleanup-orphans', 'POST');
     if (r.error) {
       status.style.color = 'var(--danger,#e66)';
-      status.textContent = '❌ ' + r.error + ' (deleted: 0)';
+      status.textContent = r.error + ' (deleted: 0)';
       return;
     }
     status.style.color = 'var(--success,#5c5)';
     status.textContent =
-      `✅ Done — ${r.deleted} deleted, ${r.examined} examined, ${r.live_keys_seen} live ratingKeys in Plex`;
+      `Done — ${r.deleted} deleted, ${r.examined} examined, ${r.live_keys_seen} live ratingKeys in Plex`;
     if (r.deleted > 0) {
       setTimeout(loadHistoryStatus, 800);
     }
   } catch (e) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ ' + (e.message || 'Failed');
+    status.textContent = (e.message || 'Failed');
   }
 }
 
@@ -3287,22 +3626,22 @@ async function loadLibrarySettings() {
   }
 }
 
-const ARR_LABELS = { sonarr: '📺 Sonarr (TV)', radarr: '🎬 Radarr (Movies)', lidarr: '🎵 Lidarr (Music)' };
+const ARR_LABELS = { sonarr: 'Sonarr (TV)', radarr: 'Radarr (Movies)', lidarr: 'Lidarr (Music)' };
 
 function renderArrCard(svc, info) {
   const card = document.createElement('div');
   card.style.cssText = 'border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:14px;margin-bottom:14px';
   const last = info.last_test || '';
   const lastBadge = last.startsWith('ok|')
-    ? `<span style="color:var(--success);font-size:11px">✓ connected (${esc(last.split('|')[1] || '')})</span>`
+    ? `<span style="color:var(--success);font-size:11px">connected (${esc(last.split('|')[1] || '')})</span>`
     : last.startsWith('fail|')
-      ? `<span style="color:var(--danger);font-size:11px">✗ ${esc(last.split('|')[1] || 'failed')}</span>`
+      ? `<span style="color:var(--danger);font-size:11px">${esc(last.split('|')[1] || 'failed')}</span>`
       : '<span style="color:var(--text3);font-size:11px">not tested</span>';
 
   card.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <h3 style="margin:0;font-size:15px">${esc(ARR_LABELS[svc])}</h3>
-      ${info.configured ? lastBadge : '<span style="color:var(--amber);font-size:11px">⚠ not configured</span>'}
+      ${info.configured ? lastBadge : `<span style="color:var(--amber);font-size:11px">${SVG_WARN} not configured</span>`}
     </div>
     <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;align-items:center;font-size:12px;margin-bottom:12px">
       <label for="arr-url-${svc}" style="color:var(--text3)">URL</label>
@@ -3339,17 +3678,17 @@ async function testArr(svc) {
     const r = await api('/api/library/test', 'POST', body);
     if (r.ok) {
       msg.style.color = 'var(--success)';
-      msg.textContent = `✓ connected (${r.version || 'ok'})`;
+      msg.textContent = `connected (${r.version || 'ok'})`;
     } else {
       msg.style.color = 'var(--danger)';
-      msg.textContent = `✗ ${r.error || 'failed'}`;
+      msg.textContent = `${r.error || 'failed'}`;
     }
     // Pass 97: render the privacy warning under the success/failure
     // line so the user sees it even when the connection itself is fine.
     if (r.privacy_warning) {
-      msg.innerHTML += `<div style="color:var(--amber);font-size:11px;margin-top:4px">⚠️ ${esc(r.privacy_warning)}</div>`;
+      msg.innerHTML += `<div style="color:var(--amber);font-size:11px;margin-top:4px">${SVG_WARN} ${esc(r.privacy_warning)}</div>`;
     }
-  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = '✗ ' + (e.message || 'failed'); }
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = (e.message || 'failed'); }
 }
 
 async function saveArrConfig(svc) {
@@ -3361,10 +3700,10 @@ async function saveArrConfig(svc) {
   try {
     await api('/api/library/configure', 'POST', { service: svc, url, api_key: key });
     msg.style.color = 'var(--success)';
-    msg.textContent = '✓ saved + connected';
+    msg.textContent = 'saved + connected';
     // Reload the whole pane so the defaults section becomes visible
     setTimeout(loadLibrarySettings, 600);
-  } catch (e) { msg.style.color='var(--danger)'; msg.textContent='✗ ' + (e.message || 'failed'); }
+  } catch (e) { msg.style.color='var(--danger)'; msg.textContent=(e.message || 'failed'); }
 }
 
 async function loadArrProfiles(svc) {
@@ -3445,8 +3784,8 @@ async function saveArrDefaults(svc) {
   try {
     await api(`/api/library/defaults/${svc}`, 'PUT', body);
     msg.style.color = 'var(--success)';
-    msg.textContent = '✓ saved';
-  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = '✗ ' + (e.message || 'failed'); }
+    msg.textContent = 'saved';
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = (e.message || 'failed'); }
 }
 
 
@@ -3458,7 +3797,7 @@ async function loadNotificationPreferences() {
     const r = await api('/api/users/me/notification-preferences');
     renderNotificationPreferences(r.triggers || []);
   } catch (e) {
-    host.innerHTML = `<p class="loading" style="color:var(--danger,#e66)">⚠️ ${esc(e.message || 'Failed to load preferences')}</p>`;
+    host.innerHTML = `<p class="loading" style="color:var(--danger,#e66)">${SVG_WARN} ${esc(e.message || 'Failed to load preferences')}</p>`;
   }
 }
 
@@ -3506,7 +3845,7 @@ function renderNotificationPreferences(triggers) {
         // Roll back the visual state if the server rejected the change.
         toggle.checked = !wantEnabled;
         stateLabel.textContent = toggle.checked ? 'on' : 'off';
-        toggle.title = '⚠️ ' + (e.message || 'Failed');
+        toggle.title = (e.message || 'Failed');
       } finally {
         toggle.disabled = false;
       }
@@ -3551,7 +3890,7 @@ async function loadPinStatus() {
       formChange.style.display = 'none';
     }
   } catch (e) {
-    stateEl.textContent = '⚠️ ' + (e.message || 'failed to load PIN status');
+    stateEl.textContent = (e.message || 'failed to load PIN status');
     stateEl.style.color = 'var(--danger,#e66)';
   }
 }
@@ -3562,12 +3901,12 @@ async function submitPinSet() {
   const status = document.getElementById('pin-set-status');
   if (newPin.length < 6) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ PIN must be at least 6 characters.';
+    status.textContent = 'PIN must be at least 6 characters.';
     return;
   }
   if (newPin !== confirm) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = "❌ PINs don't match.";
+    status.textContent = "PINs don't match.";
     return;
   }
   status.style.color = 'var(--amber)';
@@ -3575,13 +3914,13 @@ async function submitPinSet() {
   try {
     const r = await api('/api/users/me/pin', 'POST', { pin: newPin });
     status.style.color = 'var(--success,#5c5)';
-    status.textContent = '✅ PIN set.';
+    status.textContent = 'PIN set.';
     document.getElementById('pin-new').value = '';
     document.getElementById('pin-new-confirm').value = '';
     loadPinStatus();
   } catch (e) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ ' + (e.message || 'Failed');
+    status.textContent = (e.message || 'Failed');
   }
 }
 
@@ -3592,22 +3931,22 @@ async function submitPinChange() {
   const status = document.getElementById('pin-change-status');
   if (!cur) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ Current PIN required.';
+    status.textContent = 'Current PIN required.';
     return;
   }
   if (newPin.length < 6) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ New PIN must be at least 6 characters.';
+    status.textContent = 'New PIN must be at least 6 characters.';
     return;
   }
   if (newPin !== confirm) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = "❌ New PINs don't match.";
+    status.textContent = "New PINs don't match.";
     return;
   }
   if (newPin === cur) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ New PIN must differ from current.';
+    status.textContent = 'New PIN must differ from current.';
     return;
   }
   status.style.color = 'var(--amber)';
@@ -3615,14 +3954,14 @@ async function submitPinChange() {
   try {
     await api('/api/users/me/pin', 'POST', { pin: newPin, current_pin: cur });
     status.style.color = 'var(--success,#5c5)';
-    status.textContent = '✅ PIN changed.';
+    status.textContent = 'PIN changed.';
     document.getElementById('pin-current').value = '';
     document.getElementById('pin-change-new').value = '';
     document.getElementById('pin-change-confirm').value = '';
     loadPinStatus();
   } catch (e) {
     status.style.color = 'var(--danger,#e66)';
-    status.textContent = '❌ ' + (e.message || 'Failed');
+    status.textContent = (e.message || 'Failed');
   }
 }
 
@@ -3639,11 +3978,11 @@ async function loadHistoryStatus() {
         <div class="stat-box"><div class="num">${s.watch_history_entries.toLocaleString()}</div><div class="lbl">Entries synced</div></div>
         <div class="stat-box">
           <div class="num" style="color:${coverageOk?'var(--amber)':'var(--danger)'}">${tv.watch_count?.toLocaleString()||0}</div>
-          <div class="lbl">In taste profile ${coverageOk?'':'⚠️ outdated'}</div>
+          <div class="lbl">In taste profile ${coverageOk?'':'<span style="color:var(--amber)">— outdated</span>'}</div>
         </div>
-        <div class="stat-box"><div class="num">${tv.computed?'✅':'⏳'}</div><div class="lbl">Profile status</div></div>
+        <div class="stat-box"><div class="num" style="font-size:16px">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
       </div>
-      ${tv.note?`<div style="font-size:12px;color:var(--danger);margin-bottom:12px;padding:8px 12px;background:var(--danger-dim);border-radius:var(--radius)">⚠️ ${esc(tv.note)}</div>`:''}`;
+      ${tv.note?`<div style="font-size:12px;color:var(--danger);margin-bottom:12px;padding:8px 12px;background:var(--danger-dim);border-radius:var(--radius)">${esc(tv.note)}</div>`:''}`;
 
     if (types.length) {
       document.getElementById('taste-tabs').innerHTML = types.map((t,i)=>
@@ -3654,7 +3993,7 @@ async function loadHistoryStatus() {
       const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
       renderRecent(h.entries, types[0]);
     }
-  } catch(e){ document.getElementById('history-stats').innerHTML=`<p class="loading">${esc(e.message)}</p>`; }
+  } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, 'loadHistoryStatus()'); }
 }
 
 function showTasteTab(type,btn) {
@@ -3756,8 +4095,8 @@ function _stopRecsPoll() {
 
 // Lane presentation metadata for the two recommendation sections.
 const _LANE_META = {
-  library:   { icon: '📚', title: 'From your library', sub: 'you own it · still unwatched' },
-  discovery: { icon: '✨', title: 'Discover new',      sub: 'not in your library · worth acquiring' },
+  library:   { title: 'From your library', sub: 'you own it · still unwatched' },
+  discovery: { title: 'Discover new',      sub: 'not in your library · worth acquiring' },
 };
 
 function _recCard(rec) {
@@ -3766,18 +4105,15 @@ function _recCard(rec) {
   const isLib = rec.lane === 'library';
   const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`;
   return `
-  <div class="card" style="margin-bottom:12px">
-    <div style="display:flex;align-items:flex-start;gap:12px">
-      ${rec.poster_url
-        ? `<img src="${esc(proxyImg(rec.poster_url))}" alt="${esc(rec.title)}" style="width:56px;height:${rec.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`
-        : `<div style="width:56px;height:${rec.category==='music'?'56':'84'}px;background:var(--bg3);border-radius:${rec.category==='music'?'50%':'4px'};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px">${{movie:'🎬',show:'📺',anime:'⛩️',music:'🎵'}[rec.category]||'📋'}</div>`
-      }
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:flex-start;gap:18px">
+      <div class="poster-frame selectable" title="Discuss this recommendation" onclick="[...this.closest('.card').querySelectorAll('button')].find(b=>b.textContent.trim()==='Discuss')?.click()">${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:14px">${esc(rec.title)}</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(rec.category_label||'')}</div>
-        ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${genreTags}</div>` : ''}
-        ${rec.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(rec.synopsis)}</div>` : ''}
-        <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6">${esc(rec.reason||rec.pitch||'')}</div>
+        <div style="font-weight:600;font-size:16px">${esc(rec.title)}</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:3px">${esc(rec.category_label||'')}</div>
+        ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">${genreTags}</div>` : ''}
+        ${rec.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:8px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(rec.synopsis)}</div>` : ''}
+        <div style="font-size:13.5px;color:var(--text2);margin-top:10px;line-height:1.65">${esc(rec.reason||rec.pitch||'')}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
         ${laneBadge}
@@ -3816,22 +4152,22 @@ async function onAddRecToArr(btn) {
     const m = (year && matches.find(x => (x.title||'').toLowerCase() === tl && x.year === year))
            || matches.find(x => (x.title||'').toLowerCase() === tl)
            || matches[0];
-    if (!m) { fail('✗ no match'); return; }
-    if (m.already_added) { btn.textContent = 'In library ✓'; return; }   // stays disabled
+    if (!m) { fail('no match'); return; }
+    if (m.already_added) { btn.textContent = 'In library'; return; }   // stays disabled
     if (!confirm(`Add "${m.title}"${m.year ? ` (${m.year})` : ''} to ${svc}?`)) { restore(); return; }
     btn.textContent = 'adding…';
     await api('/api/library/add', 'POST', {
       service: svc, title: m.title, year: m.year,
       tvdb_id: m.tvdb_id, tmdb_id: m.tmdb_id, mbid: m.mbid,
     });
-    btn.textContent = 'Added ✓';
+    btn.textContent = 'Added';
     btn.style.background = 'var(--success)';
     btn.style.color = '#000';
   } catch (e) {
     let detail = e.message || 'failed';
     try { detail = JSON.parse(detail).detail || detail; } catch {}
     if (detail.includes('defaults incomplete')) alert(detail);
-    fail('✗ ' + detail);
+    fail(detail);
   }
 }
 
@@ -3875,15 +4211,15 @@ async function searchLibrary() {
         ${h.doc ? `<div style="font-size:12px;color:var(--text2);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(h.doc.slice(0, 220))}</div>` : ''}
       </div>`).join('');
   } catch (e) {
-    el.innerHTML = `<p class="loading">Search failed: ${esc((e.message || '').slice(0, 120))}</p>`;
+    el.innerHTML = _errHtml(e);
   }
 }
 
 function _recSection(lane, recs) {
   if (!recs || !recs.length) return '';
-  const m = _LANE_META[lane] || { icon:'', title:lane, sub:'' };
+  const m = _LANE_META[lane] || { title:lane, sub:'' };
   return `<div style="margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)">
-      <span style="font-size:14px;font-weight:700;color:var(--text)">${m.icon} ${esc(m.title)}</span>
+      <span style="font-size:14px;font-weight:700;color:var(--text)">${esc(m.title)}</span>
       <span style="font-size:12px;font-weight:400;color:var(--text3)"> · ${esc(m.sub)} · ${recs.length}</span>
     </div>` + recs.map(_recCard).join('');
 }
@@ -3939,7 +4275,7 @@ async function loadRecs(category=null, btn=null, refresh=false) {
     if (laneFilter === 'all' || laneFilter === 'discovery') body += _recSection('discovery', discovery);
     if (!body) body = '<p class="loading">Nothing in this lane yet — use Regenerate, or switch lane above.</p>';
     el.innerHTML = cacheNote + body;
-  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+  } catch(e) { el.innerHTML = _errHtml(e); }
 }
 
 // ── DELETIONS ─────────────────────────────────────────────────────────────────
@@ -3965,7 +4301,7 @@ function _recentActivityBadge(p) {
               : ageDays === 1 ? 'yesterday'
               : ageDays <= 7  ? `${ageDays}d ago`
               :                 `${Math.floor(ageDays / 7)}w ago`;
-  // Recent activity = orange-ish "🆕" tag. Small enough not to compete
+  // Recent activity = small amber "new" tag. Small enough not to compete
   // with the confidence pill, distinct enough to spot at a glance.
   return ` <span class="badge amber" style="font-size:10px"
                 title="Latest episode/movie/track file imported ${ageDays}d ago — fresh activity may indicate this proposal is more relevant to review.">new · ${label}</span>`;
@@ -3991,21 +4327,24 @@ function _renderDeletionProposals(proposals) {
           ? "e.g. 'Keep — haven\\'t watched it yet' or 'Delete — awful film'"
           : "e.g. 'Keep — still watching this' or 'Delete — dropped after 2 eps'";
       return `
-      <div class="card" data-del-id="${p.id}" style="margin-bottom:12px;border-color:${p.stagnant?'rgba(229,160,13,.35)':(p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)')}">
-        <div style="display:flex;align-items:flex-start;gap:12px">
-          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" onchange="updateDelBulkCount()" style="margin-top:4px;flex-shrink:0;accent-color:var(--amber)" title="Select for bulk delete"/>
-          ${p.poster_url ? `<img src="${esc(proxyImg(p.poster_url))}" alt="" style="width:56px;height:${p.category==='music'?'56':'84'}px;object-fit:cover;border-radius:${p.category==='music'?'50%':'4px'};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
+      <div class="card" data-del-id="${p.id}" style="margin-bottom:16px;border-color:${p.stagnant?'rgba(229,160,13,.35)':(p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)')}">
+        <div style="display:flex;align-items:flex-start;gap:18px">
+          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" onchange="updateDelBulkCount(); _syncDelPosterVisual(this)" style="display:none" title="Select for bulk delete"/>
+          <div class="poster-frame selectable" data-id="${p.id}" onclick="toggleDelSelect(${p.id})" title="Click to select for bulk delete">
+            ${_posterImg(p.poster_url, 174, p.category==='music'?174:261, p.category==='music')}
+            <div class="del-poster-check">${SVG_CHECK.replace('width="13" height="13"', 'width="34" height="34"')}</div>
+          </div>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:14px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${p.stagnant?` <span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}</div>
-            <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
-            ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${genreTags}</div>` : ''}
-            ${p.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
-            <div style="font-size:13px;color:var(--text2);margin-top:8px;line-height:1.6;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
+            <div style="font-weight:600;font-size:16px">${esc(p.title)} <span class="badge ${p.confidence>.7?'danger':'muted'}">${Math.round((p.confidence||0)*100)}%</span>${p.stagnant?` <span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:3px">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
+            ${genreTags ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">${genreTags}</div>` : ''}
+            ${p.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:8px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
+            <div style="font-size:13.5px;color:var(--text2);margin-top:10px;line-height:1.65;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
             ${p.user_comment?`<div style="font-size:12px;color:var(--amber);margin-top:6px">${esc(p.user_comment)}</div>`:''}
             <textarea id="del-comment-${p.id}" class="del-comment" style="margin-top:10px" placeholder="${placeholder}">${esc(p.user_comment||'')}</textarea>
             <div class="del-actions" style="margin-top:8px">
               <button class="btn btn-danger btn-sm" onclick="approveDelete(${p.id},this)">${p.status==='limbo'?'Retry Delete':'Delete'}</button>
-              ${p.status==='limbo'?`<span class="arr-limbo-error" style="display:block;margin-top:5px;font-size:11px;color:var(--amber)">⚠️ Previous delete attempt failed — ARR was unreachable. Click Retry Delete to try again.</span>`:''}
+              ${p.status==='limbo'?`<span class="arr-limbo-error" style="display:block;margin-top:5px;font-size:11px;color:var(--amber)">${SVG_WARN} Previous delete attempt failed — ARR was unreachable. Click Retry Delete to try again.</span>`:''}
               <button class="btn btn-secondary btn-sm" onclick="rejectDelete(${p.id},this)">Keep</button>
               <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">Save note</button>
               <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}">Discuss</button>
@@ -4051,7 +4390,7 @@ async function onFixMatch(btn) {
         <div style="margin-top:8px"><button class="btn btn-secondary btn-sm" onclick="removeFixMatch(this,'${esc(service)}',${Number(mediaid)})" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button></div>
       </div>`;
   } catch (e) {
-    box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(e.message)}</p>`;
+    box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(_errMsg(e))}</p>`;
   }
 }
 
@@ -4060,10 +4399,10 @@ async function applyFixMatch(btn, service, arrId, category, title, tmdbId) {
   try {
     const r = await api('/api/enrichment/match-override', 'POST',
       { service, arr_id: arrId, category, title, tmdb_id: tmdbId });
-    btn.textContent = r.success ? '✓ Pinned' : 'Failed';
+    btn.textContent = r.success ? 'Pinned' : 'Failed';
     if (r.success) {
       btn.closest('div[id^="fixmatch-"]').innerHTML =
-        `<p style="font-size:12px;color:var(--success)">✓ ${esc(r.message || 'Pinned — re-enriches on the pinned identity.')}</p>`;
+        `<p style="font-size:12px;color:var(--success)">${esc(r.message || 'Pinned — re-enriches on the pinned identity.')}</p>`;
     }
   } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
 }
@@ -4072,11 +4411,11 @@ async function removeFixMatch(btn, service, arrId) {
   btn.disabled = true;
   try {
     const r = await api(`/api/enrichment/match-override/${encodeURIComponent(service)}/${arrId}`, 'DELETE');
-    btn.textContent = r.success ? '✓ Unpinned' : (r.error || 'No pin found');
+    btn.textContent = r.success ? 'Unpinned' : (r.error || 'No pin found');
   } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
 }
 
-// Pass 17: read the "🆕 Just-arrived" toggle + days dropdown from the DOM.
+// Pass 17: read the "Just-arrived" toggle + days dropdown from the DOM.
 // Keeping this in a helper means loadDeletions, toggleRecentOnly, and the
 // dropdown's onchange all see the same source of truth.
 function _delRecentParams() {
@@ -4175,7 +4514,7 @@ async function loadPrinciples() {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <span style="color:var(--text3);font-size:12px">${nActive} active rules</span>
         <button class="btn btn-secondary btn-sm" onclick="condensePrinciples()"
-          title="Let the curator consolidate near-duplicate active rules (conservative — usually finds nothing on a clean set)">🧹 Condense duplicates</button>
+          title="Let the curator consolidate near-duplicate active rules (conservative — usually finds nothing on a clean set)">Condense duplicates</button>
       </div>` : '';
     el.innerHTML = condenseBar + rows.map(p => {
       const st = p.status === 'active'
@@ -4370,7 +4709,7 @@ async function loadRedundancy() {
       el.innerHTML = '<p style="color:var(--text3);font-size:13px">No redundant versions found — the library keeps one copy per title.</p>';
       return;
     }
-    const CAT = { movie: '🎬 Movies', show: '📺 TV Shows', anime: '⛩️ Anime', music: '🎵 Music' };
+    const CAT = { movie: 'Movies', show: 'TV Shows', anime: 'Anime', music: 'Music' };
     const ARR = { movie: 'radarr', show: 'sonarr', anime: 'sonarr', music: 'lidarr' };
     const links = (e) => {
       const plex = r.plex_web_base && e.plex_rating_key
@@ -4447,7 +4786,7 @@ async function loadDeletions(category=null, btn=null, refresh=false) {
   // of opening a parallel DB read that returns the pre-commit snapshot.
   if (!refresh && _delAnalysePromise) {
     const elapsed = Math.round((Date.now() - _delAnalyseStartedAt) / 1000);
-    el.innerHTML = `<p class="loading">⏳ Analysis still running (${elapsed}s)… auto-refreshing when it's done.</p>`;
+    el.innerHTML = `<p class="loading">Analysis still running (${elapsed}s)… auto-refreshing when it's done.</p>`;
     try {
       const r = await _delAnalysePromise;
       _renderEnrichmentCoverageBanner(r.enrichment_coverage);
@@ -4517,7 +4856,7 @@ async function loadDeletions(category=null, btn=null, refresh=false) {
     if (!category && !recentActive && r.proposals) _delProposalsAll = r.proposals;
 
     _renderDeletionProposals(r.proposals || []);
-  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+  } catch(e) { el.innerHTML = _errHtml(e); }
 }
 
 function _renderEnrichmentCoverageBanner(cov) {
@@ -4532,7 +4871,7 @@ function _renderEnrichmentCoverageBanner(cov) {
   if (cov.never_run) {
     banner.style.cssText = 'background:rgba(229,83,83,.12);border:1px solid rgba(229,83,83,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:center;font-size:13px;color:var(--text1)';
     banner.innerHTML = `
-      <span style="font-size:20px">⚠️</span>
+      <span style="font-size:20px;color:var(--danger)">${SVG_WARN.replace('width="13" height="13"', 'width="20" height="20"')}</span>
       <div style="flex:1">
         <strong>ARR enrichment has never run.</strong>
         Curatarr has no rating or genre data for your library — proposals may be inaccurate.
@@ -4542,7 +4881,7 @@ function _renderEnrichmentCoverageBanner(cov) {
   } else if (cov.low) {
     banner.style.cssText = 'background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:center;font-size:13px;color:var(--text1)';
     banner.innerHTML = `
-      <span style="font-size:20px">📊</span>
+      <span style="font-size:20px;color:var(--amber)">${SVG_WARN.replace('width="13" height="13"', 'width="20" height="20"')}</span>
       <div style="flex:1">
         <strong>Low enrichment coverage: ${cov.pct}% (${cov.enriched}/${cov.total} items)</strong>
         Proposals for unenriched items use neutral rating fallbacks — results are less precise.
@@ -4552,7 +4891,7 @@ function _renderEnrichmentCoverageBanner(cov) {
   } else {
     // Coverage is OK — show a small inline stat, no big warning
     banner.style.cssText = 'background:rgba(52,199,89,.08);border:1px solid rgba(52,199,89,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:14px;font-size:12px;color:var(--text3);display:flex;gap:8px;align-items:center';
-    banner.innerHTML = `<span style="color:#34c759">✓</span> Enrichment coverage: <strong style="color:var(--text2)">${cov.pct}%</strong> (${cov.enriched}/${cov.total} ARR items have rating + genre data)`;
+    banner.innerHTML = `<span style="color:var(--success)">${SVG_CHECK}</span> Enrichment coverage: <strong style="color:var(--text2)">${cov.pct}%</strong> (${cov.enriched}/${cov.total} ARR items have rating + genre data)`;
   }
 
   const delContent = document.getElementById('del-content');
@@ -4582,7 +4921,7 @@ function showDeleteConfirmModal(title) {
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg2);border:1px solid rgba(229,83,83,.4);border-radius:var(--radius);padding:28px 24px;max-width:380px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
     modal.innerHTML = `
-      <div style="font-size:36px;margin-bottom:12px">🗑</div>
+      <div style="margin-bottom:12px;color:var(--danger)">${SVG_TRASH}</div>
       <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
       <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${esc(title)}</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.5">This removes it from your *arr library and deletes the files.<br>This cannot be undone.</div>
@@ -4615,7 +4954,21 @@ function showDeleteConfirmModal(title) {
 // ── BULK DELETE (multi-select) ────────────────────────────────────────────────
 
 function delToggleAll(master) {
-  document.querySelectorAll('#del-content .del-cb').forEach(cb => { cb.checked = master.checked; });
+  document.querySelectorAll('#del-content .del-cb').forEach(cb => { cb.checked = master.checked; _syncDelPosterVisual(cb); });
+  updateDelBulkCount();
+}
+
+// Poster click toggles the same (hidden) checkbox bulkDelete()/
+// updateDelBulkCount() already read -- one state, two ways to flip it
+// (click the poster, or "Select all"), always kept in sync through here.
+function _syncDelPosterVisual(cb) {
+  document.querySelector(`.poster-frame[data-id="${cb.dataset.id}"]`)?.classList.toggle('selected', cb.checked);
+}
+function toggleDelSelect(id) {
+  const cb = document.querySelector(`.del-cb[data-id="${id}"]`);
+  if (!cb) return;
+  cb.checked = !cb.checked;
+  _syncDelPosterVisual(cb);
   updateDelBulkCount();
 }
 
@@ -4640,7 +4993,7 @@ function showBulkDeleteConfirmModal(count, gb) {
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg2);border:1px solid rgba(229,83,83,.4);border-radius:var(--radius);padding:28px 24px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
     modal.innerHTML = `
-      <div style="font-size:36px;margin-bottom:12px">🗑</div>
+      <div style="margin-bottom:12px;color:var(--danger)">${SVG_TRASH}</div>
       <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
       <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${count} items · ${gb} GB</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:16px;line-height:1.5">This removes them from your *arr libraries and deletes the files.<br>This cannot be undone.</div>
@@ -4740,12 +5093,12 @@ async function approveDelete(id, btn) {
       const err = document.createElement('span');
       err.className = 'arr-limbo-error';
       err.style.cssText = 'display:block;margin-top:5px;font-size:11px;color:var(--amber)';
-      err.textContent = '⚠️ ' + r.error;
+      err.textContent = r.error;
       btn.closest('.del-actions').appendChild(err);
       return;
     }
 
-    btn.textContent = r.ok ? '✅ Deleted' : '❌ Failed';
+    btn.textContent = r.ok ? 'Deleted' : 'Failed';
     if (r.ok) {
       // Evict from client-side cache so switching tabs doesn't show deleted card
       if (_delProposalsAll) _delProposalsAll = _delProposalsAll.filter(p => p.id !== id);
@@ -4769,7 +5122,7 @@ async function rejectDelete(id, btn) {
   await api(`/api/recommendations/deletions/${id}/reject`, 'POST').catch(()=>{});
   // Evict from client-side cache so switching tabs doesn't show kept card
   if (_delProposalsAll) _delProposalsAll = _delProposalsAll.filter(p => p.id !== id);
-  btn.textContent = '✓ Kept';
+  btn.textContent = 'Kept';
 }
 
 // Pass 81: "Level 2 Override" — force the curator to challenge its own
@@ -4838,7 +5191,7 @@ function onReevaluateDeletion(btn) {
   //    responds.
   const input = document.getElementById('chat-input');
   if (input) {
-    input.value = '🔍 Run a Level 2 thematic scan on this deletion.';
+    input.value = 'Run a Level 2 thematic scan on this deletion.';
     input.focus();
     setTimeout(() => sendMessage(), 300);
   }
@@ -4876,13 +5229,13 @@ async function saveComment(id) {
   try {
     const r = await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent(comment)}`, 'POST');
     if (r && r.is_kept) {
-      btn.textContent = '✅ Saved + Kept';
+      btn.textContent = 'Saved + Kept';
       btn.closest('.card').style.opacity = '0.4';
     } else {
-      btn.textContent = '✅ Saved';
+      btn.textContent = 'Saved';
     }
   } catch (e) {
-    btn.textContent = '❌ Error';
+    btn.textContent = 'Error';
   }
 
   btn.disabled = false;
@@ -4985,7 +5338,7 @@ async function deleteFromDiscussion() {
 
     if (r.limbo) {
       // ARR unreachable — proposal kept in limbo, user can retry.
-      addMsg(`⚠️ ${r.error}`, 'assistant');
+      addMsg(r.error, 'assistant');
       if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
       return;
     }
@@ -5003,17 +5356,17 @@ async function deleteFromDiscussion() {
       if (tid && tid !== 'general') {
         api('/api/chat/flush-memories', 'POST', { thread_id: tid }).catch(() => {});
       }
-      addMsg(`✅ Deleted "${title}". Discussion thread closed.`, 'assistant');
+      addMsg(`Deleted "${title}". Discussion thread closed.`, 'assistant');
       // Close the discussion — same end-state as exitDiscussion(), minus
       // its "exited thread" note (we just posted a more specific one).
       pendingDiscussContext = null;
       _setDiscussBanner(null);
     } else {
-      addMsg(`❌ Delete failed for "${title}". Try again from the Deletions view.`, 'assistant');
+      addMsg(`Delete failed for "${title}". Try again from the Deletions view.`, 'assistant');
       if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
     }
   } catch (e) {
-    addMsg(`❌ Delete request failed for "${title}". Try again from the Deletions view.`, 'assistant');
+    addMsg(`Delete request failed for "${title}". Try again from the Deletions view.`, 'assistant');
     if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
   }
 }
@@ -5111,7 +5464,7 @@ async function loadMappingStats() {
         Downloaded: ${s.downloaded_at ? new Date(s.downloaded_at).toLocaleString() : 'never'} · refreshes weekly
       </div>`;
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
   }
 }
 
@@ -5132,11 +5485,11 @@ async function checkMappingCoverage() {
       <details style="margin-top:8px">
         <summary style="font-size:11px;color:var(--text3);cursor:pointer">Not mapped (${c.missing} total)</summary>
         <div style="margin-top:6px">
-          ${c.missing_sample.map(m=>`<div style="font-size:11px;color:var(--danger)">✗ ${esc(m.title)} tvdb:${m.tvdb_id||'?'} — ${esc(m.reason)}</div>`).join('')}
+          ${c.missing_sample.map(m=>`<div style="font-size:11px;color:var(--danger)">${esc(m.title)} tvdb:${m.tvdb_id||'?'} — ${esc(m.reason)}</div>`).join('')}
         </div>
       </details>` : ''}`;
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
   }
 }
 
@@ -5161,11 +5514,11 @@ async function loadProfiles(offset=0) {
             <div style="flex:1">
               <div style="font-weight:600;font-size:13px">${esc(p.title)}</div>
               <div style="font-size:11px;color:var(--text3);margin-top:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                ${p.has_profile?'✅':'❌'}
+                <span style="color:${p.has_profile?'var(--success)':'var(--text3)'}">${p.has_profile?SVG_CHECK:SVG_X}</span>
                 <span style="color:${p.source?.includes('+llm')?'var(--success)':p.source?.includes('rule_based')?'var(--amber)':'var(--text3)'}">
-                  ${esc(p.source||'?')}${p.source?.includes('rule_based')?' ⚠':''}
+                  ${esc(p.source||'?')}${p.source?.includes('rule_based')?' '+SVG_WARN:''}
                 </span>
-                ${p.rating?`· ⭐ ${p.rating}`:''}
+                ${p.rating?`· <span style="color:var(--amber)">${SVG_STAR}</span> ${p.rating}`:''}
                 · ${p.enriched_at?new Date(p.enriched_at).toLocaleDateString():'?'}
                 · <span style="padding:1px 5px;border-radius:3px;font-size:10px;background:${
                     p.profile_source==='watch_history'?'rgba(99,179,237,.15)':
@@ -5178,10 +5531,10 @@ async function loadProfiles(offset=0) {
                     p.profile_source?.startsWith('arr:sonarr')?'#9ae6b4':
                     p.profile_source?.startsWith('arr:lidarr')?'#b794f4':'var(--text3)'
                   }">${
-                    p.profile_source==='watch_history'?'👁 watched':
-                    p.profile_source==='arr:radarr'?'🎬 radarr':
-                    p.profile_source==='arr:sonarr'?'📺 sonarr':
-                    p.profile_source==='arr:lidarr'?'🎵 lidarr':esc(p.profile_source||'?')
+                    p.profile_source==='watch_history'?'watched':
+                    p.profile_source==='arr:radarr'?'radarr':
+                    p.profile_source==='arr:sonarr'?'sonarr':
+                    p.profile_source==='arr:lidarr'?'lidarr':esc(p.profile_source||'?')
                   }</span>
               </div>
               ${p.genres?.length?`<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${p.genres.slice(0,5).map(g=>`<span class="badge muted">${esc(g)}</span>`).join('')}</div>`:''}
@@ -5200,7 +5553,7 @@ async function loadProfiles(offset=0) {
         ${offset+8<r.total?`<button class="btn btn-secondary btn-sm" onclick="loadProfiles(${offset+8})">Next →</button>`:''}
       </div>`;
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = _errHtml(e);
   }
 }
 
@@ -5323,7 +5676,7 @@ async function loadEnrichStatus(forceRefresh) {
     if (st.running || (cust && cust.ticking)) setTimeout(() => loadEnrichStatus(true), 8000);
   } catch (e) {
     const el = document.getElementById('enrich-overview');
-    if (el) el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    if (el) el.innerHTML = _errHtml(e, 'loadEnrichStatus()');
   }
 }
 
@@ -5429,7 +5782,7 @@ async function loadMusicStatus() {
     const s = await api('/api/music/status');
     _renderMusicStatus(s);
   } catch(e) {
-    document.getElementById('music-stats-bar').textContent = 'Could not load music stats: ' + e.message;
+    document.getElementById('music-stats-bar').textContent = 'Could not load music stats: ' + _errMsg(e);
   }
 }
 
@@ -5517,7 +5870,7 @@ function _renderMusicStatus(s) {
       const mbidNote = mr > 0 || mp > 0
         ? ` · MBIDs: ${mr} resolved${mp > 0 ? `, ${mp} pending` : ''}`
         : '';
-      progLabel.textContent = `✅ Done — Plex: ${prog.matched ?? 0} matched${mbidNote}${spNote} · Last.fm: ${prog.enriched_plays ?? 0} plays enriched${fbNote}${ndNote}`;
+      progLabel.textContent = `Done — Plex: ${prog.matched ?? 0} matched${mbidNote}${spNote} · Last.fm: ${prog.enriched_plays ?? 0} plays enriched${fbNote}${ndNote}`;
       progFill.style.width = '100%';
     } else {
       progLabel.textContent = 'Starting…';
@@ -5543,10 +5896,10 @@ async function startMusicPipeline() {
   el.innerHTML = '<span style="color:var(--amber)">Starting pipeline…</span>';
   try {
     await api('/api/music/start', 'POST', { batch });
-    el.innerHTML = '<span style="color:var(--success)">✅ Pipeline started</span>';
+    el.innerHTML = '<span style="color:var(--success)">Pipeline started</span>';
     await loadMusicStatus();
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
   }
 }
 
@@ -5555,10 +5908,10 @@ async function stopMusicPipeline() {
   el.innerHTML = '<span style="color:var(--text2)">Requesting stop…</span>';
   try {
     await api('/api/music/stop', 'POST');
-    el.innerHTML = '<span style="color:var(--amber)">⏸ Stop requested — finishing current batch…</span>';
+    el.innerHTML = '<span style="color:var(--amber)">Stop requested — finishing current batch…</span>';
     await loadMusicStatus();
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
   }
 }
 
@@ -5569,9 +5922,9 @@ async function startEnrichNew() {
   el.innerHTML = '<p class="loading">Starting enrichment…</p>';
   try {
     const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src});
-    el.innerHTML = `<p style="color:var(--success);font-size:13px">✅ Enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}</p>`;
+    el.innerHTML = `<p style="color:var(--success);font-size:13px">Enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}</p>`;
     setTimeout(() => loadEnrichStatus(true), 3000);
-  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+  } catch(e) { el.innerHTML = _errHtml(e); }
 }
 
 async function startEnrichForce(btn) {
@@ -5583,15 +5936,15 @@ async function startEnrichForce(btn) {
   if (!confirm(`Force re-enrich ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}?\n\nThis clears all existing profiles and re-processes from scratch. Use after changing the AI model or enrichment prompts.`)) return;
 
   const el = document.getElementById('enrich-progress-area');
-  el.innerHTML = '<p class="loading" style="color:var(--amber)">🔄 Clearing cache and starting force re-enrichment…</p>';
+  el.innerHTML = '<p class="loading" style="color:var(--amber)">Clearing cache and starting force re-enrichment…</p>';
   if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
   try {
     const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
     const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src, force: true});
-    el.innerHTML = `<p style="color:var(--amber);font-size:13px">🔄 Force re-enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')} — cache cleared</p>`;
+    el.innerHTML = `<p style="color:var(--amber);font-size:13px">Force re-enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')} — cache cleared</p>`;
     setTimeout(() => loadEnrichStatus(true), 3000);
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = _errHtml(e);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Force Re-Enrich'; }
   }
@@ -5613,9 +5966,9 @@ async function computeTaste() {
     const qs = cats.map(c => `categories=${encodeURIComponent(c)}`).join('&');
     const url = qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste';
     await api(url, 'POST');
-    el.innerHTML = `<p style="color:var(--success);font-size:13px">✅ Taste vector computation started for ${esc(label)}</p>`;
+    el.innerHTML = `<p style="color:var(--success);font-size:13px">Taste vector computation started for ${esc(label)}</p>`;
     setTimeout(() => showView('history', document.querySelector('.sb-item[onclick*=history]')), 3000);
-  } catch(e) { el.innerHTML = `<p class="loading">${esc(e.message)}</p>`; }
+  } catch(e) { el.innerHTML = _errHtml(e); }
 }
 
 // Pass 55: two-step audit-requeue. First a dry-run that only counts, so the
@@ -5626,7 +5979,7 @@ async function computeTaste() {
 async function auditRequeueEnrichments(btn) {
   const el = document.getElementById('enrich-progress-area');
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
-  el.innerHTML = '<p class="loading">🔍 Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
+  el.innerHTML = '<p class="loading">Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
 
   const _reasonLabel = {
     zero_rating: 'missing/zero rating', not_found: 'not found in any API', malformed: 'corrupt cache entry',
@@ -5642,7 +5995,7 @@ async function auditRequeueEnrichments(btn) {
     const scan = await api('/api/enrichment/audit-requeue?dry_run=true', 'POST');
 
     if (!scan.incomplete) {
-      el.innerHTML = `<p style="color:var(--success);font-size:13px">✅ Scanned ${scan.scanned} profiles — all have complete metadata, nothing to requeue.</p>`;
+      el.innerHTML = `<p style="color:var(--success);font-size:13px">Scanned ${scan.scanned} profiles — all have complete metadata, nothing to requeue.</p>`;
       return;
     }
 
@@ -5663,12 +6016,12 @@ async function auditRequeueEnrichments(btn) {
     el.innerHTML = '<p class="loading">Requeuing incomplete profiles…</p>';
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
     el.innerHTML =
-      `<p style="color:var(--success);font-size:13px">✅ Requeued ${r.requeued} ` +
+      `<p style="color:var(--success);font-size:13px">Requeued ${r.requeued} ` +
       `of ${r.incomplete} flagged profiles (${_fmtBreakdown(r.by_reason)}). ` +
       `Run "Start Enrichment" to re-fetch them.</p>`;
     setTimeout(() => loadEnrichStatus(true), 2000);
   } catch (e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = _errHtml(e);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Audit metadata'; }
   }
@@ -5688,9 +6041,9 @@ async function omdbBackfill(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
   try {
     await api('/api/enrichment/omdb-backfill', 'POST');
-    el.innerHTML = '<p style="color:var(--success);font-size:13px">✅ OMDb backfill started — progress shows in the task monitor.</p>';
+    el.innerHTML = '<p style="color:var(--success);font-size:13px">OMDb backfill started — progress shows in the task monitor.</p>';
   } catch (e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = _errHtml(e);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Backfill OMDb'; }
   }
@@ -5715,10 +6068,6 @@ async function loadLibraryConfig() {
       return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'})
              + ' ' + d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
     }
-    function catIcon(c) {
-      return {music:'🎵',movie:'🎬',show:'📺',anime:'⛩️',ignore:'🚫'}[c]||'📁';
-    }
-
     el.innerHTML = discoverSections.map(s => {
       const cat = cfgMap[s.key] || s.suggested_category;
       const enrichPct = s.plex_item_count > 0
@@ -5729,15 +6078,14 @@ async function loadLibraryConfig() {
         <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
           <div style="flex:1;min-width:200px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-              <span style="font-size:18px">${catIcon(cat)}</span>
               <span style="font-weight:600;font-size:15px">${esc(s.title)}</span>
               <span style="font-size:11px;color:var(--text3);background:var(--bg3);padding:1px 6px;border-radius:8px">${esc(s.type)}</span>
             </div>
             ${paths ? `<div style="font-size:11px;color:var(--text3);font-family:monospace;margin-bottom:6px">${paths}</div>` : ''}
             <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-bottom:8px">
-              <span title="Items in Plex">📦 ${s.plex_item_count.toLocaleString()} items in Plex</span>
-              <span title="Playback events in Curatarr DB">🗃 ${s.db_entry_count.toLocaleString()} plays tracked</span>
-              <span title="Enriched with metadata">✨ ${s.enriched_count.toLocaleString()} enriched</span>
+              <span title="Items in Plex">${s.plex_item_count.toLocaleString()} items in Plex</span>
+              <span title="Playback events in Curatarr DB">${s.db_entry_count.toLocaleString()} plays tracked</span>
+              <span title="Enriched with metadata">${s.enriched_count.toLocaleString()} enriched</span>
             </div>
             <div style="font-size:11px;color:var(--text3)">
               Last scan: <span style="color:var(--text2)">${fmtDate(s.scanned_at)}</span>
@@ -5754,14 +6102,14 @@ async function loadLibraryConfig() {
           <div>
             <label for="libcat-${s.key}" style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Category</label>
             <select id="libcat-${s.key}" aria-label="Select category for library" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:13px">
-              ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${cat===o?'selected':''}>${catIcon(o)} ${o}</option>`).join('')}
+              ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${cat===o?'selected':''}>${o}</option>`).join('')}
             </select>
           </div>
         </div>
       </div>`;
     }).join('') || '<p style="color:var(--text3)">No Plex libraries found.</p>';
 
-  } catch(e){el.innerHTML=`<p class="loading">${esc(e.message)}</p>`;}
+  } catch(e){el.innerHTML=_errHtml(e, 'loadLibraryConfig()');}
 }
 
 async function saveLibraries() {
@@ -5780,7 +6128,7 @@ async function checkOrphans() {
   try {
     const r = await api('/api/libraries/orphaned');
     if (!r.has_orphans) {
-      el.innerHTML = '<p style="color:var(--success);font-size:13px">✅ No orphaned entries found.</p>';
+      el.innerHTML = '<p style="color:var(--success);font-size:13px">No orphaned entries found.</p>';
       return;
     }
     const sections = r.orphaned;
@@ -5810,7 +6158,7 @@ async function checkOrphans() {
         Import missing entries
       </button>`;
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = _errHtml(e);
   }
 }
 
@@ -5826,11 +6174,11 @@ async function applyOrphanRepair(sections) {
   try {
     const r = await api('/api/libraries/repair-orphans', 'POST', {mappings});
     el.innerHTML = `<p style="color:var(--success);font-size:13px">
-      ✅ Saved ${r.saved} library mappings · Imported ${r.synced} new history entries.<br>
+      Saved ${r.saved} library mappings · Imported ${r.synced} new history entries.<br>
       <span style="color:var(--text2)">Run Force Sync to recompute your taste profile with the new data.</span>
     </p>`;
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message)}</p>`;
+    el.innerHTML = _errHtml(e);
   }
 }
 
@@ -5858,7 +6206,7 @@ async function loadUsers() {
     </tbody></table></div>`;
     targets.forEach(el => el.innerHTML = html);
   } catch (e) {
-    targets.forEach(el => el.innerHTML = `<p class="loading">${esc(e.message)}</p>`);
+    targets.forEach(el => el.innerHTML = _errHtml(e, 'loadUsers()'));
   }
 }
 async function toggleUser(id,active){await api(`/api/users/${id}`,'PATCH',{is_active:active});loadUsers();}
@@ -5916,7 +6264,7 @@ async function startTaskStream() {
     if (taskStreamRetries >= 3) {
       const el = document.getElementById('tasks-list');
       if (el) el.innerHTML = `<p class="loading" style="color:var(--danger)">
-        ⚠ Task stream disconnected — 
+        ${SVG_WARN} Task stream disconnected —
         <a href="#" onclick="location.reload();return false;" aria-label="Reload page to reconnect" style="color:var(--amber)">reload page</a>
         to reconnect.
       </p>`;
@@ -5940,22 +6288,13 @@ function updateTaskBadge(tasks) {
   }
 }
 
-const TASK_ICONS = {
-  sync: '🔄', enrichment: '⚙️', embedding: '🧮',
-  taste: '🧠', proactive: '🤖', arr_sync: '📦',
-  memory_decay: '🧹', orphan_check: '🔍',
-  custodian: '🧰', curation: '🗑️', recs: '✨',
-  memory: '💭', music: '🎵', maintenance: '🛠️',
-  'enrich-movie': '🎬', 'enrich-show': '📺', 'enrich-anime': '⛩️', 'enrich-music': '🎵',
-  default: '📋'
-};
 const STATUS_COLORS = {
   running: 'var(--amber)', done: 'var(--success)',
   error: 'var(--danger)', pending: 'var(--text3)', skipped: 'var(--text2)'
 };
 const STATUS_LABELS = {
-  running: '▶ Running', done: '✓ Done',
-  error: '✗ Error', pending: '⏳ Queued', skipped: '✕ Cancelled'
+  running: 'Running', done: 'Done',
+  error: 'Error', pending: 'Queued', skipped: 'Cancelled'
 };
 
 function fmtTime(s) {
@@ -5974,7 +6313,6 @@ function renderTasks(tasks) {
   }
 
   el.innerHTML = tasks.map(t => {
-    const icon = TASK_ICONS[t.category] || TASK_ICONS.default;
     const color = STATUS_COLORS[t.status] || 'var(--text2)';
     const label = STATUS_LABELS[t.status] || t.status;
     const rate = t.rate > 0 ? `${t.rate.toFixed(1)}/s` : '';
@@ -5984,18 +6322,17 @@ function renderTasks(tasks) {
 
     return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:8px;${t.status==='running'?'border-color:rgba(229,160,13,.3)':''}">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:${t.status==='running'?'10':'0'}px">
-        <span style="font-size:16px">${icon}</span>
         <div style="flex:1">
           <div style="font-weight:600;font-size:13px">${esc(t.name)}</div>
           <div style="font-size:11px;color:var(--text3);margin-top:2px;display:flex;gap:10px">
             <span style="color:${color};font-weight:600">${label}</span>
-            ${elapsed?`<span>⏱ ${elapsed}</span>`:''}
+            ${elapsed?`<span>${elapsed}</span>`:''}
             ${t.processed&&t.total?`<span>${t.processed.toLocaleString()} / ${t.total.toLocaleString()}</span>`:''}
             ${rate?`<span>${rate}</span>`:''}
             ${eta?`<span style="color:var(--amber)">${eta}</span>`:''}
           </div>
         </div>
-        ${t.status==='running'?(t.total>0?`<span style="font-size:13px;font-weight:700;color:var(--amber)">${t.progress}%</span>`:`<span style="font-size:13px;color:var(--amber)" title="No item count for this job — watch the log line + elapsed time">⏳</span>`):''}
+        ${t.status==='running'?(t.total>0?`<span style="font-size:13px;font-weight:700;color:var(--amber)">${t.progress}%</span>`:`<span class="sb-pulse-dot" style="margin-left:0;position:static" title="No item count for this job — watch the log line + elapsed time"></span>`):''}
         ${t.status==='error'?`<span style="font-size:11px;color:var(--danger)">${esc(t.error||'')}</span>`:''}
       </div>
       ${t.status==='running'&&t.total>0?`
@@ -6005,7 +6342,7 @@ function renderTasks(tasks) {
       ${recentLog?`<div style="font-size:11px;color:var(--text3);font-family:monospace;margin-top:4px">${esc(recentLog)}</div>`:''}
       ${t.status==='running'||t.status==='pending'?`
         <button class="btn btn-secondary btn-sm" style="margin-top:8px;color:var(--danger);border-color:var(--danger)"
-          onclick="cancelTask('${esc(t.id)}',this)">✕ Cancel</button>`:''}
+          onclick="cancelTask('${esc(t.id)}',this)">Cancel</button>`:''}
     </div>`;
   }).join('');
 }
@@ -6022,17 +6359,16 @@ function updateEnrichLiveSection(tasks) {
   el.style.display = 'block';
   el.innerHTML = `
     <div style="border:1px solid rgba(229,160,13,.35);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;background:rgba(229,160,13,.06)">
-      <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:10px">⚙️ Enrichment running — ${active.length} categor${active.length===1?'y':'ies'} in parallel · 1 slot each</div>
+      <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:10px">Enrichment running — ${active.length} categor${active.length===1?'y':'ies'} in parallel · 1 slot each</div>
       ${active.map(t => {
         const cat = t.category.replace('enrich-', '');
-        const icon = TASK_ICONS[t.category] || '⚙️';
         const pct = t.progress || 0;
         const eta = t.eta_s ? ` · ETA ${fmtTime(Math.round(t.eta_s))}` : '';
         const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
         const current = t.logs && t.logs.length ? t.logs[t.logs.length-1].msg : '';
         return `<div style="margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:3px">
-            <span style="font-weight:600">${icon} ${cat.charAt(0).toUpperCase()+cat.slice(1)}</span>
+            <span style="font-weight:600">${cat.charAt(0).toUpperCase()+cat.slice(1)}</span>
             <span style="color:var(--text3)">${(t.processed||0).toLocaleString()} / ${(t.total||0).toLocaleString()}${rate}${eta}</span>
           </div>
           <div style="background:var(--bg3);border-radius:3px;height:4px">
@@ -6056,28 +6392,24 @@ async function loadTaskHistory() {
       return;
     }
     const statusColor = { done: 'var(--success)', error: 'var(--danger)', skipped: 'var(--text2)' };
-    const statusIcon  = { done: '✓', error: '✗', skipped: '✕' };
     entries.sort((a,b) => (b[1].at||'').localeCompare(a[1].at||''));
     el.innerHTML = `<div style="display:grid;gap:6px">` + entries.map(([cat, run]) => {
-      const icon  = TASK_ICONS[cat] || TASK_ICONS.default;
       const color = statusColor[run.status] || 'var(--text2)';
-      const mark  = statusIcon[run.status]  || '·';
       const when  = run.at ? new Date(run.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
       const dur   = run.elapsed_s > 0 ? fmtTime(Math.round(run.elapsed_s)) : '';
       return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;display:flex;align-items:center;gap:10px">
-        <span style="font-size:14px">${icon}</span>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600">${esc(run.name||cat)}</div>
           ${run.message?`<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(run.message)}</div>`:''}
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:11px;color:${color};font-weight:600">${mark} ${run.status}</div>
+          <div style="font-size:11px;color:${color};font-weight:600">${run.status}</div>
           <div style="font-size:10px;color:var(--text3)">${when}${dur?' · '+dur:''}</div>
         </div>
       </div>`;
     }).join('') + `</div>`;
   } catch(e) {
-    el.innerHTML = `<p style="font-size:12px;color:var(--text3)">${esc(e.message)}</p>`;
+    el.innerHTML = `<p style="font-size:12px;color:var(--danger)">${SVG_WARN} ${esc(_errMsg(e))}</p>`;
   }
 }
 
@@ -6088,7 +6420,7 @@ async function cancelTask(taskId, btn) {
     await api(`/api/tasks/${taskId}/cancel`, 'POST');
   } catch(e) {
     btn.disabled = false;
-    btn.textContent = '✕ Cancel';
+    btn.textContent = 'Cancel';
   }
 }
 
@@ -6161,8 +6493,8 @@ function _showProcessToast(name) {
     <div class="game-toast-title">Unknown process detected</div>
     <div class="game-toast-name">${esc(name)}</div>
     <div class="game-toast-actions">
-      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">🎮 Yes, game</button>
-      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">✕ Ignore</button>
+      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">Yes, game</button>
+      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">Ignore</button>
     </div>`;
   container.appendChild(toast);
 }
