@@ -38,6 +38,43 @@ Condensed release history, newest first.
   opens a handle per process, which is the opposite of the optimization
   it claimed to be.
 
+- **The security scanner no longer congratulates itself on scanning
+  nothing.** An uploaded LLM-security-scan workflow template ran its
+  first full sweep — 63 minutes of GPT-4o over 182 files — and filed
+  zero issues while reporting "Congratulations! No security
+  vulnerabilities were detected." Every single response had been
+  discarded: the model wraps its JSON in a markdown fence despite the
+  prompt, the parser choked on the backtick, and the error handler
+  dumped each file's findings into the CI log and called the file
+  clean. The template also executed the scanner *from the PR
+  checkout* (any pull request editing that one file ran arbitrary
+  code on the runner), interpolated attacker-nameable filenames
+  straight into a shell, and pinned tj-actions/changed-files@v40 by
+  mutable tag — the action whose tags were repointed to a
+  secret-dumping commit in March 2025. Rebuilt: PR runs scan only the
+  changed files with the scanner taken from the trusted base commit,
+  filenames travel NUL-delimited so no shell ever parses them, the
+  git two-liner replaces the compromised action (closing the
+  Dependabot bump as moot), fenced JSON parses, a failed analysis is
+  an ERROR in the report instead of a clean bill, and issues are
+  filed from the JSON report — deduplicated, capped, and only from
+  the trusted weekly sweep. Full-repo scans left the push trigger
+  entirely: CodeQL covers pushes for free.
+
+- **The lost hour was salvaged, and the verdict is good news.** The
+  discarded findings were reconstructed from the CI log's own error
+  dumps: 317 findings across 158 files, 82 of them Critical or High.
+  Six triage agents read every one of the 82 against the actual
+  source: **zero were real**, four were hardening notes (three of
+  them documented design decisions), and 78 were noise — settings
+  lookups read as hardcoded credentials, ORM filters read as SQL
+  injection, a pydantic default read as a secret, a docstring read as
+  a cryptographic flaw. The one change worth making: the Wikidata
+  SPARQL query now accepts only canonical `tt`-shaped IMDb ids, since
+  ids arrive from the arrs and a quote in a corrupt one would rewrite
+  the query and confidently fetch a stranger's facts — the exact
+  failure class the entity-authority work exists to prevent.
+
 ## 2026-08-28 — No verdict on data we don't have
 
 - **The curator can finally hear the film.** Until now it judged only
