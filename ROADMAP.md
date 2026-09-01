@@ -68,6 +68,7 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
   (SoulSync-inspired), a project of its own.
 - **Tautulli importer** — full historical watch attribution for setups
   that have it.
+- Extend the music enrichment so the Curatarr actually knows about music
 
 ## Standing principles
 
@@ -76,4 +77,4 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
 - Every API we already call gets harvested fully before a new one is added.
 - The LLM never invents facts: verified data in, register-honest prose out;
   thin evidence skips the judge instead of feeding it.
-- Every live miss the owner catches becomes a test fixture.
+- Every live miss the owner catches becomes a test fixture. So please tell me about errors while using it.
