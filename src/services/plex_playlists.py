@@ -211,8 +211,8 @@ async def resolve_video_key(title: str, category: str, sections: Optional[list[s
         from src.database.connection import get_db_session
         from src.database.models import LibraryConfig
         with get_db_session() as db:
-            sections = [lc.plex_section_key for lc in
-                        db.query(LibraryConfig)
+            sections = [r[0] for r in
+                        db.query(LibraryConfig.plex_section_key)
                         .filter(LibraryConfig.media_category == category).all()]
 
     t = _VIDEO_TYPE.get(category, "1")
@@ -333,8 +333,8 @@ async def push_user_playlists(user) -> dict:
 
         from src.database.models import LibraryConfig
         with get_db_session() as db:
-            video_sections = [lc.plex_section_key for lc in
-                              db.query(LibraryConfig)
+            video_sections = [r[0] for r in
+                              db.query(LibraryConfig.plex_section_key)
                               .filter(LibraryConfig.media_category == category).all()]
 
         keys: list[str] = []
@@ -434,8 +434,8 @@ async def resolve_artist_key(name: str, sections: Optional[list[str]] = None) ->
         from src.database.connection import get_db_session
         from src.database.models import LibraryConfig
         with get_db_session() as db:
-            sections = [lc.plex_section_key for lc in
-                        db.query(LibraryConfig)
+            sections = [r[0] for r in
+                        db.query(LibraryConfig.plex_section_key)
                         .filter(LibraryConfig.media_category == "music").all()]
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
@@ -524,8 +524,8 @@ async def push_user_music_playlist(user) -> dict:
 
     from src.database.models import LibraryConfig
     with get_db_session() as db:
-        music_sections = [lc.plex_section_key for lc in
-                          db.query(LibraryConfig)
+        music_sections = [r[0] for r in
+                          db.query(LibraryConfig.plex_section_key)
                           .filter(LibraryConfig.media_category == "music").all()]
 
     keys, titles = [], []
