@@ -185,6 +185,11 @@ class ChatStarter(Base):
     form = Column(String(24), nullable=True)     # question|observation|challenge|callback|tonight_pick
     daypart = Column(String(12), nullable=True)  # morning|day|evening|night|any
     fact_used = Column(String(200), nullable=True)
+    # The title the starter is ABOUT, when it is about one — clicking the
+    # chip opens a discussion anchored on it (verified data, watch status),
+    # the same way a proposal click anchors on its title.
+    anchor_title = Column(String(512), nullable=True)
+    anchor_media_type = Column(String(32), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
     impressions = Column(Integer, default=0)

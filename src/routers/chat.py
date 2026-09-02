@@ -1226,6 +1226,8 @@ def _thread_id_for(ctx) -> str:
         return f"proactive_message:{ctx.message_id}"
     if kind == "principle" and getattr(ctx, "principle_id", None):
         return f"principle:{ctx.principle_id}"
+    if kind == "starter" and getattr(ctx, "starter_id", None):
+        return f"starter:{ctx.starter_id}"
     if kind == "watched_title":
         # One thread per WORK, not per episode: clicking S2E5 tonight and
         # S2E6 tomorrow continues the same conversation. tmdb_id when the
@@ -2020,6 +2022,67 @@ async def _build_discuss_context_block(
             block += _LEVEL_2_REEVAL_FRAMING
 
         return block, proposal.title, proposal.category or domain
+
+    # ── Curator-opened conversation (starter chip) ──────────────────────────
+    # The chip's click makes the CURATOR say the line; the user replies to
+    # it. Same shape as proactive-message discussions: no fake assistant
+    # turn is persisted — the opener is re-injected from the server-owned
+    # row (ownership-checked) on every turn of the thread.
+    if kind == "starter" and getattr(ctx, "starter_id", None):
+        from src.database.models import ChatStarter
+        srow = db.query(ChatStarter).filter(
+            ChatStarter.id == ctx.starter_id,
+            ChatStarter.user_id == user_id).first()
+        if not srow:
+            logger.info("Discuss context: starter id=%s not found / not owned "
+                        "by user %d", ctx.starter_id, user_id)
+            return "", "", domain
+
+        block = (
+            "[CURRENT DISCUSSION CONTEXT]\n"
+            f"YOU (the curator) OPENED this conversation with: \"{srow.text}\"\n"
+            + (f"Your opener was anchored on this fact from the user's watch "
+               f"log: {srow.fact_used}.\n" if srow.fact_used else "")
+            + "The user is now replying to YOUR line. Continue that thought — "
+              "never greet, re-introduce yourself, or repeat the opener; and "
+              "the \"you\" in your opener refers to the USER, not to you.\n"
+        )
+        active_title = ""
+        if srow.anchor_title:
+            active_title = srow.anchor_title
+            domain = srow.anchor_media_type or domain
+            try:
+                if domain == "music":
+                    from src.services.watch_status import (
+                        music_listening_stats, format_listening_line)
+                    _ls = music_listening_stats(user_id, active_title, None)
+                    block += (f"OWNER LISTENING RECORD for '{active_title}': "
+                              f"{format_listening_line(_ls)}\n")
+                else:
+                    _st = _watched_lookup(user_id, [active_title],
+                                          category=domain).get(active_title)
+                    if _st:
+                        block += (f"USER WATCH STATUS for '{active_title}': "
+                                  f"{_watch_tag(_st)}\n")
+                    from src.services.watch_status import viewing_pattern
+                    _vp = viewing_pattern(user_id, active_title, category=domain)
+                    if _vp:
+                        block += f"VIEWING PATTERN: {_vp}\n"
+            except Exception as _e:
+                logger.debug("[chat] starter watch stats failed: %s", _e)
+            _svd = None
+            try:
+                from src.services.media_enricher import (ensure_verified_data,
+                                                         format_verified_block)
+                _svd = await ensure_verified_data(active_title, domain or "movie")
+                _vb = format_verified_block(_svd)
+                if _vb:
+                    block += "\n" + _vb + "\n"
+            except Exception as _e:
+                logger.debug("[chat] starter verified data failed: %s", _e)
+            _set_thread_active_title(_thread_id_for(ctx),
+                                     (active_title, _svd, domain or "movie"))
+        return block, active_title, domain
 
     # ── Watched-title discussion (last-played strip click) ──────────────────
     # The anchor is the user's OWN watch-history row — resolved server-side,

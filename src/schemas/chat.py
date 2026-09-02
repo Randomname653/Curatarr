@@ -16,6 +16,7 @@ class DiscussContext(BaseModel):
     proposal_id: Optional[int] = None  # FK → DeletionProposal.id
     message_id: Optional[int] = None   # FK → ProactiveMessage.id
     principle_id: Optional[int] = None # FK → CuratorPrinciple.id (learned-principle review)
+    starter_id: Optional[int] = None   # FK → ChatStarter.id (curator-opened conversation)
 
     # watched_title (last-played strip click): hints for resolving the user's
     # OWN watch-history row. All optional — the backend anchors on the row it

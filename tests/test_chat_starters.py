@@ -175,15 +175,58 @@ def test_the_custodian_owns_generation_and_the_gpu_gate():
     assert "is_game_running()" in chat
 
 
-def test_starters_speak_in_the_users_voice():
-    """Clicking a chip sends its text as the USER'S message. The first cut
-    had the model write in the curator's voice — the user then opened chats
-    by narrating their own taste to themselves ("Looking back at your
-    Psycho-Pass stall…") and the curator read the "you" as itself. The
-    prompt must demand first person and name the failure."""
-    assert "USER'S first-person voice" in cs._PROMPT
-    assert "SENDS ITS TEXT AS THE USER'S OWN MESSAGE" in cs._PROMPT
-    assert "CURATOR'S voice" not in cs._PROMPT
+def test_starters_are_curator_openers_not_user_prompts():
+    """The design settled on the third try: the chip makes the CURATOR say
+    the line and the user replies (like proactive messages) — because
+    curator-voiced text sent as the user's message swapped the roles on
+    stage, and rewriting the voice to first person wasted the register.
+    The prompt writes openers in the curator's voice with an optional
+    title anchor; the reply turn re-injects the opener via the `starter`
+    discuss context (server-owned row, ownership check, no persisted fake
+    assistant turn)."""
+    assert "OPENERS" in cs._PROMPT
+    assert "Clicking one makes you SAY it" in cs._PROMPT
+    assert "anchor_title" in cs._PROMPT
+
+    chat = _src("routers/chat.py")
+    assert 'return f"starter:{ctx.starter_id}"' in chat
+    branch = chat[chat.index("Curator-opened conversation (starter chip)"):]
+    branch = branch[:branch.index("Watched-title discussion")]
+    # ownership check, opener re-injection, and the role clarification
+    assert "ChatStarter.user_id == user_id" in branch
+    assert "YOU (the curator) OPENED this conversation" in branch
+    assert 'refers to the USER, not to you' in branch
+    # an anchored opener grounds the discussion like a title click does
+    assert "ensure_verified_data(active_title" in branch
+
+
+def test_anchors_survive_the_gate_and_bad_ones_are_dropped():
+    import json as _json
+    batch = [
+        {"text": "Thirty-three days since Psycho-Pass. Did the Sibyl System lose you?",
+         "form": "question", "daypart": "any", "fact": "stalled_series",
+         "anchor_title": "Psycho-Pass", "anchor_media_type": "anime"},
+        {"text": "Sleep Token, seventy-three times in a fortnight. We should talk.",
+         "form": "observation", "daypart": "any", "fact": "music_rotation",
+         "anchor_title": "Sleep Token", "anchor_media_type": "playlist"},  # bad type -> nulled
+    ]
+    _FakeClient.payload = _json.dumps(batch)
+    _FakeSession.added = []
+    orig_client, orig_session = cs.httpx.AsyncClient, cs.get_db_session
+    orig_facts = cs.collect_facts
+    cs.httpx.AsyncClient = _FakeClient
+    cs.get_db_session = lambda: _FakeSession(rows=[])
+    cs.collect_facts = lambda uid, now=None: [
+        {"kind": "stalled_series", "title": "Psycho-Pass"}, {"kind": "now"}]
+    try:
+        assert asyncio.run(cs.generate_starters(1)) == 2
+    finally:
+        cs.httpx.AsyncClient = orig_client
+        cs.get_db_session = orig_session
+        cs.collect_facts = orig_facts
+    by_title = {r.anchor_title: r for r in _FakeSession.added}
+    assert by_title["Psycho-Pass"].anchor_media_type == "anime"
+    assert by_title["Sleep Token"].anchor_media_type is None
 
 
 def test_streamed_status_lines_carry_no_emoji():

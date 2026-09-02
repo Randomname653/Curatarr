@@ -18,10 +18,16 @@ The anti-sameness rules therefore live in CODE, on the output:
 * the pool decays: TTL, an impression cap for starters nobody clicks,
   and one-shot retirement on click. Ignored is a signal.
 
-Starters are written in the USER'S voice: the click sends the chip text
-as the user's own message, so curator-voiced chips swap the roles on
+Starters are CURATOR OPENERS: clicking a chip makes the curator SAY the
+line and the user replies — the proactive-message stage direction, not
+the suggested-prompt one. (The design went the other way twice first:
+curator-voiced text sent as the USER'S message swapped the roles on
 stage — observed live, the user "analysing" their own Psycho-Pass stall
-at the curator, which then read the "you" as itself.
+while the curator read the "you" as itself — and rewriting the voice to
+first person fixed the grammar but wasted the register. The MECHANIC
+moved instead; the voice was right all along.) The reply turn re-injects
+the opener via the ``starter`` discuss context: a server-owned row with
+an ownership check, never a persisted fake assistant turn.
 
 Dayparts make "time-of-day dependent" cheap: starters are TAGGED at
 generation (a tonight-pick is an evening starter), and selection filters
@@ -180,34 +186,29 @@ def _opening(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]", "", text.lower()).split()[:3])
 
 
-_PROMPT = """You write conversation starters for Curatarr, an opinionated \
-personal media curator, shown as clickable chips on its chat page. Clicking \
-a chip SENDS ITS TEXT AS THE USER'S OWN MESSAGE to the curator — so every \
-starter must be written in the USER'S first-person voice ("I", "my", "me"), \
-addressed to the curator. Never phrase observations about the user as \
-"you/your": the first cut did, and clicking one made the user narrate their \
-own taste to themselves while the curator read "you" as itself. Direct, \
-curious, a little self-aware, never generic.
+_PROMPT = """You are Curatarr, an opinionated personal media curator. You write OPENERS: short first messages FROM YOU TO THE USER, shown as clickable chips on your chat page. Clicking one makes you SAY it — the conversation begins with your line, and the user replies to you. Write in YOUR voice, addressed to the user: direct, curious, a little pointed, never generic.
 
-FACTS about this user's recent watching (use them — a starter that names a \
-real title, number or gap beats any clever generality):
+FACTS about this user's recent watching (use them — an opener that names a real title, number or gap beats any clever generality):
 {facts}
 
-Write {n} starters as a JSON array. Each element:
-{{"text": "...", "form": "...", "daypart": "...", "fact": "..."}}
+Write {n} openers as a JSON array. Each element:
+{{"text": "...", "form": "...", "daypart": "...", "fact": "...",
+  "anchor_title": "... or null", "anchor_media_type": "movie|show|anime|music or null"}}
 
 Rules:
-- "form" must be one of {forms} and every starter must use a DIFFERENT form
-  (question: the user asks something; observation: the user notices something
-  about their own habits; challenge: the user dares the curator to convince
-  them; callback: the user picks an old thread back up; tonight_pick: the
-  user asks what to put on right now).
-- "text": max 140 characters, first person, no emoji, no quotes around titles.
-- "fact": which fact anchored it, in a few words. A starter with no anchoring
-  fact is invalid.
-- "daypart": morning|day|evening|night|any — when this starter fits best
-  (a "what should I put on tonight" starter is evening; most others are any).
-- No two starters may open with the same words.
+- "form" must be one of {forms} and every opener must use a DIFFERENT form
+  (question: you ask the user something; observation: you point out a
+  pattern of theirs; challenge: you provoke a defence; callback: you pick
+  an earlier thread back up; tonight_pick: you offer to pick for tonight).
+- "text": max 140 characters, no emoji, no quotes around titles needed.
+- "fact": which fact anchored it, in a few words. An opener with no
+  anchoring fact is invalid.
+- "anchor_title"/"anchor_media_type": copied VERBATIM from the fact's
+  title/media_type when the opener is about one specific title; null when
+  it is not (a general tonight-pick, a weekday observation).
+- "daypart": morning|day|evening|night|any — when this opener fits best
+  (a tonight-pick is evening; most others are any).
+- No two openers may open with the same words.
 
 Return ONLY the JSON array."""
 
@@ -282,11 +283,17 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             continue                          # the model repeats openings
         if daypart not in ("morning", "day", "evening", "night", "any"):
             daypart = "any"
+        anchor = (c.get("anchor_title") or "").strip() or None
+        anchor_mt = (c.get("anchor_media_type") or "").strip() or None
+        if anchor_mt not in (None, "movie", "show", "anime", "music"):
+            anchor_mt = None
         seen_forms.add(form)
         seen_openings.add(_opening(text))
         accepted.append(ChatStarter(
             user_id=user_id, text=text, form=form, daypart=daypart,
             fact_used=fact[:200], created_at=now,
+            anchor_title=anchor[:512] if anchor else None,
+            anchor_media_type=anchor_mt,
             expires_at=now + timedelta(hours=STARTER_TTL_HOURS),
         ))
 

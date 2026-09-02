@@ -81,6 +81,9 @@ def _migrate_columns() -> None:
         # Subtitle metrics: the episode runtime they were measured against
         # (MediaTechProfile holds the SERIES total, which is a different number)
         ("media_subtitle_profiles", "duration_min", "FLOAT"),
+        # Starter anchors: which title a curator-opener is about
+        ("chat_starters",         "anchor_title",      "TEXT"),
+        ("chat_starters",         "anchor_media_type", "TEXT"),
         # Proactive-message TTL: ignored bubbles expire instead of nagging
         ("proactive_messages",    "expires_at",  "DATETIME"),
         ("proactive_messages",    "impressions", "INTEGER DEFAULT 0"),
