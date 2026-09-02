@@ -25,9 +25,9 @@ on your own hardware.
 > approval as final. The software is provided as-is, without warranty.
 
 > [!IMPORTANT]
-> **This codebase is entirely vibe-coded.** Practically every line —
-> backend, frontend, tests, and most of this README — was written by AI
-> (Claude, plus automated review bots), directed, live-tested and decided
+> **This codebase is at leat two thirds vibe-coded.** Practically every line by now appart from the orifinal very basic code ideas —
+> backend, frontend, tests, and part of this README — was written by AI
+> (Claude, Gemini, Local models plus automated review bots), directed, live-tested and decided
 > on by a human operator running it daily against his own household's
 > real library. That should factor into your risk calculus; it factors
 > into ours. What earns trust here is not authorship but process: the
