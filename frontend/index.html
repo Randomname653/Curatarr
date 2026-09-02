@@ -3543,11 +3543,11 @@ async function loadGlancePanel() {
 
 // ── CHAT EMPTY-STATE "LAST PLAYED" STRIP ────────────────────────────────────
 // Same lifecycle as the glance panel (loaded once at boot, gone once the
-// user sends anything -- see sendMessage()). poster_url IS in
-// /api/history/recent's response for small pages (limit<=12, which this
-// strip's limit=2 always is) -- it feeds the tiles here and the chat
-// watermark via discussLastPlayed's pendingDiscussContext.poster_url;
-// _posterImg() still degrades a null to a "?" tile with no special-casing.
+// user sends anything -- see sendMessage()). poster_url isn't in
+// /api/history/recent's response yet (verified against
+// src/routers/history.py before writing this) -- _posterImg() already
+// degrades that to a "?" tile with zero special-casing here, so this ships
+// now and just gets prettier the day that field lands.
 let _lastPlayedEntries = [];
 async function loadLastPlayed() {
   const el = document.getElementById('last-played-panel');
@@ -3606,12 +3606,26 @@ async function loadStarters() {
 // Unlike fillPrompt(), auto-sends -- a curator-picked starter is already a
 // complete, ready-to-send question, not a template to tweak. Marking it
 // used is fire-and-forget: the pool bookkeeping shouldn't gate the send.
+// Backend contract (e9ff931): a starter chip makes the CURATOR say the
+// opener, not the user -- discuss_context {kind:'starter', starter_id} is
+// re-injected server-side on every turn of the thread (never persisted as
+// a fake assistant message), the same non-persisted-opener mechanism as
+// proactive-message discussions. Mirrors respondToMessage()'s shape, not
+// discussInChat()'s: render the line as an assistant bubble, set the
+// sticky context, leave the input empty for the user's own reply -- no
+// auto-send, there's nothing of the user's to send yet. The static
+// fallback chips (fillPrompt(), never routed through here) stay
+// unchanged: user-voiced text the user fills in and edits, not opened by
+// the curator.
 function useStarter(id, btn) {
+  const text = btn.textContent;
   api(`/api/chat/starters/${id}/used`, 'POST').catch(() => {});
+  addMsg(text, 'assistant');
+  pendingDiscussContext = { kind: 'starter', starter_id: id };
+  _setDiscussBanner('Curator opened this thread');
   const inp = document.getElementById('chat-input');
-  inp.value = btn.textContent;
+  inp.value = '';
   inp.focus();
-  setTimeout(() => sendMessage(), 300);
 }
 function discussLastPlayed(i) {
   const e = _lastPlayedEntries[i];
@@ -6281,13 +6295,10 @@ let discoverSections=[];
 // never mirrored back into any JSON) -- a background revalidation that
 // found the fetched payload changed (very plausible: enriched_count/
 // scanned_at/updated_at move on their own as background enrichment runs)
-// must never blindly overwrite this markup and discard that choice. So
-// noAutoReplace deliberately does NOT refetch at all while a cache entry
-// exists -- the frozen snapshot IS the protection; enrichment counters on
-// this page may lag for the session, which is the accepted price. Only an
-// explicit _swrInvalidate('libraries') lets fresh data through again:
-// saveLibraries() fires it on success since this view doesn't otherwise
-// self-reload after a save.
+// must never blindly overwrite this markup and discard that choice. The
+// cache still refreshes in the background so the NEXT full visit starts
+// from fresh data; saveLibraries() invalidates explicitly on success since
+// this view doesn't otherwise self-reload after a save.
 function _renderLibraryConfig([cfg, disc]) {
   const el=document.getElementById('lib-config-content');
   discoverSections=disc.sections||[];
