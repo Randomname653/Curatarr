@@ -207,7 +207,7 @@ async def _startup_sync():
         (DATA_DIR / ".last_sync").touch()
 
         with get_db_session() as db:
-            user_ids = [u.id for u in db.query(User).filter(User.is_active == True).all()]
+            user_ids = [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]
         for uid in user_ids:
             await check_and_generate_messages(uid)
 

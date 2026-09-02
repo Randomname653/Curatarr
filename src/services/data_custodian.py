@@ -396,7 +396,7 @@ async def _run_chat_starters(task=None) -> str:
     from src.services.task_monitor import task_monitor
 
     with get_db_session() as db:
-        users = [u.id for u in db.query(User).filter_by(is_active=True).all()]
+        users = [u_id for (u_id,) in db.query(User.id).filter_by(is_active=True).all()]
     if task:
         task_monitor.update(task, total=len(users))
     made = skipped = 0
