@@ -24,6 +24,17 @@ on your own hardware.
 > backups, review the analysis views before approving, and treat every
 > approval as final. The software is provided as-is, without warranty.
 
+> [!IMPORTANT]
+> **This codebase is entirely vibe-coded.** Practically every line —
+> backend, frontend, tests, and most of this README — was written by AI
+> (Claude, plus automated review bots), directed, live-tested and decided
+> on by a human operator running it daily against his own household's
+> real library. That should factor into your risk calculus; it factors
+> into ours. What earns trust here is not authorship but process: the
+> test battery CI runs on every push, CodeQL, adversarial review passes,
+> and a [changelog](CHANGELOG.md) that documents the failures as
+> thoroughly as the features. Read it and judge for yourself.
+
 ---
 
 ## What it does

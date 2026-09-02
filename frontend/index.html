@@ -5503,8 +5503,13 @@ function _setChatWatermark(url) {
   if (!msgs) return;
   if (!url) { msgs.style.backgroundImage = ''; return; }
   const sizeMatch = url.match(/\/(w\d+)\//);
-  const w342 = sizeMatch ? url.replace(sizeMatch[1], 'w342') : url;
-  msgs.style.backgroundImage = `linear-gradient(var(--bg-veil), var(--bg-veil)), url("${proxyImg(w342)}")`;
+  // w780, not w342: the chat pane spans most of a desktop viewport, and a
+  // 342px source stretched across ~1500+px reads as mush even under the
+  // veil. w780 is TMDB's largest fixed poster size; at ~7% visibility the
+  // extra bytes are paid once (disk-cached by the proxy, immutable in the
+  // browser) and the texture actually resolves.
+  const big = sizeMatch ? url.replace(sizeMatch[1], 'w780') : url;
+  msgs.style.backgroundImage = `linear-gradient(var(--bg-veil), var(--bg-veil)), url("${proxyImg(big)}")`;
 }
 
 // Pass 61: mirror of the backend _thread_id_for — derive the thread id from
