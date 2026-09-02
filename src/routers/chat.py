@@ -1188,7 +1188,10 @@ async def get_starters(user: User = Depends(get_current_user)):
                 try:
                     await generate_starters(uid)
                 except Exception as _e:
-                    logger.debug("[starters] background refill failed: %s", _e)
+                    # WARNING, not debug: a silently failing refill is how a
+                    # DetachedInstanceError produced zero starters and zero
+                    # log lines on the first live run.
+                    logger.warning("[starters] background refill failed: %s", _e)
                 finally:
                     _starter_gen_running.discard(uid)
 

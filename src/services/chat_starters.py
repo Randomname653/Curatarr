@@ -71,38 +71,59 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
     """
     now = now or datetime.utcnow()
     facts: list[dict] = []
+    # Two queries, plain dicts, everything read INSIDE the session — the
+    # first cut read ORM rows after the session closed (DetachedInstanceError,
+    # swallowed by the background refill: zero starters, zero log lines).
+    # And it took "the last 400 rows" of a history where music outnumbers
+    # video 300:1, so the video facts never made the window: a Spotify
+    # afternoon erased the weekend's binge. Video gets its own window.
     with get_db_session() as db:
-        rows = (db.query(WatchHistoryEntry)
-                .filter(WatchHistoryEntry.user_id == user_id)
-                .order_by(WatchHistoryEntry.viewed_at.desc())
-                .limit(400).all())
-
-    video = [r for r in rows if r.media_type in ("movie", "show", "anime")]
-    music = [r for r in rows if r.media_type == "music"]
+        video = [
+            {"title": r.title, "series_title": r.series_title,
+             "media_type": r.media_type, "season": r.season,
+             "episode": r.episode, "viewed_at": r.viewed_at,
+             "completed": bool(r.completed)}
+            for r in (db.query(WatchHistoryEntry)
+                      .filter(WatchHistoryEntry.user_id == user_id,
+                              WatchHistoryEntry.media_type.in_(
+                                  ("movie", "show", "anime")))
+                      .order_by(WatchHistoryEntry.viewed_at.desc())
+                      .limit(200).all())]
+        music = [
+            {"series_title": r.series_title, "viewed_at": r.viewed_at}
+            for r in (db.query(WatchHistoryEntry)
+                      .filter(WatchHistoryEntry.user_id == user_id,
+                              WatchHistoryEntry.media_type == "music",
+                              WatchHistoryEntry.viewed_at
+                              >= now - timedelta(days=14))
+                      .limit(4000).all())]
 
     if video:
         r = video[0]
-        days = max(0, (now - r.viewed_at).days) if r.viewed_at else None
+        days = max(0, (now - r["viewed_at"]).days) if r["viewed_at"] else None
         facts.append({
             "kind": "last_watched",
-            "title": r.series_title or r.title,
-            "media_type": r.media_type,
-            "episode": (f"S{r.season}E{r.episode}"
-                        if r.season is not None and r.episode is not None else None),
+            "title": r["series_title"] or r["title"],
+            "media_type": r["media_type"],
+            "episode": (f"S{r['season']}E{r['episode']}"
+                        if r["season"] is not None and r["episode"] is not None
+                        else None),
             "days_ago": days,
-            "completed": bool(r.completed),
+            "completed": r["completed"],
         })
 
     # Per-series aggregates over the recent window: momentum and abandonment.
     series: dict[str, dict] = {}
     for r in video:
-        if r.media_type not in ("show", "anime") or not (r.series_title or r.title):
+        if (r["media_type"] not in ("show", "anime")
+                or not (r["series_title"] or r["title"])):
             continue
-        key = r.series_title or r.title
-        s = series.setdefault(key, {"plays": 0, "last": None, "media_type": r.media_type})
-        s["plays"] += 1
-        if s["last"] is None or (r.viewed_at and r.viewed_at > s["last"]):
-            s["last"] = r.viewed_at
+        key = r["series_title"] or r["title"]
+        agg = series.setdefault(key, {"plays": 0, "last": None,
+                                      "media_type": r["media_type"]})
+        agg["plays"] += 1
+        if agg["last"] is None or (r["viewed_at"] and r["viewed_at"] > agg["last"]):
+            agg["last"] = r["viewed_at"]
     active = [(k, v) for k, v in series.items()
               if v["last"] and (now - v["last"]).days <= 7 and v["plays"] >= 3]
     stalled = [(k, v) for k, v in series.items()
@@ -121,10 +142,9 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
 
     if music:
         artists: dict[str, int] = {}
-        cutoff = now - timedelta(days=14)
         for r in music:
-            if r.viewed_at and r.viewed_at >= cutoff and r.series_title:
-                artists[r.series_title] = artists.get(r.series_title, 0) + 1
+            if r["series_title"]:
+                artists[r["series_title"]] = artists.get(r["series_title"], 0) + 1
         if artists:
             top, plays = max(artists.items(), key=lambda kv: kv[1])
             if plays >= 10:
@@ -187,29 +207,34 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
 
     prompt = _PROMPT.format(facts=json.dumps(facts, ensure_ascii=False, indent=1),
                             n=n, forms=list(FORMS))
+    # Through the priority gate, never past it: a deletion run holding the
+    # pitcher must not get the curator loaded on top by a background refill.
+    # The gate queues us until the GPU is free.
+    from src.services.llm_priority import curator_priority
     content = None
-    for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
-        if not model:
-            continue
-        try:
-            async with httpx.AsyncClient(timeout=90) as client:
-                resp = await client.post(
-                    f"{settings.effective_ollama}/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "keep_alive": CURATOR_KEEP_ALIVE,
-                        **curator_options(temperature=0.9, num_predict=900),
-                    },
-                )
-            if resp.status_code == 200:
-                content = strip_think_tags(
-                    resp.json().get("message", {}).get("content", "").strip())
-                if content:
-                    break
-        except Exception as e:
-            logger.warning("[starters] %s failed: %s", model, e)
+    async with curator_priority("chat starters"):
+        for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
+            if not model:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=90) as client:
+                    resp = await client.post(
+                        f"{settings.effective_ollama}/api/chat",
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "stream": False,
+                            "keep_alive": CURATOR_KEEP_ALIVE,
+                            **curator_options(temperature=0.9, num_predict=900),
+                        },
+                    )
+                if resp.status_code == 200:
+                    content = strip_think_tags(
+                        resp.json().get("message", {}).get("content", "").strip())
+                    if content:
+                        break
+            except Exception as e:
+                logger.warning("[starters] %s failed: %s", model, e)
     if not content:
         return 0
 
