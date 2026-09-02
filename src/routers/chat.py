@@ -2476,7 +2476,7 @@ async def send_message(
             logger.info("💉 [DISCUSS CONTEXT INJECTED]: %s (thread=%s)",
                         active_title or "(no title anchor)", thread_id)
             pre_stream_status.append(
-                f"✓ Loaded discussion context: {active_title or '(proactive message)'}"
+                f"Loaded discussion context: {active_title or '(proactive message)'}"
             )
 
     if not message.discuss_context:
@@ -2553,7 +2553,7 @@ async def send_message(
                             detected_title, alt_title, alt_category, alt_title,
                         )
                         pre_stream_status.append(
-                            f"⚙️ Redirecting anchor: '{detected_title}' → '{alt_title}' (has prior stance)"
+                            f"️ Redirecting anchor: '{detected_title}' '{alt_title}' (has prior stance)"
                         )
                         detected_title = alt_title
                         forced_domain = alt_category  # may be None for protected
@@ -2592,14 +2592,14 @@ async def send_message(
                     if cached:
                         topic_changed = True
                         pre_stream_status.append(
-                            f"🔄 Topic switched: {cached[0]} → {detected_title}"
+                            f"Topic switched: {cached[0]} {detected_title}"
                         )
                     logger.info(
                         "🔍 [LIVE SEARCH] Attempting fetch for: '%s' (year=%s)",
                         detected_title, year_hint,
                     )
                     pre_stream_status.append(
-                        f"📚 Looking up '{detected_title}'"
+                        f"Looking up '{detected_title}'"
                         + (f" ({year_hint})" if year_hint else "") + "…"
                     )
                     domains = _domain_cascade(message.message, year_hint=year_hint)
@@ -2665,7 +2665,7 @@ async def send_message(
                         logger.info("💉 [INJECTED CONTEXT (Live)]: %s (domain=%s)",
                                     active_title, matched_domain)
                         pre_stream_status.append(
-                            f"✓ Found in {matched_domain or 'catalog'}: '{active_title}'"
+                            f"Found in {matched_domain or 'catalog'}: '{active_title}'"
                         )
                     else:
                         # No enrichment data: anchor the curator into "I don't know"
@@ -2678,7 +2678,7 @@ async def send_message(
                         logger.warning("⚠️ [NO METADATA] Anchor for: '%s' (cascade=%s)",
                                        detected_title, domains)
                         pre_stream_status.append(
-                            f"⚠️ No verified data for '{detected_title}' — anchor mode"
+                            f"️ No verified data for '{detected_title}' — anchor mode"
                         )
             else:
                 logger.info("ℹ️ [CHAT] Title hint detected but no entity extracted.")

@@ -173,3 +173,30 @@ def test_the_custodian_owns_generation_and_the_gpu_gate():
     chat = _src("routers/chat.py")
     assert "asyncio.create_task(_refill(user.id))" in chat
     assert "is_game_running()" in chat
+
+
+def test_starters_speak_in_the_users_voice():
+    """Clicking a chip sends its text as the USER'S message. The first cut
+    had the model write in the curator's voice — the user then opened chats
+    by narrating their own taste to themselves ("Looking back at your
+    Psycho-Pass stall…") and the curator read the "you" as itself. The
+    prompt must demand first person and name the failure."""
+    assert "USER'S first-person voice" in cs._PROMPT
+    assert "SENDS ITS TEXT AS THE USER'S OWN MESSAGE" in cs._PROMPT
+    assert "CURATOR'S voice" not in cs._PROMPT
+
+
+def test_streamed_status_lines_carry_no_emoji():
+    """The frontend's emoji sweep cannot reach strings the BACKEND streams
+    into the thinking panel — pre_stream_status lines are user-visible UI."""
+    import re
+    chat = _src("routers/chat.py")
+    emoji = re.compile(r"[\U0001F000-\U0001FAFF✀-➿☀-⛿"
+                       r"⬀-⯿←-⇿✔✅]")
+    lines = chat.split("\n")
+    offenders = []
+    for i, line in enumerate(lines):
+        window = "\n".join(lines[max(0, i - 2):i + 1])
+        if "pre_stream_status.append" in window and emoji.search(line):
+            offenders.append(line.strip()[:80])
+    assert not offenders, offenders

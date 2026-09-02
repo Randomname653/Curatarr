@@ -18,6 +18,11 @@ The anti-sameness rules therefore live in CODE, on the output:
 * the pool decays: TTL, an impression cap for starters nobody clicks,
   and one-shot retirement on click. Ignored is a signal.
 
+Starters are written in the USER'S voice: the click sends the chip text
+as the user's own message, so curator-voiced chips swap the roles on
+stage — observed live, the user "analysing" their own Psycho-Pass stall
+at the curator, which then read the "you" as itself.
+
 Dayparts make "time-of-day dependent" cheap: starters are TAGGED at
 generation (a tonight-pick is an evening starter), and selection filters
 by the current hour — no per-request LLM anywhere.
@@ -176,9 +181,13 @@ def _opening(text: str) -> str:
 
 
 _PROMPT = """You write conversation starters for Curatarr, an opinionated \
-personal media curator, shown as clickable chips on its chat page. The USER \
-clicks one to open the conversation — so write them in the CURATOR'S voice, \
-addressed to the user: direct, curious, a little pointed, never generic.
+personal media curator, shown as clickable chips on its chat page. Clicking \
+a chip SENDS ITS TEXT AS THE USER'S OWN MESSAGE to the curator — so every \
+starter must be written in the USER'S first-person voice ("I", "my", "me"), \
+addressed to the curator. Never phrase observations about the user as \
+"you/your": the first cut did, and clicking one made the user narrate their \
+own taste to themselves while the curator read "you" as itself. Direct, \
+curious, a little self-aware, never generic.
 
 FACTS about this user's recent watching (use them — a starter that names a \
 real title, number or gap beats any clever generality):
@@ -188,8 +197,12 @@ Write {n} starters as a JSON array. Each element:
 {{"text": "...", "form": "...", "daypart": "...", "fact": "..."}}
 
 Rules:
-- "form" must be one of {forms} and every starter must use a DIFFERENT form.
-- "text": max 140 characters, no emoji, no quotes around titles needed.
+- "form" must be one of {forms} and every starter must use a DIFFERENT form
+  (question: the user asks something; observation: the user notices something
+  about their own habits; challenge: the user dares the curator to convince
+  them; callback: the user picks an old thread back up; tonight_pick: the
+  user asks what to put on right now).
+- "text": max 140 characters, first person, no emoji, no quotes around titles.
 - "fact": which fact anchored it, in a few words. A starter with no anchoring
   fact is invalid.
 - "daypart": morning|day|evening|night|any — when this starter fits best
