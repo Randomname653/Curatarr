@@ -17,6 +17,7 @@ from src.config import settings
 from src.database import get_db
 from src.database.models import LibraryConfig, User
 from src.routers.auth import get_current_user, require_admin
+from src.services.ttl_memo import ttl_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -51,6 +52,7 @@ def _guess_category(section: dict) -> str:
 # ── DISCOVER ─────────────────────────────────────────────────────────────────
 
 @router.get("/discover")
+@ttl_response(30)
 async def discover_libraries(user: User = Depends(get_current_user)):
     """
     Fetch all Plex library sections with stats: item count, size, scan time, paths.

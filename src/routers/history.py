@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.database import get_db
 from src.database.models import User, WatchHistoryEntry, TasteVectorEntry
 from src.routers.auth import get_current_user, require_admin
+from src.services.ttl_memo import ttl_response
 from src.services.plex_sync import (
     sync_plex_history, get_user_taste_context,
     reattribute_watch_history, cleanup_orphan_watch_history,
@@ -38,6 +39,7 @@ async def _run_sync(force: bool = False):
 
 
 @router.get("/status")
+@ttl_response(10, key=lambda **kw: kw["user"].id)
 async def sync_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

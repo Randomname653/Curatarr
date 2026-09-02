@@ -23,6 +23,7 @@ from src.services.app_state import get_state, set_state
 
 logger = logging.getLogger(__name__)
 from src.services.task_monitor import task_monitor
+from src.services.ttl_memo import ttl_response
 router = APIRouter()
 
 CATEGORIES = ["music", "movie", "show", "anime"]
@@ -52,6 +53,7 @@ class EnrichRequest(BaseModel):
 
 
 @router.get("/overview")
+@ttl_response(10)
 async def enrichment_overview(user: User = Depends(get_current_user)):
     """The consolidated Knowledge-Base truth (see services/kb_overview.py):
     one denominator per category, states derived from the JOIN of status
@@ -62,6 +64,7 @@ async def enrichment_overview(user: User = Depends(get_current_user)):
 
 
 @router.get("/custodian")
+@ttl_response(10)
 async def custodian_status_endpoint(user: User = Depends(get_current_user)):
     """Debt-based maintenance state: last tick report + per-task due list."""
     from src.services.data_custodian import custodian_status
@@ -84,6 +87,7 @@ async def custodian_run(
 
 
 @router.get("/status")
+@ttl_response(10, key=lambda **kw: bool(kw.get("quick")))
 async def enrichment_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -561,6 +565,7 @@ async def _run_backfill_bg(source: str) -> None:
 
 
 @router.get("/backfill-status")
+@ttl_response(15)
 async def backfill_status(user: User = Depends(get_current_user)):
     """Per-source coverage of the archive metadata, and whether a manual
     catch-up is still worth offering (see archive_backfill.THRESHOLD_PCT)."""
