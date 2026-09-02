@@ -28,6 +28,7 @@ import openai
 from typing import List, Dict, Any, Optional
 import logging
 import time
+from pydantic import BaseModel, Field
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,31 +60,18 @@ class ScanError(Exception):
     """
 
 
-def extract_json_array(text: str) -> List[Dict[str, Any]]:
-    """Parse the LLM's vulnerability list out of its response text.
 
-    Models wrap JSON in markdown fences no matter how firmly the prompt
-    forbids it, and some return {"vulnerabilities": [...]} instead of a bare
-    array. Handle both; raise ScanError when nothing parseable remains.
-    """
-    t = (text or "").strip()
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
-    if fenced:
-        t = fenced.group(1).strip()
-    if not t.startswith('[') and not t.startswith('{'):
-        start, end = t.find('['), t.rfind(']')
-        if start != -1 and end > start:
-            t = t[start:end + 1]
-    try:
-        data = json.loads(t)
-    except json.JSONDecodeError as e:
-        raise ScanError(f"response was not parseable JSON: {e}") from e
-    if isinstance(data, dict):
-        data = data.get("vulnerabilities", [data])
-    if not isinstance(data, list):
-        raise ScanError(f"expected a JSON array, got {type(data).__name__}")
-    return [v for v in data if isinstance(v, dict)]
+class Vulnerability(BaseModel):
+    vulnerability_type: str = Field(description="Type of vulnerability")
+    description: str = Field(description="Brief description")
+    severity: str = Field(description="Severity level (Critical, High, Medium, Low, Info)")
+    line_numbers: List[int] = Field(description="Line numbers where the issue occurs")
+    impact: str = Field(description="Potential impact")
+    recommendation: str = Field(description="Recommended fix")
+    fix_example: str = Field(description="Code example")
 
+class SecurityReview(BaseModel):
+    vulnerabilities: List[Vulnerability] = Field(default_factory=list, description="List of detected vulnerabilities")
 
 class CodeSecurityScanner:
     """A security scanner that uses LLMs to detect vulnerabilities in code."""
@@ -170,87 +158,59 @@ class CodeSecurityScanner:
         return self._analyze_with_anthropic(prompt)
 
     def _build_security_prompt(self, code: str, language: str) -> str:
-        return f"""
-        You are a cybersecurity expert specializing in secure coding practices and vulnerability detection.
+        return f"""Analyze the following {language} code for security vulnerabilities.
+Focus on injection, auth/authz, data validation, crypto flaws, secrets, insecure configs, race conditions, and info leaks.
 
-        Analyze the following {language} code for security vulnerabilities, focusing on:
-
-        1. Common vulnerabilities specific to {language}
-        2. Injection vulnerabilities (SQL, command, etc.)
-        3. Authentication and authorization issues
-        4. Data validation and sanitization problems
-        5. Cryptographic flaws
-        6. Hardcoded credentials or secrets
-        7. Insecure configurations
-        8. Race conditions or concurrency issues
-        9. Error handling that leaks sensitive information
-        10. Any other security concerns
-
-        For each vulnerability found, provide:
-        1. A brief description of the vulnerability
-        2. The severity level (exactly one of: Critical, High, Medium, Low, Info)
-        3. The specific line number(s) where the issue occurs
-        4. The potential impact of exploiting the vulnerability
-        5. A recommended fix with code example
-
-        Format your response as a JSON array of objects, each representing a vulnerability, with the following structure:
-
-        [
-            {{
-                "vulnerability_type": "Type of vulnerability",
-                "description": "Brief description",
-                "severity": "Severity level",
-                "line_numbers": [line numbers],
-                "impact": "Potential impact",
-                "recommendation": "Recommended fix",
-                "fix_example": "Code example"
-            }}
-        ]
-
-        If no vulnerabilities are found, return an empty array: []
-
-        Here is the code to analyze:
-
-        ```{language}
-        {code}
-        ```
-
-        Provide only the JSON output without any additional text.
-        """
+```{language}
+{code}
+```"""
 
     def _analyze_with_openai(self, prompt: str) -> List[Dict[str, Any]]:
-        kwargs: Dict[str, Any] = {}
-        # The gpt-5 / o-series reasoning models REJECT a temperature parameter
-        # ("unsupported parameter"); only the gpt-4 family accepts it.
-        if self.model.startswith("gpt-4"):
-            kwargs["temperature"] = 0.0
         try:
-            response = self.client.chat.completions.create(
+            # Use Structured Outputs (beta.chat.completions.parse) to guarantee schema adherence without JSON prompt engineering
+            response = self.client.beta.chat.completions.parse(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a cybersecurity expert that analyzes code for security vulnerabilities."},
                     {"role": "user", "content": prompt},
                 ],
-                **kwargs,
+                response_format=SecurityReview,
             )
         except Exception as e:
             time.sleep(2)  # ease off in case this was a rate limit
             raise ScanError(f"OpenAI API call failed: {e}") from e
-        return extract_json_array(response.choices[0].message.content)
+
+        # response.choices[0].message.parsed is a SecurityReview object
+        parsed_data = response.choices[0].message.parsed
+        if not parsed_data:
+            raise ScanError("OpenAI returned empty parsed data")
+
+        # Convert Pydantic objects back to the dict format expected by the rest of the script
+        return [vuln.model_dump() for vuln in parsed_data.vulnerabilities]
 
     def _analyze_with_anthropic(self, prompt: str) -> List[Dict[str, Any]]:
-        # No temperature: current Claude models reject sampling parameters.
+        # Use Anthropic's tool_choice for structured outputs equivalent
         try:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=16000,
                 messages=[{"role": "user", "content": prompt}],
+                tools=[{
+                    "name": "report_vulnerabilities",
+                    "description": "Report all detected security vulnerabilities",
+                    "input_schema": SecurityReview.model_json_schema()
+                }],
+                tool_choice={"type": "tool", "name": "report_vulnerabilities"}
             )
         except Exception as e:
             time.sleep(2)
             raise ScanError(f"Anthropic API call failed: {e}") from e
-        text = "".join(b.text for b in response.content if b.type == "text")
-        return extract_json_array(text)
+
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "report_vulnerabilities":
+                parsed = SecurityReview.model_validate(block.input)
+                return [vuln.model_dump() for vuln in parsed.vulnerabilities]
+
+        raise ScanError("Anthropic did not return the requested structured output tool call")
 
 
 def summarize(results: List[Dict[str, Any]]) -> Dict[str, int]:
