@@ -4,6 +4,65 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-09-02 — The UI grows up, and the curator learns to converse
+
+- **A frontend worth looking at.** A full prettification pass on the
+  single-file UI: emoji sweep, unified big poster cards across
+  Recommendations / Deletions / Add-New, amber hover language, sidebar
+  collapse, global search, an at-a-glance panel, a last-played strip, a
+  curator avatar — and posters finally at w500 instead of a 92-pixel
+  thumbnail stretched to card size (the 2,526 already-stored URLs were
+  migrated in place). Poster bytes are content-addressed and now cached
+  as the immutables they are: view switches stop re-downloading every
+  image.
+
+- **Clicking a recently-played title starts a conversation, not a
+  tribunal.** The strip's posters open a chat anchored on the user's own
+  watch-history row — the episode stated as a FACT from the log ("S2E7,
+  last night, finished"), knowledge honestly held at series level, watch
+  depth, viewing pattern, verified data and the measured dialogue line
+  riding along, and none of the deletion machinery. One thread per work:
+  tonight's episode and tomorrow's continue the same conversation.
+
+- **Conversation starters with enforced variety, and bubbles that can
+  die.** The three hardcoded landing-page prompts become a background-
+  generated pool anchored on concrete facts (a stalled series at 22
+  plays, an artist at 73 plays in a fortnight), with the anti-sameness
+  rules in code rather than in the prompt: one form per starter per
+  batch, no repeated openings, generic candidates dropped, daypart
+  tagging at generation. The pool decays — TTL, click retirement, an
+  impression cap for the ignored — and proactive messages inherit the
+  same mortality: an unclicked bubble now expires instead of squatting
+  at the head of the queue for days.
+
+- **A used session never expires mid-click.** The JWT carried a hard 24h
+  expiry and nothing renewed it, so the owner was logged out exactly one
+  day after each login — observed as a 200 and a 401 six seconds apart
+  on the same connection. Tokens live 7 days now, silently reissued in a
+  response header once they are a day old: a session lives as long as it
+  is used and dies after a week idle.
+
+- **Slow endpoints name themselves, and status stops burning the DB.**
+  A pure-ASGI middleware logs any request over 300ms to first byte —
+  and its very first sessions paid for it twice: it caught the session
+  cliff above, and it showed the Maintenance view's four status
+  endpoints recomputing full-table aggregates on every 10-second poll,
+  6-8 seconds of database work per cycle competing with real jobs.
+  Status payloads are now memoized for 10-30 seconds with single-flight;
+  numbers that change at walker pace stop being computed at poll pace.
+
+- **The curator stops inventing motives and arguing from the wrong
+  profile.** Three honesty fixes from live discussions: two umlauts from
+  a keyboard typo no longer flip the conversation to German (and the
+  language directive now tells the model what its default is based on,
+  so it never again explains a switch with the user's taste in German
+  rap); a movie discussion argues from the movie taste profile instead
+  of the whole psyche (the keyword fallback handed it ALL categories —
+  including the music taste it later used as an alibi); and the measured
+  dialogue numbers now reach every discussion turn — Given (2021) sat in
+  the DB at 42.7 words/min while the curator told the owner it had no
+  subtitle data and deduced the pacing from mood tags, wrongly.
+
 ## 2026-08-31 — The record and the work
 
 - **A documentary is not condemned for wearing another film's plot.**
