@@ -34,7 +34,10 @@
 
    COMPONENTS — reuse before inventing: .card / .panel-item (+ -head, -sub,
    -meta, .panel-actions), .badge (amber|danger|success|muted), .btn
-   (-primary|-secondary|-danger, -sm), .tbl/.tbl-wrap, .stat-box, .cat-tabs.
+   (-primary|-secondary|-danger, -sm), .tbl/.tbl-wrap, .stat-box, .cat-tabs,
+   .glow-interactive (soft-shadow edge that warms to amber on hover --
+   every poster-as-click-target across Recommendations/Deletions/Add-New
+   uses this one class, not a per-view copy).
    New prompt-visible UI labels additionally go through app_context.py.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
@@ -46,6 +49,7 @@
   --amber: #e5a00d;
   --amber2: #f0b429;
   --amber-dim: rgba(229,160,13,.12);
+  --bg-veil: rgba(26,29,35,.93);
   --text: #c8cdd8;
   --text2: #8b91a0;
   --text3: #555e6e;
@@ -185,7 +189,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 /* ── CHAT ── */
 #chat-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
 #chat-view.active { display: flex; }
-#messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+#messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; background-size: cover; background-position: center; background-repeat: no-repeat; }
 .msg { max-width: 72%; line-height: 1.6; font-size: 13px; }
 .msg.user { align-self: flex-end; background: var(--amber); color: #000; padding: 10px 14px; border-radius: 12px 12px 3px 12px; font-weight: 500; }
 .msg.assistant { align-self: flex-start; background: var(--bg3); border: 1px solid var(--border); padding: 10px 14px; border-radius: 12px 12px 12px 3px; position: relative; margin-left: 28px; }
@@ -348,14 +352,30 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
    click-to-select/checkmark-overlay behavior below is Deletions-only
    (nothing ever adds .selected or a .del-poster-check child on the
    other two, so the rules are inert there, not dead code). */
-.poster-frame { position: relative; flex-shrink: 0; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.45); transition: box-shadow .15s, transform .15s; }
-.poster-frame:hover { box-shadow: 0 6px 22px rgba(229,160,13,.3); transform: translateY(-1px); }
-.poster-frame.selectable { cursor: pointer; }
-.poster-frame > *:first-child { transition: filter .15s, opacity .15s; }
-.poster-frame.selected > *:first-child { filter: blur(1.5px); opacity: .5; }
+.glow-interactive { position: relative; flex-shrink: 0; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.45); transition: box-shadow .15s, transform .15s; }
+.glow-interactive:hover { box-shadow: 0 6px 22px rgba(229,160,13,.3); transform: translateY(-1px); }
+.glow-interactive.selectable { cursor: pointer; }
+.glow-interactive.selectable:active { transform: scale(.97); box-shadow: 0 4px 16px rgba(229,160,13,.4); }
+.glow-interactive.selectable:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.glow-interactive > *:first-child { transition: filter .15s, opacity .15s; }
+.glow-interactive.selected > *:first-child { filter: blur(1.5px); opacity: .5; }
 .del-poster-check { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: rgba(229,160,13,.3); }
-.poster-frame.selected .del-poster-check { display: flex; }
-.del-poster-check svg { filter: drop-shadow(0 1px 4px rgba(0,0,0,.7)); color: #fff; }
+.glow-interactive.selected .del-poster-check { display: flex; }
+/* Shared row layout for the three poster-card surfaces (Recs/Deletions/
+   Add-New) -- was three copy-pasted inline "display:flex;gap:18px"
+   blocks, each free to drift. At <=600px the fixed 174px poster + a
+   fixed-width side column left the text column ~9px wide (measured on a
+   real 375px viewport, not just a resized desktop window) -- verify any
+   further poster-card change at that width, not just in DevTools. */
+.poster-card { display: flex; align-items: flex-start; gap: 18px; }
+@media (max-width: 600px) {
+  .poster-card { flex-wrap: wrap; gap: 12px; }
+  .poster-card .glow-interactive { width: 110px !important; }
+  .poster-card .glow-interactive > *:first-child { width: 110px !important; height: 165px !important; }
+  .poster-card .glow-interactive.is-music > *:first-child { height: 110px !important; }
+  .poster-card-actions { flex-basis: 100%; flex-direction: row !important; justify-content: flex-end; flex-wrap: wrap; }
+}
+.del-poster-check svg { filter: drop-shadow(0 1px 4px rgba(0,0,0,.7)); color: var(--text); }
 
 /* ── BUTTONS ── */
 .btn { padding: 7px 14px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: all .12s; }
@@ -1290,7 +1310,18 @@ function _posterImg(url, w, h, isMusic) {
   if (!url) {
     return `<div style="width:${w}px;height:${h}px;background:var(--bg3);border-radius:${radius};flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:${Math.round(w*0.4)}px">?</div>`;
   }
-  return `<img src="${esc(proxyImg(url))}" alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`;
+  // TMDB carries its size as a path segment (.../t/p/w92/xyz.jpg) --
+  // swapping just that segment gets a sharper (or smaller) variant of the
+  // exact same image, whatever size the backend happens to send today.
+  // The browser picks from `sizes` vs its real viewport/DPR -- no manual
+  // screen-size branching built here, same URL trick works once the
+  // backend's own w92->w500 fix (see recommendations.py) lands too.
+  const sizeMatch = url.match(/\/(w\d+)\//);
+  const srcset = sizeMatch
+    ? ['w185', 'w342', 'w500', 'w780'].map(sz => `${esc(proxyImg(url.replace(sizeMatch[1], sz)))} ${sz.slice(1)}w`).join(', ')
+    : '';
+  const srcsetAttr = srcset ? ` srcset="${srcset}" sizes="${w}px"` : '';
+  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`;
 }
 
 // ── SIDEBAR COLLAPSE ─────────────────────────────────────────────────────────
@@ -1314,11 +1345,19 @@ function toggleMobileSidebar(force) {
 // Reuses Recommendations' own semantic search wholesale (same input id, same
 // render target) instead of re-implementing result rendering here — jump to
 // that view, hand it the query, let searchLibrary() do what it already does.
+// loadRecs() and searchLibrary() both render into #recs-content -- without
+// this, showView('recs') kicks off loadRecs() at the same time
+// topbarSearch() is about to call searchLibrary(), and whichever request
+// resolves last silently wins, sometimes clobbering the search results
+// back to the plain recommendation list. Set right before showView() so
+// its recs branch can skip firing loadRecs() at all.
+let _skipNextRecsLoad = false;
 function topbarSearch(ev) {
   if (ev) ev.preventDefault();
   const box = document.getElementById('topbar-search');
   const q = box.value.trim();
   if (q.length < 2) return;
+  _skipNextRecsLoad = true;
   showView('recs', document.querySelector(".sb-item[onclick*=\"'recs'\"]"));
   const libInput = document.getElementById('lib-search');
   if (libInput) libInput.value = q;
@@ -1781,7 +1820,17 @@ async function startPlexLogin() {
   if (pollInterval) clearInterval(pollInterval);
   // Plex PINs expire after 15 minutes — there's no point polling forever.
   const expiresAt = Date.now() + 15 * 60 * 1000;
-  pollInterval = setInterval(async()=>{
+  // Backend caps polling at 5/pin/60s, sliding window (auth.py's
+  // MAX_POLLS_PER_MINUTE) -- 13s keeps every poll comfortably under that
+  // on its own (12s is the exact breakeven). A 429 still widens the gap
+  // further rather than hammering the same still-closed window again next
+  // tick -- plex.tv itself can be slow enough that even a careful client
+  // ends up bursty around a page reload or a second tab polling the same
+  // pin_id.
+  const POLL_MS = 13000;
+  const POLL_MS_BACKOFF = 30000;
+  const schedulePoll = (ms) => { clearInterval(pollInterval); pollInterval = setInterval(doPoll, ms); };
+  async function doPoll() {
     if (Date.now() > expiresAt) {
       // PIN expired client-side — stop polling and let the user re-trigger.
       clearInterval(pollInterval);
@@ -1800,8 +1849,9 @@ async function startPlexLogin() {
         if (taskEventSource) { taskEventSource.close(); taskEventSource = null; taskStreamRetries = 0; }
         setUser(r.user); showApp();
       }
-    } catch {}
-  }, 2000);
+    } catch (e) { if (e.status === 429) schedulePoll(POLL_MS_BACKOFF); }
+  }
+  schedulePoll(POLL_MS);
 }
 
 function setUser(u) {
@@ -1854,6 +1904,7 @@ async function showApp() {
   loadHistoryStatus();
   loadGlancePanel();
   loadLastPlayed();
+  loadStarters();
   startTaskStream();
   // Process monitor polls the admin-only /api/processes router — only start it
   // for admins so a normal user doesn't spam 403s in the background.
@@ -2062,9 +2113,70 @@ async function api(path, method='GET', body=null) {
   if (token) opts.headers['Authorization']='Bearer '+token;
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API+path, opts);
+  // TokenRefreshMiddleware (src/middleware.py) silently reissues a JWT past
+  // 1/7th of its 7-day life on ANY response for a still-valid token -- ok or
+  // not, so this reads before the ok-check below, not after. A client that
+  // ignores the header just keeps its fixed 7-day expiry; picking it up
+  // makes a session under active use effectively immortal.
+  const freshToken = r.headers.get('x-curatarr-refreshed-token');
+  if (freshToken) { token = freshToken; localStorage.setItem('curatarr_token', freshToken); }
   if (!r.ok) { const err = new Error(await r.text()); err.status = r.status; throw err; }
   return r.json();
 }
+
+// ── SWR VIEW CACHE ───────────────────────────────────────────────────────────
+// Stale-while-revalidate for view loads: render the last-known payload for a
+// key INSTANTLY from this in-memory Map (module-level only, deliberately
+// never localStorage -- this is a hot cache, not persisted state), then
+// refetch in the background and only re-render if the payload actually
+// changed (a JSON-string compare is enough, nothing here needs deep-equal).
+//
+// Deliberately NOT wired into every view -- only report/tasks/admin-users
+// and the history-stats tile, plus libraries/reclassify in a restricted
+// mode (see noAutoReplace below). recs and deletions already have their own
+// purpose-built caching (loadRecs' stale-category guard + self-poll,
+// deletions' _delProposalsAll tab cache) that a second generic layer here
+// would fight rather than help; enrich mixes two self-perpetuating poll
+// loops across 5 endpoints where the backend's own new 10-30s TTL memo
+// already solves the expensive-recompute problem this exists for; arr-*
+// pages resolve their own promise before their real tab content has even
+// loaded (renderArrTab/renderSynopsisBrowser run un-awaited) so there's
+// nothing stable to snapshot at the loadArrPage() level, and the endpoint
+// already carries a server-side 15-minute cache of its own.
+const _swrCache = new Map();
+
+// key: cache key. fetchFn: () => Promise<data>. renderFn: (data) => void
+// (writes DOM, looks up its own target element(s) -- same convention as
+// every other _render*() helper in this file). Returns the data that ended
+// up cached (fresh on success, the stale value on a swallowed background
+// failure) so callers that need it for follow-on logic don't have to
+// re-read the cache themselves.
+//
+// opts.noAutoReplace: for views whose DOM carries user-editable state a
+// JSON diff can't see (an unsaved <select> in libraries, unsaved
+// checkboxes in reclassify) -- once there's anything cached for this key,
+// leave the DOM alone FOR GOOD, not just after this particular call. The
+// naive version of this (skip only the post-fetch re-render) still let a
+// plain re-visit -- navigate away, come back, nothing saved -- blow away
+// an in-progress edit, because the cache-hit render at the top of this
+// function ran unconditionally regardless of the flag. Only an explicit
+// _swrInvalidate() (called by the view's own mutating action right before
+// its own reload) clears the cache and lets a fresh render through again.
+async function _swrRun(key, fetchFn, renderFn, opts = {}) {
+  const cached = _swrCache.get(key);
+  const hadCache = cached !== undefined;
+  if (hadCache && opts.noAutoReplace) return cached;
+
+  if (hadCache) renderFn(cached);
+  let fresh;
+  try { fresh = await fetchFn(); }
+  catch (e) { if (!hadCache) throw e; return cached; } // stale-but-shown beats an error screen
+  const changed = !hadCache || JSON.stringify(fresh) !== JSON.stringify(cached);
+  _swrCache.set(key, fresh);
+  if (!hadCache || changed) renderFn(fresh);
+  return fresh;
+}
+function _swrInvalidate(key) { _swrCache.delete(key); }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 function showView(name, btn) {
@@ -2087,7 +2199,7 @@ function showView(name, btn) {
   if (name==='libraries') loadLibraryConfig();
   if (name==='admin') loadUsers();
   if (name==='enrich') { loadEnrichStatus(); loadMusicStatus(); }
-  if (name==='recs') loadRecs(currentRecsCategory);
+  if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(currentRecsCategory); } }
   if (name==='deletions') loadDeletions(currentDelCategory);
   // Pass 16c: Library Manager pages
   if (name==='arr-sonarr') loadArrPage('sonarr');
@@ -2105,10 +2217,16 @@ function _repBar(pct, color) {
 
 async function loadReport() {
   const el = document.getElementById('report-content');
-  el.innerHTML = '<p class="loading">Crunching the curation ledger…</p>';
-  let d;
-  try { d = await api('/api/stats/curation?months=12'); }
-  catch (e) { el.innerHTML = _errHtml(e, 'loadReport()'); return; }
+  if (!_swrCache.has('report')) el.innerHTML = '<p class="loading">Crunching the curation ledger…</p>';
+  try {
+    await _swrRun('report', () => api('/api/stats/curation?months=12'), _renderReport);
+  } catch (e) {
+    el.innerHTML = _errHtml(e, 'loadReport()');
+  }
+}
+
+function _renderReport(d) {
+  const el = document.getElementById('report-content');
   const t = d.totals || {};
   const resTotal = (t.consensus || 0) + (t.overrides || 0);
   const maxAct = Math.max(1, ...(d.months || []).map(m => m.deleted + m.kept));
@@ -2179,7 +2297,10 @@ async function writeYearlyReview(btn) {
   btn.textContent = 'Curator is writing…';
   try {
     const r = await api('/api/stats/curation/narrative', 'POST');
-    if (r.ok) document.getElementById('report-narrative').textContent = r.narrative;
+    if (r.ok) {
+      document.getElementById('report-narrative').textContent = r.narrative;
+      _swrInvalidate('report'); // next visit re-fetches instead of flashing the pre-rewrite text
+    }
     else alert(r.error || 'Curator unavailable');
   } catch (e) {
     alert('Failed: ' + (e.message || '').slice(0, 120));
@@ -2189,14 +2310,15 @@ async function writeYearlyReview(btn) {
 }
 
 // ── Reclassify (Manage → anime ↔ TV library config audit) ────────────────
-async function loadReclassify() {
+// noAutoReplace: cards carry unsaved checkbox selections (and, for
+// "uncertain" items, a picked direction) that moveReclassify() reads
+// straight from the DOM -- a background revalidation must never silently
+// redraw these out from under a selection in progress. moveReclassify()
+// invalidates explicitly before its own reload, so a real refresh after an
+// apply still shows the post-apply state, not a stale one.
+function _renderReclassify(res) {
   const el = document.getElementById('reclassify-content');
   const sum = document.getElementById('reclassify-summary');
-  el.innerHTML = '<p class="loading">Scanning Sonarr (first run resolves origins, ~15s)…</p>';
-  if (sum) sum.textContent = '';
-  let res;
-  try { res = await api('/api/library/reclassify/scan'); }
-  catch (e) { el.innerHTML = _errHtml(e, 'loadReclassify()'); return; }
   if (res.error) { el.innerHTML = `<p style="color:var(--danger)">${esc(res.error)}</p>`; return; }
   const c = res.counts || {};
   if (sum) sum.textContent = `${c.to_tv||0} → TV · ${c.to_anime||0} → Anime · ${c.fix_settings||0} settings · ${c.uncertain||0} uncertain`;
@@ -2217,6 +2339,20 @@ async function loadReclassify() {
   }
   el.innerHTML = html || '<p style="color:var(--text3)">Everything is correctly filed and configured.</p>';
   updateReclassifyCount();
+}
+
+async function loadReclassify() {
+  const el = document.getElementById('reclassify-content');
+  const sum = document.getElementById('reclassify-summary');
+  if (!_swrCache.has('reclassify')) {
+    el.innerHTML = '<p class="loading">Scanning Sonarr (first run resolves origins, ~15s)…</p>';
+    if (sum) sum.textContent = '';
+  }
+  try {
+    await _swrRun('reclassify', () => api('/api/library/reclassify/scan'), _renderReclassify, { noAutoReplace: true });
+  } catch (e) {
+    el.innerHTML = _errHtml(e, 'loadReclassify()');
+  }
 }
 
 // One settings row: greyed when unchanged, struck-through → green when it's an issue.
@@ -2311,6 +2447,7 @@ async function moveReclassify() {
     let out = `Applied ${res.applied || 0}` + (res.failed ? `, ${res.failed} failed` : '') + '.';
     if (fails.length) out += `\n\nFailed:\n` + fails.slice(0, 12).map(f => `• ${f.title || f.sonarr_id}: ${f.error || '?'}`).join('\n');
     alert(out);
+    _swrInvalidate('reclassify'); // without this, noAutoReplace above would suppress this intentional re-render too
     loadReclassify();   // re-scan so the lists reflect the new state
   } catch (e) {
     alert('Apply failed: ' + (e.message || 'unknown'));
@@ -2727,9 +2864,9 @@ function renderAddCard(svc, m, idx) {
     ? `<span style="color:var(--text3);font-size:11px;font-style:italic">already in your library</span>`
     : `<button class="btn btn-primary btn-sm" onclick="addArrItem('${svc}',${idx},this)">+ Add to ${svc}</button>`;
   const isMusic = svc === 'lidarr';
-  const poster = `<div class="poster-frame">${_posterImg(m.poster, 174, isMusic?174:261, isMusic)}</div>`;
+  const poster = `<div class="glow-interactive${isMusic?' is-music':''}">${_posterImg(m.poster, 174, isMusic?174:261, isMusic)}</div>`;
   return `
-    <div class="card" style="display:flex;gap:18px;margin-bottom:16px">
+    <div class="card poster-card" style="margin-bottom:16px">
       ${poster}
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
@@ -3125,6 +3262,7 @@ async function newChat() {
         </div>`;
       loadGlancePanel();
       loadLastPlayed();
+      loadStarters();
     }
     // Pass 27: + New also exits any active discussion thread — sticky
     // discuss-context shouldn't survive a chat reset.
@@ -3369,8 +3507,8 @@ async function loadGlancePanel() {
   if (enrich.status === 'fulfilled') {
     let done = 0, total = 0;
     for (const c of Object.values(enrich.value.categories || {})) {
-      done += c?.states?.enriched_live || 0;
-      total += c?.denominator?.downloaded || 0;
+      done += c?.enriched || 0;
+      total += c?.total_unique || 0;
     }
     if (total) tiles.push({num: Math.round(100 * done / total) + '%', lbl: 'Enriched', view: 'enrich'});
   }
@@ -3397,7 +3535,7 @@ async function loadGlancePanel() {
   if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
   el.innerHTML = `<div class="stat-row" style="margin:16px 0 4px">` + tiles.map(t => `
-    <div class="stat-box" style="cursor:pointer" onclick="showView('${t.view}')">
+    <div class="stat-box" style="cursor:pointer" onclick="showView('${t.view}', document.querySelector(&quot;.sb-item[onclick*='${t.view}']&quot;))">
       <div class="num"${t.small ? ' style="font-size:16px"' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
     </div>`).join('') + `</div>`;
@@ -3405,11 +3543,11 @@ async function loadGlancePanel() {
 
 // ── CHAT EMPTY-STATE "LAST PLAYED" STRIP ────────────────────────────────────
 // Same lifecycle as the glance panel (loaded once at boot, gone once the
-// user sends anything -- see sendMessage()). poster_url isn't in
-// /api/history/recent's response yet (verified against
-// src/routers/history.py before writing this) -- _posterImg() already
-// degrades that to a "?" tile with zero special-casing here, so this ships
-// now and just gets prettier the day that field lands.
+// user sends anything -- see sendMessage()). poster_url IS in
+// /api/history/recent's response for small pages (limit<=12, which this
+// strip's limit=2 always is) -- it feeds the tiles here and the chat
+// watermark via discussLastPlayed's pendingDiscussContext.poster_url;
+// _posterImg() still degrades a null to a "?" tile with no special-casing.
 let _lastPlayedEntries = [];
 async function loadLastPlayed() {
   const el = document.getElementById('last-played-panel');
@@ -3433,7 +3571,7 @@ async function loadLastPlayed() {
         let title = e.title;
         if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
         else if ((e.media_type === 'anime' || e.media_type === 'show') && e.series_title) title = `${e.series_title}: ${e.title}`;
-        return `<div class="lp-chip" onclick="discussLastPlayed(${i})">
+        return `<div class="lp-chip glow-interactive selectable" role="button" tabindex="0" aria-label="Discuss ${escAttr(title)}" onclick="discussLastPlayed(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
           ${_posterImg(e.poster_url, 72, isMusic ? 72 : 108, isMusic)}
           <div class="lp-title">${esc(title)}</div>
         </div>`;
@@ -3448,6 +3586,33 @@ function fillPrompt(text) {
   inp.value = text;
   inp.focus();
 }
+// Swaps the static #suggested-prompts chips (already in the DOM, written by
+// newChat()/the page's initial HTML) for curator-picked ones when the pool
+// has fresh material. Empty or failed GET -- e.g. a brand-new user with no
+// pool yet -- leaves the 3 static chips exactly as they were: no partial
+// replace, no empty panel.
+async function loadStarters() {
+  const el = document.getElementById('suggested-prompts');
+  if (!el) return;
+  try {
+    const r = await api('/api/chat/starters');
+    const starters = (r.starters || []).slice(0, 3);
+    if (!starters.length) return;
+    el.innerHTML = starters.map(s =>
+      `<button class="sp-chip" onclick="useStarter(${s.id}, this)">${esc(s.text)}</button>`
+    ).join('');
+  } catch {} // best-effort nicety, keep the static fallback -- fail silent
+}
+// Unlike fillPrompt(), auto-sends -- a curator-picked starter is already a
+// complete, ready-to-send question, not a template to tweak. Marking it
+// used is fire-and-forget: the pool bookkeeping shouldn't gate the send.
+function useStarter(id, btn) {
+  api(`/api/chat/starters/${id}/used`, 'POST').catch(() => {});
+  const inp = document.getElementById('chat-input');
+  inp.value = btn.textContent;
+  inp.focus();
+  setTimeout(() => sendMessage(), 300);
+}
 function discussLastPlayed(i) {
   const e = _lastPlayedEntries[i];
   if (!e) return;
@@ -3455,6 +3620,29 @@ function discussLastPlayed(i) {
   let title = e.title;
   if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
   else if ((e.media_type === 'anime' || e.media_type === 'show') && e.series_title) title = `${e.series_title}: ${e.title}`;
+
+  // Structured context anchors on this exact watch-history row (history_id,
+  // always present -- every /api/history/recent entry carries its own PK)
+  // so the backend can inject real facts instead of trusting our text. Same
+  // trust model + sticky pendingDiscussContext pipeline as discussDeletion/
+  // respondToMessage: set it, then let sendMessage() pick it up below.
+  if (e.id) {
+    pendingDiscussContext = {
+      kind: 'watched_title',
+      history_id: e.id,
+      series_title: e.series_title || null,
+      title: e.title || null,
+      category: e.media_type || null,
+      season: e.season ?? null,
+      episode: e.episode ?? null,
+      viewed_at: e.viewed_at || null,
+      poster_url: e.poster_url || null,
+    };
+    _setDiscussBanner(`Discussing "${title}"`);
+  } else {
+    pendingDiscussContext = null;
+    _setDiscussBanner(null);
+  }
   discussInChat('custom', {message: `I recently ${isMusic ? 'listened to' : 'watched'} "${title}" — what do you think about it, or what should I know?`});
 }
 
@@ -3486,6 +3674,7 @@ async function recomputeTaste() {
   el.innerHTML += '<p style="color:var(--amber);font-size:12px;margin-top:8px">Recomputing taste vectors…</p>';
   try {
     await api('/api/history/recompute-taste','POST');
+    _swrInvalidate('history-stats'); // so the delayed reload below fetches fresh instead of flashing the pre-recompute numbers
     setTimeout(() => {
       loadHistoryStatus();
       // Also refresh enrichment status if on that tab
@@ -3504,6 +3693,7 @@ async function syncHistory(force=false) {
   try {
     const r=await api('/api/history/sync?force='+(force?'true':'false'),'POST');
     el.innerHTML=`<div style="color:var(--success);font-size:13px">${esc(r.message)}</div>`;
+    _swrInvalidate('history-stats'); // so the delayed reload below fetches fresh instead of flashing the pre-sync numbers
     setTimeout(loadHistoryStatus,5000);
   } catch(e){el.innerHTML=_errHtml(e, `syncHistory(${force})`);}
 }
@@ -3965,24 +4155,33 @@ async function submitPinChange() {
   }
 }
 
+function _renderHistoryStats(s) {
+  const tv = s.taste_vector;
+  const coverageOk = tv.covers_all || !tv.computed;
+  document.getElementById('history-stats').innerHTML=`
+    <div class="stat-row">
+      <div class="stat-box"><div class="num">${s.watch_history_entries.toLocaleString()}</div><div class="lbl">Entries synced</div></div>
+      <div class="stat-box">
+        <div class="num" style="color:${coverageOk?'var(--amber)':'var(--danger)'}">${tv.watch_count?.toLocaleString()||0}</div>
+        <div class="lbl">In taste profile ${coverageOk?'':'<span style="color:var(--amber)">— outdated</span>'}</div>
+      </div>
+      <div class="stat-box"><div class="num" style="font-size:16px">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
+    </div>
+    ${tv.note?`<div style="font-size:12px;color:var(--danger);margin-bottom:12px;padding:8px 12px;background:var(--danger-dim);border-radius:var(--radius)">${esc(tv.note)}</div>`:''}`;
+}
+
+// Only the stats tile above goes through the SWR cache -- the taste-tabs /
+// recent-history portion below already has its own tab-switching mechanism
+// (showTasteTab) that independently re-fetches both endpoints on click, so
+// folding it into the same cache key would make that click bypass a
+// generic cache built around the wrong assumption (one payload per key).
+// It stays exactly as it was: re-runs on every visit to this view.
 async function loadHistoryStatus() {
   try {
-    const s=await api('/api/history/status');
+    const s = await _swrRun('history-stats', () => api('/api/history/status'), _renderHistoryStats);
     const tv=s.taste_vector;
     const byType=tv.by_type||{};
     const types=Object.keys(byType);
-
-    const coverageOk = tv.covers_all || !tv.computed;
-    document.getElementById('history-stats').innerHTML=`
-      <div class="stat-row">
-        <div class="stat-box"><div class="num">${s.watch_history_entries.toLocaleString()}</div><div class="lbl">Entries synced</div></div>
-        <div class="stat-box">
-          <div class="num" style="color:${coverageOk?'var(--amber)':'var(--danger)'}">${tv.watch_count?.toLocaleString()||0}</div>
-          <div class="lbl">In taste profile ${coverageOk?'':'<span style="color:var(--amber)">— outdated</span>'}</div>
-        </div>
-        <div class="stat-box"><div class="num" style="font-size:16px">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
-      </div>
-      ${tv.note?`<div style="font-size:12px;color:var(--danger);margin-bottom:12px;padding:8px 12px;background:var(--danger-dim);border-radius:var(--radius)">${esc(tv.note)}</div>`:''}`;
 
     if (types.length) {
       document.getElementById('taste-tabs').innerHTML = types.map((t,i)=>
@@ -4106,8 +4305,8 @@ function _recCard(rec) {
   const laneBadge = `<span class="badge" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:10px" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`;
   return `
   <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:flex-start;gap:18px">
-      <div class="poster-frame selectable" title="Discuss this recommendation" onclick="[...this.closest('.card').querySelectorAll('button')].find(b=>b.textContent.trim()==='Discuss')?.click()">${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
+    <div class="poster-card">
+      <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" onclick="[...this.closest('.card').querySelectorAll('button')].find(b=>b.textContent.trim()==='Discuss')?.click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:16px">${esc(rec.title)}</div>
         <div style="font-size:12px;color:var(--text3);margin-top:3px">${esc(rec.category_label||'')}</div>
@@ -4115,7 +4314,7 @@ function _recCard(rec) {
         ${rec.synopsis ? `<div style="font-size:12px;color:var(--text3);margin-top:8px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(rec.synopsis)}</div>` : ''}
         <div style="font-size:13.5px;color:var(--text2);margin-top:10px;line-height:1.65">${esc(rec.reason||rec.pitch||'')}</div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+      <div class="poster-card-actions" style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
         ${laneBadge}
         <span class="badge amber">${Math.round((rec.confidence||0.7)*100)}%</span>
         <button class="btn btn-secondary btn-sm" onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
@@ -4328,9 +4527,9 @@ function _renderDeletionProposals(proposals) {
           : "e.g. 'Keep — still watching this' or 'Delete — dropped after 2 eps'";
       return `
       <div class="card" data-del-id="${p.id}" style="margin-bottom:16px;border-color:${p.stagnant?'rgba(229,160,13,.35)':(p.confidence>.7?'rgba(229,83,83,.3)':'var(--border)')}">
-        <div style="display:flex;align-items:flex-start;gap:18px">
+        <div class="poster-card">
           <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" onchange="updateDelBulkCount(); _syncDelPosterVisual(this)" style="display:none" title="Select for bulk delete"/>
-          <div class="poster-frame selectable" data-id="${p.id}" onclick="toggleDelSelect(${p.id})" title="Click to select for bulk delete">
+          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" aria-label="Select ${escAttr(p.title)} for bulk delete" onclick="toggleDelSelect(${p.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Click to select for bulk delete">
             ${_posterImg(p.poster_url, 174, p.category==='music'?174:261, p.category==='music')}
             <div class="del-poster-check">${SVG_CHECK.replace('width="13" height="13"', 'width="34" height="34"')}</div>
           </div>
@@ -4347,8 +4546,8 @@ function _renderDeletionProposals(proposals) {
               ${p.status==='limbo'?`<span class="arr-limbo-error" style="display:block;margin-top:5px;font-size:11px;color:var(--amber)">${SVG_WARN} Previous delete attempt failed — ARR was unreachable. Click Retry Delete to try again.</span>`:''}
               <button class="btn btn-secondary btn-sm" onclick="rejectDelete(${p.id},this)">Keep</button>
               <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">Save note</button>
-              <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}">Discuss</button>
-              <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">Reevaluate</button>
+              <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}">Discuss</button>
+              <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">Reevaluate</button>
               ${p.media_id&&p.service?`<button class="btn btn-secondary btn-sm" onclick="onFixMatch(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-category="${escAttr(p.category||'movie')}" data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}" title="Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.">Fix match</button>`:''}
               ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" aria-label="Open ${escAttr(p.title)} in ${esc(p.service)}" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
             </div>
@@ -4962,7 +5161,10 @@ function delToggleAll(master) {
 // updateDelBulkCount() already read -- one state, two ways to flip it
 // (click the poster, or "Select all"), always kept in sync through here.
 function _syncDelPosterVisual(cb) {
-  document.querySelector(`.poster-frame[data-id="${cb.dataset.id}"]`)?.classList.toggle('selected', cb.checked);
+  const el = document.querySelector(`.glow-interactive[data-id="${cb.dataset.id}"]`);
+  if (!el) return;
+  el.classList.toggle('selected', cb.checked);
+  el.setAttribute('aria-pressed', cb.checked ? 'true' : 'false');
 }
 function toggleDelSelect(id) {
   const cb = document.querySelector(`.del-cb[data-id="${id}"]`);
@@ -5163,6 +5365,7 @@ function onReevaluateDeletion(btn) {
   const title    = btn.dataset.title    || '';
   const pitch    = btn.dataset.pitch    || '';
   const category = btn.dataset.category || '';
+  const poster   = btn.dataset.poster   || '';
 
   // 1. Same context priming as the Discuss button, plus a one-shot
   //    ``reevaluate`` flag. ``sendMessage`` snapshots the context into
@@ -5174,6 +5377,7 @@ function onReevaluateDeletion(btn) {
     proposal_id: pid,
     category: category || null,
     title: title || null,
+    poster_url: poster || null,
     reevaluate: true,
   };
   _setDiscussBanner(`Reevaluating deletion of "${title}"`);
@@ -5268,6 +5472,25 @@ function _setDiscussBanner(text) {
     txt.textContent = '';
     if (delBtn) delBtn.style.display = 'none';
   }
+  // B4: every set/clear of the banner already means pendingDiscussContext
+  // just changed (both happen together at every call site), so this is
+  // the one chokepoint to also drive the watermark from -- no need to
+  // touch discussDeletion/discussLastPlayed/etc. individually.
+  _setChatWatermark(pendingDiscussContext?.poster_url || null);
+}
+
+// Faint poster wash behind the active discussion -- var(--bg-veil) is the
+// app's own --bg at ~93% opacity, so the ~7% of image that shows through
+// reads as texture, not a picture competing with the message text on top.
+// No watermark at all when the context has no poster (proactive_message,
+// principle -- neither is about one specific titled thing).
+function _setChatWatermark(url) {
+  const msgs = document.getElementById('messages');
+  if (!msgs) return;
+  if (!url) { msgs.style.backgroundImage = ''; return; }
+  const sizeMatch = url.match(/\/(w\d+)\//);
+  const w342 = sizeMatch ? url.replace(sizeMatch[1], 'w342') : url;
+  msgs.style.backgroundImage = `linear-gradient(var(--bg-veil), var(--bg-veil)), url("${proxyImg(w342)}")`;
 }
 
 // Pass 61: mirror of the backend _thread_id_for — derive the thread id from
@@ -5371,7 +5594,7 @@ async function deleteFromDiscussion() {
   }
 }
 
-function discussDeletion(id, title, pitch, category) {
+function discussDeletion(id, title, pitch, category, poster_url) {
   const userNote = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
 
   // 1. Save the context for the next API send event. Backend looks up the
@@ -5389,6 +5612,7 @@ function discussDeletion(id, title, pitch, category) {
     // (it looks the proposal up by id), but the in-chat "Delete & exit"
     // button needs it for the confirm modal + the success note.
     title: title || null,
+    poster_url: poster_url || null,
   };
   _setDiscussBanner(`Discussing deletion of "${title}"`);
 
@@ -5436,6 +5660,7 @@ function onDiscussDeletion(btn) {
     btn.dataset.title    || '',
     btn.dataset.pitch    || '',
     btn.dataset.category || '',
+    btn.dataset.poster   || '',
   );
 }
 
@@ -6051,24 +6276,30 @@ async function omdbBackfill(btn) {
 
 // ── LIBRARIES ─────────────────────────────────────────────────────────────────
 let discoverSections=[];
-async function loadLibraryConfig() {
+// noAutoReplace: each section's <select> can carry a user's in-progress,
+// unsaved category choice (read directly from the DOM by saveLibraries(),
+// never mirrored back into any JSON) -- a background revalidation that
+// found the fetched payload changed (very plausible: enriched_count/
+// scanned_at/updated_at move on their own as background enrichment runs)
+// must never blindly overwrite this markup and discard that choice. So
+// noAutoReplace deliberately does NOT refetch at all while a cache entry
+// exists -- the frozen snapshot IS the protection; enrichment counters on
+// this page may lag for the session, which is the accepted price. Only an
+// explicit _swrInvalidate('libraries') lets fresh data through again:
+// saveLibraries() fires it on success since this view doesn't otherwise
+// self-reload after a save.
+function _renderLibraryConfig([cfg, disc]) {
   const el=document.getElementById('lib-config-content');
-  el.innerHTML='<p class="loading">Fetching library info from Plex…</p>';
-  try {
-    const [cfg,disc]=await Promise.all([
-      api('/api/libraries/config'),
-      api('/api/libraries/discover').catch(()=>({sections:[]}))
-    ]);
-    discoverSections=disc.sections||[];
-    const cfgMap=Object.fromEntries((cfg.libraries||[]).map(l=>[l.key,l.category]));
+  discoverSections=disc.sections||[];
+  const cfgMap=Object.fromEntries((cfg.libraries||[]).map(l=>[l.key,l.category]));
 
-    function fmtDate(iso) {
-      if (!iso) return '—';
-      const d = new Date(iso);
-      return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'})
-             + ' ' + d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
-    }
-    el.innerHTML = discoverSections.map(s => {
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'})
+           + ' ' + d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+  }
+  el.innerHTML = discoverSections.map(s => {
       const cat = cfgMap[s.key] || s.suggested_category;
       const enrichPct = s.plex_item_count > 0
         ? Math.min(100, Math.round(100 * s.enriched_count / Math.max(s.plex_item_count, 1))) : 0;
@@ -6108,7 +6339,16 @@ async function loadLibraryConfig() {
         </div>
       </div>`;
     }).join('') || '<p style="color:var(--text3)">No Plex libraries found.</p>';
+}
 
+async function loadLibraryConfig() {
+  const el=document.getElementById('lib-config-content');
+  if (!_swrCache.has('libraries')) el.innerHTML='<p class="loading">Fetching library info from Plex…</p>';
+  try {
+    await _swrRun('libraries', () => Promise.all([
+      api('/api/libraries/config'),
+      api('/api/libraries/discover').catch(()=>({sections:[]}))
+    ]), _renderLibraryConfig, { noAutoReplace: true });
   } catch(e){el.innerHTML=_errHtml(e, 'loadLibraryConfig()');}
 }
 
@@ -6118,6 +6358,7 @@ async function saveLibraries() {
     category:document.getElementById(`libcat-${s.key}`)?.value||s.suggested_category
   }));
   await api('/api/libraries/configure','POST',{libraries});
+  _swrInvalidate('libraries'); // this view doesn't self-reload after a save -- without this the next visit would show stale pre-save data
   alert('Library configuration saved!');
 }
 
@@ -6177,34 +6418,43 @@ async function applyOrphanRepair(sections) {
       Saved ${r.saved} library mappings · Imported ${r.synced} new history entries.<br>
       <span style="color:var(--text2)">Run Force Sync to recompute your taste profile with the new data.</span>
     </p>`;
+    _swrInvalidate('libraries');
+    _swrInvalidate('history-stats');
   } catch(e) {
     el.innerHTML = _errHtml(e);
   }
 }
 
 // ── ADMIN ─────────────────────────────────────────────────────────────────────
+function _renderUsers(users) {
+  const targets = document.querySelectorAll('.user-list-target');
+  const html = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+    ${users.map(u=>`<tr>
+      <td>${esc(u.plex_username)}</td>
+      <td><span class="badge ${u.is_admin?'amber':'muted'}">${u.is_admin?'admin':'user'}</span></td>
+      <td><span class="badge ${u.is_active?'success':'danger'}">${u.is_active?'active':'disabled'}</span></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="toggleUser(${u.id},${!u.is_active})">${u.is_active?'Disable':'Enable'}</button></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+  targets.forEach(el => el.innerHTML = html);
+}
+
 async function loadUsers() {
   // The same list is rendered into the standalone admin-view AND the
   // Settings → Users pane. Both targets carry .user-list-target.
   const targets = document.querySelectorAll('.user-list-target');
   if (!targets.length) return;
   try {
-    const users = await api('/api/users/');
+    const users = await _swrRun('admin-users', () => api('/api/users/'), _renderUsers);
+    // Spotify-import dropdown/status: a side effect of visiting this view,
+    // not of the user list itself changing -- runs every time regardless of
+    // whether _renderUsers actually redrew the table above.
     const zone = document.getElementById('adm-sp-zone');
     if (zone && !zone.innerHTML) zone.innerHTML = spotifyDropZone('adm-sp');
     const sel = document.getElementById('adm-sp-user');
     if (sel) sel.innerHTML = users.map(u =>
       `<option value="${u.id}">${esc(u.plex_username)}</option>`).join('');
     refreshSpotifyPending('adm-sp');
-    const html = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
-      ${users.map(u=>`<tr>
-        <td>${esc(u.plex_username)}</td>
-        <td><span class="badge ${u.is_admin?'amber':'muted'}">${u.is_admin?'admin':'user'}</span></td>
-        <td><span class="badge ${u.is_active?'success':'danger'}">${u.is_active?'active':'disabled'}</span></td>
-        <td><button class="btn btn-secondary btn-sm" onclick="toggleUser(${u.id},${!u.is_active})">${u.is_active?'Disable':'Enable'}</button></td>
-      </tr>`).join('')}
-    </tbody></table></div>`;
-    targets.forEach(el => el.innerHTML = html);
   } catch (e) {
     targets.forEach(el => el.innerHTML = _errHtml(e, 'loadUsers()'));
   }
@@ -6380,34 +6630,39 @@ function updateEnrichLiveSection(tasks) {
     </div>`;
 }
 
+function _renderTaskHistory(r) {
+  const el = document.getElementById('tasks-history');
+  if (!el) return;
+  const runs = r.last_runs || {};
+  const entries = Object.entries(runs);
+  if (!entries.length) {
+    el.innerHTML = '<p style="font-size:12px;color:var(--text3)">No completed tasks yet this session.</p>';
+    return;
+  }
+  const statusColor = { done: 'var(--success)', error: 'var(--danger)', skipped: 'var(--text2)' };
+  entries.sort((a,b) => (b[1].at||'').localeCompare(a[1].at||''));
+  el.innerHTML = `<div style="display:grid;gap:6px">` + entries.map(([cat, run]) => {
+    const color = statusColor[run.status] || 'var(--text2)';
+    const when  = run.at ? new Date(run.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const dur   = run.elapsed_s > 0 ? fmtTime(Math.round(run.elapsed_s)) : '';
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600">${esc(run.name||cat)}</div>
+        ${run.message?`<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(run.message)}</div>`:''}
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:11px;color:${color};font-weight:600">${run.status}</div>
+        <div style="font-size:10px;color:var(--text3)">${when}${dur?' · '+dur:''}</div>
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+}
+
 async function loadTaskHistory() {
   const el = document.getElementById('tasks-history');
   if (!el) return;
   try {
-    const r = await api('/api/tasks/history');
-    const runs = r.last_runs || {};
-    const entries = Object.entries(runs);
-    if (!entries.length) {
-      el.innerHTML = '<p style="font-size:12px;color:var(--text3)">No completed tasks yet this session.</p>';
-      return;
-    }
-    const statusColor = { done: 'var(--success)', error: 'var(--danger)', skipped: 'var(--text2)' };
-    entries.sort((a,b) => (b[1].at||'').localeCompare(a[1].at||''));
-    el.innerHTML = `<div style="display:grid;gap:6px">` + entries.map(([cat, run]) => {
-      const color = statusColor[run.status] || 'var(--text2)';
-      const when  = run.at ? new Date(run.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-      const dur   = run.elapsed_s > 0 ? fmtTime(Math.round(run.elapsed_s)) : '';
-      return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;display:flex;align-items:center;gap:10px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600">${esc(run.name||cat)}</div>
-          ${run.message?`<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(run.message)}</div>`:''}
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:11px;color:${color};font-weight:600">${run.status}</div>
-          <div style="font-size:10px;color:var(--text3)">${when}${dur?' · '+dur:''}</div>
-        </div>
-      </div>`;
-    }).join('') + `</div>`;
+    await _swrRun('tasks', () => api('/api/tasks/history'), _renderTaskHistory);
   } catch(e) {
     el.innerHTML = `<p style="font-size:12px;color:var(--danger)">${SVG_WARN} ${esc(_errMsg(e))}</p>`;
   }
@@ -6418,6 +6673,7 @@ async function cancelTask(taskId, btn) {
   btn.textContent = 'Cancelling…';
   try {
     await api(`/api/tasks/${taskId}/cancel`, 'POST');
+    _swrInvalidate('tasks'); // next visit reflects the cancellation instead of a stale pre-cancel snapshot
   } catch(e) {
     btn.disabled = false;
     btn.textContent = 'Cancel';
