@@ -750,7 +750,7 @@ select option { background: var(--bg2); }
           </div>
           <span style="font-size:12px;color:var(--text3)" id="recs-source-hint">you own it, still unwatched · not in your library, worth acquiring</span>
         </div>
-        <div id="recs-content"><p class="loading">Click "Get recommendations" to load…</p></div>
+        <div id="recs-content"><p class="loading" role="status" aria-live="polite">Click "Get recommendations" to load…</p></div>
       </div>
     </div>
 
@@ -851,7 +851,7 @@ select option { background: var(--bg2); }
         <p>What the curator and you actually did with this library: resolutions, freed storage, the titles you defend but never touch — and a yearly review in the curator's own words.</p>
       </div>
       <div class="view-body">
-        <div id="report-content"><p class="loading">Loading…</p></div>
+        <div id="report-content"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
       </div>
     </div>
 
@@ -992,7 +992,7 @@ select option { background: var(--bg2); }
           <h3 style="font-size:13px;font-weight:600">Category Mapping</h3>
           <span style="font-size:11px;color:var(--text3)">— assign each Plex library to a media category.</span>
         </div>
-        <div id="lib-config-content"><p class="loading">Loading…</p></div>
+        <div id="lib-config-content"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
         <button class="btn btn-primary" style="margin-top:16px" onclick="saveLibraries()">Save Configuration</button>
         <hr class="divider" style="margin:24px 0">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -1056,7 +1056,7 @@ select option { background: var(--bg2); }
           <button class="btn btn-primary" id="reclassify-move-btn" onclick="moveReclassify()" disabled>Move selected (0) →</button>
           <span id="reclassify-summary" style="color:var(--text3);font-size:13px"></span>
         </div>
-        <div id="reclassify-content"><p class="loading">Scanning Sonarr…</p></div>
+        <div id="reclassify-content"><p class="loading" role="status" aria-live="polite">Scanning Sonarr…</p></div>
       </div>
     </div>
 
@@ -1067,10 +1067,10 @@ select option { background: var(--bg2); }
         <p>Live background tasks and automation history</p>
       </div>
       <div class="view-body">
-        <div id="tasks-list"><p class="loading">Connecting to task stream…</p></div>
+        <div id="tasks-list"><p class="loading" role="status" aria-live="polite">Connecting to task stream…</p></div>
         <hr class="divider" style="margin:20px 0">
         <h3 style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:12px">Last Run Per Type</h3>
-        <div id="tasks-history"><p class="loading" style="font-size:12px">Loading history…</p></div>
+        <div id="tasks-history"><p class="loading" role="status" aria-live="polite" style="font-size:12px">Loading history…</p></div>
       </div>
     </div>
 
@@ -1182,7 +1182,7 @@ select option { background: var(--bg2); }
                 skipped — no message is generated, no LLM call is made.
               </p>
               <div id="notif-prefs" style="display:flex;flex-direction:column;gap:8px">
-                <p class="loading">Loading…</p>
+                <p class="loading" role="status" aria-live="polite">Loading…</p>
               </div>
             </section>
 
@@ -2067,13 +2067,13 @@ async function startOnboardingSync() {
 
 async function buildOnboardingModels() {
   const el = document.getElementById('ob-model-status');
-  el.innerHTML = '<p class="loading">Building models… this may take a few minutes.</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Building models… this may take a few minutes.</p>';
   
   try {
     const r = await api('/api/setup/build-models','POST');
     if (r.curator && r.summarizer) {
       const okLine = '<p style="color:var(--success)">curatarr-curator and curatarr-summarizer created!</p>';
-      el.innerHTML = okLine + '<p class="loading">Warm-up check: loading the curator once to verify it runs on the GPU…</p>';
+      el.innerHTML = okLine + '<p class="loading" role="status" aria-live="polite">Warm-up check: loading the curator once to verify it runs on the GPU…</p>';
       // A model that doesn't quite fit VRAM runs silently part-on-CPU and
       // the whole app just feels broken-slow. Catch that HERE, not on the
       // user's first real conversation.
@@ -2217,7 +2217,7 @@ function _repBar(pct, color) {
 
 async function loadReport() {
   const el = document.getElementById('report-content');
-  if (!_swrCache.has('report')) el.innerHTML = '<p class="loading">Crunching the curation ledger…</p>';
+  if (!_swrCache.has('report')) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Crunching the curation ledger…</p>';
   try {
     await _swrRun('report', () => api('/api/stats/curation?months=12'), _renderReport);
   } catch (e) {
@@ -2345,7 +2345,7 @@ async function loadReclassify() {
   const el = document.getElementById('reclassify-content');
   const sum = document.getElementById('reclassify-summary');
   if (!_swrCache.has('reclassify')) {
-    el.innerHTML = '<p class="loading">Scanning Sonarr (first run resolves origins, ~15s)…</p>';
+    el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning Sonarr (first run resolves origins, ~15s)…</p>';
     if (sum) sum.textContent = '';
   }
   try {
@@ -3703,7 +3703,7 @@ async function recomputeTaste() {
 
 async function syncHistory(force=false) {
   const el=document.getElementById('history-stats');
-  el.innerHTML='<p class="loading">' + (force?'Force syncing…':'Syncing Plex history…') + '</p>';
+  el.innerHTML='<p class="loading" role="status" aria-live="polite">' + (force?'Force syncing…':'Syncing Plex history…') + '</p>';
   try {
     const r=await api('/api/history/sync?force='+(force?'true':'false'),'POST');
     el.innerHTML=`<div style="color:var(--success);font-size:13px">${esc(r.message)}</div>`;
@@ -3996,12 +3996,12 @@ async function saveArrDefaults(svc) {
 async function loadNotificationPreferences() {
   const host = document.getElementById('notif-prefs');
   if (!host) return;
-  host.innerHTML = '<p class="loading">Loading…</p>';
+  host.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
   try {
     const r = await api('/api/users/me/notification-preferences');
     renderNotificationPreferences(r.triggers || []);
   } catch (e) {
-    host.innerHTML = `<p class="loading" style="color:var(--danger,#e66)">${SVG_WARN} ${esc(e.message || 'Failed to load preferences')}</p>`;
+    host.innerHTML = `<p class="loading" role="status" aria-live="polite" style="color:var(--danger,#e66)">${SVG_WARN} ${esc(e.message || 'Failed to load preferences')}</p>`;
   }
 }
 
@@ -4218,7 +4218,7 @@ function showTasteTab(type,btn) {
 
 function showTasteTabData(byType, summary, type) {
   const d=byType[type];
-  if(!d){document.getElementById('taste-content').innerHTML='<p class="loading">No data for this category yet.</p>';return;}
+  if(!d){document.getElementById('taste-content').innerHTML='<p class="loading" role="status" aria-live="polite">No data for this category yet.</p>';return;}
   const typeUpper=type.toUpperCase();
   const match=summary.match(new RegExp(`\\[${typeUpper}\\]([^\\[]*)`));
   const typeSummary=match?match[1].trim():'';
@@ -4241,7 +4241,7 @@ function showTasteTabData(byType, summary, type) {
 }
 
 function renderRecent(entries, category) {
-  if(!entries?.length){document.getElementById('recent-history').innerHTML=`<p class="loading">No ${CAT_LABELS[category]||category} history yet.</p>`;return;}
+  if(!entries?.length){document.getElementById('recent-history').innerHTML=`<p class="loading" role="status" aria-live="polite">No ${CAT_LABELS[category]||category} history yet.</p>`;return;}
   const label = CAT_LABELS[category]||category;
   document.getElementById('recent-history').innerHTML=`
     <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Recent ${label}</div>
@@ -4391,14 +4391,14 @@ async function searchLibrary() {
   if (q.length < 2) return;
   _stopRecsPoll();
   const el = document.getElementById('recs-content');
-  el.innerHTML = '<p class="loading">Searching + curating your library…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Searching + curating your library…</p>';
   try {
     const cat = currentRecsCategory ? `&category=${currentRecsCategory}` : '';
     const r = await api(`/api/library/semantic-search?q=${encodeURIComponent(q)}${cat}&limit=12`);
     const hits = r.results || [];
     const back = `<div style="margin:0 0 12px"><a href="#" onclick="loadRecs(currentRecsCategory);return false" style="color:var(--amber);font-size:13px">← Back to recommendations</a></div>`;
     if (!hits.length) {
-      el.innerHTML = back + `<p class="loading">No semantic matches for "${esc(q)}" — coverage follows the enrichment index.</p>`;
+      el.innerHTML = back + `<p class="loading" role="status" aria-live="polite">No semantic matches for "${esc(q)}" — coverage follows the enrichment index.</p>`;
       return;
     }
     const modeTag = r.mode === 'evidence' ? ' · curated' : ' · similarity only';
@@ -4446,7 +4446,7 @@ async function loadRecs(category=null, btn=null, refresh=false) {
   document.querySelectorAll('#recs-view .cat-tab').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   const el = document.getElementById('recs-content');
-  el.innerHTML = '<p class="loading">Loading…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
   // Snapshot the category so a stale tab change can't clobber the active view.
   const requestedCategory = category;
   // Both lanes are always cached; currentRecsLane just filters the view.
@@ -4486,7 +4486,7 @@ async function loadRecs(category=null, btn=null, refresh=false) {
     let body = '';
     if (laneFilter === 'all' || laneFilter === 'library')   body += _recSection('library', library);
     if (laneFilter === 'all' || laneFilter === 'discovery') body += _recSection('discovery', discovery);
-    if (!body) body = '<p class="loading">Nothing in this lane yet — use Regenerate, or switch lane above.</p>';
+    if (!body) body = '<p class="loading" role="status" aria-live="polite">Nothing in this lane yet — use Regenerate, or switch lane above.</p>';
     el.innerHTML = cacheNote + body;
   } catch(e) { el.innerHTML = _errHtml(e); }
 }
@@ -4523,7 +4523,7 @@ function _recentActivityBadge(p) {
 function _renderDeletionProposals(proposals) {
   const el = document.getElementById('del-content');
   if (!proposals?.length) {
-    el.innerHTML = '<p class="loading">No proposals yet — click <strong>Analyse library</strong> to generate deletion candidates.</p>';
+    el.innerHTML = '<p class="loading" role="status" aria-live="polite">No proposals yet — click <strong>Analyse library</strong> to generate deletion candidates.</p>';
     return;
   }
   const totalGb = proposals.reduce((s, p) => s + (p.size_gb || 0), 0).toFixed(1);
@@ -4582,7 +4582,7 @@ async function onFixMatch(btn) {
   if (!box) return;
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
   box.style.display = 'block';
-  box.innerHTML = '<p class="loading" style="font-size:12px">Searching TMDB candidates…</p>';
+  box.innerHTML = '<p class="loading" role="status" aria-live="polite" style="font-size:12px">Searching TMDB candidates…</p>';
   const { title, category, service, mediaid } = btn.dataset;
   try {
     const r = await api(`/api/enrichment/match-candidates?title=${encodeURIComponent(title)}&category=${encodeURIComponent(category)}`);
@@ -4669,7 +4669,7 @@ function _setAnalysePulse(on) {
 async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
   if (!el) return;
-  el.innerHTML = '<p class="loading">Loading protected titles…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading protected titles…</p>';
   try {
     const r = await api('/api/recommendations/protections');
     const rows = r.protections || [];
@@ -4697,7 +4697,7 @@ async function loadJudgeProtections() {
       </div>`;
     }).join('');
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load protections')}</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Failed to load protections')}</p>`;
   }
 }
 
@@ -4714,7 +4714,7 @@ async function liftProtection(id) {
 async function loadPrinciples() {
   const el = document.getElementById('principles-content');
   if (!el) return;
-  el.innerHTML = '<p class="loading">Loading learned principles…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading learned principles…</p>';
   try {
     const r = await api('/api/recommendations/principles');
     const rows = r.principles || [];
@@ -4763,7 +4763,7 @@ async function loadPrinciples() {
       </div>`;
     }).join('');
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load principles')}</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Failed to load principles')}</p>`;
   }
 }
 
@@ -4830,7 +4830,7 @@ async function condensePrinciples() {
   if (!confirm('Let the curator consolidate near-duplicate active rules?\n' +
                'Merged originals are kept as an audit trail (status "merged").')) return;
   const el = document.getElementById('principles-content');
-  if (el) el.innerHTML = '<p class="loading">Curator is reviewing the rule set… (one model call per category)</p>';
+  if (el) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Curator is reviewing the rule set… (one model call per category)</p>';
   try {
     const r = await api('/api/recommendations/principles/condense', 'POST');
     const merges = r.merged || [];
@@ -4854,7 +4854,7 @@ function _arrLabel(category) {
 async function loadDownscale() {
   const el = document.getElementById('downscale-content');
   if (!el) return;
-  el.innerHTML = '<p class="loading">Loading downscale candidates…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading downscale candidates…</p>';
   try {
     const r = await api('/api/recommendations/downscale');
     const rows = r.candidates || [];
@@ -4881,14 +4881,14 @@ async function loadDownscale() {
       </div>`;
     }).join('');
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load downscale candidates')}</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Failed to load downscale candidates')}</p>`;
   }
 }
 
 async function loadUpgrades() {
   const el = document.getElementById('upgrade-content');
   if (!el) return;
-  el.innerHTML = '<p class="loading">Scanning for loved-but-lean titles…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning for loved-but-lean titles…</p>';
   try {
     const r = await api('/api/recommendations/upgrade-candidates');
     const rows = r.candidates || [];
@@ -4906,14 +4906,14 @@ async function loadUpgrades() {
         <div class="panel-item-sub">Why it qualifies: ${esc(p.love_reason || '')}</div>
       </div>`).join('');
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load upgrade candidates')}</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Failed to load upgrade candidates')}</p>`;
   }
 }
 
 async function loadRedundancy() {
   const el = document.getElementById('redundancy-content');
   if (!el) return;
-  el.innerHTML = '<p class="loading">Auditing redundant storage…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Auditing redundant storage…</p>';
   try {
     const r = await api('/api/recommendations/redundancy');
     const intra = r.intra_item || [];
@@ -4967,7 +4967,7 @@ async function loadRedundancy() {
       (cross.length ? `<div style="font-size:12px;color:var(--text3);margin:12px 0 6px">Same title as separate items (${r.cross_redundant_gb} GB)</div>` +
         cross.map(crossCard).join('') : '');
   } catch(e) {
-    el.innerHTML = `<p class="loading">${esc(e.message || 'Failed to load redundancy audit')}</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Failed to load redundancy audit')}</p>`;
   }
 }
 
@@ -4999,14 +4999,14 @@ async function loadDeletions(category=null, btn=null, refresh=false) {
   // of opening a parallel DB read that returns the pre-commit snapshot.
   if (!refresh && _delAnalysePromise) {
     const elapsed = Math.round((Date.now() - _delAnalyseStartedAt) / 1000);
-    el.innerHTML = `<p class="loading">Analysis still running (${elapsed}s)… auto-refreshing when it's done.</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">Analysis still running (${elapsed}s)… auto-refreshing when it's done.</p>`;
     try {
       const r = await _delAnalysePromise;
       _renderEnrichmentCoverageBanner(r.enrichment_coverage);
       if (!category && !recentActive && r.proposals) _delProposalsAll = r.proposals;
       _renderDeletionProposals(r.proposals || []);
     } catch(e) {
-      el.innerHTML = `<p class="loading">${esc(e.message || 'Analyse failed')}</p>`;
+      el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Analyse failed')}</p>`;
     }
     return;
   }
@@ -5029,7 +5029,7 @@ async function loadDeletions(category=null, btn=null, refresh=false) {
   // that slice — drop it so the next tab switch re-fetches correctly.
   if (refresh && category) _delProposalsAll = null;
 
-  el.innerHTML = '<p class="loading">' + (refresh ? 'Analysing library with AI…' : 'Loading cached proposals…') + '</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">' + (refresh ? 'Analysing library with AI…' : 'Loading cached proposals…') + '</p>';
   try {
     const url = `/api/recommendations/deletions?refresh=${refresh}`
               + (category ? `&category=${category}` : '')
@@ -5058,7 +5058,7 @@ async function loadDeletions(category=null, btn=null, refresh=false) {
       }
     }
 
-    if (r.message && !r.proposals?.length) { el.innerHTML = `<p class="loading">${esc(r.message)}</p>`; return; }
+    if (r.message && !r.proposals?.length) { el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(r.message)}</p>`; return; }
 
     // Show enrichment coverage banner when data quality is low
     _renderEnrichmentCoverageBanner(r.enrichment_coverage);
@@ -5742,11 +5742,11 @@ async function loadProfiles(offset=0) {
   const src    = document.getElementById('profile-source')?.value || 'all';
   const search = document.getElementById('profile-search')?.value || '';
   const el = document.getElementById('profile-browser');
-  el.innerHTML = '<p class="loading">Loading profiles…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading profiles…</p>';
   try {
     const r = await api(`/api/enrichment/profiles?category=${cat}&source=${src}&limit=8&offset=${offset}&search=${encodeURIComponent(search)}`);
     if (!r.profiles?.length) {
-      el.innerHTML = '<p class="loading">No enriched profiles found. Run enrichment first.</p>';
+      el.innerHTML = '<p class="loading" role="status" aria-live="polite">No enriched profiles found. Run enrichment first.</p>';
       return;
     }
     el.innerHTML = `
@@ -6163,7 +6163,7 @@ async function startEnrichNew() {
   const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
   const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
   const el = document.getElementById('enrich-progress-area');
-  el.innerHTML = '<p class="loading">Starting enrichment…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Starting enrichment…</p>';
   try {
     const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src});
     el.innerHTML = `<p style="color:var(--success);font-size:13px">Enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}</p>`;
@@ -6180,7 +6180,7 @@ async function startEnrichForce(btn) {
   if (!confirm(`Force re-enrich ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}?\n\nThis clears all existing profiles and re-processes from scratch. Use after changing the AI model or enrichment prompts.`)) return;
 
   const el = document.getElementById('enrich-progress-area');
-  el.innerHTML = '<p class="loading" style="color:var(--amber)">Clearing cache and starting force re-enrichment…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite" style="color:var(--amber)">Clearing cache and starting force re-enrichment…</p>';
   if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
   try {
     const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
@@ -6205,7 +6205,7 @@ async function computeTaste() {
   // movie/show/anime backlog without touching the music vectors.
   const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
   const label = cats.length ? cats.map(c => CAT_LABELS[c] || c).join(', ') : 'all categories';
-  el.innerHTML = `<p class="loading">Computing taste vectors for ${esc(label)}…</p>`;
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">Computing taste vectors for ${esc(label)}…</p>`;
   try {
     const qs = cats.map(c => `categories=${encodeURIComponent(c)}`).join('&');
     const url = qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste';
@@ -6223,7 +6223,7 @@ async function computeTaste() {
 async function auditRequeueEnrichments(btn) {
   const el = document.getElementById('enrich-progress-area');
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
-  el.innerHTML = '<p class="loading">Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
 
   const _reasonLabel = {
     zero_rating: 'missing/zero rating', not_found: 'not found in any API', malformed: 'corrupt cache entry',
@@ -6257,7 +6257,7 @@ async function auditRequeueEnrichments(btn) {
     }
 
     // Step 2 — real requeue.
-    el.innerHTML = '<p class="loading">Requeuing incomplete profiles…</p>';
+    el.innerHTML = '<p class="loading" role="status" aria-live="polite">Requeuing incomplete profiles…</p>';
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
     el.innerHTML =
       `<p style="color:var(--success);font-size:13px">Requeued ${r.requeued} ` +
@@ -6359,7 +6359,7 @@ function _renderLibraryConfig([cfg, disc]) {
 
 async function loadLibraryConfig() {
   const el=document.getElementById('lib-config-content');
-  if (!_swrCache.has('libraries')) el.innerHTML='<p class="loading">Fetching library info from Plex…</p>';
+  if (!_swrCache.has('libraries')) el.innerHTML='<p class="loading" role="status" aria-live="polite">Fetching library info from Plex…</p>';
   try {
     await _swrRun('libraries', () => Promise.all([
       api('/api/libraries/config'),
@@ -6381,7 +6381,7 @@ async function saveLibraries() {
 // ── ORPHAN REPAIR ─────────────────────────────────────────────────────────────
 async function checkOrphans() {
   const el = document.getElementById('orphan-content');
-  el.innerHTML = '<p class="loading">Scanning Plex history for orphaned entries…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning Plex history for orphaned entries…</p>';
   try {
     const r = await api('/api/libraries/orphaned');
     if (!r.has_orphans) {
@@ -6427,7 +6427,7 @@ async function applyOrphanRepair(sections) {
     plex_type: Object.keys(s.plex_types)[0] === 'track' ? 'artist' : 'show',
     category: document.getElementById(`orphan-cat-${s.section_id}`)?.value || s.suggested_category,
   }));
-  el.innerHTML = '<p class="loading">Importing entries… this may take a moment.</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Importing entries… this may take a moment.</p>';
   try {
     const r = await api('/api/libraries/repair-orphans', 'POST', {mappings});
     el.innerHTML = `<p style="color:var(--success);font-size:13px">
@@ -6529,7 +6529,7 @@ async function startTaskStream() {
     // After 3 retries, likely an auth issue — show message and stop retrying
     if (taskStreamRetries >= 3) {
       const el = document.getElementById('tasks-list');
-      if (el) el.innerHTML = `<p class="loading" style="color:var(--danger)">
+      if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite" style="color:var(--danger)">
         ${SVG_WARN} Task stream disconnected —
         <a href="#" onclick="location.reload();return false;" aria-label="Reload page to reconnect" style="color:var(--amber)">reload page</a>
         to reconnect.
@@ -6574,7 +6574,7 @@ function renderTasks(tasks) {
   const el = document.getElementById('tasks-list');
   if (!el) return;
   if (!tasks?.length) {
-    el.innerHTML = '<p class="loading">No tasks yet. Actions like Sync and Enrichment will appear here.</p>';
+    el.innerHTML = '<p class="loading" role="status" aria-live="polite">No tasks yet. Actions like Sync and Enrichment will appear here.</p>';
     return;
   }
 
