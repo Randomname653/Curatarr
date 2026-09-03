@@ -113,8 +113,8 @@ def is_game_running() -> bool:
         try:
             with get_db_session() as db:
                 games = {
-                    row.process_name.lower()
-                    for row in db.query(GameProcess)
+                    process_name.lower()
+                    for (process_name,) in db.query(GameProcess.process_name)
                     .filter(GameProcess.is_game == True)
                     .all()
                 }
@@ -222,8 +222,8 @@ def get_unknown_processes() -> list[dict]:
     try:
         with get_db_session() as db:
             classified = {
-                row.process_name.lower()
-                for row in db.query(GameProcess).all()
+                process_name.lower()
+                for (process_name,) in db.query(GameProcess.process_name).all()
             }
     except Exception:
         classified = set()
