@@ -16,6 +16,10 @@
      leaked our IP + User-Agent + a Referer hint to jsDelivr on every
      page load and broke the README's "works fully offline" promise. -->
 <script src="/vendor/marked.min.js"></script>
+<!-- DOMPurify: marked passes raw HTML through by design, and the chat sink
+     renders LLM output via innerHTML. The curator echoes text from TMDB/
+     Wikipedia metadata, so every parse goes through sanitize() first. -->
+<script src="/vendor/purify.min.js"></script>
 <style>
 /* ══ DESIGN LANGUAGE ══════════════════════════════════════════════════════════
    One visual grammar across every view. When adding/altering UI, follow these
@@ -3459,8 +3463,10 @@ async function sendMessage() {
               firstTokenSeen = true;
             }
             fullResponseText += data.token;
-            // marked.parse wandelt den String in HTML um, innerHTML rendert es
-            thinking.innerHTML = marked.parse(fullResponseText);
+            // marked.parse wandelt den String in HTML um, innerHTML rendert es.
+            // DOMPurify dazwischen, weil marked rohes HTML durchreicht und der
+            // Modell-Output Metadaten-Text aus fremden Quellen zitieren kann.
+            thinking.innerHTML = DOMPurify.sanitize(marked.parse(fullResponseText));
           }
           if (data.done) {
             // Stream ended without any tokens (unusual — empty response).
