@@ -41,7 +41,7 @@ language the user answers in, as always.
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -59,6 +59,32 @@ STARTER_TTL_HOURS = 48
 MAX_IMPRESSIONS = 12
 POOL_TARGET = 8          # generation tops the pool up to about this many
 FORMS = ("question", "observation", "challenge", "callback", "tonight_pick")
+
+# A weekday name anchors an opener to one calendar day: "It is Wednesday
+# evening" surfacing on Thursday reads like a broken clock. So a day-named
+# starter expires at local midnight instead of the 48h TTL, and pick time
+# retires any survivor whose day no longer matches (covers old pool rows).
+# \b keeps habitual plurals ("on Sundays") out — those are day-agnostic.
+_DAY_RE = re.compile(r"\b(monday|tuesday|wednesday|thursday|friday|saturday"
+                     r"|sunday|montag|dienstag|mittwoch|donnerstag|freitag"
+                     r"|samstag|sonntag)\b", re.IGNORECASE)
+_DAY_NAMES = {0: ("monday", "montag"), 1: ("tuesday", "dienstag"),
+              2: ("wednesday", "mittwoch"), 3: ("thursday", "donnerstag"),
+              4: ("friday", "freitag"), 5: ("saturday", "samstag"),
+              6: ("sunday", "sonntag")}
+
+
+def _named_day(text: str) -> Optional[str]:
+    m = _DAY_RE.search(text or "")
+    return m.group(1).lower() if m else None
+
+
+def _end_of_local_day_utc() -> datetime:
+    """Next local midnight, in the naive-UTC terms the pool compares with."""
+    local = datetime.now().astimezone()
+    nxt = (local + timedelta(days=1)).replace(hour=0, minute=0,
+                                              second=0, microsecond=0)
+    return nxt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def current_daypart(now: Optional[datetime] = None) -> str:
@@ -162,7 +188,9 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                 facts.append({"kind": "music_rotation", "artist": top,
                               "plays_14d": plays})
 
-    facts.append({"kind": "now", "weekday": now.strftime("%A"),
+    # Wall clock, not the UTC `now` of the query windows: between local
+    # midnight and 2am the UTC weekday is still yesterday's.
+    facts.append({"kind": "now", "weekday": datetime.now().strftime("%A"),
                   "daypart": current_daypart()})
     return facts
 
@@ -209,6 +237,7 @@ Rules:
 - "daypart": morning|day|evening|night|any — when this opener fits best
   (a tonight-pick is evening; most others are any).
 - No two openers may open with the same words.
+- Name today's weekday only when it genuinely matters — such openers are shown today only.
 
 Return ONLY the JSON array."""
 
@@ -283,6 +312,9 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             continue                          # the model repeats openings
         if daypart not in ("morning", "day", "evening", "night", "any"):
             daypart = "any"
+        day = _named_day(text)
+        if day is not None and day not in _DAY_NAMES[datetime.now().weekday()]:
+            continue                          # names a day that isn't today
         anchor = (c.get("anchor_title") or "").strip() or None
         anchor_mt = (c.get("anchor_media_type") or "").strip() or None
         if anchor_mt not in (None, "movie", "show", "anime", "music"):
@@ -294,7 +326,8 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             fact_used=fact[:200], created_at=now,
             anchor_title=anchor[:512] if anchor else None,
             anchor_media_type=anchor_mt,
-            expires_at=now + timedelta(hours=STARTER_TTL_HOURS),
+            expires_at=(_end_of_local_day_utc() if day
+                        else now + timedelta(hours=STARTER_TTL_HOURS)),
         ))
 
     if accepted:
@@ -335,6 +368,17 @@ def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
                 .order_by(ChatStarter.impressions.asc(),
                           ChatStarter.created_at.desc())
                 .limit(limit * 4).all())
+        # Day-named rows from before the midnight-expiry rule (or from a
+        # DST edge) get retired here instead of shown a day late.
+        today = _DAY_NAMES[datetime.now().weekday()]
+        alive = []
+        for row in pool:
+            d = _named_day(row.text)
+            if d is not None and d not in today:
+                row.expires_at = now           # frees the slot for a refill
+            else:
+                alive.append(row)
+        pool = alive
         picked, forms_used = [], set()
         for row in pool:                       # unique forms first…
             if row.form not in forms_used:

@@ -145,6 +145,77 @@ def test_an_unparseable_batch_inserts_nothing():
         cs.collect_facts = orig_facts
 
 
+# ── weekday guard: day-named openers die with their day ────────────────────
+
+def test_day_naming_detection_spares_habitual_plurals():
+    assert cs._named_day("It is Wednesday evening. Let me pick.") == "wednesday"
+    assert cs._named_day("Mittwoch also. Zeit fuer was Dichtes.") == "mittwoch"
+    assert cs._named_day("You only ever binge on sundays, admit it.") is None
+    assert cs._named_day("No day mentioned here at all.") is None
+
+
+def test_end_of_local_day_lies_within_the_next_24_utc_hours():
+    e = cs._end_of_local_day_utc()
+    now = dt.datetime.utcnow()
+    assert now < e <= now + dt.timedelta(hours=24, minutes=1)
+
+
+def test_the_gate_scopes_day_named_openers_to_their_day():
+    import json as _json
+    today_en = cs._DAY_NAMES[dt.datetime.now().weekday()][0]
+    wrong = next(names[0] for wd, names in cs._DAY_NAMES.items()
+                 if wd != dt.datetime.now().weekday())
+    batch = [
+        {"text": f"It is {today_en.capitalize()} evening. Time for something dense.",
+         "form": "tonight_pick", "daypart": "evening", "fact": "now"},
+        # names a day that is NOT today — hallucinated, must be dropped
+        {"text": f"A {wrong.capitalize()} classic: defend your comfort rewatch.",
+         "form": "challenge", "daypart": "any", "fact": "rewatch pattern"},
+        {"text": "Two stalled shows and a full watchlist. Pick a lane.",
+         "form": "observation", "daypart": "any", "fact": "stalled_series"},
+    ]
+    _FakeClient.payload = _json.dumps(batch)
+    _FakeSession.added = []
+    orig_client, orig_session = cs.httpx.AsyncClient, cs.get_db_session
+    orig_facts = cs.collect_facts
+    cs.httpx.AsyncClient = _FakeClient
+    cs.get_db_session = lambda: _FakeSession(rows=[])
+    cs.collect_facts = lambda uid, now=None: [
+        {"kind": "stalled_series", "title": "X"},
+        {"kind": "now", "weekday": today_en.capitalize(), "daypart": "evening"}]
+    try:
+        inserted = asyncio.run(cs.generate_starters(1))
+    finally:
+        cs.httpx.AsyncClient = orig_client
+        cs.get_db_session = orig_session
+        cs.collect_facts = orig_facts
+
+    texts = [r.text for r in _FakeSession.added]
+    assert inserted == 2, texts
+    assert not any(wrong in t.lower() for t in texts)
+    by_day = {cs._named_day(r.text): r for r in _FakeSession.added}
+    # day-named → local midnight, strictly sooner than the 48h default
+    assert by_day[today_en].expires_at < dt.datetime.utcnow() + dt.timedelta(hours=25)
+    assert by_day[None].expires_at > dt.datetime.utcnow() + dt.timedelta(hours=47)
+
+
+def test_pick_retires_day_mismatched_leftovers():
+    wrong = next(names[0] for wd, names in cs._DAY_NAMES.items()
+                 if wd != dt.datetime.now().weekday())
+    stale = cs.ChatStarter(id=1, user_id=1, form="tonight_pick", daypart="any",
+                           impressions=0, text=f"It is {wrong.capitalize()} evening.")
+    fresh = cs.ChatStarter(id=2, user_id=1, form="challenge", daypart="any",
+                           impressions=0, text="Pick a lane tonight.")
+    orig_session = cs.get_db_session
+    cs.get_db_session = lambda: _FakeSession(rows=[stale, fresh])
+    try:
+        picked = cs.pick_starters(1, limit=3)
+    finally:
+        cs.get_db_session = orig_session
+    assert [p["id"] for p in picked] == [2]
+    assert stale.expires_at is not None, "must be hard-retired, not just skipped"
+
+
 # ── decay is wired, on both pools ──────────────────────────────────────────
 
 def test_selection_decays_and_respects_the_daypart():
