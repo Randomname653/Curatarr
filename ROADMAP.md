@@ -16,9 +16,19 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
 - **Wikidata awards** — structured Oscars/Grammys/BAFTA data via SPARQL and
   IMDb/TMDB id mapping, hardening the significance pillar with facts
   instead of prose distillation.
-- **ListenBrainz** (music listener stats, MBID-aligned) and parsing the
-  MusicBrainz relationship edges we already fetch (cover-of / live-of /
-  part-of).
+- **ListenBrainz global popularity** — DONE 2026-09: release-group
+  listen/listener counts (MBID-aligned; needs a free account token in
+  `LISTENBRAINZ_TOKEN` — LB auth-locked these endpoints against scrapers)
+  as deletion-debate and album-dossier evidence, plus derivative-release
+  composition
+  (Live/Compilation/Remix share of on-disk GB) from Lidarr's mirrored
+  MusicBrainz `secondaryTypes`. True MB relationship edges
+  (cover-of/part-of via recording-rels/work-rels) are de-scoped: the old
+  wording claimed we "already fetch" them, but the code never did — only
+  `url-rels` for the Deezer bridge. Resolving them would serialize
+  per-recording/work calls through the global 1.1 s MusicBrainz gate, and
+  release-group MBIDs (Lidarr `foreignAlbumId`) are captured nowhere.
+  Revisit as its own item if album-MBID capture ever lands.
 
 **Search stage 2 — LLM facets**
 - Extend the enrichment schema with three targeted facet texts

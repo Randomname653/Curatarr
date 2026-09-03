@@ -9,14 +9,17 @@ appeared as bare names inside debates (the Bomber discussion argued
   Type        Lidarr albumType + secondaryTypes (Compilation/Live/Remix —
               the "definitive version" signal), release year, monitored
   Stock       trackFileCount/trackCount + sizeOnDisk
-  Community   Last.fm album.getInfo listeners/playcount + tags
+  Community   Last.fm album.getInfo listeners/playcount + tags, plus the
+              album's ListenBrainz rank within the artist's own catalogue
+              by global listens (one keyless call, 30 d-cached per artist)
   Owner       the album's TRACKS matched against the listening history:
               "4/12 tracks played, 17 plays — top: Sax (13)" (the probe
               case: 2,284 artist plays but barely THIS album)
   Styles      per-work Discogs styles from the offline snapshot, if any
 
-Two LAN calls + one Last.fm call per dossier; used on demand when a chat
-or discussion names an album of the active artist.
+Two LAN calls + one Last.fm call + one ListenBrainz call per dossier;
+used on demand when a chat or discussion names an album of the active
+artist.
 """
 from __future__ import annotations
 
@@ -44,7 +47,10 @@ async def _lidarr_artist_albums(artist_name: str) -> tuple[Optional[dict], list]
     if not base or not key:
         return None, []
     try:
-        async with httpx.AsyncClient(timeout=20) as c:
+        # 60 s, not 20: the full /artist payload is 15-30 MB (see the
+        # ARCHITECTURE "ARR collect needs >=60s" invariant) — a cold Lidarr
+        # takes >20 s and the dossier silently vanished.
+        async with httpx.AsyncClient(timeout=60) as c:
             artists = (await c.get(f"{base}/api/v1/artist",
                                    params={"apikey": key})).json()
             want = _norm(artist_name)
@@ -147,6 +153,52 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
                 lines.append(line)
         except Exception as e:
             logger.debug("[album] lastfm failed: %s", e)
+
+    # ListenBrainz: rank THIS album inside the artist's own catalogue by
+    # global listens. Resolved independently of the judge's raw:music:*
+    # doc (the dossier doesn't route through it); fetch_artist_popularity's
+    # own 30 d cache keeps repeat dossiers to one network call per artist.
+    mbid = artist.get("foreignArtistId")
+    if not mbid:
+        try:
+            from src.cache.metadata_cache import MetadataCache
+            _c = MetadataCache()
+            _hit = _c.get_cache(
+                f"mb:artist:{(artist.get('artistName') or '')[:60].lower()}")
+            _c.close()
+            if _hit and isinstance(_hit.get("response"), dict):
+                mbid = _hit["response"].get("mbid")
+        except Exception as e:
+            logger.debug("[album] mb:artist fallback failed: %s", e)
+    if mbid:
+        try:
+            from src.services.listenbrainz import (fetch_artist_popularity,
+                                                   norm_album_title)
+            lb = await fetch_artist_popularity(mbid)
+            if lb is None:
+                pass  # transient — silent, like every other absent-data line
+            elif not lb:
+                # definitive: LB tracks nothing for this artist — distinct
+                # from "merely obscure" (below the digest cap) on purpose
+                lines.append("Community (ListenBrainz): artist has no "
+                             "release groups tracked")
+            else:
+                want = norm_album_title(alb.get("title"))
+                pool = lb.get("albums") or []
+                idx = next((i for i, a in enumerate(pool)
+                            if a.get("norm_name") == want), None)
+                if idx is not None:
+                    a = pool[idx]
+                    lines.append(
+                        f"Community (ListenBrainz): #{idx + 1} of "
+                        f"{lb['n_release_groups']} releases by global listens "
+                        f"— {a['listens']:,} listens, {a['listeners']:,} listeners")
+                else:
+                    lines.append(
+                        f"Community (ListenBrainz): outside the top {len(pool)} "
+                        f"of {lb['n_release_groups']} releases by global listens")
+        except Exception as e:
+            logger.debug("[album] listenbrainz rank failed: %s", e)
 
     # per-work Discogs styles from the offline snapshot
     try:

@@ -141,9 +141,13 @@ def _watch_filters(item: dict, category: str):
             from src.services.watch_status import _artist_variants
             title_conds.append(
                 func.lower(WatchHistoryEntry.series_title).in_(_artist_variants(title)))
-    if category == "music" and (item.get("artist_mbid") or item.get("mbid")):
-        title_conds.append(WatchHistoryEntry.artist_mbid ==
-                           (item.get("artist_mbid") or item.get("mbid")))
+    # Lidarr deletion candidates carry the artist MBID as "musicbrainz_id"
+    # (recommendations._fetch_arr_candidates) — the old artist_mbid/mbid-only
+    # lookup was always None on the automated scan path.
+    _mbid = (item.get("musicbrainz_id") or item.get("artist_mbid")
+             or item.get("mbid"))
+    if category == "music" and _mbid:
+        title_conds.append(WatchHistoryEntry.artist_mbid == _mbid)
     if tmdb_id:
         title_conds.append(WatchHistoryEntry.tmdb_id == tmdb_id)
     if not title_conds:
@@ -337,7 +341,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             from src.services.watch_status import (music_listening_stats,
                                                    format_listening_line)
             ls = music_listening_stats(
-                user_id, title, item.get("artist_mbid") or item.get("mbid"))
+                user_id, title, item.get("musicbrainz_id")
+                or item.get("artist_mbid") or item.get("mbid"))
             owner_line = format_listening_line(ls)
             flags["owner_watched"] = bool(ls)
         except Exception as e:
@@ -345,7 +350,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         try:
             from src.services.lidarr_discography import discography_summary
             disc = await discography_summary(
-                artist_mbid=item.get("artist_mbid") or item.get("mbid"),
+                artist_mbid=item.get("musicbrainz_id")
+                or item.get("artist_mbid") or item.get("mbid"),
                 artist_name=title)
             if disc:
                 owner_line += f" Discography {disc}."
@@ -387,6 +393,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             anilist_id=item.get("anilist_id"), anidb_id=item.get("anidb_id"),
             plex_rating_key=item.get("plex_rating_key"),
             year=item.get("year"),
+            artist_mbid=(item.get("musicbrainz_id") or item.get("artist_mbid")
+                         or item.get("mbid")) if category == "music" else None,
             allow_summarizer=False,
         )
         # Does the profile we just loaded actually BELONG to this title? The

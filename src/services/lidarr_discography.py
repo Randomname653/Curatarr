@@ -34,7 +34,10 @@ async def discography_summary(artist_mbid: str = None,
     if not base or not key or not (artist_mbid or artist_name):
         return None
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        # 60 s, not 15: the full /artist payload is 15-30 MB (ARCHITECTURE
+        # "ARR collect needs >=60s") — cold Lidarr silently cost the judge
+        # this evidence line.
+        async with httpx.AsyncClient(timeout=60) as client:
             r = await client.get(f"{base}/api/v1/artist", params={"apikey": key})
             if r.status_code != 200:
                 return None
@@ -62,12 +65,24 @@ async def discography_summary(artist_mbid: str = None,
     on_disk = Counter()
     ghosts = 0            # monitored releases with zero files on disk
     size_gb = 0.0
+    # Derivative composition: Lidarr mirrors MusicBrainz secondaryTypes
+    # (Live/Compilation/Remix/Soundtrack…) per release — a discography
+    # that is mostly re-issues is a deletion signal the judge never saw.
+    secondary = Counter()
+    secondary_gb = 0.0
     for al in albums:
         st = al.get("statistics") or {}
         files = st.get("trackFileCount") or 0
         if files:
             on_disk[al.get("albumType") or "Release"] += 1
-            size_gb += (st.get("sizeOnDisk") or 0) / 1e9
+            gb = (st.get("sizeOnDisk") or 0) / 1e9
+            size_gb += gb
+            secs = [s for s in (al.get("secondaryTypes") or []) if s]
+            if secs:
+                # one album counts its GB ONCE, even when dual-tagged
+                secondary_gb += gb
+                for s in secs:
+                    secondary[s] += 1
         elif al.get("monitored"):
             ghosts += 1
     if not on_disk and not ghosts:
@@ -78,4 +93,9 @@ async def discography_summary(artist_mbid: str = None,
             f" ({size_gb:.1f} GB)")
     if ghosts:
         line += f"; {ghosts} monitored release(s) with NO files"
+    if secondary:
+        parts2 = [f"{n} {t.lower()}" for t, n in secondary.most_common()]
+        pct = (secondary_gb / size_gb * 100) if size_gb else 0
+        line += (f"; derivative re-issues: {' + '.join(parts2)} = "
+                 f"{secondary_gb:.1f} GB ({pct:.0f}% of artist total)")
     return line

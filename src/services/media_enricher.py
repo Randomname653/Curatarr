@@ -384,6 +384,11 @@ def build_verified_data(
             "listeners":       raw.get("listeners"),
             "artist_type":     raw.get("type") if raw.get("media_type") == "music" else None,
             "similar_artists": raw.get("similar_artists"),
+            # ListenBrainz global popularity digest (music only, own field —
+            # never merged into the Last.fm listeners count); lb_checked
+            # stops the just-in-time top-up re-querying.
+            "lb_popularity":   raw.get("lb_popularity") if raw.get("media_type") == "music" else None,
+            "lb_checked":      bool(raw.get("lb_checked")),
         }
     finally:
         if owns:
@@ -507,6 +512,15 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             add("Community", f"{int(data['listeners']):,} Last.fm listeners")
         except (TypeError, ValueError):
             add("Community", data.get("listeners"))
+    lb = data.get("lb_popularity")
+    if isinstance(lb, dict) and lb.get("total_listens"):
+        _lb_line = (f"{lb['total_listens']:,} catalogue listens across "
+                    f"{lb.get('n_release_groups', 0)} release groups")
+        _lb_top = (lb.get("albums") or [None])[0]
+        if _lb_top and _lb_top.get("name"):
+            _lb_line += (f"; top album '{_lb_top['name']}' "
+                         f"{_lb_top.get('listeners', 0):,} listeners")
+        add("Global listening (ListenBrainz)", _lb_line)
     sim = data.get("similar_artists")
     add("Similar artists", sim[:8] if isinstance(sim, list) else sim)
     add("Bio", data.get("bio"), cap=650)
@@ -1139,6 +1153,7 @@ async def ensure_verified_data(
     tmdb_id=None, tvdb_id=None, anilist_id=None, anidb_id=None,
     plex_rating_key=None,
     year: Optional[int] = None,
+    artist_mbid: Optional[str] = None,
     cache=None,
     allow_summarizer: bool = True,
 ) -> Optional[dict]:
@@ -1300,6 +1315,28 @@ async def ensure_verified_data(
                 )
         except Exception as e:
             logger.debug("[verified] franchise top-up failed for %r: %s", title, e)
+
+    # ListenBrainz global popularity (music only) — raw API top-up, no LLM,
+    # so like the OMDb block below it is NOT allow_summarizer-gated: the
+    # judge funnel (allow_summarizer=False) still gets it. Idempotent via
+    # lb_checked. MUST sit before the OMDb block — that one early-returns
+    # on missing imdb_id, which is every music item.
+    if data and media_type == "music" and not data.get("lb_checked"):
+        try:
+            from src.services.listenbrainz import topup_listenbrainz
+            if await asyncio.wait_for(topup_listenbrainz(
+                title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                anilist_id=anilist_id, anidb_id=anidb_id,
+                plex_rating_key=plex_rating_key, artist_mbid=artist_mbid,
+                cache=cache,
+            ), timeout=15.0):
+                data = build_verified_data(
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
+                    plex_rating_key=plex_rating_key, cache=cache,
+                )
+        except Exception as e:
+            logger.debug("[verified] listenbrainz top-up failed for %r: %s", title, e)
 
     # Fully OMDb-checked (incl. the ratings era), has the fields, or no
     # imdb_id → done. Docs checked before the full-harvest fix (writer/awards

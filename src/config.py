@@ -168,6 +168,10 @@ class Settings(BaseSettings):
     SOULSYNC_API_KEY: Optional[str] = None       # sk_… from SoulSync settings
     # AniList: no key needed (public GraphQL)
     # MusicBrainz: no key needed
+    # ListenBrainz global popularity (music evidence). A free account token
+    # is REQUIRED — LB locked these endpoints behind auth after AI-scraper
+    # abuse ("you need to provide an Auth token"). listenbrainz.org/settings.
+    LISTENBRAINZ_TOKEN: Optional[str] = None
 
     # ── Sync ─────────────────────────────────────────────────────────────────
     SYNC_ON_STARTUP: bool = True
