@@ -8,11 +8,16 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
 ## Now (in progress / upcoming)
 
 **Reception & archive pillars at full strength**
-- **Trakt integration** — community ratings, votes, watched/trending stats
-  for movies + shows via the free API. Closes the reception gap the
-  per-title walkers would need months for (movies were at 45/6304 checked
-  when a David Fincher film got pitched for deletion with zero reception
-  on file).
+- **Vote mass in the judge** — DONE 2026-09, replacing the Trakt idea
+  (Trakt's API went premium-only, de-scoped). The engagement stats Trakt
+  would have sold us were already in our own payloads: TMDB `vote_count`
+  and OMDb `imdbVotes` were harvested since forever but never surfaced to
+  the judge — `Rating: 7.4/10` read identically at 51 and at 500,000
+  votes. The verified block now renders `Rating: 7.4/10 (24,193 votes)`.
+  Reception PROSE for movies/shows still fills in via the per-title
+  walkers (movies were at 45/6304 checked when a David Fincher film got
+  pitched with zero reception on file) — the mass is just no longer
+  waiting on them.
 - **Wikidata awards** — structured Oscars/Grammys/BAFTA data via SPARQL and
   IMDb/TMDB id mapping, hardening the significance pillar with facts
   instead of prose distillation.

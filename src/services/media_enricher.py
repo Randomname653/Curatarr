@@ -340,6 +340,10 @@ def build_verified_data(
             "source_kind":    raw.get("source_kind"),
             "cast":           pick(enriched.get("cast_top3"), raw.get("cast")),
             "rating":         pick(enriched.get("rating"), raw.get("rating")),
+            # Vote MASS next to the score: harvested from TMDB vote_count /
+            # OMDb imdbVotes since forever, but it never reached the judge —
+            # 7.4/10 read identically at 50 votes and at 500k.
+            "vote_count":     pick(raw.get("vote_count"), enriched.get("vote_count")),
             "country":        raw.get("country"),
             "seasons":        raw.get("seasons"),
             "episodes_total": raw.get("episodes_total"),
@@ -494,7 +498,15 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     # older") — that rendered as "PG-13 - Teens 13 or older/10". Only format
     # numeric scores as N/10.
     try:
-        add("Rating", f"{float(data.get('rating')):g}/10")
+        _score = f"{float(data.get('rating')):g}/10"
+        # Consensus mass turns the score into evidence: 7.4 from 24,193
+        # votes and 7.4 from 51 votes are different facts.
+        try:
+            _votes = int(data.get("vote_count"))
+            _score += f" ({_votes:,} votes)" if _votes > 0 else ""
+        except (TypeError, ValueError):
+            pass
+        add("Rating", _score)
     except (TypeError, ValueError):
         add("Content rating", data.get("rating"))
     critics = []
