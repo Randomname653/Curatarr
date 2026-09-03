@@ -22,10 +22,9 @@ import os
 import sys
 import argparse
 import json
-import re
 from pathlib import Path
 import openai
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 import logging
 import time
 from pydantic import BaseModel, Field
@@ -64,7 +63,9 @@ class ScanError(Exception):
 class Vulnerability(BaseModel):
     vulnerability_type: str = Field(description="Type of vulnerability")
     description: str = Field(description="Brief description")
-    severity: str = Field(description="Severity level (Critical, High, Medium, Low, Info)")
+    # Literal → JSON-schema enum: the API enforces the five levels, so the
+    # workflow's severity filter can never miss on a creative spelling.
+    severity: Literal["Critical", "High", "Medium", "Low", "Info"] = Field(description="Severity level")
     line_numbers: List[int] = Field(description="Line numbers where the issue occurs")
     impact: str = Field(description="Potential impact")
     recommendation: str = Field(description="Recommended fix")
@@ -167,8 +168,9 @@ Focus on injection, auth/authz, data validation, crypto flaws, secrets, insecure
 
     def _analyze_with_openai(self, prompt: str) -> List[Dict[str, Any]]:
         try:
-            # Use Structured Outputs (beta.chat.completions.parse) to guarantee schema adherence without JSON prompt engineering
-            response = self.client.beta.chat.completions.parse(
+            # Structured Outputs guarantee schema adherence without JSON
+            # prompt engineering. GA path — the beta.* alias is deprecated.
+            response = self.client.chat.completions.parse(
                 model=self.model,
                 messages=[
                     {"role": "user", "content": prompt},
