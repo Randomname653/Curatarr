@@ -22,25 +22,24 @@ curatarr/
 │   ├── main.py                FastAPI app + lifespan
 │   ├── config.py              Settings (env + defaults)
 │   ├── middleware.py          Security response headers (pure ASGI)
-│   ├── routers/               HTTP surface — auth, chat, history, library,
-│   │                          enrichment, recommendations, music, tasks,
-│   │                          setup, users, process_monitor
-│   ├── services/              Business logic — plex_sync, media_enricher,
-│   │                          music_matcher, taste_engine,
-│   │                          recommendations_engine, pillars,
-│   │                          semantic_search, facet_index,
-│   │                          episodic_memory, proactive_messages,
-│   │                          data_custodian, corpus_repair, scheduler,
-│   │                          llm_priority, stale_guard, embed_service
+│   ├── log_setup.py           Logging bootstrap (file always, console if tty)
+│   ├── paths.py               ROOT/DATA_DIR anchoring, CWD-independent
+│   ├── tray_app.py            Windows tray launcher (production entry point)
+│   ├── routers/               HTTP surface — one file per API area (§19)
+│   ├── services/              Business logic — the §5-§13 subsystems plus
+│   │                          the satellite modules indexed in §19
 │   ├── database/              SQLAlchemy models + WAL connection
 │   ├── schemas/               Pydantic request/response shapes
 │   ├── vector_store/          ChromaDB wrapper
 │   ├── cache/                 Versioned metadata cache (SQLite)
 │   ├── embeddings/            Embedding generation
 ├── frontend/index.html        Single-page UI (vanilla JS, no build step)
+├── frontend/vendor/           marked.min.js + purify.min.js, bundled locally
 ├── scripts/                   Standalone runners + icon renderer
 ├── tests/                     Plain-script battery — python tests/run_all.py
+├── tests/benchmarks/          Model/prompt benchmarking harness (§19)
 ├── docs/USAGE.md              Operator guide
+├── docs/BENCHMARKS.md         Model measurements behind the §15/§16 choices
 ├── data/                      Runtime state (gitignored)
 │   ├── curatarr.db            SQLite (WAL)
 │   ├── cache/enrichment.db    Versioned API cache
@@ -77,6 +76,11 @@ yet. Until those sections are rewritten, this is the map:
 | Rows are not viewings | `series_progress` (`replays`, `abandoned_starts`, `count_real_views`), `plex_sync` RESUME_WINDOW_DAYS | One viewing can write two `watch_history` rows: Plex reports the partial view and the finished view through different queries. Counting raw rows also turns repeated ABANDONED starts into "replays", which inverts the signal. Count completed views, collapse those inside one viewing window, and let the finished view promote the unfinished row it belongs to. |
 | FORM guards | `pillars.build_evidence` (`_is_spoken_word`, `_is_factual`) | Some works lose by default when measured with the wrong yardstick — cabaret judged on sonic fit, a documentary judged on narrative subversion. The evidence carries an explicit FORM line telling the judge which criteria apply. Add a guard per form, narrowly; a wrong yardstick is worse than none. |
 | Batch language | `llm_utils.detect_user_language` | Surfaces with no live conversation (deletion pitches, proactive nudges) get English. They used to classify unrelated chat history, so the same title could be pitched in one language and re-evaluated in another. A per-user locale setting is the proper home for the general case. |
+| Conversation starters | `src/services/chat_starters.py`, `/api/chat/starters`, custodian task `chat_starters` | Pooled curator OPENERS replacing the three hardcoded landing prompts: one LLM batch → a code-enforced diversity gate (distinct forms, distinct openings, mandatory fact anchor) → 48 h-TTL pool with impression decay. Clicking one makes the CURATOR say it (`starter:{id}` thread — same server-owned-context pattern as proposals). Day-named openers expire at local midnight and a pick-time guard retires day-mismatches; anchor_title/media_type pin verified data when the opener is about one work. |
+| Status-poll memos | `src/services/ttl_memo.py` | `@ttl_response(seconds, key=…)` — in-process TTL cache + single-flight lock on the polled status endpoints (sync/enrichment/backfill/discover). They recomputed full-table aggregates every 10 s poll; now one compute per window serves all pollers. Exceptions are never cached. |
+| Request telemetry + rolling session | `src/middleware.py`, `src/routers/auth.py` | `SlowRequestLogMiddleware` logs >300 ms-to-first-byte requests (the tool that found the poll hotspots). JWTs last 7 d; after 24 h of age `TokenRefreshMiddleware` re-issues via the `x-curatarr-refreshed-token` header so an active user never hits the mid-conversation 401 cliff. |
+| Watched-title discussion | chat `watched_title` branch, `src/services/episode_context.py`, `src/services/watch_status.py` | Clicking the last-played strip opens a per-work thread (`watched:tmdb:{id}`) anchored on the user's OWN WatchHistoryEntry row. Episode position is stated as fact with an EPISODE-HONESTY rule — there is no per-episode metadata, and the curator must say so instead of inventing plot. |
+| Chat output sanitization | `frontend/vendor/purify.min.js` | All LLM markdown renders via `DOMPurify.sanitize(marked.parse(…))` — marked passes raw HTML through by design, and curator output can echo text fetched from external metadata sources. Single sink, wrapped once. |
 
 ---
 
@@ -938,7 +942,13 @@ without understanding why they exist.
 
 - Local-LLM only; no hosted-model calls.
 - ChromaDB telemetry disabled (`anonymized_telemetry=False`).
-- `marked.js` bundled locally (no jsDelivr CDN call).
+- `marked.js` bundled locally (no jsDelivr CDN call), and its output is
+  sanitized: `DOMPurify.sanitize(marked.parse(…))` before every innerHTML
+  write — marked passes raw HTML through by design, and LLM output can echo
+  text from external metadata sources.
+- CI scanning: CodeQL on pushes/PRs plus an LLM security scan
+  (`.github/workflows/llm-security-scan.yml`) — changed files per PR, weekly
+  full sweep; scan errors hard-fail rather than reporting a clean result.
 - **Image proxy** (`src/routers/image_proxy.py`): all external poster URLs
   go through `/api/image/proxy` so TMDB/Deezer don't see per-click browsing.
   Host whitelist + image-only content-type + 5 MB cap + no-auto-redirect
@@ -999,3 +1009,117 @@ profile = the one with "anime" in its name; TV = the rest).
    case stays internally consistent — no drift, still no re-fetch.
 
 Nothing in the apply path re-fetches metadata, re-embeds, or calls an LLM.
+
+---
+
+## 19. Module index — the satellites
+
+One line per file the sections above don't already anchor. This is the map,
+not the territory: when one of these grows a real design decision, promote it
+to its own section (or a §0 delta row) instead of growing this list.
+
+### Entry points & platform
+- `src/tray_app.py` — Windows system-tray launcher (pystray + uvicorn worker
+  thread); the production entry point, vs `start.bat`'s dev console.
+- `src/paths.py` — SSOT for filesystem anchoring (`ROOT`/`DATA_DIR`),
+  CWD-independent so tray/autostart/frozen builds resolve data + frontend.
+- `src/log_setup.py` — idempotent logging bootstrap: rotating file handler
+  always; console handler only when a real stderr exists (pythonw has none).
+- `src/services/shutdown_bridge.py` — import-free callback registry letting
+  the tray intercept the web shutdown endpoint instead of relying on SIGINT.
+- `src/services/bg_tasks.py` — keeps strong references to fire-and-forget
+  asyncio tasks so they aren't garbage-collected mid-run.
+
+### Routers not covered above
+- `src/routers/imports.py` — GUI data imports (Spotify listening-history
+  upload + run); upload open during setup, running the import is admin-only.
+- `src/routers/messages.py` — proactive-messages API (list unread, mark read).
+- `src/routers/stats.py` — admin-only curation report, backed by
+  `src/services/curation_stats.py` (live SQL: monthly resolutions, GB freed,
+  Stubbornness Index, redundancy, taste evolution).
+
+### Chat & curator satellites
+- `src/services/app_context.py` — SSOT for what the curator is told about the
+  app's own UI (buttons/badges/verdicts), drift-tested against
+  `frontend/index.html`. Never inline app knowledge in routers.
+- `src/services/episode_context.py` — the Sonarr episode a user stopped at
+  plus the next one ("you stopped at S1E9, next up …").
+- `src/services/watch_status.py` — per-user watch status from Plex-synced
+  `watch_history` (NOT Tautulli): "unseen but curious" vs "watched and moved on".
+- `src/services/verification_session.py` — post-enrichment one-at-a-time
+  taste-verification questions (abandoned items, conflicting signals, outliers).
+- `src/services/curator_principles.py` — autonomous principle-learning from
+  owner debates: extract → novelty-check → re-inject into the judge.
+- `src/services/stream_tickets.py` — short-lived one-time tickets for SSE
+  streams, so JWTs never ride in URL query strings.
+
+### Deletion-debate evidence (deterministic, LLM-free)
+- `src/services/album_dossier.py` — album-level music evidence (type, stock,
+  community standing, owner listening, style) from Lidarr + Last.fm + Discogs.
+- `src/services/lidarr_discography.py` — one-call Lidarr album summary
+  (counts, disk size, monitored-but-fileless ghosts); uncached by design.
+- `src/services/reception.py` — community reception (AniList/MAL/Jikan/TMDB
+  reviews) for obscure titles.
+- `src/services/studio_notes.py` — Wikipedia "what this studio is known for"
+  reputation notes, cached ~forever.
+- `src/services/wikidata.py` — structured Wikidata facts (adaptation-source
+  authors, named awards) as archive-pillar evidence; imdb-id shape-guarded
+  before it ever reaches SPARQL.
+- `src/services/subtitle_signals.py` — LLM-free pacing/rhythm signals from a
+  subtitle track, execution-side evidence for the judge.
+- `src/services/subtitle_provider.py` — generic HTTP adapter contract for an
+  optional self-hosted subtitle service (no bundled provider).
+
+### Identity & mapping
+- `src/services/external_ids.py` — harvests IMDb/TVDB/TMDB ids the *arrs
+  already hold (id-join first, name+year veto second).
+- `src/services/anime_mapping.py` — community anime-lists AniDB↔TVDB↔AniList
+  crossref, cached + refreshed weekly.
+- `src/services/anime_offline.py` — manami-project anime-offline-database as
+  a SQLite-cached fallback lookup.
+- `src/services/discogs_offline.py` — streams the monthly Discogs CC0 masters
+  dump into a local per-artist style vocabulary (no API token needed).
+
+### Music neighbours
+- `src/services/soulsync_client.py` — read-only client for the SoulSync LAN
+  neighbour's music-metadata API; never triggers its downloads.
+- `src/services/music_catalog_sync.py` — nightly SoulSync→Lidarr catalog sync
+  (structure index only — never fights SoulSync over files).
+- `src/services/spotify_import.py` — engine behind the GUI Spotify upload;
+  root `import_spotify.py` is a thin CLI wrapper over it.
+
+### Library-curation satellites
+- `src/services/library_memory.py` — shared seen/owned title indices so rec
+  lanes never resurface an already-watched or already-owned title.
+- `src/services/upgrade_curation.py` — the inverse of the deletion flag:
+  strong love-signal, weak file quality.
+- `src/services/collection_designer.py` + `src/services/plex_collections.py` —
+  LLM-designed rotating themed collections from owned candidates; the Plex
+  write layer is prefix-scoped so it never touches Kometa's collections.
+- `src/services/plex_watchlist.py` — adds a title to the discussing user's
+  own plex.tv watchlist when they declare watch-intent in a deletion debate.
+- `src/services/orphan_repair.py` — remaps watch-history rows whose Plex
+  library section no longer exists.
+- `src/services/kb_overview.py` — SSOT for "how much is enriched/vectorized";
+  replaced three counters that disagreed with each other.
+- `src/services/archive_backfill.py` — coverage-gated on-demand backfill for
+  metadata sources still catching up (vs the custodian's gentle pace).
+
+### Models & embeddings
+- `src/services/model_catalog.py` — benchmark-verified Ollama model catalog +
+  VRAM-aware recommendations for the setup wizard.
+- `src/services/embedding_migration.py` — one-shot v2 embedding-corpus build
+  in a parallel Chroma collection, sanity-gated before flipping the profile.
+
+### Schemas
+- `src/schemas/user.py` / `chat.py` / `recommendations.py` — Pydantic shapes;
+  `chat.DiscussContext` carries server-owned references (proposal, proactive
+  message, principle, starter, watched-title) the backend resolves itself —
+  client-supplied title/reason text is never trusted.
+
+### CI & benchmarks
+- `.github/scripts/llm_security_scanner.py` — the LLM security scan behind
+  the workflow (§17): structured outputs, scan errors hard-fail.
+- `tests/benchmarks/` — model/prompt benchmarking harness (curator_bench,
+  tournament_bench, auto_benchmark, num_ctx_bench, curator_pipeline_bench +
+  `model_baselines.csv`); measurements land in `docs/BENCHMARKS.md`.

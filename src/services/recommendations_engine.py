@@ -207,7 +207,7 @@ def _taste_section(summary_text: str, category: str) -> str:
         return ""
     tag = {"movie": "MOVIE", "show": "SHOW", "anime": "ANIME",
            "music": "MUSIC"}.get(category, (category or "").upper())
-    m = re.search(rf"\[{tag}\]\s*(.*?)(?=\n\s*\[[A-Z]+\]|\Z)", s, re.S)
+    m = re.search(rf"\[{re.escape(tag)}\]\s*(.*?)(?=\n\s*\[[A-Z]+\]|\Z)", s, re.S)
     return m.group(1).strip()[:600] if m else ""
 
 
@@ -635,7 +635,7 @@ async def generate_recommendations(
             pass
 
         import re
-        match = re.search(rf'\[{cat.upper()}\]([^\[]*)', summary_text)
+        match = re.search(rf'\[{re.escape(cat.upper())}\]([^\[]*)', summary_text)
         cat_summary = match.group(1).strip() if match else ""
 
         # Both lanes need the user's FULL seen-set for this category (no [:15]

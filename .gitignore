@@ -157,3 +157,6 @@ sqlite3_rsync.exe
 
 # local AI-CLI tool configs
 .qwen/
+
+# local GitHub PAT for API reads (never commit)
+.gh_token
