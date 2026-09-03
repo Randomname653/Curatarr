@@ -188,16 +188,22 @@ async def build_overview() -> dict:
         c["reception"] = {"covered": reception_counts.get(cat, 0)}
 
     # ── watch-history-only section (its OWN set, never mixed into the above) ──
+    from sqlalchemy import func, distinct, case
     with get_db_session() as db:
         wh_rows = {}
-        for r in db.query(EnrichmentStatus.media_category, EnrichmentStatus.enriched).all():
-            b = wh_rows.setdefault(r.media_category or "?", {"rows": 0, "enriched": 0})
-            b["rows"] += 1
-            if r.enriched:
-                b["enriched"] += 1
+        grouped = db.query(
+            EnrichmentStatus.media_category,
+            func.count(EnrichmentStatus.id).label("rows"),
+            func.sum(case((EnrichmentStatus.enriched == True, 1), else_=0)).label("enriched")
+        ).group_by(EnrichmentStatus.media_category).all()
+
+        for r in grouped:
+            cat = r.media_category or "?"
+            b = wh_rows.setdefault(cat, {"rows": 0, "enriched": 0})
+            b["rows"] += r.rows
+            b["enriched"] += (r.enriched or 0)
 
         # ── music pipeline (Spotify cascade) ──────────────────────────────────
-        from sqlalchemy import func, distinct
         spotify_total = (db.query(func.count(WatchHistoryEntry.id))
                          .filter(WatchHistoryEntry.source == "spotify").scalar()) or 0
         spotify_matched = (db.query(func.count(WatchHistoryEntry.id))
