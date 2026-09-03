@@ -11,7 +11,8 @@ appeared as bare names inside debates (the Bomber discussion argued
   Stock       trackFileCount/trackCount + sizeOnDisk
   Community   Last.fm album.getInfo listeners/playcount + tags, plus the
               album's ListenBrainz rank within the artist's own catalogue
-              by global listens (one keyless call, 30 d-cached per artist)
+              by global listens (one token-authed call, 30 d-cached per
+              artist — needs LISTENBRAINZ_TOKEN)
   Owner       the album's TRACKS matched against the listening history:
               "4/12 tracks played, 17 plays — top: Sax (13)" (the probe
               case: 2,284 artist plays but barely THIS album)
@@ -227,12 +228,14 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
         ss = await album_info(artist.get("artistName"), alb.get("title"))
         if ss:
             bits = []
-            if ss.get("genres"):
-                bits.append("genres: " + ", ".join(ss["genres"][:6]))
+            # join only real lists — a raw JSON string ('["rock", ...]')
+            # would otherwise render character-wise
+            if isinstance(ss.get("genres"), list) and ss["genres"]:
+                bits.append("genres: " + ", ".join(map(str, ss["genres"][:6])))
             if ss.get("style"):
                 bits.append(f"style: {ss['style']}")
-            if ss.get("lastfm_tags"):
-                bits.append("tags: " + ", ".join(ss["lastfm_tags"][:6]))
+            if isinstance(ss.get("lastfm_tags"), list) and ss["lastfm_tags"]:
+                bits.append("tags: " + ", ".join(map(str, ss["lastfm_tags"][:6])))
             if ss.get("label"):
                 bits.append(f"label: {ss['label']}")
             if ss.get("record_type"):
