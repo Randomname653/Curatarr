@@ -342,8 +342,13 @@ def build_verified_data(
             "rating":         pick(enriched.get("rating"), raw.get("rating")),
             # Vote MASS next to the score: harvested from TMDB vote_count /
             # OMDb imdbVotes since forever, but it never reached the judge —
-            # 7.4/10 read identically at 50 votes and at 500k.
+            # 7.4/10 read identically at 50 votes and at 500k. scored_by is
+            # MAL's equivalent (rides the Jikan passthrough); AniList
+            # popularity is list-adds, engagement mass rather than votes.
             "vote_count":     pick(raw.get("vote_count"), enriched.get("vote_count")),
+            "scored_by":      raw.get("scored_by"),
+            "anilist_popularity": raw.get("anilist_popularity"),
+            "content_rating": raw.get("content_rating"),
             "country":        raw.get("country"),
             "seasons":        raw.get("seasons"),
             "episodes_total": raw.get("episodes_total"),
@@ -386,6 +391,8 @@ def build_verified_data(
             "discogs_styles":  _discogs_styles_for(raw),
             "bio":             raw.get("bio"),
             "listeners":       raw.get("listeners"),
+            "playcount":       raw.get("playcount"),
+            "disambiguation":  raw.get("disambiguation"),
             "artist_type":     raw.get("type") if raw.get("media_type") == "music" else None,
             "similar_artists": raw.get("similar_artists"),
             # ListenBrainz global popularity digest (music only, own field —
@@ -491,6 +498,13 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
         if data.get("seasons"):
             fmt = f"{data['seasons']} season(s), {fmt}"
         add("Format", fmt)
+    elif data.get("runtime_min"):
+        # Movies never enter the episodes branch, so their length was
+        # harvested but NEVER printed — pacing arguments ran blind.
+        try:
+            add("Runtime", f"{int(data['runtime_min'])} min")
+        except (TypeError, ValueError):
+            pass
     add("Studio", data.get("studios"))
     add("Studio note", data.get("studio_note"), cap=350)
     add("Notable", data.get("extra_context"))
@@ -500,15 +514,32 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     try:
         _score = f"{float(data.get('rating')):g}/10"
         # Consensus mass turns the score into evidence: 7.4 from 24,193
-        # votes and 7.4 from 51 votes are different facts.
-        try:
-            _votes = int(data.get("vote_count"))
-            _score += f" ({_votes:,} votes)" if _votes > 0 else ""
-        except (TypeError, ValueError):
-            pass
+        # votes and 7.4 from 51 votes are different facts. TMDB/OMDb votes
+        # first, MAL's scored_by as the anime fallback; AniList popularity
+        # is list-adds — engagement, not votes — so it gets honest wording.
+        _votes = None
+        for _vc in (data.get("vote_count"), data.get("scored_by")):
+            try:
+                if int(_vc) > 0:
+                    _votes = int(_vc)
+                    break
+            except (TypeError, ValueError):
+                continue
+        if _votes:
+            _score += f" ({_votes:,} votes)"
+        else:
+            try:
+                _pop = int(data.get("anilist_popularity"))
+                if _pop > 0:
+                    _score += f" (on {_pop:,} AniList lists)"
+            except (TypeError, ValueError):
+                pass
         add("Rating", _score)
     except (TypeError, ValueError):
         add("Content rating", data.get("rating"))
+    # OMDb's Rated (MPAA/TV) — distinct from the numeric score above and
+    # from anime content-rating strings that ride the `rating` field.
+    add("Content rating", data.get("content_rating"))
     critics = []
     if data.get("rt_score"):
         critics.append(f"Rotten Tomatoes {data['rt_score']}")
@@ -518,10 +549,22 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
     add("Box office", data.get("box_office"))
     # music-artist lines (all None for video docs, so they simply don't print)
     add("Artist type", data.get("artist_type"))
+    # MB's disambiguation is the anti-wrong-entity anchor ("UK rock band"
+    # vs the doom-metal Solstice) — grounds which entity is being judged.
+    add("Disambiguation", data.get("disambiguation"))
     add("Styles (Discogs)", data.get("discogs_styles"))
     if data.get("listeners"):
         try:
-            add("Community", f"{int(data['listeners']):,} Last.fm listeners")
+            _community = f"{int(data['listeners']):,} Last.fm listeners"
+            # Play VOLUME separates a broad-but-casual audience from a
+            # smaller one that actually lives in the catalogue.
+            try:
+                _plays = int(data.get("playcount"))
+                if _plays > 0:
+                    _community += f", {_plays:,} plays"
+            except (TypeError, ValueError):
+                pass
+            add("Community", _community)
         except (TypeError, ValueError):
             add("Community", data.get("listeners"))
     lb = data.get("lb_popularity")
@@ -1710,6 +1753,9 @@ def _merge_source_into_raw(raw: dict, source: str, data: Optional[dict],
             "similar_artists": data.get("similar_artists", []),
             "bio":             data.get("bio", ""),
             "listeners":       data.get("listeners"),
+            # play VOLUME next to the listener count — rendered at track and
+            # album tier for years while the artist tier dropped it here.
+            "playcount":       data.get("playcount"),
         }
     elif source == "mb" and media_type == "music":
         norm = {
@@ -1719,6 +1765,9 @@ def _merge_source_into_raw(raw: dict, source: str, data: Optional[dict],
             "genres":  data.get("genres", []),
             "tags":    data.get("tags", []),
             "rating":  data.get("rating"),
+            # THE anti-wrong-entity field ("UK rock band" vs the doom-metal
+            # Solstice) — fetched since forever, dropped right here.
+            "disambiguation": data.get("disambiguation", ""),
         }
     else:
         # OMDb / TMDB / AniList / Jikan all come out of their own fetchers
@@ -2340,6 +2389,13 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
         "imdb_id": ext_ids.get("imdb_id"),
         "original_language": details.get("original_language"),
         "tagline": details.get("tagline", ""),
+        # production_countries (movies) / origin_country (TV) ride the same
+        # paid-for payload — fills `country` for TMDB-only titles.
+        "country": ", ".join(
+            [c.get("name", "") for c in details.get("production_countries", [])
+             if c.get("name")]
+            or [str(c) for c in details.get("origin_country", []) if c]
+        ) or None,
         "source": "tmdb",
     }
 
@@ -2430,6 +2486,9 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             "writer": d.get("Writer", ""),
             "country": d.get("Country", ""),
             "language": d.get("Language", ""),
+            # MPAA/TV content rating — evidence for the household pillar
+            # (the kids-content hard-skip finally gets a source).
+            "content_rating": _na(d.get("Rated")) or None,
         }
     except Exception as e:
         logger.debug("OMDB error for %s: %s", imdb_id, e)
@@ -2781,6 +2840,9 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
         # fall back to it before giving up. Either way it's a real user
         # rating; 0 only if AniList genuinely has neither.
         "rating": (media.get("averageScore") or media.get("meanScore") or 0) / 10,
+        # popularity = users with the title on a list. Queried since forever,
+        # dropped right here — the anime equivalent of the vote_count gap.
+        "anilist_popularity": media.get("popularity"),
         "episodes_total": media.get("episodes"),
         "runtime_min": media.get("duration"),
         "similar_titles": similar,
@@ -4065,7 +4127,9 @@ async def enrich_media_item(
             "director":      raw.get("director") or "",
             "cast":          raw.get("cast") or [],
             "country":       raw.get("country") or "",
-            "runtime":       raw.get("runtime"),
+            # The harvested key is runtime_min — ``raw.get("runtime")`` was
+            # always None, so the chat fast profile never carried a length.
+            "runtime":       raw.get("runtime_min"),
             "studios":       raw.get("studios") or raw.get("studio") or "",
             "episodes_total": raw.get("episodes_total") or raw.get("episodes"),
             "source_material": raw.get("source_material") or "",  # audit 11a: raw["source"] is PROVENANCE (tmdb/anilist), not source material
@@ -4464,6 +4528,8 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Opt
         # fall back to it before giving up. Either way it's a real user
         # rating; 0 only if AniList genuinely has neither.
         "rating": (media.get("averageScore") or media.get("meanScore") or 0) / 10,
+        # Same harvest as fetch_anilist_full — list-adds as engagement mass.
+        "anilist_popularity": media.get("popularity"),
         "episodes_total": media.get("episodes"),
         "runtime_min": media.get("duration"),
         "similar_titles": similar,

@@ -530,6 +530,10 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         "similar_artists": similar,
         "bio": clean_bio,
         "listeners": _ss.get("lastfm_listeners") or (lfm or {}).get("listeners"),
+        # Kept alongside listeners since the harvest sweep: play volume and
+        # MB's anti-wrong-entity disambiguation were fetched but dropped here.
+        "playcount": (lfm or {}).get("playcount"),
+        "disambiguation": (mb or {}).get("disambiguation", ""),
         "rating": (mb or {}).get("rating"),
         # SoulSync extras — mood for prompts, deezer_id lets the poster
         # path skip the MB→Deezer bridge. NOT part of embedding_text: the
