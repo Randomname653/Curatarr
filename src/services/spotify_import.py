@@ -139,20 +139,47 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
     if task is not None:
         from src.services.task_monitor import task_monitor
         task_monitor.update(task, processed=0, total=len(files),
-                            message="loading existing history for dedup")
-
-    with get_db_session() as db:
-        existing = {
-            f"{r.plex_item_id}|{r.viewed_at.strftime('%Y-%m-%dT%H:%M:%S')}"
-            for r in db.query(WatchHistoryEntry.plex_item_id,
-                              WatchHistoryEntry.viewed_at)
-            .filter(WatchHistoryEntry.user_id == user_id,
-                    WatchHistoryEntry.media_type == "music").all()
-        }
+                            message="importing listening history")
 
     imported = skipped = dupes = 0
     buffer: list = []
     done_dir = import_dir / "imported"
+
+    def _flush_buffer(db):
+        nonlocal imported, dupes, buffer
+        if not buffer:
+            return
+
+        # extract all plex_item_ids from the current batch to look them up
+        item_ids = {item["plex_item_id"] for item in buffer}
+
+        # find which ones already exist in the database for this user
+        existing_in_db = {
+            f"{r.plex_item_id}|{r.viewed_at.strftime('%Y-%m-%dT%H:%M:%S')}"
+            for r in db.query(WatchHistoryEntry.plex_item_id, WatchHistoryEntry.viewed_at)
+            .filter(
+                WatchHistoryEntry.user_id == user_id,
+                WatchHistoryEntry.media_type == "music",
+                WatchHistoryEntry.plex_item_id.in_(item_ids)
+            ).all()
+        }
+
+        # filter out duplicates
+        to_insert = []
+        for item in buffer:
+            dedup_key = f"{item['plex_item_id']}|{item['viewed_at'].strftime('%Y-%m-%dT%H:%M:%S')}"
+            if dedup_key in existing_in_db:
+                dupes += 1
+            else:
+                to_insert.append(item)
+                existing_in_db.add(dedup_key)
+
+        if to_insert:
+            db.bulk_insert_mappings(WatchHistoryEntry, to_insert)
+            db.commit()
+            imported += len(to_insert)
+
+        buffer.clear()
 
     with get_db_session() as db:
         for i, file_path in enumerate(files, 1):
@@ -177,12 +204,7 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
                     skipped += 1
                     continue
                 viewed_at = _parse_ts(item.get("ts", ""))
-                dedup_key = (f"{track_uri}|"
-                             f"{viewed_at.strftime('%Y-%m-%dT%H:%M:%S')}")
-                if dedup_key in existing:
-                    dupes += 1
-                    continue
-                existing.add(dedup_key)
+
                 # "trackdone" = played to the end; an unskipped 2-minute play
                 # counts too — the same completion rule the Plex path applies.
                 is_completed = (
@@ -207,19 +229,15 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
                     "source": "spotify",
                 })
                 if len(buffer) >= BATCH_SIZE:
-                    db.bulk_insert_mappings(WatchHistoryEntry, buffer)
-                    db.commit()
-                    imported += len(buffer)
-                    buffer = []
+                    _flush_buffer(db)
+
             # Commit BEFORE moving: the move is the statement "everything in
             # this file is in the database". Moving with rows still buffered
             # would lose up to a batch of plays on a crash — silently, since
             # the file would no longer be pending.
             if buffer:
-                db.bulk_insert_mappings(WatchHistoryEntry, buffer)
-                db.commit()
-                imported += len(buffer)
-                buffer = []
+                _flush_buffer(db)
+
             done_dir.mkdir(exist_ok=True)
             file_path.rename(done_dir / file_path.name)
             if task is not None:
@@ -227,9 +245,7 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
                 task_monitor.update(task, processed=i, total=len(files),
                                     message=f"{imported + len(buffer)} plays so far")
         if buffer:
-            db.bulk_insert_mappings(WatchHistoryEntry, buffer)
-            db.commit()
-            imported += len(buffer)
+            _flush_buffer(db)
 
     stats = {"imported": imported, "skipped": skipped, "duplicates": dupes,
              "files": len(files), "user_id": user_id}
