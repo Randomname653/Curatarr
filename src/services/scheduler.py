@@ -620,7 +620,7 @@ async def job_proactive_messages():
         from src.services.proactive_messages import check_and_generate_messages
 
         with get_db_session() as db:
-            users = [{"id": u.id} for u in db.query(User).filter_by(is_active=True).all()]
+            users = [{"id": u_id} for (u_id,) in db.query(User.id).filter_by(is_active=True).all()]
 
         task_monitor.update(task, total=len(users))
         for i, u in enumerate(users):

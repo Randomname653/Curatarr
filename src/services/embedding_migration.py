@@ -169,7 +169,7 @@ async def run_embedding_migration(task) -> dict:
     from src.database.models import User
     from src.services.taste_engine import compute_all_taste_vectors
     with get_db_session() as db:
-        user_ids = [u.id for u in db.query(User).filter(User.is_active == True).all()]  # noqa: E712
+        user_ids = [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]  # noqa: E712
     for uid in user_ids:
         try:
             await compute_all_taste_vectors(uid, skip_summaries=True)
