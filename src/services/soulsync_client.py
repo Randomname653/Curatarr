@@ -13,7 +13,9 @@ owner's / SoulSync's domain. Every helper degrades to None when SoulSync is
 unconfigured or unreachable, so callers can treat it as a best-effort bonus.
 
 Field notes (probed live 2026-07-11): ``genres`` arrives as a list of
-JSON-ENCODED strings (['["Electronic"]']) — _norm_genres flattens that.
+JSON-ENCODED strings (['["Electronic"]']); per-album ``lastfm_tags`` arrives
+as one BARE JSON-encoded string ('["rock", ...]', seen 2026-09-03) —
+_norm_genres flattens both.
 The instance is young; lastfm_* fields fill in as the workers progress.
 """
 from __future__ import annotations
@@ -52,8 +54,13 @@ def _norm(s: str) -> str:
 
 
 def _norm_genres(raw) -> list[str]:
-    """Flatten SoulSync's genre field: a list whose elements may themselves be
-    JSON-encoded arrays ('["Electronic"]') or plain strings."""
+    """Flatten SoulSync's genre/tag fields: a list whose elements may
+    themselves be JSON-encoded arrays ('["Electronic"]'), plain strings, or —
+    per-album lastfm_tags arrive this way — a BARE JSON-encoded array string
+    ('["rock", "punk"]'). A bare string must not hit the for-loop directly:
+    iterating it walks character-wise and yields ['[', '"', 'r', ...]."""
+    if isinstance(raw, str):
+        raw = [raw]
     out: list[str] = []
     for g in (raw or []):
         if isinstance(g, str) and g.startswith("["):

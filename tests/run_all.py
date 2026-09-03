@@ -67,8 +67,8 @@ def main() -> int:
     # cp1252 Windows shell a suite printing an arrow or an accented title dies
     # in print() and reads as a test failure. Pin UTF-8 so the result does not
     # depend on which terminal launched it.
-    env = dict(**__import__("os").environ,
-               PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
+    env = {**__import__("os").environ,
+           "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8"}
     failures, locked = [], []
     for f in files:
         cmd = ([sys.executable, __file__, "--bare", str(f)] if is_bare(f)
