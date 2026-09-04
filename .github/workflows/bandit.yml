@@ -1,0 +1,52 @@
+# Bandit — Python security linter (PyCQA, Apache-2.0), results land in the
+# Security tab as code-scanning alerts.
+#
+# Deliberately NOT the marketplace wrapper action: after the tj-actions
+# supply-chain incident this repo runs third-party code in CI only where
+# unavoidable. Bandit itself is a pip install + two flags; the only actions
+# used are GitHub's own.
+#
+# --severity-level medium: LOW is where Bandit drowns a codebase like this
+# one in noise (assert_used in tests, try/except/pass on deliberate
+# degrade-gracefully paths, hardcoded 0.0.0.0 on a LAN server that binds
+# LAN on purpose). CodeQL already covers the deep dataflow class; Bandit
+# earns its keep on the pattern class (shell=True, yaml.load, pickle,
+# SQL string building).
+
+name: Bandit
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '24 14 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  bandit:
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run Bandit (medium+ severity, SARIF)
+        # --exit-zero: report-only — findings go to the Security tab, the
+        # workflow itself stays green (a real bandit CRASH still fails).
+        run: |
+          pip install "bandit[sarif]"
+          bandit -r . \
+            -x ./tests,./frontend,./scripts,./data,./.github \
+            --severity-level medium \
+            --exit-zero \
+            -f sarif -o bandit.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
