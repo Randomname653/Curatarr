@@ -56,7 +56,7 @@ SELECT ?itemLabel ?basedOnLabel ?authorLabel ?awardLabel WHERE {
 # which version of THIS logic produced it, so changing what we ask for retires
 # the old answers instead of freezing them (see media_enricher's
 # _SIG_PROMPT_VERSION for why that lesson was learned the hard way).
-_LOGIC_VERSION = hashlib.sha1(_QUERY.encode("utf-8")).hexdigest()[:8]
+_LOGIC_VERSION = hashlib.sha1(_QUERY.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 # Awards worth naming to a judge weighing objective stature. Wikidata lists
 # everything from the Palme d'Or to local festival prizes; an unfiltered dump

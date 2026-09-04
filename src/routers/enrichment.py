@@ -1639,7 +1639,8 @@ def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
         if isinstance(resp, dict) and resp:
             try:
                 blob = json.dumps(resp, sort_keys=True, default=str)
-                return hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()
+                return hashlib.sha1(blob.encode("utf-8", "replace"),
+                                    usedforsecurity=False).hexdigest()
             except Exception:
                 return None
     return None

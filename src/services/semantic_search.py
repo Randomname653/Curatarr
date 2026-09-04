@@ -445,7 +445,7 @@ async def _texts_to_vectors(texts: list) -> dict:
             continue
         if cache is not None:
             try:
-                ck = f"tagemb2:{model}:{hashlib.sha1(k.encode()).hexdigest()[:16]}"
+                ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
                 hit = cache.get_cache(ck)
                 vec = ((hit or {}).get("response") or {}).get("v")
                 if vec:
@@ -470,7 +470,7 @@ async def _texts_to_vectors(texts: list) -> dict:
                     result[k] = unit
                     if cache is not None:
                         try:
-                            ck = f"tagemb2:{model}:{hashlib.sha1(k.encode()).hexdigest()[:16]}"
+                            ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
                             cache.set_cache(ck, {"v": unit}, days=90)
                         except Exception:
                             pass

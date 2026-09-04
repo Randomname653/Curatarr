@@ -722,7 +722,8 @@ _SIG_RETRIEVAL_VERSION = "5"   # 5: word-order-tolerant hit match (JP name reord
                                #    its Wikidata sitelink, before any name
 
 _SIG_PROMPT_VERSION = hashlib.sha1(
-    (_SIGNIFICANCE_PROMPT + _SIG_RETRIEVAL_VERSION).encode("utf-8")
+    (_SIGNIFICANCE_PROMPT + _SIG_RETRIEVAL_VERSION).encode("utf-8"),
+    usedforsecurity=False,
 ).hexdigest()[:8]
 
 # Wikipedia states what a subject IS in its opening sentence. Scanning far past

@@ -47,12 +47,12 @@ jobs:
       FULL_MODEL: gpt-5.6-luna
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -116,7 +116,7 @@ jobs:
       # open security-labeled issues, capped per run.
       - name: Create GitHub Issues for Vulnerabilities
         if: github.event_name != 'pull_request' && env.HAS_KEY == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload Scan Results
         if: env.HAS_KEY == 'true' && hashFiles('scan-results/**') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: security-scan-results
           path: scan-results/
