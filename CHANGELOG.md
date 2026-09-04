@@ -4,6 +4,47 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-09-04 — v1.0.0-beta: the first tagged release
+
+The repo went public on 2026-08-31; this is the first cut considered
+stable enough to hand a version number. The days in between were spent
+making the public-facing posture real:
+
+- **The scanner fleet is armed.** CodeQL, an LLM security scan
+  (GPT-5.6, structured outputs — the template version burned 63 minutes
+  of GPT-4o and reported nothing), Bandit (plain pip install, no
+  third-party wrapper action), OSV-Scanner (SHA-pinned; its PR job
+  hard-fails a change that introduces a known-vulnerable dependency),
+  and OSSF Scorecard with the badge in the README. All findings triaged
+  to zero: two real CodeQL hits fixed (unescaped regex interpolation),
+  the marked.js XSS class closed by vendoring DOMPurify around the one
+  `marked.parse → innerHTML` sink, the rest documented as
+  false-positive/by-design.
+- **The full 896-commit history was swept for leaks** — private keys,
+  tokens, JWTs, API-key shapes, real IPs, committed .env files: clean.
+  Every IP ever committed is the documentation placeholder.
+- **Seven bot PRs reviewed and merged** (one stripped of a misleading
+  benchmark), including SQL-side aggregation for the knowledge-base
+  overview and batch-scoped Spotify dedup that no longer loads the
+  whole listening history into a set.
+- **Music evidence grew reception mass.** ListenBrainz global
+  popularity (free account token) gives the judge catalogue listens and
+  ranks a discussed album inside the artist's own catalogue; Lidarr's
+  mirrored secondaryTypes surface the Live/Compilation/Remix share of
+  an artist's disk footprint. Found en route and fixed: Lidarr deletion
+  candidates carry the artist MBID under a key the judge never read —
+  every automated music scan had been matching by name only.
+- **The "fully harvest every API we already call" sweep.** TMDB/OMDb
+  vote counts, MAL scored_by and AniList popularity now ride the Rating
+  line (7.4/10 from 51 votes and from 500k are different facts), movies
+  finally print their runtime, MusicBrainz disambiguation and Last.fm
+  artist playcount reach the block, OMDb's MPAA rating and TMDB's
+  production countries are extracted at all.
+- **Day-named conversation starters die at local midnight** instead of
+  surfacing "It is Wednesday evening" on a Thursday.
+
+---
+
 ## 2026-09-02 — The UI grows up, and the curator learns to converse
 
 - **A frontend worth looking at.** A full prettification pass on the
