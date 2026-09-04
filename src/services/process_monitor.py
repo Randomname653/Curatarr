@@ -97,6 +97,9 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
 _cached_targets: Optional[frozenset[str]] = None
 _cached_time: float = 0
 
+_cached_known: Optional[frozenset[str]] = None
+_cached_known_time: float = 0
+
 
 def is_game_running() -> bool:
     """Return True when a known game or game-launcher signal is detected."""
@@ -216,22 +219,34 @@ def get_unknown_processes() -> list[dict]:
     previously classified by the user. These are candidates to show in
     the "Is this a game?" UI prompt.
     """
+    import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
-    try:
-        with get_db_session() as db:
-            classified = {
-                process_name.lower()
-                for (process_name,) in db.query(GameProcess.process_name).all()
-            }
-    except Exception:
-        classified = set()
+    global _cached_known, _cached_known_time
+    now = time.time()
 
-    extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
-    extra_set = {p.strip().lower() for p in extra.split(",") if p.strip()} if extra else set()
+    # Refresh cache every 60 seconds
+    if _cached_known is None or now - _cached_known_time > 60:
+        known = set(SYSTEM_PROCESSES | GAME_LAUNCHER_SIGNALS)
+        try:
+            with get_db_session() as db:
+                classified = {
+                    process_name.lower()
+                    for (process_name,) in db.query(GameProcess.process_name).all()
+                }
+                known.update(classified)
+        except Exception as e:
+            logger.debug("process_monitor get_unknown_processes DB read failed: %s", e)
 
-    known = SYSTEM_PROCESSES | GAME_LAUNCHER_SIGNALS | classified | extra_set
+        extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
+        if extra:
+            known.update(p.strip().lower() for p in extra.split(",") if p.strip())
+
+        _cached_known = frozenset(known)
+        _cached_known_time = now
+
+    known_targets = _cached_known
 
     seen: set[str] = set()
     unknown: list[dict] = []
@@ -244,7 +259,7 @@ def get_unknown_processes() -> list[dict]:
             if not name:
                 continue
             nl = name.lower()
-            if nl in known or nl in seen:
+            if nl in known_targets or nl in seen:
                 continue
             # Only surface .exe files (Windows executables, not background helpers)
             if not nl.endswith(".exe"):
