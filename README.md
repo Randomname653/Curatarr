@@ -12,6 +12,7 @@ on your own hardware.
 
 [![License][badge-license]][link-license]
 [![Tests][badge-tests]][link-tests]
+[![OpenSSF Scorecard][badge-scorecard]][link-scorecard]
 [![Python][badge-python]][link-python]
 [![Local LLM][badge-local]][link-ollama]
 [![Platform][badge-platform]](#requirements)
@@ -310,6 +311,8 @@ keep their original licenses, listed in
 [badge-python]: https://img.shields.io/badge/python-3.11%2B-blue
 [badge-local]: https://img.shields.io/badge/LLM-100%25%20local-E5A00D
 [badge-platform]: https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey
+[badge-scorecard]: https://api.scorecard.dev/projects/github.com/Randomname653/Curatarr/badge
+[link-scorecard]: https://scorecard.dev/viewer/?uri=github.com/Randomname653/Curatarr
 [link-license]: LICENSE
 [link-tests]: https://github.com/Randomname653/Curatarr/actions/workflows/tests.yml
 [link-python]: https://www.python.org/downloads/
