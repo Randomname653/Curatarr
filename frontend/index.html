@@ -3519,8 +3519,9 @@ async function loadGlancePanel() {
   if (!el) return;
   const isAdmin = !!currentUser?.is_admin;
 
-  const [enrich, recs, dels, tasks] = await Promise.allSettled([
+  const [enrich, overview, recs, dels, tasks] = await Promise.allSettled([
     api('/api/enrichment/status?quick=true'),
+    api('/api/enrichment/overview'),
     api('/api/recommendations/?source=cache&limit=1'),
     isAdmin ? api('/api/recommendations/deletions?refresh=false') : Promise.resolve(null),
     api('/api/tasks/history'),
@@ -3528,13 +3529,32 @@ async function loadGlancePanel() {
 
   const tiles = [];
 
+  // Two honest numbers with two denominators. The Knowledge-Base overview
+  // divides by DOWNLOADED library items — the same basis as the per-library
+  // cards. The quick status divides by distinct WATCHED titles; that used to
+  // be this tile's only figure and read "93%" next to cards saying 46/92/70/24.
+  let libPct = null, watchedPct = null;
+  if (overview.status === 'fulfilled') {
+    let live = 0, of = 0;
+    for (const c of Object.values(overview.value.categories || {})) {
+      live += c?.states?.enriched_live || 0;
+      of += c?.denominator?.downloaded || 0;
+    }
+    if (of) libPct = Math.round(100 * live / of);
+  }
   if (enrich.status === 'fulfilled') {
     let done = 0, total = 0;
     for (const c of Object.values(enrich.value.categories || {})) {
       done += c?.enriched || 0;
       total += c?.total_unique || 0;
     }
-    if (total) tiles.push({num: Math.round(100 * done / total) + '%', lbl: 'Enriched', view: 'enrich'});
+    if (total) watchedPct = Math.round(100 * done / total);
+  }
+  if (libPct !== null) {
+    tiles.push({num: libPct + '%', view: 'enrich',
+                lbl: watchedPct !== null ? `Library enriched · ${watchedPct}% of watched titles` : 'Library enriched'});
+  } else if (watchedPct !== null) {
+    tiles.push({num: watchedPct + '%', lbl: 'Watched titles enriched', view: 'enrich'});
   }
 
   if (recs.status === 'fulfilled' && recs.value.recommendations) {
