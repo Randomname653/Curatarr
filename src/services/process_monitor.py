@@ -97,6 +97,18 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
 _cached_targets: Optional[frozenset[str]] = None
 _cached_time: float = 0
 
+_cached_classified: Optional[frozenset[str]] = None
+_cached_classified_time: float = 0
+
+
+def invalidate_process_cache() -> None:
+    """Invalidate process monitor caches (e.g. after user classifies a game)."""
+    global _cached_targets, _cached_time, _cached_classified, _cached_classified_time
+    _cached_targets = None
+    _cached_time = 0
+    _cached_classified = None
+    _cached_classified_time = 0
+
 
 def is_game_running() -> bool:
     """Return True when a known game or game-launcher signal is detected."""
@@ -216,17 +228,26 @@ def get_unknown_processes() -> list[dict]:
     previously classified by the user. These are candidates to show in
     the "Is this a game?" UI prompt.
     """
+    import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
-    try:
-        with get_db_session() as db:
-            classified = {
-                process_name.lower()
-                for (process_name,) in db.query(GameProcess.process_name).all()
-            }
-    except Exception:
-        classified = set()
+    global _cached_classified, _cached_classified_time
+    now = time.time()
+
+    if _cached_classified is None or now - _cached_classified_time > 60:
+        try:
+            with get_db_session() as db:
+                cls_set = {
+                    process_name.lower()
+                    for (process_name,) in db.query(GameProcess.process_name).all()
+                }
+                _cached_classified = frozenset(cls_set)
+        except Exception:
+            _cached_classified = frozenset()
+        _cached_classified_time = now
+
+    classified = _cached_classified
 
     extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
     extra_set = {p.strip().lower() for p in extra.split(",") if p.strip()} if extra else set()
