@@ -162,7 +162,7 @@ def lookup(*, anilist_id=None, mal_id=None, anidb_id=None,
         for col, val in (("anilist", anilist_id), ("mal", mal_id)):
             if val:
                 row = con.execute(
-                    f"SELECT * FROM offline_anime WHERE {col}=?", (int(val),)).fetchone()
+                    f"SELECT * FROM offline_anime WHERE {col}=?", (int(val),)).fetchone()  # nosec B608 - col is one of two literals above, value is bound
                 if row:
                     break
         if row is None and title:

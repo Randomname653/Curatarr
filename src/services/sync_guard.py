@@ -90,7 +90,7 @@ def _find_synced_folder_root(target: Path) -> Optional[Path]:
         if not cfg.is_file():
             continue
         try:
-            root = ET.parse(cfg).getroot()
+            root = ET.parse(cfg).getroot()  # nosec B314 - our own Syncthing config file on local disk
         except Exception as e:
             logger.debug("[sync-guard] could not parse %s: %s", cfg, e)
             continue

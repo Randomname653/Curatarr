@@ -17,7 +17,7 @@ import pathlib
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from jose import jwt as jose_jwt
+import jwt as jose_jwt  # PyJWT
 
 from src.config import settings
 from src.middleware import TokenRefreshMiddleware

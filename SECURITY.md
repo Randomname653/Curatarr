@@ -39,12 +39,6 @@ server, so that API surface does not exist in any Curatarr deployment —
 the vulnerable code path is unused. No patched ChromaDB release exists
 yet; the pin will move once one does.
 
-`python-ecdsa` (transitive, via `python-jose`) carries PYSEC-2026-1325 —
-a Minerva timing attack on ECDSA P-256 signing. Curatarr's JWTs are
-**HS256** (symmetric `JWT_SECRET`); no code path signs or verifies with
-ECDSA keys, so the vulnerable primitive is never exercised. The advisory
-disappears entirely if `python-jose` is ever swapped for `PyJWT`.
-
 ## Reporting a vulnerability
 
 Please use GitHub's **[private vulnerability reporting](https://github.com/Randomname653/Curatarr/security/advisories/new)**

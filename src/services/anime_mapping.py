@@ -120,7 +120,7 @@ def _parse_xml(xml_text: str) -> AnimeMapping:
     """Parse anime-list-master.xml into mapping dicts."""
     mapping = AnimeMapping()
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(xml_text)  # nosec B314 - weekly community mapping file; modern expat blocks amplification
         for anime in root.findall("anime"):
             anidb_id_str = anime.get("anidbid")
             tvdb_id_str = anime.get("tvdbid")

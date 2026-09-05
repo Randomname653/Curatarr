@@ -874,7 +874,7 @@ async def library_reenrich(
 
                     placeholders = ",".join("?" for _ in keys_to_delete)
                     cache.conn.execute(
-                        f"DELETE FROM api_cache WHERE cache_key IN ({placeholders})",
+                        f"DELETE FROM api_cache WHERE cache_key IN ({placeholders})",  # nosec B608 - placeholders are literal "?" marks, values bound below
                         tuple(keys_to_delete),
                     )
                     cleared_embs = len(pids)

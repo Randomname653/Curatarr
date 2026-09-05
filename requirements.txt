@@ -12,7 +12,7 @@ python-multipart==0.0.32
 sqlalchemy==2.0.52
 
 # Auth & security
-python-jose[cryptography]==3.5.0
+PyJWT==2.13.0
 
 # HTTP client
 httpx==0.28.1

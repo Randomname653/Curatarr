@@ -378,7 +378,7 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
                 headers={**headers, "Accept": "application/xml"},
             )
             if r.status_code == 200:
-                root = ET.fromstring(r.text)
+                root = ET.fromstring(r.text)  # nosec B314 - XML from our own Plex server on the LAN
                 item = root.find(".//Video") or root.find(".//Track") or root.find(".//Directory")
                 if item is not None:
                     genres = [g.get("tag", "") for g in item.findall("Genre")]

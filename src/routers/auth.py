@@ -15,7 +15,8 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
 from src.config import settings
@@ -56,7 +57,7 @@ def _create_jwt(user_id: int, is_admin: bool) -> str:
 def _decode_jwt(token: str) -> dict:
     try:
         return jwt.decode(token, settings.effective_jwt_secret, algorithms=["HS256"])
-    except JWTError as exc:
+    except PyJWTError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
 

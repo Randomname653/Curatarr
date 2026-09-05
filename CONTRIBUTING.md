@@ -31,7 +31,8 @@ vector store, which admits one process at a time, so they all fail together
 while it is running. The runner says so rather than printing the same
 traceback eight times.
 
-New tests follow the stdlib pattern (`check(name, cond)` counter, printed
+Policy: new functionality ships with tests for it, and a bug fix
+ships with the test that would have caught it. New tests follow the stdlib pattern (`check(name, cond)` counter, printed
 summary, non-zero exit on failure — see `tests/test_stale_guard.py` as a
 template). Regressions caught live become fixtures.
 

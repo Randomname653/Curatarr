@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # the multi-user household). It is NOT a navigable origin — browser-facing
     # defaults (PLEX_REDIRECT_URI, CORS_ORIGINS) stay localhost-based and must
     # be overridden together with PORT if that ever changes.
-    HOST: str = "0.0.0.0"
+    HOST: str = "0.0.0.0"  # nosec B104 - a LAN-shared household server binds LAN by design (see SECURITY.md)
     PORT: int = 8000
     DEBUG: bool = False
     FIRST_RUN: bool = True   # set to False by setup wizard after completion

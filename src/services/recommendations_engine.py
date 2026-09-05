@@ -735,7 +735,7 @@ async def generate_recommendations(
                 await _asyncio.gather(*[_cand_line(i) for i in unwatched[:30]])
             )
 
-            prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]
+            prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]  # nosec B608 - an LLM prompt, not SQL
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.
 
 {lang_directive_str}

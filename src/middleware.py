@@ -82,7 +82,7 @@ class TokenRefreshMiddleware:
                      if k == b"authorization"), b"")
         if auth.startswith(b"Bearer "):
             try:
-                from jose import jwt
+                import jwt
                 from src.config import settings
                 payload = jwt.decode(auth[7:].decode(),
                                      settings.effective_jwt_secret,
