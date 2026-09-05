@@ -74,18 +74,26 @@ async def test_connection(
     yellow banner. We never block — the user might legitimately point
     Ollama at a cloud GPU box — but we never go silent about it either.
     """
+    # Post-setup panel: blank secrets mean "use what is saved" - the
+    # browser never receives them, so it cannot echo them back.
+    def _stored(name: str) -> str:
+        return getattr(settings, name, None) or ""
     if req.service == "plex":
-        result = await test_plex(req.url or "", req.token or "")
+        result = await test_plex(req.url or settings.effective_plex_url,
+                                 req.token or settings.effective_plex_token)
     elif req.service == "ollama":
         result = await test_ollama(req.url or settings.effective_ollama)
     elif req.service in ("radarr", "sonarr", "lidarr"):
-        result = await test_arr(req.url or "", req.api_key or "", req.service)
+        result = await test_arr(req.url or _stored(f"{req.service.upper()}_URL"),
+                                req.api_key or _stored(f"{req.service.upper()}_API_KEY"),
+                                req.service)
     elif req.service == "tmdb":
-        result = await test_tmdb(req.api_key or "")
+        result = await test_tmdb(req.api_key or _stored("TMDB_API_KEY"))
     elif req.service == "lastfm":
-        result = await test_lastfm(req.api_key or "")
+        result = await test_lastfm(req.api_key or _stored("LASTFM_API_KEY"))
     elif req.service == "spotify":
-        result = await test_spotify(req.client_id or "", req.client_secret or "")
+        result = await test_spotify(req.client_id or _stored("SPOTIFY_CLIENT_ID"),
+                                    req.client_secret or _stored("SPOTIFY_CLIENT_SECRET"))
     else:
         raise HTTPException(status_code=400, detail=f"Unknown service: {req.service}")
 

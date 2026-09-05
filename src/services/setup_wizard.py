@@ -880,6 +880,22 @@ SETUP_FIELDS = [
         "category": "ollama",
     },
     {
+        "id": "enable_pitcher",
+        "label": "Dedicated deletion judge (two-bake split)",
+        "placeholder": "",
+        "required": False,
+        "help": "A second bake that only judges deletions - more precise and faster at pitches; needs its own VRAM while it runs.",
+        "category": "ollama",
+    },
+    {
+        "id": "base_pitcher_model",
+        "label": "Judge model",
+        "placeholder": "qwen3.8:27b",
+        "required": False,
+        "help": "Base model for the deletion judge bake.",
+        "category": "ollama",
+    },
+    {
         "id": "tmdb_api_key",
         "label": "TMDB API Key",
         "placeholder": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",

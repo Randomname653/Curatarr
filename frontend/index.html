@@ -1114,6 +1114,7 @@ select option { background: var(--bg2); }
             <button class="settings-tab active" data-pane="account" onclick="openSettingsPane('account', this)">Account</button>
             <button class="settings-tab" data-pane="notifications" onclick="openSettingsPane('notifications', this)">Notifications</button>
             <button class="settings-tab admin-action-row" data-pane="library" onclick="openSettingsPane('library', this); loadLibrarySettings()" style="display:none">Library</button>
+            <button class="settings-tab admin-action-row" data-pane="integrations" onclick="openSettingsPane('integrations', this)" style="display:none">Integrations</button>
             <button class="settings-tab admin-action-row" data-pane="maintenance" onclick="openSettingsPane('maintenance', this)" style="display:none">Maintenance</button>
             <button class="settings-tab admin-action-row" data-pane="users" onclick="openSettingsPane('users', this); loadUsers()" style="display:none">Users</button>
           </nav>
@@ -1242,6 +1243,20 @@ select option { background: var(--bg2); }
               <div id="library-settings-shell">
                 <p style="color:var(--text3);font-size:13px">Loading…</p>
               </div>
+            </section>
+
+            <!-- Integrations pane (admin only): everything the wizard configured,
+                 changeable after the fact. Secrets are never echoed back - the
+                 server reports set / not set, typing a value replaces it. -->
+            <section class="settings-pane" data-pane="integrations" style="display:none">
+              <h2 style="margin-top:0">Integrations <span style="color:var(--text3);font-size:12px;font-weight:400">admin only</span></h2>
+              <p style="color:var(--text3);font-size:12px;margin:0 0 16px;line-height:1.5">
+                Plex, Ollama, the model bakes and every metadata source. Saving writes
+                <code>.env</code> and reloads settings live; a model change also needs
+                <strong>Rebuild models</strong> and a restart — the panel says so.
+                Radarr / Sonarr / Lidarr live under <em>Library</em>.
+              </p>
+              <div id="integrations-shell"><p style="color:var(--text3);font-size:13px">Loading…</p></div>
             </section>
 
             <!-- Users pane (admin only) — same renderer as the standalone
@@ -1464,6 +1479,18 @@ const SETUP_CONTENT = {
     <div class="form-group">
       <label for="s-embed-model">Embedding model</label>
       <select id="s-embed-model"><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe (recommended)</option></select>
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="s-pitcher-enable" onchange="document.getElementById('s-pitcher-wrap').style.display=this.checked?'':'none'" ${setupData.enable_pitcher?'checked':''}>
+        Dedicated deletion judge (two-bake split)
+      </label>
+      <div class="hint">A second bake that ONLY judges deletions — benchmarked more precise and 2.4× faster at pitches than the chat curator. It needs its own VRAM while it runs (the curator is evicted meanwhile), so it pays off on 24 GB cards; below that the curator judges deletions too.</div>
+      <div id="s-pitcher-wrap" style="margin-top:8px;${setupData.enable_pitcher?'':'display:none'}">
+        <label for="s-pitcher-model">Judge model</label>
+        <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (recommended for the split)</option></select>
+        <div id="pitcher-note" class="hint"></div>
+      </div>
     </div>`,
 
   metadata: () => `
@@ -1505,6 +1532,11 @@ const SETUP_CONTENT = {
     <div class="form-group">
       <label for="s-soulsync-key">SoulSync API Key</label>
       <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${setupData.soulsync_api_key||''}">
+    </div>
+    <div class="form-group">
+      <label for="s-listenbrainz">ListenBrainz user token <span class="badge muted" style="font-size:10px">Optional · Music</span></label>
+      <input id="s-listenbrainz" type="password" placeholder="free account token" value="${setupData.listenbrainz_token||''}">
+      <div class="hint">Global listener counts as deletion evidence for music. Free account at <a href="https://listenbrainz.org/settings/" style="color:var(--amber)" target="_blank">listenbrainz.org/settings</a> — ListenBrainz requires the token since it auth-locked its API.</div>
     </div>`,
 
   arr: () => `
@@ -1588,8 +1620,11 @@ function collectStep() {
     setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'gemma4:31b';
     setupData.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'granite4.1:8b';
     setupData.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text-v2-moe';
+    setupData.enable_pitcher = !!document.getElementById('s-pitcher-enable')?.checked;
+    setupData.base_pitcher_model = document.getElementById('s-pitcher-model')?.value || 'qwen3.8:27b';
     setupData.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || setupData.vram_gb || null;
   } else if (key === 'metadata') {
+    setupData.listenbrainz_token = document.getElementById('s-listenbrainz')?.value?.trim() || '';
     setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
     setupData.omdb_api_key = document.getElementById('s-omdb')?.value?.trim() || '';
     setupData.soulsync_url = document.getElementById('s-soulsync-url')?.value?.trim() || '';
@@ -1700,6 +1735,9 @@ async function refreshModelRecs() {
     renderRecSelect('s-curator-model', r.curator, r.installed);
     renderRecSelect('s-summarizer-model', r.summarizer, r.installed);
     renderRecSelect('s-embed-model', r.embedding, r.installed);
+    renderRecSelect('s-pitcher-model', r.pitcher, r.installed);
+    const pn = document.getElementById('pitcher-note');
+    if (pn) pn.textContent = r.pitcher_note || '';
     if (panel) panel.innerHTML = r.floor_note
       ? `<div class="test-status" style="color:var(--amber)">${SVG_WARN} ${esc(r.floor_note)}</div>`
       : '';
@@ -3853,9 +3891,185 @@ function openSettingsPane(name, btn) {
     loadNotificationPreferences();
   } else if (name === 'library') {
     loadLibrarySettings();
+  } else if (name === 'integrations') {
+    loadIntegrations();
   } else if (name === 'users') {
     loadUsers();
   }
+}
+
+// ── Settings → Integrations (admin only) ──────────────────────────────────
+// GET /api/setup/integrations hands back plain values for URLs / models and
+// {set: bool} for secrets; POST /api/setup/reconfigure takes only the fields
+// the admin touched. Secrets are typed to replace, cleared via the × button,
+// and never travel back to the browser.
+const INTEGRATION_CARDS = [
+  {key: 'plex', title: 'Plex', test: 'plex', fields: [
+    {id: 'plex_url', label: 'Server URL', placeholder: 'http://192.168.1.100:32400'},
+    {id: 'plex_token', label: 'Auth token', secret: true, required: true},
+  ]},
+  {key: 'models', title: 'Ollama & models', test: 'ollama', fields: [
+    {id: 'ollama_endpoint', label: 'Ollama endpoint', placeholder: 'http://localhost:11434'},
+    {id: 'base_curator_model', label: 'Curator model (chat & recommendations)'},
+    {id: 'base_summarizer_model', label: 'Summarizer model (enrichment)'},
+    {id: 'embedding_model', label: 'Embedding model (changing it means re-embedding the library)'},
+    {id: 'enable_pitcher', label: 'Dedicated deletion judge (two-bake split)', toggle: true},
+    {id: 'base_pitcher_model', label: 'Judge model'},
+  ]},
+  {key: 'metadata', title: 'Movies & series metadata', fields: [
+    {id: 'tmdb_api_key', label: 'TMDB API key', secret: true, test: 'tmdb'},
+    {id: 'omdb_api_key', label: 'OMDb API key', secret: true},
+  ]},
+  {key: 'music', title: 'Music metadata', fields: [
+    {id: 'lastfm_api_key', label: 'Last.fm API key', secret: true, test: 'lastfm'},
+    {id: 'spotify_client_id', label: 'Spotify client ID'},
+    {id: 'spotify_client_secret', label: 'Spotify client secret', secret: true, test: 'spotify'},
+    {id: 'listenbrainz_token', label: 'ListenBrainz user token', secret: true},
+    {id: 'soulsync_url', label: 'SoulSync URL (LAN, read-only)', placeholder: 'http://192.168.1.100:12279'},
+    {id: 'soulsync_api_key', label: 'SoulSync API key', secret: true},
+  ]},
+  {key: 'subtitles', title: 'Subtitles (dialogue evidence)', fields: [
+    {id: 'opensubtitles_api_key', label: 'OpenSubtitles API key', secret: true},
+    {id: 'opensubtitles_username', label: 'OpenSubtitles username'},
+    {id: 'opensubtitles_password', label: 'OpenSubtitles password', secret: true},
+    {id: 'opensubtitles_daily_budget', label: 'Daily request budget', number: true},
+  ]},
+];
+
+let _integrationsCfg = null;
+
+async function loadIntegrations() {
+  const shell = document.getElementById('integrations-shell');
+  if (!shell) return;
+  shell.innerHTML = '<p style="color:var(--text3);font-size:13px">Loading…</p>';
+  try {
+    const r = await api('/api/setup/integrations');
+    _integrationsCfg = r.config || {};
+    if (r.pitcher_enabled !== undefined) _integrationsCfg.enable_pitcher = !!r.pitcher_enabled;
+    shell.innerHTML = '';
+    for (const card of INTEGRATION_CARDS) shell.appendChild(renderIntegrationCard(card, _integrationsCfg));
+  } catch (e) {
+    shell.innerHTML = `<p style="color:var(--danger)">Failed to load: ${esc(e.message || 'unknown')}</p>`;
+  }
+}
+
+function renderIntegrationCard(card, cfg) {
+  const el = document.createElement('div');
+  el.style.cssText = 'border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:14px;margin-bottom:14px';
+  const rows = card.fields.map(f => {
+    const cur = cfg[f.id];
+    if (f.toggle) {
+      return `<label style="display:flex;align-items:center;gap:8px;margin:10px 0;cursor:pointer;font-size:13px">
+        <input type="checkbox" id="int-${f.id}" ${cur ? 'checked' : ''}> ${esc(f.label)}</label>`;
+    }
+    if (f.secret) {
+      const isSet = !!(cur && cur.set);
+      const chip = isSet
+        ? '<span style="color:var(--success);font-size:11px">set</span>'
+        : '<span style="color:var(--text3);font-size:11px">not set</span>';
+      const clear = (isSet && !f.required)
+        ? `<button class="btn btn-secondary btn-sm" title="Clear this key" onclick="clearIntegrationSecret('${f.id}', '${card.key}')">×</button>` : '';
+      return `<div class="form-group" style="margin:8px 0">
+        <label for="int-${f.id}">${esc(f.label)} ${chip}</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="int-${f.id}" type="password" autocomplete="new-password" placeholder="${isSet ? 'type to replace' : 'not set'}" style="flex:1">${clear}
+        </div></div>`;
+    }
+    const type = f.number ? 'number' : 'text';
+    return `<div class="form-group" style="margin:8px 0">
+      <label for="int-${f.id}">${esc(f.label)}</label>
+      <input id="int-${f.id}" type="${type}" value="${esc(cur === undefined || cur === null ? '' : String(cur))}" placeholder="${esc(f.placeholder || '')}"></div>`;
+  }).join('');
+  const testBtn = card.test
+    ? `<button class="btn btn-secondary btn-sm" onclick="testIntegration('${card.key}')">Test connection</button>` : '';
+  const rebuild = card.key === 'models'
+    ? `<button class="btn btn-secondary btn-sm" onclick="rebuildModels('${card.key}')" title="Bake the chosen models via ollama create">Rebuild models</button>` : '';
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 style="margin:0;font-size:15px">${esc(card.title)}</h3>
+      <span id="int-msg-${card.key}" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+    ${rows}
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="saveIntegrations('${card.key}')">Save</button>
+      ${testBtn}${rebuild}
+    </div>`;
+  return el;
+}
+
+function _integrationChanges(card) {
+  const changes = {};
+  for (const f of card.fields) {
+    const input = document.getElementById(`int-${f.id}`);
+    if (!input) continue;
+    if (f.toggle) { changes[f.id] = !!input.checked; continue; }
+    const v = input.value.trim();
+    if (f.secret) { if (v) changes[f.id] = v; continue; }     // blank = keep
+    if (f.number) { if (v !== '') changes[f.id] = parseInt(v, 10); continue; }
+    const cur = _integrationsCfg?.[f.id];
+    if (v !== String(cur === undefined || cur === null ? '' : cur)) changes[f.id] = v;
+  }
+  return changes;
+}
+
+async function saveIntegrations(cardKey) {
+  const card = INTEGRATION_CARDS.find(c => c.key === cardKey);
+  const msg = document.getElementById(`int-msg-${cardKey}`);
+  const changes = _integrationChanges(card);
+  if (!Object.keys(changes).length) { msg.textContent = 'nothing changed'; msg.style.color = 'var(--text3)'; return; }
+  msg.textContent = 'saving…'; msg.style.color = 'var(--text3)';
+  try {
+    const r = await api('/api/setup/reconfigure', 'POST', changes);
+    msg.style.color = 'var(--success)';
+    msg.textContent = r.models_changed
+      ? 'saved — now Rebuild models, then restart Curatarr'
+      : r.restart_recommended ? 'saved — restart Curatarr to apply everywhere' : 'saved + live';
+    setTimeout(loadIntegrations, 1200);
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = _errMsg(e); }
+}
+
+async function clearIntegrationSecret(fieldId, cardKey) {
+  if (!confirm('Clear this key? The integration falls back to keyless behaviour or is skipped.')) return;
+  const msg = document.getElementById(`int-msg-${cardKey}`);
+  try {
+    await api('/api/setup/reconfigure', 'POST', {[fieldId]: ''});
+    msg.style.color = 'var(--success)'; msg.textContent = 'cleared';
+    setTimeout(loadIntegrations, 800);
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = _errMsg(e); }
+}
+
+async function testIntegration(cardKey) {
+  const card = INTEGRATION_CARDS.find(c => c.key === cardKey);
+  const msg = document.getElementById(`int-msg-${cardKey}`);
+  const val = id => document.getElementById(`int-${id}`)?.value?.trim() || '';
+  // Blank secrets fall back to the stored ones server-side, so "Test" works
+  // without re-typing a key that is already saved.
+  let body;
+  if (cardKey === 'plex') body = {service: 'plex', url: val('plex_url'), token: val('plex_token')};
+  else if (cardKey === 'models') body = {service: 'ollama', url: val('ollama_endpoint')};
+  else if (cardKey === 'metadata') body = {service: 'tmdb', api_key: val('tmdb_api_key')};
+  else if (cardKey === 'music') body = val('spotify_client_id') || val('spotify_client_secret')
+    ? {service: 'spotify', client_id: val('spotify_client_id'), client_secret: val('spotify_client_secret')}
+    : {service: 'lastfm', api_key: val('lastfm_api_key')};
+  else return;
+  msg.textContent = 'testing…'; msg.style.color = 'var(--text3)';
+  try {
+    const r = await api('/api/setup/test', 'POST', body);
+    msg.style.color = r.ok ? 'var(--success)' : 'var(--danger)';
+    msg.textContent = r.ok ? `connected${r.version ? ' · ' + r.version : ''}` : (r.error || 'failed');
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = _errMsg(e); }
+}
+
+async function rebuildModels(cardKey) {
+  const msg = document.getElementById(`int-msg-${cardKey}`);
+  if (!confirm('Rebuild the Curatarr model bakes now? Pulls missing base models and re-creates the bakes; the app keeps running.')) return;
+  msg.textContent = 'building… this can take minutes'; msg.style.color = 'var(--text3)';
+  try {
+    const r = await api('/api/setup/build-models', 'POST');
+    const ok = r.curator && r.summarizer;
+    msg.style.color = ok ? 'var(--success)' : 'var(--danger)';
+    msg.textContent = ok ? 'models rebuilt — restart Curatarr to load them' : 'build failed — see the Activity log';
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = _errMsg(e); }
 }
 
 // ── Pass 16b: Library Settings (admin only) ───────────────────────────────
