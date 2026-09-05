@@ -1363,21 +1363,10 @@ async def spotify_backlog(
 # library, with every number carrying its denominator + basis-explanation
 # inline. Both screens render the same panel; differences become impossible.
 #
-# Mutually-exclusive pipeline states (from _write_enrichment_db in
-# enrichment.py:712, lines 743-755):
-#   - llm_polished     : enriched=True, error IS NULL
-#                        (full LLM summary written — terminal state)
-#   - rule_based       : enriched=True, error LIKE 'rule_based%'
-#                        (heuristic fallback wrote a profile; will retry
-#                         for LLM upgrade — 1-day cache TTL)
-#   - awaiting_llm     : enriched=True, error LIKE 'api_cached%'
-#                        (game-mode: API data persisted, LLM paused)
-#   - not_findable     : enriched=True, error LIKE 'Not found%'
-#                        (sentinel — all metadata APIs missed. 3-day TTL.)
-#   - processing_error : enriched=False (any error or no error)
-#                        (pipeline crashed mid-item — always retried)
-#   - never_processed  : NO EnrichmentStatus row at all
-#                        (calculated as ``denominator - sum(other states)``)
+# Mutually-exclusive pipeline states: ONE classifier for every view —
+# services/enrichment_state.py (STATES / STATE_DEFINITIONS /
+# classify_enrichment_row). ``never_processed`` is the implied state:
+# ``denominator - sum(other states)``.
 
 @router.get("/reclassify/scan")
 async def reclassify_scan(_admin: User = Depends(require_admin)):
@@ -1525,63 +1514,23 @@ async def library_breakdown(
     # One pass: group by (media_category, state_bucket) using SQL CASE.
     # Excludes Spotify ext-script seeds (Pass 91b — they aren't in any Plex
     # section so they don't belong to a library row here).
-    from sqlalchemy import case as _case, and_ as _and
+    from src.services.enrichment_state import classify_enrichment_row as _classify
     state_buckets: dict[str, dict[str, int]] = {}
     with get_db_session() as db:
-        # Pass 98: split the old "processing_error" catch-all into two honest
-        # buckets:
-        #   - ``queued_for_retry``   : enriched=False, error IS NULL — the
-        #                              row exists in tracking but the pipeline
-        #                              hasn't (re-)processed it yet. This
-        #                              covers freshly-seeded items AND items
-        #                              an admin reset (e.g. after the
-        #                              not_findable burst caused by the
-        #                              May-16 TMDB outage poisoning 6,464
-        #                              movies in one hour).
-        #   - ``processing_error``   : enriched=False, error IS NOT NULL —
-        #                              the pipeline actually tried and
-        #                              recorded an error string.
-        # Pre-98 both collapsed into ``processing_error`` which was
-        # misleading: a freshly-reset row got the same "warning" label as
-        # a row that genuinely crashed. The two states deserve their own
-        # bucket so the user can tell the difference at a glance.
-        # Phase 2 #40: split the LLM-polished bucket on ``provisional`` —
-        # provisional rows (fast-tier fetch, MB / Jikan / supplements still
-        # pending the #41 upgrade pass) get their own bucket so the user
-        # can see at a glance how many items are "enriched temporary".
-        # The provisional-True case MUST come before the generic
-        # ``error IS NULL → llm_polished`` so it wins; legacy rows have
-        # provisional=False (default 0 in the migration), and the bool
-        # coerces correctly under SQLite + SQLAlchemy.
-        bucket_expr = _case(
-            (_ES.enriched == False, _case(
-                (_ES.error.is_(None), "queued_for_retry"),
-                else_="processing_error",
-            )),
-            (_and(_ES.error.is_(None), _ES.provisional == True), "enriched_provisional"),
-            (_ES.error.is_(None), "llm_polished"),
-            (_ES.error.like("rule_based%"), "rule_based"),
-            (_ES.error.like("api_cached%"), "awaiting_llm"),
-            (_ES.error.like("Not found%"), "not_findable"),
-            else_="processing_error",
-        ).label("bucket")
-
-        rows = (
-            db.query(
-                _ES.media_category,
-                bucket_expr,
-                _func.count(_ES.id).label("n"),
-            )
+        # One classifier for every view (services/enrichment_state.py): the
+        # SQL CASE that lived here disagreed with the KB tile's own if-chain
+        # (and neither knew about the not-found backoff). Row-level Python
+        # over ~20k rows is a few ms and keeps the vocabulary in one place.
+        _now = datetime.utcnow()
+        for r in (
+            db.query(_ES.media_category, _ES.enriched, _ES.error,
+                     _ES.provisional, _ES.next_retry_at)
             .filter(~_ES.plex_rating_key.like("ext-script:%"))
-            # Group by the case-expression directly (not its label string).
-            # SQLite tolerates both, but other dialects bind the label only
-            # after SELECT resolution — passing the expression keeps this
-            # portable if we ever swap engines.
-            .group_by(_ES.media_category, bucket_expr)
             .all()
-        )
-        for cat, bucket, n in rows:
-            state_buckets.setdefault(cat, {})[bucket] = int(n)
+        ):
+            bucket = _classify(r, now=_now)
+            cb = state_buckets.setdefault(r.media_category, {})
+            cb[bucket] = cb.get(bucket, 0) + 1
 
         vector_ready_counts = dict(
             db.query(_ES.media_category, _func.count(_ES.id))
@@ -1768,24 +1717,9 @@ async def library_breakdown(
         "music": "Music",
     }
 
-    state_definitions = {
-        "llm_polished":     ("✅ LLM-polished",
-                             "enriched=True, error IS NULL — full LLM summary written from a canonical (full-tier) fetch. Terminal state."),
-        "enriched_provisional": ("🌗 Enriched (provisional)",
-                             "enriched=True, fetch_tier='fast' — LLM-polished from a fast-only fetch (Last.fm for music, no Jikan/OMDb/TMDB supplement). The hourly source-upgrade scheduler (#41) promotes 30 of these per hour to the full canonical fetch, oldest first."),
-        "rule_based":       ("🔧 Rule-based only",
-                             "Heuristic fallback wrote a profile; LLM upgrade pending. 1-day cache TTL before retry."),
-        "awaiting_llm":     ("⏳ Awaiting LLM polish",
-                             "Game-mode: API data was persisted, LLM was paused to free GPU. Next run finishes the polish."),
-        "not_findable":     ("❌ Not findable",
-                             "All metadata APIs (TMDB/AniList/MB/OMDb…) missed. 3-day TTL — may resolve if APIs add the title."),
-        "queued_for_retry": ("🕒 Queued for retry",
-                             "Row exists in tracking but the pipeline hasn't processed it yet — freshly seeded items, or items an admin reset (e.g. after a bad-API burst). Picked up on the next enrichment run."),
-        "processing_error": ("⚠️ Processing error",
-                             "Pipeline crashed mid-item AND recorded an error string. Always retried on the next run."),
-        "never_processed":  ("📋 Never processed",
-                             "No row in tracking — item hasn't reached the enrichment queue yet. Hit ‘Start enrichment’ to queue."),
-    }
+    # The shared vocabulary (label, explainer) — services/enrichment_state.py.
+    from src.services.enrichment_state import STATE_DEFINITIONS as _SD
+    state_definitions = {k: (v["label"], v["explainer"]) for k, v in _SD.items()}
 
     # Sonarr backs BOTH 'show' and 'anime', so its ``total`` is the COMBINED
     # series count. Using it as a per-category denominator reports the other

@@ -115,15 +115,19 @@ async def _refresh_one(raw: dict, arr: dict = None) -> bool:
         year = raw.get("year")
     if not title:
         return False
-    fresh = await fetch_and_prepare_raw(
-        title, media_type,
-        plex_rating_key=prk,
-        year=year,
-        fast_only=True,
-        **ids, **{k: v for k, v in extra.items() if v},
-    )
-    if not isinstance(fresh, dict):
-        return False
+    from src.services.media_enricher import TMDBTransientError
+    try:
+        fresh = await fetch_and_prepare_raw(
+            title, media_type,
+            plex_rating_key=prk,
+            year=year,
+            fast_only=True,
+            **ids, **{k: v for k, v in extra.items() if v},
+        )
+    except TMDBTransientError:
+        return False   # upstream unavailable — nothing to refresh from
+    if not isinstance(fresh, dict) or fresh.get("_not_found"):
+        return False   # no data (the not-found dict carries evidence, not a blob)
     if fresh.get("_already_enriched"):
         return False   # profile fresh — raw refresh unnecessary
     mc = MetadataCache()

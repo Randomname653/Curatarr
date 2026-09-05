@@ -484,6 +484,18 @@ class EnrichmentStatus(Base):
     sources_state = Column(Text,       nullable=True)   # JSON: {"tmdb":{"status":"ok","at":"…"},…}
     provisional   = Column(Boolean,    default=False)   # True while a "fast" row is still upgradable
 
+    # Healing (2026-09): the attempt counter behind the not-found backoff
+    # (services/enrichment_state.py — two free tries, then 3/6/12/24 d, capped
+    # at 30 d, forever) and the match-quality record. ``next_retry_at`` NULL =
+    # due on the next run. ``match_basis`` says which authority resolved the
+    # entity (pin | arr_id | identity | title_search); ``match_confidence`` is
+    # 1.0 for id-based matches and the title/year similarity otherwise.
+    attempt_count    = Column(Integer,   default=0)
+    last_attempt_at  = Column(DateTime,  nullable=True)
+    next_retry_at    = Column(DateTime,  nullable=True)
+    match_basis      = Column(String(16), nullable=True)
+    match_confidence = Column(Float,     nullable=True)
+
 
 class AppState(Base):
     """Persistent app-wide state — replaces reading .env for runtime checks."""

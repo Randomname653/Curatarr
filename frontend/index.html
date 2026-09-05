@@ -3575,7 +3575,7 @@ async function loadGlancePanel() {
   if (overview.status === 'fulfilled') {
     let live = 0, of = 0;
     for (const c of Object.values(overview.value.categories || {})) {
-      live += c?.states?.enriched_live || 0;
+      live += (c?.states?.enriched || 0) + (c?.states?.enriched_provisional || 0);
       of += c?.denominator?.downloaded || 0;
     }
     if (of) libPct = Math.round(100 * live / of);
@@ -6062,27 +6062,41 @@ async function loadProfiles(offset=0) {
 // ── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
 
 
+// Fallback copy only — the live definitions arrive with the /overview payload
+// (services/enrichment_state.py is the single source of truth for the states).
 const KB_STATE_DEFS = {
-  enriched_live:  'Status flag set AND a live profile exists in the cache — the real, usable truth.',
-  enriched_dead:  'Flag says enriched but the cache entry is gone — re-queued automatically by the next enrichment run.',
-  awaiting_polish:'Raw API data is cached but no LLM profile has been written yet.',
-  retry_queued:   'Tracked with an error — retried on the next run.',
-  not_findable:   'The metadata APIs do not know this title.',
-  never_processed:'Never entered the pipeline.',
+  enriched:             'A full profile was written and its cache entry is live.',
+  enriched_provisional: 'Profile from the fast pass; the slow sources are still merging in the background.',
+  enriched_dead:        'The flag says enriched but the cached profile is gone — re-queued automatically.',
+  rule_based:           'Heuristic profile without the LLM — retried for an upgrade.',
+  awaiting_llm:         'API data cached, LLM polish paused (game mode).',
+  retry_due:            'Not found so far; the waiting time is over — the next run tries again.',
+  not_found:            'Every consulted source missed; waiting on the backoff (3, 6, 12, 24, then 30 days).',
+  queued:               'Tracked but not processed yet.',
+  processing_error:     'The pipeline crashed on this item — retried every run.',
+  ignored:              'Accepted by the owner as unenriched — excluded from retries and the open count.',
+  never_processed:      'Never entered the pipeline.',
 };
 
 function _renderKbOverview(o, running, lastRun) {
   const cats = o.categories || {};
+  const served = Object.entries(o.state_definitions || {}).map(([k, v]) => [k, `${v.explainer} ${v.next_step || ''}`.trim()]);
+  const defs = Object.assign({}, KB_STATE_DEFS, Object.fromEntries(served));
   const order = ['movie', 'show', 'anime', 'music'];
   const rows = order.filter(c => cats[c]).map(cat => {
     const c = cats[cat], d = c.denominator, s = c.states;
-    const pct = d.downloaded ? Math.round(100 * s.enriched_live / d.downloaded) : 0;
-    const cell = k => `<td title="${KB_STATE_DEFS[k]}" style="text-align:right${s[k] ? '' : ';color:var(--text3)'}">${s[k].toLocaleString()}</td>`;
+    const n = k => s[k] || 0;
+    const done = n('enriched') + n('enriched_provisional');
+    const pct = d.downloaded ? Math.round(100 * done / d.downloaded) : 0;
+    const cell = keys => {
+      const v = keys.reduce((a, k) => a + n(k), 0);
+      return `<td title="${escAttr(keys.map(k => defs[k] || k).join(' · '))}" style="text-align:right${v ? '' : ';color:var(--text3)'}">${v.toLocaleString()}</td>`;
+    };
     return `<tr>
       <td>${cat}</td>
       <td style="text-align:right">${d.downloaded.toLocaleString()} <span style="color:var(--text3)">/ ${d.arr_total.toLocaleString()}</span></td>
-      <td style="text-align:right;color:var(--success);font-weight:600" title="${KB_STATE_DEFS.enriched_live}">${s.enriched_live.toLocaleString()} <span style="color:var(--text3);font-weight:400">${pct}%</span></td>
-      ${cell('enriched_dead')}${cell('awaiting_polish')}${cell('retry_queued')}${cell('not_findable')}${cell('never_processed')}
+      <td style="text-align:right;color:var(--success);font-weight:600" title="${escAttr(defs.enriched)}">${done.toLocaleString()} <span style="color:var(--text3);font-weight:400">${pct}%</span></td>
+      ${cell(['enriched_dead'])}${cell(['rule_based', 'awaiting_llm'])}${cell(['retry_due'])}${cell(['not_found'])}${cell(['queued', 'processing_error'])}${cell(['ignored'])}${cell(['never_processed'])}
       <td style="text-align:right" title="Items with at least one vector-store entry (deduplicated by item identity)">${c.vectors.indexed.toLocaleString()}</td>
       <td style="text-align:right" title="Live raw cache entries carrying Wikipedia significance">${c.wikipedia.significance_cached.toLocaleString()}</td>
       <td style="text-align:right" title="Live raw cache entries with OMDb data (writer / awards / extended plot)">${c.omdb.covered.toLocaleString()}</td>
@@ -6091,7 +6105,7 @@ function _renderKbOverview(o, running, lastRun) {
 
   const wh = o.watch_history_only || {};
   const whRows = order.filter(c => wh[c]).map(c =>
-    `<tr><td>${c}</td><td style="text-align:right">${wh[c].rows.toLocaleString()}</td><td style="text-align:right">${wh[c].enriched.toLocaleString()}</td></tr>`).join('');
+    `<tr><td>${c}</td><td style="text-align:right">${wh[c].rows.toLocaleString()}</td><td style="text-align:right">${wh[c].enriched.toLocaleString()}</td><td style="text-align:right;color:var(--text3)">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
 
   const mp = o.music_pipeline || {};
   const phase = (label, pp, def) => pp ? `<tr><td title="${def}">${label}</td><td style="text-align:right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td style="text-align:right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
@@ -6102,11 +6116,13 @@ function _renderKbOverview(o, running, lastRun) {
       <table class="tbl"><thead><tr>
         <th>Library</th>
         <th style="text-align:right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
-        <th style="text-align:right">Enriched</th>
-        <th style="text-align:right">Dead</th>
-        <th style="text-align:right">Awaiting</th>
-        <th style="text-align:right">Retry</th>
-        <th style="text-align:right">Not findable</th>
+        <th style="text-align:right" title="Full profile written (including provisional fast-pass profiles)">Enriched</th>
+        <th style="text-align:right" title="Enriched flag set but the cached profile is gone">Dead</th>
+        <th style="text-align:right" title="Rule-based profile or LLM polish still pending">Partial</th>
+        <th style="text-align:right" title="Not found so far; waiting time over — the next run tries again">Retry due</th>
+        <th style="text-align:right" title="Every consulted source missed; waiting on the backoff">Not found</th>
+        <th style="text-align:right" title="Queued or crashed — processed on the next run">Queued</th>
+        <th style="text-align:right" title="Accepted by the owner as unenriched">Ignored</th>
         <th style="text-align:right">Never</th>
         <th style="text-align:right">Vectors</th>
         <th style="text-align:right">Wikipedia</th>
@@ -6117,7 +6133,7 @@ function _renderKbOverview(o, running, lastRun) {
     <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px">
       <div style="flex:1;min-width:260px">
         <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages above">Watch-history tracking (own set)</div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th style="text-align:right">Tracking rows</th><th style="text-align:right">Enriched</th></tr></thead><tbody>${whRows}</tbody></table></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th style="text-align:right">Tracking rows</th><th style="text-align:right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th style="text-align:right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div>
       </div>
       <div style="flex:1;min-width:260px">
         <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Spotify pipeline</div>

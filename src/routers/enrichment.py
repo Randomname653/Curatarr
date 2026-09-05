@@ -24,6 +24,7 @@ from src.services.app_state import get_state, set_state
 logger = logging.getLogger(__name__)
 from src.services.task_monitor import task_monitor
 from src.services.ttl_memo import ttl_response
+from src.services import enrichment_state as _ES
 router = APIRouter()
 
 CATEGORIES = ["music", "movie", "show", "anime"]
@@ -684,10 +685,11 @@ def _enrichment_incomplete_reason(profile: dict, category: str | None = None) ->
     if not isinstance(profile, dict):
         return "malformed"
     if profile.get("source") == "not_found":
-        # Wasn't matched in any API. Worth retrying especially after the
-        # Pass 51/52 ID-resolution work — previously-unfindable titles
-        # may resolve now.
-        return "not_found"
+        # Healing 2026-09: NOT flagged any more. Not-found rows carry their
+        # own attempt counter + backoff (services/enrichment_state.py); the
+        # old blind weekly requeue fought that schedule and made the row
+        # read as enriched until it was reprocessed.
+        return None
     # Music is exempt from the rating check. TMDB/OMDb/AniList expose a 0-10
     # score, but the music sources (Last.fm/Spotify/MusicBrainz) don't — a
     # missing rating is the NORM for music, not an incompleteness signal.
@@ -1107,7 +1109,8 @@ def _purge_and_requeue_item(service: str, arr_id: int, category: str) -> dict:
     with get_db_session() as db:
         flipped += db.query(EnrichmentStatus).filter(
             EnrichmentStatus.plex_rating_key == prk,
-        ).update({"enriched": False, "enriched_at": None, "error": None},
+        ).update({"enriched": False, "enriched_at": None, "error": None,
+                  "attempt_count": 0, "next_retry_at": None},   # fresh start for the backoff
                  synchronize_session=False)
         from src.database.models import ArrEnrichmentStatus as _AES
         flipped += db.query(_AES).filter(
@@ -1431,10 +1434,76 @@ def _is_rule_based(profile: dict) -> bool:
     return "rule_based" in src or src == "not_found"
 
 
-async def _write_enrichment_db(item: dict, profile, cat: str):
-    """Write EnrichmentStatus + ArrEnrichmentStatus + propagate series cache."""
+def _build_not_found_sentinel(title: str, cat: str, raw: Optional[dict]) -> dict:
+    """The profile-shaped record for "no usable data", built from the
+    evidence ``fetch_and_prepare_raw`` returns (``_reason``, per-source
+    outcomes, arr context). A legacy ``None`` yields a bare sentinel."""
+    raw = raw or {}
+    sentinel = {
+        "source": "not_found",
+        "title": title,
+        "genres": [], "themes": [], "mood": [],
+        "media_type": cat,
+        "not_found_reason": raw.get("_reason") or _ES.REASON_NO_SOURCE,
+    }
+    state = dict(raw.get("_sources_state") or {})
+    ctx = {k: v for k, v in (raw.get("_context") or {}).items() if v not in (None, "", [])}
+    if ctx:
+        state[_ES.CONTEXT_KEY] = ctx
+    if state:
+        sentinel["sources_state"] = state
+    return sentinel
+
+
+def _rollback_attempts(keys) -> int:
+    """Undo this run's not-found attempts for ``keys`` — a category aborted
+    on the outage guard, so those misses are suspect: one attempt back,
+    due again on the next run. Returns the number of rows touched."""
+    keys = [k for k in keys if k]
+    n = 0
+    with get_db_session() as db:
+        for i in range(0, len(keys), 500):
+            rows = db.query(EnrichmentStatus).filter(
+                EnrichmentStatus.plex_rating_key.in_(keys[i:i + 500]),
+                EnrichmentStatus.attempt_count > 0,
+            ).all()
+            for r in rows:
+                r.attempt_count = (r.attempt_count or 1) - 1
+                r.next_retry_at = None
+                n += 1
+        db.commit()
+    return n
+
+
+async def _write_enrichment_db(item: dict, profile, cat: str, *,
+                               fresh_attempt: bool = False) -> bool:
+    """Write EnrichmentStatus + ArrEnrichmentStatus + propagate series cache.
+
+    ``fresh_attempt`` = this write ends a real fetch round (the producer).
+    Only then does a not-found sentinel count an attempt and move the
+    backoff; the cache-reconcile path passes False. Returns True when an
+    attempt was counted (the producer remembers those keys for the
+    outage rollback)."""
     from src.database.models import ArrEnrichmentStatus
     canonical_title = item.get("series_title") or item["title"]
+
+    is_not_found = profile is not None and profile.get("source") == "not_found"
+    llm_ok       = profile is not None and not _is_rule_based(profile)
+    has_data     = profile is not None
+    # enriched=True  + error=None                → LLM done; never retried
+    # enriched=True  + error="rule_based…"       → has data; retried for upgrade
+    # enriched=True  + error="Not found: …"      → no external data; retried per backoff
+    # enriched=False + error="Processing failed" → LLM/pipeline failed; always retried
+    if profile is None:
+        error = _ES.PROCESSING_FAILED_ERROR
+    elif llm_ok:
+        error = None
+    elif is_not_found:
+        error = _ES.not_found_error(profile.get("not_found_reason"))
+    else:
+        error = _ES.RULE_BASED_ERROR
+    counted = False
+    attempts_after = 0
 
     for _attempt in range(5):
         try:
@@ -1462,19 +1531,31 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                     # arr renamed the series or the category was re-derived.
                     status.title          = canonical_title
                     status.media_category = cat
-                is_not_found = profile is not None and profile.get("source") == "not_found"
-                llm_ok       = profile is not None and not _is_rule_based(profile)
-                has_data     = profile is not None
-                # enriched=True  + error=None           → LLM done; never retried
-                # enriched=True  + error="rule_based…"  → has data; retried for upgrade
-                # enriched=True  + error="Not found…"   → no external data; retried after cache TTL
-                # enriched=False                         → processing failed; always retried
                 status.enriched    = has_data
                 status.enriched_at = datetime.utcnow() if has_data else None
-                status.error       = (None              if llm_ok
-                                      else "Not found in metadata APIs" if is_not_found
-                                      else "rule_based — LLM upgrade pending"
-                                      if _is_rule_based(profile) else "Processing failed")
+                status.error       = error
+                # Healing: the attempt counter behind the not-found backoff.
+                # A fresh miss counts and schedules the next try; a reconcile
+                # leaves the counter alone; a real profile resets it.
+                _now = datetime.utcnow()
+                if is_not_found:
+                    if fresh_attempt:
+                        status.attempt_count   = (status.attempt_count or 0) + 1
+                        status.last_attempt_at = _now
+                        status.next_retry_at   = _ES.next_retry_at(status.attempt_count, _now)
+                        counted = True
+                    attempts_after = status.attempt_count or 0
+                elif llm_ok:
+                    status.attempt_count = 0
+                    status.next_retry_at = None
+                if profile is not None:
+                    if profile.get("match_basis"):
+                        status.match_basis = str(profile["match_basis"])[:16]
+                    if profile.get("match_confidence") is not None:
+                        try:
+                            status.match_confidence = float(profile["match_confidence"])
+                        except (TypeError, ValueError):
+                            pass
                 # Phase 2 #38a: persist per-item source-state + tier when
                 # the profile carries them. Only writes the columns when
                 # the profile actually has the keys — keeps legacy paths
@@ -1538,6 +1619,7 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
             arr_llm_ok = not _is_rule_based(profile)
             arr_s.enriched    = arr_llm_ok
             arr_s.enriched_at = datetime.utcnow() if arr_llm_ok else None
+            arr_s.error       = error          # mirrored: the arr-keyed view used to lie
             db.commit()
     elif profile and canonical_title:
         try:
@@ -1551,12 +1633,13 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                     arr_llm_ok = not _is_rule_based(profile)
                     arr_match.enriched    = arr_llm_ok
                     arr_match.enriched_at = datetime.utcnow() if arr_llm_ok else None
+                    arr_match.error       = error
                     db.commit()
         except Exception:
             pass
 
     if not profile:
-        return
+        return counted
 
     if profile:
         from src.cache.metadata_cache import MetadataCache as _MC
@@ -1576,15 +1659,16 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                 profile["_source_hash"] = _sh
         except Exception:
             pass
-        # not_found sentinel: 3-day TTL — enough to block hammering, short enough
-        #   for a title that may appear on the API after a new release.
+        # not_found sentinel: lives as long as the backoff wait (>= 3 days) so
+        #   the cache and the DB row agree on when the item is due again.
         # Rule-based fallbacks: 1-day TTL so they are retried next run.
         # LLM-enriched profiles: effectively no time expiry (10y) — the profile
         #   is OUR product, invalidated by _source_hash / prompt_version, not
         #   by a calendar. The old 90d expiry silently killed entries while
         #   enrichment_status kept saying "enriched", so runs skipped exactly
         #   the items whose cache had rotted (The Simpsons class).
-        cache_days = 3 if is_not_found else (1 if _is_rule_based(profile) else 3650)
+        cache_days = (_ES.sentinel_cache_days(attempts_after) if is_not_found
+                      else (1 if _is_rule_based(profile) else 3650))
         _c.set_cache(f"enriched:{cat}:{item['plex_rating_key']}", profile, days=cache_days)
         if cat in ("show", "anime") and item.get("series_title"):
             with get_db_session() as _db:
@@ -1620,6 +1704,7 @@ async def _write_enrichment_db(item: dict, profile, cat: str):
                 if rpid != item["plex_rating_key"]:
                     _c.set_cache(f"enriched:music:{rpid}", profile, days=cache_days)
         _c.close()
+    return counted
 
 
 def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
@@ -1933,6 +2018,21 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                             EnrichmentStatus.error.is_(None),
                         ).all()
                     }
+                    # Healing: hold back not-found rows whose backoff wait is
+                    # not over and rows the owner ignored (force=True bypasses
+                    # both). Keyed by plex_rating_key — arr items and their
+                    # rows share the "svc:id" shape.
+                    _now = datetime.utcnow()
+                    held_keys: dict = {}
+                    for _prk, _err, _nra in db.query(
+                            EnrichmentStatus.plex_rating_key, EnrichmentStatus.error,
+                            EnrichmentStatus.next_retry_at,
+                    ).filter(EnrichmentStatus.error.isnot(None)).all():
+                        _el = (_err or "").lower()
+                        if _el.startswith("ignored"):
+                            held_keys[_prk] = ("ignored", None)
+                        elif _el.startswith("not found") and not _ES.is_due(_nra, _now):
+                            held_keys[_prk] = ("waiting", _nra)
                 # The enriched flag alone is NOT enough to skip: for months the
                 # 90d cache TTL silently killed enriched:* entries while the
                 # flag stayed True, so every run skipped exactly the items
@@ -1993,6 +2093,19 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     "Pre-filter: %d -> %d items (skipped %d live-enriched; revived "
                     "%d dead-cache + %d metadata-changed; kept rule-based/failed)",
                     before, len(items), n_skipped, n_dead, n_changed)
+                if held_keys:
+                    _n0 = len(items)
+                    items = [i for i in items if i.get("plex_rating_key") not in held_keys]
+                    _held = [held_keys[k] for k in held_keys]
+                    _due_times = [t for kind, t in _held if kind == "waiting" and t]
+                    logger.info(
+                        "Pre-filter: held back %d items (%d ignored, %d waiting on the "
+                        "not-found backoff%s)",
+                        _n0 - len(items),
+                        sum(1 for kind, _ in _held if kind == "ignored"),
+                        sum(1 for kind, _ in _held if kind == "waiting"),
+                        f"; earliest due {min(_due_times):%Y-%m-%d %H:%M}" if _due_times else "",
+                    )
 
         # Pass 86: priority sort — fresh imports (never enriched) go to the
         # front of the queue, then TTL-refresh re-queues by oldest-first.
@@ -2111,6 +2224,9 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # when one upstream is degraded but the others are fine.
         _transient_streak: dict[str, int] = {c: 0 for c in CATEGORIES}
         _producer_abort_reason: dict[str, str] = {}
+        # Keys whose not-found attempt THIS run counted, per category — rolled
+        # back if the category aborts on the outage guard (see after lanes).
+        _attempted_keys: dict[str, set] = {c: set() for c in CATEGORIES}
 
         async def _process_one(pitem: dict) -> None:
             """Per-item logic — same shape as the pre-99-fu3 producer body.
@@ -2152,12 +2268,12 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     # Reconcile the EnrichmentStatus row to reflect
                     # that — no re-fetch, no LLM polish needed.
                     cached_profile = raw["_cached_profile"]
-                    await _write_enrichment_db(pitem, cached_profile, pcat)
+                    await _write_enrichment_db(pitem, cached_profile, pcat, fresh_attempt=False)
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0
-                elif raw is not None:
+                elif raw is not None and not raw.get("_not_found"):
                     # Phase 2 #39: streaming-merge — leave the finalizer
                     # transport fields ATTACHED to raw so they ride
                     # through the queue. The consumer pops them in
@@ -2173,14 +2289,15 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     _rolling[pcat].append("ok")
                     _transient_streak[pcat] = 0   # reset on any success
                 else:
-                    # No API data found for this title (title mismatch, not on TMDB/AniList, etc.)
-                    sentinel = {
-                        "source": "not_found",
-                        "title": canonical,
-                        "genres": [], "themes": [], "mood": [],
-                        "media_type": pcat,
-                    }
-                    await _write_enrichment_db(pitem, sentinel, pcat)
+                    # No usable API data: a legacy ``None`` or the evidence-
+                    # carrying ``_not_found`` dict. NEVER the LLM queue — the
+                    # branch above excludes ``_not_found`` explicitly, so a
+                    # miss can't be polished into a confident fake profile.
+                    sentinel = _build_not_found_sentinel(canonical, pcat, raw)
+                    counted = await _write_enrichment_db(
+                        pitem, sentinel, pcat, fresh_attempt=True)
+                    if counted:
+                        _attempted_keys[pcat].add(pitem["plex_rating_key"])
                     producer_not_found += 1
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
@@ -2311,6 +2428,24 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             )
             await asyncio.gather(*lanes, return_exceptions=True)
 
+            # Outage guard for the attempt counter: a category that aborted
+            # (not-found ratio or transient streak) was most likely NOT
+            # looking at dozens of genuinely unknown titles — give those rows
+            # their attempt back so an API incident cannot eat the library's
+            # retry budget. All lane workers are done here, so the sets are
+            # final.
+            for _cat, _reason in _producer_abort_reason.items():
+                _keys = _attempted_keys.get(_cat) or set()
+                if not _keys:
+                    continue
+                try:
+                    _n = _rollback_attempts(_keys)
+                    logger.warning(
+                        "[enrichment][%s] rolled back %d not-found attempts after "
+                        "the abort: %s", _cat, _n, _reason)
+                except Exception as _re:
+                    logger.warning("[enrichment][%s] attempt rollback failed: %s", _cat, _re)
+
             if main_task.status.value == "skipped":
                 logger.warning(
                     "[enrichment] Producer lanes aborted (status=skipped). "
@@ -2414,7 +2549,10 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     else:
                         await wait_for_enrichment_slot()
                         profile = await process_and_save(raw)
-                        await _write_enrichment_db(citem, profile, ccat)
+                        # fresh_attempt: a real round ended here. profile=None
+                        # (LLM failure) writes "Processing failed" — no attempt
+                        # is counted for that, only for not-found sentinels.
+                        await _write_enrichment_db(citem, profile, ccat, fresh_attempt=True)
                         # AFTER the polish-write has committed
                         # provisional=True (via profile["provisional"] set
                         # by process_and_save) we can safely spawn the

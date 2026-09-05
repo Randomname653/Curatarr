@@ -162,6 +162,14 @@ def _migrate_columns() -> None:
         ("protected_media",       "verdict", "VARCHAR(20)"),
         ("protected_media",       "title",   "VARCHAR(512)"),
         ("protected_media",       "arr_url", "VARCHAR(512)"),
+        # Healing (2026-09): not-found backoff counter + match-quality record
+        # (services/enrichment_state.py). Existing "Not found" rows are
+        # backfilled below when the counter column is first added.
+        ("enrichment_status",     "attempt_count",    "INTEGER DEFAULT 0"),
+        ("enrichment_status",     "last_attempt_at",  "DATETIME"),
+        ("enrichment_status",     "next_retry_at",    "DATETIME"),
+        ("enrichment_status",     "match_basis",      "VARCHAR(16)"),
+        ("enrichment_status",     "match_confidence", "FLOAT"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
@@ -180,16 +188,21 @@ def _migrate_columns() -> None:
         # query (#41) cheap as the table grows past 50 k rows. Typical
         # query: ``WHERE fetch_tier = 'fast' AND provisional = 1``.
         ("idx_es_fetch_tier",            "enrichment_status", "fetch_tier"),
+        # Healing: the Step-5 pre-filter and the KB "open" breakdown filter
+        # on due-ness every run — same scale argument as fetch_tier.
+        ("idx_es_next_retry_at",         "enrichment_status", "next_retry_at"),
     ]
 
     import logging as _logging
     _mig_log = _logging.getLogger(__name__)
+    added: set = set()
     with engine.connect() as conn:
         for table, col, typ in new_cols:
             try:
                 existing = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+                    added.add((table, col))
             except Exception as e:
                 # Pass 43 (B3): the existing-column guard above means this
                 # branch only fires on genuinely-unexpected failures
@@ -204,6 +217,24 @@ def _migrate_columns() -> None:
             except Exception as e:
                 _mig_log.debug("[migrate] create index %s on %s(%s) failed: %s",
                                idx_name, table, col, e)
+        if ("enrichment_status", "attempt_count") in added:
+            # Deploy-day backfill (once, when the counter is born): every
+            # existing not-found row has in truth been retried every 3 days
+            # for months. Marking them "tried 2+" (the counter starts here;
+            # earlier attempts are uncounted) puts them into Needs attention
+            # at once, and dating the next try from THEIR last write spreads
+            # the retries by history instead of making ~800 rows fall due in
+            # the same minute — which would trip the run's outage guard.
+            try:
+                conn.execute(text(
+                    "UPDATE enrichment_status "
+                    "SET attempt_count = 2, "
+                    "    last_attempt_at = enriched_at, "
+                    "    next_retry_at = datetime(enriched_at, '+3 days') "
+                    "WHERE error LIKE 'Not found%' AND enriched_at IS NOT NULL"
+                ))
+            except Exception as e:
+                _mig_log.debug("[migrate] not-found backfill failed: %s", e)
         conn.commit()
 
 

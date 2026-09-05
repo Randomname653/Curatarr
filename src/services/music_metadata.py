@@ -17,6 +17,7 @@ import httpx
 
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache
+from src.services.enrichment_state import TRANSIENT
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,13 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None)
                     client, f"{MB_BASE}/artist",
                     {"query": f'artist:"{artist_name}"', "limit": 1, "fmt": "json"},
                 )
-                if r.status_code != 200 or not r.json().get("artists"):
+                if r.status_code != 200:
+                    # 429/503 is MB having a moment, not "no such artist" —
+                    # neg-caching it froze a hiccup into a 7-day miss and the
+                    # enrichment wrote the artist down as not found.
+                    cache.close()
+                    return TRANSIENT
+                if not r.json().get("artists"):
                     cache.set_cache(cache_key, None, days=7)
                     cache.close()
                     return None
@@ -161,10 +168,13 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None)
                 client, f"{MB_BASE}/artist/{mbid}",
                 {"inc": "tags+genres+ratings", "fmt": "json"},
             )
-            if r2.status_code != 200:
-                cache.set_cache(cache_key, None, days=7)
+            if r2.status_code == 404:
+                cache.set_cache(cache_key, None, days=7)   # definitive: no such mbid
                 cache.close()
                 return None
+            if r2.status_code != 200:
+                cache.close()
+                return TRANSIENT                           # throttled / down
 
             data = r2.json()
 
@@ -172,7 +182,7 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None)
         logger.debug("MusicBrainz error for %s: %s", artist_name, e)
         # No neg-cache on exception (timeout, DNS, etc.) — transient.
         cache.close()
-        return None
+        return TRANSIENT
 
     tags = sorted(
         data.get("tags", []),
@@ -358,8 +368,9 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
             if r.status_code != 200:
                 # 429/5xx is Last.fm having a moment, not "no such artist" —
                 # freezing it for 7 days starves tags/similar/bio downstream.
+                # The marker tells the enrichment "unavailable", not "miss".
                 cache.close()
-                return None
+                return TRANSIENT
             data = r.json().get("artist", {})
             if not data:
                 # 200 with an empty body IS the definitive no-record answer
@@ -390,7 +401,7 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
     except Exception as e:
         logger.debug("Last.fm error for %s: %s", artist_name, e)
         cache.close()
-        return None
+        return TRANSIENT
 
     tags = [t.get("name", "") for t in data.get("tags", {}).get("tag", [])]
     # Strip HTML link tail then scrub Wikipedia-style footnote citations like [4][5]

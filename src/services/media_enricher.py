@@ -26,6 +26,7 @@ import httpx
 
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache, write_fields
+from src.services.enrichment_state import TRANSIENT, CONTEXT_KEY as _CONTEXT_KEY
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options
 
 logger = logging.getLogger(__name__)
@@ -1662,15 +1663,19 @@ def _new_source_state() -> dict:
     return {}
 
 
-def _record_source(state: dict, src: str, status: str) -> None:
+def _record_source(state: dict, src: str, status: str, **evidence) -> None:
     """Record one API outcome into ``state`` with a UTC timestamp.
 
     Caller is responsible for picking the right status (the helper does
     not interpret return values from the API client — that varies by
     fetcher). Timestamp is ISO-8601 + ``Z`` so the scheduler can sort
-    without timezone parsing.
+    without timezone parsing. ``evidence`` (the entity the source resolved
+    to: title / year / id) rides along so the match can be scored and
+    explained later — raw["title"] itself keeps the arr's title.
     """
-    state[src] = {"status": status, "at": datetime.utcnow().isoformat() + "Z"}
+    entry = {"status": status, "at": datetime.utcnow().isoformat() + "Z"}
+    entry.update({k: v for k, v in evidence.items() if v not in (None, "", [])})
+    state[src] = entry
 
 
 # ── PHASE 2 #39 — PER-SOURCE STREAMING-MERGE HELPERS ─────────────────────────
@@ -1741,6 +1746,12 @@ def _merge_source_into_raw(raw: dict, source: str, data: Optional[dict],
     knows how to combine TMDB / OMDb / AniList / Jikan / MB-Last.fm shapes
     sanely); a miss / transient just stamps the state and returns.
     """
+    if data is TRANSIENT:
+        # The API did not answer (429 / 5xx / network) — that is NOT "no
+        # record". Stamped apart so a drained run can stay due instead of
+        # being written down as not found.
+        _record_source(raw.setdefault("sources_state", {}), source, "transient")
+        return
     if not data:
         _record_source(raw.setdefault("sources_state", {}), source, "miss")
         return
@@ -1810,7 +1821,18 @@ def _merge_source_into_raw(raw: dict, source: str, data: Optional[dict],
     elif source not in existing_label.split("+"):
         raw["source"] = f"{existing_label}+{source}"
 
-    _record_source(raw.setdefault("sources_state", {}), source, "ok")
+    # Evidence: the entity THIS source resolved to. raw["title"] is seeded
+    # with the arr's title and setdefault keeps it, so the resolved name
+    # would otherwise vanish — and with it any way to score or explain the
+    # match ("found 'X' (1992) but the arr says 2007").
+    _resolved_id = (norm.get("tmdb_id") or norm.get("anilist_id") or norm.get("mal_id")
+                    or norm.get("mbid") or norm.get("imdb_id") or norm.get("id"))
+    _record_source(
+        raw.setdefault("sources_state", {}), source, "ok",
+        title=norm.get("title") or norm.get("name") or norm.get("original_title"),
+        year=norm.get("year"),
+        id=_resolved_id,
+    )
 
 
 async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
@@ -1841,7 +1863,9 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
             imdb = ctx.get("imdb_id")
             if not imdb:
                 return None
-            return await fetch_omdb_data(imdb)
+            # fetch_omdb_data: {} = definitive "no record", None = quota/5xx.
+            res = await fetch_omdb_data(imdb)
+            return TRANSIENT if res is None else res
         if source == "tmdb":
             tmdb_id = ctx.get("tmdb_id")
             year    = ctx.get("year")
@@ -1851,12 +1875,11 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
                     return await fetch_tmdb_full(tmdb_id, endpoint)
                 return await _tmdb_search_and_fetch(title, endpoint, year=year)
             except TMDBTransientError as te:
-                # Don't propagate — let the abort-streak logic in the
-                # producer's _process_one handle 429s based on the
-                # sources_state we'll stamp as "transient" upstream.
+                # Not a miss: stamped "transient" so a drained run raises
+                # TransientFetchError instead of writing a not-found row.
                 logger.debug("[stream] tmdb transient on %r: HTTP %s",
                              title, te.status_code)
-                return None
+                return TRANSIENT
         if source == "anilist":
             anilist_id = ctx.get("anilist_id")
             anidb_id   = ctx.get("anidb_id")
@@ -1875,16 +1898,23 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
                 title=None if mal_id else title,
             )
     except Exception as e:
-        logger.debug("[stream] %s fetch failed for %r: %s", source, title, e)
+        # A fetcher that RAISES did not say "no record" — a crash is
+        # treated like an outage: the item stays due, and five in a row
+        # trip the producer's abort so the run does not spin on a bug.
+        logger.warning("[stream] %s fetch raised for %r — treated as transient: %s",
+                       source, title, e)
+        return TRANSIENT
     return None
 
 
 async def _streaming_fetch_runner(
     ctx: dict,
     expected_sources: list[str],
-) -> tuple[Optional[dict], dict[str, asyncio.Task]]:
+) -> tuple[Optional[dict], dict[str, asyncio.Task], dict]:
     """Fire ``expected_sources`` in parallel + return the first sufficient
-    raw blob plus a dict of any still-running tasks.
+    raw blob, a dict of any still-running tasks, and the per-source
+    ``sources_state`` — the evidence survives even when nothing sufficient
+    came back (the caller decides transient vs not found from it).
 
     Behaviour:
       1. ``asyncio.create_task`` for each expected source.
@@ -1895,8 +1925,8 @@ async def _streaming_fetch_runner(
          along in ``remaining`` so the producer can spawn a background
          finalizer that updates the DB once they all complete.
       4. If we drain every source without ever hitting the polish
-         threshold → return (None, {}) so the caller writes a not_found
-         sentinel (matches the pre-streaming behaviour).
+         threshold → return (None, {}, sources_state) so the caller can
+         tell "every source missed" from "a source was unavailable".
 
     ``ctx`` is the same context dict ``_fetch_source`` uses; it must
     contain ``media_type`` at minimum.
@@ -1952,9 +1982,10 @@ async def _streaming_fetch_runner(
             initial_raw["_remaining_tasks"]    = remaining
             initial_raw["_live_sources_state"] = raw["sources_state"]
             initial_raw["_live_raw_ref"]       = raw   # finalizer updates here
-            return initial_raw, remaining
-    # All sources drained, never reached the polish threshold.
-    return None, {}
+            return initial_raw, remaining, raw["sources_state"]
+    # All sources drained, never reached the polish threshold. The evidence
+    # (who missed, who was unavailable) goes back with the empty result.
+    return None, {}, raw.get("sources_state", {})
 
 
 async def _finalize_streaming_merge(
@@ -2125,6 +2156,33 @@ class TMDBTransientError(Exception):
         self.path = path
         self.body_snippet = body_snippet
         super().__init__(f"TMDB {path} → HTTP {status_code} (retry in {retry_after_s}s)")
+
+
+class TransientFetchError(TMDBTransientError):
+    """Raised by ``fetch_and_prepare_raw`` when a run drained every source
+    and at least one of them was UNAVAILABLE (429 / 5xx / network) while
+    none answered — the item must stay due, not be written down as
+    not found. Subclasses TMDBTransientError so the producer's existing
+    streak / abort handler catches it unchanged."""
+
+    def __init__(self, sources: dict, retry_after_s: float = 5.0):
+        self.sources = dict(sources or {})
+        unavailable = [s for s, st in self.sources.items()
+                       if isinstance(st, dict) and st.get("status") == "transient"]
+        super().__init__(0, retry_after_s=retry_after_s,
+                         path=",".join(unavailable) or "?",
+                         body_snippet="upstream unavailable: " + (", ".join(unavailable) or "?"))
+
+
+def _drained_outcome(sources_state: dict) -> str:
+    """After every source came back empty: ``"transient"`` when at least one
+    was unavailable and none answered (the item stays due), else
+    ``"not_found"`` (a genuine miss worth counting)."""
+    statuses = [st.get("status") for k, st in (sources_state or {}).items()
+                if not str(k).startswith("_") and isinstance(st, dict)]
+    if "ok" in statuses:
+        return "not_found"
+    return "transient" if "transient" in statuses else "not_found"
 
 
 async def _tmdb_get(client: httpx.AsyncClient, path: str, params: dict = None) -> dict:
@@ -2537,7 +2595,9 @@ async def fetch_jikan_data(mal_id: int = None, title: str = None) -> Optional[di
 
             if r.status_code == 429:
                 logger.debug("Jikan rate limited for '%s' — skipping supplement", title or mal_id)
-                return None
+                return TRANSIENT          # throttled — not "no such anime"
+            if r.status_code >= 500:
+                return TRANSIENT          # Jikan down
             if r.status_code != 200:
                 return None
             data = r.json().get("data", {})
@@ -2553,6 +2613,11 @@ async def fetch_jikan_data(mal_id: int = None, title: str = None) -> Optional[di
         return {
             "source": "mal",
             "mal_id": data.get("mal_id"),
+            # The entity Jikan resolved to — evidence for the match score /
+            # the "found X (year)" explanation; absent before the healing work.
+            "title": data.get("title_english") or data.get("title"),
+            "year": data.get("year") or ((data.get("aired") or {}).get("prop") or {})
+                                         .get("from", {}).get("year"),
             "synopsis": (data.get("synopsis") or "")[:800],
             "genres": genres,
             "themes": themes,
@@ -2570,7 +2635,7 @@ async def fetch_jikan_data(mal_id: int = None, title: str = None) -> Optional[di
         }
     except Exception as e:
         logger.debug("Jikan error for %s/%s: %s", mal_id, title, e)
-        return None
+        return TRANSIENT
 
 
 _ADULT_TAGS = {
@@ -2779,7 +2844,9 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
             )
             if r.status_code == 429:
                 _anilist_set_backoff(r.headers)
-                return {}
+                return TRANSIENT          # throttled — not "no such id"
+            if r.status_code >= 500:
+                return TRANSIENT          # AniList down
             if r.status_code != 200:
                 return {}
             media = r.json().get("data", {}).get("Media")
@@ -2787,7 +2854,7 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
                 return {}
     except Exception as e:
         logger.debug("AniList %s error: %s", anilist_id, e)
-        return {}
+        return TRANSIENT
 
     # Pass 56: AniList can return ``title: null`` on some entries. dict.get
     # with a default only substitutes when the KEY is missing — a present-
@@ -3299,16 +3366,21 @@ async def fetch_and_prepare_raw(
     ``_tmdb_id`` / ``_anilist_id`` embedded so the consumer can save
     without needing those IDs separately.
 
-    Three return shapes that the caller MUST distinguish (Pass 99-fu):
+    Return shapes the caller MUST distinguish (Pass 99-fu, healing 2026-09):
       - dict with ``_already_enriched=True`` + ``_cached_profile`` →
         the cache already holds a fully-enriched profile for this
-        item (LLM-polished, < 7 days fresh, or both). Caller should
-        reconcile the EnrichmentStatus row with the cached profile
-        and skip — do NOT write a not_found sentinel, do NOT re-fetch.
-      - non-None dict without those keys → fresh raw API data, ready
-        for the consumer's LLM pipeline.
-      - ``None`` → no API data exists for this title. Caller writes
-        a not_found sentinel.
+        item. Caller should reconcile the EnrichmentStatus row with the
+        cached profile and skip — do NOT write a not_found sentinel.
+      - dict with ``_not_found=True`` → no usable data. Carries the
+        evidence: ``_reason`` (no_source_data | year_mismatch),
+        ``_sources_state`` (who missed / who was skipped) and ``_context``
+        (arr year, ids we had, the rejected same-named hit). Caller writes
+        a not_found sentinel FROM it — never hand it to the LLM.
+      - any other dict → fresh raw API data for the consumer's LLM pipeline.
+
+    Raises ``TransientFetchError`` when every source came back empty and at
+    least one was UNAVAILABLE (429 / 5xx / network) while none answered:
+    the item stays due; nothing is written.
 
     Pre-99-fu this function conflated "already done" and "no data" by
     returning None for both, which made the producer write not_found
@@ -3416,7 +3488,6 @@ async def fetch_and_prepare_raw(
     # multiplying the LLM-rebake cost by API rate limits and TMDB
     # outage risk. Splitting them keeps prompt-bumps to LLM-compute only.
 
-    from datetime import datetime as _dt
     polished_hit = cache.get_cache(cache_key)  # tier 1
     raw_hit_key  = f"raw:{media_type}:{id_key}"
     raw_hit      = cache.get_cache(raw_hit_key)  # tier 2
@@ -3426,17 +3497,11 @@ async def fetch_and_prepare_raw(
         cached_profile = polished_hit.get("response", {})
         cached_source  = cached_profile.get("source", "")
         cached_version = cached_profile.get("prompt_version")
-        cached_at_str  = polished_hit.get("created_at") or polished_hit.get("cached_at")
-        cache_age_days = 999
-        if cached_at_str:
-            try:
-                cached_dt = _dt.fromisoformat(str(cached_at_str))
-                cache_age_days = (_dt.utcnow() - cached_dt).days
-            except Exception as _e:
-                logger.debug("[enricher] cached_at parse failed: %r → %s", cached_at_str, _e)
-
         is_llm_polished = "+llm" in cached_source or cached_source == "llm"
-        is_recent_miss  = cached_source == "not_found" and cache_age_days < 3
+        # A cached not-found sentinel no longer short-circuits here. Due-ness
+        # is decided by the Step-5 pre-filter from the row's next_retry_at
+        # (services/enrichment_state.py); an item that reaches this point
+        # is due and gets a real re-fetch.
 
         if is_llm_polished and cached_version == _PROMPT_VERSION:
             # Tier-1 hit, prompt version matches — terminal state.
@@ -3464,18 +3529,6 @@ async def fetch_and_prepare_raw(
                     "_cache_key":        cache_key,
                     "_plex_rating_key":  plex_rating_key,
                 }
-        if is_recent_miss:
-            # not_found sentinel still fresh — skip silently as before.
-            # Same back-fill as above so not_found rows also carry the
-            # tier marker on the row (the producer wrote them via the
-            # full canonical path).
-            cached_profile.setdefault("fetch_tier", "full")
-            return {
-                "_already_enriched": True,
-                "_cached_profile":   cached_profile,
-                "_cache_key":        cache_key,
-                "_plex_rating_key":  plex_rating_key,
-            }
         if is_llm_polished and cached_version != _PROMPT_VERSION:
             # Polished profile from an OLDER prompt — fall through to
             # tier-2 raw cache (and then to fresh fetch as a last
@@ -3584,14 +3637,28 @@ async def fetch_and_prepare_raw(
         skipped = [s for s in expected if s in skip_set]
         expected = [s for s in expected if s not in skip_set]
 
-    initial_raw, remaining_tasks = await _streaming_fetch_runner(ctx, expected)
+    initial_raw, remaining_tasks, drained_state = await _streaming_fetch_runner(ctx, expected)
+    _had_ids = [k for k in ("tmdb_id", "tvdb_id", "imdb_id", "anilist_id", "mal_id", "mbid")
+                if ctx.get(k)]
     if initial_raw is None:
-        # No source had enough data for a polish — let the caller write
-        # a not_found sentinel (same as the pre-#39 ``if not raw: return None``).
-        return None
+        # Nothing sufficient came back. An UNAVAILABLE upstream is not "no
+        # record": raise so the producer's transient handler keeps the item
+        # due. Otherwise hand back the evidence so the sentinel can say
+        # exactly who missed.
+        for s in skipped:
+            _record_source(drained_state, s, "skipped")
+        if _drained_outcome(drained_state) == "transient":
+            raise TransientFetchError(drained_state)
+        return {
+            "_not_found":     True,
+            "_reason":        "no_source_data",
+            "_sources_state": drained_state,
+            "_context":       {"arr_year": year, "had_ids": _had_ids},
+        }
     # Entity-resolution safety net (Fix A, bulk path): the arr gave a year but the
     # resolved entry's year is wildly off (>5y) → a different same-named work.
-    # Enrich nothing rather than feed the curator confidently-wrong metadata.
+    # Enrich nothing rather than feed the curator confidently-wrong metadata —
+    # but record WHICH work was found, so the owner can pin the right one.
     try:
         _ry, _ty = int(initial_raw.get("year") or 0), int(year or 0)
     except (TypeError, ValueError):
@@ -3602,7 +3669,23 @@ async def fetch_and_prepare_raw(
             "(%r) — rejecting wrong-entity match",
             title, _ty, _ry, initial_raw.get("title"),
         )
-        return None
+        for _t in (remaining_tasks or {}).values():
+            _t.cancel()          # nobody will read their merges
+        _state = dict(initial_raw.get("sources_state") or {})
+        _hit = next((e for e in _state.values()
+                     if isinstance(e, dict) and e.get("status") == "ok" and e.get("title")), {})
+        return {
+            "_not_found":     True,
+            "_reason":        "year_mismatch",
+            "_sources_state": _state,
+            "_context": {
+                "arr_year": year, "had_ids": _had_ids,
+                "resolved": {"title": _hit.get("title") or initial_raw.get("title"),
+                             "year": _ry, "id": _hit.get("id"),
+                             "tmdb_id": initial_raw.get("tmdb_id"),
+                             "anilist_id": initial_raw.get("anilist_id")},
+            },
+        }
 
     # Stamp skipped-source statuses into both the snapshot and the
     # live raw (the finalizer reads from the live ref). We do this
@@ -4438,7 +4521,9 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Opt
             if r.status_code == 429:
                 wait_s = _anilist_set_backoff(r.headers)
                 logger.info("AniList 429 for '%s' — skipping (backed off %.0fs)", title, wait_s)
-                return None
+                return TRANSIENT          # throttled — not "no such title"
+            if r.status_code >= 500:
+                return TRANSIENT          # AniList down
             if r.status_code != 200:
                 return None
             media_list = r.json().get("data", {}).get("Page", {}).get("media") or []
@@ -4446,7 +4531,7 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Opt
                 return None
     except Exception as e:
         logger.debug("AniList search '%s' error: %s", title, e)
-        return None
+        return TRANSIENT
 
     # Iterate all returned candidates and pick the first one whose title is
     # close enough to the query.  Using a Page query (5 results) instead of

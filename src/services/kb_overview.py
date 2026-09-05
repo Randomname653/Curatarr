@@ -25,9 +25,12 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 from src.paths import DATA_DIR
+from src.services.enrichment_state import (STATES, STATE_DEFINITIONS, DONE_STATES,
+                                            classify_enrichment_row)
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +38,26 @@ logger = logging.getLogger(__name__)
 _CACHE: dict = {"at": 0.0, "payload": None}
 _CACHE_TTL = 60.0
 
-_STATES = ("enriched_live", "enriched_dead", "awaiting_polish",
-           "retry_queued", "not_findable", "never_processed")
+# The state vocabulary lives in services/enrichment_state.py (one classifier
+# for the KB tile, /library/breakdown and the producer). Re-exported here for
+# the invariant test and older callers.
+_STATES = STATES
+
+
+def invalidate() -> None:
+    """Drop the payload cache — every write endpoint (retry / ignore / pin)
+    calls this so the tile reflects the action on the next poll."""
+    _CACHE["payload"] = None
+
+
+class _PseudoRow:
+    """Row shape for ``classify_enrichment_row`` when only the arr-keyed
+    status exists (title-match writes never created an EnrichmentStatus)."""
+    __slots__ = ("enriched", "error", "provisional", "next_retry_at", "attempt_count")
+
+    def __init__(self, enriched=False, error=None):
+        self.enriched, self.error = bool(enriched), error
+        self.provisional, self.next_retry_at, self.attempt_count = False, None, 0
 
 
 def _dir_size_mb(path: str) -> float:
@@ -97,7 +118,6 @@ async def build_overview() -> dict:
     mc = MetadataCache()
     try:
         live_enriched = mc.live_key_set("enriched:")
-        live_raw = mc.live_key_set("raw:")
         wiki_counts = {c: mc.count_raw_with_marker(c, '"significance"')
                        for c in ("movie", "show", "anime", "music")}
         omdb_counts = {c: mc.count_raw_with_marker(c, '"omdb_checked"')
@@ -120,6 +140,17 @@ async def build_overview() -> dict:
             for r in db.query(ArrEnrichmentStatus.service, ArrEnrichmentStatus.arr_id,
                               ArrEnrichmentStatus.enriched, ArrEnrichmentStatus.error).all()
         }
+        # The row truth, keyed the way arr items are keyed ("svc:id"). This
+        # is what the old version never read — it looked at ArrEnrichmentStatus
+        # .error, which nothing wrote, so 798 not-found rows read as "retry".
+        es_rows = {
+            r.plex_rating_key: r
+            for r in db.query(EnrichmentStatus.plex_rating_key, EnrichmentStatus.enriched,
+                              EnrichmentStatus.error, EnrichmentStatus.provisional,
+                              EnrichmentStatus.next_retry_at,
+                              EnrichmentStatus.attempt_count).all()
+        }
+    now_dt = datetime.utcnow()
 
     # ── per-category classification over arr items ────────────────────────────
     categories: dict = {}
@@ -144,6 +175,9 @@ async def build_overview() -> dict:
                 "denominator": {"arr_total": 0, "downloaded": 0},
                 "states": {s: 0 for s in _STATES},
                 "vectors": {"indexed": 0},
+                # Why-not-100%: what the open rows are waiting for.
+                "open": {"due_now": 0, "waiting": 0, "next_due_at": None,
+                         "needs_attention": 0, "ignored": 0},
             })
             c["denominator"]["arr_total"] += 1
             if not _is_downloaded(svc, raw):
@@ -160,28 +194,43 @@ async def build_overview() -> dict:
                    for m in mts for k in cands):
                 c["vectors"]["indexed"] += 1
 
-            flag = arr_flags.get((svc, raw.get("id")))
             has_live = any(f"enriched:{m}:{k}" in live_enriched
                            for m in mts for k in cands)
-            has_raw = any(f"raw:{m}:{k}" in live_raw
-                          for m in mts for k in cands)
-            err = (flag[1] or "") if flag else ""
-
-            if has_live:
-                state = "enriched_live"
-            elif flag and flag[0] and not err:
-                state = "enriched_dead"          # flag says done, cache is gone
-            elif err.lower().startswith("not found"):
-                state = "not_findable"
-            elif has_raw:
-                state = "awaiting_polish"        # api data cached, no profile yet
-            elif flag:
-                state = "retry_queued"           # tracked, errored, will retry
+            row = es_rows.get(f"{svc}:{raw.get('id')}")
+            if row is None:
+                flag = arr_flags.get((svc, raw.get("id")))
+                if flag is not None:
+                    row = _PseudoRow(enriched=flag[0], error=flag[1])
+            if row is None:
+                # Rule 1: a live profile under ANY historic key counts.
+                state = "enriched" if has_live else "never_processed"
             else:
-                state = "never_processed"
+                # Status-derived state first; cache liveness only decides
+                # enriched vs enriched_dead. A live not-found sentinel can no
+                # longer masquerade as an enriched item.
+                state = classify_enrichment_row(row, has_live_cache=has_live, now=now_dt)
             c["states"][state] += 1
 
+            o = c["open"]
+            if state in ("not_found", "retry_due"):
+                if state == "retry_due":
+                    o["due_now"] += 1
+                else:
+                    o["waiting"] += 1
+                    nra = getattr(row, "next_retry_at", None)
+                    if nra and (o["next_due_at"] is None or nra < o["next_due_at"]):
+                        o["next_due_at"] = nra
+                if (getattr(row, "attempt_count", 0) or 0) >= 2:
+                    o["needs_attention"] += 1
+            elif state in ("queued", "processing_error", "enriched_dead",
+                           "rule_based", "awaiting_llm"):
+                o["due_now"] += 1
+            elif state == "ignored":
+                o["ignored"] += 1
+
     for cat, c in categories.items():
+        nda = c["open"]["next_due_at"]
+        c["open"]["next_due_at"] = nda.isoformat() + "Z" if isinstance(nda, datetime) else None
         c["vectors"]["of"] = c["denominator"]["downloaded"]
         c["wikipedia"] = {"significance_cached": wiki_counts.get(cat, 0)}
         c["omdb"] = {"covered": omdb_counts.get(cat, 0)}
@@ -191,17 +240,22 @@ async def build_overview() -> dict:
     from sqlalchemy import func, distinct, case
     with get_db_session() as db:
         wh_rows = {}
+        # "enriched" here means a real profile (error IS NULL) — a not-found
+        # sentinel also carries enriched=True and used to be counted as done.
         grouped = db.query(
             EnrichmentStatus.media_category,
             func.count(EnrichmentStatus.id).label("rows"),
-            func.sum(case((EnrichmentStatus.enriched == True, 1), else_=0)).label("enriched")
+            func.sum(case(((EnrichmentStatus.enriched == True) & EnrichmentStatus.error.is_(None), 1),
+                          else_=0)).label("enriched"),
+            func.sum(case((EnrichmentStatus.error.like("Not found%"), 1), else_=0)).label("not_found"),
         ).group_by(EnrichmentStatus.media_category).all()
 
         for r in grouped:
             cat = r.media_category or "?"
-            b = wh_rows.setdefault(cat, {"rows": 0, "enriched": 0})
+            b = wh_rows.setdefault(cat, {"rows": 0, "enriched": 0, "not_found": 0})
             b["rows"] += r.rows
             b["enriched"] += (r.enriched or 0)
+            b["not_found"] += (r.not_found or 0)
 
         # ── music pipeline (Spotify cascade) ──────────────────────────────────
         spotify_total = (db.query(func.count(WatchHistoryEntry.id))
@@ -233,6 +287,10 @@ async def build_overview() -> dict:
     payload = {
         "generated_at": int(now),
         "categories": categories,
+        # The vocabulary, served: label / explainer / next_step per state so
+        # the tile, the drilldown and the chat never carry their own copy.
+        "state_definitions": STATE_DEFINITIONS,
+        "done_states": list(DONE_STATES),
         "watch_history_only": wh_rows,
         "music_pipeline": {
             "plex_match": {"done": spotify_matched, "of": spotify_total},
