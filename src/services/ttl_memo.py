@@ -13,10 +13,12 @@ single-flight: concurrent polls during a recompute share one execution
 instead of stampeding. FastAPI still resolves dependencies on every call,
 so auth is enforced exactly as before — only the body is skipped.
 
-Deliberately in-process and tiny: no invalidation API, no persistence.
-A payload at most TTL seconds stale on a view that polls every 10 is
-invisible; anything that needs live progress (the Activity stream) uses
-SSE, not these endpoints.
+Deliberately in-process and tiny, no persistence. A payload at most TTL
+seconds stale on a view that polls every 10 is invisible; anything that
+needs live progress (the Activity stream) uses SSE, not these endpoints.
+The one escape hatch is ``endpoint.invalidate()`` — for a write that must
+be visible on the very next poll (a process the user just classified must
+not keep prompting for another TTL).
 """
 
 import asyncio
@@ -52,6 +54,7 @@ def ttl_response(seconds: float, key=None):
                 return value
 
         wrapped._ttl_seconds = seconds      # introspectable for tests
+        wrapped.invalidate = cache.clear    # drop every key; next call recomputes
         return wrapped
 
     return deco

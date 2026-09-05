@@ -699,7 +699,7 @@ select option { background: var(--bg2); }
         <button id="new-chat-btn" onclick="newChat()" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat">+ New</button>
         <button id="recheck-btn" onclick="correctChatAnchor()" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata">Re-fetch</button>
         <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" onkeydown="handleKey(event)"></textarea>
-        <button id="send-btn" onclick="sendMessage()">Send</button>
+        <button id="send-btn" onclick="sendMessage()" aria-label="Send message">Send</button>
       </div>
     </div>
 

@@ -17,6 +17,7 @@ from src.database.connection import get_db_session
 from src.database.models import GameProcess
 from src.routers.auth import get_current_user
 from src.database.models import User
+from src.services.ttl_memo import ttl_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,13 +29,24 @@ class ClassifyRequest(BaseModel):
 
 
 @router.get("/unknown")
+@ttl_response(10)
 async def get_unknown_processes(_user: User = Depends(get_current_user)):
     """
     Return running processes that are not yet classified.
     Frontend polls this every 30s and shows a toast for each result.
+
+    Memoized 10s: the cost is the psutil process walk, not the DB read
+    (a bot PR cached the wrong half). Classify/delete invalidate it so a
+    just-answered prompt never re-appears for a stale TTL.
     """
-    from src.services.process_monitor import get_unknown_processes
-    return {"processes": get_unknown_processes()}
+    from src.services.process_monitor import get_unknown_processes as _scan
+    return {"processes": _scan()}
+
+
+def _forget_process_views() -> None:
+    """A classification changed — the next poll must see it."""
+    get_unknown_processes.invalidate()
+    game_status.invalidate()
 
 
 @router.post("/classify")
@@ -61,6 +73,7 @@ async def classify_process(
             ))
         db.commit()
 
+    _forget_process_views()
     logger.info("Process classified: %s → is_game=%s", name_lower, req.is_game)
     return {"ok": True, "name": name_lower, "is_game": req.is_game}
 
@@ -96,10 +109,12 @@ async def delete_classification(
         db.commit()
     if not deleted:
         raise HTTPException(status_code=404, detail="Not found")
+    _forget_process_views()
     return {"ok": True}
 
 
 @router.get("/status")
+@ttl_response(10)
 async def game_status(_user: User = Depends(get_current_user)):
     """Return whether a game is currently running (for the UI badge).
 

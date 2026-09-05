@@ -105,3 +105,23 @@ def test_the_polled_endpoints_are_actually_memoized():
     assert ('@ttl_response(10, key=lambda **kw: kw["user"].id)\nasync def sync_status'
             in src("routers/history.py"))
     assert '@ttl_response(30)\nasync def discover_libraries' in src("routers/libraries.py")
+
+
+def test_invalidate_forces_the_next_call_to_recompute():
+    """A write that must be visible on the next poll (a just-classified
+    process) calls endpoint.invalidate(); until then the TTL rules."""
+    calls = []
+
+    @ttl_response(60)
+    async def fn(user=None):
+        calls.append(1)
+        return {"n": len(calls)}
+
+    async def run():
+        await fn(user="x")
+        await fn(user="x")          # memo hit
+        fn.invalidate()
+        return await fn(user="x")   # recomputed
+
+    assert asyncio.run(run()) == {"n": 2}
+    assert len(calls) == 2
