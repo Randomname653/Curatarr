@@ -38,6 +38,21 @@ poll_rate_limit = {}
 MAX_POLLS_PER_MINUTE = 5
 
 
+def _signing_key() -> str:
+    """The HS256 key, or a clear 503 when setup has not produced one.
+
+    python-jose silently signed with an EMPTY secret before the wizard ran
+    - a token anyone could forge. PyJWT refuses (InvalidKeyError); this
+    turns that refusal into an explanation instead of a stack trace.
+    """
+    key = settings.effective_jwt_secret
+    if not key:
+        raise HTTPException(
+            status_code=503,
+            detail="JWT_SECRET is not configured - finish the setup wizard first")
+    return key
+
+
 def _create_jwt(user_id: int, is_admin: bool) -> str:
     payload = {
         "sub": str(user_id),
@@ -51,12 +66,12 @@ def _create_jwt(user_id: int, is_admin: bool) -> str:
         "exp": datetime.now(timezone.utc) + timedelta(days=7),
         "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, settings.effective_jwt_secret, algorithm="HS256")
+    return jwt.encode(payload, _signing_key(), algorithm="HS256")
 
 
 def _decode_jwt(token: str) -> dict:
     try:
-        return jwt.decode(token, settings.effective_jwt_secret, algorithms=["HS256"])
+        return jwt.decode(token, _signing_key(), algorithms=["HS256"])
     except PyJWTError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 

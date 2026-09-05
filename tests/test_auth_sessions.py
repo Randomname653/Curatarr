@@ -20,6 +20,12 @@ sys.path.insert(0, str(_ROOT))
 import jwt as jose_jwt  # PyJWT
 
 from src.config import settings
+
+# CI has no .env, so the secret is empty - and PyJWT (unlike jose) refuses
+# to sign with an empty key. Give the suite its own throwaway secret.
+if not settings.effective_jwt_secret:
+    from pydantic import SecretStr
+    settings.JWT_SECRET = SecretStr("test-only-secret-never-shipped-32-bytes-min-per-rfc7518")
 from src.middleware import TokenRefreshMiddleware
 from src.routers.auth import _create_jwt
 
