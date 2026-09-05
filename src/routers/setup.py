@@ -183,6 +183,11 @@ async def complete_setup(
     Finalize setup: write .env and kick off model building.
     The app needs a restart after this to reload settings.
     """
+    # Blank Plex fields used to flip FIRST_RUN=false anyway, leaving an
+    # install the UI could never route back into the wizard.
+    if not req.plex_url.strip() or not req.plex_token.strip():
+        raise HTTPException(status_code=422,
+                            detail="Plex URL and token are required to complete setup")
     # Write .env
     write_env(req.dict())
 

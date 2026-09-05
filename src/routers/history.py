@@ -29,6 +29,10 @@ async def trigger_sync(
     user: User = Depends(get_current_user),
 ):
     """Kick off a Plex watch history sync. Set force=true to bypass rate limit."""
+    if force and not user.is_admin:
+        # The sync is household-wide and expensive; bypassing its cooldown
+        # is an operator lever, not a member one.
+        raise HTTPException(status_code=403, detail="Only an admin can force a resync")
     background_tasks.add_task(_run_sync, force)
     return {"status": "sync_started", "message": "Fetching Plex history and computing taste vectors…"}
 

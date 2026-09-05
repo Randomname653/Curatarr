@@ -23,6 +23,9 @@ class User(Base):
     plex_username = Column(String(256), nullable=False)
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    # Bumped on logout and deactivation; JWTs carry it as "ver" and are
+    # rejected on mismatch - the revocation a stateless token otherwise lacks.
+    token_version = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
     # The user's OWN plex.tv token, captured at PIN login. Powers per-account

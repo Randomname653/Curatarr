@@ -25,9 +25,45 @@ Defaults that matter:
   finds the port. (Until 2026-09 only the UI was gated; the spec stayed
   public at `/openapi.json`.)
 - Secrets (`JWT_SECRET`, API keys, Plex token) live only in `.env`,
-  which is gitignored. Never commit it.
+  which is gitignored. Never commit it. The wizard writes it atomically,
+  chmod 0600 on POSIX, and on Windows strips the inherited ACL so only the
+  account running Curatarr can read it.
+- Every response carries a Content-Security-Policy: the single-file UI
+  loads nothing from other origins, so `connect-src 'self'` means even a
+  script injection that survived DOMPurify cannot phone a token home.
 - Deletion actions require an authenticated session; proposals are never
   executed without an explicit user approval in the UI.
+
+## Who can log in
+
+Authentication is Plex OAuth, but a plex.tv account is free to create in a
+minute — so holding one is not enough. A new account may log in only if
+the configured Plex server itself knows it (owner, Plex Home users, shared
+friends — the same `/accounts` list watch history is attributed with), and
+the **first** account, which becomes the admin, must be the account that
+owns the server token. Both checks fail closed for *new* accounts when
+Plex is unreachable; existing users are unaffected. `PLEX_LOGIN_REQUIRE_
+MEMBERSHIP=false` disables the gate for the rare setup where `/accounts`
+does not list a legitimate member.
+
+## Sessions
+
+JWTs live 7 days and are silently re-issued once a day old — but always
+from the live account row, never from the token's own claims. Every
+request re-checks `is_active` and a per-user token version: **Sign out**
+bumps the version, so the token dies on every device at once, and an
+admin deactivating an account ends its sessions immediately instead of at
+expiry. (Before 2026-09 both were cosmetic — a deactivated member kept
+working, and only rotating `JWT_SECRET` could revoke anything.)
+
+## First-run setup
+
+Until the first admin exists the wizard endpoints have to be open —
+nobody can authenticate yet. Because the server binds the whole LAN, a
+browser on the machine itself may drive setup freely, while any other
+device must present the one-time **setup code** the server prints to its
+console (and log) at startup. That closes the window in which a LAN
+neighbour could have pointed a fresh install at their own Plex.
 
 ## Known dependency advisories
 

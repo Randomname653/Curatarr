@@ -8,7 +8,10 @@ Implements Plex PIN-based OAuth flow:
   4. Exchange Plex auth token for local JWT session
 """
 
+import hmac
 import logging
+import re
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -53,10 +56,13 @@ def _signing_key() -> str:
     return key
 
 
-def _create_jwt(user_id: int, is_admin: bool) -> str:
+def _create_jwt(user_id: int, is_admin: bool, token_version: int = 0) -> str:
     payload = {
         "sub": str(user_id),
         "admin": is_admin,
+        # Bumped server-side on logout/deactivation; a mismatch is a dead
+        # token. Pre-2026-09 tokens carry no "ver" and read as 0.
+        "ver": int(token_version or 0),
         # 7 days, not 24h: the old value logged the owner out mid-click
         # exactly one day after each login (observed live: a 200 and a 401
         # six seconds apart on the same connection). Paired with the
@@ -92,6 +98,12 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if not user.is_active:
+        # Deactivation used to be cosmetic: existing tokens kept working and
+        # the refresh middleware renewed them from their own stale claims.
+        raise HTTPException(status_code=401, detail="Account deactivated")
+    if int(payload.get("ver", 0) or 0) != int(user.token_version or 0):
+        raise HTTPException(status_code=401, detail="Session revoked - please sign in again")
     return user
 
 
@@ -106,6 +118,26 @@ def _no_admin_exists(db: Session) -> bool:
     return db.query(User).filter(User.is_admin == True).count() == 0
 
 
+# One-time first-run setup code. Until the first admin exists, every setup
+# mutation (.env write, model build, connection tests) was open to ANY device
+# on the LAN - HOST binds 0.0.0.0. A browser on the server itself is exempt;
+# anyone else must present the code main.py prints to the console at startup.
+SETUP_CODE = f"{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _require_setup_code(request: Request) -> None:
+    client = (request.client.host if request.client else "") or ""
+    if client in _LOCAL_HOSTS:
+        return
+    given = (request.headers.get("X-Setup-Code") or "").strip().upper()
+    if not hmac.compare_digest(given, SETUP_CODE):
+        raise HTTPException(
+            status_code=401,
+            detail="Setup code required: it is printed in the Curatarr console "
+                   "window (start.bat) or log file at startup")
+
+
 def require_admin_or_first_run(
     request: Request,
     db: Session = Depends(get_db),
@@ -118,6 +150,7 @@ def require_admin_or_first_run(
     admin-only (no SSRF or .env-overwrite by anonymous callers).
     """
     if _no_admin_exists(db):
+        _require_setup_code(request)
         return None
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -193,9 +226,27 @@ async def _bootstrap_user_data(user_id: int) -> None:
 # PLEX PIN OAUTH
 # ─────────────────────────────────────────────────────────────────────────────
 
+_pin_create_rate_limit: dict = {}
+
+
+def _enforce_pin_create_rate_limit(client_host: str) -> None:
+    """10 PIN requests per minute per client - each one is an outbound call
+    to plex.tv from an unauthenticated endpoint on a LAN-bound port."""
+    now = time.time()
+    bucket = [t for t in _pin_create_rate_limit.get(client_host, []) if now - t < 60]
+    if len(bucket) >= 10:
+        _pin_create_rate_limit[client_host] = bucket
+        raise HTTPException(status_code=429, detail="Too many login attempts - wait a minute")
+    bucket.append(now)
+    _pin_create_rate_limit[client_host] = bucket
+    if len(_pin_create_rate_limit) > 1000:
+        _pin_create_rate_limit.clear()
+
+
 @router.post("/plex/pin")
-async def request_plex_pin():
+async def request_plex_pin(request: Request):
     """Step 1 – Request a fresh PIN from Plex."""
+    _enforce_pin_create_rate_limit((request.client.host if request.client else "") or "?")
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://plex.tv/api/v2/pins",
@@ -214,6 +265,68 @@ async def request_plex_pin():
         f"&code={code}&forwardUrl={settings.PLEX_REDIRECT_URI}"
     )
     return {"pin_id": pin_id, "code": code, "auth_url": auth_url}
+
+
+async def _plex_owner_id() -> Optional[str]:
+    """plex.tv id of the account that owns the configured server token."""
+    token = settings.effective_plex_token
+    if not token:
+        return None
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get("https://plex.tv/api/v2/user",
+                                 headers={**PLEX_HEADERS, "X-Plex-Token": token},
+                                 timeout=10)
+        if r.status_code != 200:
+            return None
+        return str(r.json().get("id", "")) or None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[auth] plex owner lookup failed: %s", e)
+        return None
+
+
+async def _plex_server_account_ids() -> Optional[set]:
+    """plex.tv ids the configured server itself knows: owner, Plex Home
+    users, shared friends. The same list plex_sync attributes plays with."""
+    url, token = settings.effective_plex_url, settings.effective_plex_token
+    if not url or not token:
+        return None
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{url.rstrip('/')}/accounts",
+                                 headers={"X-Plex-Token": token, "Accept": "application/xml"},
+                                 timeout=10)
+        if r.status_code != 200:
+            return None
+        return set(re.findall(r'<Account[^>]*\sid="(\d+)"', r.text))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[auth] plex /accounts lookup failed: %s", e)
+        return None
+
+
+async def _assert_plex_membership(plex_id: str, first_ever: bool) -> None:
+    """Any plex.tv account is free to create in a minute; only accounts this
+    Plex server knows may log in, and the FIRST account - the admin - must be
+    the server owner. Fails closed for NEW accounts only; existing users are
+    unaffected by a Plex outage."""
+    owner = await _plex_owner_id()
+    if first_ever:
+        if owner is None:
+            raise HTTPException(status_code=503,
+                                detail="Plex is not configured or unreachable - finish setup before the first login")
+        if owner != plex_id:
+            raise HTTPException(status_code=403,
+                                detail="Only the Plex account that owns this server can create the first (admin) account")
+        return
+    if plex_id == owner:
+        return
+    ids = await _plex_server_account_ids()
+    if ids is None:
+        raise HTTPException(status_code=503,
+                            detail="Could not verify Plex server membership - try again later")
+    if plex_id not in ids:
+        raise HTTPException(status_code=403,
+                            detail="This Plex account has no access to this Plex server")
 
 
 @router.get("/plex/poll/{pin_id}")
@@ -253,6 +366,8 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
     user = db.query(User).filter(User.plex_user_id == plex_id).first()
     if not user:
         first_ever = db.query(User).first() is None
+        if settings.PLEX_LOGIN_REQUIRE_MEMBERSHIP:
+            await _assert_plex_membership(plex_id, first_ever)
         user = User(
             plex_user_id=plex_id,
             plex_username=plex_username,
@@ -282,7 +397,7 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
         user.plex_token = auth_token   # refresh on every login (see above)
         db.commit()
 
-    token = _create_jwt(user.id, user.is_admin)
+    token = _create_jwt(user.id, user.is_admin, user.token_version or 0)
     return {
         "status": "ok",
         "token": token,
@@ -301,14 +416,13 @@ async def auth_status(user: User = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout(response: Response):
-    """Client-side logout signal.
-
-    JWTs are stateless and remain valid until they expire (24h). The frontend
-    is expected to drop the token from localStorage when this is called. We
-    also clear any legacy access_token cookie. A real server-side revocation
-    list is intentionally out of scope for the current threat model
-    (single-tenant home use).
-    """
+async def logout(response: Response, user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """Server-side logout: bump the user's token version so THIS token - and
+    every other copy of it on other devices - is rejected from now on. The
+    frontend drops its localStorage copy on top. (JWTs used to be revocable
+    only by rotating JWT_SECRET, which logged out the whole household.)"""
+    user.token_version = (user.token_version or 0) + 1
+    db.commit()
     response.delete_cookie("access_token")
     return {"status": "logged_out"}

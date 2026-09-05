@@ -2107,16 +2107,36 @@ async function buildOnboardingModels() {
   }
 }
 
-function logout() {
+async function logout() {
+  // Server first: bumping the user's token version revokes THIS token on
+  // every device, not just the copy in this tab's localStorage.
+  try { await api('/api/auth/logout', 'POST'); } catch {}
   token=''; localStorage.removeItem('curatarr_token'); location.reload();
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
-async function api(path, method='GET', body=null) {
+async function api(path, method='GET', body=null, _retried=false) {
   const opts = {method, headers:{'Content-Type':'application/json'}};
   if (token) opts.headers['Authorization']='Bearer '+token;
+  // First-run wizard from ANOTHER device: the server prints a one-time
+  // setup code to its console and requires it on every setup call until
+  // the first admin exists (a browser on the server itself is exempt).
+  const setupCode = sessionStorage.getItem('curatarr_setup_code');
+  if (setupCode && path.startsWith('/api/setup/')) opts.headers['X-Setup-Code'] = setupCode;
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API+path, opts);
+  if (r.status === 401 && path.startsWith('/api/setup/') && !_retried) {
+    const msg = await r.clone().text();
+    if (/setup code/i.test(msg)) {
+      const entered = prompt('This Curatarr is being set up from another device.
+
+Enter the one-time setup code printed in the Curatarr console window (start.bat) or log file:');
+      if (entered && entered.trim()) {
+        sessionStorage.setItem('curatarr_setup_code', entered.trim().toUpperCase());
+        return api(path, method, body, true);
+      }
+    }
+  }
   // TokenRefreshMiddleware (src/middleware.py) silently reissues a JWT past
   // 1/7th of its 7-day life on ANY response for a still-valid token -- ok or
   // not, so this reads before the ok-check below, not after. A client that

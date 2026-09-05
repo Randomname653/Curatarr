@@ -56,6 +56,23 @@ class SlowRequestLogMiddleware:
         await self.app(scope, receive, send_timed)
 
 
+def _load_refresh_subject(user_id: int):
+    """Live account facts for the rolling refresh; None = do not refresh.
+    Module-level so tests can substitute it without a database."""
+    try:
+        from src.database.connection import get_db_session
+        from src.database.models import User
+        with get_db_session() as db:
+            u = db.query(User).filter(User.id == user_id).first()
+            if not u:
+                return None
+            return {"id": u.id, "is_admin": bool(u.is_admin),
+                    "is_active": bool(u.is_active),
+                    "token_version": int(u.token_version or 0)}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class TokenRefreshMiddleware:
     """Silently reissue a JWT that is past 1/7th of its life.
 
@@ -89,9 +106,15 @@ class TokenRefreshMiddleware:
                                      algorithms=["HS256"])
                 iat = int(payload.get("iat", 0))
                 if iat and (time.time() - iat) > self.REFRESH_AFTER_S:
-                    from src.routers.auth import _create_jwt
-                    fresh = _create_jwt(int(payload["sub"]),
-                                        bool(payload.get("admin"))).encode()
+                    # Re-issue from the DB row, not the token's own claims:
+                    # a deactivated or logged-out user must not be handed a
+                    # fresh week by the very token that should have died.
+                    subject = _load_refresh_subject(int(payload["sub"]))
+                    if subject and subject["is_active"] \
+                            and int(payload.get("ver", 0) or 0) == subject["token_version"]:
+                        from src.routers.auth import _create_jwt
+                        fresh = _create_jwt(subject["id"], subject["is_admin"],
+                                            subject["token_version"]).encode()
             except Exception:
                 pass          # expired/garbage → the endpoint 401s as before
 

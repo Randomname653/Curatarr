@@ -181,7 +181,34 @@ _THREAD_TITLE_CAP = 64
 _thread_active_title: "OrderedDict[str, tuple]" = OrderedDict()
 
 
-def _set_thread_active_title(thread_id: str, value: tuple) -> None:
+def _tkey(user_id, thread_id: str) -> str:
+    """Anchor-cache key. Scoped per USER: free chat lives on the literal
+    thread id "general" for everyone, so an unscoped key let one household
+    member read (and clear) what another was discussing (2026-09 audit)."""
+    return f"{int(user_id)}:{thread_id}"
+
+
+def _get_thread_active_title(user_id, thread_id: str):
+    return _thread_active_title.get(_tkey(user_id, thread_id))
+
+
+def _pop_thread_active_title(user_id, thread_id: str):
+    return _thread_active_title.pop(_tkey(user_id, thread_id), None)
+
+
+def _own_thread_active_titles(user_id) -> list:
+    """(thread_id, value) pairs belonging to ONE user."""
+    prefix = f"{int(user_id)}:"
+    return [(k[len(prefix):], v) for k, v in list(_thread_active_title.items())
+            if k.startswith(prefix)]
+
+
+def _clear_thread_active_titles(user_id) -> None:
+    for k, _ in _own_thread_active_titles(user_id):
+        _thread_active_title.pop(_tkey(user_id, k), None)
+
+
+def _set_thread_active_title(user_id, thread_id: str, value: tuple) -> None:
     """Write to the bounded thread-anchor cache, evicting the oldest-touched
     entry once over capacity (Pass 72).
 
@@ -191,8 +218,9 @@ def _set_thread_active_title(thread_id: str, value: tuple) -> None:
     threads. A re-fetch on a rare evicted-then-revisited thread is exactly
     the "missed cache" cost the comment above already calls acceptable.
     """
-    _thread_active_title[thread_id] = value
-    _thread_active_title.move_to_end(thread_id)
+    key = _tkey(user_id, thread_id)
+    _thread_active_title[key] = value
+    _thread_active_title.move_to_end(key)
     while len(_thread_active_title) > _THREAD_TITLE_CAP:
         _thread_active_title.popitem(last=False)
 
@@ -690,7 +718,7 @@ async def _check_protection_intent_bg(
     Pass 23: ``anchor_title`` resolves pronouns. When the user is in a
     deletion-proposal thread and says "I'm keeping it" / "we are keeping
     this show", the title isn't literally in the user message — but we
-    know it from ``_thread_active_title[thread_id]``. Passing it through
+    know it from ``_get_thread_active_title(user_id, thread_id)``. Passing it through
     lets the detector treat the anchor as the implicit subject.
 
     Pass 49 (flip-flop guard): we bail out without invoking the LLM
@@ -2005,7 +2033,7 @@ async def _build_discuss_context_block(
                 "source":    "deletion_proposal_db",
             }
         thread_id = _thread_id_for(ctx)
-        _set_thread_active_title(thread_id, (
+        _set_thread_active_title(user_id, thread_id, (
             proposal.title,
             anchor_payload,
             proposal.category or domain or "movie",
@@ -2080,7 +2108,7 @@ async def _build_discuss_context_block(
                     block += "\n" + _vb + "\n"
             except Exception as _e:
                 logger.debug("[chat] starter verified data failed: %s", _e)
-            _set_thread_active_title(_thread_id_for(ctx),
+            _set_thread_active_title(user_id, _thread_id_for(ctx),
                                      (active_title, _svd, domain or "movie"))
         return block, active_title, domain
 
@@ -2183,7 +2211,7 @@ async def _build_discuss_context_block(
         except Exception as _e:
             logger.debug("[chat] watched-title dialogue line failed: %s", _e)
 
-        _set_thread_active_title(_thread_id_for(ctx),
+        _set_thread_active_title(user_id, _thread_id_for(ctx),
                                  (series, _vd_payload, domain or "movie"))
         return block, series, domain
 
@@ -2353,7 +2381,7 @@ async def _build_discuss_context_block(
         # spiral. Follow-up turns don't re-send discuss_context; without this
         # the next turn falls through to unanchored free chat.
         if anchor_title:
-            _set_thread_active_title(_thread_id_for(ctx), (
+            _set_thread_active_title(user_id, _thread_id_for(ctx), (
                 anchor_title, anchor_payload, anchor_category,
             ))
 
@@ -2552,7 +2580,7 @@ async def send_message(
         # title mid-thread (which the previous first_turn-only gate failed
         # to handle and produced confused "NO VERIFIED METADATA" responses
         # for titles we *did* have data on).
-        cached = _thread_active_title.get(thread_id)
+        cached = _get_thread_active_title(user.id, thread_id)
         # The library scan runs UNGATED — it's a ~10ms in-memory check, and
         # the hint gate is exactly what dropped "oh right kill la kill was my
         # first contact" (all-lowercase, no hint pattern): the title sat
@@ -2722,7 +2750,7 @@ async def send_message(
                             except Exception as _e:
                                 logger.debug("[chat] verified block append failed: %s", _e)
                         # Cache the new active title + data for follow-up turns.
-                        _set_thread_active_title(thread_id, (
+                        _set_thread_active_title(user.id, thread_id, (
                             active_title, enrichment_data, matched_domain or "movie",
                         ))
                         logger.info("💉 [INJECTED CONTEXT (Live)]: %s (domain=%s)",
@@ -2737,7 +2765,7 @@ async def send_message(
                         # me more" replies still know which title we're stuck on.
                         active_title = detected_title
                         hidden_metadata_context = _build_no_metadata_anchor(detected_title)
-                        _set_thread_active_title(thread_id, (active_title, None, None))
+                        _set_thread_active_title(user.id, thread_id, (active_title, None, None))
                         logger.warning("⚠️ [NO METADATA] Anchor for: '%s' (cascade=%s)",
                                        detected_title, domains)
                         pre_stream_status.append(
@@ -3272,7 +3300,7 @@ FORMATTING RULES:
                 # deletion-proposal target) so pronoun-only signals like
                 # "we are keeping this show" still register as protection
                 # against the right title.
-                anchor = _thread_active_title.get(thread_id)
+                anchor = _get_thread_active_title(user.id, thread_id)
                 anchor_title = anchor[0] if anchor else None
                 anchor_category = anchor[2] if anchor and len(anchor) > 2 else None
                 if thread_id.startswith("principle:"):
@@ -3348,7 +3376,7 @@ async def correct_chat_anchor(
     exists yet — the UI should surface that instead of silently doing
     nothing.
     """
-    cached = _thread_active_title.get(req.thread_id)
+    cached = _get_thread_active_title(user.id, req.thread_id)
     if not cached:
         return {
             "ok": False,
@@ -3392,9 +3420,9 @@ async def correct_chat_anchor(
     # threads — otherwise a parallel thread would still serve the
     # already-loaded payload until the next "+ New" reset.
     cleared_threads = 0
-    for tid, val in list(_thread_active_title.items()):
+    for tid, val in _own_thread_active_titles(user.id):
         if val and val[0] == title:
-            _thread_active_title.pop(tid, None)
+            _pop_thread_active_title(user.id, tid)
             cleared_threads += 1
 
     logger.info(
@@ -3487,13 +3515,13 @@ async def clear_chat_history(
                 (ConversationMessage.thread_id == "general")
                 | (ConversationMessage.thread_id.is_(None))
             )
-            _thread_active_title.pop("general", None)
+            _pop_thread_active_title(user.id, "general")
         else:
             q = q.filter(ConversationMessage.thread_id == thread_id)
-            _thread_active_title.pop(thread_id, None)
+            _pop_thread_active_title(user.id, thread_id)
     else:
         # No thread filter → wipe everything
-        _thread_active_title.clear()
+        _clear_thread_active_titles(user.id)
     deleted = q.delete(synchronize_session=False)
     db.commit()
     return {"status": "cleared", "thread_id": thread_id, "deleted": deleted}

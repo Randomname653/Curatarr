@@ -26,7 +26,14 @@ from src.config import settings
 if not settings.effective_jwt_secret:
     from pydantic import SecretStr
     settings.JWT_SECRET = SecretStr("test-only-secret-never-shipped-32-bytes-min-per-rfc7518")
+import src.middleware as mw
 from src.middleware import TokenRefreshMiddleware
+
+# The rolling refresh re-issues from the LIVE account row (is_active, token
+# version), not from the token's own claims. Stub the lookup: no database in
+# CI, and the cases below flip the facts per test.
+_SUBJECT = {"id": 1, "is_admin": True, "is_active": True, "token_version": 0}
+mw._load_refresh_subject = lambda uid: dict(_SUBJECT, id=uid) if _SUBJECT else None
 from src.routers.auth import _create_jwt
 
 
@@ -73,6 +80,29 @@ def test_a_day_old_token_is_silently_refreshed():
                               algorithms=["HS256"])
     assert payload["sub"] == "1" and payload["admin"] is True
     assert payload["exp"] - payload["iat"] == 7 * 24 * 3600
+
+
+def test_a_deactivated_or_revoked_user_earns_no_refresh():
+    global _SUBJECT
+    keep = dict(_SUBJECT)
+    try:
+        _SUBJECT.update(is_active=False)
+        assert b"x-curatarr-refreshed-token" not in _run(_mint(age_seconds=2 * 24 * 3600)), \
+            "a deactivated account must not be handed a fresh week"
+        _SUBJECT.update(is_active=True, token_version=3)     # logged out since
+        assert b"x-curatarr-refreshed-token" not in _run(_mint(age_seconds=2 * 24 * 3600)), \
+            "a token from before a logout must not be renewed"
+    finally:
+        _SUBJECT.clear(); _SUBJECT.update(keep)
+
+
+def test_tokens_carry_the_revocation_version():
+    payload = jose_jwt.decode(_create_jwt(1, True, token_version=4),
+                              settings.effective_jwt_secret, algorithms=["HS256"])
+    assert payload["ver"] == 4
+    legacy = jose_jwt.decode(_create_jwt(1, True),
+                             settings.effective_jwt_secret, algorithms=["HS256"])
+    assert legacy["ver"] == 0, "pre-existing sessions read as version 0 and stay valid"
 
 
 def test_a_young_token_is_left_alone():

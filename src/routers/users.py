@@ -5,6 +5,7 @@ Self-service: PIN management.
 """
 
 import hashlib
+import hmac
 import os
 from datetime import datetime
 
@@ -68,6 +69,9 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
     if update.is_active is not None:
         db_user.is_active = update.is_active
+        if not update.is_active:
+            # Every token this user holds dies now, not at its 7-day expiry.
+            db_user.token_version = (db_user.token_version or 0) + 1
     db.commit()
     db.refresh(db_user)
     return UserResponse.from_orm(db_user)
@@ -209,7 +213,7 @@ async def set_pin(
                 status_code=400,
                 detail="A PIN is already set for this account. Provide `current_pin` to change it.",
             )
-        if _hash_pin(body.current_pin, existing.salt) != existing.pin_hash:
+        if not hmac.compare_digest(_hash_pin(body.current_pin, existing.salt), existing.pin_hash):
             raise HTTPException(status_code=403, detail="Current PIN is incorrect.")
         if body.current_pin == body.pin:
             raise HTTPException(

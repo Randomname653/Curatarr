@@ -78,6 +78,8 @@ def _migrate_columns() -> None:
     """Add columns introduced after initial schema creation (SQLite-safe)."""
     from sqlalchemy import text
     new_cols = [
+        # Session revocation: JWT "ver" claim must match this per-user counter
+        ("users",                 "token_version", "INTEGER DEFAULT 0"),
         # Subtitle metrics: the episode runtime they were measured against
         # (MediaTechProfile holds the SERIES total, which is a different number)
         ("media_subtitle_profiles", "duration_min", "FLOAT"),

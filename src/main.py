@@ -96,6 +96,17 @@ async def lifespan(app: FastAPI):
 
     if not settings.is_configured:
         logger.warning("Curatarr is not configured yet. Open http://localhost:%d to run setup.", settings.PORT)
+    try:
+        from src.database.connection import get_db_session as _gds
+        from src.routers.auth import _no_admin_exists, SETUP_CODE
+        with _gds() as _db:
+            if _no_admin_exists(_db):
+                logger.warning(
+                    "No admin account yet. Setting up from ANOTHER device on the "
+                    "LAN needs this one-time code: %s  (a browser on this machine "
+                    "does not).", SETUP_CODE)
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("setup-code notice skipped: %s", _e)
     else:
         from src.database.connection import get_db_session
         from src.database.models import User
@@ -234,10 +245,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# A hand-edited "*" origin combined with credentials would reflect ANY
+# origin with cookies allowed; Starlette does not stop that, so we do.
+_cors_wildcard = "*" in (settings.CORS_ORIGINS or [])
+if _cors_wildcard:
+    logger.warning("CORS_ORIGINS contains '*' - credentials disabled for CORS")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )

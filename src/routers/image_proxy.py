@@ -106,6 +106,39 @@ _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 _MAX_BYTES = 5 * 1024 * 1024   # 5 MB per image — posters are 10-80 KB typically
 _FETCH_TIMEOUT = 10             # seconds — upstream CDNs are fast
+_writes_since_sweep = 0
+_SWEEP_EVERY = 25               # writes between budget checks (a dir scan each)
+
+
+def _enforce_cache_budget() -> None:
+    """Keep the poster cache under IMAGE_CACHE_MAX_MB, oldest-modified first.
+
+    The endpoint is unauthenticated by design, so without a budget any LAN
+    client could grow the cache without bound by requesting whitelisted URLs
+    with ever-new query strings. Checked every _SWEEP_EVERY writes.
+    """
+    global _writes_since_sweep
+    _writes_since_sweep += 1
+    if _writes_since_sweep < _SWEEP_EVERY:
+        return
+    _writes_since_sweep = 0
+    try:
+        from src.config import settings
+        budget = int(getattr(settings, "IMAGE_CACHE_MAX_MB", 1024)) * 1024 * 1024
+        files = [(p.stat().st_mtime, p.stat().st_size, p)
+                 for p in _CACHE_DIR.iterdir() if p.is_file()]
+        total = sum(sz for _, sz, _ in files)
+        if total <= budget:
+            return
+        target = int(budget * 0.75)
+        for _, sz, p in sorted(files):
+            p.unlink(missing_ok=True)
+            total -= sz
+            if total <= target:
+                break
+        logger.info("[image_proxy] cache over budget - evicted down to %d MB", total // (1024 * 1024))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[image_proxy] budget sweep failed: %s", e)
 
 
 def _cache_path(url: str, content_type: Optional[str] = None) -> Path:
@@ -256,6 +289,7 @@ async def proxy_image(
         path = _cache_path(src, ct)
         try:
             path.write_bytes(body)
+            _enforce_cache_budget()
         except Exception as e:
             # Cache write failed — still serve the body in-memory so the
             # user sees the image. Subsequent requests will retry the

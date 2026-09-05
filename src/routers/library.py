@@ -224,7 +224,11 @@ async def library_configure(
     from src.services.setup_wizard import write_env
     cfg = {
         "plex_url":            settings.PLEX_URL or "",
-        "plex_token":          settings.PLEX_TOKEN or "",
+        # effective_* unwrap the SecretStr. The raw objects f-string to
+        # "**********" - write_env then stored THAT as JWT_SECRET/PLEX_TOKEN
+        # and settings.__init__() below made every JWT forgeable (2026-09
+        # setup audit; caught before it ever fired on the reference install).
+        "plex_token":          settings.effective_plex_token,
         "ollama_endpoint":     settings.effective_ollama,
         "base_curator_model":  settings.BASE_CURATOR_MODEL or "qwen2.5:32b",
         "base_summarizer_model": settings.BASE_SUMMARIZER_MODEL or "dolphin3",
@@ -240,7 +244,7 @@ async def library_configure(
         "lastfm_api_key":      settings.LASTFM_API_KEY or "",
         "spotify_client_id":   settings.SPOTIFY_CLIENT_ID or "",
         "spotify_client_secret": settings.SPOTIFY_CLIENT_SECRET or "",
-        "jwt_secret":          settings.JWT_SECRET,
+        "jwt_secret":          settings.effective_jwt_secret,
     }
     # Override the changed service
     cfg[f"{req.service}_url"]     = req.url

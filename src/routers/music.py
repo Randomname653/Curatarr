@@ -78,13 +78,14 @@ async def start_pipeline(
         raise HTTPException(status_code=409, detail="Music pipeline already running")
 
     set_state("music_pipeline_stop_requested", "0")
+    set_state("music_pipeline_owner", str(user.id))
     batch = req.effective_batch
     background_tasks.add_task(_run_music_pipeline, user.id, batch)
     return {"status": "started", "batch": batch}
 
 
 @router.post("/stop")
-async def stop_pipeline(_user: User = Depends(get_current_user)):
+async def stop_pipeline(user: User = Depends(get_current_user)):
     """
     Request a soft stop.  The pipeline finishes the current DB batch / Last.fm
     call then saves progress.  Re-running /start afterwards continues safely
@@ -92,6 +93,11 @@ async def stop_pipeline(_user: User = Depends(get_current_user)):
     """
     if get_state("music_pipeline_running") != "1":
         return {"status": "not_running"}
+    # One global slot: only the member who started the run (or an admin)
+    # may abort it - a housemate's in-flight matching is not yours to kill.
+    if not user.is_admin and get_state("music_pipeline_owner") != str(user.id):
+        raise HTTPException(status_code=403,
+                            detail="Only the user who started the pipeline (or an admin) can stop it")
     set_state("music_pipeline_stop_requested", "1")
     return {"status": "stop_requested"}
 

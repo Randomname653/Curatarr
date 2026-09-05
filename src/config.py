@@ -168,6 +168,14 @@ class Settings(BaseSettings):
     SOULSYNC_API_KEY: Optional[str] = None       # sk_… from SoulSync settings
     # AniList: no key needed (public GraphQL)
     # MusicBrainz: no key needed
+    # Plex login accepts only accounts the configured server knows (owner,
+    # Plex Home users, shared friends); the FIRST account must be the server
+    # owner. Without this, any plex.tv account created in a minute could log
+    # in from the LAN. Off only if /accounts does not list a legit member.
+    PLEX_LOGIN_REQUIRE_MEMBERSHIP: bool = True
+    # Poster cache on disk is unauthenticated by design (see image_proxy);
+    # a total budget stops a LAN client from filling the disk with variants.
+    IMAGE_CACHE_MAX_MB: int = 1024
     # ListenBrainz global popularity (music evidence). A free account token
     # is REQUIRED — LB locked these endpoints behind auth after AI-scraper
     # abuse ("you need to provide an Auth token"). listenbrainz.org/settings.
