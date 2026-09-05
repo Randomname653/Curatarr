@@ -111,7 +111,7 @@ def _preflight_deps() -> bool:
         for mod in (
             "fastapi", "uvicorn", "sqlalchemy", "chromadb",
             "pydantic_settings", "apscheduler", "psutil",
-            "PIL", "pystray",
+            "PIL", "pystray", "jwt",
         ):
             importlib.import_module(mod)
         return True
@@ -235,6 +235,7 @@ def main() -> None:
     config = uvicorn.Config(
         app_main.app, host=settings.HOST, port=settings.PORT,
         log_config=None, access_log=False, timeout_graceful_shutdown=8,
+        server_header=False,   # no "server: uvicorn" banner on a LAN port
     )
     server = uvicorn.Server(config)
     server_loop: asyncio.AbstractEventLoop | None = None

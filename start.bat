@@ -27,7 +27,7 @@ REM Check / install missing deps silently.
 REM Import every third-party module the app needs at runtime, not just one
 REM sentinel package -- otherwise a single pre-installed package (e.g.
 REM apscheduler) makes the check pass while others are still missing.
-python -c "import uvicorn, fastapi, multipart, sqlalchemy, jose, Crypto, httpx, aiohttp, chromadb, pydantic_settings, dotenv, numpy, pythonjsonlogger, apscheduler, psutil, PIL, pystray" >nul 2>&1
+python -c "import uvicorn, fastapi, multipart, sqlalchemy, jwt, Crypto, httpx, aiohttp, chromadb, pydantic_settings, dotenv, numpy, pythonjsonlogger, apscheduler, psutil, PIL, pystray" >nul 2>&1
 if errorlevel 1 (
     echo  [SETUP] Installing missing dependencies...
     pip install -r requirements.txt -q
@@ -85,7 +85,7 @@ REM reload needed for index.html edits; just refresh the browser.)
 REM --timeout-graceful-shutdown: backstop so lingering connections (an SSE
 REM stream from a tab that never got the shutdown signal, e.g. a sleeping
 REM phone) can only delay shutdown by 8s instead of forever.
-python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src --timeout-graceful-shutdown 8
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src --timeout-graceful-shutdown 8 --no-server-header
 
 REM Clean exit (web-UI shutdown / Ctrl+C) -> close the window by itself.
 REM Crash (port in use, import error) -> keep the output visible.

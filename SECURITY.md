@@ -20,8 +20,10 @@ in your threat model.
 
 Defaults that matter:
 
-- `/api/docs` (Swagger) is **off** by default (`ENABLE_DOCS=false`) — it
-  would map every endpoint for anyone who finds the port.
+- `/api/docs` (Swagger) **and** the OpenAPI spec are **off** by default
+  (`ENABLE_DOCS=false`) — either would map every endpoint for anyone who
+  finds the port. (Until 2026-09 only the UI was gated; the spec stayed
+  public at `/openapi.json`.)
 - Secrets (`JWT_SECRET`, API keys, Plex token) live only in `.env`,
   which is gitignored. Never commit it.
 - Deletion actions require an authenticated session; proposals are never

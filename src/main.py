@@ -226,6 +226,10 @@ app = FastAPI(
     # was handing out a free map of every endpoint at /api/docs. Set
     # ENABLE_DOCS=true in .env when you need the API explorer.
     docs_url="/api/docs" if settings.ENABLE_DOCS else None,
+    # The gate only hid the Swagger UI: FastAPI kept serving the spec at its
+    # default /openapi.json - the actual endpoint map, for anyone on the LAN
+    # (caught by the 2026-09 first-run probe). Gate the spec with the UI.
+    openapi_url="/api/openapi.json" if settings.ENABLE_DOCS else None,
     redoc_url=None,
     lifespan=lifespan,
 )

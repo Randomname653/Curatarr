@@ -109,6 +109,19 @@ class SecurityHeadersMiddleware:
         (b"x-content-type-options", b"nosniff"),
         (b"x-frame-options", b"DENY"),  # no iframes anywhere in the frontend
         (b"referrer-policy", b"same-origin"),
+        # 'unsafe-inline' is unavoidable: the single-file UI is built on
+        # inline onclick= handlers and <style> blocks. Everything else is
+        # locked to the origin - the frontend loads no external resource
+        # (posters go through /api/image/proxy, Plex login is a window.open),
+        # so connect-src 'self' means a script injection that survived
+        # DOMPurify still cannot phone the token home.
+        (b"content-security-policy",
+         b"default-src 'self'; script-src 'self' 'unsafe-inline'; "
+         b"style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+         b"connect-src 'self'; font-src 'self' data:; object-src 'none'; "
+         b"base-uri 'self'; form-action 'self'; frame-ancestors 'none'"),
+        (b"permissions-policy",
+         b"camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
     ]
 
     def __init__(self, app):

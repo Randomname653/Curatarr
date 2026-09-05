@@ -23,6 +23,21 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_print(*args, **kwargs) -> None:
+    """print() that survives a cp1252 console.
+
+    build_models.py reconfigures stdout to UTF-8; the web wizard's call path
+    (setup router -> build_ollama_models) runs under whatever console
+    start.bat inherited, where the check marks and emoji below raise
+    UnicodeEncodeError and turned the Build-models step into a 500.
+    """
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        safe = [str(a).encode("ascii", "replace").decode() for a in args]
+        print(*safe, **kwargs)
+
 from src.paths import ENV_FILE
 ENV_PATH = ENV_FILE
 
@@ -474,7 +489,7 @@ async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
         target = _norm(model_name)
         return target in [_norm(m) for m in local]
     except (httpx.ConnectError, httpx.ConnectTimeout):
-        print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
+        _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
         return False
     except Exception:
         return False
@@ -487,7 +502,7 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
     """
     import json as _json
 
-    print(f"  ⬇️  Pulling {model_name} …", flush=True)
+    _safe_print(f"  ⬇️  Pulling {model_name} …", flush=True)
     try:
         # No read-timeout — large models can take many minutes to download.
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=None, write=30, pool=30)) as client:
@@ -524,20 +539,20 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
                         gb_done = completed / 1_073_741_824
                         gb_total = total / 1_073_741_824
                         line_str = f"\r  {status}: {pct}%  ({gb_done:.1f} GB / {gb_total:.1f} GB)    "
-                        print(line_str, end="", flush=True)
+                        _safe_print(line_str, end="", flush=True)
                     elif status and status != last_status:
                         if last_status and total:
-                            print()  # newline after progress bar
-                        print(f"  {status}", flush=True)
+                            _safe_print()  # newline after progress bar
+                        _safe_print(f"  {status}", flush=True)
                         last_status = status
 
                     if status == "success":
-                        print()
+                        _safe_print()
                         return True
 
         return True
     except (httpx.ConnectError, httpx.ConnectTimeout):
-        print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
+        _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
         return False
     except Exception as e:
         logger.error("Failed to pull %s: %s", model_name, e)
@@ -576,22 +591,22 @@ async def build_ollama_models(ollama_endpoint: str,
         embed_model = (_settings.EMBEDDING_MODEL or "").strip()
     if embed_model:
         if await model_exists(ollama_endpoint, embed_model):
-            print(f"  ✓  {embed_model} already present — skipping pull", flush=True)
+            _safe_print(f"  ✓  {embed_model} already present — skipping pull", flush=True)
             results["embedding"] = True
         else:
             results["embedding"] = await pull_ollama_model(ollama_endpoint, embed_model)
             if not results["embedding"]:
-                print(f"  ⚠️  Pull failed for embedding model {embed_model} — "
+                _safe_print(f"  ⚠️  Pull failed for embedding model {embed_model} — "
                       "enrichment vectors will NOT be generated", flush=True)
 
     # ── Step 1: ensure base models are present ────────────────────────────────
     for model in dict.fromkeys([base_curator, base_summarizer]):  # deduplicate
         if await model_exists(ollama_endpoint, model):
-            print(f"  ✓  {model} already present — skipping pull", flush=True)
+            _safe_print(f"  ✓  {model} already present — skipping pull", flush=True)
         else:
             ok = await pull_ollama_model(ollama_endpoint, model)
             if not ok:
-                print(f"  ❌  Pull failed for {model} — cannot continue", flush=True)
+                _safe_print(f"  ❌  Pull failed for {model} — cannot continue", flush=True)
                 results["curator"] = False
                 results["summarizer"] = False
                 return results
@@ -632,7 +647,7 @@ async def build_ollama_models(ollama_endpoint: str,
                             continue
             return True
         except (httpx.ConnectError, httpx.ConnectTimeout):
-            print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
+            _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
             return False
         except Exception as e:
             logger.error("Failed to create %s: %s", name, e)
@@ -654,12 +669,12 @@ async def build_ollama_models(ollama_endpoint: str,
     # a missing/failed pitcher leaves curator/summarizer results untouched.
     if base_pitcher:
         if await model_exists(ollama_endpoint, base_pitcher):
-            print(f"  ✓  {base_pitcher} already present — skipping pull", flush=True)
+            _safe_print(f"  ✓  {base_pitcher} already present — skipping pull", flush=True)
             pulled = True
         else:
             pulled = await pull_ollama_model(ollama_endpoint, base_pitcher)
             if not pulled:
-                print(f"  ⚠️  Pull failed for pitcher base {base_pitcher} — "
+                _safe_print(f"  ⚠️  Pull failed for pitcher base {base_pitcher} — "
                       "deletion runs will fall back to the curator bake", flush=True)
         if pulled:
             logger.info("Building curatarr-pitcher from %s...", base_pitcher)
