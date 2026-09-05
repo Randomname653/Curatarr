@@ -172,6 +172,16 @@ def test_the_small_gates_are_in_place():
     assert "settings.effective_jwt_secret," in lib and "settings.JWT_SECRET," not in lib
 
 
+def test_blank_url_values_in_env_do_not_brick_startup():
+    """An older wizard wrote PLEX_URL= for blank fields; Settings() then died
+    on HttpUrl parsing before the app could even show the wizard again."""
+    from src.config import Settings
+    s = Settings(_env_file=None, PLEX_URL="", OLLAMA_ENDPOINT="", PLEX_REDIRECT_URI="  ")
+    assert s.PLEX_URL is None
+    assert str(s.OLLAMA_ENDPOINT).startswith("http://localhost:11434")
+    assert str(s.PLEX_REDIRECT_URI).startswith("http://localhost:8000")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

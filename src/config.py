@@ -58,6 +58,21 @@ class Settings(BaseSettings):
     PLEX_CLIENT_ID: str = "Curatarr"
     PLEX_REDIRECT_URI: HttpUrl = "http://localhost:8000"
 
+    @field_validator("PLEX_URL", mode="before")
+    @classmethod
+    def _blank_optional_url_is_none(cls, v):
+        # A hand-edited (or older-wizard-written) ``PLEX_URL=`` used to fail
+        # HttpUrl parsing and brick startup with a validation error. Blank
+        # means unset - the setup wizard, not a traceback, handles unset.
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("OLLAMA_ENDPOINT", "PLEX_REDIRECT_URI", mode="before")
+    @classmethod
+    def _blank_url_falls_back_to_default(cls, v, info):
+        if isinstance(v, str) and not v.strip():
+            return cls.model_fields[info.field_name].default
+        return v
+
     # ── Ollama ───────────────────────────────────────────────────────────────
     OLLAMA_ENDPOINT: HttpUrl = "http://localhost:11434"
     # ── Model names — set these in .env, do not edit here ────────────────────
