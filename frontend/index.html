@@ -2128,9 +2128,7 @@ async function api(path, method='GET', body=null, _retried=false) {
   if (r.status === 401 && path.startsWith('/api/setup/') && !_retried) {
     const msg = await r.clone().text();
     if (/setup code/i.test(msg)) {
-      const entered = prompt('This Curatarr is being set up from another device.
-
-Enter the one-time setup code printed in the Curatarr console window (start.bat) or log file:');
+      const entered = prompt('This Curatarr is being set up from another device.\n\nEnter the one-time setup code printed in the Curatarr console window (start.bat) or log file:');
       if (entered && entered.trim()) {
         sessionStorage.setItem('curatarr_setup_code', entered.trim().toUpperCase());
         return api(path, method, body, true);
