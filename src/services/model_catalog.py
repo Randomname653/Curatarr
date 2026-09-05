@@ -73,6 +73,22 @@ EMBEDDING_MODELS = [
 
 # Models a bench run explicitly DISQUALIFIED — the wizard must never offer
 # these even as custom entries without a warning naming the reason.
+# Two-bake split: a dedicated deletion-judge bake. It never co-resides with
+# the curator (llm_priority evicts one for the other), so "fits" is judged
+# alone, exactly like the curator - but it is an OPTION, never a floor.
+PITCHER_MODELS = [
+    {
+        "model": "qwen3.8:27b",
+        "vram_gb": 17.0,
+        "verified": True,
+        "label": "Recommended for the two-bake split",
+        "notes": ("Pipeline-bench winner for deletion pitches: collision "
+                  "flagging, data-bound refusals, 2.4x the curator's speed. "
+                  "Fails the chat bench (sycophancy, confabulation) - which is "
+                  "why it judges deletions ONLY and never chats."),
+    },
+]
+
 DISQUALIFIED = {
     "qwen3.6:latest": "KV starvation on 24 GB (2s->600s escalation), timeout pitches",
     "muse-glimmer:30b": "never emits valid schema JSON; persona breaks",
@@ -134,9 +150,18 @@ def recommend_models(vram_gb: float | None,
             f"runs untested: expect softer, flatter verdicts, and check the "
             f"warm-up result for CPU spill.")
 
+    pitcher = _mark(PITCHER_MODELS)
+    pitcher_note = None
+    if vram_gb is not None and not any(r["fits"] for r in pitcher):
+        pitcher_note = (
+            f"The two-bake split needs ~{PITCHER_MODELS[0]['vram_gb'] + VRAM_HEADROOM_GB:.0f} GB "
+            f"for the dedicated judge on its own; with {vram_gb:.0f} GB the "
+            f"curator bake handles deletions too (graceful single-bake mode).")
     return {
         "curator": curator,
         "summarizer": _mark(SUMMARIZER_MODELS),
         "embedding": _mark(EMBEDDING_MODELS),
+        "pitcher": pitcher,
+        "pitcher_note": pitcher_note,
         "floor_note": floor_note,
     }

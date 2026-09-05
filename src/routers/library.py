@@ -220,32 +220,11 @@ async def library_configure(
             detail=f"Connection test failed: {test_result.get('error', 'unknown')}",
         )
 
-    # Build a minimal config dict from current settings + the override
-    from src.services.setup_wizard import write_env
-    cfg = {
-        "plex_url":            settings.PLEX_URL or "",
-        # effective_* unwrap the SecretStr. The raw objects f-string to
-        # "**********" - write_env then stored THAT as JWT_SECRET/PLEX_TOKEN
-        # and settings.__init__() below made every JWT forgeable (2026-09
-        # setup audit; caught before it ever fired on the reference install).
-        "plex_token":          settings.effective_plex_token,
-        "ollama_endpoint":     settings.effective_ollama,
-        "base_curator_model":  settings.BASE_CURATOR_MODEL or "qwen2.5:32b",
-        "base_summarizer_model": settings.BASE_SUMMARIZER_MODEL or "dolphin3",
-        "embedding_model":     settings.EMBEDDING_MODEL or "nomic-embed-text",
-        "radarr_url":          settings.RADARR_URL or "",
-        "radarr_api_key":      settings.RADARR_API_KEY or "",
-        "sonarr_url":          settings.SONARR_URL or "",
-        "sonarr_api_key":      settings.SONARR_API_KEY or "",
-        "lidarr_url":          settings.LIDARR_URL or "",
-        "lidarr_api_key":      settings.LIDARR_API_KEY or "",
-        "tmdb_api_key":        settings.TMDB_API_KEY or "",
-        "omdb_api_key":        settings.OMDB_API_KEY or "",
-        "lastfm_api_key":      settings.LASTFM_API_KEY or "",
-        "spotify_client_id":   settings.SPOTIFY_CLIENT_ID or "",
-        "spotify_client_secret": settings.SPOTIFY_CLIENT_SECRET or "",
-        "jwt_secret":          settings.effective_jwt_secret,
-    }
+    # The live config with secrets unwrapped, from the one place that knows
+    # the .env shape (setup_wizard.current_env_config); a hand-built copy
+    # here once passed raw SecretStr objects and stale model fallbacks.
+    from src.services.setup_wizard import write_env, current_env_config
+    cfg = current_env_config()
     # Override the changed service
     cfg[f"{req.service}_url"]     = req.url
     cfg[f"{req.service}_api_key"] = req.api_key

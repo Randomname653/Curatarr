@@ -30,7 +30,7 @@ def check(name, cond):
 
 
 from src.services.model_catalog import (
-    CURATOR_MODELS, SUMMARIZER_MODELS, EMBEDDING_MODELS, DISQUALIFIED,
+    CURATOR_MODELS, SUMMARIZER_MODELS, EMBEDDING_MODELS, PITCHER_MODELS, DISQUALIFIED,
     VRAM_HEADROOM_GB, recommend_models)
 
 # ── drift against the bench CSV ────────────────────────────────────────────
@@ -59,6 +59,17 @@ for name in DISQUALIFIED:
     check(f"...and never appears as a catalog recommendation",
           name not in [e["model"] for e in
                        CURATOR_MODELS + SUMMARIZER_MODELS + EMBEDDING_MODELS])
+
+for e in PITCHER_MODELS:
+    if e.get("verified"):
+        row = rows.get(e["model"])
+        check(f"verified pitcher {e['model']} has a bench row", row is not None)
+        check(f"...and the bench called it a pipeline-split candidate",
+              row is not None and "pipeline" in (row.get("verdict_role") or "").lower())
+check("recommendation carries the pitcher role",
+      "pitcher" in recommend_models(24.0) and recommend_models(24.0)["pitcher"][0]["fits"] is True)
+check("12 GB: the pitcher note explains single-bake mode",
+      recommend_models(12.0)["pitcher_note"] is not None)
 
 check("the production base is the catalog's first curator entry",
       CURATOR_MODELS[0]["model"] == "gemma4:31b"

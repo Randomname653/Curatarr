@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from src.config import settings
-from src.routers.auth import require_admin_or_first_run
+from src.routers.auth import require_admin_or_first_run, require_admin
 from src.services.setup_wizard import (
     test_plex, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
@@ -171,6 +171,42 @@ class SetupCompleteRequest(BaseModel):
     lidarr_api_key: str = ""
     soulsync_url: str = ""
     soulsync_api_key: str = ""
+    listenbrainz_token: str = ""
+    # Two-bake split: a dedicated deletion-judge bake (benchmarked better
+    # at pitches than the chat curator). Off unless the wizard turns it on.
+    enable_pitcher: bool = False
+    base_pitcher_model: str = "qwen3.8:27b"
+
+
+class ReconfigureRequest(BaseModel):
+    """Partial post-setup change: every field optional, None = unchanged,
+    "" = clear. Same keys the wizard writes, so one write_env serves both."""
+    plex_url: Optional[str] = None
+    plex_token: Optional[str] = None
+    ollama_endpoint: Optional[str] = None
+    base_curator_model: Optional[str] = None
+    base_summarizer_model: Optional[str] = None
+    embedding_model: Optional[str] = None
+    enable_pitcher: Optional[bool] = None
+    base_pitcher_model: Optional[str] = None
+    tmdb_api_key: Optional[str] = None
+    omdb_api_key: Optional[str] = None
+    lastfm_api_key: Optional[str] = None
+    spotify_client_id: Optional[str] = None
+    spotify_client_secret: Optional[str] = None
+    soulsync_url: Optional[str] = None
+    soulsync_api_key: Optional[str] = None
+    listenbrainz_token: Optional[str] = None
+    opensubtitles_api_key: Optional[str] = None
+    opensubtitles_username: Optional[str] = None
+    opensubtitles_password: Optional[str] = None
+    opensubtitles_daily_budget: Optional[int] = None
+    radarr_url: Optional[str] = None
+    radarr_api_key: Optional[str] = None
+    sonarr_url: Optional[str] = None
+    sonarr_api_key: Optional[str] = None
+    lidarr_url: Optional[str] = None
+    lidarr_api_key: Optional[str] = None
 
 
 @router.post("/complete")
@@ -188,15 +224,19 @@ async def complete_setup(
     if not req.plex_url.strip() or not req.plex_token.strip():
         raise HTTPException(status_code=422,
                             detail="Plex URL and token are required to complete setup")
-    # Write .env
-    write_env(req.dict())
+    # Write .env - enable_pitcher becomes the baked name the runtime keys on
+    cfg = req.dict()
+    cfg["pitcher_model"] = "curatarr-pitcher" if req.enable_pitcher else ""
+    write_env(cfg)
 
-    # Build Ollama models in background (takes a moment)
+    # Build Ollama models in background (takes a moment). The pitcher bake
+    # used to be unreachable from here - only the post-setup rebuild built it.
     background_tasks.add_task(
         build_ollama_models,
         req.ollama_endpoint,
         req.base_curator_model,
         req.base_summarizer_model,
+        req.base_pitcher_model if req.enable_pitcher else None,
     )
 
     return {
@@ -226,3 +266,52 @@ async def build_models_endpoint(
         "summarizer": results.get("summarizer", False),
         "pitcher": results.get("pitcher"),
     }
+
+
+# ── post-setup: see and change what the wizard configured ───────────────────
+
+_MODEL_KEYS = ("base_curator_model", "base_summarizer_model", "embedding_model",
+               "pitcher_model", "base_pitcher_model")
+
+
+@router.get("/integrations")
+async def integrations_status(_admin=Depends(require_admin)):
+    """Every integration the wizard knows, as the live settings hold it -
+    plain values for URLs/models, ``{"set": bool}`` for secrets, and the
+    JWT secret not at all. This is what Settings -> Integrations renders."""
+    from src.services.setup_wizard import current_env_config, mask_secrets
+    return {"config": mask_secrets(current_env_config()),
+            "pitcher_enabled": bool(settings.PITCHER_MODEL)}
+
+
+@router.post("/reconfigure")
+async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
+    """Change any subset of integration settings after setup.
+
+    Until this existed, Plex URL/token, the Ollama endpoint, the model
+    choices and every metadata key could be set exactly once - in the wizard
+    - and never again except by hand-editing .env. Merges the change on the
+    live config, writes atomically, reloads the process settings. Model
+    changes additionally need a rebuild (POST /build-models) and a restart;
+    the response says so.
+    """
+    from src.services.setup_wizard import current_env_config, merge_env_config
+    changes = req.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="Nothing to change")
+    if "plex_url" in changes and not changes["plex_url"].strip():
+        raise HTTPException(status_code=422, detail="Plex URL cannot be empty")
+    if "plex_token" in changes and not changes["plex_token"].strip():
+        raise HTTPException(status_code=422, detail="Plex token cannot be empty")
+    before = current_env_config()
+    merged = merge_env_config(before, changes)
+    write_env(merged)
+    settings.__init__()   # live reload, same as the library panel does
+    models_changed = any(before.get(k) != merged.get(k) for k in _MODEL_KEYS)
+    endpoints_changed = any(before.get(k) != merged.get(k)
+                            for k in ("plex_url", "ollama_endpoint"))
+    logger.info("[setup] integrations reconfigured by admin: %s",
+                ", ".join(sorted(changes)))
+    return {"ok": True, "changed": sorted(changes),
+            "models_changed": models_changed,
+            "restart_recommended": models_changed or endpoints_changed}

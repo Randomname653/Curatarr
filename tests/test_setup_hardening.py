@@ -44,6 +44,11 @@ class _LiveSettings:
     BINGE_EPISODE_THRESHOLD = 4
     BINGE_SESSION_HOURS = 8
     BINGE_SERIES_PERCENT = 0.7
+    LISTENBRAINZ_TOKEN = None
+    OPENSUBTITLES_API_KEY = None
+    OPENSUBTITLES_USERNAME = None
+    OPENSUBTITLES_PASSWORD = None
+    OPENSUBTITLES_DAILY_BUDGET = 400
 
 
 def _write(config):
@@ -169,7 +174,9 @@ def test_the_small_gates_are_in_place():
     assert "if force and not user.is_admin:" in hist
     assert 'get_state("music_pipeline_owner") != str(user.id)' in music
     assert "hmac.compare_digest(_hash_pin(" in users
-    assert "settings.effective_jwt_secret," in lib and "settings.JWT_SECRET," not in lib
+    # library_configure now overlays on setup_wizard.current_env_config(),
+    # which unwraps every secret - the raw SecretStr must never come back.
+    assert "current_env_config()" in lib and "settings.JWT_SECRET," not in lib
 
 
 def test_blank_url_values_in_env_do_not_brick_startup():

@@ -306,6 +306,90 @@ def _restrict_env_acl(path) -> None:
         logger.debug("Could not narrow .env ACL: %s", e)
 
 
+# Keys whose values must never travel back to a browser. The integrations
+# panel shows "set / not set" for these and a replace-field, nothing more.
+SECRET_KEYS = frozenset({
+    "plex_token", "jwt_secret", "radarr_api_key", "sonarr_api_key",
+    "lidarr_api_key", "tmdb_api_key", "omdb_api_key", "lastfm_api_key",
+    "spotify_client_secret", "soulsync_api_key", "listenbrainz_token",
+    "opensubtitles_api_key", "opensubtitles_password",
+})
+
+
+def current_env_config() -> dict:
+    """The wizard-shaped config dict as the LIVE settings hold it, every
+    secret already unwrapped to plain text.
+
+    This is the single source for "what is configured right now": the
+    library panel and the integrations panel both overlay their change on
+    it and hand the result to write_env. It replaces a hand-built copy in
+    library.py that passed raw SecretStr objects (the ********** incident)
+    and fell back to model names two generations stale.
+    """
+    s = _live_settings()
+    return {
+        "plex_url":              s.effective_plex_url,
+        "plex_token":            s.effective_plex_token,
+        "ollama_endpoint":       s.effective_ollama,
+        "base_curator_model":    s.BASE_CURATOR_MODEL,
+        "base_summarizer_model": s.BASE_SUMMARIZER_MODEL,
+        "embedding_model":       s.EMBEDDING_MODEL,
+        "pitcher_model":         s.PITCHER_MODEL or "",
+        "base_pitcher_model":    s.BASE_PITCHER_MODEL,
+        "radarr_url":            s.RADARR_URL or "",
+        "radarr_api_key":        s.RADARR_API_KEY or "",
+        "sonarr_url":            s.SONARR_URL or "",
+        "sonarr_api_key":        s.SONARR_API_KEY or "",
+        "lidarr_url":            s.LIDARR_URL or "",
+        "lidarr_api_key":        s.LIDARR_API_KEY or "",
+        "soulsync_url":          s.SOULSYNC_URL or "",
+        "soulsync_api_key":      s.SOULSYNC_API_KEY or "",
+        "tmdb_api_key":          s.TMDB_API_KEY or "",
+        "omdb_api_key":          s.OMDB_API_KEY or "",
+        "lastfm_api_key":        s.LASTFM_API_KEY or "",
+        "spotify_client_id":     s.SPOTIFY_CLIENT_ID or "",
+        "spotify_client_secret": s.SPOTIFY_CLIENT_SECRET or "",
+        "listenbrainz_token":    s.LISTENBRAINZ_TOKEN or "",
+        "opensubtitles_api_key":      s.OPENSUBTITLES_API_KEY or "",
+        "opensubtitles_username":     s.OPENSUBTITLES_USERNAME or "",
+        "opensubtitles_password":     s.OPENSUBTITLES_PASSWORD or "",
+        "opensubtitles_daily_budget": s.OPENSUBTITLES_DAILY_BUDGET,
+        "jwt_secret":            s.effective_jwt_secret,
+    }
+
+
+def merge_env_config(current: dict, changes: dict) -> dict:
+    """Overlay a partial change set on the current config.
+
+    ``None`` means "leave as is"; an empty string clears an optional key.
+    ``enable_pitcher`` is the UI's switch for the two-bake split and maps to
+    the baked name the runtime keys on (``PITCHER_MODEL`` non-empty = on).
+    """
+    merged = dict(current)
+    for key, value in (changes or {}).items():
+        if value is None:
+            continue
+        if key == "enable_pitcher":
+            merged["pitcher_model"] = "curatarr-pitcher" if value else ""
+            continue
+        merged[key] = value
+    return merged
+
+
+def mask_secrets(cfg: dict) -> dict:
+    """What the integrations panel may see: values for plain settings,
+    ``{"set": bool}`` for secrets, and the JWT secret not at all."""
+    out = {}
+    for key, value in cfg.items():
+        if key == "jwt_secret":
+            continue
+        if key in SECRET_KEYS:
+            out[key] = {"set": bool(value)}
+        else:
+            out[key] = value
+    return out
+
+
 def _plain(value) -> str:
     """Secret-safe stringification for .env lines.
 
@@ -373,6 +457,13 @@ def write_env(config: dict) -> None:
         f"LASTFM_API_KEY={config.get('lastfm_api_key', '')}",
         f"SPOTIFY_CLIENT_ID={config.get('spotify_client_id', '')}",
         f"SPOTIFY_CLIENT_SECRET={config.get('spotify_client_secret', '')}",
+        f"LISTENBRAINZ_TOKEN={_plain(config.get('listenbrainz_token', _live_settings().LISTENBRAINZ_TOKEN or ''))}",
+        "",
+        "# Subtitles (optional - dialogue evidence for the judge)",
+        f"OPENSUBTITLES_API_KEY={_plain(config.get('opensubtitles_api_key', _live_settings().OPENSUBTITLES_API_KEY or ''))}",
+        f"OPENSUBTITLES_USERNAME={config.get('opensubtitles_username', _live_settings().OPENSUBTITLES_USERNAME or '')}",
+        f"OPENSUBTITLES_PASSWORD={_plain(config.get('opensubtitles_password', _live_settings().OPENSUBTITLES_PASSWORD or ''))}",
+        f"OPENSUBTITLES_DAILY_BUDGET={config.get('opensubtitles_daily_budget', _live_settings().OPENSUBTITLES_DAILY_BUDGET)}",
         "",
         "# Sync",
         # Live values, not literals: a wizard re-run used to reset an
@@ -781,6 +872,14 @@ SETUP_FIELDS = [
         "type": "model_select",
     },
     {
+        "id": "embedding_model",
+        "label": "Embedding model",
+        "placeholder": "nomic-embed-text-v2-moe",
+        "required": False,
+        "help": "Vector-store embedder. Changing it later means rebuilding the corpus.",
+        "category": "ollama",
+    },
+    {
         "id": "tmdb_api_key",
         "label": "TMDB API Key",
         "placeholder": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -829,6 +928,14 @@ SETUP_FIELDS = [
         "used_for": ["music"],
         "category": "metadata",
         "secret": True,
+    },
+    {
+        "id": "listenbrainz_token",
+        "label": "ListenBrainz user token",
+        "placeholder": "free account - listenbrainz.org/settings",
+        "required": False,
+        "help": "Global listener counts for music deletion debates. Required by ListenBrainz since it auth-locked its API.",
+        "category": "metadata",
     },
     {
         "id": "soulsync_url",
