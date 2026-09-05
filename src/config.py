@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Beta: feature-complete enough to run a household, not
     # stable enough to promise anything. One declaration only —
     # the file headers deliberately carry no version.
-    VERSION: str = "1.0.0-beta"
+    VERSION: str = "1.0.1-beta"
     # HOST is the BIND address only (0.0.0.0 = serve the LAN, intentional for
     # the multi-user household). It is NOT a navigable origin — browser-facing
     # defaults (PLEX_REDIRECT_URI, CORS_ORIGINS) stay localhost-based and must

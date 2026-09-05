@@ -4,6 +4,73 @@ Condensed release history, newest first.
 
 ---
 
+## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
+
+A patch release one day after the first tag, and it exists because the
+first tag was followed by the first real *boundary* audit — who can call
+what, with whose identity, before and after setup — rather than another
+review of code. Two parallel audits plus a live probe (a fresh clone booted
+with no `.env`, poked unauthenticated from localhost and from a LAN
+address) found things no scanner had, and every fix here was re-verified
+against that live instance. No deployment other than the reference
+household is known, and that one was checked and unaffected; nobody is
+logged out by the upgrade.
+
+**Security fixes**
+
+- **Forgeable sessions after an ordinary admin action.** Reconfiguring an
+  arr service through the Library panel handed `write_env` the `SecretStr`
+  *objects* for `JWT_SECRET`/`PLEX_TOKEN`; f-strings render those as
+  `**********`, which would have been persisted as the secret and reloaded
+  live — every token signed with a ten-character constant. Fixed at the call
+  site and in `write_env`, which now unwraps secrets and refuses to write a
+  mask at all.
+- **Any plex.tv account could log in, and the first one became admin.** New
+  accounts must now be known to the configured Plex server (its own
+  `/accounts` list — the same one watch history is attributed with), and the
+  first account must be the server owner. Fails closed for new accounts
+  only; `PLEX_LOGIN_REQUIRE_MEMBERSHIP=false` is the escape hatch.
+- **Deactivating a user and signing out were cosmetic.** `is_active` was
+  never checked per request and the rolling refresh renewed tokens from
+  their own stale claims. Every request now consults the live account row
+  plus a per-user token version (JWT `ver` claim; new column, automatic
+  migration): Sign out revokes on every device, deactivation is immediate.
+- **Household members could read each other's current chat topic.** The
+  anchor cache was keyed by thread id alone while everyone's free chat is
+  thread `general`; `/correct-anchor` also let anyone clear it. Keys are now
+  user-scoped.
+- **First-run setup was open to the whole LAN** until the first admin
+  existed (by necessity — nobody can authenticate yet). A one-time setup
+  code, printed to the console and log at startup, is now required from any
+  non-localhost device; the wizard prompts for it.
+- **The OpenAPI spec was public** at `/openapi.json` despite `ENABLE_DOCS`
+  being off — the gate only hid the Swagger UI. Gated together now.
+- A Content-Security-Policy and Permissions-Policy on every response; the
+  `server` banner is gone; the unauthenticated poster cache has a size
+  budget; force-resync is admin-only; the shared music pipeline can be
+  stopped only by its starter or an admin; PIN comparison is constant-time;
+  `/plex/pin` is rate-limited; a wildcard CORS origin disables credentials;
+  `python-jose` replaced by PyJWT (drops the python-ecdsa advisory).
+
+**Setup and robustness**
+
+- `write_env` no longer regenerates `JWT_SECRET` on every wizard re-run
+  (which logged the whole household out), keeps tuned sync/binge values,
+  writes atomically, narrows the Windows ACL of `.env`, and rejects blank
+  Plex fields instead of flipping `FIRST_RUN`. Blank URL values in an
+  existing `.env` no longer brick startup. The wizard's Build-models step
+  no longer crashes on a cp1252 Windows console; `start.bat`'s dependency
+  preflight matches the shipped dependencies again.
+- Scanner fleet completed: Bandit, OSV-Scanner and OSSF Scorecard join
+  CodeQL; all findings triaged to zero (real ones fixed, the rest justified
+  in code); the Best Practices badge entry exists. Full commit history
+  swept for leaked secrets: clean.
+
+**Upgrade:** pull, restart. The `users.token_version` column is added
+automatically. Existing sessions stay valid.
+
+---
+
 ## 2026-09-04 — v1.0.0-beta: the first tagged release
 
 The repo went public on 2026-08-31; this is the first cut considered
