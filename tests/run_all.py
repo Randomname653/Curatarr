@@ -24,6 +24,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 
+# The children are pinned to UTF-8 below; the PARENT prints their last line,
+# which on a cp1252 Windows console died on the first suite whose final
+# stderr line carried an arrow or an accented title (a logging line, not a
+# failure) — and took the whole battery down with it.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # The vector store admits one process at a time; suites that open it fail
 # together while the app is running. Recognised so the summary can say that
 # instead of printing seven identical tracebacks.

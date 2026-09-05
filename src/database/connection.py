@@ -170,6 +170,8 @@ def _migrate_columns() -> None:
         ("enrichment_status",     "next_retry_at",    "DATETIME"),
         ("enrichment_status",     "match_basis",      "VARCHAR(16)"),
         ("enrichment_status",     "match_confidence", "FLOAT"),
+        # Negative pin: candidates the owner excluded ("Not this one").
+        ("media_match_overrides", "rejected_ids",     "TEXT"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model

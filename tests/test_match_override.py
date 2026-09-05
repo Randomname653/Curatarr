@@ -78,5 +78,27 @@ ser = (root / "src/routers/recommendations.py").read_text(encoding="utf-8")
 check("proposal serializer carries media_id for the pin",
       '"media_id": p.media_id' in ser)
 
+# ── healing 2026-09: negative pin + generalized picker ───────────────────────
+check("negative pin column on the override (\"Not this one\")",
+      "rejected_ids" in cols)
+check("rejected ids ride into ALL four resolvers; a rejected arr id is treated as absent",
+      'ctx["rejected"]' in me
+      and 'rejected=rejected.get("tmdb_id")' in me and 'rejected=rejected.get("anilist_id")' in me
+      and 'rejected=rejected.get("mal_id")' in me and 'rejected=rejected.get("mbid")' in me
+      and '_ok("tmdb_id", ctx.get("tmdb_id"))' in me)
+mm = (root / "src/services/music_metadata.py").read_text(encoding="utf-8")
+check("MusicBrainz name search widened to 5 and skips excluded mbids",
+      '"limit": 5, "fmt": "json"' in mm and 'a.get("id") not in rejected' in mm)
+_apply = en.split("async def apply_match_override")[1].split("\n@router")[0]
+check("apply endpoint accepts the rejected list, derives the category, drops the KB cache",
+      '"rejected"' in _apply and "_derive_category(" in _apply and "_kb.invalidate()" in _apply
+      and 'or "movie"' not in _apply)
+check("candidates come from the arr's own lookup + TMDB + AniList, keyed by item",
+      "lookup_series(title)" in en and "anilist_candidates" in en
+      and "service: Optional[str] = None" in en)
+check("the picker is shared: deletion cards open the same renderMatchPicker",
+      "renderMatchPicker(box" in fe and fe.count("renderMatchPicker(") >= 2
+      and "p.category||'movie'" not in fe)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

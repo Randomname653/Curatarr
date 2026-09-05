@@ -124,7 +124,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 #sidebar.collapsed .sb-label { display: none; }
 #sidebar.collapsed .sb-item { justify-content: center; padding: 8px; }
 #sidebar.collapsed .sb-text { display: none; }
-#sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge { display: none !important; }
+#sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge, #sidebar.collapsed #kb-badge { display: none !important; }
 #sidebar.collapsed .sb-footer button { justify-content: center; padding: 7px; }
 #sidebar.collapsed #sb-collapse-icon { transform: rotate(180deg); }
 #sb-backdrop { display: none; }
@@ -151,7 +151,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
   #sidebar.collapsed .sb-label,
   #sidebar.collapsed .sb-text { display: block; }
   #sidebar.collapsed .sb-item { justify-content: flex-start; padding: 8px 16px; }
-  #sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge { display: flex !important; }
+  #sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge, #sidebar.collapsed #kb-badge { display: flex !important; }
   #sb-collapse-toggle { display: none; }
   #sb-backdrop.show {
     display: block; position: fixed; inset: 46px 0 0 0; z-index: 25;
@@ -631,6 +631,7 @@ select option { background: var(--bg2); }
       <div class="sb-item" onclick="showView('enrich',this)" title="Knowledge Base">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
         <span class="sb-text">Knowledge Base</span>
+        <span id="kb-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none" title="Items that need a human: wrong year, unsure match, or not found after two or more tries">0</span>
       </div>
       <div class="sb-item" onclick="showView('tasks',this)" id="tasks-nav" title="Activity">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -868,6 +869,8 @@ select option { background: var(--bg2); }
         <div id="custodian-bar" style="margin-bottom:14px"></div>
         <div id="backfill-panel" style="margin-bottom:14px"></div>
         <div id="enrich-overview" style="margin-bottom:20px"></div>
+        <div id="kb-drilldown" style="margin-bottom:16px"></div>
+        <div id="kb-attention" style="margin-bottom:20px"></div>
 
         <details style="margin-bottom:16px">
         <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);padding:4px 0">Advanced — manual enrichment controls</summary>
@@ -3579,6 +3582,7 @@ async function loadGlancePanel() {
       of += c?.denominator?.downloaded || 0;
     }
     if (of) libPct = Math.round(100 * live / of);
+    _updateKbBadge(overview.value);
   }
   if (enrich.status === 'fulfilled') {
     let done = 0, total = 0;
@@ -4820,7 +4824,7 @@ function _renderDeletionProposals(proposals) {
               <button class="btn btn-secondary btn-sm" onclick="saveComment(${p.id})">Save note</button>
               <button class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}">Discuss</button>
               <button class="btn btn-secondary btn-sm" onclick="onReevaluateDeletion(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}" title="Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)">Reevaluate</button>
-              ${p.media_id&&p.service?`<button class="btn btn-secondary btn-sm" onclick="onFixMatch(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-category="${escAttr(p.category||'movie')}" data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}" title="Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.">Fix match</button>`:''}
+              ${p.media_id&&p.service?`<button class="btn btn-secondary btn-sm" onclick="onFixMatch(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-category="${escAttr(p.category||'')}" data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}" title="Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.">Fix match</button>`:''}
               ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" aria-label="Open ${escAttr(p.title)} in ${esc(p.service)}" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
             </div>
             <div id="fixmatch-${p.id}" style="display:none;margin-top:8px"></div>
@@ -4835,47 +4839,20 @@ function _renderDeletionProposals(proposals) {
 }
 
 // ── Fix match: owner-pinned entity resolution (same-named-twins repair) ──────
+// Deletion cards open the same picker the Knowledge-Base page uses (the arr's
+// own lookup + TMDB / AniList candidates, free id fields, "Not this one");
+// the category is resolved server-side from the item, never invented here.
 async function onFixMatch(btn) {
   const box = document.getElementById(`fixmatch-${btn.dataset.pid}`);
   if (!box) return;
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
   box.style.display = 'block';
-  box.innerHTML = '<p class="loading" role="status" aria-live="polite" style="font-size:12px">Searching TMDB candidates…</p>';
   const { title, category, service, mediaid } = btn.dataset;
-  try {
-    const r = await api(`/api/enrichment/match-candidates?title=${encodeURIComponent(title)}&category=${encodeURIComponent(category)}`);
-    const cands = r.candidates || [];
-    if (!cands.length) {
-      box.innerHTML = `<p style="font-size:12px;color:var(--text3)">${esc(r.error || 'No TMDB candidates found.')}</p>`;
-      return;
-    }
-    box.innerHTML = `
-      <div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--bg3)">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pick the entity this library item really is — the pin overrides every automatic match and survives rescans.</div>
-        ${cands.map(c => `
-          <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border)">
-            <div style="flex:1;font-size:12px"><b>${esc(c.title)}</b> ${c.year ? `(${c.year})` : ''} <span style="color:var(--text3)">tmdb:${c.tmdb_id}</span>
-              <div style="color:var(--text3);font-size:11px">${esc(c.overview || '')}</div></div>
-            <button class="btn btn-secondary btn-sm" onclick="applyFixMatch(this,'${esc(service)}',${Number(mediaid)},'${esc(category)}','${escAttr(title)}',${c.tmdb_id})">Pin</button>
-          </div>`).join('')}
-        <div style="margin-top:8px"><button class="btn btn-secondary btn-sm" onclick="removeFixMatch(this,'${esc(service)}',${Number(mediaid)})" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button></div>
-      </div>`;
-  } catch (e) {
-    box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(_errMsg(e))}</p>`;
-  }
+  await renderMatchPicker(box, {service, arrId: Number(mediaid), title, category: category || undefined});
 }
 
 async function applyFixMatch(btn, service, arrId, category, title, tmdbId) {
-  btn.disabled = true; btn.textContent = 'Pinning…';
-  try {
-    const r = await api('/api/enrichment/match-override', 'POST',
-      { service, arr_id: arrId, category, title, tmdb_id: tmdbId });
-    btn.textContent = r.success ? 'Pinned' : 'Failed';
-    if (r.success) {
-      btn.closest('div[id^="fixmatch-"]').innerHTML =
-        `<p style="font-size:12px;color:var(--success)">${esc(r.message || 'Pinned — re-enriches on the pinned identity.')}</p>`;
-    }
-  } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
+  return _pickerPost(btn, { service, arr_id: arrId, category: category || undefined, title, tmdb_id: tmdbId }, 'Pinned');
 }
 
 async function removeFixMatch(btn, service, arrId) {
@@ -6079,6 +6056,7 @@ const KB_STATE_DEFS = {
 };
 
 function _renderKbOverview(o, running, lastRun) {
+  _updateKbBadge(o);
   const cats = o.categories || {};
   const served = Object.entries(o.state_definitions || {}).map(([k, v]) => [k, `${v.explainer} ${v.next_step || ''}`.trim()]);
   const defs = Object.assign({}, KB_STATE_DEFS, Object.fromEntries(served));
@@ -6088,19 +6066,38 @@ function _renderKbOverview(o, running, lastRun) {
     const n = k => s[k] || 0;
     const done = n('enriched') + n('enriched_provisional');
     const pct = d.downloaded ? Math.round(100 * done / d.downloaded) : 0;
+    // Every count is a door: click → the list behind it (same classification).
     const cell = keys => {
       const v = keys.reduce((a, k) => a + n(k), 0);
-      return `<td title="${escAttr(keys.map(k => defs[k] || k).join(' · '))}" style="text-align:right${v ? '' : ';color:var(--text3)'}">${v.toLocaleString()}</td>`;
+      const tip = keys.map(k => defs[k] || k).join(' · ') + (v ? ' — click to list' : '');
+      const click = v ? ` onclick="loadKbItems('${cat}','${keys.join(',')}')"` : '';
+      return `<td title="${escAttr(tip)}" style="text-align:right${v ? ';cursor:pointer;text-decoration:underline dotted' : ';color:var(--text3)'}"${click}>${v.toLocaleString()}</td>`;
     };
     return `<tr>
       <td>${cat}</td>
       <td style="text-align:right">${d.downloaded.toLocaleString()} <span style="color:var(--text3)">/ ${d.arr_total.toLocaleString()}</span></td>
-      <td style="text-align:right;color:var(--success);font-weight:600" title="${escAttr(defs.enriched)}">${done.toLocaleString()} <span style="color:var(--text3);font-weight:400">${pct}%</span></td>
+      <td style="text-align:right;color:var(--success);font-weight:600;cursor:pointer" title="${escAttr(defs.enriched + ' — click to list')}" onclick="loadKbItems('${cat}','enriched,enriched_provisional')">${done.toLocaleString()} <span style="color:var(--text3);font-weight:400">${pct}%</span></td>
       ${cell(['enriched_dead'])}${cell(['rule_based', 'awaiting_llm'])}${cell(['retry_due'])}${cell(['not_found'])}${cell(['queued', 'processing_error'])}${cell(['ignored'])}${cell(['never_processed'])}
       <td style="text-align:right" title="Items with at least one vector-store entry (deduplicated by item identity)">${c.vectors.indexed.toLocaleString()}</td>
       <td style="text-align:right" title="Live raw cache entries carrying Wikipedia significance">${c.wikipedia.significance_cached.toLocaleString()}</td>
       <td style="text-align:right" title="Live raw cache entries with OMDb data (writer / awards / extended plot)">${c.omdb.covered.toLocaleString()}</td>
     </tr>`;
+  }).join('');
+
+  // Why not 100 %: one honest line per library — done / ignored / open, and
+  // what the open rows are waiting for.
+  const openLines = order.filter(c => cats[c]).map(cat => {
+    const c = cats[cat], d = c.denominator, s = c.states, op = c.open || {};
+    const n = k => s[k] || 0;
+    const dl = d.downloaded || 0;
+    const done = n('enriched') + n('enriched_provisional'), ign = n('ignored');
+    const open = Math.max(0, dl - done - ign);
+    const p = v => dl ? Math.round(100 * v / dl) : 0;
+    const bits = [];
+    if (op.due_now) bits.push(`${op.due_now.toLocaleString()} due next run`);
+    if (op.waiting) bits.push(`${op.waiting.toLocaleString()} waiting on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
+    if (op.needs_attention) bits.push(`<span style="color:var(--amber)">${op.needs_attention.toLocaleString()} need attention</span>`);
+    return `<div style="font-size:11px;color:var(--text3)"><b style="color:var(--text2)">${cat}</b>: ${p(done)}% enriched · ${p(ign)}% ignored · ${p(open)}% open${bits.length ? ' — ' + bits.join(', ') : ''}</div>`;
   }).join('');
 
   const wh = o.watch_history_only || {};
@@ -6129,7 +6126,8 @@ function _renderKbOverview(o, running, lastRun) {
         <th style="text-align:right">OMDb</th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>
-    <p style="font-size:11px;color:var(--text3);margin:0 0 16px">One denominator per row: downloaded ARR items. Hover any header or number for its definition. Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
+    <div style="margin:0 0 8px">${openLines}</div>
+    <p style="font-size:11px;color:var(--text3);margin:0 0 16px">One denominator per row: downloaded ARR items. Hover any header or number for its definition; click a number for the list behind it. Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
     <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px">
       <div style="flex:1;min-width:260px">
         <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages above">Watch-history tracking (own set)</div>
@@ -6191,11 +6189,216 @@ async function loadEnrichStatus(forceRefresh) {
     _renderKbOverview(ov, !!st.running, st.last_run);
     if (cust) _renderCustodianBar(cust);
     loadBackfillPanel();
+    const att = document.getElementById('kb-attention');
+    if (att && (forceRefresh || !att.dataset.loaded)) loadKbAttention();
     if (st.running || (cust && cust.ticking)) setTimeout(() => loadEnrichStatus(true), 8000);
   } catch (e) {
     const el = document.getElementById('enrich-overview');
     if (el) el.innerHTML = _errHtml(e, 'loadEnrichStatus()');
   }
+}
+
+// ── KB drilldown, Needs attention, match picker (healing 2026-09) ───────────
+// The list behind every number: /api/enrichment/items shares the tile's
+// classification, /api/enrichment/unmatched is the Needs-attention page.
+// Owner actions: Search & pin (positive pin), Not this one (negative pin),
+// Retry now, Ignore / Un-ignore. Button copy is mirrored in app_context.py.
+const KB_SOURCE_LABELS = {tmdb: 'TMDB', omdb: 'OMDb', anilist: 'AniList', jikan: 'MAL', mb: 'MusicBrainz', lastfm: 'Last.fm'};
+const KB_SOURCE_GLYPH = {ok: '✓', miss: '✗', transient: '⏳', skipped: '–'};
+const PIN_ID_KINDS = ['tmdb_id', 'tvdb_id', 'imdb_id', 'anilist_id', 'mal_id', 'mbid'];
+const KB_PAGE = 50, KB_ATT_PAGE = 100;
+
+function _updateKbBadge(o) {
+  const badge = document.getElementById('kb-badge');
+  if (!badge) return;
+  let n = 0;
+  for (const c of Object.values(o?.categories || {})) n += c?.open?.needs_attention || 0;
+  badge.textContent = n > 999 ? '999+' : String(n);
+  badge.style.display = n > 0 ? 'inline' : 'none';
+}
+
+function _fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(/Z$|[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z');
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
+}
+
+function _kbSourceChips(sources) {
+  return (sources || []).map(s => {
+    const name = KB_SOURCE_LABELS[s.source] || s.source;
+    const hit = s.title ? ` → ${s.title}${s.year ? ` (${s.year})` : ''}` : '';
+    return `<span class="badge muted" style="font-size:10px" title="${escAttr(`${name}: ${s.status}${hit}`)}">${esc(name)} ${KB_SOURCE_GLYPH[s.status] || esc(s.status || '')}</span>`;
+  }).join(' ');
+}
+
+function _kbData(it) {
+  return `data-svc="${escAttr(it.service)}" data-id="${Number(it.arr_id)}" data-title="${escAttr(it.title || '')}" data-year="${it.year || ''}" data-cat="${escAttr(it.category || '')}"`;
+}
+
+function _kbItemActions(it) {
+  if (!currentUser?.is_admin) return '';
+  const d = _kbData(it);
+  const ign = it.state === 'ignored';
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+    <button class="btn btn-secondary btn-sm" ${d} onclick="kbFixMatch(this)" title="Search the arr, TMDB or AniList and pin the entity this item really is">Search &amp; pin</button>
+    <button class="btn btn-secondary btn-sm" ${d} onclick="kbRetry(this)" title="Attempts back to zero — the next enrichment run tries again">Retry now</button>
+    ${ign ? `<button class="btn btn-secondary btn-sm" ${d} onclick="kbUnignore(this)" title="Back into the queue">Un-ignore</button>`
+          : `<button class="btn btn-secondary btn-sm" ${d} onclick="kbIgnore(this)" title="Accept the gap: no more retries, not counted as open">Ignore</button>`}
+    ${it.arr_url ? `<a class="btn btn-secondary btn-sm" href="${escAttr(it.arr_url)}" target="_blank" rel="noopener">Open in ${esc(it.service)}</a>` : ''}
+  </div><div id="fixmatch-${escAttr(it.service)}-${Number(it.arr_id)}" style="display:none;margin-top:8px"></div>`;
+}
+
+function _kbItemCard(it, extraBadges) {
+  const conf = (it.match_confidence != null && it.match_basis === 'title_search') ? ` · match ${Math.round(it.match_confidence * 100)}%` : '';
+  const pin = it.pin ? `<span class="badge amber" style="font-size:10px" title="${escAttr(JSON.stringify(it.pin))}">pinned</span>` : '';
+  const meta = [it.attempt_count ? `tried ${it.attempt_count}×` : '', it.next_retry_at ? `next ${_fmtDate(it.next_retry_at)}` : ''].filter(Boolean).join(' · ');
+  return `<div style="border-top:1px solid var(--border);padding:8px 0">
+    <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+      <b style="font-size:13px">${esc(it.title || '?')}</b>${it.year ? `<span style="color:var(--text3)">(${it.year})</span>` : ''}
+      <span class="badge muted" style="font-size:10px">${esc(it.service)}</span>
+      <span class="badge muted" style="font-size:10px">${esc(it.state_label || it.state)}</span>${pin}${extraBadges || ''}
+      <span style="color:var(--text3);font-size:11px;margin-left:auto">${esc(meta)}${conf}</span>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-top:3px">${esc(it.reason || '')}</div>
+    ${it.sources?.length ? `<div style="margin-top:4px">${_kbSourceChips(it.sources)}</div>` : ''}
+    ${_kbItemActions(it)}
+  </div>`;
+}
+
+async function loadKbItems(cat, states, offset = 0) {
+  const el = document.getElementById('kb-drilldown');
+  if (!el) return;
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite" style="font-size:12px">Loading…</p>';
+  try {
+    const r = await api(`/api/enrichment/items?category=${encodeURIComponent(cat)}&state=${encodeURIComponent(states)}&offset=${offset}&limit=${KB_PAGE}`);
+    const defs = Object.values(r.definitions || {});
+    const nav = `${offset > 0 ? `<button class="btn btn-secondary btn-sm" onclick="loadKbItems('${esc(cat)}','${esc(states)}',${Math.max(0, offset - KB_PAGE)})">← Prev</button>` : ''}
+      ${offset + KB_PAGE < r.total ? `<button class="btn btn-secondary btn-sm" onclick="loadKbItems('${esc(cat)}','${esc(states)}',${offset + KB_PAGE})">Next →</button>` : ''}`;
+    el.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <div><b style="font-size:13px">${esc(cat)} · ${esc(defs.map(d => d.label).join(' / '))}</b> <span style="color:var(--text3);font-size:12px">${r.total.toLocaleString()} items</span></div>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('kb-drilldown').innerHTML=''">Close</button>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:4px 0 6px">${esc(defs.map(d => `${d.explainer} ${d.next_step || ''}`).join(' '))}</p>
+      ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : '<p style="font-size:12px;color:var(--text3)">Nothing here.</p>'}
+      <div style="display:flex;gap:8px;margin-top:8px">${nav}</div>
+    </div>`;
+    el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } catch (e) { el.innerHTML = _errHtml(e); }
+}
+
+async function loadKbAttention(offset = 0) {
+  const el = document.getElementById('kb-attention');
+  if (!el) return;
+  try {
+    const r = await api(`/api/enrichment/unmatched?offset=${offset}&limit=${KB_ATT_PAGE}`);
+    el.dataset.loaded = '1';
+    const defs = r.reason_definitions || {};
+    const counts = Object.entries(r.by_reason || {}).map(([k, n]) => `<span class="badge muted" style="font-size:10px" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}: ${n}</span>`).join(' ');
+    const badgesFor = it => (it.reasons || []).map(k => `<span class="badge amber" style="font-size:10px" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}</span>`).join('');
+    const nav = `${offset > 0 ? `<button class="btn btn-secondary btn-sm" onclick="loadKbAttention(${Math.max(0, offset - KB_ATT_PAGE)})">← Prev</button>` : ''}
+      ${offset + KB_ATT_PAGE < r.total ? `<button class="btn btn-secondary btn-sm" onclick="loadKbAttention(${offset + KB_ATT_PAGE})">Next →</button>` : ''}`;
+    el.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <div><b style="font-size:13px">Needs attention</b> <span style="color:var(--text3);font-size:12px">${r.total.toLocaleString()} items the pipeline cannot settle alone</span></div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">${counts}</div>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:4px 0 6px">Tried twice or more without a hit, found under the wrong year, refused as too far off, or matched with middling confidence. Pin the right entity, retry, or accept the gap.</p>
+      ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : '<p style="font-size:12px;color:var(--success)">Nothing needs a human right now.</p>'}
+      <div style="display:flex;gap:8px;margin-top:8px">${nav}</div>
+    </div>`;
+  } catch (e) { el.innerHTML = _errHtml(e); }
+}
+
+async function _kbAction(btn, path, method, doneText) {
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const r = await api(path, method);
+    btn.textContent = r.success ? doneText : (r.error || 'Failed');
+    if (r.success) setTimeout(() => loadEnrichStatus(true), 400);
+    else btn.disabled = false;
+  } catch (e) {
+    btn.textContent = 'Failed'; btn.disabled = false;
+    setTimeout(() => { btn.textContent = old; }, 2000);
+  }
+}
+function kbRetry(btn)    { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/retry`, 'POST', 'Queued'); }
+function kbIgnore(btn)   { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'POST', 'Ignored'); }
+function kbUnignore(btn) { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'DELETE', 'Back in queue'); }
+
+function kbFixMatch(btn) {
+  const {svc, id, title, year, cat} = btn.dataset;
+  const box = document.getElementById(`fixmatch-${svc}-${Number(id)}`);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  renderMatchPicker(box, {service: svc, arrId: Number(id), title, year: year ? Number(year) : null, category: cat || undefined});
+}
+
+// ── Match picker: the arr's own lookup + TMDB / AniList candidates, free id
+//    fields, and the negative pin. Shared by the KB page and deletion cards.
+async function renderMatchPicker(box, opts) {
+  const {service, arrId, title, year, category} = opts;
+  box.innerHTML = '<p class="loading" role="status" aria-live="polite" style="font-size:12px">Searching candidates…</p>';
+  const q = new URLSearchParams({service, arr_id: String(arrId), title: title || ''});
+  if (year) q.set('year', String(year));
+  if (category) q.set('category', category);
+  try {
+    const r = await api(`/api/enrichment/match-candidates?${q.toString()}`);
+    const cands = r.candidates || [];
+    const cat = r.category || category || '';
+    const ctx = `data-svc="${escAttr(service)}" data-id="${Number(arrId)}" data-cat="${escAttr(cat)}" data-title="${escAttr(title || '')}"`;
+    const idsOf = c => PIN_ID_KINDS.reduce((o, k) => { if (c[k] != null && c[k] !== '') o[k] = c[k]; return o; }, {});
+    const idLine = c => PIN_ID_KINDS.filter(k => c[k]).map(k => `${k.replace('_id', '')}:${esc(String(c[k]))}`).join(' · ');
+    box.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--bg3)">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pick the entity this library item really is — the pin outranks every automatic match and survives rescans. "Not this one" excludes a wrong candidate for good.</div>
+        ${cands.length ? cands.map(c => `
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border)">
+            <div style="flex:1;font-size:12px"><b>${esc(c.title || '?')}</b> ${c.year ? `(${c.year})` : ''} <span class="badge muted" style="font-size:10px">${esc(c.kind || '')}</span>
+              <span style="color:var(--text3)">${idLine(c)}</span>
+              <div style="color:var(--text3);font-size:11px">${esc(c.overview || c.disambiguation || '')}</div></div>
+            <button class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerPin(this)">Pin</button>
+            <button class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerReject(this)" title="Never resolve to this candidate again">Not this one</button>
+          </div>`).join('') : `<p style="font-size:12px;color:var(--text3)">${esc(r.error || 'No candidates found — enter an id below.')}</p>`}
+        <div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <select class="input" style="width:auto;font-size:12px">${PIN_ID_KINDS.map(k => `<option value="${k}">${k}</option>`).join('')}</select>
+          <input class="input" style="width:180px;font-size:12px" placeholder="id, e.g. 603 or tt0133093">
+          <button class="btn btn-secondary btn-sm" ${ctx} onclick="pickerFreePin(this)">Pin this id</button>
+          <button class="btn btn-secondary btn-sm" onclick="removeFixMatch(this,'${esc(service)}',${Number(arrId)})" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button>
+        </div>
+      </div>`;
+  } catch (e) { box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(_errMsg(e))}</p>`; }
+}
+
+async function _pickerPost(btn, payload, doneText) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const r = await api('/api/enrichment/match-override', 'POST', payload);
+    btn.textContent = r.success ? doneText : (r.error || 'Failed');
+    if (r.success) {
+      const box = btn.closest('div[id^="fixmatch-"]');
+      if (box) box.innerHTML = `<p style="font-size:12px;color:var(--success)">${esc(r.message || 'Saved.')}</p>`;
+      if (document.getElementById('kb-attention')?.dataset.loaded) setTimeout(() => loadEnrichStatus(true), 400);
+    } else btn.disabled = false;
+  } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
+}
+function _pickerBase(btn) {
+  const {svc, id, cat, title} = btn.dataset;
+  const p = {service: svc, arr_id: Number(id), title: title || undefined};
+  if (cat) p.category = cat;
+  return p;
+}
+function pickerPin(btn)    { return _pickerPost(btn, Object.assign(_pickerBase(btn), JSON.parse(btn.dataset.ids || '{}')), 'Pinned'); }
+function pickerReject(btn) { return _pickerPost(btn, Object.assign(_pickerBase(btn), {rejected: [JSON.parse(btn.dataset.ids || '{}')]}), 'Excluded'); }
+function pickerFreePin(btn) {
+  const wrap = btn.parentElement;
+  const kind = wrap.querySelector('select').value, val = wrap.querySelector('input').value.trim();
+  if (!val) { btn.textContent = 'Enter an id'; return; }
+  const p = _pickerBase(btn); p[kind] = val;
+  return _pickerPost(btn, p, 'Pinned');
 }
 
 // ── DATA CUSTODIAN (debt-based maintenance — replaces the button zoo) ────────

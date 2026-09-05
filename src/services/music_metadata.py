@@ -112,8 +112,11 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
 
 # ── MUSICBRAINZ ───────────────────────────────────────────────────────────────
 
-async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None) -> Optional[dict]:
+async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
+                                   rejected=None) -> Optional[dict]:
     """Search MusicBrainz for artist info: genres, tags, disambiguation.
+    ``rejected``: MBIDs the owner excluded ("Not this one") — the name search
+    skips them, and a cached wrong hit is re-searched instead of returned.
 
     When ``mbid`` is given (Lidarr's foreignArtistId) we fetch THAT artist
     directly and skip the name search — the only reliable way to disambiguate the
@@ -130,21 +133,26 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None)
     keeps the door open for MB to add the artist later, or for us to fix
     the query escaping.
     """
+    rejected = set(rejected or ())
     cache = MetadataCache()
     cache_key = f"mb:artist:{mbid}" if mbid else f"mb:artist:{artist_name[:60].lower()}"
     cached = cache.get_cache(cache_key)
     if cached:
-        cache.close()
-        return cached["response"]   # may legitimately be None (neg-cached)
+        _resp = cached["response"]   # may legitimately be None (neg-cached)
+        if not (rejected and isinstance(_resp, dict) and _resp.get("mbid") in rejected):
+            cache.close()
+            return _resp
+        # The cached hit is the one the owner just excluded — search again.
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             if not mbid:
                 # No id from the arr — fall back to a name search (ambiguous:
-                # takes the first hit, which is the name-collision risk).
+                # the first hit not excluded by the owner wins — the
+                # name-collision risk the negative pin exists for).
                 r = await _mb_request(
                     client, f"{MB_BASE}/artist",
-                    {"query": f'artist:"{artist_name}"', "limit": 1, "fmt": "json"},
+                    {"query": f'artist:"{artist_name}"', "limit": 5, "fmt": "json"},
                 )
                 if r.status_code != 200:
                     # 429/503 is MB having a moment, not "no such artist" —
@@ -152,16 +160,14 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None)
                     # enrichment wrote the artist down as not found.
                     cache.close()
                     return TRANSIENT
-                if not r.json().get("artists"):
+                artists = [a for a in (r.json().get("artists") or [])
+                           if a.get("id") and a.get("id") not in rejected]
+                if not artists:
                     cache.set_cache(cache_key, None, days=7)
                     cache.close()
                     return None
 
-                mbid = r.json()["artists"][0].get("id")
-                if not mbid:
-                    cache.set_cache(cache_key, None, days=7)
-                    cache.close()
-                    return None
+                mbid = artists[0].get("id")
 
             # Fetch full artist details with tags — rate limited
             r2 = await _mb_request(

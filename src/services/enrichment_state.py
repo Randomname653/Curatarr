@@ -324,3 +324,162 @@ def open_reason(error: Optional[str], sources_state: Any = None, *,
                  else ", due on the next run")
         parts.append(tail)
     return " · ".join(parts)
+
+
+# ── match quality (SoulSync: score it, store it, three outcomes) ──────────────
+
+import re as _re
+from difflib import SequenceMatcher as _SM
+
+REVIEW_THRESHOLD = 0.8     # below: accepted, but flagged for the owner
+REFUSE_THRESHOLD = 0.5     # below (and the year disagrees or is unknown): refused
+
+MATCH_BASES = ("pin", "arr_id", "identity", "title_search")
+
+# Which ids make a resolution id-based (authoritative) per category.
+ID_KEYS_BY_CATEGORY = {
+    "movie": ("tmdb_id", "imdb_id"),
+    "show":  ("tmdb_id", "tvdb_id", "imdb_id"),
+    "anime": ("anilist_id", "mal_id", "tvdb_id"),
+    "music": ("mbid",),
+}
+
+# The source whose hit decides a title-search resolution, per category.
+RESOLVING_SOURCE = {
+    "movie": ("tmdb", "omdb"), "show": ("tmdb", "omdb"),
+    "anime": ("anilist", "jikan"), "music": ("mb", "lastfm"),
+}
+
+
+def normalize_title(s: Optional[str]) -> str:
+    return _re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def title_similarity(a: Optional[str], b: Optional[str]) -> float:
+    na, nb = normalize_title(a), normalize_title(b)
+    if not na or not nb:
+        return 0.0
+    return _SM(None, na, nb).ratio()
+
+
+def years_agree(arr_year, hit_year) -> Optional[bool]:
+    """True / False when both years are known, None when either is not."""
+    try:
+        ay, hy = int(arr_year or 0), int(hit_year or 0)
+    except (TypeError, ValueError):
+        return None
+    if not ay or not hy:
+        return None
+    return abs(ay - hy) <= 1
+
+
+def match_score(arr_title, arr_year, hit_title, hit_year, alt_titles=()) -> float:
+    """0..1 — title similarity (best over the hit's names), nudged by the
+    year: agreement (±1 y) adds 0.15, disagreement takes 0.2."""
+    best = max([title_similarity(arr_title, t) for t in (hit_title, *alt_titles) if t] or [0.0])
+    agree = years_agree(arr_year, hit_year)
+    if agree is True:
+        best = min(1.0, best + 0.15)
+    elif agree is False:
+        best = max(0.0, best - 0.2)
+    return round(best, 3)
+
+
+def match_decision(score: float, arr_year=None, hit_year=None) -> str:
+    """``accept`` / ``review`` / ``refuse``. No match is better than a wrong
+    match — but a same-year hit with an odd name (localised title) is kept
+    for review rather than refused."""
+    if score >= REVIEW_THRESHOLD:
+        return "accept"
+    if score >= REFUSE_THRESHOLD:
+        return "review"
+    return "review" if years_agree(arr_year, hit_year) is True else "refuse"
+
+
+def resolve_match_basis(category: str, pin: Optional[dict], caller_ids: Optional[dict],
+                        resolved_ids: Optional[dict]) -> str:
+    """Which authority resolved the entity: the owner's pin, an id the arr
+    handed over, an id we resolved ourselves (MediaIdentity / cross-ref),
+    or nothing but the title."""
+    keys = ID_KEYS_BY_CATEGORY.get(category, ID_KEYS_BY_CATEGORY["movie"])
+    if any((pin or {}).get(k) for k in keys):
+        return "pin"
+    if any((resolved_ids or {}).get(k) for k in keys):
+        return "arr_id" if any((caller_ids or {}).get(k) for k in keys) else "identity"
+    return "title_search"
+
+
+_INT_ID_KINDS = ("tmdb_id", "tvdb_id", "anilist_id", "mal_id")
+
+
+def parse_rejected_ids(value: Any) -> dict[str, set]:
+    """Negative pins — ``'[{"tmdb_id": 1}, {"mbid": "x"}]'`` (or the parsed
+    list) → ``{"tmdb_id": {1}, "mbid": {"x"}}``. Never raises."""
+    if not value:
+        return {}
+    entries = value
+    if isinstance(value, str):
+        try:
+            entries = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+    out: dict[str, set] = {}
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict):
+            continue
+        for k, v in e.items():
+            if v in (None, ""):
+                continue
+            if k in _INT_ID_KINDS:
+                try:
+                    v = int(v)
+                except (TypeError, ValueError):
+                    continue
+            else:
+                v = str(v).strip()
+            out.setdefault(k, set()).add(v)
+    return out
+
+
+# ── needs attention ───────────────────────────────────────────────────────────
+
+ATTENTION_REASONS: dict[str, dict[str, str]] = {
+    "year_mismatch": {
+        "label": "Wrong year", "severity": "error",
+        "explainer": "A same-named work was found, but its year is far off the arr's — most likely a different title. Pin the right one.",
+    },
+    "low_confidence": {
+        "label": "Rejected hit", "severity": "error",
+        "explainer": "The only candidate was too far from the arr's title and year; nothing was written. Pin the right entry.",
+    },
+    "needs_review": {
+        "label": "Unsure match", "severity": "warning",
+        "explainer": "Matched by title search with middling similarity. Confirm it by pinning, or exclude the candidate.",
+    },
+    "not_found_repeatedly": {
+        "label": "Not found (2+ tries)", "severity": "info",
+        "explainer": "No source knew this title in two or more rounds. Supply an id, or ignore it.",
+    },
+    "no_external_id": {
+        "label": "No id in the arr", "severity": "info",
+        "explainer": "The arr item carries no TMDB / TVDB / IMDb / MusicBrainz id — only the arr can fix that.",
+    },
+}
+ATTENTION_ORDER = tuple(ATTENTION_REASONS)
+
+
+def attention_reasons(state: str, error: Optional[str], attempt_count: int = 0,
+                      match_basis: Optional[str] = None,
+                      match_confidence: Optional[float] = None) -> list[str]:
+    """Why an item belongs on the Needs-attention page (empty = it doesn't)."""
+    reasons: list[str] = []
+    if state in ("not_found", "retry_due"):
+        r = not_found_reason(error)
+        if r in (REASON_YEAR, REASON_LOW_CONFIDENCE):
+            reasons.append(r)
+        elif int(attempt_count or 0) >= 2:
+            reasons.append("not_found_repeatedly")
+    if (state in DONE_STATES and match_basis == "title_search"
+            and match_confidence is not None and float(match_confidence) < REVIEW_THRESHOLD):
+        reasons.append("needs_review")
+    return reasons

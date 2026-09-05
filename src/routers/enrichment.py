@@ -1049,56 +1049,165 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
 # of fetch_and_prepare_raw (highest authority); applying it purges the item's
 # cached rows + flips enrichment status so the pipeline rebuilds on the pin.
 
+_SERVICES = ("radarr", "sonarr", "lidarr")
+_CATEGORIES = ("movie", "show", "anime", "music")
+
+
+def _derive_category(service: str, arr_id: int, hint: Optional[str] = None) -> str:
+    """The item's category from what we KNOW — never a bare "movie" default
+    for a series (that keyed the purge on the wrong cache rows). Order: a
+    valid hint, the arr-keyed status row, the enrichment row, then the
+    service's own domain (sonarr → show; the purge covers anime as well)."""
+    if hint in _CATEGORIES:
+        return hint
+    from src.database.models import ArrEnrichmentStatus as _AES
+    prk = f"{service}:{arr_id}"
+    try:
+        with get_db_session() as db:
+            a = db.query(_AES.category).filter(
+                _AES.service == service, _AES.arr_id == arr_id).first()
+            if a and a.category in _CATEGORIES:
+                return a.category
+            e = db.query(EnrichmentStatus.media_category).filter(
+                EnrichmentStatus.plex_rating_key == prk).first()
+            if e and e.media_category in _CATEGORIES:
+                return e.media_category
+    except Exception as _e:
+        logger.debug("[match] category lookup failed for %s: %s", prk, _e)
+    return {"radarr": "movie", "lidarr": "music"}.get(service, "show")
+
+
 @router.get("/match-candidates")
 async def match_candidates(
-    title: str,
-    category: str = "movie",
+    title: str = "",
+    category: str = "",
     year: Optional[int] = None,
+    service: Optional[str] = None,
+    arr_id: Optional[int] = None,
     user: User = Depends(require_admin),
 ):
-    """TMDB candidate search for a manual re-match (no scoring — the owner is
-    the matcher). Returns id/title/year/overview so same-named twins are
-    distinguishable at a glance."""
+    """Candidates for a manual re-match (no scoring — the owner is the
+    matcher): the arr's own lookup (tvdb / tmdb / imdb / mbid — what Sonarr
+    or Lidarr would resolve to), TMDB for movies and shows, AniList for
+    anime. Each carries id kind, title, year and overview so same-named
+    twins are distinguishable at a glance. With ``service`` + ``arr_id`` the
+    category (and a missing title / year) come from the item itself."""
     import httpx as _hx
-    if not settings.TMDB_API_KEY:
-        return {"candidates": [], "error": "no TMDB key configured"}
+    from src.database.models import ArrEnrichmentStatus as _AES
+    title = (title or "").strip()
+    category = (category or "").strip().lower()
+    if service and arr_id is not None:
+        if service not in _SERVICES:
+            return {"candidates": [], "error": "service must be radarr|sonarr|lidarr"}
+        category = _derive_category(service, arr_id, category or None)
+        if not title or year is None:
+            prk = f"{service}:{arr_id}"
+            with get_db_session() as db:
+                a = db.query(_AES.title).filter(
+                    _AES.service == service, _AES.arr_id == arr_id).first()
+                e = db.query(EnrichmentStatus.title, EnrichmentStatus.sources_state).filter(
+                    EnrichmentStatus.plex_rating_key == prk).first()
+            title = title or (a.title if a else None) or (e.title if e else "") or ""
+            if year is None and e:
+                _ctx = _ES.parse_sources_state(e.sources_state).get(_ES.CONTEXT_KEY) or {}
+                year = _ctx.get("arr_year") if isinstance(_ctx, dict) else None
+    if not title:
+        return {"candidates": [], "error": "title required"}
+    if category not in _CATEGORIES:
+        category = {"lidarr": "music", "sonarr": "show"}.get(service or "", "movie")
+
+    out: list = []
+    # 1. The arr's own lookup — the ids the arr itself would resolve to.
+    if service in _SERVICES:
+        try:
+            from src.routers.library import (_get_arr_url_key, _make_client,
+                                             _normalise_lookup_result)
+            url, key = _get_arr_url_key(service)
+            if url and key:
+                client = _make_client(service, url, key)
+                async with client:
+                    if service == "sonarr":
+                        raw = await client.lookup_series(title)
+                    elif service == "radarr":
+                        raw = await client.lookup_movie(title)
+                    else:
+                        raw = await client.lookup_artist(title)
+                for m in (raw or [])[:8]:
+                    n = _normalise_lookup_result(service, m)
+                    n["kind"] = service
+                    out.append(n)
+        except Exception as e:
+            logger.debug("[match] %s lookup failed for %r: %s", service, title, e)
+    # 2. TMDB for movies and shows (anime too — many are on TMDB as tv).
     mt = "movie" if category == "movie" else "tv"
-    params = {"api_key": settings.TMDB_API_KEY, "query": title, "page": 1}
-    if year:
-        params["year" if mt == "movie" else "first_air_date_year"] = year
-    try:
-        async with _hx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"https://api.themoviedb.org/3/search/{mt}", params=params)
-        results = (r.json().get("results") or [])[:8] if r.status_code == 200 else []
-    except Exception as e:
-        logger.warning("[match] candidate search failed for %r: %s", title, e)
-        return {"candidates": [], "error": "TMDB search failed"}
-    out = []
-    for res in results:
-        date = res.get("release_date") or res.get("first_air_date") or ""
-        out.append({
-            "tmdb_id": res.get("id"),
-            "title": res.get("title") or res.get("name") or "",
-            "year": int(date[:4]) if date[:4].isdigit() else None,
-            "overview": (res.get("overview") or "")[:180],
-        })
-    return {"candidates": out, "media_type": mt}
+    if settings.TMDB_API_KEY and category != "music":
+        params = {"api_key": settings.TMDB_API_KEY, "query": title, "page": 1}
+        if year:
+            params["year" if mt == "movie" else "first_air_date_year"] = year
+        try:
+            async with _hx.AsyncClient(timeout=10) as c:
+                r = await c.get(f"https://api.themoviedb.org/3/search/{mt}", params=params)
+            results = (r.json().get("results") or [])[:8] if r.status_code == 200 else []
+        except Exception as e:
+            logger.warning("[match] candidate search failed for %r: %s", title, e)
+            results = []
+        for res in results:
+            date = res.get("release_date") or res.get("first_air_date") or ""
+            out.append({
+                "kind": "tmdb",
+                "tmdb_id": res.get("id"),
+                "title": res.get("title") or res.get("name") or "",
+                "year": int(date[:4]) if date[:4].isdigit() else None,
+                "overview": (res.get("overview") or "")[:180],
+            })
+    # 3. AniList for anime.
+    if category == "anime":
+        try:
+            from src.services.media_enricher import anilist_candidates
+            out += await anilist_candidates(title)
+        except Exception as e:
+            logger.debug("[match] anilist candidates failed for %r: %s", title, e)
+    if not out and category != "music" and not settings.TMDB_API_KEY:
+        return {"candidates": [], "category": category, "media_type": mt,
+                "error": "no TMDB key configured"}
+    return {"candidates": out, "category": category, "media_type": mt}
 
 
 def _purge_and_requeue_item(service: str, arr_id: int, category: str) -> dict:
-    """Delete the item's cached raw/prefetch/enriched rows (svc:id-keyed, both
-    key epochs) and flip its enrichment status so the next cycle rebuilds —
-    with the override active, on the pinned ids."""
+    """Delete the item's cached raw/prefetch/enriched rows and flip its
+    enrichment status so the next cycle rebuilds — with the override active,
+    on the pinned ids.
+
+    Every key shape the item may live under is purged, both key epochs: the
+    ``svc:id`` key, the ``title[:40]`` key a title-search resolution stores
+    its polished profile under (the one a NEGATIVE pin must clear, or the
+    wrong profile is simply reconciled back), and the arr's tmdb/tvdb ids;
+    for series both the show and the anime category."""
     from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
+    from src.database.models import ArrEnrichmentStatus as _AES
     prk = f"{service}:{arr_id}"
+    keys = {prk}
+    with get_db_session() as db:
+        es = db.query(EnrichmentStatus.title).filter(
+            EnrichmentStatus.plex_rating_key == prk).first()
+        arr_s = db.query(_AES.title, _AES.tmdb_id, _AES.tvdb_id).filter(
+            _AES.service == service, _AES.arr_id == arr_id).first()
+    for t in ((es.title if es else None), (arr_s.title if arr_s else None)):
+        if t:
+            keys.add(t[:40])
+    for v in ((arr_s.tmdb_id if arr_s else None), (arr_s.tvdb_id if arr_s else None)):
+        if v:
+            keys.add(str(v))
+    cats = {category} | ({"show", "anime"} if category in ("show", "anime") else set())
     purged = 0
     mc = MetadataCache()
     try:
         pats = []
         for v in ("", f"{_CACHE_VERSION}:"):
-            pats += [f"{v}raw_prefetch:{prk}",
-                     f"{v}raw:{category}:{prk}",
-                     f"{v}enriched:{category}:{prk}"]
+            pats.append(f"{v}raw_prefetch:{prk}")
+            for c in sorted(cats):
+                for k in sorted(keys):
+                    pats += [f"{v}raw:{c}:{k}", f"{v}enriched:{c}:{k}"]
         for p in pats:
             cur = mc.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (p,))
             purged += cur.rowcount
@@ -1112,10 +1221,9 @@ def _purge_and_requeue_item(service: str, arr_id: int, category: str) -> dict:
         ).update({"enriched": False, "enriched_at": None, "error": None,
                   "attempt_count": 0, "next_retry_at": None},   # fresh start for the backoff
                  synchronize_session=False)
-        from src.database.models import ArrEnrichmentStatus as _AES
         flipped += db.query(_AES).filter(
             _AES.service == service, _AES.arr_id == arr_id,
-        ).update({"enriched": False, "enriched_at": None},
+        ).update({"enriched": False, "enriched_at": None, "error": None},
                  synchronize_session=False)
         db.commit()
     return {"purged_cache_rows": purged, "status_rows_flipped": flipped}
@@ -1140,19 +1248,25 @@ async def apply_match_override(
     payload: dict,
     user: User = Depends(require_admin),
 ):
+    """Pin the entity an arr item really is (positive pin: any of tmdb /
+    tvdb / imdb / anilist / mal / mbid) and/or exclude wrong candidates
+    (``rejected``: list of ``{"tmdb_id": 123}``-shaped dicts — the negative
+    pin, "Not this one"). Category is derived from the item when absent."""
     from src.database.models import MediaMatchOverride
+    from src.services import kb_overview as _kb
     service = str(payload.get("service") or "").strip().lower()
-    category = str(payload.get("category") or "").strip().lower()
     try:
         arr_id = int(payload.get("arr_id"))
     except (TypeError, ValueError):
         return {"success": False, "error": "arr_id required"}
-    if service not in ("radarr", "sonarr", "lidarr"):
+    if service not in _SERVICES:
         return {"success": False, "error": "service must be radarr|sonarr|lidarr"}
+    category = _derive_category(
+        service, arr_id, str(payload.get("category") or "").strip().lower() or None)
     ids = {}
     for f in ("tmdb_id", "tvdb_id", "anilist_id", "mal_id"):
         v = payload.get(f)
-        if v is not None:
+        if v not in (None, ""):
             try:
                 ids[f] = int(v)
             except (TypeError, ValueError):
@@ -1160,7 +1274,8 @@ async def apply_match_override(
     for f in ("imdb_id", "mbid"):
         if payload.get(f):
             ids[f] = str(payload[f]).strip()
-    if not ids:
+    rejected_new = _ES.parse_rejected_ids(payload.get("rejected") or [])
+    if not ids and not rejected_new:
         return {"success": False, "error": "at least one external id required"}
     with get_db_session() as db:
         row = db.query(MediaMatchOverride).filter(
@@ -1169,18 +1284,27 @@ async def apply_match_override(
         if not row:
             row = MediaMatchOverride(service=service, arr_id=arr_id)
             db.add(row)
-        row.category = category or row.category
+        row.category = category
         row.title = payload.get("title") or row.title
         row.note = payload.get("note") or row.note
         row.created_by = user.id
         for f, v in ids.items():
             setattr(row, f, v)
+        if rejected_new:
+            merged = _ES.parse_rejected_ids(row.rejected_ids)
+            for k, vals in rejected_new.items():
+                merged.setdefault(k, set()).update(vals)
+            row.rejected_ids = json.dumps(
+                [{k: v} for k in sorted(merged) for v in sorted(merged[k], key=str)])
         db.commit()
-    res = _purge_and_requeue_item(service, arr_id, category or "movie")
-    logger.info("[match] owner pinned %s:%s -> %s (%s)", service, arr_id, ids, res)
-    return {"success": True, **res,
-            "message": "Pinned. The item re-enriches on the pinned identity "
-                       "with the next enrichment cycle (or run one now)."}
+    res = _purge_and_requeue_item(service, arr_id, category)
+    _kb.invalidate()
+    logger.info("[match] owner pinned %s:%s -> %s rejected=%s (%s)",
+                service, arr_id, ids, {k: sorted(v, key=str) for k, v in rejected_new.items()}, res)
+    what = "Pinned" if ids else "Excluded"
+    return {"success": True, **res, "category": category,
+            "message": f"{what}. The item re-enriches on the next enrichment run "
+                       "(or run one now)."}
 
 
 @router.delete("/match-override/{service}/{arr_id}")
@@ -1195,11 +1319,258 @@ async def delete_match_override(
             MediaMatchOverride.arr_id == arr_id).first()
         if not row:
             return {"success": False, "error": "no override for this item"}
-        category = row.category or "movie"
+        hint = row.category
         db.delete(row)
         db.commit()
+    from src.services import kb_overview as _kb
+    category = _derive_category(service, arr_id, hint)
     res = _purge_and_requeue_item(service, arr_id, category)
+    _kb.invalidate()
     return {"success": True, **res, "message": "Unpinned — re-resolves naturally."}
+
+
+# ── Knowledge-base drilldown + Needs attention (healing 2026-09) ──────────────
+# The lists behind the KB numbers. Both read kb_overview.classified_items, the
+# same per-item classification the tile is counted from, so a number and the
+# list behind it cannot disagree.
+
+def _iso(dt) -> Optional[str]:
+    return dt.isoformat() + "Z" if isinstance(dt, datetime) else None
+
+
+def _row_details(prks: list) -> dict:
+    """Heavy columns for one page of items, by plex_rating_key."""
+    out: dict = {}
+    if not prks:
+        return out
+    with get_db_session() as db:
+        for r in db.query(EnrichmentStatus.plex_rating_key, EnrichmentStatus.sources_state,
+                          EnrichmentStatus.last_attempt_at, EnrichmentStatus.enriched_at).filter(
+                EnrichmentStatus.plex_rating_key.in_(prks)).all():
+            out[r.plex_rating_key] = r
+    return out
+
+
+def _pins_for(items: list) -> dict:
+    """Owner pins for one page of items, by (service, arr_id)."""
+    from src.database.models import MediaMatchOverride
+    wanted = {(i["service"], i["arr_id"]) for i in items}
+    out: dict = {}
+    if not wanted:
+        return out
+    with get_db_session() as db:
+        for ov in db.query(MediaMatchOverride).all():      # small table
+            if (ov.service, ov.arr_id) not in wanted:
+                continue
+            pin = {k: getattr(ov, k) for k in
+                   ("tmdb_id", "tvdb_id", "anilist_id", "mal_id", "imdb_id", "mbid")
+                   if getattr(ov, k)}
+            rej = _ES.parse_rejected_ids(ov.rejected_ids)
+            if rej:
+                pin["rejected"] = {k: sorted(v, key=str) for k, v in rej.items()}
+            if ov.note:
+                pin["note"] = ov.note
+            out[(ov.service, ov.arr_id)] = pin
+    return out
+
+
+def _arr_link(item: dict) -> Optional[str]:
+    """Deep link into the arr (as far as the ids allow)."""
+    try:
+        base = {"radarr": settings.effective_radarr_url,
+                "sonarr": settings.effective_sonarr_url,
+                "lidarr": settings.effective_lidarr_url}.get(item["service"])
+    except Exception:
+        return None
+    if not base:
+        return None
+    base = str(base).rstrip("/")
+    if item["service"] == "radarr" and item.get("tmdb_id"):
+        return f"{base}/movie/{item['tmdb_id']}"
+    if item["service"] == "lidarr" and item.get("mbid"):
+        return f"{base}/artist/{item['mbid']}"
+    if item["service"] == "sonarr":
+        return f"{base}/series"
+    return base
+
+
+def _serialize_item(i: dict, det=None, pin=None, now=None) -> dict:
+    ss = _ES.parse_sources_state(det.sources_state if det is not None else None)
+    ctx = ss.get(_ES.CONTEXT_KEY) if isinstance(ss.get(_ES.CONTEXT_KEY), dict) else {}
+    sources = []
+    for s, st in ss.items():
+        if s.startswith("_"):
+            continue
+        st = st if isinstance(st, dict) else {"status": st}
+        sources.append({"source": s, "status": st.get("status"),
+                        "title": st.get("title"), "year": st.get("year")})
+    state = i["state"]
+    conf = i.get("match_confidence")
+    needs_review = bool(state in _ES.DONE_STATES and i.get("match_basis") == "title_search"
+                        and conf is not None and conf < _ES.REVIEW_THRESHOLD)
+    if needs_review:
+        hit = next((s for s in sources if s["status"] == "ok" and s.get("title")), None)
+        reason = (f"Matched '{hit['title']}'" + (f" ({hit['year']})" if hit and hit.get("year") else "")
+                  if hit else "Matched") + \
+                 f" by title search at {conf:.0%} similarity — confirm by pinning, or exclude it"
+    elif state in _ES.DONE_STATES:
+        reason = _ES.STATE_DEFINITIONS[state]["explainer"]
+    else:
+        reason = _ES.open_reason(i.get("error"), ss, attempt_count=i.get("attempt_count") or 0,
+                                 next_retry_at=i.get("next_retry_at"), title=i.get("title") or "",
+                                 category=i["category"], now=now)
+    return {
+        "plex_rating_key": i["plex_rating_key"], "service": i["service"], "arr_id": i["arr_id"],
+        "category": i["category"], "title": i.get("title"), "year": i.get("year"),
+        "state": state, "state_label": _ES.STATE_DEFINITIONS[state]["label"],
+        "attempt_count": i.get("attempt_count") or 0,
+        "next_retry_at": _iso(i.get("next_retry_at")),
+        "last_attempt_at": _iso(det.last_attempt_at if det is not None else None),
+        "enriched_at": _iso(det.enriched_at if det is not None else None),
+        "match_basis": i.get("match_basis"), "match_confidence": conf,
+        "needs_review": needs_review,
+        "not_found_reason": _ES.not_found_reason(i.get("error")),
+        "reason": reason,
+        "sources": sources,
+        "resolved": ctx.get("resolved") if isinstance(ctx.get("resolved"), dict) else None,
+        "ids": {"tmdb_id": i.get("tmdb_id"), "tvdb_id": i.get("tvdb_id"),
+                "imdb_id": i.get("imdb_id"), "mbid": i.get("mbid")},
+        "pin": pin,
+        "arr_url": _arr_link(i),
+    }
+
+
+@router.get("/items")
+async def enrichment_items(
+    category: str,
+    state: str,
+    offset: int = 0,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+):
+    """The list behind one KB cell: every downloaded arr item of ``category``
+    in one of the comma-separated ``state``s, with its attempts, next retry,
+    match basis / confidence, per-source outcomes and the one-sentence reason."""
+    from src.services import kb_overview as _kb
+    states = [s for s in (state or "").split(",") if s in _ES.STATES]
+    if category not in _CATEGORIES or not states:
+        raise HTTPException(400, "category and a known state are required")
+    items = [i for i in await _kb.classified_items()
+             if i["downloaded"] and i["category"] == category and i["state"] in states]
+    items.sort(key=lambda i: (-(i.get("attempt_count") or 0), (i.get("title") or "").lower()))
+    limit = max(1, min(int(limit or 50), 200))
+    offset = max(0, int(offset or 0))
+    page = items[offset:offset + limit]
+    det = _row_details([i["plex_rating_key"] for i in page])
+    pins = _pins_for(page)
+    now = datetime.utcnow()
+    return {
+        "category": category, "states": states,
+        "total": len(items), "offset": offset, "limit": limit,
+        "definitions": {s: _ES.STATE_DEFINITIONS[s] for s in states},
+        "items": [_serialize_item(i, det.get(i["plex_rating_key"]),
+                                  pins.get((i["service"], i["arr_id"])), now) for i in page],
+    }
+
+
+@router.get("/unmatched")
+async def enrichment_unmatched(
+    category: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+):
+    """Needs attention: the items the pipeline cannot settle alone — found
+    under the wrong year, refused as too far off, matched with middling
+    confidence, or not found in two or more rounds. Each row carries its
+    reasons, the evidence and the owner's pin if any."""
+    from collections import Counter
+    from src.services import kb_overview as _kb
+    rows = []
+    for i in await _kb.classified_items():
+        if not i["downloaded"] or (category and i["category"] != category):
+            continue
+        reasons = _ES.attention_reasons(i["state"], i.get("error"), i.get("attempt_count") or 0,
+                                        i.get("match_basis"), i.get("match_confidence"))
+        if reasons:
+            rows.append((reasons, i))
+    order = {r: n for n, r in enumerate(_ES.ATTENTION_ORDER)}
+    rows.sort(key=lambda t: (min(order.get(r, 99) for r in t[0]),
+                             -(t[1].get("attempt_count") or 0),
+                             (t[1].get("title") or "").lower()))
+    by_reason = Counter(r for reasons, _ in rows for r in reasons)
+    limit = max(1, min(int(limit or 100), 500))
+    offset = max(0, int(offset or 0))
+    page = rows[offset:offset + limit]
+    det = _row_details([i["plex_rating_key"] for _, i in page])
+    pins = _pins_for([i for _, i in page])
+    now = datetime.utcnow()
+    return {
+        "total": len(rows), "offset": offset, "limit": limit,
+        "by_reason": dict(by_reason),
+        "reason_definitions": _ES.ATTENTION_REASONS,
+        "items": [dict(_serialize_item(i, det.get(i["plex_rating_key"]),
+                                       pins.get((i["service"], i["arr_id"])), now),
+                       reasons=reasons) for reasons, i in page],
+    }
+
+
+def _check_service(service: str) -> None:
+    if service not in _SERVICES:
+        raise HTTPException(400, "service must be radarr|sonarr|lidarr")
+
+
+@router.post("/items/{service}/{arr_id}/retry")
+async def enrichment_item_retry(service: str, arr_id: int, user: User = Depends(require_admin)):
+    """Retry now: attempts back to zero, cached rows purged, row re-queued —
+    the next enrichment run picks the item up (or start one)."""
+    from src.services import kb_overview as _kb
+    _check_service(service)
+    category = _derive_category(service, arr_id)
+    res = _purge_and_requeue_item(service, arr_id, category)
+    _kb.invalidate()
+    return {"success": True, "category": category, **res,
+            "message": "Reset — attempts back to zero; the next enrichment run picks it up."}
+
+
+@router.post("/items/{service}/{arr_id}/ignore")
+async def enrichment_item_ignore(service: str, arr_id: int, user: User = Depends(require_admin)):
+    """Ignore: the owner accepts that this item stays unenriched. Held back by
+    the pre-filter, excluded from the open count, its own KB column."""
+    from src.database.models import ArrEnrichmentStatus as _AES
+    from src.services import kb_overview as _kb
+    _check_service(service)
+    category = _derive_category(service, arr_id)
+    prk = f"{service}:{arr_id}"
+    with get_db_session() as db:
+        row = db.query(EnrichmentStatus).filter(EnrichmentStatus.plex_rating_key == prk).first()
+        arr = db.query(_AES).filter(_AES.service == service, _AES.arr_id == arr_id).first()
+        title = (row.title if row else None) or (arr.title if arr else None) or prk
+        if not row:
+            row = EnrichmentStatus(plex_rating_key=prk, title=title, media_category=category)
+            db.add(row)
+        row.enriched = False
+        row.enriched_at = None
+        row.error = _ES.IGNORED_ERROR
+        row.next_retry_at = None
+        if arr:
+            arr.enriched = False
+            arr.error = _ES.IGNORED_ERROR
+        db.commit()
+    _kb.invalidate()
+    return {"success": True, "category": category,
+            "message": "Ignored — excluded from retries and from the open count."}
+
+
+@router.delete("/items/{service}/{arr_id}/ignore")
+async def enrichment_item_unignore(service: str, arr_id: int, user: User = Depends(require_admin)):
+    """Un-ignore: back into the queue (a fresh start for the backoff)."""
+    from src.services import kb_overview as _kb
+    _check_service(service)
+    category = _derive_category(service, arr_id)
+    res = _purge_and_requeue_item(service, arr_id, category)
+    _kb.invalidate()
+    return {"success": True, "category": category, **res, "message": "Back in the queue."}
 
 
 @router.get("/cache-inventory")

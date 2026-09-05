@@ -314,6 +314,10 @@ class MediaMatchOverride(Base):
     mal_id = Column(Integer, nullable=True)
     imdb_id = Column(String(20), nullable=True)
     mbid = Column(String(64), nullable=True)        # MusicBrainz artist id
+    # Negative pin ("Not this one"): JSON list of candidate ids the owner
+    # excluded, e.g. [{"tmdb_id": 123}, {"mbid": "…"}]. The title-search
+    # resolvers skip them; survives a later positive pin and re-enrichment.
+    rejected_ids = Column(Text, nullable=True)
     note = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -26,7 +26,11 @@ import httpx
 
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache, write_fields
-from src.services.enrichment_state import TRANSIENT, CONTEXT_KEY as _CONTEXT_KEY
+from src.services.enrichment_state import (
+    TRANSIENT, CONTEXT_KEY as _CONTEXT_KEY, RESOLVING_SOURCE as _RESOLVING_SOURCE,
+    parse_rejected_ids as _parse_rejected, resolve_match_basis as _resolve_match_basis,
+    match_score as _match_score, match_decision as _match_decision,
+)
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options
 
 logger = logging.getLogger(__name__)
@@ -1852,13 +1856,20 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
     """
     title      = ctx.get("title", "")
     media_type = ctx.get("media_type", "")
+    rejected   = ctx.get("rejected") or {}
+
+    def _ok(kind, value):
+        """An id the owner rejected ("Not this one") is treated as absent —
+        the resolver falls back to a search that skips it as well."""
+        return value if value and value not in (rejected.get(kind) or set()) else None
     try:
         if source == "lastfm":
             from src.services.music_metadata import fetch_lastfm_artist
             return await fetch_lastfm_artist(title)
         if source == "mb":
             from src.services.music_metadata import fetch_musicbrainz_artist
-            return await fetch_musicbrainz_artist(title, mbid=ctx.get("mbid"))
+            return await fetch_musicbrainz_artist(title, mbid=_ok("mbid", ctx.get("mbid")),
+                                                  rejected=rejected.get("mbid"))
         if source == "omdb":
             imdb = ctx.get("imdb_id")
             if not imdb:
@@ -1867,13 +1878,14 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
             res = await fetch_omdb_data(imdb)
             return TRANSIENT if res is None else res
         if source == "tmdb":
-            tmdb_id = ctx.get("tmdb_id")
+            tmdb_id = _ok("tmdb_id", ctx.get("tmdb_id"))
             year    = ctx.get("year")
             endpoint = "movie" if media_type == "movie" else "tv"
             try:
                 if tmdb_id:
                     return await fetch_tmdb_full(tmdb_id, endpoint)
-                return await _tmdb_search_and_fetch(title, endpoint, year=year)
+                return await _tmdb_search_and_fetch(title, endpoint, year=year,
+                                                    rejected=rejected.get("tmdb_id"))
             except TMDBTransientError as te:
                 # Not a miss: stamped "transient" so a drained run raises
                 # TransientFetchError instead of writing a not-found row.
@@ -1881,21 +1893,24 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
                              title, te.status_code)
                 return TRANSIENT
         if source == "anilist":
-            anilist_id = ctx.get("anilist_id")
+            anilist_id = _ok("anilist_id", ctx.get("anilist_id"))
             anidb_id   = ctx.get("anidb_id")
             if anilist_id:
                 return await fetch_anilist_full(anilist_id)
             if anidb_id:
-                result = await search_anilist_by_title(title, year=ctx.get("year"))
+                result = await search_anilist_by_title(title, year=ctx.get("year"),
+                                                       rejected=rejected.get("anilist_id"))
                 if result:
                     result["anidb_id"] = anidb_id
                 return result
-            return await search_anilist_by_title(title, year=ctx.get("year"))
+            return await search_anilist_by_title(title, year=ctx.get("year"),
+                                                 rejected=rejected.get("anilist_id"))
         if source == "jikan":
-            mal_id = ctx.get("mal_id")
+            mal_id = _ok("mal_id", ctx.get("mal_id"))
             return await fetch_jikan_data(
                 mal_id=mal_id,
                 title=None if mal_id else title,
+                rejected=rejected.get("mal_id"),
             )
     except Exception as e:
         # A fetcher that RAISES did not say "no record" — a crash is
@@ -2263,13 +2278,19 @@ def _match_override_ids(plex_rating_key) -> dict:
                 ("anilist_id", ov.anilist_id), ("mal_id", ov.mal_id),
                 ("imdb_id", ov.imdb_id), ("mbid", ov.mbid),
             ) if v}
+            # Negative pin ("Not this one"): candidates the owner excluded.
+            # Rides along under a private key; the resolvers skip them.
+            _rejected = _parse_rejected(getattr(ov, "rejected_ids", None))
+            if _rejected:
+                pin["_rejected"] = _rejected
     except Exception as _e:
         logger.debug("[enricher] match-override lookup failed: %s", _e)
         return {}
     if pin:
         logger.info("[enricher] owner match override active for %s (%s)",
                     plex_rating_key,
-                    " ".join(f"{k}={v}" for k, v in pin.items()))
+                    " ".join(f"{k}={v}" for k, v in pin.items() if not k.startswith("_"))
+                    or "negative pin only")
     return pin
 
 
@@ -2554,12 +2575,16 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
         return None
 
 
-async def fetch_jikan_data(mal_id: int = None, title: str = None) -> Optional[dict]:
+async def fetch_jikan_data(mal_id: int = None, title: str = None,
+                           rejected=None) -> Optional[dict]:
     """
     Fetch additional anime metadata from Jikan (MAL API proxy).
     Free, no key needed. Returns synopsis, genres, themes, demographics, score.
+    ``rejected``: MAL ids the owner excluded ("Not this one") — skipped in
+    the title search.
     """
     _ensure_concurrency_primitives()
+    rejected = set(rejected or ())
     try:
         async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:   # Pass 99-fu3: cap 2 concurrent
             if mal_id:
@@ -2568,7 +2593,8 @@ async def fetch_jikan_data(mal_id: int = None, title: str = None) -> Optional[di
                 r = await client.get("https://api.jikan.moe/v4/anime",
                     params={"q": title, "limit": 8})
                 if r.status_code == 200:
-                    results = r.json().get("data", [])
+                    results = [x for x in r.json().get("data", [])
+                               if x.get("mal_id") not in rejected]
                     if not results:
                         return None
                     # Validate title match before using any result
@@ -3391,6 +3417,10 @@ async def fetch_and_prepare_raw(
     poisoned 200 rows in 3 seconds.
     """
     cache = MetadataCache()
+    # What the CALLER (the arr item) handed over — decides "arr_id" vs
+    # "identity" for the match basis once every resolution step has run.
+    _caller_ids = {"tmdb_id": tmdb_id, "tvdb_id": tvdb_id, "imdb_id": imdb_id,
+                   "anilist_id": anilist_id, "mal_id": mal_id, "mbid": mbid}
 
     # ── OWNER MATCH OVERRIDE (highest authority, before ANY resolution) ──
     # A pinned entity wins over arr-provided ids, MediaIdentity, and every
@@ -3620,6 +3650,14 @@ async def fetch_and_prepare_raw(
         "year":        year,
     }
     expected = _expected_sources_for(media_type, is_anime, ctx)
+    # Negative pins travel with the context; _fetch_source treats a rejected
+    # id as absent and the title-search resolvers skip rejected candidates.
+    ctx["rejected"] = _pin.get("_rejected") or {}
+    _basis_cat = "anime" if is_anime else media_type
+    _basis = _resolve_match_basis(
+        _basis_cat, _pin, _caller_ids,
+        {"tmdb_id": tmdb_id, "tvdb_id": tvdb_id, "imdb_id": imdb_id,
+         "anilist_id": anilist_id, "mal_id": mal_id, "mbid": mbid})
 
     # ``fast_only`` skips slow sources entirely (they don't fire, don't
     # land in _remaining_tasks). The #41 source-upgrade scheduler later
@@ -3687,6 +3725,40 @@ async def fetch_and_prepare_raw(
             },
         }
 
+    # Match quality (SoulSync: score it, store it, three outcomes). Id-based
+    # resolutions are 1.0. A title-search resolution is scored from the
+    # entity the resolving source came back with vs the arr's title/year:
+    # >= 0.8 accept, 0.5-0.8 accept but flag for review, below that (with a
+    # disagreeing or unknown year) refuse — no match beats a wrong match.
+    _conf = 1.0
+    if _basis == "title_search":
+        _ss = initial_raw.get("sources_state") or {}
+        _ev = next((_ss[s] for s in _RESOLVING_SOURCE.get(_basis_cat, ())
+                    if isinstance(_ss.get(s), dict) and _ss[s].get("status") == "ok"
+                    and _ss[s].get("title")), None)
+        if _ev:
+            _conf = _match_score(title, year, _ev.get("title"), _ev.get("year"),
+                                 alt_titles=(initial_raw.get("original_title"),))
+            if _match_decision(_conf, year, _ev.get("year")) == "refuse":
+                logger.warning(
+                    "[enricher] LOW-CONFIDENCE match for %r (%s): best hit %r (%s) "
+                    "scored %.2f — refusing rather than storing a wrong profile",
+                    title, year, _ev.get("title"), _ev.get("year"), _conf)
+                for _t in (remaining_tasks or {}).values():
+                    _t.cancel()
+                return {
+                    "_not_found":     True,
+                    "_reason":        "low_confidence",
+                    "_sources_state": dict(_ss),
+                    "_context": {
+                        "arr_year": year, "had_ids": _had_ids, "confidence": _conf,
+                        "resolved": {"title": _ev.get("title"), "year": _ev.get("year"),
+                                     "id": _ev.get("id"),
+                                     "tmdb_id": initial_raw.get("tmdb_id"),
+                                     "anilist_id": initial_raw.get("anilist_id")},
+                    },
+                }
+
     # Stamp skipped-source statuses into both the snapshot and the
     # live raw (the finalizer reads from the live ref). We do this
     # AFTER the runner so the polish-readiness gate isn't tricked by a
@@ -3718,6 +3790,8 @@ async def fetch_and_prepare_raw(
     initial_raw["_tmdb_id"]         = tmdb_id    or initial_raw.get("tmdb_id")
     initial_raw["_anilist_id"]      = anilist_id or initial_raw.get("anilist_id")
     initial_raw["_sources_state"]   = initial_raw.get("sources_state", {})
+    initial_raw["_match_basis"]      = _basis
+    initial_raw["_match_confidence"] = _conf
     # Tier semantics:
     #   fast_only=True           → "fast" forever (scheduler upgrades later)
     #   remaining_tasks present  → "fast" now, finalizer flips to "full"
@@ -3765,6 +3839,8 @@ async def process_and_save(raw: dict) -> Optional[dict]:
     sources_state = raw.pop("_sources_state", None)
     fetch_tier    = raw.pop("_fetch_tier", None)
     provisional   = raw.pop("_provisional", None)
+    match_basis   = raw.pop("_match_basis", None)
+    match_conf    = raw.pop("_match_confidence", None)
     media_type = raw.get("media_type", "movie")
 
     profile = await summarize_with_small_llm(raw)
@@ -3790,6 +3866,10 @@ async def process_and_save(raw: dict) -> Optional[dict]:
         profile["fetch_tier"] = fetch_tier
     if provisional is not None:
         profile["provisional"] = provisional
+    if match_basis is not None:
+        profile["match_basis"] = match_basis
+    if match_conf is not None:
+        profile["match_confidence"] = match_conf
 
     if cache_key:
         cache = MetadataCache()
@@ -4507,10 +4587,12 @@ query ($search: String) {
 """
 
 
-async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Optional[dict]:
+async def search_anilist_by_title(title: str, year: Optional[int] = None,
+                                  rejected=None) -> Optional[dict]:
     """Search AniList by title, iterate up to 5 candidates, return first close
     match (or, when a ``year`` hint is given, the closest-year close match) or
-    None."""
+    None. ``rejected``: AniList ids the owner excluded ("Not this one")."""
+    rejected = set(rejected or ())
     try:
         await _anilist_wait()
         async with httpx.AsyncClient(timeout=15) as client:
@@ -4526,7 +4608,8 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Opt
                 return TRANSIENT          # AniList down
             if r.status_code != 200:
                 return None
-            media_list = r.json().get("data", {}).get("Page", {}).get("media") or []
+            media_list = [m for m in (r.json().get("data", {}).get("Page", {}).get("media") or [])
+                          if m.get("id") not in rejected]
             if not media_list:
                 return None
     except Exception as e:
@@ -4625,12 +4708,43 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None) -> Opt
     }
 
 
+async def anilist_candidates(title: str, limit: int = 6) -> list[dict]:
+    """Owner-facing candidate list for the match picker — no scoring, the
+    owner is the matcher. Same search the resolver uses."""
+    try:
+        await _anilist_wait()
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                "https://graphql.anilist.co",
+                json={"query": ANILIST_SEARCH_QUERY, "variables": {"search": title}},
+            )
+        if r.status_code != 200:
+            return []
+        media = r.json().get("data", {}).get("Page", {}).get("media") or []
+    except Exception as e:
+        logger.debug("AniList candidates '%s' error: %s", title, e)
+        return []
+    out = []
+    for m in media[:limit]:
+        t = m.get("title") or {}
+        out.append({
+            "kind": "anilist",
+            "anilist_id": m.get("id"),
+            "title": t.get("english") or t.get("romaji") or "",
+            "year": (m.get("startDate") or {}).get("year"),
+            "overview": (m.get("description") or "")[:180],
+        })
+    return out
+
+
 async def _tmdb_search_and_fetch(
     title: str,
     endpoint: str,
     year: Optional[int] = None,
+    rejected=None,
 ) -> Optional[dict]:
     """Search TMDB by title (with optional year hint) and fetch full details.
+    ``rejected``: TMDB ids the owner excluded ("Not this one") — never picked.
 
     The ``year`` hint disambiguates same-name titles released in different
     years (e.g. *Jesus Shows You the Way to the Highway* — 2019 surreal
@@ -4660,6 +4774,8 @@ async def _tmdb_search_and_fetch(
             r = await _tmdb_get(client, f"/search/{endpoint}", {"query": title})
         results = r.get("results", [])
 
+    if rejected:
+        results = [res for res in results if res.get("id") not in set(rejected)]
     if not results:
         return None
 

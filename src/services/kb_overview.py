@@ -17,6 +17,11 @@ The three rules every number here obeys:
      live cache entries, vector ids) — "enriched" with a dead cache entry is
      reported as exactly that, not as 100%.
 
+Healing (2026-09): the per-item classification lives in ``classified_items``
+and is shared by the tile, the drilldown (/enrichment/items) and the
+Needs-attention page (/enrichment/unmatched), so a number and the list behind
+it can never disagree. The state vocabulary is services/enrichment_state.py.
+
 Invariants (enforced by tests/test_kb_overview.py):
   sum(states) == downloaded, every state >= 0, vectors.indexed <= downloaded.
 """
@@ -36,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 # 60s payload cache — the endpoint may be polled by the KB view.
 _CACHE: dict = {"at": 0.0, "payload": None}
+_ITEMS: dict = {"at": 0.0, "items": None}
 _CACHE_TTL = 60.0
 
 # The state vocabulary lives in services/enrichment_state.py (one classifier
@@ -43,21 +49,26 @@ _CACHE_TTL = 60.0
 # the invariant test and older callers.
 _STATES = STATES
 
+_SERVICES = ("radarr", "sonarr", "lidarr")
+
 
 def invalidate() -> None:
-    """Drop the payload cache — every write endpoint (retry / ignore / pin)
-    calls this so the tile reflects the action on the next poll."""
+    """Drop both caches — every write endpoint (retry / ignore / pin) calls
+    this so the tile and the lists reflect the action on the next poll."""
     _CACHE["payload"] = None
+    _ITEMS["items"] = None
 
 
 class _PseudoRow:
     """Row shape for ``classify_enrichment_row`` when only the arr-keyed
     status exists (title-match writes never created an EnrichmentStatus)."""
-    __slots__ = ("enriched", "error", "provisional", "next_retry_at", "attempt_count")
+    __slots__ = ("enriched", "error", "provisional", "next_retry_at", "attempt_count",
+                 "match_basis", "match_confidence")
 
     def __init__(self, enriched=False, error=None):
         self.enriched, self.error = bool(enriched), error
         self.provisional, self.next_retry_at, self.attempt_count = False, None, 0
+        self.match_basis, self.match_confidence = None, None
 
 
 def _dir_size_mb(path: str) -> float:
@@ -101,29 +112,36 @@ def _is_downloaded(svc: str, raw: dict) -> bool:
     return (stats.get("sizeOnDisk") or 0) > 0   # lidarr
 
 
-async def build_overview() -> dict:
-    """Assemble the full consolidated payload. Read-only; ~1-2s cold."""
-    now = time.time()
-    if _CACHE["payload"] is not None and now - _CACHE["at"] < _CACHE_TTL:
-        return _CACHE["payload"]
+def _category_of(svc: str, raw: dict) -> str:
+    if svc == "radarr":
+        return "movie"
+    if svc == "lidarr":
+        return "music"
+    root = (raw.get("rootFolderPath") or "").lower()
+    return "anime" if "anime" in root else "show"
 
-    from src.config import settings
+
+async def classified_items() -> list[dict]:
+    """Every arr item with its ONE state — the list behind every KB number.
+
+    Each entry: category, service, arr_id, plex_rating_key, title, year, the
+    arr's external ids, downloaded, state (None when not downloaded),
+    has_live (a live profile under any historic key), vector (indexed), and
+    the row's attempt_count / next_retry_at / error / match_basis /
+    match_confidence for the drilldown and the Needs-attention page.
+    Cached 60 s alongside the payload; ``invalidate()`` drops both."""
+    now = time.time()
+    if _ITEMS["items"] is not None and now - _ITEMS["at"] < _CACHE_TTL:
+        return _ITEMS["items"]
+
     from src.cache.metadata_cache import MetadataCache
     from src.database.connection import get_db_session
-    from src.database.models import (ArrEnrichmentStatus, EnrichmentStatus,
-                                     WatchHistoryEntry)
+    from src.database.models import ArrEnrichmentStatus, EnrichmentStatus
     from src.routers.library import _fetch_arr_library
 
-    # ── shared truth sets (one query each) ────────────────────────────────────
     mc = MetadataCache()
     try:
         live_enriched = mc.live_key_set("enriched:")
-        wiki_counts = {c: mc.count_raw_with_marker(c, '"significance"')
-                       for c in ("movie", "show", "anime", "music")}
-        omdb_counts = {c: mc.count_raw_with_marker(c, '"omdb_checked"')
-                       for c in ("movie", "show", "anime", "music")}
-        reception_counts = {c: mc.count_raw_with_marker(c, '"reception"')
-                            for c in ("movie", "show", "anime")}
     finally:
         mc.close()
 
@@ -140,65 +158,57 @@ async def build_overview() -> dict:
             for r in db.query(ArrEnrichmentStatus.service, ArrEnrichmentStatus.arr_id,
                               ArrEnrichmentStatus.enriched, ArrEnrichmentStatus.error).all()
         }
-        # The row truth, keyed the way arr items are keyed ("svc:id"). This
-        # is what the old version never read — it looked at ArrEnrichmentStatus
-        # .error, which nothing wrote, so 798 not-found rows read as "retry".
+        # The row truth, keyed the way arr items are keyed ("svc:id"). The
+        # old version never read it — it looked at ArrEnrichmentStatus.error,
+        # which nothing wrote, so 798 not-found rows read as "retry".
         es_rows = {
             r.plex_rating_key: r
             for r in db.query(EnrichmentStatus.plex_rating_key, EnrichmentStatus.enriched,
                               EnrichmentStatus.error, EnrichmentStatus.provisional,
-                              EnrichmentStatus.next_retry_at,
-                              EnrichmentStatus.attempt_count).all()
+                              EnrichmentStatus.next_retry_at, EnrichmentStatus.attempt_count,
+                              EnrichmentStatus.match_basis,
+                              EnrichmentStatus.match_confidence).all()
         }
     now_dt = datetime.utcnow()
 
-    # ── per-category classification over arr items ────────────────────────────
-    categories: dict = {}
-    for svc in ("radarr", "sonarr", "lidarr"):
+    items: list[dict] = []
+    for svc in _SERVICES:
         try:
             items_raw, _tags, _ci = await _fetch_arr_library(svc)
         except Exception as e:
             logger.debug("[kb-overview] %s not available: %s", svc, e)
             continue
-
-        def _cat_of(raw: dict) -> str:
-            if svc == "radarr":
-                return "movie"
-            if svc == "lidarr":
-                return "music"
-            root = (raw.get("rootFolderPath") or "").lower()
-            return "anime" if "anime" in root else "show"
-
         for raw in items_raw:
-            cat = _cat_of(raw)
-            c = categories.setdefault(cat, {
-                "denominator": {"arr_total": 0, "downloaded": 0},
-                "states": {s: 0 for s in _STATES},
-                "vectors": {"indexed": 0},
-                # Why-not-100%: what the open rows are waiting for.
-                "open": {"due_now": 0, "waiting": 0, "next_due_at": None,
-                         "needs_attention": 0, "ignored": 0},
-            })
-            c["denominator"]["arr_total"] += 1
-            if not _is_downloaded(svc, raw):
-                continue
-            c["denominator"]["downloaded"] += 1
-
+            cat = _category_of(svc, raw)
+            arr_id = raw.get("id")
             title = raw.get("title") or raw.get("artistName") or ""
-            cands = _candidates(
-                cat, svc, raw.get("id"), raw.get("tmdbId"), raw.get("tvdbId"),
-                title, raw.get("foreignArtistId"))
+            item = {
+                "category": cat, "service": svc, "arr_id": arr_id,
+                "plex_rating_key": f"{svc}:{arr_id}",
+                "title": title, "year": raw.get("year"),
+                "tmdb_id": raw.get("tmdbId"), "tvdb_id": raw.get("tvdbId"),
+                "imdb_id": raw.get("imdbId"), "mbid": raw.get("foreignArtistId"),
+                "downloaded": _is_downloaded(svc, raw),
+                "state": None, "has_live": False, "vector": False,
+                "attempt_count": 0, "next_retry_at": None, "error": None,
+                "match_basis": None, "match_confidence": None,
+            }
+            if not item["downloaded"]:
+                items.append(item)
+                continue
+
+            cands = _candidates(cat, svc, arr_id, raw.get("tmdbId"), raw.get("tvdbId"),
+                                title, raw.get("foreignArtistId"))
             mts = ("show", "anime") if cat in ("show", "anime") else (cat,)
-
-            if any(f"{m}:{k}" in chroma_ids or k in chroma_ids
-                   for m in mts for k in cands):
-                c["vectors"]["indexed"] += 1
-
+            item["vector"] = any(f"{m}:{k}" in chroma_ids or k in chroma_ids
+                                 for m in mts for k in cands)
             has_live = any(f"enriched:{m}:{k}" in live_enriched
                            for m in mts for k in cands)
-            row = es_rows.get(f"{svc}:{raw.get('id')}")
+            item["has_live"] = has_live
+
+            row = es_rows.get(item["plex_rating_key"])
             if row is None:
-                flag = arr_flags.get((svc, raw.get("id")))
+                flag = arr_flags.get((svc, arr_id))
                 if flag is not None:
                     row = _PseudoRow(enriched=flag[0], error=flag[1])
             if row is None:
@@ -209,24 +219,82 @@ async def build_overview() -> dict:
                 # enriched vs enriched_dead. A live not-found sentinel can no
                 # longer masquerade as an enriched item.
                 state = classify_enrichment_row(row, has_live_cache=has_live, now=now_dt)
-            c["states"][state] += 1
+                item.update(
+                    attempt_count=getattr(row, "attempt_count", 0) or 0,
+                    next_retry_at=getattr(row, "next_retry_at", None),
+                    error=getattr(row, "error", None),
+                    match_basis=getattr(row, "match_basis", None),
+                    match_confidence=getattr(row, "match_confidence", None),
+                )
+            item["state"] = state
+            items.append(item)
 
-            o = c["open"]
-            if state in ("not_found", "retry_due"):
-                if state == "retry_due":
-                    o["due_now"] += 1
-                else:
-                    o["waiting"] += 1
-                    nra = getattr(row, "next_retry_at", None)
-                    if nra and (o["next_due_at"] is None or nra < o["next_due_at"]):
-                        o["next_due_at"] = nra
-                if (getattr(row, "attempt_count", 0) or 0) >= 2:
-                    o["needs_attention"] += 1
-            elif state in ("queued", "processing_error", "enriched_dead",
-                           "rule_based", "awaiting_llm"):
+    _ITEMS.update(at=now, items=items)
+    return items
+
+
+def _empty_category() -> dict:
+    return {
+        "denominator": {"arr_total": 0, "downloaded": 0},
+        "states": {s: 0 for s in _STATES},
+        "vectors": {"indexed": 0},
+        # Why-not-100%: what the open rows are waiting for.
+        "open": {"due_now": 0, "waiting": 0, "next_due_at": None,
+                 "needs_attention": 0, "ignored": 0},
+    }
+
+
+async def build_overview() -> dict:
+    """Assemble the full consolidated payload. Read-only; ~1-2s cold."""
+    now = time.time()
+    if _CACHE["payload"] is not None and now - _CACHE["at"] < _CACHE_TTL:
+        return _CACHE["payload"]
+
+    from src.config import settings
+    from src.cache.metadata_cache import MetadataCache
+    from src.database.connection import get_db_session
+    from src.database.models import EnrichmentStatus, WatchHistoryEntry
+
+    mc = MetadataCache()
+    try:
+        wiki_counts = {c: mc.count_raw_with_marker(c, '"significance"')
+                       for c in ("movie", "show", "anime", "music")}
+        omdb_counts = {c: mc.count_raw_with_marker(c, '"omdb_checked"')
+                       for c in ("movie", "show", "anime", "music")}
+        reception_counts = {c: mc.count_raw_with_marker(c, '"reception"')
+                            for c in ("movie", "show", "anime")}
+    finally:
+        mc.close()
+
+    # ── per-category aggregation over the classified items ────────────────────
+    categories: dict = {}
+    for it in await classified_items():
+        c = categories.setdefault(it["category"], _empty_category())
+        c["denominator"]["arr_total"] += 1
+        if not it["downloaded"]:
+            continue
+        c["denominator"]["downloaded"] += 1
+        if it["vector"]:
+            c["vectors"]["indexed"] += 1
+        state = it["state"]
+        c["states"][state] += 1
+
+        o = c["open"]
+        if state in ("not_found", "retry_due"):
+            if state == "retry_due":
                 o["due_now"] += 1
-            elif state == "ignored":
-                o["ignored"] += 1
+            else:
+                o["waiting"] += 1
+                nra = it.get("next_retry_at")
+                if nra and (o["next_due_at"] is None or nra < o["next_due_at"]):
+                    o["next_due_at"] = nra
+            if (it.get("attempt_count") or 0) >= 2:
+                o["needs_attention"] += 1
+        elif state in ("queued", "processing_error", "enriched_dead",
+                       "rule_based", "awaiting_llm"):
+            o["due_now"] += 1
+        elif state == "ignored":
+            o["ignored"] += 1
 
     for cat, c in categories.items():
         nda = c["open"]["next_due_at"]
