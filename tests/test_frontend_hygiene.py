@@ -20,14 +20,15 @@ _INDEX = _ROOT / "frontend" / "index.html"
 
 # Ceilings, not targets. Step 1 of the UI-grammar work pinned the numbers as
 # they stood after the foundation landed; every later step lowers them
-# (Step 2, the Knowledge Base: 635 -> 468 inline styles in JS, 198 -> 153 static).
+# (Step 2, the Knowledge Base: 635 -> 468 inline styles in JS, 198 -> 153 static;
+# Step 3, Deletions/Curation/Recs/Report: 468 -> 388 / 153 -> 140, alert 16 -> 7).
 CEILINGS = {
-    "alert(": 16,
-    "confirm(": 9,
-    "prompt(": 3,
-    "style.cssText": 15,
-    'style= in JS templates': 468,
-    'style= in static markup': 153,
+    "alert(": 7,
+    "confirm(": 6,
+    "prompt(": 2,
+    "style.cssText": 11,
+    'style= in JS templates': 388,
+    'style= in static markup': 140,
 }
 
 
