@@ -98,6 +98,53 @@ token before and after.
   batch ≤ 2 000, list sizes capped on the recommendation and library
   endpoints.
 
+### UI grammar — one visual language down to the deepest view
+
+The healing UI "worked but looked rudimentary; the deeper you dig, the more
+ad hoc the buttons get". Three inventories agreed: five recipes for "a row
+with actions", three tab systems, four ways to confirm or report (native
+alert/confirm/prompt, hand-built countdown overlays, button-text mutation,
+and a `showToast` that was called but never defined — the coverage banner's
+"Enrich library now" silently failed for months), some 830 inline styles.
+Patterns were taken from UIs that are genuinely usable — Sonarr's toolbar
+and mass-editor footer, Plex's Fix Match dialog and three-actions-plus-
+ellipsis, Jellyfin's progress-on-the-row, SoulSync's bulk bar that appears
+only with a selection (MIT) — and applied as one grammar; Curatarr keeps its
+own look.
+
+**Foundation.** One toast, one modal, one confirm dialog (the 3-second
+countdown and the reason field kept), one "More" menu, one pager, one empty
+state, one inline status, one dirty-form guard; `.toolbar`, `.section`,
+`.select-bar`, `.banner`, `.chip`, utilities. Dead CSS removed.
+
+**Knowledge Base.** Five tabs (Overview · Needs attention · Maintenance ·
+Music pipeline · Profile browser) instead of nine stacked panels; every
+number is a link to its list, the list is a section with the state
+explainer, a pager and Close; Needs attention filters by reason (server-side
+`reason=`); rows carry Search & pin · Retry now · Ignore with Open-in-arr
+behind More; the match picker is a dialog shared with the deletion cards.
+Two faults the seeded probe exposed: the page returned 500 on the first
+pending audit finding (a session closed too early), and the sidebar badge
+counted by attempts alone while the page used the full reason set — both
+share one rule now.
+
+**Deletions, Curation, Recommendations, Report.** Toolbar + selection bar;
+cards with Delete · Keep · Discuss visible and Reevaluate, Fix match, Open
+in arr behind More; the note saves itself; Keep uses the note as its
+reason; bulk results as toasts. Curation sections with real empty states and
+confirmations; recommendation lanes as chips; the report in sections.
+
+**Activity, Admin, Settings, Libraries, arr browser, Reclassify.** Task
+rows with the status badge and Cancel at the row end; a table for the
+history; Disable behind a confirmation; Settings as sections whose Save
+enables once a field changed and whose status sits next to the buttons;
+Maintenance with its own status lines; one Re-enrich menu per library row
+instead of three stacked buttons; Reclassify with a selection bar.
+
+Nothing in the backend changed except the `reason=` filter on
+`/api/enrichment/unmatched` and the two fixes above; a browser reload is
+enough.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

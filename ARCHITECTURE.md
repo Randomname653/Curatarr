@@ -90,6 +90,7 @@ yet. Until those sections are rewritten, this is the map:
 | Public surface | `SecurityHeadersMiddleware`, `main.FastAPI(openapi_url=…)`, `image_proxy._enforce_cache_budget` | CSP + Permissions-Policy; the OpenAPI spec is gated with the docs (it was public at `/openapi.json`); the unauthenticated poster cache has a size budget with oldest-first eviction. |
 | Enrichment healing | `src/services/enrichment_state.py`, `kb_overview.classified_items`, `EnrichmentStatus.attempt_count/next_retry_at/match_basis/match_confidence`, `EnrichmentFinding`, `MediaMatchOverride.rejected_ids`, `/api/enrichment/items · unmatched · findings`, `_audit_enrichments` + `_triage_audit_hit` | ONE classifier for the KB tile, `/library/breakdown` and the producer (the old KB view read a column nothing wrote and counted a live not-found sentinel as enriched). Not-found rows carry an attempt counter with a backoff (2 free tries, then 3/6/12/24 d, capped at 30 d — never given up on; a category abort rolls its attempts back). Fetchers return a falsy `TRANSIENT` marker; a drained run with an unavailable source raises `TransientFetchError` and writes nothing. Sentinels persist their evidence (per-source outcomes, arr year, the rejected same-named hit) → `open_reason()` sentences. Title-search resolutions store a match basis + confidence (≥0.8 accept, 0.5–0.8 accept-and-flag, below with a disagreeing year refuse). Every KB count opens its list; Needs attention unions the row-derived reasons with the audit's persisted findings (SoulSync `repair_findings` contract: pending refreshed, dismissed silent, resolved re-raised after 7 d; each finding gets exactly ONE automatic requeue, then escalates to a human). Owner actions: pin (arr lookup + TMDB/AniList + free ids, category derived server-side), negative pin (all four title-search resolvers skip it; the purge covers title-keyed cache rows too), retry, ignore, dismiss. |
 | Member budgets + untrusted text | `src/services/rate_limit.py` (`enforce`, `InFlight`), `llm_utils.fence_untrusted / scrub_untrusted / UNTRUSTED_RULE`, `format_verified_block` markers, `subtitle_signals._bounded_text`, `image_proxy._read_bounded`, `spotify_import.save_upload` caps, `plex_sync.sync_plex_history` lock | Second security angle (2026-09-06). Every endpoint that turns one request into LLM or external-API work carries a per-user sliding-window budget and, where the work is long, a one-at-a-time guard (chat reply, recommendation generation — including the GET lane that bypassed `/refresh-cache`). The global curator gate serialises the GPU; it never stopped one member from owning the queue. Third-party prose (overviews, reviews, wiki extracts, bios, the verified block) is fenced `<<<UNTRUSTED_SOURCE:…>>>` and scrubbed of markup / special tokens / role markers; every system prompt that receives it carries `UNTRUSTED_RULE`; `clean_llm_text` strips tag-like markup before persistence. The significance template is hashed into its cache stamp, so that path is scrubbed, not fenced. External bodies are capped while streaming (OpenSubtitles 4 MB + metrics off-loop, image proxy 5 MB, zip members 50 MB / 400 MB). One Plex sync at a time (`plex_sync_running`). |
+| UI grammar | `frontend/index.html` (CSS DESIGN LANGUAGE header; helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
 
 ---
 
@@ -1170,3 +1171,68 @@ to its own section (or a §0 delta row) instead of growing this list.
 - `tests/benchmarks/` — model/prompt benchmarking harness (curator_bench,
   tournament_bench, auto_benchmark, num_ctx_bench, curator_pipeline_bench +
   `model_baselines.csv`); measurements land in `docs/BENCHMARKS.md`.
+
+---
+
+## 20. Frontend grammar (`frontend/index.html`)
+
+One file, one visual language. The CSS header (DESIGN LANGUAGE) states the
+rules; this section is the map.
+
+**Anatomy.** A view is `.view-header` (h1 + one sentence) → `.toolbar`
+(page-level actions on the left, view controls — sort, filter chips, search,
+Refresh — on the right in `.toolbar-right`) → content → `.select-bar`
+(sticky at the bottom, rendered only while something is selected; the bulk
+action lives there and nowhere else). Sub-panels inside a view are
+`.section` (`.section-head`: h3 + count badge + `.section-hint`,
+`.section-actions` on the right; `.section-body`); collapsible ones are
+`<details class="section">`. Sub-views inside a view are `.cat-tabs`
+(Knowledge Base: Overview · Needs attention · Maintenance · Music pipeline ·
+Profile browser).
+
+**Rows.** `.panel-item`: `.panel-item-head` (`.panel-item-title` with badges,
+`.panel-actions` on the right — at most three visible buttons, the rest in
+`menuHtml()` as "More", destructive ones last) → `.panel-item-sub` (one
+sentence) → `.panel-item-meta` (chips, findings, numbers with the absolute
+time in `title=`) → `.panel-item-foot` (progress, log line). Poster rows are
+`.card.poster-card` with the same head. Tables (`.tbl`) put actions in the
+last column.
+
+**Feedback.** `toast(text, kind)` for outcomes (success · danger · amber ·
+info; a toast with `actions` stays until answered and is never evicted);
+`btnBusy(btn)` / `btnDone(btn, label, {revertMs, keepDisabled})` for the
+pressed button; `setStatus(el, text, kind)` for the inline status next to a
+Save / Test button; `_errHtml()` for load failures; `emptyHtml(html, cta)`
+for empty lists (`.empty.good` is the happy case). Nothing calls `alert()`,
+`confirm()` or `prompt()`.
+
+**Decisions.** `confirmDialog({title, body, confirmLabel, danger, countdown,
+reason})` → `{ok, reason}` for every destructive action (delete, bulk
+delete, force re-enrich, disable user, lift protection, apply to Sonarr,
+shut down); `countdown: 3` is the deliberate pause the delete flow always
+had; `reason` is the free-text field Curatarr learns from. Dialogs share one
+root (`openModal`/`closeModal`: Escape, backdrop, X, first control focused;
+Escape closes an open menu first). The match picker is such a dialog
+(`openMatchPicker` → `renderMatchPicker`), one for the Knowledge Base and
+the deletion cards.
+
+**Forms.** `trackDirty(form, saveBtn)` keeps a card's Save disabled until a
+field changes; the caller's reload re-arms it (Settings → Library /
+Integrations / defaults, the Libraries mapping). Notifications save on the
+toggle itself.
+
+**Utilities.** `.t2 .t3 .t-amber .t-danger .t-success .t-right .t-center .b
+.mono .fs-10..13 .row .row-end .stack .grow .mt-4/8/12 .mb-8/12`, `.input`
+for controls outside a `.form-group`, `.chip(.active)` for filters,
+`.link-num` for a number that opens a list, `.badge-sm`, `.banner(.warn|
+.danger|.ok)`, `.spinner`; `[hidden]` wins over any display rule. Inline
+`style=` is for data-driven values (a width, a grid template) only.
+
+**Guard.** `tests/test_frontend_hygiene.py` pins the counts of the old
+mechanisms and the inline-style budget as ceilings that only go down
+(2026-09-06: alert/confirm/prompt/cssText 0; inline styles in JS templates
+≤ 218 and in static markup ≤ 60, down from 651 / 198), checks that every
+shared helper exists and that no second overlay or toast system appears.
+`test_app_context_drift` keeps prompt-visible labels in sync with
+`app_context.py`; `test_frontend_syntax` runs every inline script through
+`node --check`.

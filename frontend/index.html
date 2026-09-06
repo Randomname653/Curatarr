@@ -36,12 +36,27 @@
    for containers (cards, panels, banners). Borders are 1px --border, hover
    raises to --border2 (or amber for interactive emphasis).
 
-   COMPONENTS — reuse before inventing: .card / .panel-item (+ -head, -sub,
-   -meta, .panel-actions), .badge (amber|danger|success|muted), .btn
-   (-primary|-secondary|-danger, -sm), .tbl/.tbl-wrap, .stat-box, .cat-tabs,
-   .glow-interactive (soft-shadow edge that warms to amber on hover --
-   every poster-as-click-target across Recommendations/Deletions/Add-New
-   uses this one class, not a per-view copy).
+   COMPONENTS — reuse before inventing: .card / .panel-item (+ -head, -title,
+   -sub, -meta, -foot, .panel-actions), .badge (amber|danger|success|muted|
+   info, .badge-sm), .btn (-primary|-secondary|-danger, -sm), .tbl/.tbl-wrap,
+   .stat-box, .cat-tabs, .glow-interactive (soft-shadow edge that warms to
+   amber on hover -- every poster-as-click-target across Recommendations/
+   Deletions/Add-New uses this one class, not a per-view copy).
+
+   GRAMMAR (2026-09, the same anatomy at every depth):
+   page = .view-header → .toolbar (actions left, view controls right) →
+   content → .select-bar (bottom, only while something is selected);
+   sub-panels are .section (.section-head: h3 + count badge + .section-hint,
+   .section-actions right; collapsible = <details class="section">); rows
+   are .panel-item (head with ≤3 visible actions + a .menu "More" for the
+   rest, then sub / meta / foot). Outcomes → toast(); decisions →
+   confirmDialog(); dialogs → openModal(); empty → emptyHtml(); paging →
+   pagerHtml(); button state → btnBusy/btnDone; inline status → setStatus();
+   dirty forms → trackDirty(). Never alert()/confirm()/prompt(), never a
+   hand-built overlay, never a hardcoded colour. Utilities (.t2 .t3
+   .t-amber .fs-12 .row .row-end .grow .mt-8 …) replace inline styles;
+   inline style= is for data-driven values only. tests/test_frontend_hygiene
+   pins the counts.
    New prompt-visible UI labels additionally go through app_context.py.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
@@ -2226,7 +2241,12 @@ async function api(path, method='GET', body=null, _retried=false) {
   if (r.status === 401 && path.startsWith('/api/setup/') && !_retried) {
     const msg = await r.clone().text();
     if (/setup code/i.test(msg)) {
-      const entered = prompt('This Curatarr is being set up from another device.\n\nEnter the one-time setup code printed in the Curatarr console window (start.bat) or log file:');
+      const ask = await confirmDialog({
+        title: 'Setup code required', confirmLabel: 'Continue',
+        body: '<p>This Curatarr is being set up from another device. Enter the one-time setup code printed in the Curatarr console window (start.bat) or log file.</p>',
+        reason: {label: 'Setup code'},
+      });
+      const entered = ask.ok ? ask.reason : '';
       if (entered && entered.trim()) {
         sessionStorage.setItem('curatarr_setup_code', entered.trim().toUpperCase());
         return api(path, method, body, true);
@@ -3501,7 +3521,11 @@ async function newChat() {
   // and wipe the visible messages. Memories + library remain — only the
   // chat-message log gets reset, so the curator starts each new topic
   // without prior-turn baggage.
-  if (!confirm('Clear conversation history? This deletes the chat log for this thread (memories and library are kept).')) return;
+  const res = await confirmDialog({
+    title: 'Clear conversation history', danger: true, confirmLabel: 'Clear',
+    body: '<p>This deletes the chat log for this thread. Memories and the library are kept.</p>',
+  });
+  if (!res.ok) return;
   try {
     await api('/api/chat/history?thread_id=general', 'DELETE');
     const msgs = document.getElementById('messages');
@@ -3529,7 +3553,7 @@ async function newChat() {
     pendingDiscussContext = null;
     _setDiscussBanner(null);
   } catch (e) {
-    alert('Failed to clear chat history: ' + (e.message || 'unknown'));
+    toast('Failed to clear chat history: ' + _errMsg(e), 'danger');
   }
 }
 
@@ -3553,8 +3577,7 @@ async function correctChatAnchor() {
     const msgs = document.getElementById('messages');
     if (msgs) {
       const note = document.createElement('div');
-      note.className = 'msg assistant';
-      note.style.cssText = 'border-left:3px solid var(--amber);padding-left:10px;font-size:12px;color:var(--text2);font-style:italic';
+      note.className = 'msg system';
       note.textContent = r.ok
         ? `${r.message || `Cleared cache for '${r.title}'. Your next question will re-fetch fresh metadata.`}`
         : `${r.reason || 'No active topic to clear yet.'}`;
@@ -3562,7 +3585,7 @@ async function correctChatAnchor() {
       msgs.scrollTop = msgs.scrollHeight;
     }
   } catch (e) {
-    alert('Re-fetch failed: ' + (e.message || 'unknown'));
+    toast('Re-fetch failed: ' + _errMsg(e), 'danger');
   } finally {
     btn.disabled = false;
     btn.textContent = original;
@@ -3698,12 +3721,8 @@ async function sendMessage() {
             // response will be slower than usual.
             if (!warningBanner) {
               warningBanner = document.createElement('div');
-              const isSevere = data.severity === 'severe';
-              warningBanner.style.cssText =
-                'background:' + (isSevere ? 'rgba(220,80,80,0.15)' : 'rgba(255,180,80,0.12)') +
-                ';border:1px solid ' + (isSevere ? 'rgba(220,80,80,0.4)' : 'rgba(255,180,80,0.4)') +
-                ';color:var(--text2);font-size:12px;padding:6px 10px;border-radius:6px;' +
-                'margin-bottom:8px;line-height:1.4';
+              warningBanner.className = 'banner ' + (data.severity === 'severe' ? 'danger' : 'warn');
+              warningBanner.style.alignSelf = 'stretch';
               warningBanner.textContent = data.warning;
               thinking.parentElement?.insertBefore(warningBanner, thinking);
             }
@@ -5141,7 +5160,11 @@ async function setPrinciple(id, action, btn) {
 }
 
 async function shutdownServer() {
-  if (!confirm('Shut down Curatarr?\n\nThe server stops gracefully: running jobs are finalized, pending memory extractions are flushed, and the database is released for sync.\n\nYou will need to start it again on the server.')) return;
+  const res = await confirmDialog({
+    title: 'Shut down Curatarr', danger: true, confirmLabel: 'Shut down',
+    body: '<p>The server stops gracefully: running jobs are finalized, pending memory extractions are flushed, and the database is released for sync.</p><p class="t3 fs-12 mt-8">You will need to start it again on the server.</p>',
+  });
+  if (!res.ok) return;
   // Release this tab's SSE stream BEFORE asking — open streams are exactly
   // what used to pin "Waiting for connections to close".
   if (taskEventSource) { try { taskEventSource.close(); } catch (e) {} taskEventSource = null; }
@@ -5844,9 +5867,8 @@ function exitDiscussion() {
   const msgs = document.getElementById('messages');
   if (msgs) {
     const note = document.createElement('div');
-    note.className = 'msg assistant';
-    note.style.cssText = 'border-left:3px solid var(--text3);padding-left:10px;font-size:12px;color:var(--text3);font-style:italic';
-    note.textContent = 'ⓘ Exited discussion thread. The next message is free chat.';
+    note.className = 'msg system';
+    note.textContent = 'Exited the discussion thread. The next message is free chat.';
     msgs.appendChild(note);
     msgs.scrollTop = msgs.scrollHeight;
   }

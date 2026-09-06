@@ -48,7 +48,7 @@ PRINCIPLE_REVIEW_BLOCK = (
     "but the OWNER decides. When they settle it, confirm the outcome in plain "
     "words (adopt / reject / adopt with their refined wording); the decision "
     "is applied automatically after the conversation, and the "
-    "'Learned principles' panel in the Deletions view remains the manual "
+    "'Learned principles' panel in the Curation view remains the manual "
     "fallback.\n"
 )
 
@@ -68,7 +68,7 @@ APP_MAP_BLOCK = (
     "button that EXECUTES the deletion from inside Curatarr via "
     "Sonarr/Radarr/Lidarr, plus Keep/Discuss; card checkboxes + a "
     "'Delete selected' button bulk-delete several at once. If a card or "
-    "pitch describes the WRONG same-named title, the 'Fix match' button "
+    "pitch describes the WRONG same-named title, 'Fix match' (behind the card's More menu) "
     "pins the correct entity — the pin survives rescans and the item "
     "re-enriches on it.\n"
     "- 'Curation' (admin) panels: 'Judge-protected titles' (what the judge "
@@ -109,8 +109,8 @@ KB_HEALING_BLOCK = (
     "(waiting on the backoff), queued / error, ignored, never processed. A "
     "title no source knows is retried two rounds in a row, then after 3, 6, "
     "12 and 24 days, then monthly — for ever; nothing is given up on, and an "
-    "upstream outage never counts as 'not found'. The 'Needs attention' panel "
-    "below the table lists what the pipeline cannot settle alone: wrong year, "
+    "upstream outage never counts as 'not found'. The 'Needs attention' tab of "
+    "the Knowledge Base lists what the pipeline cannot settle alone: wrong year, "
     "unsure match, not found after two or more tries, and audit findings "
     "(wrong entity, shared id, pin contradicted). Admin actions there: "
     "'Search & pin' (the arr's own lookup plus TMDB/AniList candidates; "

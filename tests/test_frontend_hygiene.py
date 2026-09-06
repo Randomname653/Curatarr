@@ -22,12 +22,13 @@ _INDEX = _ROOT / "frontend" / "index.html"
 # they stood after the foundation landed; every later step lowers them
 # (Step 2, the Knowledge Base: 635 -> 468 inline styles in JS, 198 -> 153 static;
 # Step 3, Deletions/Curation/Recs/Report: 468 -> 388 / 153 -> 140, alert 16 -> 7;
-# Step 4, Activity/Admin/Settings/Libraries/arr/Reclassify: 388 -> 218 / 140 -> 60).
+# Step 4, Activity/Admin/Settings/Libraries/arr/Reclassify: 388 -> 218 / 140 -> 60;
+# Step 5, the sweep: alert/confirm/prompt/cssText 0 — the floor, not a ceiling).
 CEILINGS = {
-    "alert(": 3,
-    "confirm(": 2,
-    "prompt(": 2,
-    "style.cssText": 3,
+    "alert(": 0,
+    "confirm(": 0,
+    "prompt(": 0,
+    "style.cssText": 0,
     'style= in JS templates': 218,
     'style= in static markup': 60,
 }
@@ -45,11 +46,12 @@ def _count(pattern: str, text: str) -> int:
 
 def test_old_mechanisms_only_go_down():
     static, js = _regions()
+    code = re.sub(r"(?m)^\s*//.*$", "", js)   # comments may still name the retired calls
     seen = {
-        "alert(": _count(r"(?<![\w.])alert\(", js),
-        "confirm(": _count(r"(?<![\w.])confirm\(", js),       # confirmDialog( does not match
-        "prompt(": _count(r"(?<![\w.])prompt\(", js),
-        "style.cssText": _count(r"\.style\.cssText", js),
+        "alert(": _count(r"(?<![\w.])alert\(", code),
+        "confirm(": _count(r"(?<![\w.])confirm\(", code),       # confirmDialog( does not match
+        "prompt(": _count(r"(?<![\w.])prompt\(", code),
+        "style.cssText": _count(r"\.style\.cssText", code),
         'style= in JS templates': _count(r'style="', js),
         'style= in static markup': _count(r'style="', static),
     }
