@@ -18,6 +18,7 @@ Pins:
     python tests/test_setup_hardening.py
 """
 import asyncio
+import os
 import pathlib
 import sys
 import tempfile
@@ -84,6 +85,33 @@ def test_write_env_keeps_the_live_secret_and_tuned_values():
     assert "SYNC_ON_STARTUP=false" in text and "SYNC_INTERVAL_HOURS=6" in text
     assert "BINGE_EPISODE_THRESHOLD=4" in text and "BINGE_SERIES_PERCENT=0.7" in text
     assert not list(tmpdir.glob("*.tmp")), "atomic write must leave no temp file"
+
+
+def test_write_env_is_owner_only_from_the_first_byte():
+    """CodeQL #53 (clear-text .env — by design, .env is the secret store)
+    prompted a re-read of the writer, which found a real gap: the temp file
+    was created with the directory's default rights (umask on POSIX, the
+    inherited DACL on Windows) and narrowed only after the rename, every
+    token in it. Now the temp file is born 0600 and the ACL hook runs on it
+    while it is still empty; the final path gets the hook once more."""
+    tmpdir = pathlib.Path(tempfile.mkdtemp())
+    env = tmpdir / ".env"
+    seen = []
+    real_path, real_live, real_acl = sw.ENV_PATH, sw._live_settings, sw._restrict_env_acl
+    sw.ENV_PATH = env
+    sw._live_settings = lambda: _LiveSettings()
+    sw._restrict_env_acl = lambda p: seen.append((str(p), pathlib.Path(p).stat().st_size))
+    try:
+        sw.write_env({"plex_url": "http://p", "plex_token": "t"})
+    finally:
+        sw.ENV_PATH, sw._live_settings, sw._restrict_env_acl = real_path, real_live, real_acl
+    assert seen[0][0] != str(env) and seen[0][1] == 0, \
+        "the ACL hook must run on the still-empty temp file before content lands"
+    assert seen[-1][0] == str(env), "and once more on the final file"
+    if os.name != "nt":
+        assert env.stat().st_mode & 0o777 == 0o600
+    assert "PLEX_TOKEN=t" in env.read_text(encoding="utf-8")
+    assert not list(tmpdir.glob("*.tmp"))
 
 
 class _Req:

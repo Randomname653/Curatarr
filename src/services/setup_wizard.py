@@ -11,10 +11,12 @@ Handles first-run configuration:
 """
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import os
 import secrets
+import tempfile
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -495,19 +497,27 @@ def write_env(config: dict) -> None:
         lines += ["", "# Preserved from the previous .env (not managed by the wizard)"]
         lines += preserved
 
-    # Atomic: a crash mid-write (or two concurrent writers) can't leave a
-    # truncated .env behind. os.replace is atomic on POSIX and NTFS alike.
-    tmp = ENV_PATH.with_name(ENV_PATH.name + ".tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(tmp, ENV_PATH)
-    _restrict_env_acl(ENV_PATH)
-    # Restrict to owner-only on POSIX so the file (which contains JWT_SECRET,
-    # API keys, and Plex tokens) isn't world-readable on shared hosts.
+    # Atomic, and owner-only from the first byte: the temp file is born 0600
+    # in the same directory (mkstemp: O_EXCL, a umask can only narrow it) and
+    # has its inherited DACL stripped on Windows before any content is
+    # written; os.replace is atomic on POSIX and NTFS alike and carries the
+    # temp file's rights over. A crash mid-write cannot leave a truncated
+    # .env behind, and no other account ever sees the tokens under the
+    # directory's default permissions — the old write-then-chmod order
+    # allowed exactly that for a few milliseconds.
+    fd, tmp = tempfile.mkstemp(dir=ENV_PATH.parent, prefix=ENV_PATH.name + ".", suffix=".tmp")
     try:
-        import stat
-        os.chmod(ENV_PATH, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-    except OSError as e:
-        logger.debug("Could not chmod .env (likely Windows): %s", e)
+        _restrict_env_acl(tmp)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            # .env IS the secret store (SECURITY.md): the process needs the
+            # plaintext at boot with nobody present to unlock a key.
+            fh.write("\n".join(lines) + "\n")  # lgtm[py/clear-text-storage-sensitive-data]
+        os.replace(tmp, ENV_PATH)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    _restrict_env_acl(ENV_PATH)
     logger.info("Wrote .env to %s", ENV_PATH.absolute())
 
 

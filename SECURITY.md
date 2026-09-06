@@ -25,9 +25,12 @@ Defaults that matter:
   finds the port. (Until 2026-09 only the UI was gated; the spec stayed
   public at `/openapi.json`.)
 - Secrets (`JWT_SECRET`, API keys, Plex token) live only in `.env`,
-  which is gitignored. Never commit it. The wizard writes it atomically,
-  chmod 0600 on POSIX, and on Windows strips the inherited ACL so only the
-  account running Curatarr can read it.
+  which is gitignored. Never commit it. The wizard writes it through a
+  temp file that is owner-only from the moment it exists (0600 on POSIX;
+  on Windows the inherited ACL is stripped before any content is written)
+  and renames it into place atomically. `.env` is the secret store by
+  design: the process needs the plaintext at boot with nobody present to
+  unlock a key — the same reason data at rest is not encrypted.
 - Every response carries a Content-Security-Policy: the single-file UI
   loads nothing from other origins, so `connect-src 'self'` means even a
   script injection that survived DOMPurify cannot phone a token home.

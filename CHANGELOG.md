@@ -148,7 +148,12 @@ enough.
 **Code scanning.** CodeQL alert #54 (`py/bad-tag-filter`): the frontend
 syntax test extracts the inline scripts with `html.parser` instead of a
 tag regex, so upper-case tags and end tags with attributes are the
-parser's business, not a pattern's.
+parser's business, not a pattern's. Alert #53 (clear-text storage, the
+`.env` writer) is by design — `.env` is the secret store, see SECURITY.md —
+and is now suppressed on the line itself instead of re-dismissed each time
+the writer moves; reading it again did find a real gap: the temp file was
+created with the directory's default rights and narrowed only after the
+rename. It is now owner-only from the first byte.
 
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
