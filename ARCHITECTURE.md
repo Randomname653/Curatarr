@@ -88,6 +88,7 @@ yet. Until those sections are rewritten, this is the map:
 | Per-user anchor cache | `chat._tkey` and friends | `_thread_active_title` was keyed by thread id alone while every user's free chat is thread `general` — a housemate could read and clear another's current topic via `/correct-anchor`. Keys are now `user_id:thread_id`. |
 | Setup coverage | `setup_wizard.current_env_config/merge_env_config/mask_secrets`, `GET /api/setup/integrations`, `POST /api/setup/reconfigure`, Settings → Integrations | One source for the .env shape with secrets unwrapped; the wizard and the post-setup panel both overlay on it. The two-bake pitcher is a first-run choice (built by `complete_setup`, recommended by `model_catalog.PITCHER_MODELS` with a VRAM verdict); ListenBrainz and OpenSubtitles are managed keys; every connection is changeable after setup. Secrets never travel back to the browser (`{set: bool}`); `/test` falls back to stored secrets so the panel can test without re-typing. |
 | Public surface | `SecurityHeadersMiddleware`, `main.FastAPI(openapi_url=…)`, `image_proxy._enforce_cache_budget` | CSP + Permissions-Policy; the OpenAPI spec is gated with the docs (it was public at `/openapi.json`); the unauthenticated poster cache has a size budget with oldest-first eviction. |
+| Enrichment healing | `src/services/enrichment_state.py`, `kb_overview.classified_items`, `EnrichmentStatus.attempt_count/next_retry_at/match_basis/match_confidence`, `EnrichmentFinding`, `MediaMatchOverride.rejected_ids`, `/api/enrichment/items · unmatched · findings`, `_audit_enrichments` + `_triage_audit_hit` | ONE classifier for the KB tile, `/library/breakdown` and the producer (the old KB view read a column nothing wrote and counted a live not-found sentinel as enriched). Not-found rows carry an attempt counter with a backoff (2 free tries, then 3/6/12/24 d, capped at 30 d — never given up on; a category abort rolls its attempts back). Fetchers return a falsy `TRANSIENT` marker; a drained run with an unavailable source raises `TransientFetchError` and writes nothing. Sentinels persist their evidence (per-source outcomes, arr year, the rejected same-named hit) → `open_reason()` sentences. Title-search resolutions store a match basis + confidence (≥0.8 accept, 0.5–0.8 accept-and-flag, below with a disagreeing year refuse). Every KB count opens its list; Needs attention unions the row-derived reasons with the audit's persisted findings (SoulSync `repair_findings` contract: pending refreshed, dismissed silent, resolved re-raised after 7 d; each finding gets exactly ONE automatic requeue, then escalates to a human). Owner actions: pin (arr lookup + TMDB/AniList + free ids, category derived server-side), negative pin (all four title-search resolvers skip it; the purge covers title-keyed cache rows too), retry, ignore, dismiss. |
 
 ---
 
@@ -196,28 +197,50 @@ historical bugs.
 
 The most intricate subsystem. Read this section before touching either file.
 
-### 5.1 The seven EnrichmentStatus states
+### 5.1 The EnrichmentStatus states (one classifier — `services/enrichment_state.py`)
 
-`(enriched, error, provisional)` encodes a mutually-exclusive state,
-surfaced in the breakdown panel (§ recommendations UI) with explainers:
+`(enriched, error, provisional, next_retry_at)` plus cache liveness encode
+ONE mutually-exclusive state per item. `classify_enrichment_row(row,
+has_live_cache)` is the only classifier — the KB tile, `/library/breakdown`
+and the drilldown all call it; `STATE_DEFINITIONS` (label / explainer /
+next step) is served in the overview payload so the frontend carries no
+copy. Status-derived states come FIRST; cache liveness only decides
+enriched vs enriched_dead (before 2026-09 a live not-found sentinel was
+counted as enriched because the cache check came first):
 
 | State | DB condition | Meaning |
 |---|---|---|
-| **LLM-polished** | `enriched=True, error IS NULL, (provisional=0 OR NULL)` | Full canonical fetch + LLM profile written. Terminal. |
-| **Enriched (provisional)** | `enriched=True, error IS NULL, provisional=1` | Phase-2 fast-tier (Pass 99-fu13 / #40) — only the cheap sources contributed (Last.fm for music, no Jikan/OMDb/TMDB supplement). The #41 hourly source-upgrade scheduler promotes 30 of these per hour to LLM-polished. |
-| **Rule-based** | `enriched=True, error LIKE 'rule_based%'` | Heuristic fallback, LLM upgrade pending. 1-day cache TTL. |
-| **Awaiting LLM** | `enriched=True, error LIKE 'api_cached%'` | API data persisted, LLM paused (game-mode or standalone music_enricher's default marker). |
-| **Not findable** | `enriched=True, error LIKE 'Not found%'` | All APIs missed. 3-day sentinel TTL. |
-| **Queued for retry** | `enriched=False, error IS NULL` | Tracked but not (re-)processed yet. Freshly seeded OR admin-reset. |
-| **Processing error** | `enriched=False, error IS NOT NULL` | Pipeline crashed mid-item AND recorded an error string (rare). |
-| *Never processed* | no row at all | denominator − tracked. |
+| **ignored** | `error LIKE 'ignored%'` | The owner accepted the gap. Held back by the pre-filter, excluded from the open count. |
+| **processing_error** | `enriched=False, error IS NOT NULL` | The pipeline (or the LLM) failed and recorded it — `Processing failed` used to crash the writer instead of being written. Always retried. |
+| **queued** | `enriched=False, error IS NULL` | Tracked but not (re-)processed yet: freshly seeded, admin-reset, or API data waiting for the polish. |
+| **not_found** | `error LIKE 'Not found%'`, `next_retry_at > now` | Every consulted source missed (`Not found: no_source_data`), or the only hit was the wrong year (`year_mismatch`) / too far off (`low_confidence`). Waiting on the backoff. |
+| **retry_due** | `error LIKE 'Not found%'`, due | Same rows once their wait is over — the next run tries again. |
+| **awaiting_llm** | `error LIKE 'api_cached%'` | API data persisted, LLM paused (game mode). |
+| **rule_based** | `error LIKE 'rule_based%'` | Heuristic profile; LLM upgrade retried next run. 1-day cache TTL. |
+| **enriched_dead** | `enriched=True, error IS NULL`, no live cache | Flag says done, the profile rotted — revived by the pre-filter. |
+| **enriched_provisional** | `enriched=True, error IS NULL, provisional=1` | Fast-tier profile; the finalizer / #41 scheduler promotes it. |
+| **enriched** | `enriched=True, error IS NULL` | Full profile, live cache. |
+| *never_processed* | no row | denominator − tracked (a live profile under a historic key still counts as enriched). |
 
-`_write_enrichment_db()` is the single writer. The breakdown endpoint
-(`src/routers/library.py::library_breakdown`) classifies via a SQL CASE
-expression matching the table above. The provisional case is checked
-BEFORE the generic `error IS NULL → llm_polished` so a fast-tier row
-gets its own bucket; legacy rows have `provisional=0` (migration
-default) and fall through to LLM-polished as before.
+`_write_enrichment_db(item, profile, cat, *, fresh_attempt)` is the single
+writer and owns the vocabulary above (`ArrEnrichmentStatus.error` is
+mirrored). A not-found sentinel written by a FRESH producer round counts an
+attempt: `attempt_count`, `last_attempt_at`, `next_retry_at` (backoff:
+attempts 1–2 due on the next run, then 3 → 6 → 12 → 24 days, capped at
+30 days, for ever — owner decision, no terminal state). A cache reconcile
+never counts; a real profile resets the counter. The Step-5 pre-filter holds
+back rows that are not due (and ignored rows) unless `force=True`; a
+category that aborts on the outage guard gets its attempts rolled back.
+Sentinels persist their `sources_state` (per-source `ok | miss | transient
+| skipped`, each `ok` entry carrying the entity the source resolved to)
+plus a reserved `_context` (arr year, ids we had, the rejected hit) —
+`open_reason()` turns that into the one sentence the UI shows.
+
+Match quality: `match_basis` (pin | arr_id | identity | title_search) and,
+for title searches, `match_confidence` from the resolving source's own
+title/year vs the arr's (`match_score` / `match_decision`: ≥ 0.8 accept,
+0.5–0.8 accept and flag for review, below that with a disagreeing or
+unknown year refuse — `Not found: low_confidence`).
 
 ### 5.2 Producer / consumer
 
@@ -466,15 +489,31 @@ entries.
 
 - **`TMDBTransientError`** (`media_enricher.py`): `_tmdb_get` raises this on
   429 / 5xx / network errors (NOT on 4xx-other-than-429, which is a real
-  "not found"). The producer catches it, sleeps `retry_after_s`, and SKIPS
-  the item without writing a sentinel — the row stays queued for the next
-  run. The pre-99 silent `return {}` on any non-200 was indistinguishable
-  from a real miss and poisoned ~5,800 movies during a TMDB blip.
+  "not found"). The pre-99 silent `return {}` on any non-200 was
+  indistinguishable from a real miss and poisoned ~5,800 movies during a
+  TMDB blip.
+- **The `TRANSIENT` marker** (`enrichment_state.TRANSIENT`, 2026-09): the
+  streaming runner swallowed that exception into a `"miss"`, so the
+  producer's transient handler was dead code. Every fetcher now returns the
+  falsy, identity-checked `TRANSIENT` for 429 / 5xx / exceptions (TMDB via
+  `_fetch_source`, OMDb `None`, AniList, Jikan, MusicBrainz — which no
+  longer negative-caches an outage for 7 days — and Last.fm); legacy callers
+  that test truthiness see what they always saw. `_merge_source_into_raw`
+  stamps `"transient"`; `_drained_outcome()` decides after a drained run.
+- **`TransientFetchError`** (subclass): `fetch_and_prepare_raw` raises it
+  when nothing sufficient came back and at least one source was unavailable
+  while none answered — the producer sleeps `retry_after_s` and SKIPS the
+  item; nothing is written. All sources genuinely missed → the
+  `{"_not_found": True, "_reason", "_sources_state", "_context"}` dict, which
+  `_process_one` checks BEFORE the LLM queue (a not-found dict must never be
+  polished into a confident fake profile).
 - **50%-not_found abort**: a per-category rolling window (last 50 items); if
   >50% are not_found sentinels, the producer aborts that category — almost
   certainly an upstream API outage, not a real findability problem.
 - **5-consecutive-transient abort**: same idea for durable API-down.
-- Aborted categories leave their items at `enriched=False` for the next run.
+- Aborted categories leave their items at `enriched=False` for the next run,
+  and the attempts this run counted for them are rolled back
+  (`_rollback_attempts`) so an incident cannot eat the retry budget.
 
 ### 5.6 Per-service concurrency caps (Pass 99-fu3)
 

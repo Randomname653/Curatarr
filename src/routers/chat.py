@@ -3044,11 +3044,11 @@ async def send_message(
 
     # App map from app_context.py (SSOT, drift-tested) — lets the curator
     # answer "where do I find …?" about its own UI instead of improvising.
-    from src.services.app_context import APP_MAP_BLOCK
+    from src.services.app_context import APP_MAP_BLOCK, KB_HEALING_BLOCK
 
     system_prompt = f"""You are Curatarr, an uncompromising, elite personal media curator.
 
-{APP_MAP_BLOCK}
+{APP_MAP_BLOCK}{KB_HEALING_BLOCK}
 {taste_context if taste_context else "No taste profile yet."}
 
 {memory_context if memory_context else ""}

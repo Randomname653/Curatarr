@@ -4,6 +4,62 @@ Condensed release history, newest first.
 
 ---
 
+## Unreleased — enrichment healing: honest numbers, a page behind them, no more silent loops
+
+The Knowledge Base said "93 % enriched" while the libraries reported 46 to
+92; the "Not findable" column was always zero because it read a column
+nothing wrote; a fresh miss counted as enriched for three days; a title no
+source knew was re-fetched every three days for ever; an API outage looked
+like hundreds of unfindable titles; and the weekly audit purged and
+re-fetched the same wrong-entity profiles every week without anyone seeing
+it. SoulSync's healing mechanics (MIT) were studied and the portable parts
+ported.
+
+**One honest state model.** One classifier for the KB tile, the breakdown
+endpoint and the producer, with the definitions served to the UI. States:
+enriched (incl. provisional), dead cache, rule-based, awaiting LLM, retry
+due, not found (waiting), queued, processing error, ignored, never
+processed. The Glance tile and the watch-history table no longer count
+sentinels as enriched.
+
+**Retries that back off instead of hammering.** Not-found rows carry an
+attempt counter: two quick tries, then 3, 6, 12, 24 days, then monthly —
+for ever (nothing is given up on). Existing rows are backfilled once on
+upgrade, dated from their own last write. An upstream outage (429/5xx on
+any source) is recorded as *unavailable*, keeps the item due and writes
+nothing; a category that aborts on the outage guard gets its attempts back.
+
+**Why not 100 %, per item.** Every count in the KB table opens the list
+behind it, each item with its attempts, next retry, per-source outcomes
+(TMDB ✗, OMDb not asked — no IMDb id, …) and a one-sentence reason. A
+**Needs attention** panel (badge in the nav) lists what the pipeline
+cannot settle alone: found under the wrong year, refused as too far off,
+matched with middling confidence, not found after two or more tries,
+audit findings (wrong entity, shared id, pin contradicted), or no external
+id in the arr at all.
+
+**Owner tools.** Search & pin from the arr's own lookup (tvdb / tmdb / imdb /
+mbid), TMDB or AniList, or a typed id of any kind — from the KB page and
+from deletion cards, category resolved server-side. "Not this one" excludes
+a wrong candidate for good (all four title-search resolvers skip it). Retry
+now, Ignore / Un-ignore (an accepted gap leaves the open count), Dismiss
+finding.
+
+**Match confidence.** Title-search resolutions store which authority
+resolved the entity and a similarity score; middling matches are accepted
+but flagged, far-off ones with a disagreeing year are refused instead of
+stored as a wrong profile.
+
+**Findings inbox.** The audit's verdicts persist as rows with a lifecycle
+(pending refreshed in place, dismissed silent, resolved re-raised after a
+week if still there). Each finding gets exactly one automatic re-resolution;
+a second detection escalates it to a human. Pinned items are skipped by the
+entity check unless the profile contradicts the pin.
+
+Also: the LLM-failure path crashed the status writer, so "Processing
+failed" was never recorded; fixed. Migration is automatic (new columns, a
+new table, one backfill).
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

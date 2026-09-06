@@ -97,6 +97,30 @@ APP_MAP_BLOCK = (
     "'Libraries' / 'Users' (admin) · 'Settings'.\n"
 )
 
+# ── Knowledge Base health: why the library is not at 100 % ───────────────────
+# Injected next to the app map. The vocabulary is services/enrichment_state.py
+# (STATE_DEFINITIONS / ATTENTION_REASONS); the numbers come from the same
+# per-item classification the KB tile is counted from, so the curator can
+# explain a percentage instead of guessing at it.
+KB_HEALING_BLOCK = (
+    "KNOWLEDGE BASE (enrichment health): every count in the Knowledge Base "
+    "table opens the list behind it. States: enriched (incl. provisional), "
+    "dead cache, partial (rule-based / awaiting LLM), retry due, not found "
+    "(waiting on the backoff), queued / error, ignored, never processed. A "
+    "title no source knows is retried two rounds in a row, then after 3, 6, "
+    "12 and 24 days, then monthly — for ever; nothing is given up on, and an "
+    "upstream outage never counts as 'not found'. The 'Needs attention' panel "
+    "below the table lists what the pipeline cannot settle alone: wrong year, "
+    "unsure match, not found after two or more tries, and audit findings "
+    "(wrong entity, shared id, pin contradicted). Admin actions there: "
+    "'Search & pin' (the arr's own lookup plus TMDB/AniList candidates; "
+    "'Pin this id' for a typed id; 'Not this one' excludes a wrong candidate "
+    "for good), 'Retry now', 'Ignore' / 'Un-ignore' (an accepted gap leaves "
+    "the open count), 'Dismiss finding'. When asked why the library is not at "
+    "100 %, explain from these states — never call an item unfindable when it "
+    "is merely waiting on the backoff.\n"
+)
+
 # What the app can and cannot DO to the library — the chat's rule 5 builds on
 # this. The old wording claimed "there is no ARR integration that lets you
 # act", which predates the deletion flow and made the curator send the user to
@@ -144,4 +168,13 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Libraries",
     "Users",
     "Settings",
+    # Knowledge Base health (KB_HEALING_BLOCK)
+    "Needs attention",
+    "Search & pin",
+    "Pin this id",
+    "Not this one",
+    "Retry now",
+    "Ignore",
+    "Un-ignore",
+    "Dismiss finding",
 )
