@@ -31,17 +31,20 @@ the data custodian picks up whatever is overdue on the next run.
 | Task | Where |
 |---|---|
 | Re-run Plex sync now | History → **Force sync** |
-| Start / resume enrichment | Knowledge Base → **Start enrichment** |
-| Recompute taste vectors | Knowledge Base → **Recompute taste vectors** |
-| Audit + self-heal metadata | Knowledge Base → **🔍 Audit metadata** |
-| Cache inventory (rows, staleness, size) | Knowledge Base → **Cache inventory** |
-| Review deletion proposals (admin) | Sidebar → **Deletions** |
-| Fix a wrongly-matched title | Any proposal card → **Fix match** |
-| Browse / add media via \*arr | Sidebar → 🎬 Movies / 📺 TV / 🎵 Music |
-| Reclassify anime ↔ TV (admin) | Manage → **🔀 Reclassify** |
+| Start / resume enrichment | Knowledge Base → Maintenance tab → **Start Enrichment** |
+| Recompute taste vectors | Knowledge Base → Maintenance tab → **Recompute taste vectors** |
+| Audit + self-heal metadata | Knowledge Base → Maintenance tab → **Audit metadata** |
+| Titles that need a human (wrong match, low confidence, repeatedly not found) | Knowledge Base → **Needs attention** tab: filter by reason, then **Search & pin**, **Retry now** or **Ignore** on the row |
+| Cache inventory (rows, staleness, size) | Knowledge Base → Overview tab → Storage → **Cache inventory** |
+| Review deletion proposals (admin) | Sidebar → **Deletions**: Delete / Keep / Discuss on the card, the rest under **More** |
+| Delete several proposals at once (admin) | Deletions → tick the cards → selection bar at the bottom → **Delete selected** |
+| Fix a wrongly-matched title | Proposal card → **More** → **Fix match**, or Knowledge Base → Needs attention → **Search & pin** |
+| Browse / add media via \*arr | Manage → **TV Shows** / **Movies** / **Music** |
+| Re-enrich one library title | Any library row → **Re-enrich** menu (metadata, summary, or both) |
+| Reclassify anime ↔ TV (admin) | Manage → **Reclassify**: tick the rows, then **Apply selected** in the bottom bar |
 | Watch running background jobs | Sidebar → **Activity** |
-| Per-library coverage breakdown | Library Configuration page |
-| Spotify artists not in Lidarr | 🎵 Music → **Spotify Backlog** tab |
+| Per-library coverage breakdown | Sidebar → **Libraries** (Library Configuration) |
+| Spotify artists not in Lidarr | Manage → **Music** → **Spotify Backlog** tab |
 
 ## Command-line helpers
 
@@ -109,7 +112,8 @@ is never safe to file-sync, running or not. If locks persist, confirm
 **A title is enriched as the wrong work**
 
 Two same-named works (remakes, unrelated films sharing a title) can
-collide. Use **Fix match** on any card for that title: the pin overrides
+collide. Use **Fix match** on that title's proposal card (under **More**) or
+**Search & pin** in the Knowledge Base's Needs attention tab: the pin overrides
 every automatic identifier source and survives rescans and
 re-enrichment.
 

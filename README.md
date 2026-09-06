@@ -117,7 +117,8 @@ and it speaks up when it notices a pattern worth asking about.*
 - **Self-healing library knowledge** — the profile audit requeues stale
   entries, rebuilds orphaned documents from cache, re-resolves corrupt
   id clusters, and refuses to mistake an unreachable service for a
-  deleted library. A **Fix match** button permanently pins the right
+  deleted library. A **Fix match** action (in a proposal card's More menu,
+  or Search & pin in the Knowledge Base) permanently pins the right
   identity when two same-named works collide.
 - **Game mode** — when a game starts, the models are evicted from VRAM
   and only keyless API pre-fetching continues. The pipeline resumes by

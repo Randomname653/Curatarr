@@ -4,7 +4,7 @@ Condensed release history, newest first.
 
 ---
 
-## Unreleased — enrichment healing: honest numbers, a page behind them, no more silent loops
+## Unreleased — enrichment healing, a second security angle, one UI grammar down to the deepest view
 
 The Knowledge Base said "93 % enriched" while the libraries reported 46 to
 92; the "Not findable" column was always zero because it read a column
