@@ -1568,6 +1568,7 @@ async def enrichment_items(
 @router.get("/unmatched")
 async def enrichment_unmatched(
     category: Optional[str] = None,
+    reason: Optional[str] = None,
     offset: int = 0,
     limit: int = 100,
     user: User = Depends(get_current_user),
@@ -1575,13 +1576,18 @@ async def enrichment_unmatched(
     """Needs attention: the items the pipeline cannot settle alone — found
     under the wrong year, refused as too far off, matched with middling
     confidence, or not found in two or more rounds. Each row carries its
-    reasons, the evidence and the owner's pin if any."""
+    reasons, the evidence and the owner's pin if any. ``reason`` narrows the
+    page to one attention reason (the filter chips); ``by_reason`` and
+    ``total_all`` always describe the whole set."""
     from collections import Counter
     from src.services import kb_overview as _kb
     with get_db_session() as db:
         pend = _ES.pending_findings(db)
         pend_dicts = {k: [_ES.finding_to_dict(f) for f in v] for k, v in pend.items()}
-    findings_summary = Counter(_ES.finding_base(f.kind) for v in pend.values() for f in v)
+        # Inside the session on purpose: the rows expire when it closes, and
+        # reading f.kind afterwards raised DetachedInstanceError the moment a
+        # single pending finding existed (500 on the whole page).
+        findings_summary = Counter(_ES.finding_base(f.kind) for v in pend.values() for f in v)
     rows = []
     for i in await _kb.classified_items():
         if not i["downloaded"] or (category and i["category"] != category):
@@ -1599,6 +1605,9 @@ async def enrichment_unmatched(
                              -(t[1].get("attempt_count") or 0),
                              (t[1].get("title") or "").lower()))
     by_reason = Counter(r for reasons, _ in rows for r in reasons)
+    total_all = len(rows)
+    if reason:
+        rows = [t for t in rows if reason in t[0]]
     limit = max(1, min(int(limit or 100), 500))
     offset = max(0, int(offset or 0))
     page = rows[offset:offset + limit]
@@ -1606,8 +1615,8 @@ async def enrichment_unmatched(
     pins = _pins_for([i for _, i in page])
     now = datetime.utcnow()
     return {
-        "total": len(rows), "offset": offset, "limit": limit,
-        "by_reason": dict(by_reason),
+        "total": len(rows), "total_all": total_all, "offset": offset, "limit": limit,
+        "reason": reason, "by_reason": dict(by_reason),
         "reason_definitions": _ES.ATTENTION_REASONS,
         # Every pending finding by kind — including the info-level data-quality
         # ones (no rating, malformed) that do not put an item on this page.

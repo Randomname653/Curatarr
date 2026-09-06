@@ -19,14 +19,15 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _INDEX = _ROOT / "frontend" / "index.html"
 
 # Ceilings, not targets. Step 1 of the UI-grammar work pinned the numbers as
-# they stood after the foundation landed; every later step lowers them.
+# they stood after the foundation landed; every later step lowers them
+# (Step 2, the Knowledge Base: 635 -> 468 inline styles in JS, 198 -> 153 static).
 CEILINGS = {
-    "alert(": 17,
-    "confirm(": 12,
+    "alert(": 16,
+    "confirm(": 9,
     "prompt(": 3,
     "style.cssText": 15,
-    'style= in JS templates': 635,
-    'style= in static markup': 198,
+    'style= in JS templates': 468,
+    'style= in static markup': 153,
 }
 
 

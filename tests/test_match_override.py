@@ -71,7 +71,7 @@ check("apply/unpin purge BOTH cache-key epochs and flip BOTH status tables",
 
 fe = (root / "frontend/index.html").read_text(encoding="utf-8")
 check("Fix match button on deletion cards + pin/unpin handlers",
-      "onFixMatch" in fe and "applyFixMatch" in fe and "removeFixMatch" in fe
+      "onFixMatch" in fe and "openMatchPicker" in fe and "removeFixMatch" in fe
       and "/api/enrichment/match-override" in fe)
 
 ser = (root / "src/routers/recommendations.py").read_text(encoding="utf-8")

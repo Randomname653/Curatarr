@@ -475,6 +475,19 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .msg.system { align-self: center; background: none; border: none; color: var(--text3); font-size: 12px; font-style: italic; max-width: 90%; }
 /* Working-without-a-count dot: the sidebar's pulse as a content-level spinner */
 .spinner { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: sb-pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+/* Number-as-link inside tables: the door to the list behind a count */
+.link-num { background: none; border: none; padding: 0; font: inherit; color: var(--text); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.link-num:hover { color: var(--amber); }
+/* Filter chips: a row of toggles above a list, one active at a time */
+.chip { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 3px 10px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: border-color .15s, color .15s; }
+.chip:hover { border-color: var(--amber); color: var(--amber); }
+.chip.active { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+/* A row that unfolds: <details class="panel-item"><summary class="panel-item-head"> */
+details.panel-item > summary { cursor: pointer; list-style: none; }
+details.panel-item > summary::-webkit-details-marker { display: none; }
+.section-body > .tbl-wrap { background: transparent; }
+/* The hidden attribute wins over any display rule (badges, buttons, flex rows) */
+[hidden] { display: none !important; }
 /* ── UTILITIES — named versions of the inline styles that kept recurring ── */
 .t2 { color: var(--text2); } .t3 { color: var(--text3); }
 .t-amber { color: var(--amber); } .t-danger { color: var(--danger); } .t-success { color: var(--success); }
@@ -926,126 +939,124 @@ select option { background: var(--bg2); }
     <div class="view" id="enrich-view">
       <div class="view-header">
         <h1>Knowledge Base</h1>
-        <p>Fetch metadata from TMDB, AniList, and MusicBrainz, then compute real embedding-based taste vectors.</p>
+        <p>What Curatarr knows about your library — metadata from TMDB, AniList and MusicBrainz, the items it cannot settle alone, and the maintenance behind it.</p>
       </div>
       <div class="view-body">
-        <div id="custodian-bar" style="margin-bottom:14px"></div>
-        <div id="backfill-panel" style="margin-bottom:14px"></div>
-        <div id="enrich-overview" style="margin-bottom:20px"></div>
-        <div id="kb-drilldown" style="margin-bottom:16px"></div>
-        <div id="kb-attention" style="margin-bottom:20px"></div>
-
-        <details style="margin-bottom:16px">
-        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);padding:4px 0">Advanced — manual enrichment controls</summary>
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:10px 0 16px">
-          <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Enrich by category</h3>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-            <label for="enrich-cat-music" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
-            <label for="enrich-cat-movie" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-movie" checked> Movies</label>
-            <label for="enrich-cat-show" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-show" checked> TV Shows</label>
-            <label for="enrich-cat-anime" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="enrich-cat-anime" checked> Anime</label>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-            <span style="font-size:12px;color:var(--text3)">Source:</span>
-            <label for="enrich-src-history" style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="watch_history" id="enrich-src-history" checked> Watch History Only</label>
-            <label for="enrich-src-arr" style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="arr" id="enrich-src-arr"> Arr Library Only</label>
-            <label for="enrich-src-both" style="font-size:12px;cursor:pointer"><input type="radio" name="enrich-src" value="both" id="enrich-src-both"> Both</label>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-primary" onclick="startEnrichNew()">Start Enrichment</button>
-            <button class="btn btn-secondary" onclick="loadEnrichStatus(true)">Refresh</button>
-            <button class="btn btn-secondary" onclick="computeTaste()">Recompute taste vectors</button>
-            <!-- Pass 55: audit-requeue — finds profiles with missing metadata
-                 (zero rating, not_found) and requeues only those, instead of
-                 a full-library force-clear. Runs a dry-run first to show the
-                 breakdown, then asks for confirmation. -->
-            <button class="btn btn-secondary" onclick="auditRequeueEnrichments(this)"
-              title="Scans existing enrichment profiles for missing metadata (e.g. 0 ratings, not-found titles) and requeues only those for re-enrichment — no full re-process">
-              Audit metadata
-            </button>
-            <button class="btn btn-secondary" onclick="omdbBackfill(this)"
-              title="Backfill OMDb (writer, awards, extended plot) for every cached title that has an imdb_id but never got OMDb data. Fast over the supporter key — runs in the background, watch the task monitor.">
-              Backfill OMDb
-            </button>
-            <button class="btn btn-secondary" style="color:var(--danger);border-color:var(--danger)"
-              onclick="startEnrichForce(this)"
-              title="Clears cache and re-enriches all selected categories — use after model or prompt changes">
-              Force Re-Enrich
-            </button>
-          </div>
+        <div class="cat-tabs" id="kb-tabs">
+          <button class="cat-tab active" data-kbtab="overview" onclick="showKbTab('overview')">Overview</button>
+          <button class="cat-tab" data-kbtab="attention" onclick="showKbTab('attention')">Needs attention <span class="badge amber badge-sm" id="kb-tab-badge" style="display:none">0</span></button>
+          <button class="cat-tab" data-kbtab="maintenance" onclick="showKbTab('maintenance')">Maintenance</button>
+          <button class="cat-tab" data-kbtab="music" onclick="showKbTab('music')">Music pipeline</button>
+          <button class="cat-tab" data-kbtab="profiles" onclick="showKbTab('profiles')">Profile browser</button>
         </div>
-        </details>
 
-        <div id="enrich-progress-area"></div>
-        <div id="enrich-live-section" style="display:none"></div>
+        <!-- Overview: the one table every KB number comes from, and the list behind any number -->
+        <div class="kb-tab" data-kbtab="overview">
+          <div id="enrich-overview"></div>
+          <div id="kb-drilldown"></div>
+        </div>
 
-        <details style="margin:0 0 16px">
-        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);padding:4px 0">Advanced — Spotify pipeline controls</summary>
-        <!-- SPOTIFY / MUSIC PIPELINE (phases run automatically via the custodian;
-             these controls remain for manual runs and the emergency stop) -->
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:10px 0 16px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <h3 style="font-size:13px;font-weight:600">Spotify Import Pipeline</h3>
-            <span id="music-running-badge" style="display:none;background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);border-radius:10px;font-size:11px;padding:2px 8px">Running…</span>
-          </div>
-          <p style="font-size:12px;color:var(--text2);margin-bottom:12px">
-            Phase 1 — Match imported Spotify plays to Plex tracks (gets genres + ratingKey).<br>
-            Phase 2 — Fetch Last.fm genre tags for everything still missing genres.<br>
-            Safe to re-run. Already-matched/enriched entries are skipped automatically.
-          </p>
-          <div id="music-stats-bar" style="font-size:12px;color:var(--text3);margin-bottom:12px">Loading…</div>
-          <div id="music-progress-bar" style="display:none;margin-bottom:12px">
-            <div style="font-size:12px;color:var(--amber);margin-bottom:4px" id="music-progress-label">Starting…</div>
-            <div style="background:var(--bg3);border-radius:3px;height:6px;overflow:hidden">
-              <div id="music-progress-fill" style="background:var(--amber);height:100%;width:0%;transition:width .4s"></div>
+        <!-- Needs attention: the items the pipeline cannot settle alone -->
+        <div class="kb-tab" data-kbtab="attention" hidden>
+          <div id="kb-attention"></div>
+        </div>
+
+        <!-- Maintenance: the custodian, the backfill, manual runs, the anime id map -->
+        <div class="kb-tab" data-kbtab="maintenance" hidden>
+          <div id="custodian-bar"></div>
+          <div id="backfill-panel"></div>
+          <div id="enrich-live-section" hidden></div>
+          <section class="section">
+            <div class="section-head"><h3>Enrichment run</h3><span class="section-hint">The custodian runs this on its own schedule — these are the manual controls.</span></div>
+            <div class="section-body">
+              <div class="row mb-8">
+                <span class="fs-12 t3">Libraries:</span>
+                <label class="row fs-13" for="enrich-cat-music"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
+                <label class="row fs-13" for="enrich-cat-movie"><input type="checkbox" id="enrich-cat-movie" checked> Movies</label>
+                <label class="row fs-13" for="enrich-cat-show"><input type="checkbox" id="enrich-cat-show" checked> TV Shows</label>
+                <label class="row fs-13" for="enrich-cat-anime"><input type="checkbox" id="enrich-cat-anime" checked> Anime</label>
+              </div>
+              <div class="row mb-12">
+                <span class="fs-12 t3">Source:</span>
+                <label class="fs-12" for="enrich-src-history"><input type="radio" name="enrich-src" value="watch_history" id="enrich-src-history" checked> Watch history only</label>
+                <label class="fs-12" for="enrich-src-arr"><input type="radio" name="enrich-src" value="arr" id="enrich-src-arr"> Arr libraries only</label>
+                <label class="fs-12" for="enrich-src-both"><input type="radio" name="enrich-src" value="both" id="enrich-src-both"> Both</label>
+              </div>
+              <div class="toolbar" style="margin-bottom:0">
+                <button class="btn btn-primary" onclick="startEnrichNew(this)">Start Enrichment</button>
+                <button class="btn btn-secondary" onclick="computeTaste(this)">Recompute taste vectors</button>
+                <!-- Pass 55: audit-requeue — finds profiles with missing metadata
+                     (zero rating, not_found) and requeues only those, instead of
+                     a full-library force-clear. Runs a dry-run first to show the
+                     breakdown, then asks for confirmation. -->
+                <button class="btn btn-secondary" onclick="auditRequeueEnrichments(this)"
+                  title="Scans existing enrichment profiles for missing metadata (e.g. 0 ratings, not-found titles) and requeues only those for re-enrichment — no full re-process">Audit metadata</button>
+                <button class="btn btn-secondary" onclick="omdbBackfill(this)"
+                  title="Backfill OMDb (writer, awards, extended plot) for every cached title that has an imdb_id but never got OMDb data. Fast over the supporter key — runs in the background, progress shows in Activity.">Backfill OMDb</button>
+                <div class="toolbar-right">
+                  <button class="btn btn-secondary" onclick="loadEnrichStatus()">Refresh</button>
+                  <button class="btn btn-danger" onclick="startEnrichForce(this)"
+                    title="Clears cache and re-enriches all selected categories — use after model or prompt changes">Force Re-Enrich</button>
+                </div>
+              </div>
+              <div id="enrich-progress-area" class="mt-8"></div>
             </div>
+          </section>
+          <section class="section">
+            <div class="section-head"><h3>Anime ID mapping</h3><span class="section-hint">anime-lists crossref — resolves TVDB → AniDB → AniList ids for your Sonarr library</span>
+              <div class="section-actions">
+                <button class="btn btn-secondary btn-sm" onclick="loadMappingStats(this)">Check stats</button>
+                <button class="btn btn-secondary btn-sm" onclick="checkMappingCoverage(this)">Coverage check</button>
+              </div>
+            </div>
+            <div class="section-body"><div id="mapping-stats" class="fs-12 t3"></div><div id="mapping-coverage" class="fs-12 t3"></div></div>
+          </section>
+        </div>
+
+        <!-- Music pipeline: the Spotify import phases (the custodian runs them; manual start + emergency stop here) -->
+        <div class="kb-tab" data-kbtab="music" hidden>
+          <section class="section">
+            <div class="section-head"><h3>Spotify import pipeline <span class="badge amber badge-sm" id="music-running-badge" hidden>Running</span></h3>
+              <div class="section-actions">
+                <label class="fs-12 t2 row" for="music-batch-input" title="Cap unique tracks per enrichment phase per run. Applies to BOTH Spotify and Last.fm. Tracks not covered this run carry over to the next.">Batch (per phase)
+                  <input id="music-batch-input" class="input" type="number" min="50" max="2000" value="300" style="width:70px"></label>
+                <button class="btn btn-primary btn-sm" id="music-start-btn" onclick="startMusicPipeline(this)">Start</button>
+                <button class="btn btn-secondary btn-sm" id="music-stop-btn" onclick="stopMusicPipeline(this)" hidden>Stop</button>
+                <button class="btn btn-secondary btn-sm" onclick="loadMusicStatus()">Refresh</button>
+              </div>
+            </div>
+            <div class="section-body">
+              <p class="fs-12 t2 mb-12">Phase 1 matches imported Spotify plays to Plex tracks (genres + ratingKey); Phase 2 fetches Last.fm genre tags for everything still missing genres. Safe to re-run — matched and enriched entries are skipped.</p>
+              <div id="music-stats-bar" class="fs-12 t3 mb-12">Loading…</div>
+              <div id="music-progress-bar" class="mb-12" hidden>
+                <div class="fs-12 t-amber mb-4" id="music-progress-label">Starting…</div>
+                <div class="progress-bar" style="margin-top:0"><div class="progress-fill" id="music-progress-fill" style="width:0%"></div></div>
+              </div>
+            </div>
+          </section>
+          <div id="music-phases"></div>
+        </div>
+
+        <!-- Profile browser: inspect what a finished profile actually says -->
+        <div class="kb-tab" data-kbtab="profiles" hidden>
+          <div class="toolbar">
+            <select id="profile-cat" class="input" aria-label="Profile category">
+              <option value="movie">Movies</option>
+              <option value="show">TV Shows</option>
+              <option value="anime">Anime</option>
+              <option value="music">Music</option>
+            </select>
+            <select id="profile-source" class="input" aria-label="Profile source">
+              <option value="all">All sources</option>
+              <option value="watch_history">Watch history</option>
+              <option value="arr">ARR libraries</option>
+            </select>
+            <input id="profile-search" class="input" aria-label="Search profiles by title" placeholder="Search title…" style="width:200px" onkeydown="if(event.key==='Enter')loadProfiles()">
+            <button class="btn btn-secondary btn-sm" onclick="loadProfiles()">Browse</button>
+            <span class="fs-12 t3 row-end">Inspect enriched metadata profiles</span>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <label for="music-batch-input" style="font-size:12px;color:var(--text2)" title="Cap unique tracks per enrichment phase per run. Applies to BOTH Spotify and Last.fm. Tracks not covered this run carry over to the next.">Batch (per phase):
-              <input id="music-batch-input" type="number" min="50" max="2000" value="300"
-                style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);width:70px;font-size:12px;margin-left:4px">
-            </label>
-            <button class="btn btn-primary btn-sm" id="music-start-btn" onclick="startMusicPipeline()">Start</button>
-            <button class="btn btn-secondary btn-sm" id="music-stop-btn" style="display:none" onclick="stopMusicPipeline()">Stop</button>
-            <button class="btn btn-secondary btn-sm" onclick="loadMusicStatus()">↻ Refresh</button>
-          </div>
-          <div id="music-result-area" style="margin-top:10px;font-size:12px"></div>
+          <div id="profile-browser"></div>
         </div>
-        </details>
-
-        <hr class="divider" style="margin:24px 0">
-
-        <!-- MAPPING STATS -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <h3 style="font-size:14px;font-weight:600">Anime ID Mapping</h3>
-          <button class="btn btn-secondary btn-sm" onclick="loadMappingStats()">Check stats</button>
-          <button class="btn btn-secondary btn-sm" onclick="checkMappingCoverage()">Coverage check</button>
-        </div>
-        <div id="mapping-stats" style="font-size:12px;color:var(--text3)">anime-lists crossref database — resolves TVDB→AniDB→AniList IDs for your Sonarr library</div>
-
-        <hr class="divider" style="margin:24px 0">
-
-        <!-- PROFILE BROWSER -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <h3 style="font-size:14px;font-weight:600">Profile Browser</h3>
-          <span style="font-size:12px;color:var(--text3)">Inspect enriched metadata profiles</span>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-          <select id="profile-cat" aria-label="Profile category" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
-            <option value="movie">Movies</option>
-            <option value="show">TV Shows</option>
-            <option value="anime">Anime</option>
-            <option value="music">Music</option>
-          </select>
-          <select id="profile-source" aria-label="Profile source" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
-            <option value="all">All sources</option>
-            <option value="watch_history">Watch history</option>
-            <option value="arr">ARR libraries</option>
-          </select>
-          <input id="profile-search" aria-label="Search profiles by title" placeholder="Search title…" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px;width:180px">
-          <button class="btn btn-secondary btn-sm" onclick="loadProfiles()">Browse</button>
-        </div>
-        <div id="profile-browser"></div>
       </div>
     </div>
 
@@ -2336,6 +2347,7 @@ function toast(text, kind = 'info', opts = {}) {
       `<button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : 'btn-secondary'}" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>` : '');
   const close = () => { if (el.parentNode) el.remove(); };
   if (opts.actions?.length) {
+    el.classList.add('has-actions');   // a question is never evicted by later toasts
     el.querySelectorAll('.toast-actions button').forEach(b => b.onclick = ev => {
       ev.stopPropagation();
       const a = opts.actions[Number(b.dataset.i)];
@@ -2345,7 +2357,8 @@ function toast(text, kind = 'info', opts = {}) {
     el.onclick = close;
     setTimeout(close, opts.ms || (kind === 'danger' ? 6000 : 3500));
   }
-  while (stack.children.length >= 4) stack.firstChild.remove();
+  const plain = () => [...stack.children].filter(t => !t.classList.contains('has-actions'));
+  while (plain().length >= 4) plain()[0].remove();
   stack.appendChild(el);
   return el;
 }
@@ -2533,7 +2546,7 @@ function showView(name, btn) {
   if (name==='tasks') loadTaskHistory();
   if (name==='libraries') loadLibraryConfig();
   if (name==='admin') loadUsers();
-  if (name==='enrich') { loadEnrichStatus(); loadMusicStatus(); }
+  if (name==='enrich') showKbTab(_kbTab);
   if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(currentRecsCategory); } }
   if (name==='deletions') loadDeletions(currentDelCategory);
   // Pass 16c: Library Manager pages
@@ -5099,7 +5112,6 @@ function _renderDeletionProposals(proposals) {
               ${p.media_id&&p.service?`<button class="btn btn-secondary btn-sm" onclick="onFixMatch(this)" data-pid="${p.id}" data-title="${escAttr(p.title)}" data-category="${escAttr(p.category||'')}" data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}" title="Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.">Fix match</button>`:''}
               ${p.arr_url?`<a href="${esc(p.arr_url)}" target="_blank" aria-label="Open ${escAttr(p.title)} in ${esc(p.service)}" class="btn btn-secondary btn-sm">Open in ${esc(p.service)}</a>`:''}
             </div>
-            <div id="fixmatch-${p.id}" style="display:none;margin-top:8px"></div>
           </div>
         </div>
       </div>`;
@@ -5114,25 +5126,10 @@ function _renderDeletionProposals(proposals) {
 // Deletion cards open the same picker the Knowledge-Base page uses (the arr's
 // own lookup + TMDB / AniList candidates, free id fields, "Not this one");
 // the category is resolved server-side from the item, never invented here.
-async function onFixMatch(btn) {
-  const box = document.getElementById(`fixmatch-${btn.dataset.pid}`);
-  if (!box) return;
-  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
-  box.style.display = 'block';
+function onFixMatch(btn) {
   const { title, category, service, mediaid } = btn.dataset;
-  await renderMatchPicker(box, {service, arrId: Number(mediaid), title, category: category || undefined});
-}
-
-async function applyFixMatch(btn, service, arrId, category, title, tmdbId) {
-  return _pickerPost(btn, { service, arr_id: arrId, category: category || undefined, title, tmdb_id: tmdbId }, 'Pinned');
-}
-
-async function removeFixMatch(btn, service, arrId) {
-  btn.disabled = true;
-  try {
-    const r = await api(`/api/enrichment/match-override/${encodeURIComponent(service)}/${arrId}`, 'DELETE');
-    btn.textContent = r.success ? 'Unpinned' : (r.error || 'No pin found');
-  } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
+  openMatchPicker({service, arrId: Number(mediaid), title, category: category || undefined,
+                   onDone: () => { _delProposalsAll = null; loadDeletions(currentDelCategory); }});
 }
 
 // Pass 17: read the "Just-arrived" toggle + days dropdown from the DOM.
@@ -6136,117 +6133,121 @@ function onApplyOrphanRepair(btn) {
 }
 
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
-async function loadMappingStats() {
+// Two questions, two result areas — the second answer no longer overwrites the first.
+async function loadMappingStats(btn) {
   const el = document.getElementById('mapping-stats');
-  el.innerHTML = '<span style="color:var(--amber)">Loading…</span>';
+  btnBusy(btn, 'Loading…');
   try {
     const s = await api('/api/enrichment/mapping-stats');
     el.innerHTML = `
-      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
-        <span><strong style="color:var(--amber)">${(s.total_entries||0).toLocaleString()}</strong> <span style="color:var(--text2)">total entries</span></span>
-        <span><strong style="color:var(--success)">${(s.tvdb_mapped||0).toLocaleString()}</strong> <span style="color:var(--text2)">TVDB mapped</span></span>
-        <span><strong style="color:var(--info)">${(s.anilist_resolved||0).toLocaleString()}</strong> <span style="color:var(--text2)">AniList resolved</span></span>
-        <span><strong style="color:var(--danger)">${(s.anilist_missing||0).toLocaleString()}</strong> <span style="color:var(--text2)">AniList pending</span></span>
+      <div class="row mt-4" style="gap:16px">
+        <span><b class="t-amber">${(s.total_entries || 0).toLocaleString()}</b> <span class="t2">total entries</span></span>
+        <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString()}</b> <span class="t2">TVDB mapped</span></span>
+        <span><b>${(s.anilist_resolved || 0).toLocaleString()}</b> <span class="t2">AniList resolved</span></span>
+        <span><b class="t-danger">${(s.anilist_missing || 0).toLocaleString()}</b> <span class="t2">AniList pending</span></span>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">
-        Downloaded: ${s.downloaded_at ? new Date(s.downloaded_at).toLocaleString() : 'never'} · refreshes weekly
-      </div>`;
-  } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
-  }
+      <div class="fs-11 t3 mt-4">Downloaded: ${s.downloaded_at ? esc(new Date(s.downloaded_at).toLocaleString()) : 'never'} · refreshes weekly</div>`;
+  } catch (e) { el.innerHTML = _errHtml(e); }
+  btnDone(btn);
 }
 
-async function checkMappingCoverage() {
-  const el = document.getElementById('mapping-stats');
-  el.innerHTML = '<span style="color:var(--amber)">Checking Sonarr coverage… this may take a moment</span>';
+async function checkMappingCoverage(btn) {
+  const el = document.getElementById('mapping-coverage');
+  btnBusy(btn, 'Checking…');
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Checking Sonarr coverage… this may take a moment</p>';
   try {
     const c = await api('/api/enrichment/mapping-coverage');
-    if (c.error) { el.innerHTML = `<span style="color:var(--danger)">${esc(c.error)}</span>`; return; }
-    el.innerHTML = `
-      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
-        <span><strong style="color:var(--amber)">${c.total_anime}</strong> <span style="color:var(--text2)">anime in Sonarr</span></span>
-        <span><strong style="color:var(--success)">${c.covered} (${c.coverage_pct}%)</strong> <span style="color:var(--text2)">in mapping</span></span>
-        <span><strong style="color:var(--info)">${c.anilist_resolved}</strong> <span style="color:var(--text2)">AniList ready</span></span>
-        <span><strong style="color:var(--danger)">${c.missing}</strong> <span style="color:var(--text2)">not in mapping</span></span>
+    if (c.error) el.innerHTML = `<p class="load-err">${esc(c.error)}</p>`;
+    else el.innerHTML = `
+      <div class="row mt-8" style="gap:16px">
+        <span><b class="t-amber">${c.total_anime}</b> <span class="t2">anime in Sonarr</span></span>
+        <span><b class="t-success">${c.covered} (${c.coverage_pct}%)</b> <span class="t2">in mapping</span></span>
+        <span><b>${c.anilist_resolved}</b> <span class="t2">AniList ready</span></span>
+        <span><b class="t-danger">${c.missing}</b> <span class="t2">not in mapping</span></span>
       </div>
       ${c.missing_sample?.length ? `
-      <details style="margin-top:8px">
-        <summary style="font-size:11px;color:var(--text3);cursor:pointer">Not mapped (${c.missing} total)</summary>
-        <div style="margin-top:6px">
-          ${c.missing_sample.map(m=>`<div style="font-size:11px;color:var(--danger)">${esc(m.title)} tvdb:${m.tvdb_id||'?'} — ${esc(m.reason)}</div>`).join('')}
-        </div>
+      <details class="mt-8">
+        <summary class="fs-11 t3" style="cursor:pointer">Not mapped (${c.missing} total)</summary>
+        <div class="mt-4">${c.missing_sample.map(m => `<div class="fs-11 t-danger">${esc(m.title)} tvdb:${m.tvdb_id || '?'} — ${esc(m.reason)}</div>`).join('')}</div>
       </details>` : ''}`;
-  } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
-  }
+  } catch (e) { el.innerHTML = _errHtml(e); }
+  btnDone(btn);
 }
 
-async function loadProfiles(offset=0) {
+const PROFILE_PAGE = 8;
+async function loadProfiles(offset = 0) {
   const cat    = document.getElementById('profile-cat')?.value    || 'movie';
   const src    = document.getElementById('profile-source')?.value || 'all';
   const search = document.getElementById('profile-search')?.value || '';
   const el = document.getElementById('profile-browser');
   el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading profiles…</p>';
   try {
-    const r = await api(`/api/enrichment/profiles?category=${cat}&source=${src}&limit=8&offset=${offset}&search=${encodeURIComponent(search)}`);
+    const r = await api(`/api/enrichment/profiles?category=${cat}&source=${src}&limit=${PROFILE_PAGE}&offset=${offset}&search=${encodeURIComponent(search)}`);
     if (!r.profiles?.length) {
-      el.innerHTML = '<p class="loading" role="status" aria-live="polite">No enriched profiles found. Run enrichment first.</p>';
+      el.innerHTML = emptyHtml('No enriched profiles found — run an enrichment first.');
       return;
     }
+    const srcLabel = p => p.profile_source === 'watch_history' ? 'watched'
+      : (p.profile_source || '').startsWith('arr:') ? p.profile_source.slice(4) : (p.profile_source || '?');
+    const block = (label, html, mono) => html
+      ? `<div class="mb-8"><div class="fs-10 t3" style="text-transform:uppercase;letter-spacing:.6px">${label}</div><div class="${mono ? 'fs-11 t3 mono' : 'fs-12 t2'} mt-4" style="line-height:1.6;word-break:break-word">${html}</div></div>` : '';
     el.innerHTML = `
-      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">${r.total} enriched · showing ${offset+1}–${Math.min(offset+8,r.total)}</div>
+      <div class="fs-12 t3 mb-8">${r.total.toLocaleString()} enriched · showing ${offset + 1}–${Math.min(offset + PROFILE_PAGE, r.total)}</div>
       ${r.profiles.map(p => `
-        <div class="card" style="margin-bottom:10px">
-          <div style="display:flex;align-items:flex-start;gap:8px;justify-content:space-between;cursor:pointer"
-               onclick="this.closest('.card').querySelector('.pd').style.display=this.closest('.card').querySelector('.pd').style.display==='none'?'block':'none'">
-            <div style="flex:1">
-              <div style="font-weight:600;font-size:13px">${esc(p.title)}</div>
-              <div style="font-size:11px;color:var(--text3);margin-top:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                <span style="color:${p.has_profile?'var(--success)':'var(--text3)'}">${p.has_profile?SVG_CHECK:SVG_X}</span>
-                <span style="color:${p.source?.includes('+llm')?'var(--success)':p.source?.includes('rule_based')?'var(--amber)':'var(--text3)'}">
-                  ${esc(p.source||'?')}${p.source?.includes('rule_based')?' '+SVG_WARN:''}
-                </span>
-                ${p.rating?`· <span style="color:var(--amber)">${SVG_STAR}</span> ${p.rating}`:''}
-                · ${p.enriched_at?new Date(p.enriched_at).toLocaleDateString():'?'}
-                · <span style="padding:1px 5px;border-radius:3px;font-size:10px;background:${
-                    p.profile_source==='watch_history'?'rgba(99,179,237,.15)':
-                    p.profile_source?.startsWith('arr:radarr')?'rgba(246,173,85,.15)':
-                    p.profile_source?.startsWith('arr:sonarr')?'rgba(154,230,180,.15)':
-                    p.profile_source?.startsWith('arr:lidarr')?'rgba(183,148,246,.15)':'rgba(255,255,255,.08)'
-                  };color:${
-                    p.profile_source==='watch_history'?'#63b3ed':
-                    p.profile_source?.startsWith('arr:radarr')?'#f6ad55':
-                    p.profile_source?.startsWith('arr:sonarr')?'#9ae6b4':
-                    p.profile_source?.startsWith('arr:lidarr')?'#b794f4':'var(--text3)'
-                  }">${
-                    p.profile_source==='watch_history'?'watched':
-                    p.profile_source==='arr:radarr'?'radarr':
-                    p.profile_source==='arr:sonarr'?'sonarr':
-                    p.profile_source==='arr:lidarr'?'lidarr':esc(p.profile_source||'?')
-                  }</span>
+        <details class="panel-item">
+          <summary class="panel-item-head">
+            <div class="grow">
+              <div class="panel-item-title">${esc(p.title)}
+                <span class="badge ${p.has_profile ? 'success' : 'muted'} badge-sm">${p.has_profile ? 'profile' : 'no profile'}</span>
+                <span class="badge ${p.source?.includes('+llm') ? 'success' : p.source?.includes('rule_based') ? 'amber' : 'muted'} badge-sm">${esc(p.source || '?')}</span>
+                <span class="badge muted badge-sm">${esc(srcLabel(p))}</span>
+                ${p.rating ? `<span class="fs-11 t-amber">${SVG_STAR} ${p.rating}</span>` : ''}
+                <span class="fs-11 t3">${p.enriched_at ? new Date(p.enriched_at).toLocaleDateString() : '?'}</span>
               </div>
-              ${p.genres?.length?`<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${p.genres.slice(0,5).map(g=>`<span class="badge muted">${esc(g)}</span>`).join('')}</div>`:''}
+              ${p.genres?.length ? `<div class="row mt-4" style="gap:4px">${p.genres.slice(0, 5).map(g => `<span class="badge muted badge-sm">${esc(g)}</span>`).join('')}</div>` : ''}
             </div>
-            <span style="font-size:11px;color:var(--text3);flex-shrink:0">▼</span>
+            <span class="fs-11 t3">details</span>
+          </summary>
+          <div class="panel-item-foot" style="border-top:1px solid var(--border);padding-top:10px">
+            ${block('Themes', p.themes?.length ? esc(p.themes.join(' · ')) : '')}
+            ${block('Mood', p.mood?.length ? esc(p.mood.join(' · ')) : '')}
+            ${block('Summary', p.plot_summary ? esc(p.plot_summary) : '')}
+            ${block('Embedding text', p.embedding_text ? esc(p.embedding_text) : '', true)}
           </div>
-          <div class="pd" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            ${p.themes?.length?`<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Themes</span><div style="font-size:12px;color:var(--text2);margin-top:2px">${p.themes.join(' · ')}</div></div>`:''}
-            ${p.mood?.length?`<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Mood</span><div style="font-size:12px;color:var(--text2);margin-top:2px">${p.mood.join(' · ')}</div></div>`:''}
-            ${p.plot_summary?`<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Summary</span><div style="font-size:12px;color:var(--text2);margin-top:2px;line-height:1.6">${esc(p.plot_summary)}</div></div>`:''}
-            ${p.embedding_text?`<div><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Embedding text</span><div style="font-size:11px;color:var(--text3);margin-top:2px;font-family:monospace;line-height:1.5;word-break:break-word">${esc(p.embedding_text)}</div></div>`:''}
-          </div>
-        </div>`).join('')}
-      <div style="display:flex;gap:8px;margin-top:4px">
-        ${offset>0?`<button class="btn btn-secondary btn-sm" onclick="loadProfiles(${offset-8})">← Prev</button>`:''}
-        ${offset+8<r.total?`<button class="btn btn-secondary btn-sm" onclick="loadProfiles(${offset+8})">Next →</button>`:''}
-      </div>`;
-  } catch(e) {
+        </details>`).join('')}
+      ${pagerHtml({offset, limit: PROFILE_PAGE, total: r.total, call: 'loadProfiles({offset})'})}`;
+  } catch (e) {
     el.innerHTML = _errHtml(e);
   }
 }
 
 // ── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
-
+// Five sub-views behind one tab row: Overview (the table every number comes
+// from + the list behind any number), Needs attention, Maintenance, Music
+// pipeline, Profile browser. Each loads when opened; the overview repolls
+// itself while something runs. Lists reload only after an owner action
+// (_kbRefresh), never on the poll — a list that re-renders under the cursor
+// every 8 s is the thing this replaces.
+let _kbTab = 'overview';
+let _kbDrill = null;                       // {cat, states, offset} while a drilldown is open
+let _kbAtt = {offset: 0, reason: null};    // the Needs-attention page + filter chip
+const _kbLoaded = new Set();
+function showKbTab(name) {
+  _kbTab = name || 'overview';
+  document.querySelectorAll('#kb-tabs .cat-tab').forEach(b => b.classList.toggle('active', b.dataset.kbtab === _kbTab));
+  document.querySelectorAll('#enrich-view .kb-tab').forEach(s => { s.hidden = s.dataset.kbtab !== _kbTab; });
+  if (_kbTab === 'overview' || _kbTab === 'maintenance') loadEnrichStatus();
+  if (_kbTab === 'attention') loadKbAttention(_kbAtt.offset, _kbAtt.reason);
+  if (_kbTab === 'music') loadMusicStatus();
+  if (_kbTab === 'profiles' && !_kbLoaded.has('profiles')) loadProfiles();
+  _kbLoaded.add(_kbTab);
+}
+// After an owner action: the numbers, and whichever lists are on screen.
+function _kbRefresh() {
+  loadEnrichStatus();
+  if (document.getElementById('kb-attention')?.dataset.loaded) loadKbAttention(_kbAtt.offset, _kbAtt.reason);
+  if (_kbDrill) loadKbItems(_kbDrill.cat, _kbDrill.states, _kbDrill.offset);
+}
 
 // Fallback copy only — the live definitions arrive with the /overview payload
 // (services/enrichment_state.py is the single source of truth for the states).
@@ -6270,26 +6271,24 @@ function _renderKbOverview(o, running, lastRun) {
   const served = Object.entries(o.state_definitions || {}).map(([k, v]) => [k, `${v.explainer} ${v.next_step || ''}`.trim()]);
   const defs = Object.assign({}, KB_STATE_DEFS, Object.fromEntries(served));
   const order = ['movie', 'show', 'anime', 'music'];
+  // Every count is a door: click → the list behind it (same classification).
+  const num = (v, cat, keys, tip, cls) => v
+    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" onclick="loadKbItems('${cat}','${keys}')">${v.toLocaleString()}</button>`
+    : `<span class="t3" title="${escAttr(tip)}">0</span>`;
   const rows = order.filter(c => cats[c]).map(cat => {
     const c = cats[cat], d = c.denominator, s = c.states;
     const n = k => s[k] || 0;
     const done = n('enriched') + n('enriched_provisional');
     const pct = d.downloaded ? Math.round(100 * done / d.downloaded) : 0;
-    // Every count is a door: click → the list behind it (same classification).
-    const cell = keys => {
-      const v = keys.reduce((a, k) => a + n(k), 0);
-      const tip = keys.map(k => defs[k] || k).join(' · ') + (v ? ' — click to list' : '');
-      const click = v ? ` onclick="loadKbItems('${cat}','${keys.join(',')}')"` : '';
-      return `<td title="${escAttr(tip)}" style="text-align:right${v ? ';cursor:pointer;text-decoration:underline dotted' : ';color:var(--text3)'}"${click}>${v.toLocaleString()}</td>`;
-    };
+    const cell = keys => `<td class="t-right">${num(keys.reduce((a, k) => a + n(k), 0), cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</td>`;
     return `<tr>
-      <td>${cat}</td>
-      <td style="text-align:right">${d.downloaded.toLocaleString()} <span style="color:var(--text3)">/ ${d.arr_total.toLocaleString()}</span></td>
-      <td style="text-align:right;color:var(--success);font-weight:600;cursor:pointer" title="${escAttr(defs.enriched + ' — click to list')}" onclick="loadKbItems('${cat}','enriched,enriched_provisional')">${done.toLocaleString()} <span style="color:var(--text3);font-weight:400">${pct}%</span></td>
+      <td>${esc(CAT_LABELS[cat] || cat)}</td>
+      <td class="t-right">${d.downloaded.toLocaleString()} <span class="t3">/ ${d.arr_total.toLocaleString()}</span></td>
+      <td class="t-right">${num(done, cat, 'enriched,enriched_provisional', defs.enriched, 't-success b')} <span class="t3">${pct}%</span></td>
       ${cell(['enriched_dead'])}${cell(['rule_based', 'awaiting_llm'])}${cell(['retry_due'])}${cell(['not_found'])}${cell(['queued', 'processing_error'])}${cell(['ignored'])}${cell(['never_processed'])}
-      <td style="text-align:right" title="Items with at least one vector-store entry (deduplicated by item identity)">${c.vectors.indexed.toLocaleString()}</td>
-      <td style="text-align:right" title="Live raw cache entries carrying Wikipedia significance">${c.wikipedia.significance_cached.toLocaleString()}</td>
-      <td style="text-align:right" title="Live raw cache entries with OMDb data (writer / awards / extended plot)">${c.omdb.covered.toLocaleString()}</td>
+      <td class="t-right" title="Items with at least one vector-store entry (deduplicated by item identity)">${c.vectors.indexed.toLocaleString()}</td>
+      <td class="t-right" title="Live raw cache entries carrying Wikipedia significance">${c.wikipedia.significance_cached.toLocaleString()}</td>
+      <td class="t-right" title="Live raw cache entries with OMDb data (writer / awards / extended plot)">${c.omdb.covered.toLocaleString()}</td>
     </tr>`;
   }).join('');
 
@@ -6305,63 +6304,73 @@ function _renderKbOverview(o, running, lastRun) {
     const bits = [];
     if (op.due_now) bits.push(`${op.due_now.toLocaleString()} due next run`);
     if (op.waiting) bits.push(`${op.waiting.toLocaleString()} waiting on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
-    if (op.needs_attention) bits.push(`<span style="color:var(--amber)">${op.needs_attention.toLocaleString()} need attention</span>`);
-    return `<div style="font-size:11px;color:var(--text3)"><b style="color:var(--text2)">${cat}</b>: ${p(done)}% enriched · ${p(ign)}% ignored · ${p(open)}% open${bits.length ? ' — ' + bits.join(', ') : ''}</div>`;
+    if (op.needs_attention) bits.push(`<button type="button" class="link-num t-amber" onclick="showKbTab('attention')">${op.needs_attention.toLocaleString()} need attention</button>`);
+    return `<div class="fs-11 t3"><b class="t2">${esc(CAT_LABELS[cat] || cat)}</b>: ${p(done)}% enriched · ${p(ign)}% ignored · ${p(open)}% open${bits.length ? ' — ' + bits.join(', ') : ''}</div>`;
   }).join('');
 
   const wh = o.watch_history_only || {};
   const whRows = order.filter(c => wh[c]).map(c =>
-    `<tr><td>${c}</td><td style="text-align:right">${wh[c].rows.toLocaleString()}</td><td style="text-align:right">${wh[c].enriched.toLocaleString()}</td><td style="text-align:right;color:var(--text3)">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
-
-  const mp = o.music_pipeline || {};
-  const phase = (label, pp, def) => pp ? `<tr><td title="${def}">${label}</td><td style="text-align:right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td style="text-align:right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+    `<tr><td>${esc(CAT_LABELS[c] || c)}</td><td class="t-right">${wh[c].rows.toLocaleString()}</td><td class="t-right">${wh[c].enriched.toLocaleString()}</td><td class="t-right t3">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
   const st = o.storage || {};
 
   document.getElementById('enrich-overview').innerHTML = `
-    <div class="tbl-wrap" style="margin-bottom:6px;overflow-x:auto">
-      <table class="tbl"><thead><tr>
-        <th>Library</th>
-        <th style="text-align:right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
-        <th style="text-align:right" title="Full profile written (including provisional fast-pass profiles)">Enriched</th>
-        <th style="text-align:right" title="Enriched flag set but the cached profile is gone">Dead</th>
-        <th style="text-align:right" title="Rule-based profile or LLM polish still pending">Partial</th>
-        <th style="text-align:right" title="Not found so far; waiting time over — the next run tries again">Retry due</th>
-        <th style="text-align:right" title="Every consulted source missed; waiting on the backoff">Not found</th>
-        <th style="text-align:right" title="Queued or crashed — processed on the next run">Queued</th>
-        <th style="text-align:right" title="Accepted by the owner as unenriched">Ignored</th>
-        <th style="text-align:right">Never</th>
-        <th style="text-align:right">Vectors</th>
-        <th style="text-align:right">Wikipedia</th>
-        <th style="text-align:right">OMDb</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-    </div>
-    <div style="margin:0 0 8px">${openLines}</div>
-    <p style="font-size:11px;color:var(--text3);margin:0 0 16px">One denominator per row: downloaded ARR items. Hover any header or number for its definition; click a number for the list behind it. Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
-    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px">
-      <div style="flex:1;min-width:260px">
-        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages above">Watch-history tracking (own set)</div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th style="text-align:right">Tracking rows</th><th style="text-align:right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th style="text-align:right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div>
+    <section class="section">
+      <div class="section-head"><h3>Library coverage</h3>
+        <span class="section-hint">One denominator per row: downloaded arr items. Hover a header for its definition, click a number for the list behind it.</span>
+        <div class="section-actions">
+          ${running ? '<span class="badge amber badge-sm">Enrichment running <span id="enrich-pct-live"></span></span>' : ''}
+          ${lastRun ? `<span class="fs-11 t3" title="${escAttr(_fmtAbs(lastRun))}">last run ${_fmtRel(lastRun)}</span>` : ''}
+        </div>
       </div>
-      <div style="flex:1;min-width:260px">
-        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Spotify pipeline</div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Phase</th><th style="text-align:right">Progress</th><th></th></tr></thead><tbody>
-          ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
-          ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
-          ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
-        </tbody></table></div>
+      <div class="section-body">
+        <div class="tbl-wrap" style="overflow-x:auto">
+          <table class="tbl"><thead><tr>
+            <th>Library</th>
+            <th class="t-right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
+            <th class="t-right" title="Full profile written (including provisional fast-pass profiles)">Enriched</th>
+            <th class="t-right" title="Enriched flag set but the cached profile is gone">Dead</th>
+            <th class="t-right" title="Rule-based profile or LLM polish still pending">Partial</th>
+            <th class="t-right" title="Not found so far; waiting time over — the next run tries again">Retry due</th>
+            <th class="t-right" title="Every consulted source missed; waiting on the backoff">Not found</th>
+            <th class="t-right" title="Queued or crashed — processed on the next run">Queued</th>
+            <th class="t-right" title="Accepted by the owner as unenriched">Ignored</th>
+            <th class="t-right">Never</th>
+            <th class="t-right">Vectors</th>
+            <th class="t-right">Wikipedia</th>
+            <th class="t-right">OMDb</th>
+          </tr></thead><tbody>${rows}</tbody></table>
+        </div>
+        <div class="mt-8">${openLines}</div>
+        <p class="fs-11 t3 mt-8">Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
       </div>
-    </div>
-    <p style="font-size:11px;color:var(--text3);margin-bottom:4px">Storage: enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</p>
-    <div id="cache-inventory-block" style="margin:2px 0 8px">
-      <button class="btn btn-secondary btn-sm" onclick="loadCacheInventory(this)" title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button>
-      <div id="cache-inventory"></div>
-    </div>
-    ${running ? '<p style="color:var(--amber);margin-top:8px;font-size:12px">Enrichment running… <span id="enrich-pct-live"></span></p>' : ''}
-    ${lastRun ? `<p style="color:var(--text3);font-size:11px;margin-top:6px">Last run: ${new Date(lastRun).toLocaleString()}</p>` : ''}`;
+    </section>
+    <div class="row" style="align-items:stretch">
+      <section class="section grow" style="min-width:280px">
+        <div class="section-head"><h3>Watch-history tracking</h3><span class="section-hint" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages">own set, not part of the percentages</span></div>
+        <div class="section-body"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
+      </section>
+      <section class="section grow" style="min-width:280px">
+        <div class="section-head"><h3>Storage</h3><span class="section-hint">enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</span>
+          <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="loadCacheInventory(this)" title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button></div></div>
+        <div class="section-body"><div id="cache-inventory"></div></div>
+      </section>
+    </div>`;
+
+  // The Spotify phases live on the Music-pipeline tab, fed by the same payload.
+  const mp = o.music_pipeline || {};
+  const phase = (label, pp, def) => pp ? `<tr><td title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+  const mpEl = document.getElementById('music-phases');
+  if (mpEl) mpEl.innerHTML = `<section class="section">
+    <div class="section-head"><h3>Coverage</h3><span class="section-hint">where the imported plays stand</span></div>
+    <div class="section-body"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
+      ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
+      ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
+      ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
+    </tbody></table></div></div></section>`;
 }
 
 async function loadCacheInventory(btn) {
-  if (btn) btn.textContent = 'Loading…';
+  btnBusy(btn, 'Loading…');
   try {
     const r = await api('/api/enrichment/cache-inventory');
     const rows = r.classes.map(c =>
@@ -6382,13 +6391,20 @@ async function loadCacheInventory(btn) {
         OMDb writer ${cov.omdb_writer.toLocaleString()} · awards ${cov.omdb_awards.toLocaleString()} ·
         reception ${cov.reception_checked.toLocaleString()} — of ${cov.raw_total.toLocaleString()} raw entries.
         Total ${r.totals.rows.toLocaleString()} rows · ${r.totals.mb} MB (${r.totals.expired.toLocaleString()} stale).</p>`;
-    if (btn) btn.remove();
+    if (btn) btn.remove();   // a permanent button for a finished job is clutter
   } catch (e) {
-    if (btn) btn.textContent = 'Cache inventory (failed — retry)';
+    btnDone(btn, 'Cache inventory (failed — retry)');
   }
 }
 
-async function loadEnrichStatus(forceRefresh) {
+// The numbers (overview + custodian + backfill). Repolls itself every 8 s
+// while a run or a custodian tick is in progress; lists are NOT touched here
+// (see _kbRefresh). Called from showKbTab, the Refresh button and after runs.
+let _kbPollTimer = null;
+async function loadEnrichStatus() {
+  if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
+  const el = document.getElementById('enrich-overview');
+  if (el && !el.innerHTML) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
   try {
     const [ov, st, cust] = await Promise.all([
       api('/api/enrichment/overview'),
@@ -6398,11 +6414,8 @@ async function loadEnrichStatus(forceRefresh) {
     _renderKbOverview(ov, !!st.running, st.last_run);
     if (cust) _renderCustodianBar(cust);
     loadBackfillPanel();
-    const att = document.getElementById('kb-attention');
-    if (att && (forceRefresh || !att.dataset.loaded)) loadKbAttention();
-    if (st.running || (cust && cust.ticking)) setTimeout(() => loadEnrichStatus(true), 8000);
+    if (st.running || (cust && cust.ticking)) _kbPollTimer = setTimeout(loadEnrichStatus, 8000);
   } catch (e) {
-    const el = document.getElementById('enrich-overview');
     if (el) el.innerHTML = _errHtml(e, 'loadEnrichStatus()');
   }
 }
@@ -6413,14 +6426,17 @@ async function loadEnrichStatus(forceRefresh) {
 // Owner actions: Search & pin (positive pin), Not this one (negative pin),
 // Retry now, Ignore / Un-ignore. Button copy is mirrored in app_context.py.
 const KB_SOURCE_LABELS = {tmdb: 'TMDB', omdb: 'OMDb', anilist: 'AniList', jikan: 'MAL', mb: 'MusicBrainz', lastfm: 'Last.fm'};
-const KB_SOURCE_GLYPH = {ok: '✓', miss: '✗', transient: '⏳', skipped: '–'};
+const KB_SOURCE_GLYPH = {ok: '✓', miss: '✗', transient: '…', skipped: '–'};
 const PIN_ID_KINDS = ['tmdb_id', 'tvdb_id', 'imdb_id', 'anilist_id', 'mal_id', 'mbid'];
 const KB_PAGE = 50, KB_ATT_PAGE = 100;
 
+// The sidebar bubble and the tab count are the same number: what the
+// Needs-attention page lists (the overview counts it with the same rule).
 function _updateKbBadge(o) {
   let n = 0;
   for (const c of Object.values(o?.categories || {})) n += c?.open?.needs_attention || 0;
   setBadge('kb-badge', n);
+  setBadge('kb-tab-badge', n);
 }
 
 function _fmtDate(iso) {
@@ -6433,7 +6449,7 @@ function _kbSourceChips(sources) {
   return (sources || []).map(s => {
     const name = KB_SOURCE_LABELS[s.source] || s.source;
     const hit = s.title ? ` → ${s.title}${s.year ? ` (${s.year})` : ''}` : '';
-    return `<span class="badge muted" style="font-size:10px" title="${escAttr(`${name}: ${s.status}${hit}`)}">${esc(name)} ${KB_SOURCE_GLYPH[s.status] || esc(s.status || '')}</span>`;
+    return `<span class="badge muted badge-sm" title="${escAttr(`${name}: ${s.status}${hit}`)}">${esc(name)} ${KB_SOURCE_GLYPH[s.status] || esc(s.status || '')}</span>`;
   }).join(' ');
 }
 
@@ -6441,34 +6457,45 @@ function _kbData(it) {
   return `data-svc="${escAttr(it.service)}" data-id="${Number(it.arr_id)}" data-title="${escAttr(it.title || '')}" data-year="${it.year || ''}" data-cat="${escAttr(it.category || '')}"`;
 }
 
+// Row actions (admin): three visible, the rest behind More. Button copy is
+// mirrored in app_context.py — rename here, rename there.
 function _kbItemActions(it) {
   if (!currentUser?.is_admin) return '';
   const d = _kbData(it);
   const ign = it.state === 'ignored';
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-    <button class="btn btn-secondary btn-sm" ${d} onclick="kbFixMatch(this)" title="Search the arr, TMDB or AniList and pin the entity this item really is">Search &amp; pin</button>
-    <button class="btn btn-secondary btn-sm" ${d} onclick="kbRetry(this)" title="Attempts back to zero — the next enrichment run tries again">Retry now</button>
-    ${ign ? `<button class="btn btn-secondary btn-sm" ${d} onclick="kbUnignore(this)" title="Back into the queue">Un-ignore</button>`
-          : `<button class="btn btn-secondary btn-sm" ${d} onclick="kbIgnore(this)" title="Accept the gap: no more retries, not counted as open">Ignore</button>`}
-    ${it.arr_url ? `<a class="btn btn-secondary btn-sm" href="${escAttr(it.arr_url)}" target="_blank" rel="noopener">Open in ${esc(it.service)}</a>` : ''}
-  </div><div id="fixmatch-${escAttr(it.service)}-${Number(it.arr_id)}" style="display:none;margin-top:8px"></div>`;
+  return `<div class="panel-actions">
+    <button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbFixMatch(this)" title="Search the arr, TMDB or AniList and pin the entity this item really is">Search &amp; pin</button>
+    <button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbRetry(this)" title="Attempts back to zero — the next enrichment run tries again">Retry now</button>
+    ${ign ? `<button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbUnignore(this)" title="Back into the queue">Un-ignore</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbIgnore(this)" title="Accept the gap: no more retries, not counted as open">Ignore</button>`}
+    ${menuHtml([it.arr_url ? {label: `Open in ${it.service}`, href: it.arr_url} : null])}
+  </div>`;
 }
 
+// One row per item, the same anatomy everywhere: head (title, badges,
+// actions) → the sentence → attempts/next try/match → findings → sources.
 function _kbItemCard(it, extraBadges) {
-  const conf = (it.match_confidence != null && it.match_basis === 'title_search') ? ` · match ${Math.round(it.match_confidence * 100)}%` : '';
-  const pin = it.pin ? `<span class="badge amber" style="font-size:10px" title="${escAttr(JSON.stringify(it.pin))}">pinned</span>` : '';
-  const meta = [it.attempt_count ? `tried ${it.attempt_count}×` : '', it.next_retry_at ? `next ${_fmtDate(it.next_retry_at)}` : ''].filter(Boolean).join(' · ');
-  return `<div style="border-top:1px solid var(--border);padding:8px 0">
-    <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
-      <b style="font-size:13px">${esc(it.title || '?')}</b>${it.year ? `<span style="color:var(--text3)">(${it.year})</span>` : ''}
-      <span class="badge muted" style="font-size:10px">${esc(it.service)}</span>
-      <span class="badge muted" style="font-size:10px">${esc(it.state_label || it.state)}</span>${pin}${extraBadges || ''}
-      <span style="color:var(--text3);font-size:11px;margin-left:auto">${esc(meta)}${conf}</span>
+  const pin = it.pin ? `<span class="badge amber badge-sm" title="${escAttr(JSON.stringify(it.pin))}">pinned</span>` : '';
+  const meta = [
+    it.attempt_count ? `tried ${it.attempt_count}×` : '',
+    it.next_retry_at ? `<span title="${escAttr(_fmtAbs(it.next_retry_at))}">next try ${_fmtRel(it.next_retry_at)}</span>` : '',
+    (it.match_confidence != null && it.match_basis === 'title_search') ? `matched by title at ${Math.round(it.match_confidence * 100)}%` : '',
+  ].filter(Boolean).join(' · ');
+  const findings = (it.findings || []).map(f => `<div class="panel-item-meta row mt-4">
+      <span class="badge danger badge-sm">${esc(f.label || f.base || f.kind)}</span><span>${esc(_kbFindingText(f))}</span>
+      ${currentUser?.is_admin ? `<button type="button" class="btn btn-secondary btn-sm" data-fid="${Number(f.id)}" onclick="kbDismissFinding(this)" title="Silence this finding for good — the audit will not raise it again">Dismiss finding</button>` : ''}
+    </div>`).join('');
+  return `<div class="panel-item">
+    <div class="panel-item-head">
+      <div class="panel-item-title">${esc(it.title || '?')}${it.year ? `<span class="t3">(${it.year})</span>` : ''}
+        <span class="badge muted badge-sm">${esc(it.service)}</span>
+        <span class="badge muted badge-sm">${esc(it.state_label || it.state)}</span>${pin}${extraBadges || ''}</div>
+      ${_kbItemActions(it)}
     </div>
-    <div style="font-size:12px;color:var(--text2);margin-top:3px">${esc(it.reason || '')}</div>
-    ${(it.findings || []).map(f => `<div style="font-size:11px;color:var(--text3);margin-top:3px">⚑ <b>${esc(f.label || f.base || f.kind)}</b> — ${esc(_kbFindingText(f))}${currentUser?.is_admin ? ` <button class="btn btn-secondary btn-sm" style="padding:0 6px;font-size:10px" data-fid="${Number(f.id)}" onclick="kbDismissFinding(this)" title="Silence this finding for good — the audit will not raise it again">Dismiss finding</button>` : ''}</div>`).join('')}
-    ${it.sources?.length ? `<div style="margin-top:4px">${_kbSourceChips(it.sources)}</div>` : ''}
-    ${_kbItemActions(it)}
+    <div class="panel-item-sub">${esc(it.reason || '')}</div>
+    ${meta ? `<div class="panel-item-meta mt-4">${meta}</div>` : ''}
+    ${findings}
+    ${it.sources?.length ? `<div class="panel-item-foot">${_kbSourceChips(it.sources)}</div>` : ''}
   </div>`;
 }
 
@@ -6482,85 +6509,114 @@ function _kbFindingText(f) {
   if (f.base === 'malformed') return 'the cached profile is not readable';
   return f.kind || '';
 }
-function kbDismissFinding(btn) { return _kbAction(btn, `/api/enrichment/findings/${Number(btn.dataset.fid)}/dismiss`, 'POST', 'Dismissed'); }
+function kbDismissFinding(btn) { return _kbAction(btn, `/api/enrichment/findings/${Number(btn.dataset.fid)}/dismiss`, 'POST', 'Finding dismissed — the audit will not raise it again'); }
 
+// The list behind a number: a section under the overview table with the
+// state explainer as its hint, a pager and a Close.
 async function loadKbItems(cat, states, offset = 0) {
   const el = document.getElementById('kb-drilldown');
   if (!el) return;
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite" style="font-size:12px">Loading…</p>';
+  const fresh = !_kbDrill || _kbDrill.cat !== cat || _kbDrill.states !== states;
+  _kbDrill = {cat, states, offset};
+  if (fresh) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
   try {
     const r = await api(`/api/enrichment/items?category=${encodeURIComponent(cat)}&state=${encodeURIComponent(states)}&offset=${offset}&limit=${KB_PAGE}`);
     const defs = Object.values(r.definitions || {});
-    const nav = `${offset > 0 ? `<button class="btn btn-secondary btn-sm" onclick="loadKbItems('${esc(cat)}','${esc(states)}',${Math.max(0, offset - KB_PAGE)})">← Prev</button>` : ''}
-      ${offset + KB_PAGE < r.total ? `<button class="btn btn-secondary btn-sm" onclick="loadKbItems('${esc(cat)}','${esc(states)}',${offset + KB_PAGE})">Next →</button>` : ''}`;
-    el.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
-        <div><b style="font-size:13px">${esc(cat)} · ${esc(defs.map(d => d.label).join(' / '))}</b> <span style="color:var(--text3);font-size:12px">${r.total.toLocaleString()} items</span></div>
-        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('kb-drilldown').innerHTML=''">Close</button>
+    el.innerHTML = `<section class="section">
+      <div class="section-head">
+        <h3>${esc(CAT_LABELS[cat] || cat)} · ${esc(defs.map(d => d.label).join(' / '))} <span class="badge muted badge-sm">${r.total.toLocaleString()}</span></h3>
+        <span class="section-hint">${esc(defs.map(d => `${d.explainer} ${d.next_step || ''}`).join(' '))}</span>
+        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="closeKbDrilldown()">Close</button></div>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin:4px 0 6px">${esc(defs.map(d => `${d.explainer} ${d.next_step || ''}`).join(' '))}</p>
-      ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : '<p style="font-size:12px;color:var(--text3)">Nothing here.</p>'}
-      <div style="display:flex;gap:8px;margin-top:8px">${nav}</div>
-    </div>`;
-    el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      <div class="section-body">
+        ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : emptyHtml('Nothing here.')}
+        ${pagerHtml({offset, limit: KB_PAGE, total: r.total, call: `loadKbItems('${cat}','${states}',{offset})`})}
+      </div>
+    </section>`;
+    if (fresh) el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   } catch (e) { el.innerHTML = _errHtml(e); }
 }
+function closeKbDrilldown() {
+  _kbDrill = null;
+  const el = document.getElementById('kb-drilldown');
+  if (el) el.innerHTML = '';
+}
 
-async function loadKbAttention(offset = 0) {
+// Needs attention: filter chips per reason (server-side, so the page count
+// is honest), the same rows as the drilldown plus one amber badge per reason.
+async function loadKbAttention(offset = 0, reason = null) {
   const el = document.getElementById('kb-attention');
   if (!el) return;
+  _kbAtt = {offset, reason: reason || null};
+  if (!el.dataset.loaded) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
   try {
-    const r = await api(`/api/enrichment/unmatched?offset=${offset}&limit=${KB_ATT_PAGE}`);
+    const q = new URLSearchParams({offset: String(offset), limit: String(KB_ATT_PAGE)});
+    if (reason) q.set('reason', reason);
+    const r = await api(`/api/enrichment/unmatched?${q.toString()}`);
     el.dataset.loaded = '1';
     const defs = r.reason_definitions || {};
-    const counts = Object.entries(r.by_reason || {}).map(([k, n]) => `<span class="badge muted" style="font-size:10px" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}: ${n}</span>`).join(' ');
-    const badgesFor = it => (it.reasons || []).map(k => `<span class="badge amber" style="font-size:10px" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}</span>`).join('');
-    const nav = `${offset > 0 ? `<button class="btn btn-secondary btn-sm" onclick="loadKbAttention(${Math.max(0, offset - KB_ATT_PAGE)})">← Prev</button>` : ''}
-      ${offset + KB_ATT_PAGE < r.total ? `<button class="btn btn-secondary btn-sm" onclick="loadKbAttention(${offset + KB_ATT_PAGE})">Next →</button>` : ''}`;
-    el.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
-        <div><b style="font-size:13px">Needs attention</b> <span style="color:var(--text3);font-size:12px">${r.total.toLocaleString()} items the pipeline cannot settle alone</span></div>
-        <div style="display:flex;gap:4px;flex-wrap:wrap">${counts}</div>
+    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" onclick="loadKbAttention(0, ${key ? `'${key}'` : 'null'})" title="${escAttr(defs[key]?.explainer || 'Everything that needs a human')}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString()}</span></button>`;
+    const chips = [chip('', 'All', r.total_all ?? r.total)]
+      .concat(Object.entries(r.by_reason || {}).map(([k, n]) => chip(k, defs[k]?.label || k, n))).join('');
+    const badgesFor = it => (it.reasons || []).map(k => `<span class="badge amber badge-sm" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}</span>`).join('');
+    const findingsNote = Object.keys(r.findings_summary || {}).length
+      ? ` Open audit findings: ${Object.entries(r.findings_summary).map(([k, n]) => `${esc(defs[k]?.label || k)} ${n}`).join(' · ')}.` : '';
+    const empty = reason ? emptyHtml('Nothing in this group.') : emptyHtml('Nothing needs a human right now.', null, null, {good: true});
+    el.innerHTML = `<section class="section">
+      <div class="section-head">
+        <h3>Needs attention <span class="badge amber badge-sm">${r.total.toLocaleString()}</span></h3>
+        <span class="section-hint">${reason ? esc(defs[reason]?.label || reason) : 'the items the pipeline cannot settle alone'}</span>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin:4px 0 6px">Tried twice or more without a hit, found under the wrong year, refused as too far off, matched with middling confidence, or flagged by the weekly audit (wrong entity, shared id, pin contradicted). Pin the right entity, retry, dismiss a finding, or accept the gap.${Object.keys(r.findings_summary || {}).length ? ` Open audit findings: ${Object.entries(r.findings_summary).map(([k, n]) => `${esc(defs[k]?.label || k)} ${n}`).join(' · ')}.` : ''}</p>
-      ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : '<p style="font-size:12px;color:var(--success)">Nothing needs a human right now.</p>'}
-      <div style="display:flex;gap:8px;margin-top:8px">${nav}</div>
-    </div>`;
+      <div class="section-body">
+        <p class="fs-12 t3 mb-8">Tried twice or more without a hit, found under the wrong year, refused as too far off, matched with middling confidence, or flagged by the weekly audit (wrong entity, shared id, pin contradicted). Pin the right entity, retry, dismiss a finding, or accept the gap.${findingsNote}</p>
+        <div class="row mb-12">${chips}</div>
+        ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : empty}
+        ${pagerHtml({offset, limit: KB_ATT_PAGE, total: r.total, call: `loadKbAttention({offset}, ${reason ? `'${reason}'` : 'null'})`})}
+      </div>
+    </section>`;
   } catch (e) { el.innerHTML = _errHtml(e); }
 }
 
+// Owner actions on a row: the button shows busy, the outcome is a toast, and
+// the numbers + the lists on screen reload.
 async function _kbAction(btn, path, method, doneText) {
-  btn.disabled = true;
-  const old = btn.textContent;
-  btn.textContent = '…';
+  btnBusy(btn);
   try {
     const r = await api(path, method);
-    btn.textContent = r.success ? doneText : (r.error || 'Failed');
-    if (r.success) setTimeout(() => loadEnrichStatus(true), 400);
-    else btn.disabled = false;
-  } catch (e) {
-    btn.textContent = 'Failed'; btn.disabled = false;
-    setTimeout(() => { btn.textContent = old; }, 2000);
-  }
+    if (r.success) { toast(doneText, 'success'); _kbRefresh(); }
+    else { toast(r.error || 'Failed', 'danger'); btnDone(btn); }
+  } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
-function kbRetry(btn)    { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/retry`, 'POST', 'Queued'); }
-function kbIgnore(btn)   { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'POST', 'Ignored'); }
-function kbUnignore(btn) { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'DELETE', 'Back in queue'); }
+function kbRetry(btn)    { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/retry`, 'POST', 'Attempts reset — the next run tries again'); }
+function kbIgnore(btn)   { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'POST', 'Ignored — no more retries, not counted as open'); }
+function kbUnignore(btn) { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'DELETE', 'Back in the queue'); }
 
 function kbFixMatch(btn) {
   const {svc, id, title, year, cat} = btn.dataset;
-  const box = document.getElementById(`fixmatch-${svc}-${Number(id)}`);
-  if (!box) return;
-  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
-  box.style.display = 'block';
-  renderMatchPicker(box, {service: svc, arrId: Number(id), title, year: year ? Number(year) : null, category: cat || undefined});
+  openMatchPicker({service: svc, arrId: Number(id), title, year: year ? Number(year) : null, category: cat || undefined, onDone: _kbRefresh});
 }
 
-// ── Match picker: the arr's own lookup + TMDB / AniList candidates, free id
-//    fields, and the negative pin. Shared by the KB page and deletion cards.
+// ── Match picker (dialog): the arr's own lookup + TMDB / AniList candidates,
+//    a free id row, and the negative pin. One dialog for the KB page and the
+//    deletion cards; the category is resolved server-side, never invented
+//    here. Pin closes it (toast + the caller's onDone), "Not this one" only
+//    drops that candidate from the list so another can be picked.
+let _pickerCtx = null;
+function openMatchPicker(opts) {
+  _pickerCtx = opts;
+  openModal({
+    title: `Fix match — ${opts.title || '?'}${opts.year ? ` (${opts.year})` : ''}`, size: 'wide',
+    body: '<div id="match-picker-body"></div>',
+    foot: `<span class="fs-11 t3 grow">The pin outranks every automatic match and survives rescans. "Not this one" excludes a candidate for good.</span>
+           <button type="button" class="btn btn-secondary btn-sm" onclick="removeFixMatch(this)" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button>`,
+    onClose: () => { _pickerCtx = null; },
+  });
+  renderMatchPicker(document.getElementById('match-picker-body'), opts);
+}
+
 async function renderMatchPicker(box, opts) {
   const {service, arrId, title, year, category} = opts;
-  box.innerHTML = '<p class="loading" role="status" aria-live="polite" style="font-size:12px">Searching candidates…</p>';
+  box.innerHTML = '<p class="loading" role="status" aria-live="polite">Searching the arr, TMDB and AniList…</p>';
   const q = new URLSearchParams({service, arr_id: String(arrId), title: title || ''});
   if (year) q.set('year', String(year));
   if (category) q.set('category', category);
@@ -6572,37 +6628,38 @@ async function renderMatchPicker(box, opts) {
     const idsOf = c => PIN_ID_KINDS.reduce((o, k) => { if (c[k] != null && c[k] !== '') o[k] = c[k]; return o; }, {});
     const idLine = c => PIN_ID_KINDS.filter(k => c[k]).map(k => `${k.replace('_id', '')}:${esc(String(c[k]))}`).join(' · ');
     box.innerHTML = `
-      <div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--bg3)">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pick the entity this library item really is — the pin outranks every automatic match and survives rescans. "Not this one" excludes a wrong candidate for good.</div>
-        ${cands.length ? cands.map(c => `
-          <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border)">
-            <div style="flex:1;font-size:12px"><b>${esc(c.title || '?')}</b> ${c.year ? `(${c.year})` : ''} <span class="badge muted" style="font-size:10px">${esc(c.kind || '')}</span>
-              <span style="color:var(--text3)">${idLine(c)}</span>
-              <div style="color:var(--text3);font-size:11px">${esc(c.overview || c.disambiguation || '')}</div></div>
-            <button class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerPin(this)">Pin</button>
-            <button class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerReject(this)" title="Never resolve to this candidate again">Not this one</button>
-          </div>`).join('') : `<p style="font-size:12px;color:var(--text3)">${esc(r.error || 'No candidates found — enter an id below.')}</p>`}
-        <div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
-          <select class="input" style="width:auto;font-size:12px">${PIN_ID_KINDS.map(k => `<option value="${k}">${k}</option>`).join('')}</select>
-          <input class="input" style="width:180px;font-size:12px" placeholder="id, e.g. 603 or tt0133093">
-          <button class="btn btn-secondary btn-sm" ${ctx} onclick="pickerFreePin(this)">Pin this id</button>
-          <button class="btn btn-secondary btn-sm" onclick="removeFixMatch(this,'${esc(service)}',${Number(arrId)})" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button>
-        </div>
+      ${cands.length ? cands.map(c => `
+        <div class="panel-item">
+          <div class="panel-item-head">
+            <div class="panel-item-title">${esc(c.title || '?')}${c.year ? `<span class="t3">(${c.year})</span>` : ''}
+              <span class="badge muted badge-sm">${esc(c.kind || '')}</span><span class="t3 fs-11">${idLine(c)}</span></div>
+            <div class="panel-actions">
+              <button type="button" class="btn btn-primary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerPin(this)">Pin</button>
+              <button type="button" class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerReject(this)" title="Never resolve to this candidate again">Not this one</button>
+            </div>
+          </div>
+          ${(c.overview || c.disambiguation) ? `<div class="panel-item-sub">${esc(c.overview || c.disambiguation)}</div>` : ''}
+        </div>`).join('') : emptyHtml(esc(r.error || 'No candidates found — pin an id directly below.'))}
+      <div class="row mt-12">
+        <span class="fs-12 t2">Pin an id directly:</span>
+        <select class="input" aria-label="Id kind">${PIN_ID_KINDS.map(k => `<option value="${k}">${k}</option>`).join('')}</select>
+        <input class="input" style="width:180px" aria-label="Id" placeholder="e.g. 603 or tt0133093" onkeydown="if(event.key==='Enter')this.nextElementSibling.click()">
+        <button type="button" class="btn btn-secondary btn-sm" ${ctx} onclick="pickerFreePin(this)">Pin this id</button>
       </div>`;
-  } catch (e) { box.innerHTML = `<p style="font-size:12px;color:var(--danger)">${esc(_errMsg(e))}</p>`; }
+  } catch (e) { box.innerHTML = _errHtml(e); }
 }
 
-async function _pickerPost(btn, payload, doneText) {
-  btn.disabled = true; btn.textContent = '…';
+async function _pickerPost(btn, payload, doneText, keepOpen = false) {
+  btnBusy(btn);
   try {
     const r = await api('/api/enrichment/match-override', 'POST', payload);
-    btn.textContent = r.success ? doneText : (r.error || 'Failed');
-    if (r.success) {
-      const box = btn.closest('div[id^="fixmatch-"]');
-      if (box) box.innerHTML = `<p style="font-size:12px;color:var(--success)">${esc(r.message || 'Saved.')}</p>`;
-      if (document.getElementById('kb-attention')?.dataset.loaded) setTimeout(() => loadEnrichStatus(true), 400);
-    } else btn.disabled = false;
-  } catch (e) { btn.textContent = 'Failed'; btn.disabled = false; }
+    if (!r.success) { toast(r.error || 'Failed', 'danger'); btnDone(btn); return; }
+    toast(r.message || doneText, 'success');
+    const done = _pickerCtx?.onDone;
+    if (keepOpen) btn.closest('.panel-item')?.remove();   // the excluded candidate leaves the list
+    else closeModal();
+    if (done) done();
+  } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 function _pickerBase(btn) {
   const {svc, id, cat, title} = btn.dataset;
@@ -6610,14 +6667,24 @@ function _pickerBase(btn) {
   if (cat) p.category = cat;
   return p;
 }
-function pickerPin(btn)    { return _pickerPost(btn, Object.assign(_pickerBase(btn), JSON.parse(btn.dataset.ids || '{}')), 'Pinned'); }
-function pickerReject(btn) { return _pickerPost(btn, Object.assign(_pickerBase(btn), {rejected: [JSON.parse(btn.dataset.ids || '{}')]}), 'Excluded'); }
+function pickerPin(btn)    { return _pickerPost(btn, Object.assign(_pickerBase(btn), JSON.parse(btn.dataset.ids || '{}')), 'Pinned — re-enriches on the next run'); }
+function pickerReject(btn) { return _pickerPost(btn, Object.assign(_pickerBase(btn), {rejected: [JSON.parse(btn.dataset.ids || '{}')]}), 'Excluded for good', true); }
 function pickerFreePin(btn) {
   const wrap = btn.parentElement;
   const kind = wrap.querySelector('select').value, val = wrap.querySelector('input').value.trim();
-  if (!val) { btn.textContent = 'Enter an id'; return; }
+  if (!val) { toast('Enter an id first.', 'amber'); wrap.querySelector('input').focus(); return; }
   const p = _pickerBase(btn); p[kind] = val;
-  return _pickerPost(btn, p, 'Pinned');
+  return _pickerPost(btn, p, 'Pinned — re-enriches on the next run');
+}
+async function removeFixMatch(btn) {
+  const c = _pickerCtx;
+  if (!c) return;
+  btnBusy(btn);
+  try {
+    const r = await api(`/api/enrichment/match-override/${encodeURIComponent(c.service)}/${Number(c.arrId)}`, 'DELETE');
+    if (r.success) { toast(r.message || 'Pin removed — the item re-resolves on the next run', 'success'); closeModal(); if (c.onDone) c.onDone(); }
+    else { toast(r.error || 'No pin found', 'amber'); btnDone(btn); }
+  } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 
 // ── DATA CUSTODIAN (debt-based maintenance — replaces the button zoo) ────────
@@ -6638,15 +6705,12 @@ function _renderCustodianBar(c) {
   } else {
     line = 'No maintenance run yet this session — first tick fires a few minutes after start.';
   }
-  el.innerHTML = `
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-      <div style="font-size:12px;color:var(--text2);min-width:200px;flex:1">
-        <span style="font-weight:600;color:var(--text)">Data custodian</span>
-        <span title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups."> · ${esc(line)}</span>
-        ${due ? ` <span class="badge amber" style="font-size:10px">${due} task${due > 1 ? 's' : ''} due</span>` : ' <span class="badge muted" style="font-size:10px">all caught up</span>'}
-      </div>
-      <button class="btn btn-secondary btn-sm" onclick="runMaintenance(this)" ${c.ticking ? 'disabled' : ''}>Run maintenance now</button>
-    </div>`;
+  el.innerHTML = `<section class="section">
+    <div class="section-head">
+      <h3>Data custodian ${due ? `<span class="badge amber badge-sm">${due} task${due > 1 ? 's' : ''} due</span>` : '<span class="badge muted badge-sm">all caught up</span>'}</h3>
+      <span class="section-hint" title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups.">${esc(line)}</span>
+      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="runMaintenance(this)"${c.ticking ? ' disabled' : ''}>Run maintenance now</button></div>
+    </div></section>`;
 }
 
 // First-run backfill. The archive sources fill themselves on a daily tick,
@@ -6661,57 +6725,47 @@ async function loadBackfillPanel() {
   catch (e) { el.innerHTML = ''; return; }
   if (!d || !d.any_offer) { el.innerHTML = ''; return; }   // nothing worth offering
   const rows = d.sources.filter(s => s.offer).map(s => `
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--border)">
-      <div style="flex:1;min-width:220px">
-        <div style="font-size:12px;font-weight:600;color:var(--text)">${esc(s.label)}</div>
-        <div style="font-size:11px;color:var(--text3)">${esc(s.blurb)}</div>
+    <div class="panel-item${s.running ? ' live' : ''}">
+      <div class="panel-item-head">
+        <div class="panel-item-title">${esc(s.label)}${s.running ? '<span class="badge amber badge-sm">running</span>' : ''}</div>
+        <div class="panel-actions">${s.running
+          ? `<button type="button" class="btn btn-secondary btn-sm" onclick="stopBackfill('${esc(s.key)}',this)">Stop</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" onclick="startBackfill('${esc(s.key)}',this)">Fetch now</button>`}</div>
       </div>
-      <div style="min-width:150px">
-        <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${s.pct}%"></div></div>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">${s.pct}% · ${s.missing.toLocaleString()} to go</div>
+      <div class="panel-item-sub">${esc(s.blurb)}</div>
+      <div class="panel-item-foot">
+        <div class="progress-bar" style="margin-top:0"><div class="progress-fill" style="width:${Number(s.pct) || 0}%"></div></div>
+        <div class="fs-11 t3 mt-4">${s.pct}% · ${s.missing.toLocaleString()} to go</div>
       </div>
-      ${s.running
-        ? `<button class="btn btn-secondary btn-sm" onclick="stopBackfill('${s.key}',this)">Stop</button>`
-        : `<button class="btn btn-secondary btn-sm" onclick="startBackfill('${s.key}',this)">Fetch now</button>`}
     </div>`).join('');
-  el.innerHTML = `
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px">
-      <div style="font-size:12px;color:var(--text2)">
-        <span style="font-weight:600;color:var(--text)">Finish the backfill</span>
-        · these sources feed the deletion judge. The daily tick fills them slowly;
-        fetch them now and this panel disappears above ${d.threshold_pct}% coverage.
-      </div>
-      ${rows}
-    </div>`;
+  el.innerHTML = `<section class="section">
+    <div class="section-head"><h3>Finish the backfill</h3><span class="section-hint">These sources feed the deletion judge. The daily tick fills them slowly; fetch them now and this panel disappears above ${d.threshold_pct}% coverage.</span></div>
+    <div class="section-body">${rows}</div></section>`;
 }
 
 async function startBackfill(source, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'starting…'; }
-  try {
-    await api('/api/enrichment/backfill/' + source, 'POST');
-    if (btn) btn.textContent = 'running…';
-  } catch (e) {
-    if (btn) { btn.textContent = 'failed'; btn.disabled = false; }
-  }
+  btnBusy(btn, 'Starting…');
+  try { await api('/api/enrichment/backfill/' + source, 'POST'); toast('Backfill started — progress shows in Activity', 'success'); }
+  catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   // The panel re-reads coverage, so a finished source removes its own row.
   setTimeout(loadBackfillPanel, 1500);
 }
 
 async function stopBackfill(source, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'stopping…'; }
-  try { await api('/api/enrichment/backfill/' + source + '/stop', 'POST'); } catch (e) {}
+  btnBusy(btn, 'Stopping…');
+  try { await api('/api/enrichment/backfill/' + source + '/stop', 'POST'); toast('Stop requested', 'info'); }
+  catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadBackfillPanel, 1200);
 }
 
 async function runMaintenance(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'starting…'; }
+  btnBusy(btn, 'Starting…');
   try {
     const r = await api('/api/enrichment/custodian/run', 'POST');
-    if (btn) btn.textContent = r.status === 'started' ? 'running…' : 'already running';
-  } catch (e) {
-    if (btn) btn.textContent = 'failed';
-  }
-  setTimeout(() => loadEnrichStatus(true), 4000);
+    if (r.status === 'started') toast('Maintenance started — whatever is due runs now', 'success');
+    else toast('Maintenance is already running', 'info');
+  } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
+  setTimeout(loadEnrichStatus, 4000);
 }
 
 // ── MUSIC PIPELINE ────────────────────────────────────────────────────────────
@@ -6741,156 +6795,112 @@ function _renderMusicStatus(s) {
     s.last_run ? `last run ${new Date(s.last_run).toLocaleString()}` : 'never run',
   ].join(' · ');
 
-  // Running badge
-  document.getElementById('music-running-badge').style.display = running ? '' : 'none';
-  document.getElementById('music-start-btn').style.display = running ? 'none' : '';
-  document.getElementById('music-stop-btn').style.display  = running ? '' : 'none';
+  // Running badge + the one Start/Stop slot
+  document.getElementById('music-running-badge').hidden = !running;
+  document.getElementById('music-start-btn').hidden = running;
+  document.getElementById('music-stop-btn').hidden = !running;
 
-  // Progress bar
+  // Progress: the bar is a journey across the phases, not a percentage of one
   const progBar   = document.getElementById('music-progress-bar');
   const progLabel = document.getElementById('music-progress-label');
   const progFill  = document.getElementById('music-progress-fill');
-
   if (running || (prog.phase && prog.phase !== 'done')) {
-    progBar.style.display = '';
-    const phase   = prog.phase || '';
-    const queried = prog.tracks_queried ?? 0;
-    const total   = prog.total_unique   ?? 0;
-    const pct     = Math.min(100, prog.pct ?? (total ? Math.round(100 * queried / total) : 0));
-
-    if (phase === 'plex_match') {
-      progLabel.textContent = `Phase 1: Matching plays to Plex…`;
-      progFill.style.width = '15%';
-    } else if (phase === 'plex_match_done') {
-      progLabel.textContent = `Phase 1 done — matched: ${prog.matched ?? 0}, unmatched: ${prog.unmatched ?? 0}. Resolving MBIDs…`;
-      progFill.style.width = '20%';
-    } else if (phase === 'mbid_resolve') {
-      // Pass 16l: Phase 1.4 progress — MusicBrainz artist-MBID resolution
-      // batches at ~1 req/s, so a 200-artist batch is ~3.5min. Without this
-      // the UI sat silent between Phase 1 and Phase 1.5.
-      const q  = prog.queried ?? 0;
-      const bs = prog.batch_size ?? 0;
-      const rs = prog.resolved ?? 0;
-      const lbl = bs
-        ? `Phase 1.4: MusicBrainz — ${q} / ${bs} artists (${rs} resolved, ${prog.pct ?? 0}%)`
-        : `Phase 1.4: Resolving artist MBIDs…`;
-      progLabel.textContent = lbl;
-      progFill.style.width = Math.min(20 + Math.round(7 * (prog.pct ?? 0) / 100), 27) + '%';
-    } else if (phase === 'mbid_resolve_done') {
-      progLabel.textContent = `Phase 1.4 done — ${prog.resolved ?? 0} MBIDs resolved. Starting Spotify…`;
-      progFill.style.width = '27%';
-    } else if (phase === 'spotify_enrich') {
-      progLabel.textContent = `Phase 1.5: Fetching genres from Spotify…`;
-      progFill.style.width = '28%';
-    } else if (phase === 'lastfm_enrich') {
-      const label = total
-        ? `Phase 2: Last.fm — ${queried} / ${total} tracks (${pct}%)`
-        : `Phase 2: Last.fm — ${queried} tracks queried…`;
-      progLabel.textContent = label;
-      progFill.style.width = Math.min(35 + Math.round(64 * pct / 100), 99) + '%';
-    } else if (phase === 'lastfm_batch_done') {
-      const fb = prog.artist_fallback ?? 0;
-      const nd = prog.no_data ?? 0;
-      const sp = prog.spotify_enriched ?? 0;
-      const fbNote = fb > 0 ? ` (${fb} via artist fallback)` : '';
-      const ndNote = nd > 0 ? `, ${nd} cached as no-data` : '';
-      const spNote = sp > 0 ? ` · Spotify: ${sp}` : '';
-      progLabel.textContent = `Batch done${spNote} · Last.fm: ${queried} queried, ${prog.enriched_plays ?? 0} enriched${fbNote}${ndNote}.`;
-      progFill.style.width = '100%';
-    } else if (phase === 'done') {
-      const fb = prog.artist_fallback ?? 0;
-      const nd = prog.no_data ?? 0;
-      const sp = prog.spotify_enriched ?? 0;
-      const mr = prog.mbid_resolved   ?? 0;
-      const mp = prog.mbid_remaining  ?? 0;
-      const fbNote = fb > 0 ? ` · ${fb} via artist fallback` : '';
-      const ndNote = nd > 0 ? ` · ${nd} no-data cached` : '';
-      const spNote = sp > 0 ? ` · Spotify: ${sp}` : '';
-      // Pass 16n: surface Phase 1.4 in the done summary too
-      const mbidNote = mr > 0 || mp > 0
-        ? ` · MBIDs: ${mr} resolved${mp > 0 ? `, ${mp} pending` : ''}`
-        : '';
-      progLabel.textContent = `Done — Plex: ${prog.matched ?? 0} matched${mbidNote}${spNote} · Last.fm: ${prog.enriched_plays ?? 0} plays enriched${fbNote}${ndNote}`;
-      progFill.style.width = '100%';
-    } else {
-      progLabel.textContent = 'Starting…';
-      progFill.style.width = '5%';
-    }
+    progBar.hidden = false;
+    const [label, width] = _musicPhase(prog);
+    progLabel.textContent = label;
+    progFill.style.width = width + '%';
   } else {
-    progBar.style.display = 'none';
+    progBar.hidden = true;
   }
 
   // Auto-poll while running
   if (running) {
-    if (!_musicPollTimer) {
-      _musicPollTimer = setInterval(loadMusicStatus, 4000);
-    }
-  } else {
-    if (_musicPollTimer) { clearInterval(_musicPollTimer); _musicPollTimer = null; }
+    if (!_musicPollTimer) _musicPollTimer = setInterval(loadMusicStatus, 4000);
+  } else if (_musicPollTimer) {
+    clearInterval(_musicPollTimer); _musicPollTimer = null;
   }
 }
 
-async function startMusicPipeline() {
+// One entry per pipeline phase: [label, bar position]. Phase 1.4 (MusicBrainz
+// at ~1 req/s) used to leave the UI silent for minutes — it reports too.
+const MUSIC_PHASES = {
+  plex_match:        () => ['Phase 1: matching plays to Plex…', 15],
+  plex_match_done:   p => [`Phase 1 done — matched ${p.matched ?? 0}, unmatched ${p.unmatched ?? 0}. Resolving MBIDs…`, 20],
+  mbid_resolve:      p => [p.batch_size ? `Phase 1.4: MusicBrainz — ${p.queried ?? 0} / ${p.batch_size} artists (${p.resolved ?? 0} resolved, ${p.pct ?? 0}%)` : 'Phase 1.4: resolving artist MBIDs…',
+                           Math.min(20 + Math.round(7 * (p.pct ?? 0) / 100), 27)],
+  mbid_resolve_done: p => [`Phase 1.4 done — ${p.resolved ?? 0} MBIDs resolved. Starting Spotify…`, 27],
+  spotify_enrich:    () => ['Phase 1.5: fetching genres from Spotify…', 28],
+  lastfm_enrich:     p => {
+    const q = p.tracks_queried ?? 0, t = p.total_unique ?? 0, pct = Math.min(100, p.pct ?? (t ? Math.round(100 * q / t) : 0));
+    return [t ? `Phase 2: Last.fm — ${q} / ${t} tracks (${pct}%)` : `Phase 2: Last.fm — ${q} tracks queried…`, Math.min(35 + Math.round(64 * pct / 100), 99)];
+  },
+  lastfm_batch_done: p => [`Batch done${p.spotify_enriched > 0 ? ` · Spotify: ${p.spotify_enriched}` : ''} · Last.fm: ${p.tracks_queried ?? 0} queried, ${p.enriched_plays ?? 0} enriched`
+                           + `${p.artist_fallback > 0 ? ` (${p.artist_fallback} via artist fallback)` : ''}${p.no_data > 0 ? `, ${p.no_data} cached as no-data` : ''}.`, 100],
+  done:              p => [`Done — Plex: ${p.matched ?? 0} matched`
+                           + `${(p.mbid_resolved > 0 || p.mbid_remaining > 0) ? ` · MBIDs: ${p.mbid_resolved ?? 0} resolved${p.mbid_remaining > 0 ? `, ${p.mbid_remaining} pending` : ''}` : ''}`
+                           + `${p.spotify_enriched > 0 ? ` · Spotify: ${p.spotify_enriched}` : ''} · Last.fm: ${p.enriched_plays ?? 0} plays enriched`
+                           + `${p.artist_fallback > 0 ? ` · ${p.artist_fallback} via artist fallback` : ''}${p.no_data > 0 ? ` · ${p.no_data} no-data cached` : ''}`, 100],
+};
+function _musicPhase(p) {
+  const f = MUSIC_PHASES[p.phase || ''];
+  return f ? f(p) : ['Starting…', 5];
+}
+
+async function startMusicPipeline(btn) {
   const batch = parseInt(document.getElementById('music-batch-input').value) || 300;
-  const el = document.getElementById('music-result-area');
-  el.innerHTML = '<span style="color:var(--amber)">Starting pipeline…</span>';
-  try {
-    await api('/api/music/start', 'POST', { batch });
-    el.innerHTML = '<span style="color:var(--success)">Pipeline started</span>';
-    await loadMusicStatus();
-  } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
-  }
+  btnBusy(btn, 'Starting…');
+  try { await api('/api/music/start', 'POST', { batch }); toast('Music pipeline started', 'success'); await loadMusicStatus(); }
+  catch (e) { toast(_errMsg(e), 'danger'); }
+  btnDone(btn);
 }
 
-async function stopMusicPipeline() {
-  const el = document.getElementById('music-result-area');
-  el.innerHTML = '<span style="color:var(--text2)">Requesting stop…</span>';
-  try {
-    await api('/api/music/stop', 'POST');
-    el.innerHTML = '<span style="color:var(--amber)">Stop requested — finishing current batch…</span>';
-    await loadMusicStatus();
-  } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">${esc(_errMsg(e))}</span>`;
-  }
+async function stopMusicPipeline(btn) {
+  btnBusy(btn, 'Stopping…');
+  try { await api('/api/music/stop', 'POST'); toast('Stop requested — the current batch finishes first', 'info'); await loadMusicStatus(); }
+  catch (e) { toast(_errMsg(e), 'danger'); }
+  btnDone(btn);
 }
 
-async function startEnrichNew() {
-  const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
-  const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
+// Manual runs: the pressed button shows busy, the outcome is a toast; the
+// status line under the toolbar keeps only what outlives a toast (a scan
+// result, a load error).
+function _enrichCats() { return ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked); }
+function _enrichSrc()  { return document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history'; }
+
+async function startEnrichNew(btn) {
+  const cats = _enrichCats();
   const el = document.getElementById('enrich-progress-area');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Starting enrichment…</p>';
+  btnBusy(btn, 'Starting…');
   try {
-    const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src});
-    el.innerHTML = `<p style="color:var(--success);font-size:13px">Enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}</p>`;
-    setTimeout(() => loadEnrichStatus(true), 3000);
-  } catch(e) { el.innerHTML = _errHtml(e); }
+    await api('/api/enrichment/start', 'POST', {categories: cats, source: _enrichSrc()});
+    toast(`Enrichment started for ${cats.map(c => CAT_LABELS[c] || c).join(', ')}`, 'success');
+    el.innerHTML = '';
+    setTimeout(loadEnrichStatus, 3000);
+  } catch (e) { el.innerHTML = _errHtml(e); }
+  btnDone(btn);
 }
 
 async function startEnrichForce(btn) {
-  const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
-  if (!cats.length) {
-    alert('Select at least one category first.');
-    return;
-  }
-  if (!confirm(`Force re-enrich ${cats.map(c=>CAT_LABELS[c]||c).join(', ')}?\n\nThis clears all existing profiles and re-processes from scratch. Use after changing the AI model or enrichment prompts.`)) return;
-
+  const cats = _enrichCats();
+  if (!cats.length) { toast('Select at least one library first.', 'amber'); return; }
+  const labels = cats.map(c => CAT_LABELS[c] || c).join(', ');
+  const res = await confirmDialog({
+    title: 'Force re-enrich', danger: true, confirmLabel: 'Clear and re-enrich',
+    body: `<p>Every existing profile for <b>${esc(labels)}</b> is cleared and re-processed from scratch.</p><p class="t3 fs-12 mt-8">Use this after changing the model or the enrichment prompts.</p>`,
+  });
+  if (!res.ok) return;
   const el = document.getElementById('enrich-progress-area');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite" style="color:var(--amber)">Clearing cache and starting force re-enrichment…</p>';
-  if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+  btnBusy(btn, 'Working…');
   try {
-    const src = document.querySelector('input[name="enrich-src"]:checked')?.value || 'watch_history';
-    const r = await api('/api/enrichment/start', 'POST', {categories: cats, source: src, force: true});
-    el.innerHTML = `<p style="color:var(--amber);font-size:13px">Force re-enrichment started for: ${cats.map(c=>CAT_LABELS[c]||c).join(', ')} — cache cleared</p>`;
-    setTimeout(() => loadEnrichStatus(true), 3000);
-  } catch(e) {
-    el.innerHTML = _errHtml(e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Force Re-Enrich'; }
-  }
+    await api('/api/enrichment/start', 'POST', {categories: cats, source: _enrichSrc(), force: true});
+    toast(`Force re-enrichment started for ${labels} — cache cleared`, 'amber');
+    el.innerHTML = '';
+    setTimeout(loadEnrichStatus, 3000);
+  } catch (e) { el.innerHTML = _errHtml(e); }
+  btnDone(btn);
 }
 
-async function computeTaste() {
+async function computeTaste(btn) {
   const el = document.getElementById('enrich-progress-area');
   // Pass 62: category-aware. Reads the same enrich-cat-* checkboxes that
   // Start Enrichment / Force Re-Enrich use, instead of always recomputing
@@ -6899,16 +6909,16 @@ async function computeTaste() {
   // the param → backend recomputes everything (matches startEnrichNew's
   // "no checkboxes = all" behaviour). Lets the user recompute the big
   // movie/show/anime backlog without touching the music vectors.
-  const cats = ['music','movie','show','anime'].filter(c => document.getElementById(`enrich-cat-${c}`)?.checked);
+  const cats = _enrichCats();
   const label = cats.length ? cats.map(c => CAT_LABELS[c] || c).join(', ') : 'all categories';
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">Computing taste vectors for ${esc(label)}…</p>`;
+  btnBusy(btn, 'Starting…');
   try {
     const qs = cats.map(c => `categories=${encodeURIComponent(c)}`).join('&');
-    const url = qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste';
-    await api(url, 'POST');
-    el.innerHTML = `<p style="color:var(--success);font-size:13px">Taste vector computation started for ${esc(label)}</p>`;
+    await api(qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste', 'POST');
+    toast(`Taste vector computation started for ${label}`, 'success');
     setTimeout(() => showView('history', document.querySelector('.sb-item[onclick*=history]')), 3000);
-  } catch(e) { el.innerHTML = _errHtml(e); }
+  } catch (e) { el.innerHTML = _errHtml(e); }
+  btnDone(btn);
 }
 
 // Pass 55: two-step audit-requeue. First a dry-run that only counts, so the
@@ -6918,7 +6928,7 @@ async function computeTaste() {
 // itself (deliberate — see the Pass-55 design decision).
 async function auditRequeueEnrichments(btn) {
   const el = document.getElementById('enrich-progress-area');
-  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+  btnBusy(btn, 'Scanning…');
   el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
 
   const _reasonLabel = {
@@ -6933,37 +6943,28 @@ async function auditRequeueEnrichments(btn) {
   try {
     // Step 1 — dry run: scan + count only, change nothing.
     const scan = await api('/api/enrichment/audit-requeue?dry_run=true', 'POST');
-
     if (!scan.incomplete) {
-      el.innerHTML = `<p style="color:var(--success);font-size:13px">Scanned ${scan.scanned} profiles — all have complete metadata, nothing to requeue.</p>`;
+      el.innerHTML = `<p class="fs-13 t-success">Scanned ${scan.scanned} profiles — all have complete metadata, nothing to requeue.</p>`;
       return;
     }
-
-    const breakdown = _fmtBreakdown(scan.by_reason);
-    const proceed = confirm(
-      `Scanned ${scan.scanned} enrichment profiles.\n\n` +
-      `${scan.incomplete} need re-enrichment (incomplete or wrong-entity):\n  ${breakdown}\n\n` +
-      `Requeue these ${scan.incomplete} for re-enrichment?\n` +
-      `(Drops their cached profiles + marks them pending. The next ` +
-      `enrichment run re-fetches them — this won't start a run itself.)`
-    );
-    if (!proceed) {
-      el.innerHTML = `<p style="color:var(--text3);font-size:13px">Audit cancelled — ${scan.incomplete} flagged profiles left untouched.</p>`;
+    const res = await confirmDialog({
+      title: 'Requeue flagged profiles', confirmLabel: `Requeue ${scan.incomplete}`,
+      body: `<p>Scanned <b>${scan.scanned}</b> enrichment profiles; <b>${scan.incomplete}</b> need re-enrichment: ${esc(_fmtBreakdown(scan.by_reason))}.</p>
+             <p class="t3 fs-12 mt-8">Their cached profiles are dropped and they are marked pending. The next enrichment run re-fetches them — this does not start a run itself.</p>`,
+    });
+    if (!res.ok) {
+      el.innerHTML = `<p class="fs-13 t3">Audit cancelled — ${scan.incomplete} flagged profiles left untouched.</p>`;
       return;
     }
-
     // Step 2 — real requeue.
     el.innerHTML = '<p class="loading" role="status" aria-live="polite">Requeuing incomplete profiles…</p>';
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
-    el.innerHTML =
-      `<p style="color:var(--success);font-size:13px">Requeued ${r.requeued} ` +
-      `of ${r.incomplete} flagged profiles (${_fmtBreakdown(r.by_reason)}). ` +
-      `Run "Start Enrichment" to re-fetch them.</p>`;
-    setTimeout(() => loadEnrichStatus(true), 2000);
+    el.innerHTML = `<p class="fs-13 t-success">Requeued ${r.requeued} of ${r.incomplete} flagged profiles (${esc(_fmtBreakdown(r.by_reason))}). Run "Start Enrichment" to re-fetch them.</p>`;
+    setTimeout(loadEnrichStatus, 2000);
   } catch (e) {
     el.innerHTML = _errHtml(e);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Audit metadata'; }
+    btnDone(btn);
   }
 }
 
@@ -6972,21 +6973,18 @@ async function auditRequeueEnrichments(btn) {
 // rate-limited, so only ~1/3 of the library has those fields). Background job.
 async function omdbBackfill(btn) {
   const el = document.getElementById('enrich-progress-area');
-  const proceed = confirm(
-    "Backfill OMDb for every cached title with an imdb_id but no OMDb data " +
-    "(writer, awards, extended plot)?\n\n" +
-    "Runs in the background over the supporter key — watch the task monitor for progress."
-  );
-  if (!proceed) return;
-  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  const res = await confirmDialog({
+    title: 'Backfill OMDb', confirmLabel: 'Start backfill',
+    body: '<p>Fetches writer, awards and the extended plot for every cached title with an imdb_id but no OMDb data yet.</p><p class="t3 fs-12 mt-8">Runs in the background over the supporter key — progress shows in Activity.</p>',
+  });
+  if (!res.ok) return;
+  btnBusy(btn, 'Starting…');
   try {
     await api('/api/enrichment/omdb-backfill', 'POST');
-    el.innerHTML = '<p style="color:var(--success);font-size:13px">OMDb backfill started — progress shows in the task monitor.</p>';
-  } catch (e) {
-    el.innerHTML = _errHtml(e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Backfill OMDb'; }
-  }
+    toast('OMDb backfill started — progress shows in Activity', 'success');
+    el.innerHTML = '';
+  } catch (e) { el.innerHTML = _errHtml(e); }
+  btnDone(btn);
 }
 
 // ── LIBRARIES ─────────────────────────────────────────────────────────────────
@@ -7304,34 +7302,23 @@ function renderTasks(tasks) {
 function updateEnrichLiveSection(tasks) {
   const el = document.getElementById('enrich-live-section');
   if (!el) return;
-  const catTasks = tasks.filter(t => t.category && t.category.startsWith('enrich-'));
-  const active = catTasks.filter(t => t.status === 'running' || t.status === 'pending');
-  if (!active.length) {
-    el.style.display = 'none';
-    return;
-  }
-  el.style.display = 'block';
-  el.innerHTML = `
-    <div style="border:1px solid rgba(229,160,13,.35);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;background:rgba(229,160,13,.06)">
-      <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:10px">Enrichment running — ${active.length} categor${active.length===1?'y':'ies'} in parallel · 1 slot each</div>
-      ${active.map(t => {
-        const cat = t.category.replace('enrich-', '');
-        const pct = t.progress || 0;
-        const eta = t.eta_s ? ` · ETA ${fmtTime(Math.round(t.eta_s))}` : '';
-        const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
-        const current = t.logs && t.logs.length ? t.logs[t.logs.length-1].msg : '';
-        return `<div style="margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:3px">
-            <span style="font-weight:600">${cat.charAt(0).toUpperCase()+cat.slice(1)}</span>
-            <span style="color:var(--text3)">${(t.processed||0).toLocaleString()} / ${(t.total||0).toLocaleString()}${rate}${eta}</span>
-          </div>
-          <div style="background:var(--bg3);border-radius:3px;height:4px">
-            <div style="background:var(--amber);height:4px;border-radius:3px;width:${pct}%;transition:width .6s ease"></div>
-          </div>
-          ${current ? `<div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(current)}">${esc(current)}</div>` : ''}
-        </div>`;
-      }).join('')}
-    </div>`;
+  const active = tasks.filter(t => t.category && t.category.startsWith('enrich-') && (t.status === 'running' || t.status === 'pending'));
+  el.hidden = !active.length;
+  if (!active.length) return;
+  el.innerHTML = `<section class="section">
+    <div class="section-head"><h3>Enrichment running <span class="badge amber badge-sm">${active.length} categor${active.length === 1 ? 'y' : 'ies'}</span></h3><span class="section-hint">in parallel, one slot each</span></div>
+    <div class="section-body">${active.map(t => {
+      const cat = t.category.replace('enrich-', '');
+      const pct = t.progress || 0;
+      const eta = t.eta_s ? ` · ETA ${fmtTime(Math.round(t.eta_s))}` : '';
+      const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
+      const current = t.logs && t.logs.length ? t.logs[t.logs.length - 1].msg : '';
+      return `<div class="mb-8">
+        <div class="row fs-12"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString()} / ${(t.total || 0).toLocaleString()}${rate}${eta}</span></div>
+        <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${pct}%"></div></div>
+        ${current ? `<div class="fs-10 t3 mono mt-4" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(current)}">${esc(current)}</div>` : ''}
+      </div>`;
+    }).join('')}</div></section>`;
 }
 
 function _renderTaskHistory(r) {

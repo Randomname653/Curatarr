@@ -267,6 +267,13 @@ async def build_overview() -> dict:
         mc.close()
 
     # ── per-category aggregation over the classified items ────────────────────
+    # needs_attention counts exactly what the Needs-attention page lists —
+    # the same attention_reasons() call, pending findings included — so the
+    # sidebar badge and the page never disagree.
+    from src.database.connection import get_db_session
+    from src.services.enrichment_state import attention_reasons, finding_to_dict, pending_findings
+    with get_db_session() as db:
+        pend = {k: [finding_to_dict(f) for f in v] for k, v in pending_findings(db).items()}
     categories: dict = {}
     for it in await classified_items():
         c = categories.setdefault(it["category"], _empty_category())
@@ -280,6 +287,11 @@ async def build_overview() -> dict:
         c["states"][state] += 1
 
         o = c["open"]
+        if attention_reasons(state, it.get("error"), it.get("attempt_count") or 0,
+                             it.get("match_basis"), it.get("match_confidence"),
+                             has_external_id=any(it.get(k) for k in ("tmdb_id", "tvdb_id", "imdb_id", "mbid")),
+                             findings=pend.get(it["plex_rating_key"], ())):
+            o["needs_attention"] += 1
         if state in ("not_found", "retry_due"):
             if state == "retry_due":
                 o["due_now"] += 1
@@ -288,8 +300,6 @@ async def build_overview() -> dict:
                 nra = it.get("next_retry_at")
                 if nra and (o["next_due_at"] is None or nra < o["next_due_at"]):
                     o["next_due_at"] = nra
-            if (it.get("attempt_count") or 0) >= 2:
-                o["needs_attention"] += 1
         elif state in ("queued", "processing_error", "enriched_dead",
                        "rule_based", "awaiting_llm"):
             o["due_now"] += 1

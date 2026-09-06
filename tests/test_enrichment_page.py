@@ -307,8 +307,10 @@ def test_page_endpoints_and_frontend_wiring():
         assert route in en, route
     assert en.count("_kb.invalidate()") >= 5, "every write endpoint drops the KB cache"
     assert "classified_items" in en and "attention_reasons" in en
+    assert "reason in t[0]" in en and '"total_all"' in en, "Needs attention filters by reason server-side"
     kb = (_ROOT / "src/services/kb_overview.py").read_text(encoding="utf-8")
     assert "async def classified_items" in kb and "def invalidate" in kb
+    assert "attention_reasons(" in kb, "the sidebar badge counts what the Needs-attention page lists"
     me = (_ROOT / "src/services/media_enricher.py").read_text(encoding="utf-8")
     assert 'ctx["rejected"]' in me and "async def anilist_candidates" in me
     assert '"_match_basis"' in me and '"_reason":        "low_confidence"' in me

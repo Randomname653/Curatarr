@@ -143,6 +143,51 @@ def test_wiring():
         assert needle in fe, needle
 
 
+
+
+def test_unmatched_page_survives_a_pending_finding():
+    """2026-09-06: with ONE pending finding in the table, /unmatched raised
+    DetachedInstanceError — the findings summary read f.kind after the
+    session had closed and expired the rows. Every Needs-attention load was
+    a 500 from the first audit hit on. The summary is built inside the
+    session now; the reason filter added the same day is covered too."""
+    import asyncio
+    from src.routers import enrichment as en
+    from src.services import kb_overview as kb
+    fake, S = _mem_session()
+    with S() as s:
+        es.record_finding(s, plex_rating_key="radarr:102", kind="wrong_entity:year",
+                          service="radarr", arr_id=102, category="movie", title="Collateral",
+                          detail={"arr_year": 2004, "profile_year": 1968},
+                          now=datetime(2026, 9, 6, 12, 0, 0))
+        s.commit()
+
+    def item(prk, svc, arr_id, title, state, error, attempts):
+        return {"category": "movie", "service": svc, "arr_id": arr_id, "plex_rating_key": prk,
+                "title": title, "year": 2004, "tmdb_id": 1, "tvdb_id": None, "imdb_id": None,
+                "mbid": None, "downloaded": True, "state": state, "has_live": True, "vector": False,
+                "attempt_count": attempts, "next_retry_at": None, "error": error,
+                "match_basis": None, "match_confidence": None}
+
+    async def fake_items():
+        return [item("radarr:102", "radarr", 102, "Collateral", "enriched", None, 0),
+                item("radarr:104", "radarr", 104, "The Thing", "not_found", "Not found: no_source_data", 3)]
+
+    orig = (en.get_db_session, kb.classified_items)
+    en.get_db_session, kb.classified_items = fake, fake_items
+    try:
+        page = asyncio.run(en.enrichment_unmatched(user=None))
+        assert page["findings_summary"] == {"wrong_entity": 1}
+        assert page["total"] == page["total_all"] == 2
+        titles = {i["title"] for i in page["items"]}
+        assert titles == {"Collateral", "The Thing"}
+        only = asyncio.run(en.enrichment_unmatched(reason="not_found_repeatedly", user=None))
+        assert only["total"] == 1 and only["total_all"] == 2 and only["reason"] == "not_found_repeatedly"
+        assert [i["title"] for i in only["items"]] == ["The Thing"]
+        assert only["by_reason"] == page["by_reason"], "chip counts describe the whole set"
+    finally:
+        en.get_db_session, kb.classified_items = orig
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
