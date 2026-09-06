@@ -95,10 +95,13 @@ def _extract_relations(al: dict) -> list[dict]:
                      "anilist_id": node.get("id"), "mal_id": node.get("idMal")})
     return rels[:_MAX_RELATIONS]
 
+from src.services.llm_utils import UNTRUSTED_RULE, fence_untrusted  # noqa: E402
+
 _CONDENSE_SYS = (
     "You write a RECEPTION summary for a media curator's evidence file. "
     "Use ONLY the material given — never your own knowledge of the title. "
-    "If the material is thin, say so plainly instead of padding."
+    "If the material is thin, say so plainly instead of padding. "
+    + UNTRUSTED_RULE
 )
 
 
@@ -268,13 +271,18 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
                     stats, tags, "Audience too small for written reviews.") if x
                     ), relations, staff, finale
             lines = [f"TITLE: {title}", stats, tags]
+            # Reviews are the lowest-friction text anyone can post about a
+            # title — fenced as data, so a review that says "ignore the task
+            # above" is quoted material, not a new task.
             for rv in al_reviews:
-                lines.append(f"\nAniList review ({rv.get('score')}/100): "
-                             f"{_clip(rv.get('summary'), 200)} {_clip(rv.get('body'), 700)}")
+                lines.append(f"\nAniList review ({rv.get('score')}/100):\n"
+                             + fence_untrusted("anilist-review",
+                                               f"{_clip(rv.get('summary'), 200)} "
+                                               f"{_clip(rv.get('body'), 700)}"))
             for rv in mal_reviews:
                 t = ",".join(rv.get("tags") or [])
-                lines.append(f"\nMAL review ({rv.get('score')}/10, {t}): "
-                             f"{_clip(rv.get('review'), 900)}")
+                lines.append(f"\nMAL review ({rv.get('score')}/10, {t}):\n"
+                             + fence_untrusted("mal-review", _clip(rv.get('review'), 900)))
             lines.append("\nTASK: Write RECEPTION — 3 to 5 sentences: the community "
                          "verdict, what viewers praise, what they slam, and whether "
                          "opinion is split. Plain prose, no bullet points, no scores "
@@ -293,7 +301,8 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
         lines = [f"TITLE: {title}"]
         for rv in reviews[:_MAX_REVIEWS]:
             rating = (rv.get("author_details") or {}).get("rating")
-            lines.append(f"\nTMDB review ({rating}/10): {_clip(rv.get('content'), 800)}")
+            lines.append(f"\nTMDB review ({rating}/10):\n"
+                         + fence_untrusted("tmdb-review", _clip(rv.get('content'), 800)))
         lines.append("\nTASK: Write RECEPTION — 3 to 5 sentences: the community "
                      "verdict, what viewers praise, what they slam, and whether "
                      "opinion is split. Plain prose, no bullet points, no scores "
@@ -356,13 +365,14 @@ async def _finale_reception(client: httpx.AsyncClient, al: dict,
         lines.append(f"AniList score: {last['averageScore']}/100")
     for rv in al_reviews:
         lines.append("")
-        lines.append(f"AniList review ({rv.get('score')}/100): "
-                     f"{_clip(rv.get('summary'), 180)} {_clip(rv.get('body'), 600)}")
+        lines.append(f"AniList review ({rv.get('score')}/100):\n"
+                     + fence_untrusted("anilist-review",
+                                       f"{_clip(rv.get('summary'), 180)} {_clip(rv.get('body'), 600)}"))
     for rv in mal_reviews:
         t = ",".join(rv.get("tags") or [])
         lines.append("")
-        lines.append(f"MAL review ({rv.get('score')}/10, {t}): "
-                     f"{_clip(rv.get('review'), 800)}")
+        lines.append(f"MAL review ({rv.get('score')}/10, {t}):\n"
+                     + fence_untrusted("mal-review", _clip(rv.get('review'), 800)))
     lines.append("")
     lines.append("TASK: Write FINALE RECEPTION - 2 to 4 sentences on how the "
                  "series CONCLUDES per these reviews: tonal shifts, departures "

@@ -49,13 +49,31 @@ _TMDB_CACHE_TTL = 86_400            # 24 hours
 @router.get("/")
 async def get_recommendations(
     category: Optional[str] = Query(None),
-    limit: int = Query(8),
+    limit: int = Query(8, ge=1, le=50),
     refresh: bool = Query(False),
     source: str = Query("cache"),  # cache / library / external
     lane: Optional[str] = Query(None),  # filter cache to "library" / "discovery"
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Cache reads are free. Generating (``refresh``, the library or external
+    lane) is minutes of curator time on the shared GPU plus TMDB/OMDb calls
+    per candidate — the same per-user budget and one-at-a-time guard as
+    ``/refresh-cache``, or this GET was the way around them."""
+    generating = refresh or source in ("library", "external")
+    if not generating:
+        return await _get_recommendations_impl(category, limit, refresh, source, lane, user, db)
+    from src.services import rate_limit as _rl
+    _rl.enforce("recs-refresh", user.id, _rl.RECS_REFRESH_PER_10MIN, 600,
+                "Recommendations were generated recently — try again in a few minutes")
+    _rl.RECS_REFRESH_IN_FLIGHT.enter_or_409(user.id)
+    try:
+        return await _get_recommendations_impl(category, limit, refresh, source, lane, user, db)
+    finally:
+        _rl.RECS_REFRESH_IN_FLIGHT.leave(user.id)
+
+
+async def _get_recommendations_impl(category, limit, refresh, source, lane, user, db):
     from src.database.models import CachedRecommendation
     from src.services.app_state import get_state
     CAT_LABEL = {"movie":"🎬 Movies","show":"📺 TV Shows","anime":"⛩️ Anime","music":"🎵 Music"}
@@ -133,14 +151,27 @@ async def refresh_recommendation_cache(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
 ):
-    """Manually trigger recommendation cache refresh."""
+    """Manually trigger recommendation cache refresh.
+
+    One refresh per user at a time (a second click while one runs → 409),
+    and two starts per ten minutes: each refresh is minutes of curator time
+    on the shared GPU, and a stacked queue of them is the cheapest way for
+    one member token to own the LLM for an hour."""
+    from src.services import rate_limit as _rl
+    _rl.enforce("recs-refresh", user.id, _rl.RECS_REFRESH_PER_10MIN, 600,
+                "Recommendations were refreshed recently — try again in a few minutes")
+    _rl.RECS_REFRESH_IN_FLIGHT.enter_or_409(user.id)
     background_tasks.add_task(_run_cache_refresh, user.id)
     return {"status": "started", "message": "Generating recommendations in background…"}
 
 
 async def _run_cache_refresh(user_id: int):
     from src.services.scheduler import _cache_recommendations
-    await _cache_recommendations(user_id)
+    from src.services import rate_limit as _rl
+    try:
+        await _cache_recommendations(user_id)
+    finally:
+        _rl.RECS_REFRESH_IN_FLIGHT.leave(user_id)
 
 
 # ── POSTER / SYNOPSIS FETCHING ───────────────────────────────────────────────
@@ -363,7 +394,7 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
 
 @router.get("/by-category")
 async def get_recommendations_by_category(
-    limit: int = Query(5),
+    limit: int = Query(5, ge=1, le=50),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

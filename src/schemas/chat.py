@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 
@@ -47,6 +47,8 @@ class DiscussContext(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    message: str
+    # 8k chars is several screens of typing; anything larger only exists to
+    # blow the context window and burn a curator turn. 422 before any work.
+    message: str = Field(..., max_length=8000)
     discuss_context: Optional[DiscussContext] = None
 

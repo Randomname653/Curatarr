@@ -89,6 +89,17 @@ _ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (
 )
 
 
+async def _read_bounded(response, cap: int) -> Optional[bytes]:
+    """Accumulate a streamed body up to ``cap`` bytes; None once exceeded
+    (the header is not trusted — CDNs omit or misstate Content-Length)."""
+    buf = bytearray()
+    async for chunk in response.aiter_bytes():
+        buf += chunk
+        if len(buf) > cap:
+            return None
+    return bytes(buf)
+
+
 def _host_allowed(host: str) -> bool:
     if not host:
         return False
@@ -241,10 +252,14 @@ async def proxy_image(
                 next_url = src
                 r = None
                 for hop in range(4):   # initial + up to 3 redirects
-                    r = await client.get(next_url)
+                    # Streamed: the cap is enforced WHILE reading. Before, the
+                    # whole body was buffered first and only then measured —
+                    # backwards for an endpoint anyone on the LAN can call.
+                    r = await client.send(client.build_request("GET", next_url), stream=True)
                     if not r.is_redirect:
                         break
                     loc = r.headers.get("location")
+                    await r.aclose()
                     if not loc:
                         break
                     # Resolve relative redirects against the current URL.
@@ -264,26 +279,32 @@ async def proxy_image(
                     # Hit the redirect ceiling without ever landing on a 200.
                     _inflight.pop(src, None)
                     raise HTTPException(502, "Too many redirects")
+
+                try:
+                    if r.status_code != 200:
+                        _inflight.pop(src, None)
+                        raise HTTPException(502, f"Upstream returned HTTP {r.status_code}")
+
+                    ct = (r.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+                    if not ct.startswith("image/"):
+                        _inflight.pop(src, None)
+                        raise HTTPException(415, f"Upstream content-type not image/*: {ct!r}")
+
+                    if int(r.headers.get("content-length") or 0) > _MAX_BYTES:
+                        _inflight.pop(src, None)
+                        raise HTTPException(413, "Upstream image too large")
+                    body = await _read_bounded(r, _MAX_BYTES)
+                    if body is None:
+                        _inflight.pop(src, None)
+                        raise HTTPException(413, "Upstream image too large")
+                finally:
+                    await r.aclose()
         except HTTPException:
             raise
         except Exception as e:
             logger.info("[image_proxy] upstream fetch failed for %s: %s", parsed.hostname, e)
             _inflight.pop(src, None)
             raise HTTPException(502, "Upstream image fetch failed")
-
-        if r.status_code != 200:
-            _inflight.pop(src, None)
-            raise HTTPException(502, f"Upstream returned HTTP {r.status_code}")
-
-        ct = (r.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-        if not ct.startswith("image/"):
-            _inflight.pop(src, None)
-            raise HTTPException(415, f"Upstream content-type not image/*: {ct!r}")
-
-        body = r.content
-        if len(body) > _MAX_BYTES:
-            _inflight.pop(src, None)
-            raise HTTPException(413, f"Upstream image too large ({len(body)} bytes)")
 
         # 5. Write cache
         path = _cache_path(src, ct)

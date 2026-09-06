@@ -40,7 +40,10 @@ class PipelineRequest(BaseModel):
 
     @property
     def effective_batch(self) -> int:
-        return self.batch or self.lastfm_batch or 300
+        # Bounded: MusicBrainz is throttled to ~1 req/s, so a batch is hours
+        # of the one server-wide pipeline slot — a client value must not be
+        # able to hold it for days.
+        return max(1, min(int(self.batch or self.lastfm_batch or 300), 2000))
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -74,6 +77,10 @@ async def start_pipeline(
     # here + set_state later in the background task left a window where two
     # fast starts (or a custodian tick) both passed the check.
     from src.services.app_state import acquire_state_lock
+    from src.services import rate_limit as _rl
+    # Hours of MusicBrainz / Last.fm / Spotify spend per run — two starts per
+    # ten minutes per user is plenty for a human, not for a loop.
+    _rl.enforce("music-start", user.id, _rl.MUSIC_STARTS_PER_10MIN, 600)
     if not acquire_state_lock("music_pipeline_running"):
         raise HTTPException(status_code=409, detail="Music pipeline already running")
 

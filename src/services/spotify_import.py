@@ -26,7 +26,19 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-IMPORT_DIR = Path("data/imports/spotify")
+from src.paths import ROOT  # noqa: E402
+
+# Anchored to the project root like every other data path (src/paths.py);
+# a relative path silently followed the process CWD, which differs between
+# the console launcher, the tray and a frozen build.
+IMPORT_DIR = ROOT / "data" / "imports" / "spotify"
+
+# A real Spotify extended-history JSON is a few MB; the whole export a few
+# tens. Members are read through a bounded stream — the zip's own headers
+# are not trusted for the size (a deflate stream can expand far past what
+# the upload cap allowed in).
+MAX_MEMBER_BYTES = 50 * 1024 * 1024
+MAX_TOTAL_BYTES = 400 * 1024 * 1024
 
 BATCH_SIZE = 5000
 MIN_MS_PLAYED = 30_000   # skip plays shorter than 30 s (accidental taps / skips)
@@ -59,16 +71,21 @@ _BASIC_MSG = ("this is the BASIC account export, which lacks play durations "
               "Spotify's privacy page instead")
 
 
-def save_upload(filename: str, content: bytes, import_dir: Path = None) -> dict:
+def save_upload(filename: str, content: bytes, import_dir: Path = None, *,
+                max_member_bytes: int = MAX_MEMBER_BYTES,
+                max_total_bytes: int = MAX_TOTAL_BYTES) -> dict:
     """Store one uploaded file (or unpack a zip) into the pending directory.
 
     Returns ``{"saved": [names], "rejected": [(name, reason)]}``. Only files
     the importer can actually use are kept — storing the rest would show a
-    pending count that an import can never clear.
+    pending count that an import can never clear. Zip members are read
+    through a bounded stream: one over ``max_member_bytes`` is rejected,
+    and extraction stops once ``max_total_bytes`` have been written.
     """
     import_dir = import_dir or IMPORT_DIR
     import_dir.mkdir(parents=True, exist_ok=True)
     saved, rejected = [], []
+    total = 0
 
     def _keep(name: str, data: bytes):
         kind = _classify(name)
@@ -87,7 +104,19 @@ def save_upload(filename: str, content: bytes, import_dir: Path = None) -> dict:
             with zipfile.ZipFile(BytesIO(content)) as zf:
                 members = [m for m in zf.namelist() if not m.endswith("/")]
                 for member in members:
-                    _keep(member, zf.read(member))
+                    if _classify(member) != "usable":
+                        _keep(member, b"")          # classified + rejected, never read
+                        continue
+                    with zf.open(member) as fh:
+                        data = fh.read(max_member_bytes + 1)
+                    if len(data) > max_member_bytes:
+                        rejected.append((Path(member).name, "file too large for a Spotify export"))
+                        continue
+                    if total + len(data) > max_total_bytes:
+                        rejected.append((Path(member).name, "archive exceeds the import size limit"))
+                        break
+                    total += len(data)
+                    _keep(member, data)
             if not saved and not rejected:
                 rejected.append((filename, "zip contains no files"))
         except zipfile.BadZipFile:

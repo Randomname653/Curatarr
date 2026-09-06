@@ -65,6 +65,43 @@ device must present the one-time **setup code** the server prints to its
 console (and log) at startup. That closes the window in which a LAN
 neighbour could have pointed a fresh install at their own Plex.
 
+## What a member can make the server do
+
+Every household member may chat, search and refresh their recommendations
+— that is the product — but each of those turns one request into curator
+time on the single GPU or into calls against metadata APIs with quotas.
+Since 2026-09 the endpoints that do so carry **per-user budgets** (sliding
+windows with a `Retry-After` on refusal) and, where the work is long, a
+**one-at-a-time guard**: one chat reply in flight per user, one
+recommendation generation per user (the plain `GET` lane included), one
+Plex sync server-wide, music pipeline starts and sync triggers a few per
+ten minutes. Budgets are generous for a human and tight for a script; the
+guards expire on their own, so a dropped stream cannot lock anyone out.
+Administrative work (enrichment runs, backfills, migrations, process
+classification, deletions, arr writes) is admin-only at the router mount.
+
+## Third-party text in prompts
+
+Overviews, reviews, encyclopedia extracts and bios come from sources
+anyone can edit or post to. Before they reach a model they are **fenced**
+(`<<<UNTRUSTED_SOURCE:…>>>` … `<<<END_UNTRUSTED_SOURCE>>>`) and scrubbed of
+markup, chat special tokens and role markers, and every system prompt that
+receives fenced text states that such text is data, never an instruction.
+The shared verified-data block — the one renderer behind chat answers,
+deletion verdicts and pitches — is fenced as a whole. Model output is
+stripped of tag-like markup before it is stored, the chat sink renders
+through DOMPurify, and names pushed into Plex are plain printable text.
+Studio and director notes distilled from Wikipedia cache for a year, not a
+decade, so an upstream correction reaches the evidence.
+
+## Bodies from the outside
+
+Subtitle downloads, proxied poster images and uploaded Spotify archives are
+read through bounds enforced *while* streaming (4 MB, 5 MB, 50 MB per zip
+member / 400 MB per archive), never buffered first and measured after; the
+CPU-bound subtitle metrics run off the event loop so one oversized file
+cannot stall every other user's request.
+
 ## Known dependency advisories
 
 The pinned `chromadb` release carries four open advisories

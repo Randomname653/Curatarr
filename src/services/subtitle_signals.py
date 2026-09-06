@@ -510,8 +510,13 @@ async def fetch_subtitle_metrics(plex_rating_key: str, hints: dict = None):
     if not got or not isinstance(got, tuple):
         return {}
     txt, meta = got
-    m = subtitle_metrics(parse_cues(txt), meta.get("duration_min") or 0,
-                         track_name=meta.get("track_name") or "")
+    # Off the event loop: parsing + the sliding-window lexical metrics are
+    # pure CPU, and a wait_for() around this call cannot interrupt a tight
+    # loop — only a thread keeps other users' requests moving meanwhile.
+    import asyncio as _asyncio
+    m = await _asyncio.to_thread(
+        lambda: subtitle_metrics(parse_cues(txt), meta.get("duration_min") or 0,
+                                 track_name=meta.get("track_name") or ""))
     if not m:
         return {}
     m["language"] = meta.get("language") or ""
@@ -766,7 +771,9 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
             if not link:
                 return None
             _os_charge()
-            txt = (await c.get(link, headers={"User-Agent": _OS_UA})).text
+            txt = await _bounded_text(c, link, {"User-Agent": _OS_UA})
+            if txt is None:
+                return None
             return (txt, lang)
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
         return None
@@ -774,6 +781,33 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
         return None if e.response.status_code >= 500 else ""
     except Exception as e:
         logger.debug("[subtitles] OpenSubtitles failed for %s: %s", imdb_id, e)
+        return None
+
+
+# A subtitle file is tens of KB; the largest real ones (full-series SDH
+# dumps) a few hundred. The provider leg checked its size before reading;
+# this leg buffered whatever the CDN sent, and the metrics pass that follows
+# is CPU-bound — an oversized body would have pinned the event loop for
+# every user. Same cap as subtitle_provider._MAX_BYTES.
+_OS_MAX_BYTES = 4_000_000
+
+
+async def _bounded_text(client, url: str, headers: dict, cap: int = _OS_MAX_BYTES):
+    """GET ``url`` and decode it, refusing bodies over ``cap`` bytes at the
+    header AND while streaming (CDNs omit Content-Length). Returns "" for
+    an oversized file (nothing usable on file), None on a transport error."""
+    try:
+        async with client.stream("GET", url, headers=headers) as r:
+            r.raise_for_status()
+            if int(r.headers.get("content-length") or 0) > cap:
+                return ""
+            buf = bytearray()
+            async for chunk in r.aiter_bytes():
+                buf += chunk
+                if len(buf) > cap:
+                    return ""
+            return bytes(buf).decode(r.encoding or "utf-8", errors="replace")
+    except httpx.HTTPError:
         return None
 
 

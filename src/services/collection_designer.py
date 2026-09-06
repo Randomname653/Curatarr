@@ -56,12 +56,15 @@ def map_designs(themes: list, by_title: dict, by_norm: dict,
             logger.info("[collections] theme %r dropped — only %d/%d titles "
                         "resolved", name, len(keys), len(items))
             continue
+        # Shelf names and blurbs are LLM prose pushed into every household
+        # member's Plex — keep them printable text, no angle brackets.
+        _plain = lambda s: "".join(ch for ch in str(s or "") if ch.isprintable() and ch not in "<>")
         designs.append({
             "section_key": str(section_key),
             "plex_type": plex_type,
-            "title": f"{COLLECTION_PREFIX}{name}"[:120],
+            "title": _plain(f"{COLLECTION_PREFIX}{name}")[:120],
             "keys": keys[:MAX_ITEMS],
-            "description": (t.get("description") or "")[:300],
+            "description": _plain(t.get("description"))[:300],
         })
     return designs
 

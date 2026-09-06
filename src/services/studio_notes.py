@@ -34,7 +34,12 @@ logger = logging.getLogger(__name__)
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 WIKI_HEADERS = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                               "personal media curator) python-httpx"}
-_NOTE_CACHE_DAYS = 3650   # reputation moves slowly; NONE results cache too
+# Reputation moves slowly, but a decade turned any transient bad fetch (a
+# vandalised article, a mis-resolved page) into a ten-year payload reused
+# across every title of that studio or director. A year keeps the cache
+# cheap and lets a correction upstream reach the evidence within it.
+_NOTE_CACHE_DAYS = 365   # NONE results cache too
+from src.services.llm_utils import UNTRUSTED_RULE, fence_untrusted  # noqa: E402
 
 _CONDENSE_SYS = (
     "You write a one-line STUDIO NOTE for a media curator's evidence file. "
@@ -132,9 +137,11 @@ async def _condense(studio: str, extract: str,
             async with httpx.AsyncClient(timeout=120) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
-                    "messages": [{"role": "system", "content": sys_prompt or _CONDENSE_SYS},
+                    "messages": [{"role": "system",
+                                  "content": (sys_prompt or _CONDENSE_SYS) + " " + UNTRUSTED_RULE},
                                  {"role": "user",
-                                  "content": f"{label}: {studio}\n\nTEXT:\n{extract[:2400]}"}],
+                                  "content": f"{label}: {studio}\n\n"
+                                             + fence_untrusted("wikipedia", extract, 2400)}],
                     "stream": False,
                     "keep_alive": SUMMARIZER_KEEP_ALIVE,
                     **ollama_options(temperature=0.1, num_predict=200),

@@ -60,6 +60,44 @@ Also: the LLM-failure path crashed the status writer, so "Processing
 failed" was never recorded; fixed. Migration is automatic (new columns, a
 new table, one backfill).
 
+### Security, second angle: what a household member can make the server do
+
+The first pass asked who can call what. This one asked what a logged-in
+*member* (or a stolen member token) can make the server spend, what text
+from the outside world reaches the models, and where an external body
+touches memory or disk. Verified with a probe instance and a minted member
+token before and after.
+
+- **Per-user budgets on the endpoints that turn one request into GPU or
+  API work.** Chat: 30 messages per 5 minutes and one reply in flight per
+  user (a second concurrent request gets 409, the guard self-expires so a
+  dropped stream cannot lock anyone out). Semantic search 20/min, arr
+  lookups 30/min, recommendation generation 2 per 10 minutes and one at a
+  time — including the `GET /api/recommendations/?refresh=…` path that
+  bypassed the refresh endpoint's guard — music pipeline starts, sync
+  triggers, memory flushes. The global curator gate serialised the GPU; it
+  never stopped one caller from owning the queue.
+- **One Plex sync at a time.** The hourly cooldown was read from a stamp
+  written only when a sync *finished*, so triggers inside one window ran
+  full syncs side by side. Same state lock as enrichment and the music run.
+- **Bounded bodies.** OpenSubtitles downloads are capped while streaming
+  (4 MB, the provider leg already did this) and the CPU-bound subtitle
+  metrics moved off the event loop — an oversized file used to pin the
+  whole app for every user. The image proxy enforces its 5 MB cap while
+  reading instead of after buffering. Spotify zip members are read through
+  a bound (50 MB each, 400 MB per archive) and the import directory is
+  anchored to the project root instead of the process CWD.
+- **Third-party text is data, not instructions.** Overviews, reviews,
+  Wikipedia extracts, bios and the shared verified-data block are fenced
+  with explicit markers and scrubbed of markup, chat special tokens and
+  role markers before they reach a model; every system prompt that receives
+  fenced text carries the rule. Studio and director notes cache for a year
+  instead of a decade. Model output is stripped of tag-like markup before
+  persistence; Plex shelf names and blurbs are plain printable text.
+- Request shapes: chat messages max 8 000 characters, music pipeline
+  batch ≤ 2 000, list sizes capped on the recommendation and library
+  endpoints.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

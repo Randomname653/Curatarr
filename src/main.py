@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
         set_state("music_pipeline_running", "0")
         set_state("music_pipeline_stop_requested", "0")
         set_state("deletion_run", "0")
+        set_state("plex_sync_running", "0")
         # Pass 75/76: seed the game flag with the ACTUAL current state, not
         # a blind "0". A blind reset left a ~30 s window (until the watcher's
         # first tick) where game_active was wrong — long enough for the
@@ -137,6 +138,7 @@ async def lifespan(app: FastAPI):
         set_state("music_pipeline_running", "0")
         set_state("music_pipeline_stop_requested", "0")
         set_state("deletion_run", "0")
+        set_state("plex_sync_running", "0")
     except Exception:
         pass
 

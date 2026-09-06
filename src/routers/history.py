@@ -33,6 +33,10 @@ async def trigger_sync(
         # The sync is household-wide and expensive; bypassing its cooldown
         # is an operator lever, not a member one.
         raise HTTPException(status_code=403, detail="Only an admin can force a resync")
+    from src.services import rate_limit as _rl
+    # The sync itself is hourly-limited; this stops a loop from stacking
+    # background tasks that each wake Plex just to learn that.
+    _rl.enforce("sync", user.id, _rl.SYNC_TRIGGERS_PER_10MIN, 600)
     background_tasks.add_task(_run_sync, force)
     return {"status": "sync_started", "message": "Fetching Plex history and computing taste vectors…"}
 

@@ -17,7 +17,8 @@ import httpx
 
 from src.config import settings
 from src.database.connection import get_db_session
-from src.services.app_state import get_datetime, set_datetime, get_state, set_state
+from src.services.app_state import (get_datetime, set_datetime, get_state, set_state,
+                                    acquire_state_lock, release_state_lock)
 from src.database.models import (
     User, WatchHistoryEntry, TasteVectorEntry, PlexRating,
 )
@@ -197,6 +198,22 @@ async def _sync_music_ratings(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -> dict:
+    """Single-flight wrapper: one Plex sync at a time, server-wide.
+
+    The hourly cooldown below is read from ``last_sync_at``, which is only
+    written when a sync FINISHES — so several triggers landing inside one
+    window each passed the check and ran full syncs side by side. The
+    state lock is the same mutex the enrichment and music runs use; the
+    lifespan clears a stale one at boot."""
+    if not acquire_state_lock("plex_sync_running"):
+        return {"skipped": True, "reason": "A sync is already running"}
+    try:
+        return await _sync_plex_history_impl(job_id, force)
+    finally:
+        release_state_lock("plex_sync_running")
+
+
+async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = False) -> dict:
     """
     Incremental sync: fetch watched items per Plex library.
     Rate-limited to once per hour unless force=True.

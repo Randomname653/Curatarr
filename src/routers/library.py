@@ -723,6 +723,7 @@ async def library_items(
         "synopsis_updated_asc": (lambda x:  (x.get("enrichment_updated") or "0000")),
         "title_asc":            (lambda x:  (x.get("title") or "").lower()),
     }
+    limit = max(1, min(int(limit or 200), 2000))
     key_fn = sort_map.get(sort, sort_map["size_desc"])
     if sort in ("size_desc", "added_desc"):
         items.sort(key=key_fn)
@@ -993,6 +994,10 @@ async def library_search(
     q = (q or "").strip()
     if len(q) < 2:
         return {"service": service, "matches": []}
+    from src.services import rate_limit as _rl
+    # Every lookup is an upstream call the arr makes on our behalf (TVDB /
+    # TMDB / MusicBrainz via its metadata proxy) — budget it per user.
+    _rl.enforce("arr-lookup", _user.id, _rl.ARR_LOOKUPS_PER_MIN, 60)
     url, api_key = _get_arr_url_key(service)
     if not url or not api_key:
         raise HTTPException(400, f"{service} not configured")
@@ -1034,6 +1039,10 @@ async def semantic_library_search(
     if len(q) < 2:
         return {"query": q, "category": category, "results": [], "mode": "vector"}
     cat = category if category in ("movie", "show", "anime", "music") else None
+    from src.services import rate_limit as _rl
+    # One query = one summarizer parse (+ embeddings) on the shared GPU.
+    _rl.enforce("search", user.id, _rl.SEARCH_PARSES_PER_MIN, 60,
+                "Too many searches at once — try again in a moment")
     from src.services.semantic_search import curated_search
     res = await curated_search(q, n_results=max(1, min(int(limit or 10), 25)),
                                domain=cat, user_id=user.id)
