@@ -327,6 +327,38 @@ class MediaMatchOverride(Base):
     )
 
 
+class EnrichmentFinding(Base):
+    """The audit's persisted verdicts — an inbox, not a log (SoulSync's
+    repair_findings contract, MIT). One row per (item, kind): a pending
+    finding is refreshed in place, a dismissed one stays silent, a resolved
+    one re-opens after a grace week if still detected. ``detail`` (JSON)
+    holds what was compared plus ``requeued_at`` — the loop guard: the audit
+    re-queues a finding ONCE; a second detection escalates it to Needs
+    attention instead of purging the same cache row every week forever."""
+    __tablename__ = "enrichment_findings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plex_rating_key = Column(String(64), nullable=False, index=True)
+    service = Column(String(20), nullable=True)
+    arr_id = Column(Integer, nullable=True)
+    category = Column(String(20), nullable=True)
+    title = Column(String(512), nullable=True)
+    kind = Column(String(40), nullable=False)        # wrong_entity:title | id_conflict:tmdb_id | pin_violated | zero_rating | malformed
+    detail = Column(Text, nullable=True)             # JSON
+    severity = Column(String(10), default="info")    # info | warning | error
+    status = Column(String(12), default="pending")   # pending | resolved | dismissed
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+    dismissed_at = Column(DateTime, nullable=True)
+    resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    note = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("plex_rating_key", "kind", name="uq_enrichment_finding"),
+    )
+
+
 class CuratorPrinciple(Base):
     """A generalizable curation PRINCIPLE the curator learned from a debate with
     the owner — the autonomous self-learning layer.

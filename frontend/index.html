@@ -6260,10 +6260,23 @@ function _kbItemCard(it, extraBadges) {
       <span style="color:var(--text3);font-size:11px;margin-left:auto">${esc(meta)}${conf}</span>
     </div>
     <div style="font-size:12px;color:var(--text2);margin-top:3px">${esc(it.reason || '')}</div>
+    ${(it.findings || []).map(f => `<div style="font-size:11px;color:var(--text3);margin-top:3px">⚑ <b>${esc(f.label || f.base || f.kind)}</b> — ${esc(_kbFindingText(f))}${currentUser?.is_admin ? ` <button class="btn btn-secondary btn-sm" style="padding:0 6px;font-size:10px" data-fid="${Number(f.id)}" onclick="kbDismissFinding(this)" title="Silence this finding for good — the audit will not raise it again">Dismiss finding</button>` : ''}</div>`).join('')}
     ${it.sources?.length ? `<div style="margin-top:4px">${_kbSourceChips(it.sources)}</div>` : ''}
     ${_kbItemActions(it)}
   </div>`;
 }
+
+function _kbFindingText(f) {
+  const d = f.detail || {};
+  const yr = y => (y ? ` (${y})` : '');
+  if (f.base === 'wrong_entity') return `arr says ${d.arr_title || '?'}${yr(d.arr_year)}, the profile is ${d.profile_title || '?'}${yr(d.profile_year)}`;
+  if (f.base === 'id_conflict') return `${d.source || 'id'} ${d.value || ''} is shared by ${(d.titles || []).join(', ')}`;
+  if (f.base === 'pin_violated') return `the profile's ${d.id || 'id'} ${d.profile ?? '?'} contradicts the pinned ${d.pinned ?? '?'}`;
+  if (f.base === 'zero_rating') return 'no rating in any source';
+  if (f.base === 'malformed') return 'the cached profile is not readable';
+  return f.kind || '';
+}
+function kbDismissFinding(btn) { return _kbAction(btn, `/api/enrichment/findings/${Number(btn.dataset.fid)}/dismiss`, 'POST', 'Dismissed'); }
 
 async function loadKbItems(cat, states, offset = 0) {
   const el = document.getElementById('kb-drilldown');
@@ -6303,7 +6316,7 @@ async function loadKbAttention(offset = 0) {
         <div><b style="font-size:13px">Needs attention</b> <span style="color:var(--text3);font-size:12px">${r.total.toLocaleString()} items the pipeline cannot settle alone</span></div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">${counts}</div>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin:4px 0 6px">Tried twice or more without a hit, found under the wrong year, refused as too far off, or matched with middling confidence. Pin the right entity, retry, or accept the gap.</p>
+      <p style="font-size:11px;color:var(--text3);margin:4px 0 6px">Tried twice or more without a hit, found under the wrong year, refused as too far off, matched with middling confidence, or flagged by the weekly audit (wrong entity, shared id, pin contradicted). Pin the right entity, retry, dismiss a finding, or accept the gap.${Object.keys(r.findings_summary || {}).length ? ` Open audit findings: ${Object.entries(r.findings_summary).map(([k, n]) => `${esc(defs[k]?.label || k)} ${n}`).join(' · ')}.` : ''}</p>
       ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : '<p style="font-size:12px;color:var(--success)">Nothing needs a human right now.</p>'}
       <div style="display:flex;gap:8px;margin-top:8px">${nav}</div>
     </div>`;

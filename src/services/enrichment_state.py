@@ -444,6 +444,20 @@ def parse_rejected_ids(value: Any) -> dict[str, set]:
 # ── needs attention ───────────────────────────────────────────────────────────
 
 ATTENTION_REASONS: dict[str, dict[str, str]] = {
+    # ── findings: the audit's persisted verdicts a human has to settle ──
+    "pin_violated": {
+        "label": "Pin contradicted", "severity": "error",
+        "explainer": "The stored profile carries ids that contradict the owner's pin. Re-pin or unpin — nothing automatic can settle this.",
+    },
+    "wrong_entity": {
+        "label": "Wrong entity", "severity": "error",
+        "explainer": "The profile's title, year or MusicBrainz id diverge from the arr's — a same-named work. One automatic re-resolution did not fix it; pin the right one.",
+    },
+    "id_conflict": {
+        "label": "Shared id", "severity": "error",
+        "explainer": "The same external id is held by differently named items — one wrong resolution leaked onto another. One automatic re-resolution did not fix it; pin the right ids.",
+    },
+    # ── row-derived ──
     "year_mismatch": {
         "label": "Wrong year", "severity": "error",
         "explainer": "A same-named work was found, but its year is far off the arr's — most likely a different title. Pin the right one.",
@@ -470,9 +484,19 @@ ATTENTION_ORDER = tuple(ATTENTION_REASONS)
 
 def attention_reasons(state: str, error: Optional[str], attempt_count: int = 0,
                       match_basis: Optional[str] = None,
-                      match_confidence: Optional[float] = None) -> list[str]:
-    """Why an item belongs on the Needs-attention page (empty = it doesn't)."""
+                      match_confidence: Optional[float] = None,
+                      has_external_id: bool = True, findings=()) -> list[str]:
+    """Why an item belongs on the Needs-attention page (empty = it doesn't).
+    ``findings``: the item's pending EnrichmentFinding rows (or dicts) — only
+    error/warning ones count; info-level data-quality findings stay in the
+    findings list."""
     reasons: list[str] = []
+    for f in findings or ():
+        kind = f.get("kind") if isinstance(f, dict) else getattr(f, "kind", None)
+        sev = f.get("severity") if isinstance(f, dict) else getattr(f, "severity", None)
+        base = finding_base(kind)
+        if base in ATTENTION_REASONS and sev in ("error", "warning") and base not in reasons:
+            reasons.append(base)
     if state in ("not_found", "retry_due"):
         r = not_found_reason(error)
         if r in (REASON_YEAR, REASON_LOW_CONFIDENCE):
@@ -482,4 +506,154 @@ def attention_reasons(state: str, error: Optional[str], attempt_count: int = 0,
     if (state in DONE_STATES and match_basis == "title_search"
             and match_confidence is not None and float(match_confidence) < REVIEW_THRESHOLD):
         reasons.append("needs_review")
+    if not has_external_id and state not in DONE_STATES and state != "ignored":
+        reasons.append("no_external_id")
     return reasons
+
+
+# ── findings inbox (SoulSync repair_findings contract, MIT) ──────────────────
+
+RESOLVED_GRACE_DAYS = 7      # a fixed finding is not re-raised for a week
+
+FINDING_KINDS: dict[str, dict[str, str]] = {
+    "wrong_entity": {"label": "Wrong entity",     "severity": "warning", "auto_requeue": "once"},
+    "id_conflict":  {"label": "Shared id",        "severity": "warning", "auto_requeue": "once"},
+    "pin_violated": {"label": "Pin contradicted", "severity": "error",   "auto_requeue": "never"},
+    "zero_rating":  {"label": "No rating",        "severity": "info",    "auto_requeue": "once"},
+    "malformed":    {"label": "Malformed profile", "severity": "info",   "auto_requeue": "once"},
+}
+
+
+def finding_base(kind: Optional[str]) -> str:
+    """``wrong_entity:title`` → ``wrong_entity``."""
+    return (kind or "").split(":", 1)[0]
+
+
+def _parse_detail(value: Any) -> dict:
+    return parse_sources_state(value)   # same tolerant JSON-or-dict reader
+
+
+def _merge_detail(old: Any, new: Optional[dict]) -> str:
+    merged = _parse_detail(old)
+    merged.update(new or {})
+    return json.dumps(merged, default=str, sort_keys=True)
+
+
+def _fill_identity(row, service, arr_id, category, title) -> None:
+    if service and not row.service:
+        row.service = service
+    if arr_id is not None and row.arr_id is None:
+        row.arr_id = arr_id
+    if category and not row.category:
+        row.category = category
+    if title:
+        row.title = title
+
+
+def record_finding(db, *, plex_rating_key: str, kind: str, service: Optional[str] = None,
+                   arr_id: Optional[int] = None, category: Optional[str] = None,
+                   title: Optional[str] = None, detail: Optional[dict] = None,
+                   now: Optional[datetime] = None, supersede: bool = False):
+    """Upsert one finding under the recurrence contract. Returns
+    ``(row, action)`` with action in created | refreshed | reopened |
+    silenced_dismissed | silenced_grace. ``supersede`` forces a re-raise
+    when the caller knows the world changed."""
+    from src.database.models import EnrichmentFinding as F
+    now = now or datetime.utcnow()
+    sev = FINDING_KINDS.get(finding_base(kind), {}).get("severity", "info")
+    row = db.query(F).filter(F.plex_rating_key == plex_rating_key, F.kind == kind).first()
+    if row is None:
+        row = F(plex_rating_key=plex_rating_key, kind=kind, service=service, arr_id=arr_id,
+                category=category, title=title,
+                detail=json.dumps(detail or {}, default=str, sort_keys=True),
+                severity=sev, status="pending", first_seen=now, last_seen=now)
+        db.add(row)
+        return row, "created"
+    if row.status == "dismissed" and not supersede:
+        row.last_seen = now
+        return row, "silenced_dismissed"
+    if row.status == "resolved":
+        if (not supersede and row.resolved_at
+                and row.resolved_at > now - timedelta(days=RESOLVED_GRACE_DAYS)):
+            row.last_seen = now
+            return row, "silenced_grace"
+        row.status, row.resolved_at, row.resolved_by, row.dismissed_at = "pending", None, None, None
+        row.last_seen = now
+        row.detail = _merge_detail(row.detail, detail)
+        _fill_identity(row, service, arr_id, category, title)
+        return row, "reopened"
+    row.status = "pending"
+    row.last_seen = now
+    row.detail = _merge_detail(row.detail, detail)
+    _fill_identity(row, service, arr_id, category, title)
+    return row, "refreshed"
+
+
+def was_requeued(row) -> bool:
+    return bool(_parse_detail(row.detail).get("requeued_at"))
+
+
+def mark_requeued(row, now: Optional[datetime] = None) -> None:
+    row.detail = _merge_detail(row.detail, {"requeued_at": (now or datetime.utcnow()).isoformat() + "Z"})
+
+
+def resolve_stale_findings(db, seen: set, kinds, now: Optional[datetime] = None) -> int:
+    """Pending findings of the scanned ``kinds`` that this pass did NOT detect
+    → resolved ("no longer detected"). ``seen`` = {(plex_rating_key, kind)}."""
+    from src.database.models import EnrichmentFinding as F
+    now = now or datetime.utcnow()
+    n = 0
+    for row in db.query(F).filter(F.status == "pending").all():
+        if finding_base(row.kind) not in kinds or (row.plex_rating_key, row.kind) in seen:
+            continue
+        row.status, row.resolved_at, row.resolved_by = "resolved", now, None
+        row.note = "no longer detected"
+        n += 1
+    return n
+
+
+def resolve_item_findings(db, plex_rating_key: str, now: Optional[datetime] = None,
+                          note: str = "settled by the owner", by: Optional[int] = None) -> int:
+    """A human settled the item (pin / unpin): its pending findings close."""
+    from src.database.models import EnrichmentFinding as F
+    now = now or datetime.utcnow()
+    n = 0
+    for row in db.query(F).filter(F.plex_rating_key == plex_rating_key,
+                                  F.status == "pending").all():
+        row.status, row.resolved_at, row.resolved_by, row.note = "resolved", now, by, note
+        n += 1
+    return n
+
+
+def pending_findings(db, prks=None) -> dict[str, list]:
+    """Pending findings grouped by plex_rating_key (optionally only ``prks``)."""
+    from src.database.models import EnrichmentFinding as F
+    out: dict[str, list] = {}
+    q = db.query(F).filter(F.status == "pending")
+    if prks is None:
+        rows = q.all()
+    else:
+        prks = list(prks)
+        rows = []
+        for i in range(0, len(prks), 500):
+            rows += q.filter(F.plex_rating_key.in_(prks[i:i + 500])).all()
+    for r in rows:
+        out.setdefault(r.plex_rating_key, []).append(r)
+    return out
+
+
+def finding_to_dict(row) -> dict:
+    base = finding_base(row.kind)
+    return {
+        "id": row.id, "plex_rating_key": row.plex_rating_key,
+        "service": row.service, "arr_id": row.arr_id, "category": row.category, "title": row.title,
+        "kind": row.kind, "base": base,
+        "label": (ATTENTION_REASONS.get(base) or FINDING_KINDS.get(base) or {}).get("label", base),
+        "severity": row.severity, "status": row.status,
+        "detail": _parse_detail(row.detail),
+        "first_seen": row.first_seen.isoformat() + "Z" if row.first_seen else None,
+        "last_seen": row.last_seen.isoformat() + "Z" if row.last_seen else None,
+        "resolved_at": row.resolved_at.isoformat() + "Z" if row.resolved_at else None,
+        "dismissed_at": row.dismissed_at.isoformat() + "Z" if row.dismissed_at else None,
+        "note": row.note,
+    }

@@ -52,7 +52,10 @@ check("audit collects id->rows during its normal scan (no extra pass)",
       "_id_rows.setdefault((category, _src, str(_v))" in en)
 check("clusters requeue through the EXISTING hits machinery",
       'reason = f"id_conflict:{_src}"' in en
-      and "hits.append((cache_key, prk, title, _cat, reason))" in en)
+      # healing 2026-09: hits carry a detail dict (the colliding names) for
+      # the findings inbox — same machinery, one more element
+      and "hits.append((cache_key, prk, title, _cat, reason," in en
+      and "_triage_audit_hit(db, hit, _now, fstats)" in en)
 check("similar titles are guarded (ratio >= 0.8 = alternate form, not a leak)",
       ".ratio() >= 0.8" in en)
 check("conflicts are logged with the colliding names",

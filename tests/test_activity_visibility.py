@@ -196,7 +196,9 @@ check("playlist pushes: per-user progress; collections: stage messages; "
 en = (root / "src/routers/enrichment.py").read_text(encoding="utf-8")
 check("audit reports its stages (ground truth -> scan -> requeue)",
       "Auditing {len(rows):,} cached profiles" in en
-      and "Requeuing {len(hits):,} flagged profiles" in en)
+      # healing 2026-09: only the findings that earned their one automatic
+      # requeue are requeued, not every hit
+      and "Requeuing {len(to_requeue):,} flagged profiles" in en)
 
 check("frontend hides the fake 0% chip when a running card has no total",
       "t.status==='running'?(t.total>0?" in fe)

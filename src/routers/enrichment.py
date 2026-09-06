@@ -794,6 +794,19 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     except Exception as e:
         logger.warning("[audit] arr ground-truth fetch failed — skipping entity check: %s", e)
 
+    # Owner pins: the entity check skips pinned items (the pin IS the answer)
+    # unless the stored profile contradicts the pin — that is a finding a
+    # human has to settle (``pin_violated``), never an automatic requeue.
+    pins: dict = {}
+    try:
+        from src.database.models import MediaMatchOverride
+        with get_db_session() as db:
+            for ov in db.query(MediaMatchOverride).all():
+                pins[f"{ov.service}:{ov.arr_id}"] = {
+                    "tmdb_id": ov.tmdb_id, "anilist_id": ov.anilist_id, "mbid": ov.mbid}
+    except Exception as e:
+        logger.debug("[audit] pin lookup failed: %s", e)
+
     mc = MetadataCache()
     try:
         rows = mc.conn.execute(
@@ -828,21 +841,36 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                             (cache_key, profile.get("plex_rating_key"),
                              profile.get("title") or ""))
 
-            reason = _enrichment_incomplete_reason(profile or {}, category)
-            if not reason and truth:
-                _arr = truth.get((profile or {}).get("plex_rating_key"))
-                if _arr:
-                    reason = _entity_divergence_reason(profile or {}, category, _arr)
+            _prof = profile or {}
+            _prk = _prof.get("plex_rating_key")
+            detail: dict = {}
+            reason = _enrichment_incomplete_reason(_prof, category)
+            if reason:
+                detail = {"rating": _prof.get("rating"), "source": _prof.get("source")}
+            elif truth:
+                _arr = truth.get(_prk)
+                _pin = pins.get(_prk) if _prk else None
+                if _arr and _pin:
+                    for _k in ("tmdb_id", "anilist_id", "mbid"):
+                        if _pin.get(_k) and _prof.get(_k) and str(_pin[_k]) != str(_prof[_k]):
+                            reason = "pin_violated"
+                            detail = {"id": _k, "pinned": _pin[_k], "profile": _prof[_k]}
+                            break
+                elif _arr:
+                    reason = _entity_divergence_reason(_prof, category, _arr)
+                    if reason:
+                        detail = {
+                            "arr_title": _arr.get("title"), "arr_year": _arr.get("year"),
+                            "arr_mbid": _arr.get("mbid"),
+                            "profile_title": _prof.get("title"), "profile_year": _prof.get("year"),
+                            "profile_mbid": _prof.get("mbid"),
+                            "profile_tmdb_id": _prof.get("tmdb_id"),
+                            "profile_anilist_id": _prof.get("anilist_id"),
+                        }
             if not reason:
                 continue
             by_reason[reason] = by_reason.get(reason, 0) + 1
-            hits.append((
-                cache_key,
-                (profile or {}).get("plex_rating_key"),
-                (profile or {}).get("title"),
-                category,
-                reason,
-            ))
+            hits.append((cache_key, _prk, _prof.get("title"), category, reason, detail))
 
         # Resolve the id clusters: >1 genuinely different normalized title on
         # one external id → requeue EVERY row of the cluster (re-resolution
@@ -866,22 +894,48 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
             reason = f"id_conflict:{_src}"
             for cache_key, prk, title in _rows:
                 by_reason[reason] = by_reason.get(reason, 0) + 1
-                hits.append((cache_key, prk, title, _cat, reason))
+                hits.append((cache_key, prk, title, _cat, reason,
+                             {"source": _src, "value": _v, "titles": distinct[:4]}))
             logger.warning("[audit] corrupt source id %s=%s (%s) held by %s",
                            _src, _v, _cat, distinct[:4])
-
-        if not dry_run and hits:
-            for cache_key, *_ in hits:
-                mc.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
-            mc.conn.commit()
     finally:
         mc.close()
 
-    requeued = 0
-    if not dry_run and hits:
-        _prog(f"Requeuing {len(hits):,} flagged profiles…")
+    # ── findings inbox: persist every verdict, requeue each finding ONCE ─────
+    # (SoulSync repair_findings contract, MIT). A pending finding is refreshed
+    # in place, a dismissed one stays silent, a resolved one re-opens after a
+    # grace week if still detected. Loop guard: the FIRST detection purges +
+    # requeues (a re-resolution may fix it); a second detection means the
+    # automatic path cannot — the finding escalates to Needs attention and the
+    # cache row is left alone instead of being purged every week forever.
+    fstats: dict = {"created": 0, "refreshed": 0, "reopened": 0, "silenced": 0,
+                    "escalated": 0, "resolved_stale": 0}
+    to_requeue: list = []
+    if not dry_run:
+        _now = datetime.utcnow()
+        seen: set = set()
         with get_db_session() as db:
-            for _ck, prk, title, category, _reason in hits:
+            for hit in hits:
+                seen.add((hit[1] or f"title:{hit[3]}:{(hit[2] or '')[:40]}", hit[4]))
+                if _triage_audit_hit(db, hit, _now, fstats):
+                    to_requeue.append(hit)
+            fstats["resolved_stale"] = _ES.resolve_stale_findings(
+                db, seen, set(_ES.FINDING_KINDS), _now)
+            db.commit()
+        if to_requeue:
+            mc2 = MetadataCache()
+            try:
+                for cache_key, *_ in to_requeue:
+                    mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
+                mc2.conn.commit()
+            finally:
+                mc2.close()
+
+    requeued = 0
+    if not dry_run and to_requeue:
+        _prog(f"Requeuing {len(to_requeue):,} flagged profiles…")
+        with get_db_session() as db:
+            for _ck, prk, title, category, _reason, _detail in to_requeue:
                 if prk:
                     # Precise path — plex_rating_key is EnrichmentStatus's
                     # UNIQUE column, immune to AniList title normalisation.
@@ -1039,8 +1093,42 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
         "requeued":   requeued,
         "dry_run":    dry_run,
         "by_reason":  by_reason,
+        "findings":   fstats,
         "zombies":    zstats,
     }
+
+
+def _triage_audit_hit(db, hit: tuple, now: datetime, fstats: dict) -> bool:
+    """Persist one audit hit as a finding and decide whether to requeue it.
+
+    True = purge + requeue (the first detection of a requeue-able kind: a
+    re-resolution with today's guards may fix it). False = leave the cache
+    alone: the finding is silenced (dismissed / inside the resolved grace),
+    its kind is never auto-requeued (``pin_violated``), or it already had its
+    one automatic chance — then it escalates to ``error`` and lands in Needs
+    attention. This is what stops the audit→requeue→audit loop that ran
+    invisibly every week for wrong-entity profiles."""
+    cache_key, prk, title, category, reason, detail = hit
+    fkey = prk or f"title:{category}:{(title or '')[:40]}"
+    svc, _, aid = (prk or "").partition(":")
+    row, action = _ES.record_finding(
+        db, plex_rating_key=fkey, kind=reason, service=svc or None,
+        arr_id=int(aid) if aid.isdigit() else None, category=category,
+        title=title, detail=detail, now=now)
+    key = "silenced" if action.startswith("silenced") else action
+    fstats[key] = fstats.get(key, 0) + 1
+    if action.startswith("silenced"):
+        return False
+    policy = _ES.FINDING_KINDS.get(_ES.finding_base(reason), {}).get("auto_requeue", "once")
+    if policy == "never":
+        return False
+    if _ES.was_requeued(row):
+        if row.severity != "error":
+            row.severity = "error"
+            fstats["escalated"] = fstats.get("escalated", 0) + 1
+        return False
+    _ES.mark_requeued(row, now)
+    return True
 
 
 # ── Owner match overrides (SoulSync-ported durable entity pins) ──────────────
@@ -1296,6 +1384,10 @@ async def apply_match_override(
                 merged.setdefault(k, set()).update(vals)
             row.rejected_ids = json.dumps(
                 [{k: v} for k in sorted(merged) for v in sorted(merged[k], key=str)])
+        # A human settled the item: its pending findings close (the weekly
+        # audit re-raises after the grace week if the pin did not fix it).
+        _ES.resolve_item_findings(db, f"{service}:{arr_id}", by=user.id,
+                                  note="pinned by the owner" if ids else "candidate excluded by the owner")
         db.commit()
     res = _purge_and_requeue_item(service, arr_id, category)
     _kb.invalidate()
@@ -1486,12 +1578,20 @@ async def enrichment_unmatched(
     reasons, the evidence and the owner's pin if any."""
     from collections import Counter
     from src.services import kb_overview as _kb
+    with get_db_session() as db:
+        pend = _ES.pending_findings(db)
+        pend_dicts = {k: [_ES.finding_to_dict(f) for f in v] for k, v in pend.items()}
+    findings_summary = Counter(_ES.finding_base(f.kind) for v in pend.values() for f in v)
     rows = []
     for i in await _kb.classified_items():
         if not i["downloaded"] or (category and i["category"] != category):
             continue
-        reasons = _ES.attention_reasons(i["state"], i.get("error"), i.get("attempt_count") or 0,
-                                        i.get("match_basis"), i.get("match_confidence"))
+        prk = i["plex_rating_key"]
+        reasons = _ES.attention_reasons(
+            i["state"], i.get("error"), i.get("attempt_count") or 0,
+            i.get("match_basis"), i.get("match_confidence"),
+            has_external_id=any(i.get(k) for k in ("tmdb_id", "tvdb_id", "imdb_id", "mbid")),
+            findings=pend_dicts.get(prk, ()))
         if reasons:
             rows.append((reasons, i))
     order = {r: n for n, r in enumerate(_ES.ATTENTION_ORDER)}
@@ -1509,10 +1609,71 @@ async def enrichment_unmatched(
         "total": len(rows), "offset": offset, "limit": limit,
         "by_reason": dict(by_reason),
         "reason_definitions": _ES.ATTENTION_REASONS,
+        # Every pending finding by kind — including the info-level data-quality
+        # ones (no rating, malformed) that do not put an item on this page.
+        "findings_summary": dict(findings_summary),
         "items": [dict(_serialize_item(i, det.get(i["plex_rating_key"]),
                                        pins.get((i["service"], i["arr_id"])), now),
-                       reasons=reasons) for reasons, i in page],
+                       reasons=reasons,
+                       findings=pend_dicts.get(i["plex_rating_key"], []))
+                  for reasons, i in page],
     }
+
+
+@router.get("/findings")
+async def enrichment_findings(
+    status: str = "pending",
+    kind: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+):
+    """The findings inbox: the audit's persisted verdicts (wrong entity,
+    shared id, pin contradicted, no rating, malformed) with their lifecycle."""
+    from src.database.models import EnrichmentFinding as F
+    limit = max(1, min(int(limit or 100), 500))
+    offset = max(0, int(offset or 0))
+    with get_db_session() as db:
+        q = db.query(F)
+        if status in ("pending", "resolved", "dismissed"):
+            q = q.filter(F.status == status)
+        if kind:
+            q = q.filter(F.kind.like(f"{kind}%"))
+        total = q.count()
+        rows = q.order_by(F.last_seen.desc()).offset(offset).limit(limit).all()
+        items = [_ES.finding_to_dict(r) for r in rows]
+    return {"total": total, "offset": offset, "limit": limit, "status": status,
+            "kinds": _ES.FINDING_KINDS, "items": items}
+
+
+@router.post("/findings/{finding_id}/dismiss")
+async def dismiss_finding(finding_id: int, payload: Optional[dict] = None,
+                          user: User = Depends(require_admin)):
+    """Dismiss: silenced for good — the audit will not raise it again."""
+    from src.database.models import EnrichmentFinding as F
+    with get_db_session() as db:
+        row = db.query(F).filter(F.id == finding_id).first()
+        if not row:
+            raise HTTPException(404, "no such finding")
+        row.status, row.dismissed_at, row.resolved_by = "dismissed", datetime.utcnow(), user.id
+        if (payload or {}).get("note"):
+            row.note = str(payload["note"])[:500]
+        db.commit()
+    return {"success": True, "message": "Dismissed — this finding stays silent from now on."}
+
+
+@router.post("/findings/{finding_id}/reopen")
+async def reopen_finding(finding_id: int, user: User = Depends(require_admin)):
+    """Reopen a dismissed or resolved finding (back to pending)."""
+    from src.database.models import EnrichmentFinding as F
+    with get_db_session() as db:
+        row = db.query(F).filter(F.id == finding_id).first()
+        if not row:
+            raise HTTPException(404, "no such finding")
+        row.status, row.resolved_at, row.dismissed_at, row.resolved_by = "pending", None, None, None
+        row.last_seen = datetime.utcnow()
+        db.commit()
+    return {"success": True, "message": "Reopened."}
 
 
 def _check_service(service: str) -> None:
