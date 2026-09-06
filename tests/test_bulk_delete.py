@@ -145,7 +145,7 @@ check("single approve uses the shared helper",
 
 html = (root / "frontend/index.html").read_text(encoding="utf-8")
 for frag in ["del-cb", "del-bulk-btn", "del-select-all",
-             "showBulkDeleteConfirmModal", "updateDelBulkCount", "bulkDelete()"]:
+             "confirmDialog(", "updateDelBulkCount", "bulkDelete()"]:
     check(f"frontend has {frag}", frag in html)
 
 print(f"\n{PASS} passed, {FAIL} failed")

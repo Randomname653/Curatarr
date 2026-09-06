@@ -159,6 +159,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
   }
   .view-body { padding: 14px 16px; }
   .tbl-wrap { overflow-x: auto; }
+  .select-bar { margin: 12px -16px -14px; padding: 10px 16px; }
 }
 
 /* ── CONTENT ── */
@@ -173,22 +174,18 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .view-header p { color: var(--text2); margin-top: 6px; font-size: 13px; padding-left: 14px; }
 .view-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
 
-/* ── ARR TABS (Pass 16c — Library Manager pages) ── */
-.arr-tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.arr-tab { background: none; border: none; color: var(--text2); padding: 8px 14px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .12s; }
-.arr-tab:hover { color: var(--text); }
-.arr-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
+/* ── ARR TABS (Pass 16c — Library Manager pages) — same rule as .cat-tabs, see TABS ── */
 .arr-tab-content { padding: 8px 0; }
 /* Setup-needed banner inside arr views */
 .arr-setup-banner { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; text-align: center; margin: 20px 0; }
 .arr-setup-banner h3 { margin: 0 0 8px; font-size: 15px; }
 .arr-setup-banner p { color: var(--text3); font-size: 13px; margin: 0 0 16px; }
 
-/* ── CAT TABS ── */
-.cat-tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
-.cat-tab { background: none; border: none; color: var(--text2); padding: 8px 16px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .12s; }
-.cat-tab:hover { color: var(--text); }
-.cat-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
+/* ── TABS — one look for category tabs, arr-page tabs and sub-views inside a view ── */
+.cat-tabs, .arr-tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.cat-tab, .arr-tab { background: none; border: none; color: var(--text2); padding: 8px 16px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .12s; display: inline-flex; align-items: center; gap: 6px; }
+.cat-tab:hover, .arr-tab:hover { color: var(--text); }
+.cat-tab.active, .arr-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
 
 /* ── CHAT ── */
 #chat-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
@@ -295,27 +292,34 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .badge.danger { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(229,83,83,.25); }
 .badge.success { background: var(--success-dim); color: var(--success); border: 1px solid rgba(61,220,151,.2); }
 .badge.muted { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+.badge.info { background: rgba(91,141,238,.12); color: var(--info); border: 1px solid rgba(91,141,238,.25); }
+.badge-sm { font-size: 10px; padding: 1px 6px; }
 
 /* ── CARDS ── */
 .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; transition: border-color .12s; }
 .card:hover { border-color: var(--border2); }
 .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .card p { font-size: 12px; color: var(--text2); line-height: 1.5; }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 
 /* ── CURATION SECTIONS (protections / downscale / principles) ── */
 .panel-section { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 16px; }
 .panel-hint { font-size: 12px; color: var(--text3); margin-left: 8px; }
-/* Collapsible curation sections: native <details> so several can be open at
-   once and each can be folded away — the old always-expanded inline blocks
-   under the Deletions list were the complaint. */
-.cur-section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 12px; }
-.cur-section > summary { cursor: pointer; padding: 13px 16px; font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; user-select: none; }
-.cur-section > summary::-webkit-details-marker { display: none; }
-.cur-section > summary::before { content: '▸'; color: var(--amber); transition: transform .15s; }
-.cur-section[open] > summary::before { transform: rotate(90deg); }
-.cur-section > summary:hover { color: var(--amber); }
-.cur-section .cur-body { padding: 0 16px 14px; }
+/* ── SECTIONS — every sub-panel inside a view: .section-head (h3 + count
+   badge + .section-hint, .section-actions at the right) + .section-body.
+   Collapsible ones are <details class="section"> (native <details>, so
+   several can be open at once and each folds away). .cur-section is the
+   older name for the same thing and stays an alias until its markup moves. ── */
+.section, .cur-section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 12px; }
+.section-head, .cur-section > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; font-size: 13px; font-weight: 600; }
+.section-head h3 { font-size: 13px; font-weight: 600; margin: 0; display: inline-flex; align-items: center; gap: 8px; }
+.section-hint { font-size: 12px; color: var(--text3); font-weight: 400; }
+.section-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.section-body, .cur-section .cur-body { padding: 0 16px 14px; }
+details.section > summary, .cur-section > summary { cursor: pointer; list-style: none; user-select: none; }
+details.section > summary::-webkit-details-marker, .cur-section > summary::-webkit-details-marker { display: none; }
+details.section > summary::before, .cur-section > summary::before { content: '▸'; color: var(--amber); transition: transform .15s; }
+details.section[open] > summary::before, .cur-section[open] > summary::before { transform: rotate(90deg); }
+details.section > summary:hover, .cur-section > summary:hover { color: var(--amber); }
 .panel-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; transition: border-color .12s; animation: cardIn .22s ease both; }
 .panel-item:hover { border-color: var(--border2); }
 /* staggered card entrance (kept subtle; amber stays the identity) */
@@ -337,7 +341,10 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .panel-item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .panel-item-sub { color: var(--text2); font-size: 12px; margin-top: 8px; line-height: 1.5; }
 .panel-item-meta { color: var(--text3); font-size: 12px; }
-.panel-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.panel-item-title { font-weight: 600; font-size: 13px; display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.panel-item-foot { margin-top: 8px; }
+.panel-item.live { border-color: rgba(229,160,13,.35); }
+.panel-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-left: auto; }
 .stat-row { display: flex; gap: 12px; margin-bottom: 20px; }
 .stat-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .stat-box .num { font-size: 24px; font-weight: 700; color: var(--amber); }
@@ -406,6 +413,78 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .test-status.ok { color: var(--success); }
 .test-status.err { color: var(--danger); }
 
+/* ── UI GRAMMAR (see the DESIGN LANGUAGE header): page → .toolbar → content →
+   .select-bar; sub-panels are .section; rows are .panel-item with ≤3 visible
+   actions + a .menu; outcomes go through toast(), decisions through
+   confirmDialog() / openModal(). One implementation per job. ── */
+/* Toolbar: page-level actions left, view controls (filters, sort, search) right */
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+/* Overflow menu behind a row's visible actions ("More") */
+.menu { position: relative; display: inline-block; }
+.menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 170px; background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 4px; z-index: 40; }
+.menu.open .menu-list { display: block; }
+.menu-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text); font-size: 12px; padding: 7px 10px; border-radius: 6px; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.menu-item:hover { background: var(--bg3); color: var(--amber); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: var(--danger-dim); color: var(--danger); }
+.menu-sep { border-top: 1px solid var(--border); margin: 4px 0; }
+/* Modal: one layer, one root; openModal() / closeModal() own it */
+#modal-root { position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.72); padding: 16px; }
+#modal-root.open { display: flex; }
+.modal { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-lg); width: 100%; max-width: 560px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.55); animation: cardIn .18s ease both; }
+.modal.narrow { max-width: 420px; }
+.modal.wide { max-width: 780px; }
+.modal.danger { border-color: rgba(229,83,83,.4); }
+.modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modal-head h3 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; min-width: 0; }
+.modal-close { background: none; border: none; color: var(--text2); font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: var(--radius); }
+.modal-close:hover { color: var(--amber); }
+.modal-body { padding: 16px 18px; overflow-y: auto; font-size: 13px; line-height: 1.55; }
+.modal-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--border); }
+.confirm-count { font-size: 32px; font-weight: 700; color: var(--danger); text-align: center; min-height: 40px; margin-top: 8px; }
+/* Toasts: bottom right, newest last, click to dismiss */
+#toast-stack { position: fixed; bottom: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.toast { background: var(--bg2); border: 1px solid var(--border2); border-left: 3px solid var(--info); border-radius: var(--radius); padding: 10px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); font-size: 13px; color: var(--text); animation: slideIn .2s ease; cursor: pointer; }
+.toast.success { border-left-color: var(--success); }
+.toast.danger { border-left-color: var(--danger); }
+.toast.amber { border-left-color: var(--amber); }
+.toast-title { font-size: 12px; font-weight: 600; color: var(--amber); margin-bottom: 4px; }
+.toast-actions { display: flex; gap: 8px; margin-top: 10px; }
+.toast-actions .btn { flex: 1; }
+/* Selection bar: sits at the bottom of the view only while something is selected */
+.select-bar { position: sticky; bottom: 0; display: none; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px -24px -20px; padding: 10px 24px; background: var(--bg-veil); border-top: 1px solid var(--amber); backdrop-filter: blur(4px); z-index: 5; font-size: 13px; }
+.select-bar.show { display: flex; }
+.select-bar .count { font-weight: 600; color: var(--amber); }
+/* Empty state: one sentence, at most one action; .good = the happy case */
+.empty { padding: 26px 16px; text-align: center; color: var(--text3); font-size: 13px; }
+.empty p { margin-bottom: 10px; }
+.empty.good { color: var(--success); }
+/* Pager: "1–50 of 812 · Prev · Next", buttons disabled rather than hidden */
+.pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--text3); }
+/* Banner: an in-flow notice above a list (coverage, limbo, setup) */
+.banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); font-size: 12px; color: var(--text2); margin-bottom: 14px; }
+.banner.warn { border-color: rgba(229,160,13,.4); }
+.banner.danger { border-color: rgba(229,83,83,.4); }
+.banner.ok { border-color: rgba(61,220,151,.3); }
+.banner.warn .banner-icon { color: var(--amber); } .banner.danger .banner-icon { color: var(--danger); } .banner.ok .banner-icon { color: var(--success); }
+.banner-text { flex: 1; min-width: 0; }
+/* Controls outside a .form-group */
+.input { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: var(--radius); font-size: 12px; font-family: inherit; }
+/* Chat system note (thread exited / deleted from the discussion) */
+.msg.system { align-self: center; background: none; border: none; color: var(--text3); font-size: 12px; font-style: italic; max-width: 90%; }
+/* Working-without-a-count dot: the sidebar's pulse as a content-level spinner */
+.spinner { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: sb-pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+/* ── UTILITIES — named versions of the inline styles that kept recurring ── */
+.t2 { color: var(--text2); } .t3 { color: var(--text3); }
+.t-amber { color: var(--amber); } .t-danger { color: var(--danger); } .t-success { color: var(--success); }
+.t-right { text-align: right; } .t-center { text-align: center; } .b { font-weight: 600; } .mono { font-family: monospace; }
+.fs-10 { font-size: 10px; } .fs-11 { font-size: 11px; } .fs-12 { font-size: 12px; } .fs-13 { font-size: 13px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stack { display: flex; flex-direction: column; gap: 6px; }
+.grow { flex: 1; min-width: 0; }
+.mt-4 { margin-top: 4px; } .mt-8 { margin-top: 8px; } .mt-12 { margin-top: 12px; } .mb-8 { margin-bottom: 8px; } .mb-12 { margin-bottom: 12px; }
+
 /* ── PROGRESS ── */
 .progress-bar { background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; margin-top: 8px; }
 .progress-fill { height: 100%; background: var(--amber); border-radius: 4px; transition: width .3s; }
@@ -450,12 +529,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 #msg-empty { padding: 24px; text-align: center; color: var(--text3); font-size: 13px; }
 
 /* ── DELETION FEEDBACK ── */
-.del-row { display: flex; gap: 8px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.del-row:last-child { border-bottom: none; }
-.del-info { flex: 1; }
-.del-title { font-weight: 600; font-size: 13px; }
-.del-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
-.del-reason { font-size: 12px; color: var(--text3); margin-top: 4px; }
 .del-comment { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: var(--radius); font-size: 12px; margin-top: 8px; font-family: inherit; resize: none; height: 60px; }
 .del-comment:focus-visible { outline: none; border-color: var(--amber); }
 .del-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -465,7 +538,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .load-err { color: var(--danger); font-style: normal; font-size: 13px; }
 .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .inline-flex { display: flex; align-items: center; gap: 8px; }
-.ml-auto { margin-left: auto; }
+.ml-auto, .row-end { margin-left: auto; }
 select option { background: var(--bg2); }
 
 /* ── SETTINGS SIDEBAR (sub-nav inside Settings view) ── */
@@ -475,17 +548,7 @@ select option { background: var(--bg2); }
 .settings-pane h2 { margin-top: 0; }
 .settings-pane h3 { color: var(--text); }
 .settings-pane h4 { color: var(--text); }
-/* ── GAME PROCESS TOASTS ── */
-#game-toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 340px; }
-.game-toast { background: var(--bg2); border: 1px solid var(--border2); border-left: 3px solid var(--amber); border-radius: var(--radius); padding: 12px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); animation: slideIn .2s ease; }
-.game-toast-title { font-size: 12px; font-weight: 600; color: var(--amber); margin-bottom: 4px; }
-.game-toast-name { font-size: 13px; color: var(--text); font-family: monospace; margin-bottom: 10px; }
-.game-toast-actions { display: flex; gap: 8px; }
-.game-toast-actions button { flex: 1; padding: 5px 10px; border-radius: var(--radius); font-size: 12px; cursor: pointer; border: 1px solid var(--border2); transition: all .12s; }
-.btn-yes-game { background: var(--amber-dim); color: var(--amber); }
-.btn-yes-game:hover { background: var(--amber); color: #000; }
-.btn-no-game { background: none; color: var(--text2); }
-.btn-no-game:hover { border-color: var(--text2); color: var(--text); }
+/* Toast entrance (the game-process question rides the shared toast stack too) */
 @keyframes slideIn { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
 /* ── GAME STATUS INDICATOR (topbar) ── */
 #game-indicator { display:none; align-items:center; gap:6px; font-size:11px; color:var(--success); background:var(--success-dim); border:1px solid var(--success); border-radius:12px; padding:3px 10px; }
@@ -2240,6 +2303,215 @@ async function _swrRun(key, fetchFn, renderFn, opts = {}) {
   return fresh;
 }
 function _swrInvalidate(key) { _swrCache.delete(key); }
+
+// ── UI GRAMMAR HELPERS ──────────────────────────────────────────────────────
+// One implementation per job — toast, modal, confirm, overflow menu, pager,
+// button state, badge counts, empty states, times. Views compose these and
+// build no overlay, alert() or prompt() of their own
+// (tests/test_frontend_hygiene.py ratchets the old mechanisms to zero).
+
+function _mount(id) {
+  let el = document.getElementById(id);
+  if (!el) { el = document.createElement('div'); el.id = id; document.body.appendChild(el); }
+  return el;
+}
+
+// toast(text, kind, {title, ms, actions:[{label, primary, onClick}]}) — bottom
+// right, newest last, click dismisses. kind: info | success | danger | amber
+// ('error' is accepted as danger). The same text is not repeated within 5 s.
+// A toast with actions stays until one of them resolves (onClick may return
+// false to keep it open).
+const _toastRecent = new Map();
+function toast(text, kind = 'info', opts = {}) {
+  const stack = _mount('toast-stack');
+  if (kind === 'error') kind = 'danger';
+  const key = `${kind}|${text}`, now = Date.now();
+  if (!opts.actions && _toastRecent.get(key) > now - 5000) return null;
+  _toastRecent.set(key, now);
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
+  el.innerHTML = (opts.title ? `<div class="toast-title">${esc(opts.title)}</div>` : '') + `<div>${esc(text)}</div>` +
+    (opts.actions?.length ? `<div class="toast-actions">${opts.actions.map((a, i) =>
+      `<button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : 'btn-secondary'}" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>` : '');
+  const close = () => { if (el.parentNode) el.remove(); };
+  if (opts.actions?.length) {
+    el.querySelectorAll('.toast-actions button').forEach(b => b.onclick = ev => {
+      ev.stopPropagation();
+      const a = opts.actions[Number(b.dataset.i)];
+      Promise.resolve(a.onClick?.(el)).then(r => { if (r !== false) close(); });
+    });
+  } else {
+    el.onclick = close;
+    setTimeout(close, opts.ms || (kind === 'danger' ? 6000 : 3500));
+  }
+  while (stack.children.length >= 4) stack.firstChild.remove();
+  stack.appendChild(el);
+  return el;
+}
+const showToast = toast;
+
+// openModal({title, body, foot, size: 'narrow'|'wide', danger, onClose}) → {el, close}
+// One layer: opening a second modal replaces the first. Escape, the backdrop
+// and the X all close it; the first control gets focus. body/foot are HTML.
+let _modal = null;
+function openModal(o = {}) {
+  closeModal();
+  const root = _mount('modal-root');
+  root.innerHTML = `<div class="modal ${o.size || ''}${o.danger ? ' danger' : ''}" role="dialog" aria-modal="true" aria-label="${escAttr(o.title || '')}">
+      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${o.body || ''}</div>
+      ${o.foot ? `<div class="modal-foot">${o.foot}</div>` : ''}
+    </div>`;
+  root.classList.add('open');
+  root.onclick = ev => { if (ev.target === root) closeModal(); };
+  const el = root.firstElementChild;
+  _modal = {el, onClose: o.onClose};
+  const first = el.querySelector('.modal-body input:not([type=hidden]), .modal-body select, .modal-body textarea, .modal-foot button:not([disabled])');
+  if (first) setTimeout(() => first.focus(), 0);
+  return {el, close: closeModal};
+}
+function closeModal() {
+  const root = document.getElementById('modal-root');
+  const m = _modal;
+  _modal = null;
+  if (root) { root.classList.remove('open'); root.innerHTML = ''; }
+  if (m?.onClose) { try { m.onClose(); } catch (_) {} }
+}
+document.addEventListener('keydown', ev => {
+  if (ev.key !== 'Escape') return;
+  const menu = document.querySelector('.menu.open');
+  if (menu) { menu.classList.remove('open'); return; }   // innermost layer first
+  if (_modal) closeModal();
+});
+
+// confirmDialog({title, body, confirmLabel, cancelLabel, danger, countdown,
+//                reason: {label, placeholder, value}}) → Promise<{ok, reason}>
+// Every destructive action goes through here. countdown: N keeps the confirm
+// button disabled for N seconds ("Delete (3)") — the deliberate pause the
+// delete flow always had. reason renders a free-text field whose value comes
+// back trimmed (Curatarr learns from it).
+function confirmDialog(o = {}) {
+  return new Promise(resolve => {
+    let timer = null, done = false;
+    const label = o.confirmLabel || 'Confirm';
+    const finish = ok => {
+      if (done) return;
+      done = true;
+      if (timer) clearInterval(timer);
+      const reason = (document.getElementById('confirm-reason')?.value || '').trim();
+      closeModal();
+      resolve({ok, reason});
+    };
+    const reasonHtml = o.reason
+      ? `<label class="stack mt-12 fs-12 t2" for="confirm-reason">${esc(o.reason.label || 'Reason (optional — Curatarr learns from it)')}
+           <input id="confirm-reason" class="input" style="width:100%" placeholder="${escAttr(o.reason.placeholder || '')}" value="${escAttr(o.reason.value || '')}"></label>`
+      : '';
+    openModal({
+      title: o.title || 'Are you sure?', size: 'narrow', danger: !!o.danger,
+      body: `${o.body || ''}${reasonHtml}${o.countdown ? `<div class="confirm-count" id="confirm-count">${o.countdown}</div>` : ''}`,
+      foot: `<button type="button" class="btn btn-secondary row-end" id="confirm-cancel">${esc(o.cancelLabel || 'Cancel')}</button>
+             <button type="button" class="btn ${o.danger ? 'btn-danger' : 'btn-primary'}" id="confirm-ok"${o.countdown ? ' disabled' : ''}>${esc(label)}${o.countdown ? ` (${o.countdown})` : ''}</button>`,
+      onClose: () => finish(false),
+    });
+    const okBtn = document.getElementById('confirm-ok');
+    document.getElementById('confirm-cancel').onclick = () => finish(false);
+    okBtn.onclick = () => finish(true);
+    document.getElementById('confirm-reason')?.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !okBtn.disabled) finish(true); });
+    if (o.countdown) {
+      let s = o.countdown;
+      const cd = document.getElementById('confirm-count');
+      timer = setInterval(() => {
+        s -= 1;
+        if (cd) cd.textContent = s > 0 ? String(s) : '';
+        okBtn.textContent = s > 0 ? `${label} (${s})` : label;
+        if (s <= 0) { clearInterval(timer); timer = null; okBtn.disabled = false; }
+      }, 1000);
+    }
+  });
+}
+
+// menuHtml([{label, call, href, danger, title, attrs, sep}], label) — the
+// "More" overflow behind a row's visible actions. `call` is the inline
+// handler (rows are string templates; `this` is the menu item, so pass data
+// through `attrs`, e.g. attrs: 'data-pid="7"'); `href` renders a link.
+function menuHtml(items, label = 'More') {
+  const list = (items || []).filter(Boolean);
+  if (!list.length) return '';
+  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" onclick="toggleMenu(this)">${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
+    it.sep ? '<div class="menu-sep"></div>'
+    : it.href ? `<a class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" href="${escAttr(it.href)}" target="_blank" rel="noopener"${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</a>`
+    : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" onclick="${escAttr(it.call || '')}"${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;
+}
+function toggleMenu(btn) {
+  const menu = btn.closest('.menu');
+  const wasOpen = menu.classList.contains('open');
+  document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+  if (!wasOpen) menu.classList.add('open');
+  btn.setAttribute('aria-expanded', String(!wasOpen));
+}
+document.addEventListener('click', ev => {
+  const inMenu = ev.target.closest('.menu');
+  if (ev.target.closest('.menu-item')) { inMenu?.classList.remove('open'); return; }
+  if (!inMenu) document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+});
+
+// pagerHtml({offset, limit, total, call}) — "1–50 of 812 · Prev · Next";
+// `call` is the loader expression with {offset} as the placeholder, e.g.
+// "loadKbItems('movie','not_found',{offset})". Nothing renders when
+// everything fits on one page.
+function pagerHtml(p) {
+  const total = Number(p.total || 0), limit = Number(p.limit || 50), offset = Number(p.offset || 0);
+  if (offset === 0 && total <= limit) return '';
+  const from = total ? offset + 1 : 0, to = Math.min(offset + limit, total);
+  const go = o => escAttr(p.call.replace('{offset}', String(o)));
+  return `<div class="pager"><span>${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}</span><span class="row-end"></span>
+    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} onclick="${go(Math.max(0, offset - limit))}">Prev</button>
+    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} onclick="${go(offset + limit)}">Next</button></div>`;
+}
+
+// btnBusy(btn, label) / btnDone(btn, label, {revertMs, keepDisabled}) — the
+// pressed button tells its own story; everything beyond it goes to toast().
+function btnBusy(btn, label = '…') {
+  if (!btn) return;
+  if (btn.dataset.label === undefined) btn.dataset.label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+}
+function btnDone(btn, label, o = {}) {
+  if (!btn) return;
+  btn.textContent = label ?? btn.dataset.label ?? btn.textContent;
+  btn.disabled = !!o.keepDisabled;
+  if (o.revertMs) setTimeout(() => { btn.textContent = btn.dataset.label ?? btn.textContent; btn.disabled = false; }, o.revertMs);
+}
+
+// setBadge(id, n) — count bubbles (#kb-badge, #tasks-badge, tab counts):
+// hidden at 0, capped at 999+.
+function setBadge(id, n) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  n = Number(n) || 0;
+  el.textContent = n > 999 ? '999+' : String(n);
+  el.style.display = n > 0 ? 'inline' : 'none';
+}
+
+// emptyHtml(html, ctaLabel, ctaCall, {good}) — one sentence (HTML, the caller
+// escapes), at most one action. good: the empty state is the happy case.
+function emptyHtml(html, ctaLabel, ctaCall, o = {}) {
+  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" onclick="${escAttr(ctaCall || '')}">${esc(ctaLabel)}</button>` : ''}</div>`;
+}
+
+// _fmtRel(iso) → "in 3 d" / "2 h ago"; pair it with _fmtAbs(iso) in title=.
+function _fmtRel(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const d = t - Date.now(), a = Math.abs(d);
+  if (a < 60e3) return 'now';
+  const [n, u] = a < 3600e3 ? [Math.round(a / 60e3), 'min'] : a < 86400e3 ? [Math.round(a / 3600e3), 'h'] : [Math.round(a / 86400e3), 'd'];
+  return d > 0 ? `in ${n} ${u}` : `${n} ${u} ago`;
+}
+function _fmtAbs(iso) { const dt = new Date(iso); return isNaN(dt.getTime()) ? '' : dt.toLocaleString(); }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 function showView(name, btn) {
@@ -5362,41 +5634,13 @@ async function startArrPreEnrich(btn) {
   }
 }
 
-function showDeleteConfirmModal(title) {
-  return new Promise(resolve => {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center';
-    const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--bg2);border:1px solid rgba(229,83,83,.4);border-radius:var(--radius);padding:28px 24px;max-width:380px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
-    modal.innerHTML = `
-      <div style="margin-bottom:12px;color:var(--danger)">${SVG_TRASH}</div>
-      <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
-      <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${esc(title)}</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.5">This removes it from your *arr library and deletes the files.<br>This cannot be undone.</div>
-      <div style="font-size:36px;font-weight:700;color:var(--danger);margin-bottom:16px;min-height:44px" id="_del_countdown">3</div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button id="_del_confirm" class="btn btn-danger" disabled style="min-width:110px">Delete (3)</button>
-        <button id="_del_cancel" class="btn btn-secondary" style="min-width:80px">Cancel</button>
-      </div>`;
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    let s = 3;
-    const cd = modal.querySelector('#_del_countdown');
-    const confirmBtn = modal.querySelector('#_del_confirm');
-    const cancelBtn = modal.querySelector('#_del_cancel');
-    const timer = setInterval(() => {
-      s--;
-      cd.textContent = s > 0 ? s : '';
-      confirmBtn.textContent = s > 0 ? `Delete (${s})` : 'Delete';
-      if (s <= 0) { clearInterval(timer); confirmBtn.disabled = false; }
-    }, 1000);
-
-    const cleanup = (result) => { clearInterval(timer); document.body.removeChild(overlay); resolve(result); };
-    confirmBtn.onclick = () => cleanup(true);
-    cancelBtn.onclick = () => cleanup(false);
-    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
-  });
+// The body every delete confirmation shares: what goes, and what that means.
+// The 3-second countdown and the reason field come from confirmDialog().
+function _deleteBody(what, note) {
+  return `<div class="t-center"><div class="t-danger">${SVG_TRASH}</div>
+    <div class="b fs-13 mt-4">You're about to delete</div>
+    <div class="t-amber b mt-4">${esc(what)}</div>
+    <p class="t3 fs-12 mt-8">${esc(note)}</p></div>`;
 }
 
 // ── BULK DELETE (multi-select) ────────────────────────────────────────────────
@@ -5434,57 +5678,18 @@ function updateDelBulkCount() {
   btn.disabled = boxes.length === 0;
 }
 
-// Same 3s-countdown pattern as the single-item modal, plus an optional shared
-// reason field (replaces the prompt(); sent per item as "Deleted: <reason>"
-// so the backend stays on the no-LLM fast path).
-function showBulkDeleteConfirmModal(count, gb) {
-  return new Promise(resolve => {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center';
-    const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--bg2);border:1px solid rgba(229,83,83,.4);border-radius:var(--radius);padding:28px 24px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.5)';
-    modal.innerHTML = `
-      <div style="margin-bottom:12px;color:var(--danger)">${SVG_TRASH}</div>
-      <div style="font-weight:600;font-size:15px;margin-bottom:8px">You're about to delete</div>
-      <div style="font-size:14px;color:var(--amber);font-weight:600;margin-bottom:12px">${count} items · ${gb} GB</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:16px;line-height:1.5">This removes them from your *arr libraries and deletes the files.<br>This cannot be undone.</div>
-      <input id="_bulk_reason" aria-label="Shared reason for bulk deletion" placeholder="Shared reason (optional — Curatarr will learn)" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius);font-size:13px;margin-bottom:16px"/>
-      <div style="font-size:36px;font-weight:700;color:var(--danger);margin-bottom:16px;min-height:44px" id="_del_countdown">3</div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button id="_del_confirm" class="btn btn-danger" disabled style="min-width:140px">Delete ${count} (3)</button>
-        <button id="_del_cancel" class="btn btn-secondary" style="min-width:80px">Cancel</button>
-      </div>`;
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    let s = 3;
-    const cd = modal.querySelector('#_del_countdown');
-    const confirmBtn = modal.querySelector('#_del_confirm');
-    const cancelBtn = modal.querySelector('#_del_cancel');
-    const timer = setInterval(() => {
-      s--;
-      cd.textContent = s > 0 ? s : '';
-      confirmBtn.textContent = s > 0 ? `Delete ${count} (${s})` : `Delete ${count}`;
-      if (s <= 0) { clearInterval(timer); confirmBtn.disabled = false; }
-    }, 1000);
-
-    const cleanup = (confirmed) => {
-      const reason = (modal.querySelector('#_bulk_reason').value || '').trim();
-      clearInterval(timer); document.body.removeChild(overlay);
-      resolve({ confirmed, reason });
-    };
-    confirmBtn.onclick = () => cleanup(true);
-    cancelBtn.onclick = () => cleanup(false);
-    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
-  });
-}
-
+// The shared reason is sent per item as "Deleted: <reason>" so the backend
+// stays on the no-LLM fast path.
 async function bulkDelete() {
   const boxes = [...document.querySelectorAll('#del-content .del-cb:checked')];
   if (!boxes.length) return;
   const gb = boxes.reduce((s, b) => s + (parseFloat(b.dataset.gb) || 0), 0);
-  const res = await showBulkDeleteConfirmModal(boxes.length, gb.toFixed(1));
-  if (!res.confirmed) return;
+  const res = await confirmDialog({
+    title: 'Delete selected', danger: true, countdown: 3, confirmLabel: `Delete ${boxes.length}`,
+    body: _deleteBody(`${boxes.length} items · ${gb.toFixed(1)} GB`, 'This removes them from your *arr libraries and deletes the files. This cannot be undone.'),
+    reason: {label: 'Shared reason (optional — Curatarr learns from it)'},
+  });
+  if (!res.ok) return;
   const btn = document.getElementById('del-bulk-btn');
   btn.disabled = true;
   btn.textContent = `Deleting ${boxes.length}…`;
@@ -5497,7 +5702,7 @@ async function bulkDelete() {
   } catch (e) {
     let d = e.message || 'failed';
     try { d = JSON.parse(d).detail || d; } catch {}
-    alert('Bulk delete failed to start: ' + d);
+    toast('Bulk delete failed to start: ' + d, 'danger');
     updateDelBulkCount();
     return;
   }
@@ -5513,7 +5718,7 @@ async function bulkDelete() {
         const last = t?.logs?.length ? t.logs[t.logs.length - 1].msg : 'finished';
         _delProposalsAll = null;
         loadDeletions(currentDelCategory);
-        alert('Bulk delete: ' + last);
+        toast('Bulk delete: ' + last, t?.status === 'done' ? 'success' : 'amber', {ms: 8000});
       }
     } catch {}
   }, 2000);
@@ -5521,11 +5726,13 @@ async function bulkDelete() {
 
 async function approveDelete(id, btn) {
   const title = btn.closest('.card')?.querySelector('div[style*="font-weight:600"]')?.firstChild?.textContent?.trim() || 'this item';
-  const confirmed = await showDeleteConfirmModal(title);
-  if (!confirmed) return;
-
-  const reason = prompt('What made you decide to delete this? (Curatarr will learn)\nLeave blank to skip.');
-  if (reason === null) return;
+  const res = await confirmDialog({
+    title: 'Delete from library', danger: true, countdown: 3, confirmLabel: 'Delete',
+    body: _deleteBody(title, 'This removes it from your *arr library and deletes the files. This cannot be undone.'),
+    reason: {label: 'What made you decide? (optional — Curatarr learns from it)'},
+  });
+  if (!res.ok) return;
+  const reason = res.reason;
 
   // Clear any previous limbo error on this card
   btn.closest('.del-actions')?.querySelectorAll('.arr-limbo-error').forEach(e => e.remove());
@@ -5794,11 +6001,13 @@ async function deleteFromDiscussion() {
   const id    = ctx.proposal_id;
   const title = ctx.title || 'this item';
 
-  // Deletion is irreversible — keep the 3-second-countdown confirm modal.
-  // We skip the reason prompt the Deletions view shows, though: the
-  // discussion thread itself IS the reasoning.
-  const confirmed = await showDeleteConfirmModal(title);
-  if (!confirmed) return;
+  // Deletion is irreversible — keep the 3-second-countdown confirm. No
+  // reason field here: the discussion thread itself IS the reasoning.
+  const res = await confirmDialog({
+    title: 'Delete from library', danger: true, countdown: 3, confirmLabel: 'Delete',
+    body: _deleteBody(title, 'This removes it from your *arr library and deletes the files. This cannot be undone.'),
+  });
+  if (!res.ok) return;
 
   const btn = document.getElementById('discuss-delete-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
@@ -6209,12 +6418,9 @@ const PIN_ID_KINDS = ['tmdb_id', 'tvdb_id', 'imdb_id', 'anilist_id', 'mal_id', '
 const KB_PAGE = 50, KB_ATT_PAGE = 100;
 
 function _updateKbBadge(o) {
-  const badge = document.getElementById('kb-badge');
-  if (!badge) return;
   let n = 0;
   for (const c of Object.values(o?.categories || {})) n += c?.open?.needs_attention || 0;
-  badge.textContent = n > 999 ? '999+' : String(n);
-  badge.style.display = n > 0 ? 'inline' : 'none';
+  setBadge('kb-badge', n);
 }
 
 function _fmtDate(iso) {
@@ -7033,15 +7239,7 @@ async function startTaskStream() {
 }
 
 function updateTaskBadge(tasks) {
-  const running = tasks.filter(t => t.status === 'running' || t.status === 'pending');
-  const badge = document.getElementById('tasks-badge');
-  if (!badge) return;
-  if (running.length > 0) {
-    badge.textContent = running.length;
-    badge.style.display = 'inline';
-  } else {
-    badge.style.display = 'none';
-  }
+  setBadge('tasks-badge', tasks.filter(t => t.status === 'running' || t.status === 'pending').length);
 }
 
 const STATUS_COLORS = {
@@ -7237,42 +7435,23 @@ function escAttr(s){
 const _shownProcesses = new Set();   // names already shown in a toast this session
 let   _processPollTimer = null;
 
-function _getOrCreateToastContainer() {
-  let el = document.getElementById('game-toast-container');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'game-toast-container';
-    document.body.appendChild(el);
-  }
-  return el;
-}
-
+// One question per unknown exe, its two answers as toast actions — on the
+// shared toast() stack, not a component of its own.
 function _showProcessToast(name) {
-  const container = _getOrCreateToastContainer();
-  const toast = document.createElement('div');
-  toast.className = 'game-toast';
-  toast.innerHTML = `
-    <div class="game-toast-title">Unknown process detected</div>
-    <div class="game-toast-name">${esc(name)}</div>
-    <div class="game-toast-actions">
-      <button class="btn-yes-game" onclick="_classifyProcess('${esc(name)}', true, this)">Yes, game</button>
-      <button class="btn-no-game"  onclick="_classifyProcess('${esc(name)}', false, this)">Ignore</button>
-    </div>`;
-  container.appendChild(toast);
+  toast(name, 'amber', {title: 'Unknown process detected — is this a game?', actions: [
+    {label: 'Yes, game', primary: true, onClick: () => _classifyProcess(name, true)},
+    {label: 'Ignore', onClick: () => _classifyProcess(name, false)},
+  ]});
 }
 
-async function _classifyProcess(name, isGame, btn) {
-  const toast = btn.closest('.game-toast');
-  toast.style.opacity = '0.5';
+async function _classifyProcess(name, isGame) {
   try {
     await api('/api/processes/classify', 'POST', { name, is_game: isGame });
-    toast.remove();
-    if (isGame) {
-      // Update game indicator immediately
-      document.getElementById('game-indicator').classList.add('show');
-    }
-  } catch(e) {
-    toast.style.opacity = '1';
+    if (isGame) document.getElementById('game-indicator')?.classList.add('show');
+    return true;
+  } catch (e) {
+    toast(`Could not save the answer for ${name} — try again.`, 'danger');
+    return false;   // keeps the question on screen
   }
 }
 
