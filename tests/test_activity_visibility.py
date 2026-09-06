@@ -151,7 +151,7 @@ check("activity rows render the task's backend-sent name",
 check("the old per-category icon map is fully gone, not half-removed",
       "TASK_ICONS" not in fe)
 check("every status the backend emits has a color and a label",
-      all(f"{s}:" in fe.split("STATUS_COLORS")[1][:220]
+      all(f"{s}:" in fe.split("STATUS_BADGE")[1][:220]
           for s in ("running", "done", "error", "pending", "skipped")))
 
 # ── 4. inner progress inside the wrapper runners (the 0%-until-done fix) ─────
@@ -201,7 +201,7 @@ check("audit reports its stages (ground truth -> scan -> requeue)",
       and "Requeuing {len(to_requeue):,} flagged profiles" in en)
 
 check("frontend hides the fake 0% chip when a running card has no total",
-      "t.status==='running'?(t.total>0?" in fe)
+      "t.status === 'running' ? (t.total > 0 ?" in fe)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
