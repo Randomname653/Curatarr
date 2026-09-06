@@ -145,6 +145,11 @@ Nothing in the backend changed except the `reason=` filter on
 `/api/enrichment/unmatched` and the two fixes above; a browser reload is
 enough.
 
+**Code scanning.** CodeQL alert #54 (`py/bad-tag-filter`): the frontend
+syntax test extracts the inline scripts with `html.parser` instead of a
+tag regex, so upper-case tags and end tags with attributes are the
+parser's business, not a pattern's.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

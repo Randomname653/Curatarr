@@ -15,14 +15,47 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from html.parser import HTMLParser
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _INDEX = _ROOT / "frontend" / "index.html"
 
 
+class _ScriptCollector(HTMLParser):
+    """Bodies of the inline <script> blocks (no src=), via the stdlib parser:
+    tag names are case-insensitive, a '</div>' inside a JS string is data,
+    and no regex has to impersonate an HTML parser (CodeQL py/bad-tag-filter)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)   # raw text, byte for byte
+        self.scripts: list[str] = []
+        self._buf = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script" and not any(k == "src" for k, _ in attrs):
+            self._buf = []
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._buf is not None:
+            self.scripts.append("".join(self._buf))
+            self._buf = None
+
+    def handle_data(self, data):
+        if self._buf is not None:
+            self._buf.append(data)
+
+    def close(self):
+        super().close()
+        if self._buf is not None:   # unterminated <script>: hand it to node so it fails loudly
+            self.scripts.append("".join(self._buf) + self.rawdata)
+            self._buf = None
+
+
 def _inline_scripts(html: str) -> list[str]:
-    return [m.group(1) for m in
-            re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S)]
+    c = _ScriptCollector()
+    c.feed(html)
+    c.close()
+    return c.scripts
 
 
 def test_every_inline_script_parses():
