@@ -157,6 +157,8 @@ rename. It is now owner-only from the first byte.
 Bandit #52 (B608, the recommendation pitch prompt): the `# nosec` marker sat
 inside the f-string and reached the model as prompt text; it is gone, and
 the mission line no longer reads like SQL to a pattern matcher.
+Dependencies: pydantic 2.13.5; the workflows moved to github-script 9 and
+upload-artifact 7 (Dependabot #71–#73, compatibility read before merging).
 
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
