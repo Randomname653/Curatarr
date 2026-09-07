@@ -997,6 +997,20 @@ without understanding why they exist.
 - CI scanning: CodeQL on pushes/PRs plus an LLM security scan
   (`.github/workflows/llm-security-scan.yml`) — changed files per PR, weekly
   full sweep; scan errors hard-fail rather than reporting a clean result.
+  The sweep's scope is the server (`src/`): owner-run CLI tools, `scripts/`,
+  the test suite and vendored code are excluded, because every finding the
+  model produced for them was by-design and came back weekly under a new
+  title (2026-09-07: 733 medium+ findings, the ten alphabetically first
+  filed as issues, all re-reports). The issue step now sorts worst-first,
+  deduplicates against every security issue ever filed, drops findings
+  matched by `.github/llm-scan-accepted.json` (the owner's documented
+  decisions, kept where the next run can read them) and files issues only
+  from `ISSUE_MIN_SEVERITY` up (critical by default); the whole picture
+  lands as a digest table on the run page plus the report artifact. Known
+  limit: the model reads one file at a time and never sees the control in
+  the next file, so its highs are mostly cross-file false positives — and
+  it never reads `frontend/index.html` at all (no `.html` in its extension
+  list); the inline JS is CodeQL's job.
 - **Image proxy** (`src/routers/image_proxy.py`): all external poster URLs
   go through `/api/image/proxy` so TMDB/Deezer don't see per-click browsing.
   Host whitelist + image-only content-type + 5 MB cap + no-auto-redirect
@@ -1167,7 +1181,11 @@ to its own section (or a §0 delta row) instead of growing this list.
 
 ### CI & benchmarks
 - `.github/scripts/llm_security_scanner.py` — the LLM security scan behind
-  the workflow (§17): structured outputs, scan errors hard-fail.
+  the workflow (§17): structured outputs, scan errors hard-fail,
+  `--exclude-paths` for scan-root-relative files and directories (what a
+  directory name cannot express). `.github/llm-scan-accepted.json` — the
+  owner's by-design decisions the issue step consults (file + type regex +
+  the document that carries the reasoning).
 - `tests/benchmarks/` — model/prompt benchmarking harness (curator_bench,
   tournament_bench, auto_benchmark, num_ctx_bench, curator_pipeline_bench +
   `model_baselines.csv`); measurements land in `docs/BENCHMARKS.md`.

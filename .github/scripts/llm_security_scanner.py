@@ -128,19 +128,23 @@ class CodeSecurityScanner:
         return results
 
     def scan_directory(self, directory_path: str, recursive: bool = True,
-                       exclude_dirs: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+                       exclude_dirs: Optional[List[str]] = None,
+                       exclude_paths: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         if exclude_dirs is None:
             exclude_dirs = list(DEFAULT_EXCLUDE_DIRS)
 
         walk_dir = Path(directory_path)
         logger.info(f"Scanning directory: {walk_dir}")
         return self.scan_files(
-            [str(p) for p in self._get_files_to_scan(walk_dir, recursive, exclude_dirs)])
+            [str(p) for p in self._get_files_to_scan(walk_dir, recursive, exclude_dirs,
+                                                     exclude_paths or [])])
 
     def _get_files_to_scan(self, directory: Path, recursive: bool,
-                           exclude_dirs: List[str]) -> List[Path]:
+                           exclude_dirs: List[str], exclude_paths: List[str] = ()) -> List[Path]:
         globber = directory.rglob('*') if recursive else directory.glob('*')
-        return sorted(p for p in globber if self._should_scan_file(p, exclude_dirs))
+        return sorted(p for p in globber
+                      if self._should_scan_file(p, exclude_dirs)
+                      and not excluded_path(p.relative_to(directory), exclude_paths))
 
     def _should_scan_file(self, path: Path, exclude_dirs: List[str]) -> bool:
         if path.is_dir():
@@ -311,6 +315,19 @@ def read_file_list(path: str, max_files: int = 0) -> List[str]:
     return entries
 
 
+def excluded_path(rel: Path, exclude_paths) -> bool:
+    """True when the scan-root-relative path is one of the excluded files or
+    sits under one of the excluded directories ("frontend/vendor/"). Used for
+    what a directory NAME cannot express: owner-run CLI tools at the repo root
+    and vendored third-party code, which the weekly sweep must not re-report."""
+    posix = rel.as_posix()
+    for entry in exclude_paths or ():
+        entry = str(entry).strip().replace("\\", "/").rstrip("/")
+        if entry and (posix == entry or posix.startswith(entry + "/")):
+            return True
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='LLM-based Code Security Scanner')
 
@@ -331,6 +348,9 @@ def main():
                             help='Recursively scan directories (default: True)')
     scan_group.add_argument('--exclude-dirs', nargs='+', default=list(DEFAULT_EXCLUDE_DIRS),
                             help='Directory names to exclude from scanning')
+    scan_group.add_argument('--exclude-paths', nargs='+', default=[],
+                            help='Scan-root-relative files or directories to leave out '
+                                 '(owner-run CLI tools, vendored third-party code)')
 
     output_group = parser.add_argument_group('Output Options')
     output_group.add_argument('--output-format', choices=['json', 'markdown'], default='json',
@@ -365,7 +385,8 @@ def main():
         results = scanner.scan_files(read_file_list(args.file_list, args.max_files))
     else:
         results = scanner.scan_directory(
-            args.directory, recursive=args.recursive, exclude_dirs=args.exclude_dirs)
+            args.directory, recursive=args.recursive, exclude_dirs=args.exclude_dirs,
+            exclude_paths=args.exclude_paths)
 
     generate_report(results, args.output_format, args.output_file)
     if args.json_output_file:

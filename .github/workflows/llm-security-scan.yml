@@ -45,6 +45,9 @@ jobs:
       # manually with gpt-daybreak-red-latest (OpenAI's security line, ~$25).
       PR_MODEL: gpt-5.6-sol
       FULL_MODEL: gpt-5.6-luna
+      # The weekly sweep files issues only from this severity up; lower it to
+      # 'high' to widen. Every finding lands in the run summary regardless.
+      ISSUE_MIN_SEVERITY: critical
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +100,15 @@ jobs:
       # Full sweep: weekly and on manual dispatch. Deliberately NOT on push —
       # CodeQL already runs there for free, and a full GPT-4o pass over the
       # repo costs real money and the better part of an hour.
+      #
+      # Scope = the server. Owner-run CLI tools at the repo root and under
+      # scripts/ (a shell on the host already outranks anything they could
+      # add), the test suite (fixtures and monkeypatches are not shipped
+      # code; CodeQL still reads them) and vendored third-party code (pinned,
+      # OSV-scanned, marked is wrapped in DOMPurify) are left out: every
+      # finding the model produced for them was by-design and got re-filed
+      # weekly under a new title. Note the model never sees frontend/index.html
+      # (no .html in its extension list); the inline JS is CodeQL's job.
       - name: LLM Security Scan (Full)
         if: github.event_name != 'pull_request' && env.HAS_KEY == 'true'
         env:
@@ -106,14 +118,24 @@ jobs:
           python .github/scripts/llm_security_scanner.py \
             --directory . \
             --exclude-dirs .git node_modules venv __pycache__ .env scan-results .github \
+            --exclude-paths frontend/vendor scripts tests \
+              benchmark.py build_models.py import_spotify.py run_pipeline_spotify.py \
+              update_db.py curatarr_tray.pyw \
             --model "$FULL_MODEL" \
             --output-format markdown --output-file scan-results/results.md \
             --json-output-file scan-results/results.json
 
       # Issues only from the trusted full sweep, read from the JSON report
       # (the template parsed its own markdown back apart with a state machine
-      # that misattributed nearly every finding's file). Deduplicated against
-      # open security-labeled issues, capped per run.
+      # that misattributed nearly every finding's file). Worst first, so the
+      # per-run cap surfaces a critical in src/ rather than whatever file
+      # sorts first; deduplicated against every security issue ever filed
+      # (the model rewords a finding each week, a closed issue stays closed);
+      # and filtered through .github/llm-scan-accepted.json — the owner's
+      # by-design decisions, kept in the repo where the next run can read
+      # them. 2026-09-07: the weekly sweep produced 400 medium+ findings and
+      # filed the ten alphabetically first, all of them re-reports of issues
+      # closed as by-design four days earlier.
       - name: Create GitHub Issues for Vulnerabilities
         if: github.event_name != 'pull_request' && env.HAS_KEY == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -128,32 +150,71 @@ jobs:
             }
             const report = JSON.parse(fs.readFileSync(path, 'utf8'));
 
-            const wanted = new Set(['medium', 'high', 'critical']);
+            // The owner's by-design decisions, as file + type patterns with a
+            // reason. A matching finding is logged and skipped; it still sits
+            // in the uploaded report.
+            const acceptedPath = '.github/llm-scan-accepted.json';
+            const accepted = fs.existsSync(acceptedPath)
+              ? (JSON.parse(fs.readFileSync(acceptedPath, 'utf8')).accepted || [])
+              : [];
+            const acceptedBy = (file, type) => accepted.find(a =>
+              new RegExp(a.file, 'i').test(file || '') && new RegExp(a.type, 'i').test(type || ''));
+
+            const RANK = { critical: 0, high: 1, medium: 2 };
             const vulns = [];
+            let skipped = 0;
             for (const result of report.results || []) {
               if (result.status !== 'completed') continue;
               for (const v of result.vulnerabilities || []) {
                 const sev = String(v.severity || '').trim().toLowerCase();
-                if (!wanted.has(sev)) continue;
+                if (!(sev in RANK)) continue;
+                const rule = acceptedBy(result.file, v.vulnerability_type);
+                if (rule) {
+                  skipped++;
+                  core.info(`Accepted (${rule.reason}): ${result.file} — ${v.vulnerability_type}`);
+                  continue;
+                }
                 vulns.push({ ...v, file: result.file, sev });
               }
             }
-            core.info(`${vulns.length} medium+ findings in the report.`);
-            if (!vulns.length) return;
+            vulns.sort((a, b) => (RANK[a.sev] - RANK[b.sev]) || String(a.file).localeCompare(String(b.file)));
+            core.info(`${vulns.length} medium+ findings to consider, ${skipped} accepted by the owner's list.`);
 
+            // The digest lives on the run page: counts and the worst 25, so
+            // nobody has to open the artifact to know what the week looked like.
+            const count = s => vulns.filter(v => v.sev === s).length;
+            await core.summary
+              .addHeading('LLM security sweep', 2)
+              .addRaw(`${vulns.length} findings (critical ${count('critical')}, high ${count('high')}, medium ${count('medium')}); ${skipped} accepted via .github/llm-scan-accepted.json. Full report in the artifact.`, true)
+              .addTable([
+                [{ data: 'Severity', header: true }, { data: 'File', header: true }, { data: 'Finding', header: true }],
+                ...vulns.slice(0, 25).map(v => [v.sev, String(v.file), String(v.vulnerability_type || '')]),
+              ])
+              .write();
+
+            // Issues only from the configured severity up. The model reads one
+            // file at a time and cannot see the control that lives in the next
+            // file, so its highs are mostly cross-file false positives; they
+            // stay in the digest. ISSUE_MIN_SEVERITY widens or narrows this.
+            const minSev = String(process.env.ISSUE_MIN_SEVERITY || 'critical').toLowerCase();
+            const toFile = vulns.filter(v => RANK[v.sev] <= (RANK[minSev] ?? 0));
+            core.info(`${toFile.length} at or above ${minSev} are candidates for issues.`);
+            if (!toFile.length) return;
+
+            const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
             const existing = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner, repo: context.repo.repo,
-              state: 'open', labels: 'security', per_page: 100,
+              state: 'all', labels: 'security', per_page: 100,
             });
-            const known = new Set(existing.map(i => i.title));
+            const known = new Set(existing.map(i => norm(i.title)));
 
             const CAP = 10;
             let created = 0;
-            for (const v of vulns) {
+            for (const v of toFile) {
               const sevLabel = v.sev.charAt(0).toUpperCase() + v.sev.slice(1);
               const title = `[${sevLabel}] ${v.vulnerability_type || 'Security finding'} in ${v.file}`;
-              if (known.has(title)) {
-                core.info(`Already filed: ${title}`);
+              if (known.has(norm(title))) {
+                core.info(`Already filed (open or closed): ${title}`);
                 continue;
               }
               if (created >= CAP) {
@@ -184,7 +245,7 @@ jobs:
                   owner: context.repo.owner, repo: context.repo.repo,
                   title, body, labels: ['security', `severity:${v.sev}`],
                 });
-                known.add(title);
+                known.add(norm(title));
                 created++;
                 core.info(`Created #${issue.data.number}: ${title}`);
               } catch (e) {

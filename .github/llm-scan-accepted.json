@@ -1,0 +1,16 @@
+{
+  "_what": "Owner decisions the weekly LLM security scan must remember. A finding whose file and vulnerability_type match an entry (case-insensitive regular expressions) is logged and skipped by the issue step, with the reason; it still appears in the uploaded report. Closing an issue in the UI is not a memory the next run can read - this file is. Owner-run CLI tools and vendored code are not listed here: they are excluded from the sweep itself in llm-security-scan.yml.",
+  "_how": "Add an entry when a finding is a documented design decision, never for one that is merely inconvenient; name the document that carries the reasoning.",
+  "accepted": [
+    {
+      "file": ".*",
+      "type": "(plain-?text|clear-?text|unencrypted) storage of .*(token|credential|secret)",
+      "reason": "SECURITY.md, 'Data at rest is not encrypted by the app': the Plex token and API keys must be usable by unattended background jobs; encrypting them would only move the key next to the data. Disk encryption is the operator's layer."
+    },
+    {
+      "file": ".*",
+      "type": "(insecure|unencrypted|plain-?text|missing) .*(transport|http|lan|communication|tls)|secrets? transmitted over insecure http",
+      "reason": "SECURITY.md, threat model: Curatarr serves one household over the LAN; TLS and access control belong to the operator's reverse proxy, not to the app. Plex, the *arr services and Ollama are reached by the URLs the owner configured."
+    }
+  ]
+}

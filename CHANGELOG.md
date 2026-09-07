@@ -160,6 +160,20 @@ the mission line no longer reads like SQL to a pattern matcher.
 Dependencies: pydantic 2.13.5; the workflows moved to github-script 9 and
 upload-artifact 7 (Dependabot #71–#73, compatibility read before merging).
 
+**The weekly LLM sweep gets a memory.** Its first Monday after the release
+produced 733 medium+ findings and filed the ten alphabetically first as
+issues (#74–#83) — every one a re-report of a finding closed as by-design
+four days earlier, because the model rewords a finding each week and the
+step only knew open issues by exact title. Now: the sweep covers the
+server code only (owner-run CLI tools, `scripts/`, the test suite and
+vendored code are out — their findings were by-design without exception);
+findings are ordered worst-first, deduplicated against every security
+issue ever filed, and filtered through `.github/llm-scan-accepted.json`,
+where the owner's documented decisions live so the next run can read them;
+issues are filed only from `ISSUE_MIN_SEVERITY` up (critical by default),
+while the whole picture lands as a digest table on the run page plus the
+report artifact. The ten re-filed issues are closed with this change.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the
