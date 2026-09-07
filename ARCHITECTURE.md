@@ -1087,6 +1087,13 @@ to its own section (or a §0 delta row) instead of growing this list.
   CWD-independent so tray/autostart/frozen builds resolve data + frontend.
 - `src/log_setup.py` — idempotent logging bootstrap: rotating file handler
   always; console handler only when a real stderr exists (pythonw has none).
+- `src/deps_check.py` — pinned `requirements.txt` vs. the running
+  interpreter (stdlib only, so it runs before the dependencies exist).
+  `start.bat` and the tray call it before the first import and run pip on
+  a missing or drifted pin; the server only reports (lifespan log line,
+  `GET /api/system/dependencies` for Settings → Maintenance). Replaced the
+  batch sentinel import, which proved presence, not version, and named an
+  unpinned `Crypto` that made fresh installs run pip on every start.
 - `src/services/shutdown_bridge.py` — import-free callback registry letting
   the tray intercept the web shutdown endpoint instead of relying on SIGINT.
 - `src/services/bg_tasks.py` — keeps strong references to fire-and-forget

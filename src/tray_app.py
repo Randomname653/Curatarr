@@ -106,6 +106,22 @@ def _port_in_use(port: int) -> bool:
 # ── preflight ─────────────────────────────────────────────────────────────────
 
 def _preflight_deps() -> bool:
+    """Bring the interpreter up to requirements.txt BEFORE anything is
+    imported: the tray serves in-process, so a half-installed package is a
+    crash a minute later, not a warning. A missing or drifted pin runs pip
+    for this interpreter (owner's call, 2026-09-07: the tray pulls, like
+    start.bat does). The import probe below stays as the last word."""
+    try:
+        from src.deps_check import check, install
+        rep = check()
+        if not rep.clean:
+            logger.warning("Dependencies off: %s — running pip.", "; ".join(rep.lines()))
+            if install():
+                logger.info("pip done: %s", check().summary())
+            else:
+                logger.error("pip failed; continuing with what is installed.")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Dependency check skipped: %s", e)
     try:
         import importlib
         for mod in (

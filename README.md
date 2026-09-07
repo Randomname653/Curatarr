@@ -190,9 +190,13 @@ start.bat
 ```
 
 `start.bat` is the development entry point: live console, hot reload, and
-it self-heals missing dependencies and Ollama model bakes. For everyday
-background use, `start_tray.bat` runs Curatarr as a tray icon with an
-autostart toggle, log access and graceful shutdown.
+it self-heals Ollama model bakes. For everyday background use,
+`start_tray.bat` runs Curatarr as a tray icon with an autostart toggle,
+log access and graceful shutdown. Both launchers compare the pinned
+`requirements.txt` with their interpreter before the first import and
+install what is missing or outdated, so a `git pull` is a full update.
+The server itself never installs anything; it reports the same comparison
+in Settings → Maintenance.
 
 **Linux / macOS**
 

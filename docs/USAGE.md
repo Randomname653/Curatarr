@@ -85,6 +85,19 @@ state locks as the in-app pipeline, so they cannot collide with it.
 
 ## Troubleshooting
 
+**Settings → Maintenance says the dependencies differ from requirements.txt**
+
+The pins moved (Dependabot bumps them weekly) and this interpreter still
+has the old versions. `start.bat` and the tray launcher install the pinned
+versions on their own at the next start; if you run uvicorn by hand, do it
+yourself with the same interpreter, then restart:
+
+```bash
+pip install -r requirements.txt
+```
+
+`python -m src.deps_check` prints the comparison without installing.
+
 **A pipeline flag is stuck (`enrichment_running`, `music_pipeline_running`)**
 
 Happens if the process was killed mid-run. The next sync usually clears

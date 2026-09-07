@@ -37,6 +37,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("[sync-guard] enable failed: %s", e)
 
+    # Pinned requirements vs. this interpreter: reported, never installed from
+    # inside the server — the launchers do that before the first import.
+    # Settings → Maintenance shows the same report to admins.
+    try:
+        from src.deps_check import check as _deps_check
+        _deps = _deps_check()
+        (logger.info if _deps.clean else logger.warning)("[deps] %s", _deps.summary())
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[deps] check failed: %s", e)
+
     (DATA_DIR / "chromadb").mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
 
@@ -313,6 +323,15 @@ app.include_router(stats.router,           prefix="/api/stats",           tags=[
 app.include_router(imports.router,         prefix="/api/import",          tags=["import"])
 
 # ── SYSTEM ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/system/dependencies", dependencies=_ADMIN_ONLY)
+async def system_dependencies():
+    """Pinned requirements vs. the interpreter that serves this request —
+    the report the lifespan logged, for Settings → Maintenance. Read-only:
+    installing is the launchers' job, before the first import."""
+    from src.deps_check import check
+    return check().as_dict()
+
 
 @app.post("/api/system/shutdown", dependencies=_ADMIN_ONLY)
 async def shutdown_server():

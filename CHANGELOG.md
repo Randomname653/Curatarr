@@ -174,6 +174,15 @@ issues are filed only from `ISSUE_MIN_SEVERITY` up (critical by default),
 while the whole picture lands as a digest table on the run page plus the
 report artifact. The ten re-filed issues are closed with this change.
 
+**Dependencies keep up with the pins.** `start.bat` proved that packages
+were present, not that they matched `requirements.txt`, so a weekly
+Dependabot bump passed unnoticed; it also imported `Crypto`, which is
+neither pinned nor used, so a fresh install ran pip on every start. Both
+launchers now compare the pinned versions with their interpreter before
+the first import (`src/deps_check.py`, stdlib only) and install what is
+missing or outdated. The server never installs; it logs the comparison at
+boot and shows it to admins in Settings → Maintenance, with the command.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

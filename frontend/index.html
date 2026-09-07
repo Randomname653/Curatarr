@@ -1288,6 +1288,11 @@ select option { background: var(--bg2); }
             <!-- Maintenance pane (admin only): one section per action, its status under it -->
             <section class="settings-pane" data-pane="maintenance" hidden>
               <section class="section">
+                <div class="section-head"><h3>Dependencies</h3><span class="section-hint">Pinned requirements versus the interpreter that runs this server. The launchers install; the server only reports.</span>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" onclick="loadDepsStatus(this)">Check again</button></div></div>
+                <div class="section-body"><div id="maint-deps"><p class="loading" role="status" aria-live="polite">Loading…</p></div></div>
+              </section>
+              <section class="section">
                 <div class="section-head"><h3>Plex sync</h3><span class="section-hint">Pull new watch history from Plex and recompute taste vectors. Idempotent.</span>
                   <div class="section-actions">
                     <button class="btn btn-secondary btn-sm" onclick="syncHistory(false,'maint-sync-status')">Sync</button>
@@ -4111,6 +4116,32 @@ function openSettingsPane(name, btn) {
     loadIntegrations();
   } else if (name === 'users') {
     loadUsers();
+  } else if (name === 'maintenance') {
+    loadDepsStatus();
+  }
+}
+
+// Pinned requirements vs. the interpreter behind this server (admin only).
+// The server never installs; the launchers do, before the first import.
+async function loadDepsStatus(btn) {
+  const box = document.getElementById('maint-deps');
+  if (!box) return;
+  if (btn) btnBusy(btn, 'Checking…');
+  try {
+    const d = await api('/api/system/dependencies');
+    const rows = [
+      ...d.missing.map(m => `<tr><td>${esc(m.name)}</td><td class="t-danger">not installed</td><td>${esc(m.pinned)}</td></tr>`),
+      ...d.drift.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.pinned)}</td></tr>`),
+    ];
+    box.innerHTML = d.clean
+      ? `<div class="empty good">All ${d.pins} pinned packages match requirements.txt.</div>`
+      : `<div class="banner warn"><span class="banner-icon">!</span><div class="banner-text">${rows.length} of ${d.pins} pinned packages differ. In the Curatarr folder, with this interpreter, run <code class="mono">${esc(d.command)}</code> and restart. start.bat and the tray launcher do this on their own at the next start.</div></div>
+         <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th>Package</th><th>Installed</th><th>Pinned</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+         <p class="fs-12 t3 mt-8">Interpreter: <span class="mono">${esc(d.interpreter)}</span></p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="t-danger fs-12">Could not read the dependency report: ${esc(e.message || e)}</p>`;
+  } finally {
+    if (btn) btnDone(btn, 'Check again');
   }
 }
 

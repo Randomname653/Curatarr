@@ -64,8 +64,14 @@ def test_wizard_prints_survive_a_cp1252_console():
 def test_launchers_preflight_the_dependencies_we_actually_ship():
     bat = (_ROOT / "start.bat").read_text(encoding="utf-8", errors="replace")
     tray = (_ROOT / "src/tray_app.py").read_text(encoding="utf-8")
-    assert "jwt," in bat and " jose" not in bat, "start.bat still preflights python-jose"
-    assert '"jwt"' in tray
+    # 2026-09-07: the sentinel import proved presence, not version (a
+    # Dependabot bump passed it) and named Crypto, unpinned and unused (a
+    # fresh install ran pip on every start). Both launchers go through
+    # src.deps_check now: pinned versions, this interpreter, pip on drift.
+    assert "python -m src.deps_check --install" in bat, "start.bat must pull the pinned versions"
+    assert 'python -c "import' not in bat and " jose" not in bat, "the sentinel import is back"
+    assert "from src.deps_check import check, install" in tray, "the tray must pull like start.bat"
+    assert '"jwt"' in tray and '"Crypto"' not in tray
     assert "--no-server-header" in bat
     assert "server_header=False" in tray
 

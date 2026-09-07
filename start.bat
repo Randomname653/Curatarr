@@ -23,15 +23,15 @@ if exist venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 )
 
-REM Check / install missing deps silently.
-REM Import every third-party module the app needs at runtime, not just one
-REM sentinel package -- otherwise a single pre-installed package (e.g.
-REM apscheduler) makes the check pass while others are still missing.
-python -c "import uvicorn, fastapi, multipart, sqlalchemy, jwt, Crypto, httpx, aiohttp, chromadb, pydantic_settings, dotenv, numpy, pythonjsonlogger, apscheduler, psutil, PIL, pystray" >nul 2>&1
+REM Check the PINNED versions against this interpreter and pull what is
+REM missing or outdated (src/deps_check.py, stdlib only). The old sentinel
+REM import proved presence, not version -- a Dependabot bump passed it
+REM unnoticed -- and imported Crypto, which is neither pinned nor used, so a
+REM fresh install ran pip on every start.
+python -m src.deps_check >nul 2>&1
 if errorlevel 1 (
-    echo  [SETUP] Installing missing dependencies...
-    pip install -r requirements.txt -q
-    echo  Done.
+    echo  [SETUP] Dependencies missing or outdated - installing from requirements.txt...
+    python -m src.deps_check --install
     echo.
 )
 
