@@ -735,7 +735,7 @@ async def generate_recommendations(
                 await _asyncio.gather(*[_cand_line(i) for i in unwatched[:30]])
             )
 
-            prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]  # nosec B608 - an LLM prompt, not SQL
+            prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.
 
 {lang_directive_str}
@@ -747,7 +747,7 @@ USER'S {cat.upper()} TASTE PROFILE:
 AVAILABLE {cat.upper()} LIBRARY (unwatched):
 {items_text}
 
-MISSION: Select the best {min(limit, 5)} recommendations from the library above.
+MISSION: Pick the best {min(limit, 5)} recommendations from the library above.
 
 CRITICAL RULES AND GUARDRAILS:
 1. THE PITCH: For each item, write 2-3 vivid sentences on specifically why it fits the user — the hook, then the texture/tone, then who it lands for. No filler, no plot-summary padding.

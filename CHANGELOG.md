@@ -154,6 +154,9 @@ and is now suppressed on the line itself instead of re-dismissed each time
 the writer moves; reading it again did find a real gap: the temp file was
 created with the directory's default rights and narrowed only after the
 rename. It is now owner-only from the first byte.
+Bandit #52 (B608, the recommendation pitch prompt): the `# nosec` marker sat
+inside the f-string and reached the model as prompt text; it is gone, and
+the mission line no longer reads like SQL to a pattern matcher.
 
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
