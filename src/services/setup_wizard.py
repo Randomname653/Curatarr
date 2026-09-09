@@ -297,6 +297,11 @@ def _restrict_env_acl(path) -> None:
     shared family PC every local account could read .env (all tokens live in
     it). Strip inheritance and grant the current user alone. Best-effort."""
     if os.name != "nt":
+        try:
+            import stat
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception as e:
+            logger.debug("Could not chmod .env: %s", e)
         return
     try:
         import subprocess

@@ -358,13 +358,19 @@ def _migrate_deletion_proposals_autoincrement() -> None:
 
 
 def _secure_db_files() -> None:
-    """Ensure SQLite files in data/ are 0600 (POSIX only)."""
+    """Ensure SQLite files in data/ and .env are 0600 (POSIX only)."""
     import os
     import stat
     import logging as _logging
-    from src.paths import DATA_DIR
+    from src.paths import DATA_DIR, ENV_FILE
 
     _mig_log = _logging.getLogger(__name__)
+    if ENV_FILE.exists():
+        try:
+            os.chmod(ENV_FILE, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception as e:
+            _mig_log.debug("Could not chmod %s (likely Windows): %s", ENV_FILE, e)
+
     if not DATA_DIR.exists():
         return
 
