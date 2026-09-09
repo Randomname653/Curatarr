@@ -53,7 +53,7 @@ class MockSession:
     def __init__(self, data=None):
         self.data = data or []
 
-    def query(self, model):
+    def query(self, *models):
         return MockQuery(self.data)
 
 

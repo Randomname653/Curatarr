@@ -1424,7 +1424,10 @@ async def cleanup_orphan_watch_history() -> dict:
         # play happened on Spotify and the underlying Plex music track may
         # legitimately not be in any configured library section.
         from sqlalchemy import or_
-        rows = db.query(WatchHistoryEntry).filter(
+        rows = db.query(
+            WatchHistoryEntry.id,
+            WatchHistoryEntry.plex_item_id
+        ).filter(
             or_(
                 WatchHistoryEntry.source.is_(None),
                 WatchHistoryEntry.source != "spotify",
