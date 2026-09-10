@@ -45,6 +45,8 @@ async def get_unknown_processes(_user: User = Depends(get_current_user)):
 
 def _forget_process_views() -> None:
     """A classification changed — the next poll must see it."""
+    from src.services.process_monitor import invalidate_process_cache
+    invalidate_process_cache()
     get_unknown_processes.invalidate()
     game_status.invalidate()
 
