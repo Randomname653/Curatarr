@@ -159,7 +159,19 @@ async def recent_history(
     franchise lesson). Deduped per series, so a binge of one show costs one
     lookup. Large pages skip resolution entirely and return ``None``.
     """
-    q = db.query(WatchHistoryEntry).filter(WatchHistoryEntry.user_id == user.id)
+    q = db.query(
+        WatchHistoryEntry.id,
+        WatchHistoryEntry.title,
+        WatchHistoryEntry.series_title,
+        WatchHistoryEntry.media_type,
+        WatchHistoryEntry.viewed_at,
+        WatchHistoryEntry.completed,
+        WatchHistoryEntry.genres,
+        WatchHistoryEntry.season,
+        WatchHistoryEntry.episode,
+        WatchHistoryEntry.tmdb_id,
+        WatchHistoryEntry.artist_mbid,
+    ).filter(WatchHistoryEntry.user_id == user.id)
     if category and category != "all":
         q = q.filter(WatchHistoryEntry.media_type == category)
     entries = q.order_by(WatchHistoryEntry.viewed_at.desc()).offset(offset).limit(limit).all()
