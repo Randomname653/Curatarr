@@ -96,6 +96,7 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
 
 _cached_targets: Optional[frozenset[str]] = None
 _cached_time: float = 0
+_cached_game_pid: Optional[int] = None
 
 
 def is_game_running() -> bool:
@@ -104,7 +105,7 @@ def is_game_running() -> bool:
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
-    global _cached_targets, _cached_time
+    global _cached_targets, _cached_time, _cached_game_pid
     now = time.time()
 
     # Refresh cache every 60 seconds
@@ -135,12 +136,24 @@ def is_game_running() -> bool:
     if not targets:
         return False
 
+    # ⚡ Bolt: Check cached PID first to avoid OS-level process iteration overhead
+    if _cached_game_pid is not None:
+        try:
+            p = psutil.Process(_cached_game_pid)
+            if p.name().lower() in targets:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+        # Clear if process is dead or no longer a target
+        _cached_game_pid = None
+
     # ⚡ Bolt: Early stop - check targets during iteration rather than
     # building a full set of all running process names first
     for proc in psutil.process_iter(["name"]):
         try:
             name = proc.info.get("name")
             if name and name.lower() in targets:
+                _cached_game_pid = proc.pid
                 return True
         except Exception:
             continue
