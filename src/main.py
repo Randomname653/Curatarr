@@ -376,7 +376,10 @@ _FRONTEND_ROOT = frontend_root()
 
 @app.get("/")
 async def serve_frontend():
-    return FileResponse(_FRONTEND_ROOT / "index.html")
+    return FileResponse(
+        _FRONTEND_ROOT / "index.html",
+        headers={"Cache-Control": "no-cache"}
+    )
 
 
 @app.get("/{full_path:path}")
@@ -396,8 +399,17 @@ async def catch_all(full_path: str):
         candidate.relative_to(_FRONTEND_ROOT)
     except ValueError:
         # Path escaped the frontend root — fall back to SPA index.
-        return FileResponse(_FRONTEND_ROOT / "index.html")
+        return FileResponse(
+            _FRONTEND_ROOT / "index.html",
+            headers={"Cache-Control": "no-cache"}
+        )
 
     if candidate.is_file():
-        return FileResponse(candidate)
-    return FileResponse(_FRONTEND_ROOT / "index.html")
+        headers = {}
+        if full_path.startswith("js/") or full_path.startswith("css/"):
+            headers["Cache-Control"] = "no-cache"
+        return FileResponse(candidate, headers=headers)
+    return FileResponse(
+        _FRONTEND_ROOT / "index.html",
+        headers={"Cache-Control": "no-cache"}
+    )

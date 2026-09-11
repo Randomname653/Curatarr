@@ -43,7 +43,7 @@ template). Regressions caught live become fixtures.
 - UI/app knowledge lives in `src/services/app_context.py` blocks, never
   inline in routers (`tests/test_app_context_drift.py` enforces it).
 - Frontend: design tokens/classes only, amber is the accent — rules live
-  in the CSS header of `frontend/index.html`.
+  in the header of `frontend/css/app.css`.
 
 ## License
 

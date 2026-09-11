@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from src.services.curation_stats import _month_range, aggregate_resolutions
 
@@ -63,7 +64,7 @@ st = (root / "src/routers/stats.py").read_text(encoding="utf-8")
 check("both endpoints admin-gated", st.count("require_admin") >= 3)
 check("narrative cached per user+year", "curation_narrative:" in st)
 
-html = (root / "frontend/index.html").read_text(encoding="utf-8")
+html = _frontend_everything()
 check("'report' is in the admin view gate",
       "'reclassify','report'" in html)
 for frag in ["report-view", "loadReport", "writeYearlyReview",

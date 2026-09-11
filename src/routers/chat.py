@@ -1765,7 +1765,7 @@ async def _build_discuss_context_block(
         )
         # App knowledge (in-view buttons, verdict classes) lives in
         # app_context.py — the single source of truth, drift-tested against
-        # frontend/index.html. Never inline UI prose here again.
+        # the frontend files. Never inline UI prose here again.
         from src.services.app_context import DISCUSSION_UI_BLOCK, STAGNANT_VERDICT_BLOCK
         block += DISCUSSION_UI_BLOCK
         if getattr(proposal, "stagnant", False):

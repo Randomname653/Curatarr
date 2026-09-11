@@ -145,7 +145,8 @@ check("manual analysis feeds the card into generate_deletion_proposals "
 # into every activity row — which makes any NEW category visible by default,
 # where the old map needed a manual entry per category. What must hold now:
 # the row renders the name, and no half-removed icon map lingers.
-fe = (root / "frontend/index.html").read_text(encoding="utf-8")
+from tests.frontend_files import everything
+fe = everything()
 check("activity rows render the task's backend-sent name",
       "${esc(t.name)}" in fe)
 check("the old per-category icon map is fully gone, not half-removed",

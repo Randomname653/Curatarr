@@ -14,71 +14,33 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-from html.parser import HTMLParser
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # `tests` is a package only from the repo root
+from tests.frontend_files import script
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-_INDEX = _ROOT / "frontend" / "index.html"
 
 
-class _ScriptCollector(HTMLParser):
-    """Bodies of the inline <script> blocks (no src=), via the stdlib parser:
-    tag names are case-insensitive, a '</div>' inside a JS string is data,
-    and no regex has to impersonate an HTML parser (CodeQL py/bad-tag-filter)."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=False)   # raw text, byte for byte
-        self.scripts: list[str] = []
-        self._buf = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "script" and not any(k == "src" for k, _ in attrs):
-            self._buf = []
-
-    def handle_endtag(self, tag):
-        if tag == "script" and self._buf is not None:
-            self.scripts.append("".join(self._buf))
-            self._buf = None
-
-    def handle_data(self, data):
-        if self._buf is not None:
-            self._buf.append(data)
-
-    def close(self):
-        super().close()
-        if self._buf is not None:   # unterminated <script>: hand it to node so it fails loudly
-            self.scripts.append("".join(self._buf) + self.rawdata)
-            self._buf = None
 
 
-def _inline_scripts(html: str) -> list[str]:
-    c = _ScriptCollector()
-    c.feed(html)
-    c.close()
-    return c.scripts
 
-
-def test_every_inline_script_parses():
+def test_app_js_parses():
     node = shutil.which("node")
-    html = _INDEX.read_text(encoding="utf-8")
-    scripts = _inline_scripts(html)
-    assert scripts, "index.html carries its app logic inline - none found?"
     if not node:
         print("  (node not installed - JS syntax check skipped)")
         return
-    tmp = pathlib.Path(tempfile.mkdtemp())
-    for i, src in enumerate(scripts):
-        p = tmp / f"inline_{i}.js"
-        p.write_text(src, encoding="utf-8")
-        r = subprocess.run([node, "--check", str(p)], capture_output=True, text=True)
-        assert r.returncode == 0, f"inline script #{i} does not parse:\n{r.stderr[:800]}"
+    
+    app_js = _ROOT / "frontend" / "js" / "app.js"
+    assert app_js.exists(), "frontend/js/app.js is missing"
+    
+    r = subprocess.run([node, "--check", str(app_js)], capture_output=True, text=True)
+    assert r.returncode == 0, f"app.js does not parse:\n{r.stderr[:800]}"
 
 
 def test_no_js_string_literal_spans_a_line():
     """Cheap node-free guard for the exact failure: a single-quoted string
     that opens in a prompt()/alert() call and never closes on its line."""
-    html = _INDEX.read_text(encoding="utf-8")
-    for n, line in enumerate(html.split("\n"), 1):
+    js = script()
+    for n, line in enumerate(js.split("\n"), 1):
         s = line.strip()
         if re.match(r"(const|let|var)\s+\w+\s*=\s*(prompt|alert|confirm)\('", s):
             assert s.count("'") % 2 == 0 or s.endswith("',") or s.endswith("');"), \

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from src.services import enrichment_state as es
 
@@ -314,7 +315,7 @@ def test_page_endpoints_and_frontend_wiring():
     me = (_ROOT / "src/services/media_enricher.py").read_text(encoding="utf-8")
     assert 'ctx["rejected"]' in me and "async def anilist_candidates" in me
     assert '"_match_basis"' in me and '"_reason":        "low_confidence"' in me
-    fe = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    fe = _frontend_everything()
     for needle in ("renderMatchPicker", "loadKbItems", "loadKbAttention", 'id="kb-badge"',
                    "Not this one", "Retry now", "Search &amp; pin", "Un-ignore", "_updateKbBadge",
                    'id="kb-attention"', 'id="kb-drilldown"', "Pin this id"):

@@ -69,7 +69,8 @@ check("apply/unpin purge BOTH cache-key epochs and flip BOTH status tables",
       and en.count("_purge_and_requeue_item(") >= 3   # def + apply + delete
       and "ArrEnrichmentStatus" in en.split("_purge_and_requeue_item")[1])
 
-fe = (root / "frontend/index.html").read_text(encoding="utf-8")
+from tests.frontend_files import everything
+fe = everything()
 check("Fix match button on deletion cards + pin/unpin handlers",
       "onFixMatch" in fe and "openMatchPicker" in fe and "removeFixMatch" in fe
       and "/api/enrichment/match-override" in fe)

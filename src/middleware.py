@@ -132,7 +132,7 @@ class SecurityHeadersMiddleware:
         (b"x-content-type-options", b"nosniff"),
         (b"x-frame-options", b"DENY"),  # no iframes anywhere in the frontend
         (b"referrer-policy", b"same-origin"),
-        # 'unsafe-inline' is unavoidable: the single-file UI is built on
+        # 'unsafe-inline' is unavoidable for now: the UI is built on
         # inline onclick= handlers and <style> blocks. Everything else is
         # locked to the origin - the frontend loads no external resource
         # (posters go through /api/image/proxy, Plex login is a window.open),

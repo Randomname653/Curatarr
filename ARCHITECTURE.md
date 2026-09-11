@@ -33,7 +33,9 @@ curatarr/
 │   ├── vector_store/          ChromaDB wrapper
 │   ├── cache/                 Versioned metadata cache (SQLite)
 │   ├── embeddings/            Embedding generation
-├── frontend/index.html        Single-page UI (vanilla JS, no build step)
+├── frontend/index.html        Single-page UI markup (vanilla, no build step)
+├── frontend/css/app.css       the stylesheet (DESIGN LANGUAGE header first)
+├── frontend/js/app.js         the app module (one ES module; split by view is next)
 ├── frontend/vendor/           marked.min.js + purify.min.js, bundled locally
 ├── scripts/                   Standalone runners + icon renderer
 ├── tests/                     Plain-script battery — python tests/run_all.py
@@ -90,7 +92,7 @@ yet. Until those sections are rewritten, this is the map:
 | Public surface | `SecurityHeadersMiddleware`, `main.FastAPI(openapi_url=…)`, `image_proxy._enforce_cache_budget` | CSP + Permissions-Policy; the OpenAPI spec is gated with the docs (it was public at `/openapi.json`); the unauthenticated poster cache has a size budget with oldest-first eviction. |
 | Enrichment healing | `src/services/enrichment_state.py`, `kb_overview.classified_items`, `EnrichmentStatus.attempt_count/next_retry_at/match_basis/match_confidence`, `EnrichmentFinding`, `MediaMatchOverride.rejected_ids`, `/api/enrichment/items · unmatched · findings`, `_audit_enrichments` + `_triage_audit_hit` | ONE classifier for the KB tile, `/library/breakdown` and the producer (the old KB view read a column nothing wrote and counted a live not-found sentinel as enriched). Not-found rows carry an attempt counter with a backoff (2 free tries, then 3/6/12/24 d, capped at 30 d — never given up on; a category abort rolls its attempts back). Fetchers return a falsy `TRANSIENT` marker; a drained run with an unavailable source raises `TransientFetchError` and writes nothing. Sentinels persist their evidence (per-source outcomes, arr year, the rejected same-named hit) → `open_reason()` sentences. Title-search resolutions store a match basis + confidence (≥0.8 accept, 0.5–0.8 accept-and-flag, below with a disagreeing year refuse). Every KB count opens its list; Needs attention unions the row-derived reasons with the audit's persisted findings (SoulSync `repair_findings` contract: pending refreshed, dismissed silent, resolved re-raised after 7 d; each finding gets exactly ONE automatic requeue, then escalates to a human). Owner actions: pin (arr lookup + TMDB/AniList + free ids, category derived server-side), negative pin (all four title-search resolvers skip it; the purge covers title-keyed cache rows too), retry, ignore, dismiss. |
 | Member budgets + untrusted text | `src/services/rate_limit.py` (`enforce`, `InFlight`), `llm_utils.fence_untrusted / scrub_untrusted / UNTRUSTED_RULE`, `format_verified_block` markers, `subtitle_signals._bounded_text`, `image_proxy._read_bounded`, `spotify_import.save_upload` caps, `plex_sync.sync_plex_history` lock | Second security angle (2026-09-06). Every endpoint that turns one request into LLM or external-API work carries a per-user sliding-window budget and, where the work is long, a one-at-a-time guard (chat reply, recommendation generation — including the GET lane that bypassed `/refresh-cache`). The global curator gate serialises the GPU; it never stopped one member from owning the queue. Third-party prose (overviews, reviews, wiki extracts, bios, the verified block) is fenced `<<<UNTRUSTED_SOURCE:…>>>` and scrubbed of markup / special tokens / role markers; every system prompt that receives it carries `UNTRUSTED_RULE`; `clean_llm_text` strips tag-like markup before persistence. The significance template is hashed into its cache stamp, so that path is scrubbed, not fenced. External bodies are capped while streaming (OpenSubtitles 4 MB + metrics off-loop, image proxy 5 MB, zip members 50 MB / 400 MB). One Plex sync at a time (`plex_sync_running`). |
-| UI grammar | `frontend/index.html` (CSS DESIGN LANGUAGE header; helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
+| UI grammar | `frontend/css/app.css` (DESIGN LANGUAGE header) + `frontend/js/app.js` (helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
 
 ---
 
@@ -1009,8 +1011,9 @@ without understanding why they exist.
   lands as a digest table on the run page plus the report artifact. Known
   limit: the model reads one file at a time and never sees the control in
   the next file, so its highs are mostly cross-file false positives — and
-  it never reads `frontend/index.html` at all (no `.html` in its extension
-  list); the inline JS is CodeQL's job.
+  it never reads `frontend/index.html` (no `.html` in its extension list);
+  since the 2026-09-11 split the app module `frontend/js/app.js` is a file it
+  does read, the markup stays CodeQL's job.
 - **Image proxy** (`src/routers/image_proxy.py`): all external poster URLs
   go through `/api/image/proxy` so TMDB/Deezer don't see per-click browsing.
   Host whitelist + image-only content-type + 5 MB cap + no-auto-redirect
@@ -1110,7 +1113,8 @@ to its own section (or a §0 delta row) instead of growing this list.
 ### Chat & curator satellites
 - `src/services/app_context.py` — SSOT for what the curator is told about the
   app's own UI (buttons/badges/verdicts), drift-tested against
-  `frontend/index.html`. Never inline app knowledge in routers.
+  the frontend files (`index.html` + `js/app.js`, read through
+  `tests/frontend_files.py`). Never inline app knowledge in routers.
 - `src/services/episode_context.py` — the Sonarr episode a user stopped at
   plus the next one ("you stopped at S1E9, next up …").
 - `src/services/watch_status.py` — per-user watch status from Plex-synced
@@ -1199,7 +1203,26 @@ to its own section (or a §0 delta row) instead of growing this list.
 
 ---
 
-## 20. Frontend grammar (`frontend/index.html`)
+## 20. Frontend grammar (`frontend/`: index.html, css/app.css, js/app.js)
+
+**Files (2026-09-11, PR 1 of 3 of the split).** The 7,376-line single file
+became three: `index.html` keeps the markup and its 217 inline `on*=`
+handlers; `css/app.css` carries the stylesheet with the DESIGN LANGUAGE
+header; `js/app.js` is the whole app logic as ONE ES module (a
+`script type=module` tag). A module has its own scope and runs strict, so
+the 130 functions the inline handlers name are handed to `window` in the
+`Object.assign(window, {...})` block at the end of app.js — `tests/
+test_frontend_hygiene.py` pins that the block covers every handler and
+nothing more; an eslint `no-undef` pass found no implicit globals. main.py
+serves the three with `Cache-Control: no-cache` so a `git pull` + reload
+never mixes an old module with new markup. Tests read the frontend through
+`tests/frontend_files.py` (`markup()`, `styles()`, `script()`,
+`everything()`), so the next split touches one place. Next: PR 2 splits
+app.js by view with a `state.js` for the shared globals; PR 3 replaces the
+inline handlers with event delegation and drops `'unsafe-inline'` from the
+CSP. The extraction itself was done by Jules from a written brief; the
+readers, the encoding-safe helper and the strict-mode audit were finished
+here.
 
 One file, one visual language. The CSS header (DESIGN LANGUAGE) states the
 rules; this section is the map.

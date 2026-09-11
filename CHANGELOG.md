@@ -183,6 +183,16 @@ the first import (`src/deps_check.py`, stdlib only) and install what is
 missing or outdated. The server never installs; it logs the comparison at
 boot and shows it to admins in Settings → Maintenance, with the command.
 
+**The frontend is three files.** `frontend/index.html` (7,376 lines) split
+into markup, `css/app.css` and `js/app.js`, the latter loaded as one ES
+module — no framework, no bundler, byte-identical content. The 130
+functions the inline handlers name are exported to `window` explicitly and
+a test pins that list; a strict-mode audit found no implicit globals; the
+three files are served with `Cache-Control: no-cache` so an update never
+mixes old code with new markup. Behaviour is unchanged; this is the first
+of three steps (next: modules per view, then event delegation in place of
+inline handlers). Extraction by Jules from a written brief, finished here.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

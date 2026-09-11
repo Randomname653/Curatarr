@@ -20,6 +20,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 ROOT = Path(__file__).resolve().parents[1]
 PASS = FAIL = 0
@@ -109,7 +110,7 @@ check("only one import at a time",
 _m = (ROOT / "src/main.py").read_text(encoding="utf-8")
 check("the router is registered", '"/api/import"' in _m)
 
-_f = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+_f = _frontend_everything()
 check("the setup wizard has an Import step",
       "'import','done'" in _f and "spotifyDropZone('su-sp')" in _f)
 check("the admin view has the same drop zone with a user picker",

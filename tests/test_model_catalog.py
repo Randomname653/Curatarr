@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 PASS = FAIL = 0
 
@@ -125,8 +126,7 @@ _wiz = (Path(__file__).resolve().parents[1]
 check("the warm-up measures GPU residency, not just latency",
       "size_vram" in _wiz and "cpu_spill" in _wiz)
 
-_html = (Path(__file__).resolve().parents[1]
-         / "frontend/index.html").read_text(encoding="utf-8")
+_html = _frontend_everything()
 check("the wizard offers detection AND a manual VRAM picker",
       "detectGpu()" in _html and 's-vram' in _html)
 check("untested installed models are labeled, never silently recommended",

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from src.services import enrichment_state as es
 
@@ -138,7 +139,7 @@ def test_wiring():
     assert "for cache_key, *_ in to_requeue:" in body
     models = (_ROOT / "src/database/models.py").read_text(encoding="utf-8")
     assert "class EnrichmentFinding(Base)" in models and "uq_enrichment_finding" in models
-    fe = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    fe = _frontend_everything()
     for needle in ("Dismiss finding", "kbDismissFinding", "_kbFindingText", "findings_summary"):
         assert needle in fe, needle
 

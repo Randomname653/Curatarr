@@ -15,7 +15,7 @@ Rules:
   Sonarr to delete a title while the 'Delete & exit' button sat top right,
   and improvising when asked what the 'Stagnant' badge means.)
 - SCOPED injection: each surface gets its own block, not the whole app manual.
-- Every UI label referenced here must exist VERBATIM in frontend/index.html —
+- Every UI label referenced here must exist VERBATIM in the frontend files (index.html + js/app.js) —
   enforced by tests/test_app_context_drift.py, so renaming a button without
   updating the prompt is a red test instead of a confident hallucination.
 """
@@ -139,7 +139,7 @@ LIBRARY_ACTIONS_BLOCK = (
 
 # ── Drift-test registry ───────────────────────────────────────────────────────
 # Every label the blocks above mention. tests/test_app_context_drift.py asserts
-# each exists verbatim in frontend/index.html (and that none is orphaned here).
+# each exists verbatim in the frontend files (and that none is orphaned here).
 REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Delete & exit",
     "Delete",

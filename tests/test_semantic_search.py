@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 import src.services.semantic_search as ss
 from src.services.semantic_search import format_rag_context
@@ -406,7 +407,7 @@ check("endpoint clamps limit and validates category",
 check("endpoint rides curated_search and reports mode",
       "curated_search" in lib and '"mode": res["mode"]' in lib)
 
-html = (root / "frontend/index.html").read_text(encoding="utf-8")
+html = _frontend_everything()
 for frag in ["lib-search", "searchLibrary()", "semantic-search?q=",
              "fit_note", "curating", "mode === 'evidence'",
              "No library title carries this full profile"]:

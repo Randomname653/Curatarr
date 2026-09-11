@@ -2268,7 +2268,7 @@ CRITICAL RULES AND GUARDRAILS:
 # new LLM lifecycle to manage, streaming UX instead of a 30-90 s spinner,
 # and the verdict becomes searchable conversation history instead of an
 # appended blob on the proposal card. The Level-2 *prompt* lives in the
-# frontend (see ``onReevaluateDeletion`` in index.html) — it's just a
+# frontend (see ``onReevaluateDeletion`` in frontend/js/app.js) — it's just a
 # pre-filled chat input, no server help needed: the chat backend's
 # ``_build_discuss_context_block`` already injects the item title +
 # original verdict + synopsis as RAG, so the user-side prompt only carries

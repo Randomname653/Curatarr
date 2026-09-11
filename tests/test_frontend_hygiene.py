@@ -9,14 +9,19 @@ setBadge, emptyHtml) replace them view by view. This suite pins the counts
 so they can only fall: lower a ceiling when you retire a call, never raise
 one.
 
+2026-09-11: index.html became three files (markup, css/app.css, js/app.js
+as an ES module). The regions are the files now; the ceilings did not move.
+A module has its own scope, so every function an inline on*="…" handler
+names must be handed to window explicitly — the last test pins that list.
+
     python tests/test_frontend_hygiene.py
 """
-import pathlib
 import re
 import sys
 
-_ROOT = pathlib.Path(__file__).resolve().parents[1]
-_INDEX = _ROOT / "frontend" / "index.html"
+import pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # `tests` is a package only from the repo root
+from tests.frontend_files import markup, script, styles
 
 # Ceilings, not targets. Step 1 of the UI-grammar work pinned the numbers as
 # they stood after the foundation landed; every later step lowers them
@@ -35,9 +40,8 @@ CEILINGS = {
 
 
 def _regions():
-    html = _INDEX.read_text(encoding="utf-8")
-    start = html.index("<script>\n", html.index("</head>"))
-    return html[:start], html[start:]
+    """(static markup, app module) — the two places an inline style can hide."""
+    return markup(), script()
 
 
 def _count(pattern: str, text: str) -> int:
@@ -77,11 +81,40 @@ def test_shared_helpers_exist_and_every_toast_call_resolves():
 
 
 def test_no_second_overlay_or_toast_system():
-    static, js = _regions()
+    _, js = _regions()
+    css = styles()
     # Only the shared root may be positioned as a full-screen overlay from JS.
     assert _count(r"position:fixed;inset:0", js) == 0, "an overlay is being hand-built in JS again"
     for cls in (".modal ", ".toast ", ".menu-list ", ".select-bar ", ".empty ", ".pager ", ".toolbar ", ".section-head"):
-        assert cls in static, f"grammar class missing from the stylesheet: {cls.strip()}"
+        assert cls in css, f"grammar class missing from the stylesheet: {cls.strip()}"
+    assert "DESIGN LANGUAGE" in css, "the design-language header must travel with the stylesheet"
+
+
+def test_every_inline_handler_resolves_to_an_exported_global():
+    """app.js is an ES module: nothing in it is global unless the
+    Object.assign(window, {...}) block at its end says so. A handler that
+    names a function outside that block is a ReferenceError on the first
+    click — and no Python test would notice without this one."""
+    m, s = _regions()
+    both = m + "\n" + s
+    needed = set(re.findall(r'\bon[a-z]+="([A-Za-z_$][\w$]*)\(', both))
+    needed |= set(re.findall(r"""(?:setTimeout|setInterval)\(\s*['"]([A-Za-z_$][\w$]*)\(""", both))
+    needed.discard("if")   # onclick="if (...) ..." is a statement, not a call
+    # Calls spelled inside strings reach a handler at runtime too: _errHtml's
+    # retry button, menuHtml items ({call: 'onFixMatch(this)'}), pagerHtml,
+    # emptyHtml's CTA. Ten of those were missing on the first split.
+    code = re.sub(r"(?m)^\s*//.*$", "", s)
+    top_level = set(re.findall(r"^(?:async )?function ([A-Za-z_$][\w$]*)\(", code, re.M))
+    in_strings = set(re.findall(r"""['"`]\s*([A-Za-z_$][\w$]*)\(""", code))
+    needed |= in_strings & top_level
+    block = re.search(r"Object\.assign\(window,\s*\{(.*?)\}\s*\);", s, re.S)
+    assert block, "app.js must end with the Object.assign(window, {...}) block"
+    exposed = {n.strip() for n in block.group(1).split(",") if n.strip()}
+    missing = sorted(needed - exposed)
+    assert not missing, f"inline handlers reference functions app.js does not expose: {missing}"
+    unused = sorted(exposed - needed)
+    assert not unused, f"exposed but no handler names them (export only what is referenced): {unused}"
+    print(f"  {len(exposed)} functions exposed for {len(needed)} handler references")
 
 
 if __name__ == "__main__":

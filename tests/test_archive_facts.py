@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 ROOT = Path(__file__).resolve().parents[1]
 PASS = FAIL = 0
@@ -133,7 +134,7 @@ check("starting a backfill is admin-only",
 check("a running backfill can be asked to stop mid-run",
       "should_stop=lambda: source not in _backfill_running" in _router)
 
-_html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+_html = _frontend_everything()
 check("the panel exists and is refreshed with the page",
       'id="backfill-panel"' in _html and "loadBackfillPanel();" in _html)
 check("it removes itself when nothing is worth offering",

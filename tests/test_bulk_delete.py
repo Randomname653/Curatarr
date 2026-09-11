@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -143,7 +144,7 @@ check("endpoint registered admin-only",
 check("single approve uses the shared helper",
       src.count("_delete_one_and_log(") >= 2)
 
-html = (root / "frontend/index.html").read_text(encoding="utf-8")
+html = _frontend_everything()
 for frag in ["del-cb", "del-bulk-btn", "del-select-all",
              "confirmDialog(", "updateDelBulkCount", "bulkDelete()"]:
     check(f"frontend has {frag}", frag in html)

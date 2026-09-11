@@ -38,7 +38,7 @@ def test_security_headers_include_a_locked_down_csp():
                       "object-src 'none'", "frame-ancestors 'none'",
                       "base-uri 'self'", "form-action 'self'"):
         assert directive in csp, directive
-    # the single-file UI runs on inline handlers - this is the one allowance
+    # the UI runs on inline on*= handlers - this is the one allowance
     assert "script-src 'self' 'unsafe-inline'" in csp
     assert b"permissions-policy" in hdrs
     assert hdrs[b"x-frame-options"] == b"DENY"

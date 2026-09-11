@@ -31,7 +31,7 @@ Defaults that matter:
   and renames it into place atomically. `.env` is the secret store by
   design: the process needs the plaintext at boot with nobody present to
   unlock a key — the same reason data at rest is not encrypted.
-- Every response carries a Content-Security-Policy: the single-file UI
+- Every response carries a Content-Security-Policy: the UI
   loads nothing from other origins, so `connect-src 'self'` means even a
   script injection that survived DOMPurify cannot phone a token home.
 - Deletion actions require an authenticated session; proposals are never

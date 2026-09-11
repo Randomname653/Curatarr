@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from src.services.upgrade_curation import _judge
 
@@ -65,7 +66,7 @@ uc = (root / "src/services/upgrade_curation.py").read_text(encoding="utf-8")
 check("no arr writes in upgrade curation",
       "httpx" not in uc and "post(" not in uc.lower())
 
-html = (root / "frontend/index.html").read_text(encoding="utf-8")
+html = _frontend_everything()
 for frag in ["loadUpgrades", "loadRedundancy", "upgrade-content", "redundancy-content"]:
     check(f"frontend has {frag}", frag in html)
 

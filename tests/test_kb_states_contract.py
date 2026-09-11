@@ -19,7 +19,8 @@ OLD_NAMES = ("enriched_live", "not_findable", "retry_queued", "awaiting_polish",
 
 
 def test_frontend_knows_every_backend_state():
-    fe = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    from tests.frontend_files import everything
+    fe = everything()
     kb = fe[fe.index("const KB_STATE_DEFS"):fe.index("async function loadCacheInventory")]
     for s in es.STATES:
         assert f"'{s}'" in kb or f"{s}:" in kb, f"frontend KB view does not know state {s!r}"

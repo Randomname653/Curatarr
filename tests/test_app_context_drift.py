@@ -21,7 +21,8 @@ from src.services import app_context
 
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    html = open(os.path.join(root, "frontend", "index.html"), encoding="utf-8").read()
+    from tests.frontend_files import everything
+    html = everything()
 
     # Every prompt block in the module (auto-discovered so a new *_BLOCK is
     # covered without touching this test).

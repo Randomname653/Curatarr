@@ -93,7 +93,8 @@ check("cache-inventory endpoint exists with per-class + coverage stats",
       '@router.get("/cache-inventory")' in en
       and '"significance_text"' in en and '"omdb_writer"' in en)
 
-fe = (root / "frontend/index.html").read_text(encoding="utf-8")
+from tests.frontend_files import everything
+fe = everything()
 check("KB view renders the inventory on demand",
       "loadCacheInventory" in fe and "/api/enrichment/cache-inventory" in fe)
 
