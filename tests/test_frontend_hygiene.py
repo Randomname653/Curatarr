@@ -104,7 +104,7 @@ def test_every_inline_handler_resolves_to_an_exported_global():
     # retry button, menuHtml items ({call: 'onFixMatch(this)'}), pagerHtml,
     # emptyHtml's CTA. Ten of those were missing on the first split.
     code = re.sub(r"(?m)^\s*//.*$", "", s)
-    top_level = set(re.findall(r"^(?:async )?function ([A-Za-z_$][\w$]*)\(", code, re.M))
+    top_level = set(re.findall(r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\(", code, re.M))
     in_strings = set(re.findall(r"""['"`]\s*([A-Za-z_$][\w$]*)\(""", code))
     needed |= in_strings & top_level
     block = re.search(r"Object\.assign\(window,\s*\{(.*?)\}\s*\);", s, re.S)
