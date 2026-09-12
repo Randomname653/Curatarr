@@ -59,7 +59,6 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -210,17 +209,17 @@ async def proxy_image(
 
     # 1. Parse + scheme + host check
     try:
-        parsed = urlparse(src)
+        parsed = httpx.URL(src)
     except Exception:
         raise HTTPException(400, "Invalid URL")
 
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(400, "Only http(s) schemes accepted")
-    if not _host_allowed(parsed.hostname or ""):
+    if not _host_allowed(parsed.host or ""):
         # Logging level kept low — this is the expected outcome for any
         # client that tries to feed us an arbitrary URL.
-        logger.debug("[image_proxy] reject non-whitelisted host: %s", parsed.hostname)
-        raise HTTPException(403, f"Host not on image-proxy whitelist: {parsed.hostname}")
+        logger.debug("[image_proxy] reject non-whitelisted host: %s", parsed.host)
+        raise HTTPException(403, f"Host not on image-proxy whitelist: {parsed.host}")
 
     # 2. Disk cache hit?
     cached = _find_existing(src)
@@ -302,7 +301,7 @@ async def proxy_image(
         except HTTPException:
             raise
         except Exception as e:
-            logger.info("[image_proxy] upstream fetch failed for %s: %s", parsed.hostname, e)
+            logger.info("[image_proxy] upstream fetch failed for %s: %s", parsed.host, e)
             _inflight.pop(src, None)
             raise HTTPException(502, "Upstream image fetch failed")
 
