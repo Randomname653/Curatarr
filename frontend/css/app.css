@@ -573,3 +573,6 @@ select option { background: var(--bg2); }
 /* ── GAME STATUS INDICATOR (topbar) ── */
 #game-indicator { display:none; align-items:center; gap:6px; font-size:11px; color:var(--success); background:var(--success-dim); border:1px solid var(--success); border-radius:12px; padding:3px 10px; }
 #game-indicator.show { display:flex; }
+
+/* Active state tactile feedback for buttons and interactive elements */
+.btn:active, .chip:active, #send-btn:active, #new-chat-btn:active, #recheck-btn:active, .cat-tab:active, .sp-chip:active, .sb-item:active, .menu-item:active, .modal-close:active, .toast:active, .sb-footer button:active { transform: scale(0.98); }
