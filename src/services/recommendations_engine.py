@@ -2362,48 +2362,47 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         if (it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
     ])
 
-    def _vector_score(item: dict):
-        """Cosine similarity (user taste vector · item ChromaDB embedding),
-        or None when either side is missing."""
-        # External eval catch: P3b renamed the single vector into the
-        # user_vecs_n list but left this guard on the OLD name — NameError
-        # for every user with taste data (endpoint 500, scheduler swallowed
-        # it silently). Guard on what actually exists.
-        if not user_vecs_n:
-            return None
-        doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or item.get("title") or "")
-        if not doc_id:
-            return None
-        try:
-            res = _prefetched_embeddings.get(doc_id)
-            # Pass 74: ChromaDB embeddings are numpy arrays — check
-            # ``is not None``, never truthiness. ``bool(array)`` raises
-            # ValueError; the old ``if res.get("embedding")`` raised inside
-            # this try/except, so it was silently swallowed and EVERY item
-            # fell through to the genre fallback — the pass-70 vector ranking
-            # never actually ran.
-            emb = res.get("embedding") if res else None
-            if emb is not None:
-                # Audit #6: stored embeddings are RAW (norm ~13) -- the same
-                # trap the deletion path fixed with _normalize_vec. A bare
-                # dot ranked by |emb| instead of taste fit and drowned the
-                # 0.1 monitored bonus.
-                emb_n = _normalize_vec(emb)
-                if emb_n is not None and user_vecs_n:
-                    return max(float(np.dot(u, emb_n)) for u in user_vecs_n)
-        except Exception:
-            pass
-        return None
-
     vectored: list = []
     genre_only: list = []
+
+    # Fast path: Vectorized scoring
+    # Instead of normalizing and dot-producting thousands of items in a tight Python loop,
+    # we collect all valid embeddings, normalize them together, and score them via matrix multiplication.
+    # Yields an order-of-magnitude speedup on large libraries.
+    valid_items = []
+    valid_embs = []
     for item in items:
-        vs = _vector_score(item)
-        if vs is not None:
-            vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
+        doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or item.get("title") or "")
+        if not doc_id:
+            genre_only.append(((_dislike_rank(item), _genre_score(item), _monitored_rank(item)), item))
+            continue
+
+        res = _prefetched_embeddings.get(doc_id)
+        emb = res.get("embedding") if res else None
+        if emb is not None:
+            valid_items.append(item)
+            valid_embs.append(emb)
         else:
-            genre_only.append(((_dislike_rank(item), _genre_score(item),
-                                _monitored_rank(item)), item))
+            genre_only.append(((_dislike_rank(item), _genre_score(item), _monitored_rank(item)), item))
+
+    if valid_embs and user_vecs_n:
+        emb_arr = np.asarray(valid_embs, dtype=float)
+        # Vectorized unit normalization
+        norms = np.linalg.norm(emb_arr, axis=1, keepdims=True)
+        # Handle zero-norms safely (though Chroma embeddings shouldn't be zeroes)
+        emb_arr_n = np.divide(emb_arr, norms, out=np.zeros_like(emb_arr), where=norms!=0)
+
+        user_arr = np.asarray(user_vecs_n, dtype=float)
+        # Matrix multiply: items x clusters
+        scores = np.max(np.dot(emb_arr_n, user_arr.T), axis=1)
+
+        for idx, item in enumerate(valid_items):
+            vs = float(scores[idx])
+            vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
+    else:
+        # Fallback if no user taste vector exists
+        for item in valid_items:
+            genre_only.append(((_dislike_rank(item), _genre_score(item), _monitored_rank(item)), item))
 
     vectored.sort(key=lambda t: t[0], reverse=True)
     genre_only.sort(key=lambda t: t[0], reverse=True)

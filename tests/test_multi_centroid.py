@@ -96,7 +96,7 @@ re_src = (root / "src/services/recommendations_engine.py").read_text(encoding="u
 check("deletion scoring is max over centroids",
       "cosine = max(float(np.dot(u, iv_c)) for u in user_cmps)" in re_src)
 check("library-lane ranking is max over centroids",
-      "return max(float(np.dot(u, emb_n)) for u in user_vecs_n)" in re_src)
+      "scores = np.max(np.dot(emb_arr_n, user_arr.T), axis=1)" in re_src)
 check("prompts surface the clusters (serve all, not a blend)",
       "serve them ALL, not a blend" in re_src)
 
