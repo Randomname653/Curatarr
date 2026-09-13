@@ -105,7 +105,7 @@ check("tick wraps runners in a custodian card with stable id",
 check("tick closes the card on done AND partial",
       '"Partial — continues next tick"' in dc)
 check("tick surfaces runner failures on the card",
-      "task_monitor.error(mon, str(e))" in dc)
+      "task_monitor.error(mon, _short_error(e))" in dc)
 check("facet runner passes the card through",
       "run_facet_backfill(task=task)" in dc)
 
@@ -203,6 +203,11 @@ check("audit reports its stages (ground truth -> scan -> requeue)",
 
 check("frontend hides the fake 0% chip when a running card has no total",
       "t.status === 'running' ? (t.total > 0 ?" in fe)
+
+check("task rows are patched in place (data-task-id) and renders coalesce per frame",
+      'data-task-id="' in fe and "requestAnimationFrame" in fe.split("function renderTasks")[1][:400])
+check("the row keeps every part so a tick can patch it (hidden when empty)",
+      all(f"js-{p}" in fe for p in ("status", "meta", "error", "progress", "foot", "actions")))
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

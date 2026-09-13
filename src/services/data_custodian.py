@@ -29,6 +29,16 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+def _short_error(e: BaseException) -> str:
+    """One line for the status pill and the report: the exception class and
+    the first line of its message. SQLAlchemy appends the statement and every
+    parameter to str(e); that belongs in the log, not in a UI status line
+    (2026-09-13: the custodian pill showed a full INSERT with 15 parameters)."""
+    msg = (str(e) or "").splitlines()[0] if str(e) else ""
+    msg = msg.split(" [SQL:", 1)[0].strip()
+    return f"{type(e).__name__}: {msg[:140]}" if msg else type(e).__name__
+
 # One tick at a time; "run now" and the interval tick share this.
 _tick_lock = asyncio.Lock()
 _first_tick_done = False
@@ -596,10 +606,10 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
                     "seconds": round(time.time() - t0, 1),
                 })
             except Exception as e:
-                logger.warning("[custodian] task %s failed: %s", t.job_id, e)
+                logger.warning("[custodian] task %s failed: %s", t.job_id, e, exc_info=True)
                 if mon is not None:
-                    task_monitor.error(mon, str(e))
-                actions.append({"task": t.job_id, "result": f"error: {e}"})
+                    task_monitor.error(mon, _short_error(e))
+                actions.append({"task": t.job_id, "result": f"error: {_short_error(e)}"})
         _first_tick_done = True
         report = {
             "ts": datetime.utcnow().isoformat(),

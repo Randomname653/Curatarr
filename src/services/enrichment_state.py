@@ -563,6 +563,14 @@ def record_finding(db, *, plex_rating_key: str, kind: str, service: Optional[str
     sev = FINDING_KINDS.get(finding_base(kind), {}).get("severity", "info")
     row = db.query(F).filter(F.plex_rating_key == plex_rating_key, F.kind == kind).first()
     if row is None:
+        # The app's sessions run with autoflush=False: a finding added earlier
+        # in this same session is invisible to the query above, and a second
+        # record_finding for the same (key, kind) inserted a duplicate — the
+        # audit's IntegrityError on 'The Evil Dead' (2026-09-13). Unflushed
+        # rows count as existing.
+        row = next((o for o in db.new if isinstance(o, F)
+                    and o.plex_rating_key == plex_rating_key and o.kind == kind), None)
+    if row is None:
         row = F(plex_rating_key=plex_rating_key, kind=kind, service=service, arr_id=arr_id,
                 category=category, title=title,
                 detail=json.dumps(detail or {}, default=str, sort_keys=True),

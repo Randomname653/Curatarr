@@ -226,6 +226,15 @@ functions. Templates follow in the second half, after which the window
 block goes and the Content-Security-Policy loses `'unsafe-inline'` for
 scripts. Conversion by Jules from a written brief; finished here.
 
+**Three small ones from a screenshot.** The metadata audit failed its run
+whenever it met the same finding twice in one pass (the app's sessions do
+not autoflush, so the upsert could not see the row it had just added); it
+sees it now. A failed custodian step put the whole database error, statement
+and parameters included, into the status pill; one line now, the rest in
+the log. The Activity view rebuilt every task row on every progress event
+and replayed the card animation each time; rows are patched in place and
+renders coalesce to one per frame.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

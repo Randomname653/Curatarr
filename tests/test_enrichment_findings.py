@@ -189,6 +189,35 @@ def test_unmatched_page_survives_a_pending_finding():
     finally:
         en.get_db_session, kb.classified_items = orig
 
+
+def test_record_finding_twice_in_one_session_does_not_duplicate():
+    """The app's SessionLocal has autoflush=False. Two record_finding calls for
+    the same (key, kind) in one session used to insert twice — the audit's
+    IntegrityError on 'The Evil Dead' (2026-09-13). The second call must see
+    the unflushed row and refresh it."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from src.database.models import Base, EnrichmentFinding
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    S = sessionmaker(bind=engine, autoflush=False)
+    db = S()
+    try:
+        r1, a1 = es.record_finding(db, plex_rating_key="radarr:1027", kind="wrong_entity:year",
+                                   service="radarr", arr_id=1027, category="movie", title="The Evil Dead",
+                                   detail={"arr_year": 1983, "profile_year": 1981})
+        r2, a2 = es.record_finding(db, plex_rating_key="radarr:1027", kind="wrong_entity:year",
+                                   service="radarr", arr_id=1027, category="movie", title="The Evil Dead",
+                                   detail={"arr_year": 1983, "profile_year": 1981, "requeued_at": "now"})
+        assert (a1, a2) == ("created", "refreshed"), (a1, a2)
+        assert r1 is r2, "the second call must return the unflushed row, not a new one"
+        db.commit()                                   # the old code raised IntegrityError here
+        assert db.query(EnrichmentFinding).count() == 1
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

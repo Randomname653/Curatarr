@@ -83,38 +83,91 @@ export function fmtTime(s) {
   return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
 }
 
+// Rows are patched in place while the task set is unchanged, and renders are
+// coalesced to one per animation frame. Rebuilding the list on every progress
+// event re-ran the card entrance animation on every row several times a
+// second: the taste-vector recompute strobed the page (2026-09-13).
+let _tasksPending = null;
+let _tasksRaf = 0;
 export function renderTasks(tasks) {
+  _tasksPending = tasks;
+  if (_tasksRaf) return;
+  _tasksRaf = requestAnimationFrame(() => { _tasksRaf = 0; _renderTasksNow(_tasksPending || []); });
+}
+
+// Every part of a row is always present (hidden when empty) so a later tick
+// can patch it instead of rebuilding the row.
+function _taskRowHtml(t) {
+  const label = STATUS_LABELS[t.status] || t.status;
+  const live = t.status === 'running' || t.status === 'pending';
+  const meta = [
+    t.elapsed_s > 0 ? fmtTime(Math.round(t.elapsed_s)) : '',
+    t.processed && t.total ? `${t.processed.toLocaleString()} / ${t.total.toLocaleString()}` : '',
+    t.rate > 0 ? `${t.rate.toFixed(1)}/s` : '',
+    t.eta_s ? `<span class="t-amber">ETA ${fmtTime(t.eta_s)}</span>` : '',
+  ].filter(Boolean).join(' · ');
+  const recentLog = t.logs?.slice(-1)[0]?.msg || '';
+  const err = t.status === 'error' && t.error ? esc(t.error) : '';
+  const bar = t.status === 'running' && t.total > 0;
+  return `<div class="panel-item${t.status === 'running' ? ' live' : ''}" data-task-id="${escAttr(String(t.id))}">
+      <div class="panel-item-head">
+        <div class="panel-item-title">${esc(t.name)}<span class="js-status"><span class="badge ${STATUS_BADGE[t.status] || 'muted'} badge-sm">${esc(label)}</span>
+          ${t.status === 'running' ? (t.total > 0 ? `<span class="t-amber b">${t.progress}%</span>` : '<span class="spinner" title="No item count for this job — watch the log line and the elapsed time"></span>') : ''}</span></div>
+        <div class="panel-actions js-actions"${live ? '' : ' hidden'}><button type="button" class="btn btn-danger btn-sm" onclick="cancelTask('${esc(t.id)}',this)">Cancel</button></div>
+      </div>
+      <div class="panel-item-meta mt-4 js-meta"${meta ? '' : ' hidden'}>${meta}</div>
+      <div class="panel-item-sub t-danger js-error"${err ? '' : ' hidden'}>${err}</div>
+      <div class="progress-bar js-progress"${bar ? '' : ' hidden'}><div class="progress-fill" style="width:${bar ? t.progress : 0}%"></div></div>
+      <div class="panel-item-foot fs-11 t3 mono js-foot"${recentLog ? '' : ' hidden'}>${esc(recentLog)}</div>
+    </div>`;
+}
+
+function _renderTasksNow(tasks) {
   const el = document.getElementById('tasks-list');
   if (!el) return;
   if (!tasks?.length) {
+    el.dataset.taskIds = '';
     el.innerHTML = emptyHtml('No tasks yet — syncs, enrichment runs and imports appear here while they run.');
     return;
   }
-  // Row anatomy: name + status badge (+ percent or spinner) with Cancel at
-  // the row end while it can still be cancelled; the numbers on one meta
-  // line; progress and the last log line on the row itself.
-  el.innerHTML = tasks.map(t => {
-    const label = STATUS_LABELS[t.status] || t.status;
-    const live = t.status === 'running' || t.status === 'pending';
-    const meta = [
-      t.elapsed_s > 0 ? fmtTime(Math.round(t.elapsed_s)) : '',
-      t.processed && t.total ? `${t.processed.toLocaleString()} / ${t.total.toLocaleString()}` : '',
-      t.rate > 0 ? `${t.rate.toFixed(1)}/s` : '',
-      t.eta_s ? `<span class="t-amber">ETA ${fmtTime(t.eta_s)}</span>` : '',
-    ].filter(Boolean).join(' · ');
-    const recentLog = t.logs?.slice(-1)[0]?.msg || '';
-    return `<div class="panel-item${t.status === 'running' ? ' live' : ''}">
-      <div class="panel-item-head">
-        <div class="panel-item-title">${esc(t.name)}<span class="badge ${STATUS_BADGE[t.status] || 'muted'} badge-sm">${esc(label)}</span>
-          ${t.status === 'running' ? (t.total > 0 ? `<span class="t-amber b">${t.progress}%</span>` : '<span class="spinner" title="No item count for this job — watch the log line and the elapsed time"></span>') : ''}</div>
-        ${live ? `<div class="panel-actions"><button type="button" class="btn btn-danger btn-sm" onclick="cancelTask('${esc(t.id)}',this)">Cancel</button></div>` : ''}
-      </div>
-      ${meta ? `<div class="panel-item-meta mt-4">${meta}</div>` : ''}
-      ${t.status === 'error' && t.error ? `<div class="panel-item-sub t-danger">${esc(t.error)}</div>` : ''}
-      ${t.status === 'running' && t.total > 0 ? `<div class="progress-bar"><div class="progress-fill" style="width:${t.progress}%"></div></div>` : ''}
-      ${recentLog ? `<div class="panel-item-foot fs-11 t3 mono">${esc(recentLog)}</div>` : ''}
-    </div>`;
-  }).join('');
+  const ids = tasks.map(t => String(t.id)).join('\u0001');
+  if (el.dataset.taskIds !== ids) {          // membership or order changed: one rebuild
+    el.innerHTML = tasks.map(_taskRowHtml).join('');
+    el.dataset.taskIds = ids;
+    return;
+  }
+  const rows = new Map([...el.querySelectorAll('[data-task-id]')].map(r => [r.dataset.taskId, r]));
+  const scratch = document.createElement('div');
+  for (const t of tasks) {
+    const row = rows.get(String(t.id));
+    if (!row) continue;
+    scratch.innerHTML = _taskRowHtml(t);
+    const fresh = scratch.firstElementChild;
+    if (row.className !== fresh.className) row.className = fresh.className;
+    for (const sel of ['.js-status', '.js-meta', '.js-error', '.js-foot']) {
+      const a = row.querySelector(sel), b = fresh.querySelector(sel);
+      if (a.innerHTML !== b.innerHTML) a.innerHTML = b.innerHTML;
+      a.hidden = b.hidden;
+    }
+    const pa = row.querySelector('.js-progress'), pb = fresh.querySelector('.js-progress');
+    pa.hidden = pb.hidden;
+    pa.firstElementChild.style.width = pb.firstElementChild.style.width;
+    // The Cancel button is never replaced: a "Cancelling…" busy state survives the next tick.
+    row.querySelector('.js-actions').hidden = fresh.querySelector('.js-actions').hidden;
+  }
+}
+
+function _enrichRowHtml(t) {
+  const cat = t.category.replace('enrich-', '');
+  const pct = t.progress || 0;
+  const eta = t.eta_s ? ` · ETA ${fmtTime(Math.round(t.eta_s))}` : '';
+  const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
+  const current = t.logs && t.logs.length ? t.logs[t.logs.length - 1].msg : '';
+  return `<div class="mb-8" data-enrich-cat="${escAttr(t.category)}">
+        <div class="row fs-12 js-count-line"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString()} / ${(t.total || 0).toLocaleString()}${rate}${eta}</span></div>
+        <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="fs-10 t3 mono mt-4 js-current" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${current ? '' : ' hidden'} title="${escAttr(current)}">${esc(current)}</div>
+      </div>`;
 }
 
 export function updateEnrichLiveSection(tasks) {
@@ -122,21 +175,28 @@ export function updateEnrichLiveSection(tasks) {
   if (!el) return;
   const active = tasks.filter(t => t.category && t.category.startsWith('enrich-') && (t.status === 'running' || t.status === 'pending'));
   el.hidden = !active.length;
-  if (!active.length) return;
-  el.innerHTML = `<section class="section">
+  if (!active.length) { el.dataset.cats = ''; return; }
+  const cats = active.map(t => t.category).join('\u0001');
+  if (el.dataset.cats !== cats) {            // a category started or finished: one rebuild
+    el.innerHTML = `<section class="section">
     <div class="section-head"><h3>Enrichment running <span class="badge amber badge-sm">${active.length} categor${active.length === 1 ? 'y' : 'ies'}</span></h3><span class="section-hint">in parallel, one slot each</span></div>
-    <div class="section-body">${active.map(t => {
-      const cat = t.category.replace('enrich-', '');
-      const pct = t.progress || 0;
-      const eta = t.eta_s ? ` · ETA ${fmtTime(Math.round(t.eta_s))}` : '';
-      const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
-      const current = t.logs && t.logs.length ? t.logs[t.logs.length - 1].msg : '';
-      return `<div class="mb-8">
-        <div class="row fs-12"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString()} / ${(t.total || 0).toLocaleString()}${rate}${eta}</span></div>
-        <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${pct}%"></div></div>
-        ${current ? `<div class="fs-10 t3 mono mt-4" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(current)}">${esc(current)}</div>` : ''}
-      </div>`;
-    }).join('')}</div></section>`;
+    <div class="section-body">${active.map(_enrichRowHtml).join('')}</div></section>`;
+    el.dataset.cats = cats;
+    return;
+  }
+  const rows = new Map([...el.querySelectorAll('[data-enrich-cat]')].map(r => [r.dataset.enrichCat, r]));
+  const scratch = document.createElement('div');
+  for (const t of active) {
+    const row = rows.get(t.category);
+    if (!row) continue;
+    scratch.innerHTML = _enrichRowHtml(t);
+    const fresh = scratch.firstElementChild;
+    for (const sel of ['.js-count-line', '.js-current']) {
+      const a = row.querySelector(sel), b = fresh.querySelector(sel);
+      if (a.outerHTML !== b.outerHTML) a.replaceWith(b);
+    }
+    row.querySelector('.progress-fill').style.width = fresh.querySelector('.progress-fill').style.width;
+  }
 }
 
 export function _renderTaskHistory(r) {
