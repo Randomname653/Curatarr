@@ -1,7 +1,7 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
 import { state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
-import { SETUP_STEPS, SVG_WARN, SVG_X, _errMsg, esc } from './ui.js';
+import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errMsg, act, actOn, esc } from './ui.js';
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
@@ -549,5 +549,5 @@ export async function logout() {
   state.token=''; localStorage.removeItem('curatarr_token'); location.reload();
 }
 
-// setup.js:65 ${actOn('change', 'togglePitcherWrap', EL)}
+// The Pitcher checkbox shows or hides the model picker beneath it.
 export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').style.display = el.checked ? '' : 'none'; }

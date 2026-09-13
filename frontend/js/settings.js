@@ -1,5 +1,5 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { _errHtml, _errMsg, _showTestResult, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
 import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';

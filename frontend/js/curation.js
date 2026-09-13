@@ -1,6 +1,6 @@
 // ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 import { api } from './api.js';
-import { SVG_CHECK, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { state } from './state.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');

@@ -5,7 +5,7 @@
 // Invalidated whenever a targeted single-category analysis runs (because that
 // category's slice would then be out of sync with the stored full list).
 // Moved state._delProposalsAll to state
-import { SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _posterImg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, toast } from './ui.js';
+import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, toast } from './ui.js';
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
@@ -521,8 +521,7 @@ export function reloadDeletions(refresh = false) {
 
 export function onRecentOnlyChange(el) { toggleRecentOnly(el.checked); }
 
-// deletions.js:61 ${actOn('change', 'onDelCheckbox', EL)}
+// The bulk-select checkbox drives the count and the poster's selected look in one step.
 export function onDelCheckbox(el) { updateDelBulkCount(); _syncDelPosterVisual(el); }
-
-// deletions.js:89 ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}
-export function blurOnCtrlEnter(event, el) { if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)) el.blur(); }
+// Ctrl/Cmd+Enter in the note textarea blurs it, which saves the note.
+export function blurOnCtrlEnter(event, el) { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) el.blur(); }

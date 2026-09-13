@@ -5,7 +5,7 @@
 // redraw these out from under a selection in progress. moveReclassify()
 // invalidates explicitly before its own reload, so a real refresh after an
 // apply still shows the post-apply state, not a stale one.
-import { _errHtml, _errMsg, _posterImg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 export function _renderReclassify(res) {
   const el = document.getElementById('reclassify-content');

@@ -1,6 +1,6 @@
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
 // Two questions, two result areas — the second answer no longer overwrites the first.
-import { CAT_LABELS, SVG_STAR, _errHtml, _errMsg, _fmtAbs, _fmtRel, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
+import { CAT_LABELS, EL, SVG_STAR, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
@@ -86,7 +86,7 @@ export async function loadProfiles(offset = 0) {
             ${block('Embedding text', p.embedding_text ? esc(p.embedding_text) : '', true)}
           </div>
         </details>`).join('')}
-      ${pagerHtml({offset, limit: PROFILE_PAGE, total: r.total, action: act('loadProfiles', OFFSET)})}`;
+      ${pagerHtml({offset, limit: PROFILE_PAGE, total: r.total, page: o => act('loadProfiles', o)})}`;
   } catch (e) {
     el.innerHTML = _errHtml(e);
   }
@@ -401,7 +401,7 @@ export async function loadKbItems(cat, states, offset = 0) {
       </div>
       <div class="section-body">
         ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : emptyHtml('Nothing here.')}
-        ${pagerHtml({offset, limit: KB_PAGE, total: r.total, action: act('loadKbItems', cat, states, OFFSET)})}
+        ${pagerHtml({offset, limit: KB_PAGE, total: r.total, page: o => act('loadKbItems', cat, states, o)})}
       </div>
     </section>`;
     if (fresh) el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -442,7 +442,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
         <p class="fs-12 t3 mb-8">Tried twice or more without a hit, found under the wrong year, refused as too far off, matched with middling confidence, or flagged by the weekly audit (wrong entity, shared id, pin contradicted). Pin the right entity, retry, dismiss a finding, or accept the gap.${findingsNote}</p>
         <div class="row mb-12">${chips}</div>
         ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : empty}
-        ${pagerHtml({offset, limit: KB_ATT_PAGE, total: r.total, action: act('loadKbAttention', OFFSET, reason || null)})}
+        ${pagerHtml({offset, limit: KB_ATT_PAGE, total: r.total, page: o => act('loadKbAttention', o, reason || null)})}
       </div>
     </section>`;
   } catch (e) { el.innerHTML = _errHtml(e); }

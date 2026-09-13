@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { _errHtml, _errMsg, _posterImg, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView } from './nav.js';
 import { openSettingsPane } from './settings.js';
@@ -176,7 +176,7 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
       ${cacheBadge}
       <div class="toolbar-right">
         <label for="arr-sort-${svc}-${tabId}" class="fs-12 t3">Sort</label>
-        <select id="arr-sort-${svc}-${tabId}" class="input" ${actOn('change', 'onBrowserSort', 'svc', 'tabId', EL)}>
+        <select id="arr-sort-${svc}-${tabId}" class="input" ${actOn('change', 'onBrowserSort', svc, tabId, EL)}>
           <option value="size_desc"            ${st.sort === 'size_desc' ? 'selected' : ''}>Size ↓ (biggest first)</option>
           <option value="size_asc"             ${st.sort === 'size_asc' ? 'selected' : ''}>Size ↑ (smallest first)</option>
           <option value="added_desc"           ${st.sort === 'added_desc' ? 'selected' : ''}>Recently added</option>
@@ -185,9 +185,9 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
           <option value="title_asc"            ${st.sort === 'title_asc' ? 'selected' : ''}>Title A→Z</option>
         </select>
         <label class="chip${st.needs_enrichment ? ' active' : ''}" title="Only items without a synopsis or with raw metadata still awaiting the polish">
-          <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} ${actOn('change', 'onBrowserFilter', 'svc', 'tabId', EL)}> Needs enrichment</label>
+          <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} ${actOn('change', 'onBrowserFilter', svc, tabId, EL)}> Needs enrichment</label>
         <input type="text" id="arr-search-${svc}-${tabId}" class="input" aria-label="Search items" value="${escAttr(st.search || '')}"
-               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', 'svc', 'tabId', EL)} style="width:200px">
+               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', svc, tabId, EL)} style="width:200px">
         <button type="button" class="btn btn-secondary btn-sm" ${act('renderSynopsisBrowser', svc, tabId, {forceRefresh: true})} title="Bypass the 15-min cache and re-fetch from ${esc(svc)}">Refresh</button>
       </div>
     </div>
@@ -469,10 +469,10 @@ export async function renderSpotifyBacklog(svc) {
           ${lidarrCacheLoaded ? `<span><b class="t-success">${inLidarrVisible}</b> <span class="t3">already in Lidarr (this page)</span></span>` : ''}
           <div class="row row-end">
             <label class="chip${st.only_resolved ? ' active' : ''}" title="Only artists whose MusicBrainz ID has been resolved by Phase 1.4 of the music pipeline — the ones with a clickable Add button.">
-              <input type="checkbox" ${st.only_resolved ? 'checked' : ''} ${actOn('change', 'onBacklogOnlyResolved', 'svc', EL)}> Resolved only</label>
+              <input type="checkbox" ${st.only_resolved ? 'checked' : ''} ${actOn('change', 'onBacklogOnlyResolved', svc, EL)}> Resolved only</label>
             <label class="chip${st.not_added_only ? ' active' : ''}" style="${lidarrCacheLoaded ? '' : 'opacity:.5'}"
                    title="${lidarrCacheLoaded ? 'Hide artists already in your Lidarr library. Combines with the resolved filter so you see exactly the queue you have not added yet.' : 'Lidarr cache not loaded — this filter is inactive until the Lidarr tab is opened once.'}">
-              <input type="checkbox" ${st.not_added_only ? 'checked' : ''} ${actOn('change', 'onBacklogNotAddedOnly', 'svc', EL)} ${lidarrCacheLoaded ? '' : 'disabled'}> Not in Lidarr yet</label>
+              <input type="checkbox" ${st.not_added_only ? 'checked' : ''} ${actOn('change', 'onBacklogNotAddedOnly', svc, EL)} ${lidarrCacheLoaded ? '' : 'disabled'}> Not in Lidarr yet</label>
           </div>
         </div>
         ${pending > 0 && !st.only_resolved ? '<p class="fs-11 t3 mt-8" style="font-style:italic">Pending artists are still being looked up by Phase 1.4 of the music pipeline; they become addable once their MusicBrainz ID is resolved.</p>' : ''}
@@ -559,17 +559,11 @@ export async function addBacklogArtist(svc, idx, btn) {
   }
 }
 
-// arr.js:179 ${actOn('change', 'onBrowserSort', 'svc', 'tabId', EL)}
+// Synopsis-browser controls: the inline handlers read this.value / this.checked;
+// the dispatcher hands over the element instead, so these small readers do it.
 export function onBrowserSort(svc, tabId, el) { setBrowserSort(svc, tabId, el.value); }
-
-// arr.js:188 ${actOn('change', 'onBrowserFilter', 'svc', 'tabId', EL)}
 export function onBrowserFilter(svc, tabId, el) { setBrowserFilter(svc, tabId, el.checked); }
-
-// arr.js:190 ${actOn('input', 'onBrowserSearch', 'svc', 'tabId', EL)}
 export function onBrowserSearch(svc, tabId, el) { setBrowserSearch(svc, tabId, el.value); }
-
-// arr.js:472 ${actOn('change', 'onBacklogOnlyResolved', 'svc', EL)}
+// Spotify-backlog filters, same reason.
 export function onBacklogOnlyResolved(svc, el) { setBacklogOnlyResolved(svc, el.checked); }
-
-// arr.js:475 ${actOn('change', 'onBacklogNotAddedOnly', 'svc', EL)}
 export function onBacklogNotAddedOnly(svc, el) { setBacklogNotAddedOnly(svc, el.checked); }

@@ -3,7 +3,7 @@
 //    deletion cards; the category is resolved server-side, never invented
 //    here. Pin closes it (toast + the caller's onDone), "Not this one" only
 //    drops that candidate from the list so another can be picked.
-import { _errHtml, _errMsg, btnBusy, btnDone, closeModal, emptyHtml, esc, escAttr, openModal, toast } from './ui.js';
+import { EL, EVENT, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, closeModal, emptyHtml, esc, escAttr, openModal, toast } from './ui.js';
 import { api } from './api.js';
 import { PIN_ID_KINDS } from './kb.js';
 let _pickerCtx = null;
@@ -92,5 +92,5 @@ export async function removeFixMatch(btn) {
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 
-// picker.js:51 ${actOn('keydown', 'freePinOnEnter', EVENT, EL)}
-export function freePinOnEnter(event, el) { if(event.key==='Enter') el.nextElementSibling.click(); }
+// Enter in the free-id field presses the "Pin this id" button next to it.
+export function freePinOnEnter(event, el) { if (event.key === 'Enter') el.nextElementSibling.click(); }

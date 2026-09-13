@@ -32,10 +32,11 @@ export function _errMsg(e) {
 }
 // Standard "this view failed to load" block: reuses the .loading slot's
 // layout but marks it as an error, and always offers a way back in instead
-// of leaving the view stuck on a bare "Loading…" forever.
-export function _errHtml(e, retryFn) {
-  const retry = retryFn ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" ${retryFn}>Retry</button>` : '';
-  return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${retry}`;
+// of leaving the view stuck on a bare "Loading…" forever. `retry` is the
+// attribute text from act(): _errHtml(e, act('loadUsers')).
+export function _errHtml(e, retry) {
+  const button = retry ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" ${retry}>Retry</button>` : '';
+  return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${button}`;
 }
 
 // Shared poster/cover-art thumbnail. Every card that puts a title next to
@@ -206,18 +207,17 @@ export function toggleMenu(btn) {
   btn.setAttribute('aria-expanded', String(!wasOpen));
 }
 
-// pagerHtml({offset, limit, total, action}) — "1–50 of 812 · Prev · Next";
-// `action` is the loader expression with {offset} as the placeholder, e.g.
-// "loadKbItems('movie','not_found',{offset})". Nothing renders when
-// everything fits on one page.
+// pagerHtml({offset, limit, total, page}) — "1–50 of 812 · Prev · Next";
+// `page(o)` returns the attribute text that loads offset o, e.g.
+// o => act('loadKbItems', cat, states, o). Nothing renders when everything
+// fits on one page.
 export function pagerHtml(p) {
   const total = Number(p.total || 0), limit = Number(p.limit || 50), offset = Number(p.offset || 0);
   if (offset === 0 && total <= limit) return '';
   const from = total ? offset + 1 : 0, to = Math.min(offset + limit, total);
-  const go = o => escAttr(p.call.replace('{offset}', String(o)));
   return `<div class="pager"><span>${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}</span><span class="row-end"></span>
-    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.action.replace(OFFSET, Math.max(0, offset - limit))}>Prev</button>
-    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.action.replace(OFFSET, offset + limit)}>Next</button></div>`;
+    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.page(Math.max(0, offset - limit))}>Prev</button>
+    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.page(offset + limit)}>Next</button></div>`;
 }
 
 // btnBusy(btn, label) / btnDone(btn, label, {revertMs, keepDisabled}) — the
@@ -245,8 +245,9 @@ export function setBadge(id, n) {
   el.style.display = n > 0 ? 'inline' : 'none';
 }
 
-// emptyHtml(html, ctaLabel, ctaCall, {good}) — one sentence (HTML, the caller
-// escapes), at most one action. good: the empty state is the happy case.
+// emptyHtml(html, ctaLabel, ctaAction, {good}) — one sentence (HTML, the caller
+// escapes), at most one action; ctaAction is the attribute text from act().
+// good: the empty state is the happy case.
 export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
   return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
 }
@@ -339,15 +340,16 @@ export function escAttr(s){
 }
 
 
-// Template handler mechanism sentinels
+// Template handler mechanism: the two tokens the dispatcher (app.js) replaces
+// at run time — EL becomes the element carrying the attribute, EVENT the event.
 export const EL = '$el';
 export const EVENT = '$event';
-export const OFFSET = '$offset';
 
-// Handler attributes for templates: data-action (click) or data-on-<event>,
-// plus data-args as JSON. EL / EVENT / OFFSET are the tokens the dispatcher
-// (app.js) and pagerHtml replace at run time. Without args the dispatcher
-// calls the function with no arguments — never with the element implicitly.
+// Handler attributes for templates: act(name, ...args) renders data-action
+// (click), actOn(event, name, ...args) renders data-on-<event>; the args travel
+// as JSON in data-args, so pass raw values and never esc() them. Without args
+// the dispatcher calls the function with no arguments — never with the element
+// implicitly.
 export function act(name, ...args) {
   const base = `data-action="${name}"`;
   if (!args.length) return base;
@@ -360,10 +362,10 @@ export function actOn(event, name, ...args) {
   return `${base} data-args="${escAttr(JSON.stringify(args))}"`;
 }
 
-// chat.js:369, deletions.js:62, recs.js:28 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+// Keyboard activation for div[role=button] rows: Enter or Space acts like a click.
 export function keyActivate(event, el) {
-  if(event.key==='Enter'||event.key===' '){ event.preventDefault(); el.click(); }
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); el.click(); }
 }
 
-// ui.js:63 ${actOn('error', 'hideOnError', EL)}
+// A poster whose image failed to load disappears instead of showing the broken-image glyph.
 export function hideOnError(el) { el.style.display = 'none'; }

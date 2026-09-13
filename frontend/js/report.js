@@ -1,6 +1,6 @@
 // ── Curation Report (admin) ──────────────────────────────────────────────
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
-import { _errHtml, _errMsg, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
 export function _repBar(pct, color) {
   return `<div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden"><div style="width:${Math.min(100, pct)}%;height:100%;background:${color}"></div></div>`;
 }

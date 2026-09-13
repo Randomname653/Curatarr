@@ -1,6 +1,6 @@
 import { loadProfiles } from './kb.js';
 // ── ADMIN ─────────────────────────────────────────────────────────────────────
-import { _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, esc, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
 export function _renderUsers(users) {

@@ -1,7 +1,7 @@
 // ── NOTIFICATION CENTER (bell: proactive messages + system notifications) ────
 import { api } from './api.js';
 import { state } from './state.js';
-import { esc, escAttr } from './ui.js';
+import { EL, act, esc, escAttr } from './ui.js';
 import { showView } from './nav.js';
 import { _setDiscussBanner, addMsg, sendMessage } from './chat.js';
 export async function loadUnreadMessages() {
@@ -29,7 +29,7 @@ export async function loadUnreadMessages() {
         <div class="msg-item" style="cursor:default">
           <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="badge danger" style="font-size:10px;margin-right:4px">contradiction</span>' : ''}${esc(p.text)}</div>
           <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" style="flex:1" data-pid="${p.id}" data-ptext="${escAttr(p.text)}" ${act('discussPrinciple', m.principle_id, m.principle_text)}>Review together</button>
+            <button class="btn btn-primary btn-sm" style="flex:1" ${act('discussPrinciple', p.id, p.text)}>Review together</button>
           </div>
         </div>`).join('');
       if (principles.length > 3) {
@@ -46,7 +46,7 @@ export async function loadUnreadMessages() {
           <span class="mi-time">${new Date(m.created_at).toLocaleString()}</span>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-primary btn-sm" style="flex:1" data-mid="${m.id}" data-msg="${esc(m.message).replace(/"/g,'&quot;')}" data-ttype="${esc(m.trigger_type)}" ${act('respondToMessage', m.id, m.msg, m.ttype)}>Respond</button>
+          <button class="btn btn-primary btn-sm" style="flex:1" ${act('respondToMessage', m.id, m.message, m.trigger_type)}>Respond</button>
           <button class="btn btn-secondary btn-sm" ${act('skipMessage', m.id, EL)} title="Skip — may come back later">Skip</button>
         </div>
       </div>`;

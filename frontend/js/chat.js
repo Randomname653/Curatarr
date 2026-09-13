@@ -1,6 +1,6 @@
 /* global DOMPurify, marked */
 // ── CHAT ──────────────────────────────────────────────────────────────────────
-import { _errMsg, _posterImg, confirmDialog, esc, escAttr, proxyImg, toast } from './ui.js';
+import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, proxyImg, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { _updateKbBadge } from './kb.js';
@@ -330,7 +330,7 @@ export async function loadGlancePanel() {
   if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
   el.innerHTML = `<div class="stat-row" style="margin:16px 0 4px">` + tiles.map(t => `
-    <div class="stat-box" style="cursor:pointer" ${act('goToView', 't.view')}>
+    <div class="stat-box" style="cursor:pointer" ${act('goToView', t.view)}>
       <div class="num"${t.small ? ' style="font-size:16px"' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
     </div>`).join('') + `</div>`;

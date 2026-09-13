@@ -2,7 +2,7 @@
 // Moved state.taskEventSource to state
 // Moved state.taskStreamRetries to state
 import { state } from './state.js';
-import { CAT_LABELS, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, btnBusy, btnDone, emptyHtml, esc, escAttr, setBadge, toast } from './ui.js';
+import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, setBadge, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 
 export async function startTaskStream() {
@@ -242,5 +242,6 @@ export async function cancelTask(taskId, btn) {
   }
 }
 
-// activity.js:58 ${act('reloadPage', EVENT)}
+// The "reload page" link of the stream-error notice: an <a href="#"> has to
+// swallow its default before reloading.
 export function reloadPage(event) { event.preventDefault(); location.reload(); }

@@ -11,7 +11,11 @@ one.
 
 2026-09-11: index.html became three files (markup, css/app.css, js/app.js
 as an ES module). The regions are the files now; the ceilings did not move.
-The window block is gone; all actions are registered in a single dictionary.
+2026-09-13: every handler is a data attribute (PR 3a the markup, PR 3b the
+templates and the four string-to-handler helpers). The window block is gone;
+`const actions = {...}` in app.js is the only table, and the tests below pin
+its symmetry with every reference, the literal names, and the variable-in-
+quotes trap the 3b review found.
 
     python tests/test_frontend_hygiene.py
 """
@@ -21,7 +25,7 @@ import sys
 
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # `tests` is a package only from the repo root
-from tests.frontend_files import markup, script, styles
+from tests.frontend_files import markup, modules, script, styles
 
 # Ceilings, not targets. Step 1 of the UI-grammar work pinned the numbers as
 # they stood after the foundation landed; every later step lowers them
@@ -91,69 +95,86 @@ def test_no_second_overlay_or_toast_system():
 
 
 
-def test_no_inline_handlers_or_window_assignments():
-    m, s = _regions()
-    code = re.sub(r"(?m)^\s*//.*$", "", s)
-    handlers_m = re.findall(r'\bon[a-z]+="[^"]*"', m)
-    handlers_s = re.findall(r'\bon[a-z]+="[^"]*"', code)
-    assert not handlers_m, f"markup contains inline handlers: {handlers_m}"
-    assert not handlers_s, f"script contains inline handlers: {handlers_s}"
+IDENT = r"[A-Za-z_$][\w$]*"
 
-    assert "Object.assign(window" not in code, "Object.assign(window still present"
-    window_assignments = [m for m in re.findall(r'window\.[a-zA-Z_$][\w$]*\s*=', code) if 'window.onload' not in m and 'window._notifPollTimer' not in m]
-    assert not window_assignments, f"window.* assignments found: {window_assignments}"
+
+def _code():
+    """The modules with full-line comments removed: a comment may quote an old
+    handler or an example attribute."""
+    return re.sub(r"(?m)^\s*//.*$", "", script())
+
+
+def test_no_inline_handlers_or_window_globals():
+    """Nothing needs the global scope any more: no on*="…" anywhere, no
+    Object.assign(window, …), no window.<name> = smuggling a global back in.
+    Event properties (window.onload) are not globals."""
+    m, code = markup(), _code()
+    handlers = re.findall(r'\bon[a-z]+="[^"]*"', m) + re.findall(r'\bon[a-z]+="[^"]*"', code)
+    assert not handlers, f"inline handlers are back: {handlers}"
+    assert "Object.assign(window" not in code, "the window export block is back"
+    smuggled = re.findall(r"window\.(?!on[a-z]+\b)(%s)\s*=[^=]" % IDENT, code)
+    assert not smuggled, f"a module writes a global through window: {smuggled}"
+
+
+def _referenced_actions(m, code):
+    """Every action name an attribute can fire: literal data-action / data-on-*
+    values in markup and templates, plus the name argument of act() / actOn()."""
+    refs = set(re.findall(r'data(?:-action|-on-[a-z]+)="(%s)"' % IDENT, m + "\n" + code))
+    refs |= set(re.findall(r"""(?<![\w$.])act\(\s*['"](%s)['"]""" % IDENT, code))
+    refs |= set(re.findall(r"""(?<![\w$.])actOn\(\s*['"][a-z]+['"]\s*,\s*['"](%s)['"]""" % IDENT, code))
+    return refs
+
+
+def _registry(s):
+    block = re.search(r"const actions = \{(.*?)\n\};", s, re.S)
+    assert block, "app.js must carry the const actions = {...} block"
+    lines = [l.strip() for l in block.group(1).splitlines() if l.strip()]
+    bad = [l for l in lines if not re.fullmatch(r"%s,?" % IDENT, l)]
+    assert not bad, f"registry entries must be bare names, one per line: {bad}"
+    return {l.rstrip(",") for l in lines}
+
 
 def test_referenced_actions_match_registry():
+    """Both directions: a name an attribute fires but the registry lacks is a
+    click that logs "Unknown action"; a registry key nothing fires is dead."""
     m, s = _regions()
-    code = re.sub(r"(?m)^\s*//.*$", "", s)
+    referenced, registry = _referenced_actions(m, _code()), _registry(s)
+    assert not referenced - registry, f"unregistered action referenced: {sorted(referenced - registry)}"
+    assert not registry - referenced, f"dead registry entry: {sorted(registry - referenced)}"
+    print(f"  {len(registry)} registered actions, all referenced")
 
-    referenced = set()
-    for match in re.finditer(r'data-action=["\'](.*?)["\']', m + "\n" + code):
-        referenced.add(match.group(1))
-    for match in re.finditer(r'data-on-[a-z]+=["\'](.*?)["\']', m + "\n" + code):
-        referenced.add(match.group(1))
-    for match in re.finditer(r"act\(\s*['\"](.*?)['\"]", code):
-        referenced.add(match.group(1))
-    for match in re.finditer(r"actOn\(\s*['\"][^'\"]*?['\"]\s*,\s*['\"](.*?)['\"]", code):
-        referenced.add(match.group(1))
-    for match in re.finditer(r"action:\s*['\"](.*?)['\"]", code):
-        referenced.add(match.group(1))
 
-    if '${name}' in referenced:
-        referenced.remove('${name}')
+def test_action_names_are_literals():
+    """act()/actOn() take the name as a string literal so the test above can
+    see it; the only non-literal name positions are the two definitions."""
+    code = _code()
+    for mm in re.finditer(r"(?<!function )(?<![\w$.])act\(\s*([^,)]+)", code):
+        assert re.fullmatch(r"""['"]%s['"]""" % IDENT, mm.group(1).strip()), f"act() name is not a literal: {mm.group(0)!r}"
+    for mm in re.finditer(r"(?<!function )(?<![\w$.])actOn\(\s*[^,]+,\s*([^,)]+)", code):
+        assert re.fullmatch(r"""['"]%s['"]""" % IDENT, mm.group(1).strip()), f"actOn() name is not a literal: {mm.group(0)!r}"
 
-    actions_match = re.search(r"const actions = \{(.*?)\}", s, re.S)
-    assert actions_match, "app.js must carry the const actions = {...} block"
-    registry = {n.strip() for n in actions_match.group(1).split(",") if n.strip()}
 
-    missing = registry - referenced
-    surplus = referenced - registry
-    print(f"  registry sizes: referenced={len(referenced)}, registry={len(registry)}")
-    assert not missing, f"dead entry in registry (no references): {sorted(missing)}"
-    assert not surplus, f"unregistered action referenced: {sorted(surplus)}"
-
-def test_act_calls_use_string_literals():
-    _, s = _regions()
-    code = re.sub(r"(?m)^\s*//.*$", "", s)
-
-    for match in re.finditer(r"\bact\(\s*([^,)]+)", code):
-        arg = match.group(1).strip()
-        if arg in ["name", "p.action"]: continue
-        if not ((arg.startswith("'") and arg.endswith("'")) or (arg.startswith('\"') and arg.endswith('\"'))):
-            assert False, f"act() name position must be a string literal, found: {arg}"
-
-    for match in re.finditer(r"\bactOn\(\s*[^,]+,\s*([^,)]+)", code):
-        arg = match.group(1).strip()
-        if arg == "name": continue
-        if not ((arg.startswith("'") and arg.endswith("'")) or (arg.startswith('\"') and arg.endswith('\"'))):
-            assert False, f"actOn() name position must be a string literal, found: {arg}"
+def test_no_variable_names_in_quotes():
+    """The 3b review found actOn('change', 'onBrowserSort', 'svc', 'tabId', EL)
+    and act('goToView', 't.view'): variables in quotes, which the dispatcher
+    passes on as the strings "svc" and "t.view". A quoted argument that is
+    also interpolated as ${name} in the same module, or that looks like a
+    member expression, is that mistake."""
+    hits = []
+    for path in modules():
+        code = re.sub(r"(?m)^\s*//.*$", "", path.read_text(encoding="utf-8"))
+        interpolated = set(re.findall(r"\$\{(%s)[.\[}]" % IDENT, code))
+        for call in re.finditer(r"(?<![\w$.])(act(?:On)?)\(([^)]*)\)", code):
+            skip = 2 if call.group(1) == "actOn" else 1          # the event and/or the name
+            for arg in re.findall(r"""['"]([^'"]*)['"]""", call.group(2))[skip:]:
+                if re.fullmatch(r"%s\.[\w$.]+" % IDENT, arg) or (re.fullmatch(IDENT, arg) and arg in interpolated):
+                    hits.append(f"{path.name}: {call.group(0)}")
+    assert not hits, "a variable name in quotes is passed on as a string:\n  " + "\n  ".join(hits)
 
 
 def test_data_attributes_in_markup():
     m, s = _regions()
-    actions_match = re.search(r"const actions = \{(.*?)\}", s, re.S)
-    assert actions_match, "app.js must carry the const actions = {...} block"
-    registry = {n.strip() for n in actions_match.group(1).split(",") if n.strip()}
+    registry = _registry(s)
 
     # Check data-action and data-on-*
     attributes = re.findall(r'data(?:-action|-on-[a-z]+)="([^"]+)"', m)

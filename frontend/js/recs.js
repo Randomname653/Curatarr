@@ -3,7 +3,8 @@
 // Moved state._recsPollTimer to state
 // Moved state._recsPollKillswitch to state
 import { state } from './state.js';
-import { _errHtml, _fmtAbs, _fmtRel, _posterImg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
 
 export function _stopRecsPoll() {
@@ -225,5 +226,5 @@ export function reloadRecs() {
   return loadRecs(state.currentRecsCategory);
 }
 
-// recs.js:28 ${act('discussRecCard', EL)}
+// The poster of a recommendation card discusses the card, like its Discuss button.
 export function discussRecCard(el) { onDiscussRec(el.closest('.card').querySelector('[data-discuss]')); }

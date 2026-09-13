@@ -1,6 +1,6 @@
 // ── Pass 16b: Library Settings (admin only) ───────────────────────────────
 import { api } from './api.js';
-import { _errHtml, _errMsg, _showTestResult, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
 export async function loadLibrarySettings() {
   const shell = document.getElementById('library-settings-shell');
   if (!shell) return;
