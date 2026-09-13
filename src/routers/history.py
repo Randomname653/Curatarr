@@ -57,34 +57,46 @@ async def sync_status(
     tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user.id).first()
 
     # Aggregate completion stats per type via SQL instead of loading all rows
+    from sqlalchemy import case
     completion_stats = {}
-    for mtype in ["music", "movie", "show", "anime"]:
-        base = db.query(WatchHistoryEntry).filter(
-            WatchHistoryEntry.user_id == user.id,
-            WatchHistoryEntry.media_type == mtype,
-        )
-        total = base.count()
-        if not total:
+
+    # ⚡ Bolt: Fast path - calculate all media type statistics in a single query
+    # instead of doing 4 iterations * 2 queries per iteration.
+    grouped = db.query(
+        WatchHistoryEntry.media_type,
+        func.count(WatchHistoryEntry.id).label("total"),
+        func.sum(case(((WatchHistoryEntry.completed == True), 1), else_=0)).label("completed"),
+        func.sum(case((
+            (WatchHistoryEntry.completed == False) &
+            WatchHistoryEntry.view_offset_ms.isnot(None) &
+            WatchHistoryEntry.duration_ms.isnot(None) &
+            (WatchHistoryEntry.duration_ms > 0), 1), else_=0)).label("in_progress"),
+        func.sum(case((
+            (WatchHistoryEntry.completed == False) &
+            WatchHistoryEntry.view_offset_ms.isnot(None) &
+            WatchHistoryEntry.duration_ms.isnot(None) &
+            (WatchHistoryEntry.duration_ms > 0) &
+            (WatchHistoryEntry.view_offset_ms * 1.0 < 0.4 * WatchHistoryEntry.duration_ms), 1), else_=0)).label("dropped"),
+        func.sum(case((
+            (WatchHistoryEntry.completed == False) &
+            WatchHistoryEntry.view_offset_ms.isnot(None) &
+            WatchHistoryEntry.duration_ms.isnot(None) &
+            (WatchHistoryEntry.duration_ms > 0) &
+            (WatchHistoryEntry.view_offset_ms * 1.0 >= 0.8 * WatchHistoryEntry.duration_ms), 1), else_=0)).label("nearly_done"),
+    ).filter(
+        WatchHistoryEntry.user_id == user.id,
+        WatchHistoryEntry.media_type.in_(["music", "movie", "show", "anime"])
+    ).group_by(WatchHistoryEntry.media_type).all()
+
+    for r in grouped:
+        if not r.total:
             continue
-        completed = base.filter(WatchHistoryEntry.completed == True).count()
-        # in_progress: not completed, has both offset and duration
-        in_progress_q = base.filter(
-            WatchHistoryEntry.completed == False,
-            WatchHistoryEntry.view_offset_ms.isnot(None),
-            WatchHistoryEntry.duration_ms.isnot(None),
-            WatchHistoryEntry.duration_ms > 0,
-        ).with_entities(
-            WatchHistoryEntry.view_offset_ms,
-            WatchHistoryEntry.duration_ms,
-        ).all()
-        dropped = sum(1 for o, d in in_progress_q if (o / d) < 0.4)
-        nearly_done = sum(1 for o, d in in_progress_q if (o / d) >= 0.8)
-        completion_stats[mtype] = {
-            "total": total,
-            "completed": completed,
-            "in_progress": len(in_progress_q),
-            "dropped": dropped,
-            "nearly_done": nearly_done,
+        completion_stats[r.media_type] = {
+            "total": r.total,
+            "completed": r.completed or 0,
+            "in_progress": r.in_progress or 0,
+            "dropped": r.dropped or 0,
+            "nearly_done": r.nearly_done or 0,
         }
 
     per_type = {}
