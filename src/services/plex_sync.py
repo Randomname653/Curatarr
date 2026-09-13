@@ -1918,10 +1918,43 @@ def _parse_media(item: dict) -> dict:
     }
 
 
+_LAST_FETCH_COMPLETE: dict = {}   # (section key, type) -> did the paginated fetch finish cleanly
+
+
+def _prune_stale_tech_profiles(live_keys: set, categories: set) -> int:
+    """Delete MediaTechProfile rows whose rating key Plex no longer has.
+
+    A Plex re-add, a library move (anime <-> TV reclassify) or a rebuilt
+    section hands the same title a new rating key; the profile row of the old
+    key stayed for ever and the redundancy audit counted it as a second copy.
+    2026-09-13: 1,373 such phantom groups (2,809 rows) in an 11.5k-profile
+    library - the curator told the owner he kept "two separate copies, 2.7 GB
+    redundant" of a series that exists once. Only categories whose sections
+    were fetched COMPLETELY and non-empty are pruned: a Plex outage or an
+    aborted page walk must never read as an emptied library."""
+    if not categories:
+        return 0
+    from src.database.models import MediaTechProfile
+    live = {str(k) for k in live_keys}
+    with get_db_session() as db:
+        rows = (db.query(MediaTechProfile.id, MediaTechProfile.plex_rating_key)
+                  .filter(MediaTechProfile.media_type.in_(sorted(categories))).all())
+        stale_ids = [r.id for r in rows if str(r.plex_rating_key) not in live]
+        for i in range(0, len(stale_ids), 500):
+            (db.query(MediaTechProfile)
+               .filter(MediaTechProfile.id.in_(stale_ids[i:i + 500]))
+               .delete(synchronize_session=False))
+        db.commit()
+    if stale_ids:
+        logger.info("[tech] pruned %d stale profiles in %s", len(stale_ids), sorted(categories))
+    return len(stale_ids)
+
+
 async def _fetch_section_all(client, plex_url, headers, sec_key, type_num) -> list:
     """Paginated fetch of every item of a Plex type in a section (no view filter)."""
     PAGE = 400
     out, start = [], 0
+    complete = True
     while True:
         try:
             r = await client.get(
@@ -1932,14 +1965,17 @@ async def _fetch_section_all(client, plex_url, headers, sec_key, type_num) -> li
             )
         except Exception as e:
             logger.warning("[tech] fetch %s/%s failed: %s", sec_key, type_num, e)
+            complete = False
             break
         if r.status_code != 200:
+            complete = False
             break
         items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
         out.extend(items)
         if len(items) < PAGE:
             break
         start += len(items)
+    _LAST_FETCH_COMPLETE[(str(sec_key), str(type_num))] = complete
     return out
 
 
@@ -2014,6 +2050,7 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
     _task = task_monitor.create(name="Tech-metadata sync", category="sync")
     task_monitor.start(_task)
     agg: dict = {}
+    scanned, incomplete = set(), set()   # categories safe to prune vs. never
 
     async with httpx.AsyncClient(timeout=90) as client:
         for sec_key, (category, sec_title) in lib_configs.items():
@@ -2023,6 +2060,10 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
             if category == "music" and not include_music:
                 continue
             items = await _fetch_section_all(client, plex_url, headers, sec_key, type_num)
+            if items and _LAST_FETCH_COMPLETE.get((str(sec_key), str(type_num)), False):
+                scanned.add(category)
+            else:
+                incomplete.add(category)   # partial or empty: this category is not pruned
             task_monitor.log(_task, f"{sec_title}: {len(items)} parts")
             for it in items:
                 if category == "movie":
@@ -2071,7 +2112,12 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                         agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
 
     written = _persist_tech_profiles(agg)
+    pruned = _prune_stale_tech_profiles(set(agg.keys()), scanned - incomplete)
+    if pruned:
+        task_monitor.log(_task, f"pruned {pruned} stale profiles (rating keys Plex no longer has)")
+        from src.services.size_norms import invalidate_norms_cache
+        invalidate_norms_cache()
     set_datetime("last_tech_sync_at", datetime.utcnow())
     task_monitor.done(_task, f"{written} tech profiles")
     logger.info("[tech] wrote %d MediaTechProfile rows across %d items", written, len(agg))
-    return {"profiles": written, "items": len(agg)}
+    return {"profiles": written, "items": len(agg), "pruned": pruned}

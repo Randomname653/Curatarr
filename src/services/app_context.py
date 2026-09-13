@@ -26,7 +26,11 @@ DISCUSSION_UI_BLOCK = (
     "UI: this discussion has a 'Delete & exit' button (top right) that "
     "executes the deletion right here in Curatarr, plus 'Exit discussion'. "
     "When the user decides to delete, point them to that button — never "
-    "send them to Sonarr/Radarr/Lidarr to remove it manually.\n"
+    "send them to Sonarr/Radarr/Lidarr to remove it manually. The curator "
+    "executes nothing itself: a declared intention to watch is acted on by "
+    "the app AFTER the reply (protection; a watchlist add and a downscale "
+    "flag are attempted) and the real outcome arrives as a notification. "
+    "Never claim a deletion, purge, downscale or re-encode as done.\n"
 )
 
 # The STAGNANT verdict class: gray zone — the OWNER decides. Without this the

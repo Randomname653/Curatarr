@@ -181,7 +181,8 @@ def duplicate_report() -> dict:
         return {"title": r.title, "plex_rating_key": r.plex_rating_key,
                 "media_type": r.media_type, "resolution": r.resolution,
                 "codec": r.codec, "is_remux": bool(r.is_remux),
-                "size_gb": round((r.size_mb or 0) / 1024, 1)}
+                "size_gb": round((r.size_mb or 0) / 1024, 1),
+                "item_count": r.item_count or 1}
 
     intra = []
     by_tmdb, by_tvdb = defaultdict(list), defaultdict(list)
@@ -197,6 +198,12 @@ def duplicate_report() -> dict:
     cross, seen = [], set()
     for grp in (by_tmdb, by_tvdb):
         for _id, rows in grp.items():
+            # Identical files under different rating keys (a stale key after a
+            # Plex re-add or library move) are ONE copy, not a duplicate.
+            uniq = {}
+            for c in rows:
+                uniq.setdefault(_copy_fingerprint(c["size_gb"] * 1024, c["resolution"], c["codec"], c["item_count"]), c)
+            rows = list(uniq.values())
             if len(rows) > 1 and rows[0]["title"] not in seen:
                 seen.add(rows[0]["title"])
                 copies = sorted(rows, key=lambda c: c["size_gb"], reverse=True)
@@ -321,6 +328,13 @@ def _tmdb_namespace(media_type: str) -> str:
     return "movie" if media_type == "movie" else "tv"
 
 
+def _copy_fingerprint(size_mb, resolution, codec, item_count) -> tuple:
+    """What makes two profile rows the SAME files: identical size, resolution,
+    codec and item count. A genuine second copy is a different encode; a
+    stale rating key (Plex re-add, library move) is the identical row again."""
+    return (round(size_mb or 0), (resolution or "").lower(), (codec or "").lower(), int(item_count or 1))
+
+
 def _load_cross_dup() -> dict:
     """{(source, namespace, id): (copies, redundant_mb)} for titles that exist as
     MULTIPLE separate library items (same external id, different rating keys).
@@ -328,29 +342,37 @@ def _load_cross_dup() -> dict:
     Keyed by TMDB NAMESPACE, not by the bare id: grouping on the number alone
     paired every film with the unrelated series holding the same number and
     reported it as a redundant copy. That reached the owner as "you have two
-    separate copies of this series — ~8.7 GB redundant" for a title with
+    separate copies of this series - ~8.7 GB redundant" for a title with
     exactly one copy, where the 8.7 GB was the size of a completely different
     film. 88 such phantom pairs existed in a 10k-item library; scoping by
     namespace removes all of them and keeps all 195 genuine duplicates.
+
+    Second phantom class (2026-09-13): rows that are IDENTICAL in size,
+    resolution, codec and item count are the same files under a stale rating
+    key, not a second copy - they collapse to one. The tech sync prunes such
+    rows; this keeps the note honest until it has run. The case: "two
+    separate library copies, 2.7 GB redundant" for a series that existed once.
     """
     if _CROSS_DUP["data"] is None:
         from collections import defaultdict
-        by = defaultdict(list)
+        by = defaultdict(dict)   # key -> {fingerprint: size_mb}
         with get_db_session() as db:
             rows = db.query(MediaTechProfile.tmdb_id, MediaTechProfile.tvdb_id,
-                            MediaTechProfile.size_mb,
-                            MediaTechProfile.media_type).all()
-        for tmdb, tvdb, smb, mtype in rows:
+                            MediaTechProfile.size_mb, MediaTechProfile.media_type,
+                            MediaTechProfile.resolution, MediaTechProfile.codec,
+                            MediaTechProfile.item_count).all()
+        for tmdb, tvdb, smb, mtype, res, codec, n in rows:
+            fp = _copy_fingerprint(smb, res, codec, n)
             ns = _tmdb_namespace(mtype)
             if tmdb:
-                by[("tmdb", ns, tmdb)].append(smb or 0)
+                by[("tmdb", ns, tmdb)].setdefault(fp, smb or 0)
             if tvdb:
                 # TVDB is TV-only, but keep the shape uniform.
-                by[("tvdb", "tv", tvdb)].append(smb or 0)
+                by[("tvdb", "tv", tvdb)].setdefault(fp, smb or 0)
         idx = {}
-        for k, sizes in by.items():
-            if len(sizes) > 1:
-                sizes.sort(reverse=True)
+        for k, copies in by.items():
+            if len(copies) > 1:
+                sizes = sorted(copies.values(), reverse=True)
                 idx[k] = (len(sizes), round(sum(sizes[1:]), 1))   # copies, redundant_mb
         _CROSS_DUP["data"] = idx
     return _CROSS_DUP["data"]

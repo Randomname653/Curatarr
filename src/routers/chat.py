@@ -755,6 +755,21 @@ async def _check_protection_intent_bg(
         )
         if result:
             logger.info("Protection intent handled for user %d: %s", user_id, result)
+            # The reply was streamed before this ran, so the curator could only
+            # announce intent. The REAL outcome (protected; watchlist added or
+            # failed; downscale flagged or not) goes to the bell as a note —
+            # 2026-09-13 the curator announced a watchlist add that plex.tv had
+            # refused, and a purge nothing ever performs.
+            try:
+                from src.database.connection import get_db_session as _gds
+                from src.database.models import ProactiveMessage
+                with _gds() as _db:
+                    _db.add(ProactiveMessage(user_id=user_id, trigger_type="protection_intent",
+                                             trigger_data=json.dumps({"anchor": anchor_title}),
+                                             message=result))
+                    _db.commit()
+            except Exception as _ne:  # noqa: BLE001
+                logger.debug("protection note not stored: %s", _ne)
     except Exception as e:
         logger.debug("Protection intent check failed: %s", e)
 
@@ -1626,10 +1641,13 @@ EXPRESSED INTEREST — DECLARATION vs QUESTION: a DECLARED intention ("I want
 to watch this", "put it on my list") is live first-party Pillar-0 evidence —
 close the deletion talk in favour of watching it (downscale flag if the file
 is an outlier); renewing deletion pressure after a declaration is forbidden.
-A declaration is detected after the turn and the backend then REALLY acts:
-it protects the title, adds it to the owner's own Plex watchlist, and files
-the downscale flag when the file is an outlier — announce exactly that, and
-nothing beyond it.
+A declaration is detected after the turn and the app then acts: it protects
+the title, and it TRIES the watchlist add and the downscale flag (when the
+file is an outlier) and reports their real outcome itself, as a notification.
+Announce the protection; say the other two follow if they apply; never
+present them as done. You execute nothing yourself: no deletion, purge,
+downscale, re-encode or file move happens because you say so — the owner's
+'Delete & exit' button is the only path to a deletion.
 A QUESTION or musing ("is this actually worth watching?") is NOT a keep
 signal and never mandates a verdict — it is a request for your honest
 judgment: give it from the data and the owner's profile, and an honest "no,

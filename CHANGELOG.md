@@ -207,6 +207,17 @@ Also merged: `aria-hidden` on 22 decorative icons, the image proxy
 validating the URL with the same parser that fetches it (no parser
 differential), and the history sync status computed in one grouped query.
 
+**The curator's duplicate claims are true again.** Technical profiles were
+kept per Plex rating key for ever, so every re-add or library move left a
+phantom copy behind: 1,373 titles looked duplicated, and the curator told
+the owner he kept two copies of a series that exists once. The tech sync
+now prunes profiles whose rating key Plex no longer has (only for sections
+it fetched completely), the redundancy audit collapses identical files
+under different keys, and the curator is told it executes nothing itself:
+a declared intention to watch is acted on by the app after the reply, and
+the real outcome (protected; watchlist added or refused; downscale flagged
+or not) now arrives as a notification instead of a claim.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

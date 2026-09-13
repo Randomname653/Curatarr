@@ -100,9 +100,10 @@ check("the token is never logged",
 
 _ch = (Path(__file__).resolve().parents[1]
        / "src/routers/chat.py").read_text(encoding="utf-8")
-check("the curator announces exactly what the backend does — no more",
-      "the backend then REALLY acts" in _ch
-      and "announce exactly that, and\nnothing beyond it" in _ch)
+check("the curator announces the protection and claims nothing the app has not done",
+      "the app then acts: it protects" in _ch
+      and "never\npresent them as done" in _ch
+      and "You execute nothing yourself" in _ch)
 check("the chat LLM still executes no library actions itself",
       "no_library_actions_rule" in _ch)
 
