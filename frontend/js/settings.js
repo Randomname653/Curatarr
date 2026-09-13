@@ -4,6 +4,7 @@ import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
 import { loadUsers } from './admin.js';
+import { showView } from './nav.js';
 import { state } from './state.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
@@ -426,3 +427,10 @@ export async function submitPinChange(btn) {
 
 export function openLibrarySettings(el) { openSettingsPane('library', el); loadLibrarySettings(); }
 export function openUsersSettings(el) { openSettingsPane('users', el); loadUsers(); }
+
+// Sidebar shortcut: the Settings view with its Account pane open (one inline
+// handler carried both calls before PR 3a).
+export function showSettingsAccount(el) {
+  showView('settings', el);
+  openSettingsPane('account');
+}

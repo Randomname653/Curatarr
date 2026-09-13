@@ -1253,6 +1253,24 @@ concatenates the modules for every needle test. Next: PR 3, event
 delegation in place of the 217 inline handlers, then `'unsafe-inline'`
 leaves the CSP.
 
+**Delegation, first half (2026-09-13, PR 3a).** The 109 inline handlers in
+`index.html` are data attributes now: `data-action="name"` fires on click,
+`data-on-<event>="name"` for change, input, keydown, submit, drop, dragover,
+dragleave (bubbling) and toggle, blur, error (capture phase — they do not
+bubble); `data-args` is a JSON array in which `"$el"` becomes the element
+and `"$event"` the event, and WITHOUT `data-args` the function is called
+with no arguments (never the element implicitly). One dispatcher in app.js
+resolves `closest('[data-action]')` and calls `actions[name]`, a registry of
+the same functions the window block used to expose plus eight one-line
+wrappers for handlers that carried a statement or a condition
+(`curationSection`, `searchOnEnter`, `onRecentOnlyChange`, ...). Templates
+still use inline handlers and the window block (shrunk to the 98 names they
+reference); `ui.js` exports `act()`/`actOn()` and the `EL`/`EVENT`/`OFFSET`
+tokens for PR 3b, which converts the templates and the four string-to-handler
+helpers, removes the block and sets `script-src 'self'`. Hygiene tests pin:
+zero `on*=` in markup, every action name in the registry, every `data-args`
+valid JSON, the window block equal to the template references.
+
 One file, one visual language. The CSS header (DESIGN LANGUAGE) states the
 rules; this section is the map.
 

@@ -1,5 +1,3 @@
-import { showView } from './nav.js';
-import { openSettingsPane } from './settings.js';
 import { state } from './state.js';
 
 export const API = '';
@@ -346,21 +344,18 @@ export const EL = '$el';
 export const EVENT = '$event';
 export const OFFSET = '$offset';
 
-function _escAttr(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
+// Handler attributes for templates: data-action (click) or data-on-<event>,
+// plus data-args as JSON. EL / EVENT / OFFSET are the tokens the dispatcher
+// (app.js) and pagerHtml replace at run time. Without args the dispatcher
+// calls the function with no arguments — never with the element implicitly.
 export function act(name, ...args) {
   const base = `data-action="${name}"`;
   if (!args.length) return base;
-  return `${base} data-args="${_escAttr(JSON.stringify(args))}"`;
+  return `${base} data-args="${escAttr(JSON.stringify(args))}"`;
 }
 
 export function actOn(event, name, ...args) {
   const base = `data-on-${event}="${name}"`;
   if (!args.length) return base;
-  return `${base} data-args="${_escAttr(JSON.stringify(args))}"`;
+  return `${base} data-args="${escAttr(JSON.stringify(args))}"`;
 }
-
-export function showSettingsAccount(el) { showView('settings', el); openSettingsPane('account'); }

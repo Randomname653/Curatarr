@@ -16,6 +16,7 @@ names must be handed to window explicitly — the last test pins that list.
 
     python tests/test_frontend_hygiene.py
 """
+import json
 import re
 import sys
 
@@ -101,8 +102,8 @@ def test_every_inline_handler_resolves_to_an_exported_global():
     second statement, and the second split wrote `state.` into a handler
     string. All three classes are caught here."""
     m, s = _regions()
-    both = m + "\n" + s
-    code = re.sub(r"(?m)^\s*//.*$", "", s)
+    code = re.sub(r"(?m)^\s*//.*$", "", s)   # a comment may quote an old handler
+    both = m + "\n" + code
     top_level = set(re.findall(r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\(", code, re.M))
     handlers = re.findall(r'\bon[a-z]+="([^"]*)"', both)
     handlers += [x[2] for x in re.findall(r"""(call|ctaCall)\s*[:=]\s*(['"`])(.*?)\2""", both)]
@@ -151,25 +152,13 @@ def test_every_inline_handler_resolves_to_an_exported_global():
     print(f"  {len(exposed)} functions exposed for {len(needed)} handler references")
 
 
-if __name__ == "__main__":
-    fails = 0
-    for name, fn in list(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn()
-                print(f"  PASS  {name}")
-            except Exception as e:  # noqa: BLE001
-                fails += 1
-                print(f"  FAIL  {name}: {type(e).__name__}: {e}")
-    sys.exit(1 if fails else 0)
+
 
 
 def test_no_inline_handlers_in_markup():
     m, _ = _regions()
     handlers = re.findall(r'\bon[a-z]+="[^"]*"', m)
     assert not handlers, f"markup still contains inline handlers: {handlers}"
-
-import json
 
 def test_data_attributes_in_markup():
     m, s = _regions()
@@ -186,7 +175,20 @@ def test_data_attributes_in_markup():
     args = re.findall(r'data-args=\'([^\']*)\'', m) + re.findall(r'data-args="([^"]*)"', m)
     for arg_str in args:
         try:
-            parsed = json.loads(arg_str.replace('&quot;', '"'))
+            parsed = json.loads(arg_str.replace('&quot;', '"').replace('&amp;', '&'))
             assert isinstance(parsed, list), f"data-args must be a JSON array, got {type(parsed)}"
         except Exception as e:
             assert False, f"invalid JSON in data-args: {arg_str} -> {e}"
+
+
+if __name__ == "__main__":
+    fails = 0
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"  PASS  {name}")
+            except Exception as e:  # noqa: BLE001
+                fails += 1
+                print(f"  FAIL  {name}: {type(e).__name__}: {e}")
+    sys.exit(1 if fails else 0)

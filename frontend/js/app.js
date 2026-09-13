@@ -1,4 +1,4 @@
-import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, submitPinChange, submitPinSet, testIntegration, openLibrarySettings, openUsersSettings } from './settings.js';
+import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openLibrarySettings, openSettingsPane, openUsersSettings, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, submitPinChange, submitPinSet, testIntegration } from './settings.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
@@ -6,7 +6,7 @@ import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelR
 import { cancelTask, loadTaskHistory } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, stopBackfill } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { closeModal, toggleMenu, showSettingsAccount } from './ui.js';
+import { closeModal, toggleMenu } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -273,17 +273,14 @@ document.addEventListener('click', e => {
 
 ['toggle', 'blur', 'error'].forEach(evt => {
   document.addEventListener(evt, e => {
-    let target = e.target;
-    // Capture phase listeners don't use closest() in the same way because they are not bubbling up.
-    // Instead, we just check the target itself. Wait, if it's capture, we are at document level,
-    // event path might be deep, so e.target is the innermost element. We still need closest().
-    // Actually, closest() works on the element itself, so e.target.closest() works fine even in capture phase,
-    // as long as the event targets a descendent.
+    // toggle, blur and error do not bubble: listen in the capture phase at the
+    // document and resolve the element from the event target as usual.
+    const target = e.target;
     if (target && target.closest) {
       const el = target.closest(`[data-on-${evt}]`);
       if (el) dispatchAction(el, `data-on-${evt}`, e);
     }
-  }, true); // true for capture phase
+  }, true);
 });
 
 Object.assign(window, {

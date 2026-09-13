@@ -218,6 +218,14 @@ a declared intention to watch is acted on by the app after the reply, and
 the real outcome (protected; watchlist added or refused; downscale flagged
 or not) now arrives as a notification instead of a claim.
 
+**Event delegation, first half.** The 109 inline handlers in the markup are
+data attributes dispatched by one listener set in the entry module; a
+registry names what an attribute may call, arguments travel as JSON, and
+handlers that carried a condition or two statements became one-line
+functions. Templates follow in the second half, after which the window
+block goes and the Content-Security-Policy loses `'unsafe-inline'` for
+scripts. Conversion by Jules from a written brief; finished here.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the
