@@ -35,7 +35,8 @@ curatarr/
 │   ├── embeddings/            Embedding generation
 ├── frontend/index.html        Single-page UI markup (vanilla, no build step)
 ├── frontend/css/app.css       the stylesheet (DESIGN LANGUAGE header first)
-├── frontend/js/app.js         the app module (one ES module; split by view is next)
+├── frontend/js/               app.js (entry: imports, init(), the window export block),
+│                              state.js (shared mutable state) and one module per view
 ├── frontend/vendor/           marked.min.js + purify.min.js, bundled locally
 ├── scripts/                   Standalone runners + icon renderer
 ├── tests/                     Plain-script battery — python tests/run_all.py
@@ -1223,6 +1224,33 @@ inline handlers with event delegation and drops `'unsafe-inline'` from the
 CSP. The extraction itself was done by Jules from a written brief; the
 readers, the encoding-safe helper and the strict-mode audit were finished
 here.
+
+**Modules (2026-09-13, PR 2 of 3).** app.js became an entry module (imports,
+`init()` holding the former top-level statements, the window export block,
+`init()` call) plus 25 modules cut along the banner comments — `api.js`,
+`ui.js`, `nav.js`, `notifications.js`, `setup.js`, `spotify_import.js`,
+`auth.js`, `report.js`, `reclassify.js`, `arr.js`, `chat.js`, `history.js`,
+`settings.js`, `library_settings.js`, `recs.js`, `deletions.js`,
+`curation.js`, `kb.js`, `picker.js`, `music.js`, `libraries.js`, `admin.js`,
+`activity.js`, `game.js` — and `state.js`, one exported object holding the
+20 mutable variables that more than one module touches (an imported `let`
+cannot be assigned, so `state.token`, `state.currentUser`, ...). Modules
+contain declarations only; the import graph has cycles, which is safe
+because nothing runs at import time. `frontend/js/package.json` says
+`{"type": "module"}` so `node --check` parses ESM. Rules that came out of
+the review: state.js must carry the ORIGINAL initial values (a `null` where
+the code expects `[]` or `{}` is a TypeError on the first `.map`); handler
+code — every `on*=` attribute, every string menuHtml/pagerHtml/emptyHtml/
+_errHtml turns into a handler — runs in the global scope, so it may name
+only exported functions and browser globals, never `state` or a former
+top-level variable (`reloadDeletions()`/`reloadRecs()` exist for that), and
+every identifier in it counts, not just the leading call (five Curation
+`ontoggle="if (this.open) loadX()"` sections and one second-statement
+`_syncDelPosterVisual(this)` were missing from the export block since PR 1).
+`tests/test_frontend_hygiene.py` pins all of it; `tests/frontend_files.py`
+concatenates the modules for every needle test. Next: PR 3, event
+delegation in place of the 217 inline handlers, then `'unsafe-inline'`
+leaves the CSP.
 
 One file, one visual language. The CSS header (DESIGN LANGUAGE) states the
 rules; this section is the map.

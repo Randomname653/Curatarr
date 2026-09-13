@@ -193,6 +193,20 @@ mixes old code with new markup. Behaviour is unchanged; this is the first
 of three steps (next: modules per view, then event delegation in place of
 inline handlers). Extraction by Jules from a written brief, finished here.
 
+**Modules per view.** The 6,014-line app module became an entry file plus 25
+modules cut along the file's own section banners, with `state.js` holding
+the 20 variables more than one module shares; no framework, no bundler,
+every function moved once and unchanged. Review of the agent's PR found
+and fixed three classes of runtime error the tests could not see: six
+initial values defaulted to `null` where the code expects `[]` or `{}`, six
+functions that inline handlers call in second position (Curation section
+toggles, the deletion checkbox) missing from the window export block since
+the first split, and handler strings naming a former global variable or
+module state. The hygiene test now checks every identifier in handler code.
+Also merged: `aria-hidden` on 22 decorative icons, the image proxy
+validating the URL with the same parser that fetches it (no parser
+differential), and the history sync status computed in one grouped query.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

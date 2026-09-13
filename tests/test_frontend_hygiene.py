@@ -91,24 +91,58 @@ def test_no_second_overlay_or_toast_system():
 
 
 def test_every_inline_handler_resolves_to_an_exported_global():
-    """app.js is an ES module: nothing in it is global unless the
-    Object.assign(window, {...}) block at its end says so. A handler that
-    names a function outside that block is a ReferenceError on the first
-    click — and no Python test would notice without this one."""
+    """The modules have their own scope: nothing is global unless app.js hands
+    it to window in the Object.assign(window, {...}) block. Handler code — the
+    on*="..." attributes in markup and templates, the strings menuHtml,
+    pagerHtml, emptyHtml and _errHtml turn into handlers — runs in the global
+    scope, so EVERY identifier in it must be an exported function or a browser
+    global. Not just the leading call: the first split missed the
+    ontoggle="if (this.open) loadX()" sections and a "...; _syncDelPosterVisual(this)"
+    second statement, and the second split wrote `state.` into a handler
+    string. All three classes are caught here."""
     m, s = _regions()
     both = m + "\n" + s
-    needed = set(re.findall(r'\bon[a-z]+="([A-Za-z_$][\w$]*)\(', both))
-    needed |= set(re.findall(r"""(?:setTimeout|setInterval)\(\s*['"]([A-Za-z_$][\w$]*)\(""", both))
-    needed.discard("if")   # onclick="if (...) ..." is a statement, not a call
-    # Calls spelled inside strings reach a handler at runtime too: _errHtml's
-    # retry button, menuHtml items ({call: 'onFixMatch(this)'}), pagerHtml,
-    # emptyHtml's CTA. Ten of those were missing on the first split.
     code = re.sub(r"(?m)^\s*//.*$", "", s)
     top_level = set(re.findall(r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\(", code, re.M))
-    in_strings = set(re.findall(r"""['"`]\s*([A-Za-z_$][\w$]*)\(""", code))
-    needed |= in_strings & top_level
+    handlers = re.findall(r'\bon[a-z]+="([^"]*)"', both)
+    handlers += [x[2] for x in re.findall(r"""(call|ctaCall)\s*[:=]\s*(['"`])(.*?)\2""", both)]
+    handlers += re.findall(r"""_errHtml\([^,()]+,\s*['"]([^'"]*)['"]""", code)
+    allowed = {"this", "event", "if", "else", "true", "false", "null", "undefined", "document",
+               "window", "location", "return", "new", "typeof", "void", "offset"}
+    def _strip_templates(text):
+        """Replace every ${...} — nesting included, as in ${a ? `'${b}'` : 'x'} —
+        with a literal 0: the expression runs at render time, not on click."""
+        out, i, depth = [], 0, 0
+        while i < len(text):
+            if depth == 0 and text.startswith("${", i):
+                depth, i = 1, i + 2
+                out.append("0")
+                continue
+            if depth:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                i += 1
+                continue
+            out.append(text[i])
+            i += 1
+        return "".join(out)
+
+    needed, foreign = set(), set()
+    for h in handlers:
+        h = _strip_templates(h)
+        h = re.sub(r"'[^']*'|&quot;[^&]*&quot;", "''", h)          # string literals are data
+        h = re.sub(r"(?<=[{,])\s*[A-Za-z_$][\w$]*\s*:", ",", h)   # object-literal keys are not identifiers
+        for ident in re.findall(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?![\w$])", h):
+            if ident in allowed:
+                continue
+            (needed if ident in top_level else foreign).add(ident)
+    # calls spelled inside other strings reach a handler too (pagerHtml pages, CTAs)
+    needed |= set(re.findall(r"""['"`]\s*([A-Za-z_$][\w$]*)\(""", code)) & top_level
+    assert not foreign, f"handler code names something that is neither exported nor a browser global: {sorted(foreign)}"
     block = re.search(r"Object\.assign\(window,\s*\{(.*?)\}\s*\);", s, re.S)
-    assert block, "app.js must end with the Object.assign(window, {...}) block"
+    assert block, "app.js must carry the Object.assign(window, {...}) block"
     exposed = {n.strip() for n in block.group(1).split(",") if n.strip()}
     missing = sorted(needed - exposed)
     assert not missing, f"inline handlers reference functions app.js does not expose: {missing}"

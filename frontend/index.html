@@ -304,14 +304,14 @@
           <button class="cat-tab" data-cat="music" onclick="loadDeletions('music',this)">Music</button>
         </div>
         <div class="toolbar">
-          <button class="btn btn-primary" onclick="loadDeletions(currentDelCategory,null,true)">Analyse library</button>
-          <button class="btn btn-secondary" onclick="loadDeletions(currentDelCategory)">Show cached</button>
+          <button class="btn btn-primary" onclick="reloadDeletions(true)">Analyse library</button>
+          <button class="btn btn-secondary" onclick="reloadDeletions()">Show cached</button>
           <span class="fs-12 t3">Nothing is deleted without your explicit approval.</span>
           <div class="toolbar-right">
             <!-- Pass 17: incoming-audit filter — flips proposal sort to "newest activity" -->
             <label class="chip" for="del-recent-only" title="Show only items whose latest file/episode/track was imported recently. Useful for catching auto-grabbed seasons or spurious downloads.">
               <input type="checkbox" id="del-recent-only" onchange="toggleRecentOnly(this.checked)"> Just-arrived only</label>
-            <select id="del-recent-days" class="input" aria-label="Recent days to show" onchange="loadDeletions(currentDelCategory)" hidden>
+            <select id="del-recent-days" class="input" aria-label="Recent days to show" onchange="reloadDeletions()" hidden>
               <option value="7" selected>last 7 days</option>
               <option value="14">last 14 days</option>
               <option value="30">last 30 days</option>

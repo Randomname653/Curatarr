@@ -511,3 +511,10 @@ export function onReevaluateDeletion(btn) {
     setTimeout(() => sendMessage(), 300);
   }
 }
+
+// The Deletions toolbar (Analyse library, Show cached, the recent-days select)
+// used to pass the global currentDelCategory. Module state has no global
+// name, so inline handlers call this and it reads the state.
+export function reloadDeletions(refresh = false) {
+  return loadDeletions(state.currentDelCategory, null, refresh);
+}

@@ -1,20 +1,20 @@
 import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, submitPinChange, submitPinSet, testIntegration } from './settings.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort } from './arr.js';
-import { approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount } from './deletions.js';
+import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
 import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn } from './setup.js';
 import { cancelTask, loadTaskHistory } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, stopBackfill } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries } from './libraries.js';
 import { closeModal, toggleMenu } from './ui.js';
-import { condensePrinciples, downscaleDone, liftProtection, setPrinciple, shutdownServer } from './curation.js';
+import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
-import { loadRecs, onAddRecToArr, regenerateRecs, searchLibrary, setRecLane } from './recs.js';
+import { loadRecs, onAddRecToArr, regenerateRecs, reloadRecs, searchLibrary, setRecLane } from './recs.js';
 import { loadReport, writeYearlyReview } from './report.js';
 import { loadUsers, toggleUser } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch } from './picker.js';
@@ -75,6 +75,7 @@ document.addEventListener('click', ev => {
 
 Object.assign(window, {
   _setNotifPref,
+  _syncDelPosterVisual,
   addArrItem,
   addBacklogArtist,
   approveDelete,
@@ -117,9 +118,11 @@ Object.assign(window, {
   loadCacheInventory,
   loadDeletions,
   loadDepsStatus,
+  loadDownscale,
   loadEnrichStatus,
   loadHistoryStatus,
   loadIntegrations,
+  loadJudgeProtections,
   loadKbAttention,
   loadKbItems,
   loadLibraryConfig,
@@ -127,11 +130,14 @@ Object.assign(window, {
   loadMappingStats,
   loadMusicStatus,
   loadNotificationPreferences,
+  loadPrinciples,
   loadProfiles,
   loadReclassify,
   loadRecs,
+  loadRedundancy,
   loadReport,
   loadTaskHistory,
+  loadUpgrades,
   loadUsers,
   logout,
   moveReclassify,
@@ -157,6 +163,8 @@ Object.assign(window, {
   refreshModelRecs,
   regenerateRecs,
   rejectDelete,
+  reloadDeletions,
+  reloadRecs,
   removeFixMatch,
   renderSpotifyBacklog,
   renderSynopsisBrowser,

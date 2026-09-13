@@ -94,7 +94,7 @@ export async function searchLibrary() {
     const cat = state.currentRecsCategory ? `&category=${ state.currentRecsCategory }` : '';
     const r = await api(`/api/library/semantic-search?q=${encodeURIComponent(q)}${cat}&limit=12`);
     const hits = r.results || [];
-    const back = `<div class="mb-12"><button type="button" class="btn btn-secondary btn-sm" onclick="loadRecs(state.currentRecsCategory)">← Back to recommendations</button></div>`;
+    const back = `<div class="mb-12"><button type="button" class="btn btn-secondary btn-sm" onclick="reloadRecs()">← Back to recommendations</button></div>`;
     if (!hits.length) {
       el.innerHTML = back + emptyHtml(`No semantic matches for "${esc(q)}" — coverage follows the enrichment index.`);
       return;
@@ -218,4 +218,9 @@ export async function regenerateRecs() {
     emptyHtml('Regenerating both lanes — library picks and fresh discoveries across every category, ~2-4 min. The view updates on its own.');
   api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
   _pollRecsUntilFresh(cat, null, prevStamp || 'none');
+}
+
+// Same reason as reloadDeletions: a handler string cannot read module state.
+export function reloadRecs() {
+  return loadRecs(state.currentRecsCategory);
 }
