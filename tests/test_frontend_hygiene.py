@@ -182,13 +182,32 @@ def test_data_attributes_in_markup():
         assert attr in registry, f"markup references {attr} which is not in the actions registry"
 
     # Check data-args validity
-    args = re.findall(r'data-args=\'([^\']*)\'', m) + re.findall(r'data-args="([^"]*)"', m)
+    args = re.findall(r"data-args(?:-[a-z]+)?='([^']*)'", m) + re.findall(r'data-args(?:-[a-z]+)?="([^"]*)"', m)
     for arg_str in args:
         try:
             parsed = json.loads(arg_str.replace('&quot;', '"').replace('&amp;', '&'))
             assert isinstance(parsed, list), f"data-args must be a JSON array, got {type(parsed)}"
         except Exception as e:
             assert False, f"invalid JSON in data-args: {arg_str} -> {e}"
+
+    # One element, several handlers: a data-on-<event> handler reads
+    # data-args-<event>, falling back to data-args. Hand-written markup that
+    # puts data-action and data-on-* on one tag must therefore give the event
+    # handler its own arguments (or none) — otherwise it fires with the click's.
+    for tag in re.findall(r"<[a-z][^>]*>", m, re.S):
+        events = re.findall(r"data-on-([a-z]+)=", tag)
+        if "data-action=" in tag and events and "data-args=" in tag:
+            for evt in events:
+                assert f"data-args-{evt}=" in tag, f"data-on-{evt} would fire with the click's data-args: {' '.join(tag.split())[:160]}"
+
+
+def test_no_handler_strings_left():
+    """menuHtml and emptyHtml ignore the old `call` / `ctaCall` keys; an item
+    that still carries one renders a button that does nothing (the 3b review
+    found Fix match, Summary and Both that way)."""
+    code = _code()
+    left = re.findall(r"\b(?:call|ctaCall)\s*:\s*['\"`][^\n]{0,60}", code)
+    assert not left, f"handler strings nothing reads any more: {left}"
 
 
 if __name__ == "__main__":

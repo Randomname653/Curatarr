@@ -159,6 +159,7 @@ const actions = {
   onDelCheckbox,
   onDiscussDeletion,
   onDiscussRec,
+  onFixMatch,
   onRecentOnlyChange,
   onReevaluateDeletion,
   onSpotifyFile,
@@ -246,7 +247,11 @@ function dispatchAction(el, nameAttr, e) {
     return;
   }
 
-  const argsAttr = el.getAttribute('data-args');
+  // Click arguments live in data-args; a data-on-<event> handler reads its own
+  // data-args-<event> first (one element, several handlers, each with its own
+  // arguments) and falls back to data-args, which hand-written markup uses.
+  const own = nameAttr === 'data-action' ? null : el.getAttribute(nameAttr.replace('data-on-', 'data-args-'));
+  const argsAttr = own ?? el.getAttribute('data-args');
   let args = [];
   if (argsAttr) {
     try {

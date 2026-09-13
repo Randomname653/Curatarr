@@ -226,8 +226,8 @@ export function renderArrItemRow(svc, item) {
         <div class="panel-item-title" style="font-size:14px">${esc(item.title || '(untitled)')}${item.year ? `<span class="t3 fs-12">(${item.year})</span>` : ''}${enrichedBadge}</div>
         <div class="panel-actions">${menuHtml([
           {label: 'Metadata — re-fetch from TMDB / AniList / MusicBrainz', action: act('reEnrich', svc, item.id, 'metadata')},
-          {label: 'Summary — re-run the LLM on the existing data', call: `reEnrich('${svc}',${item.id},'summary')`},
-          {label: 'Both', call: `reEnrich('${svc}',${item.id},'both')`},
+          {label: 'Summary — re-run the LLM on the existing data', action: act('reEnrich', svc, item.id, 'summary')},
+          {label: 'Both', action: act('reEnrich', svc, item.id, 'both')},
         ], 'Re-enrich')}</div>
       </div>
       <div class="panel-item-meta mt-4">${sizeStr} · added ${addedStr}${item.root_folder ? ` · <code class="fs-10">${esc(item.root_folder)}</code>` : ''}${item.status ? ` · ${esc(item.status)}` : ''}</div>

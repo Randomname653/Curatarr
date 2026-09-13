@@ -76,7 +76,7 @@ export function _renderDeletionProposals(proposals) {
                 <button type="button" class="btn btn-secondary btn-sm" ${act('onDiscussDeletion', EL)} ${ctx}>Discuss</button>
                 ${menuHtml([
                   {label: 'Reevaluate', action: act('onReevaluateDeletion', EL), attrs: ctx, title: 'Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)'},
-                  p.media_id && p.service ? {label: 'Fix match', call: 'onFixMatch(this)', attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
+                  p.media_id && p.service ? {label: 'Fix match', action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
                   p.arr_url ? {label: `Open in ${p.service}`, href: p.arr_url} : null,
                 ])}
               </div>

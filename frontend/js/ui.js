@@ -346,9 +346,12 @@ export const EL = '$el';
 export const EVENT = '$event';
 
 // Handler attributes for templates: act(name, ...args) renders data-action
-// (click), actOn(event, name, ...args) renders data-on-<event>; the args travel
-// as JSON in data-args, so pass raw values and never esc() them. Without args
-// the dispatcher calls the function with no arguments — never with the element
+// (click) with the args as JSON in data-args; actOn(event, name, ...args)
+// renders data-on-<event> with its own data-args-<event>, so one element can
+// carry a click handler and any number of event handlers, each with its own
+// arguments (one shared data-args would keep only the first — the parser drops
+// duplicate attributes). Pass raw values, never esc() them. Without args the
+// dispatcher calls the function with no arguments — never with the element
 // implicitly.
 export function act(name, ...args) {
   const base = `data-action="${name}"`;
@@ -359,7 +362,7 @@ export function act(name, ...args) {
 export function actOn(event, name, ...args) {
   const base = `data-on-${event}="${name}"`;
   if (!args.length) return base;
-  return `${base} data-args="${escAttr(JSON.stringify(args))}"`;
+  return `${base} data-args-${event}="${escAttr(JSON.stringify(args))}"`;
 }
 
 // Keyboard activation for div[role=button] rows: Enter or Space acts like a click.
