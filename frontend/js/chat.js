@@ -1,3 +1,4 @@
+/* global DOMPurify, marked */
 // ── CHAT ──────────────────────────────────────────────────────────────────────
 import { _errMsg, _posterImg, confirmDialog, esc, escAttr, proxyImg, toast } from './ui.js';
 import { api } from './api.js';

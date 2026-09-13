@@ -1,3 +1,4 @@
+import { loadProfiles } from './kb.js';
 // ── ADMIN ─────────────────────────────────────────────────────────────────────
 import { _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
@@ -49,3 +50,5 @@ export async function toggleUser(id, active, btn) {
     loadUsers(true);
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
+
+export function loadProfilesOnEnter(event) { if (event.key === 'Enter') loadProfiles(); }

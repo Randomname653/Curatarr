@@ -518,3 +518,5 @@ export function onReevaluateDeletion(btn) {
 export function reloadDeletions(refresh = false) {
   return loadDeletions(state.currentDelCategory, null, refresh);
 }
+
+export function onRecentOnlyChange(el) { toggleRecentOnly(el.checked); }

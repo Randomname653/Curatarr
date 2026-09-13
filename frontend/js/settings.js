@@ -423,3 +423,6 @@ export async function submitPinChange(btn) {
   }
   btnDone(btn);
 }
+
+export function openLibrarySettings(el) { openSettingsPane('library', el); loadLibrarySettings(); }
+export function openUsersSettings(el) { openSettingsPane('users', el); loadUsers(); }

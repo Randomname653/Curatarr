@@ -82,3 +82,5 @@ export function showView(name, btn) {
   if (name==='report') loadReport();
   // tasks view uses live SSE, no manual load needed
 }
+
+export function showLibrariesForce() { showView('libraries', document.querySelector('.sb-item[data-action*=showView][data-args*="libraries"]')); }
