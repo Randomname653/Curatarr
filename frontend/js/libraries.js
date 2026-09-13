@@ -67,7 +67,7 @@ export async function loadLibraryConfig() {
       api('/api/libraries/config'),
       api('/api/libraries/discover').catch(()=>({sections:[]}))
     ]), _renderLibraryConfig, { noAutoReplace: true });
-  } catch(e){el.innerHTML=_errHtml(e, 'loadLibraryConfig()');}
+  } catch(e){el.innerHTML=_errHtml(e, act('loadLibraryConfig'));}
 }
 
 export async function saveLibraries(btn) {
@@ -113,7 +113,7 @@ export async function checkOrphans(btn) {
           </tbody>
         </table>
       </div>
-      <div class="row"><button type="button" class="btn btn-primary" onclick="onApplyOrphanRepair(this)" data-sections="${escAttr(JSON.stringify(sections))}">Import missing entries</button></div>`;
+      <div class="row"><button type="button" class="btn btn-primary" ${act('onApplyOrphanRepair', EL)} data-args="${escAttr(JSON.stringify(sections))}">Import missing entries</button></div>`;
   } catch(e) {
     el.innerHTML = _errHtml(e);
   } finally {

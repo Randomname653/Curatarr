@@ -12,7 +12,7 @@ export async function loadLibrarySettings() {
       shell.appendChild(renderArrCard(svc, status[svc] || {}));
     }
   } catch (e) {
-    shell.innerHTML = _errHtml(e, 'loadLibrarySettings()');
+    shell.innerHTML = _errHtml(e, act('loadLibrarySettings'));
   }
 }
 
@@ -37,12 +37,12 @@ export function renderArrCard(svc, info) {
         <input type="password" id="arr-key-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}">
       </div>
       <div class="row mb-12">
-        <button type="button" class="btn btn-primary btn-sm" id="arr-save-${svc}" onclick="saveArrConfig('${svc}',this)">Save URL + key</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="testArr('${svc}',this)">Test connection</button>
+        <button type="button" class="btn btn-primary btn-sm" id="arr-save-${svc}" ${act('saveArrConfig', svc, EL)}>Save URL + key</button>
+        <button type="button" class="btn btn-secondary btn-sm" ${act('testArr', svc, EL)}>Test connection</button>
         <span id="arr-msg-${svc}" class="status"></span>
       </div>
       <div id="arr-defaults-${svc}"${info.configured ? '' : ' hidden'} style="border-top:1px solid var(--border);padding-top:10px">
-        ${info.configured ? `<div class="row"><span class="fs-11 t3">Root folder, quality profile and the other defaults come from the arr itself.</span><button type="button" class="btn btn-secondary btn-sm row-end" onclick="loadArrProfiles('${svc}',this)">Load profiles</button></div>` : ''}
+        ${info.configured ? `<div class="row"><span class="fs-11 t3">Root folder, quality profile and the other defaults come from the arr itself.</span><button type="button" class="btn btn-secondary btn-sm row-end" ${act('loadArrProfiles', svc, EL)}>Load profiles</button></div>` : ''}
       </div>
     </div>`;
   trackDirty(card.querySelector(`#arr-form-${svc}`), card.querySelector(`#arr-save-${svc}`));
@@ -138,7 +138,7 @@ export async function loadArrProfiles(svc, btn) {
         ${extra}
       </div>
       <div class="row">
-        <button type="button" class="btn btn-primary btn-sm" id="arr-defaults-save-${svc}" onclick="saveArrDefaults('${svc}',this)">Save defaults</button>
+        <button type="button" class="btn btn-primary btn-sm" id="arr-defaults-save-${svc}" ${act('saveArrDefaults', svc, EL)}>Save defaults</button>
         <span id="arr-defaults-msg-${svc}" class="status"></span>
       </div>
     `;

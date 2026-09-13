@@ -42,7 +42,7 @@ export async function syncHistory(force = false, statusId = null) {
     setTimeout(loadHistoryStatus, 5000);
   } catch (e) {
     if (status) setStatus(status, _errMsg(e), 'err');
-    else if (el) el.innerHTML = _errHtml(e, `syncHistory(${force})`);
+    else if (el) el.innerHTML = _errHtml(e, act('syncHistory', force));
   }
 }
 
@@ -77,14 +77,14 @@ export async function loadHistoryStatus() {
 
     if (types.length) {
       document.getElementById('taste-tabs').innerHTML = types.map((t,i)=>
-        `<button class="cat-tab ${i===0?'active':''}" onclick="showTasteTab('${t}',this)">${CAT_LABELS[t]||t}</button>`
+        `<button class="cat-tab ${i===0?'active':''}" ${act('showTasteTab', t, EL)}>${CAT_LABELS[t]||t}</button>`
       ).join('');
       showTasteTabData(byType, tv.summary||'', types[0]);
 
       const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
       renderRecent(h.entries, types[0]);
     }
-  } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, 'loadHistoryStatus()'); }
+  } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }
 
 export function showTasteTab(type,btn) {
