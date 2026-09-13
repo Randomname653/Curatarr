@@ -68,8 +68,8 @@ export function setUser(u) {
   // Notifications arrive while the app is open (principles are captured in the
   // background AFTER a debate ends) — without a poll the bell stayed frozen at
   // its boot-time state and new shadow principles never surfaced for review.
-  if (!window._notifPollTimer) {
-    window._notifPollTimer = setInterval(loadUnreadMessages, 60_000);
+  if (!state._notifPollTimer) {
+    state._notifPollTimer = setInterval(loadUnreadMessages, 60_000);
   }
 }
 

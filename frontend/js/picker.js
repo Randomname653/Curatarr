@@ -13,7 +13,7 @@ export function openMatchPicker(opts) {
     title: `Fix match — ${opts.title || '?'}${opts.year ? ` (${opts.year})` : ''}`, size: 'wide',
     body: '<div id="match-picker-body"></div>',
     foot: `<span class="fs-11 t3 grow">The pin outranks every automatic match and survives rescans. "Not this one" excludes a candidate for good.</span>
-           <button type="button" class="btn btn-secondary btn-sm" onclick="removeFixMatch(this)" title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button>`,
+           <button type="button" class="btn btn-secondary btn-sm" ${act('removeFixMatch', EL)} title="Remove an existing pin — the item re-resolves automatically again">Unpin existing</button>`,
     onClose: () => { _pickerCtx = null; },
   });
   renderMatchPicker(document.getElementById('match-picker-body'), opts);
@@ -39,8 +39,8 @@ export async function renderMatchPicker(box, opts) {
             <div class="panel-item-title">${esc(c.title || '?')}${c.year ? `<span class="t3">(${c.year})</span>` : ''}
               <span class="badge muted badge-sm">${esc(c.kind || '')}</span><span class="t3 fs-11">${idLine(c)}</span></div>
             <div class="panel-actions">
-              <button type="button" class="btn btn-primary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerPin(this)">Pin</button>
-              <button type="button" class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" onclick="pickerReject(this)" title="Never resolve to this candidate again">Not this one</button>
+              <button type="button" class="btn btn-primary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" ${act('pickerPin', EL)}>Pin</button>
+              <button type="button" class="btn btn-secondary btn-sm" ${ctx} data-ids="${escAttr(JSON.stringify(idsOf(c)))}" ${act('pickerReject', EL)} title="Never resolve to this candidate again">Not this one</button>
             </div>
           </div>
           ${(c.overview || c.disambiguation) ? `<div class="panel-item-sub">${esc(c.overview || c.disambiguation)}</div>` : ''}
@@ -48,8 +48,8 @@ export async function renderMatchPicker(box, opts) {
       <div class="row mt-12">
         <span class="fs-12 t2">Pin an id directly:</span>
         <select class="input" aria-label="Id kind">${PIN_ID_KINDS.map(k => `<option value="${k}">${k}</option>`).join('')}</select>
-        <input class="input" style="width:180px" aria-label="Id" placeholder="e.g. 603 or tt0133093" onkeydown="if(event.key==='Enter')this.nextElementSibling.click()">
-        <button type="button" class="btn btn-secondary btn-sm" ${ctx} onclick="pickerFreePin(this)">Pin this id</button>
+        <input class="input" style="width:180px" aria-label="Id" placeholder="e.g. 603 or tt0133093" ${actOn('keydown', 'freePinOnEnter', EVENT, EL)}>
+        <button type="button" class="btn btn-secondary btn-sm" ${ctx} ${act('pickerFreePin', EL)}>Pin this id</button>
       </div>`;
   } catch (e) { box.innerHTML = _errHtml(e); }
 }
@@ -91,3 +91,6 @@ export async function removeFixMatch(btn) {
     else { toast(r.error || 'No pin found', 'amber'); btnDone(btn); }
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
+
+// picker.js:51 ${actOn('keydown', 'freePinOnEnter', EVENT, EL)}
+export function freePinOnEnter(event, el) { if(event.key==='Enter') el.nextElementSibling.click(); }

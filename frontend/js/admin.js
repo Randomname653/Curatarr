@@ -10,7 +10,7 @@ export function _renderUsers(users) {
       <td>${esc(u.plex_username)}</td>
       <td><span class="badge ${u.is_admin?'amber':'muted'}">${u.is_admin?'admin':'user'}</span></td>
       <td><span class="badge ${u.is_active?'success':'danger'}">${u.is_active?'active':'disabled'}</span></td>
-      <td class="t-right"><button type="button" class="btn btn-secondary btn-sm" onclick="toggleUser(${u.id},${!u.is_active},this)">${u.is_active?'Disable':'Enable'}</button></td>
+      <td class="t-right"><button type="button" class="btn btn-secondary btn-sm" ${act('toggleUser', u.id, !u.is_active, EL)}>${u.is_active?'Disable':'Enable'}</button></td>
     </tr>`).join('')}
   </tbody></table></div>`;
   targets.forEach(el => el.innerHTML = html);
@@ -34,7 +34,7 @@ export async function loadUsers(force = false) {
       `<option value="${u.id}">${esc(u.plex_username)}</option>`).join('');
     refreshSpotifyPending('adm-sp');
   } catch (e) {
-    targets.forEach(el => el.innerHTML = _errHtml(e, 'loadUsers()'));
+    targets.forEach(el => el.innerHTML = _errHtml(e, act('loadUsers')));
   }
 }
 export async function toggleUser(id, active, btn) {

@@ -25,7 +25,7 @@ export async function loadJudgeProtections() {
           <div class="panel-item-title">${esc(p.title || '—')} ${badge}
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="liftProtection(${p.id},this)">Lift protection</button>
+            <button type="button" class="btn btn-secondary btn-sm" ${act('liftProtection', p.id, EL)}>Lift protection</button>
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
           </div>
         </div>
@@ -63,7 +63,7 @@ export async function loadPrinciples() {
     const condenseBar = nActive >= 2 ? `
       <div class="row mb-8">
         <span class="fs-12 t3">${nActive} active rules</span>
-        <button type="button" class="btn btn-secondary btn-sm row-end" onclick="condensePrinciples(this)"
+        <button type="button" class="btn btn-secondary btn-sm row-end" ${act('condensePrinciples', EL)}
           title="Let the curator consolidate near-duplicate active rules (conservative — usually finds nothing on a clean set)">Condense duplicates</button>
       </div>` : '';
     el.innerHTML = condenseBar + rows.map(p => {
@@ -83,8 +83,8 @@ export async function loadPrinciples() {
       const actions = p.status === 'merged'
         ? ''
         : p.status === 'active'
-          ? `<button type="button" class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'shadow',this)">Deactivate</button>`
-          : `<button type="button" class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'activate',this)">Activate</button>`;
+          ? `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'shadow', EL)}>Deactivate</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'activate', EL)}>Activate</button>`;
       return `<div class="panel-item">
         <div class="panel-item-head" style="align-items:flex-start">
           <div class="grow" style="min-width:200px">
@@ -94,7 +94,7 @@ export async function loadPrinciples() {
           </div>
           <div class="panel-actions">
             ${actions}
-            ${p.status === 'merged' ? '' : `<button type="button" class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'reject',this)">Reject</button>`}
+            ${p.status === 'merged' ? '' : `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'reject', EL)}>Reject</button>`}
           </div>
         </div>
       </div>`;
@@ -223,7 +223,7 @@ export async function loadDownscale() {
           <div class="panel-item-title">${esc(p.title || '—')} ${tech}
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="downscaleDone(${p.id},this)" title="File has been transcoded — protection stays (HARD_KEEP); leaves this list">Done</button>
+            <button type="button" class="btn btn-secondary btn-sm" ${act('downscaleDone', p.id, EL)} title="File has been transcoded — protection stays (HARD_KEEP); leaves this list">Done</button>
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
           </div>
         </div>

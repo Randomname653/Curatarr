@@ -84,3 +84,8 @@ export function showView(name, btn) {
 }
 
 export function showLibrariesForce() { showView('libraries', document.querySelector('.sb-item[data-action*=showView][data-args*="libraries"]')); }
+
+// chat.js:333 showView('${t.view}', document.querySelector(".sb-item[onclick*='${t.view}']"))
+export function goToView(view) {
+  showView(view, document.querySelector(`.sb-item[data-args*='"${view}"']`));
+}

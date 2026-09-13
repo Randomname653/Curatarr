@@ -34,7 +34,7 @@ export function _errMsg(e) {
 // layout but marks it as an error, and always offers a way back in instead
 // of leaving the view stuck on a bare "Loading…" forever.
 export function _errHtml(e, retryFn) {
-  const retry = retryFn ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="${esc(retryFn)}">Retry</button>` : '';
+  const retry = retryFn ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" ${retryFn}>Retry</button>` : '';
   return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${retry}`;
 }
 
@@ -60,7 +60,7 @@ export function _posterImg(url, w, h, isMusic) {
     ? ['w185', 'w342', 'w500', 'w780'].map(sz => `${esc(proxyImg(url.replace(sizeMatch[1], sz)))} ${sz.slice(1)}w`).join(', ')
     : '';
   const srcsetAttr = srcset ? ` srcset="${srcset}" sizes="${w}px"` : '';
-  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`;
+  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" ${actOn('error', 'hideOnError', EL)}>`;
 }
 
 // ── UI GRAMMAR HELPERS ──────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ export function openModal(o = {}) {
   closeModal();
   const root = _mount('modal-root');
   root.innerHTML = `<div class="modal ${o.size || ''}${o.danger ? ' danger' : ''}" role="dialog" aria-modal="true" aria-label="${escAttr(o.title || '')}">
-      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" onclick="closeModal()">×</button></div>
+      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" ${act('closeModal')}>×</button></div>
       <div class="modal-body">${o.body || ''}</div>
       ${o.foot ? `<div class="modal-foot">${o.foot}</div>` : ''}
     </div>`;
@@ -193,10 +193,10 @@ export function confirmDialog(o = {}) {
 export function menuHtml(items, label = 'More') {
   const list = (items || []).filter(Boolean);
   if (!list.length) return '';
-  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" onclick="toggleMenu(this)">${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
+  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
     it.sep ? '<div class="menu-sep"></div>'
     : it.href ? `<a class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" href="${escAttr(it.href)}" target="_blank" rel="noopener"${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</a>`
-    : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" onclick="${escAttr(it.call || '')}"${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;
+    : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" ${it.action || ''}${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;
 }
 export function toggleMenu(btn) {
   const menu = btn.closest('.menu');
@@ -206,8 +206,8 @@ export function toggleMenu(btn) {
   btn.setAttribute('aria-expanded', String(!wasOpen));
 }
 
-// pagerHtml({offset, limit, total, call}) — "1–50 of 812 · Prev · Next";
-// `call` is the loader expression with {offset} as the placeholder, e.g.
+// pagerHtml({offset, limit, total, action}) — "1–50 of 812 · Prev · Next";
+// `action` is the loader expression with {offset} as the placeholder, e.g.
 // "loadKbItems('movie','not_found',{offset})". Nothing renders when
 // everything fits on one page.
 export function pagerHtml(p) {
@@ -216,8 +216,8 @@ export function pagerHtml(p) {
   const from = total ? offset + 1 : 0, to = Math.min(offset + limit, total);
   const go = o => escAttr(p.call.replace('{offset}', String(o)));
   return `<div class="pager"><span>${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}</span><span class="row-end"></span>
-    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} onclick="${go(Math.max(0, offset - limit))}">Prev</button>
-    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} onclick="${go(offset + limit)}">Next</button></div>`;
+    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.action.replace(OFFSET, Math.max(0, offset - limit))}>Prev</button>
+    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.action.replace(OFFSET, offset + limit)}>Next</button></div>`;
 }
 
 // btnBusy(btn, label) / btnDone(btn, label, {revertMs, keepDisabled}) — the
@@ -247,8 +247,8 @@ export function setBadge(id, n) {
 
 // emptyHtml(html, ctaLabel, ctaCall, {good}) — one sentence (HTML, the caller
 // escapes), at most one action. good: the empty state is the happy case.
-export function emptyHtml(html, ctaLabel, ctaCall, o = {}) {
-  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" onclick="${escAttr(ctaCall || '')}">${esc(ctaLabel)}</button>` : ''}</div>`;
+export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
+  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
 }
 
 // _fmtRel(iso) → "in 3 d" / "2 h ago"; pair it with _fmtAbs(iso) in title=.
@@ -359,3 +359,11 @@ export function actOn(event, name, ...args) {
   if (!args.length) return base;
   return `${base} data-args="${escAttr(JSON.stringify(args))}"`;
 }
+
+// chat.js:369, deletions.js:62, recs.js:28 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+export function keyActivate(event, el) {
+  if(event.key==='Enter'||event.key===' '){ event.preventDefault(); el.click(); }
+}
+
+// ui.js:63 ${actOn('error', 'hideOnError', EL)}
+export function hideOnError(el) { el.style.display = 'none'; }
