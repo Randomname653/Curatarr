@@ -1,13 +1,13 @@
-import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, submitPinChange, submitPinSet, testIntegration } from './settings.js';
+import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, submitPinChange, submitPinSet, testIntegration, openLibrarySettings, openUsersSettings } from './settings.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort } from './arr.js';
-import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount } from './deletions.js';
+import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
 import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn } from './setup.js';
 import { cancelTask, loadTaskHistory } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, stopBackfill } from './kb.js';
-import { checkOrphans, loadLibraryConfig, saveLibraries } from './libraries.js';
-import { closeModal, toggleMenu } from './ui.js';
-import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer } from './curation.js';
+import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
+import { closeModal, toggleMenu, showSettingsAccount } from './ui.js';
+import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify } from './spotify_import.js';
@@ -16,9 +16,9 @@ import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
 import { loadRecs, onAddRecToArr, regenerateRecs, reloadRecs, searchLibrary, setRecLane } from './recs.js';
 import { loadReport, writeYearlyReview } from './report.js';
-import { loadUsers, toggleUser } from './admin.js';
+import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch } from './picker.js';
-import { showView, toggleMobileSidebar, toggleSidebar, topbarSearch } from './nav.js';
+import { showView, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce } from './nav.js';
 import { setUser, showApp, startPlexLogin } from './auth.js';
 import { api } from './api.js';
 import { state } from './state.js';
@@ -73,7 +73,8 @@ document.addEventListener('click', ev => {
 });
 }
 
-Object.assign(window, {
+
+const actions = {
   _setNotifPref,
   _syncDelPosterVisual,
   addArrItem,
@@ -92,10 +93,11 @@ Object.assign(window, {
   computeTaste,
   condensePrinciples,
   correctChatAnchor,
+  curationSection,
   debouncedAddSearch,
   delClearSelection,
-  deleteFromDiscussion,
   delToggleAll,
+  deleteFromDiscussion,
   detectGpu,
   discussLastPlayed,
   discussPrinciple,
@@ -132,6 +134,7 @@ Object.assign(window, {
   loadNotificationPreferences,
   loadPrinciples,
   loadProfiles,
+  loadProfilesOnEnter,
   loadReclassify,
   loadRecs,
   loadRedundancy,
@@ -148,18 +151,21 @@ Object.assign(window, {
   onDiscussDeletion,
   onDiscussRec,
   onFixMatch,
+  onRecentOnlyChange,
   onReevaluateDeletion,
+  openLibrarySettings,
   openSettingsPane,
+  openUsersSettings,
   pickerFreePin,
   pickerPin,
   pickerReject,
   rcClearSelection,
   rcPickUncertain,
   rcToggleSection,
+  reEnrich,
   reattributeHistory,
   rebuildModels,
   recomputeTaste,
-  reEnrich,
   refreshModelRecs,
   regenerateRecs,
   rejectDelete,
@@ -178,6 +184,7 @@ Object.assign(window, {
   saveLibraries,
   saveOnboardingLibraries,
   searchLibrary,
+  searchOnEnter,
   sendMessage,
   setArrTab,
   setBacklogNotAddedOnly,
@@ -189,6 +196,8 @@ Object.assign(window, {
   setRecLane,
   setupNav,
   showKbTab,
+  showLibrariesForce,
+  showSettingsAccount,
   showTasteTab,
   showView,
   shutdownServer,
@@ -216,6 +225,161 @@ Object.assign(window, {
   toggleSidebar,
   toggleUser,
   topbarSearch,
+  updateDelBulkCount,
+  updateReclassifyCount,
+  uploadSpotify,
+  useStarter,
+  writeYearlyReview,
+};
+
+function dispatchAction(el, nameAttr, e) {
+  if (!el) return;
+  const name = el.getAttribute(nameAttr);
+  if (!name) return;
+
+  if (!actions[name]) {
+    console.error(`Unknown action: ${name}`, el);
+    return;
+  }
+
+  const argsAttr = el.getAttribute('data-args');
+  let args = [];
+  if (argsAttr) {
+    try {
+      args = JSON.parse(argsAttr).map(arg => {
+        if (arg === '$el') return el;
+        if (arg === '$event') return e;
+        return arg;
+      });
+    } catch (err) {
+      console.error(`Invalid data-args on ${name}:`, argsAttr, err);
+    }
+  }
+
+  actions[name](...args);
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-action]');
+  if (el) dispatchAction(el, 'data-action', e);
+});
+
+['change', 'input', 'keydown', 'submit', 'drop', 'dragover', 'dragleave'].forEach(evt => {
+  document.addEventListener(evt, e => {
+    const el = e.target.closest(`[data-on-${evt}]`);
+    if (el) dispatchAction(el, `data-on-${evt}`, e);
+  });
+});
+
+['toggle', 'blur', 'error'].forEach(evt => {
+  document.addEventListener(evt, e => {
+    let target = e.target;
+    // Capture phase listeners don't use closest() in the same way because they are not bubbling up.
+    // Instead, we just check the target itself. Wait, if it's capture, we are at document level,
+    // event path might be deep, so e.target is the innermost element. We still need closest().
+    // Actually, closest() works on the element itself, so e.target.closest() works fine even in capture phase,
+    // as long as the event targets a descendent.
+    if (target && target.closest) {
+      const el = target.closest(`[data-on-${evt}]`);
+      if (el) dispatchAction(el, `data-on-${evt}`, e);
+    }
+  }, true); // true for capture phase
+});
+
+Object.assign(window, {
+  _setNotifPref,
+  _syncDelPosterVisual,
+  addArrItem,
+  addBacklogArtist,
+  approveDelete,
+  buildOnboardingModels,
+  cancelTask,
+  clearIntegrationSecret,
+  closeKbDrilldown,
+  closeModal,
+  condensePrinciples,
+  debouncedAddSearch,
+  detectGpu,
+  discussLastPlayed,
+  discussPrinciple,
+  downscaleDone,
+  fillPrompt,
+  finishSetup,
+  goToLibrarySettings,
+  handleSpotifyDrop,
+  hideOnboarding,
+  kbDismissFinding,
+  kbFixMatch,
+  kbIgnore,
+  kbRetry,
+  kbUnignore,
+  liftProtection,
+  loadArrPage,
+  loadArrProfiles,
+  loadCacheInventory,
+  loadDeletions,
+  loadEnrichStatus,
+  loadHistoryStatus,
+  loadIntegrations,
+  loadKbAttention,
+  loadKbItems,
+  loadLibraryConfig,
+  loadLibrarySettings,
+  loadNotificationPreferences,
+  loadProfiles,
+  loadReclassify,
+  loadReport,
+  loadTaskHistory,
+  loadUsers,
+  onAddRecToArr,
+  onApplyOrphanRepair,
+  onDiscussDeletion,
+  onDiscussRec,
+  onFixMatch,
+  onReevaluateDeletion,
+  pickerFreePin,
+  pickerPin,
+  pickerReject,
+  rcPickUncertain,
+  rcToggleSection,
+  rebuildModels,
+  reEnrich,
+  refreshModelRecs,
+  regenerateRecs,
+  rejectDelete,
+  reloadRecs,
+  removeFixMatch,
+  renderSpotifyBacklog,
+  renderSynopsisBrowser,
+  respondToMessage,
+  runMaintenance,
+  saveArrConfig,
+  saveArrDefaults,
+  saveComment,
+  saveIntegrations,
+  saveOnboardingLibraries,
+  setArrTab,
+  setBacklogNotAddedOnly,
+  setBacklogOnlyResolved,
+  setBrowserFilter,
+  setBrowserSearch,
+  setBrowserSort,
+  setPrinciple,
+  showKbTab,
+  showTasteTab,
+  showView,
+  skipMessage,
+  startArrPreEnrich,
+  startBackfill,
+  startOnboardingSync,
+  stopBackfill,
+  syncHistory,
+  testArr,
+  testConn,
+  testIntegration,
+  toggleDelSelect,
+  toggleMenu,
+  toggleUser,
   updateDelBulkCount,
   updateReclassifyCount,
   uploadSpotify,

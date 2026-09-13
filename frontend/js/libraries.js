@@ -1,3 +1,4 @@
+import { searchLibrary } from './recs.js';
 // ── LIBRARIES ─────────────────────────────────────────────────────────────────
 // Moved state.discoverSections to state
 // noAutoReplace: each section's <select> can carry a user's in-progress,
@@ -139,3 +140,5 @@ export async function applyOrphanRepair(sections) {
     el.innerHTML = _errHtml(e);
   }
 }
+
+export function searchOnEnter(event) { if (event.key === 'Enter') searchLibrary(); }

@@ -1,3 +1,5 @@
+import { showView } from './nav.js';
+import { openSettingsPane } from './settings.js';
 import { state } from './state.js';
 
 export const API = '';
@@ -337,3 +339,28 @@ export function escAttr(s){
     .replace(/'/g, '&#39;')
     .replace(/`/g, '&#96;');
 }
+
+
+// Template handler mechanism sentinels
+export const EL = '$el';
+export const EVENT = '$event';
+export const OFFSET = '$offset';
+
+function _escAttr(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function act(name, ...args) {
+  const base = `data-action="${name}"`;
+  if (!args.length) return base;
+  return `${base} data-args="${_escAttr(JSON.stringify(args))}"`;
+}
+
+export function actOn(event, name, ...args) {
+  const base = `data-on-${event}="${name}"`;
+  if (!args.length) return base;
+  return `${base} data-args="${_escAttr(JSON.stringify(args))}"`;
+}
+
+export function showSettingsAccount(el) { showView('settings', el); openSettingsPane('account'); }

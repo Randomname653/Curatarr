@@ -162,3 +162,31 @@ if __name__ == "__main__":
                 fails += 1
                 print(f"  FAIL  {name}: {type(e).__name__}: {e}")
     sys.exit(1 if fails else 0)
+
+
+def test_no_inline_handlers_in_markup():
+    m, _ = _regions()
+    handlers = re.findall(r'\bon[a-z]+="[^"]*"', m)
+    assert not handlers, f"markup still contains inline handlers: {handlers}"
+
+import json
+
+def test_data_attributes_in_markup():
+    m, s = _regions()
+    actions_match = re.search(r"const actions = \{(.*?)\}", s, re.S)
+    assert actions_match, "app.js must carry the const actions = {...} block"
+    registry = {n.strip() for n in actions_match.group(1).split(",") if n.strip()}
+
+    # Check data-action and data-on-*
+    attributes = re.findall(r'data(?:-action|-on-[a-z]+)="([^"]+)"', m)
+    for attr in attributes:
+        assert attr in registry, f"markup references {attr} which is not in the actions registry"
+
+    # Check data-args validity
+    args = re.findall(r'data-args=\'([^\']*)\'', m) + re.findall(r'data-args="([^"]*)"', m)
+    for arg_str in args:
+        try:
+            parsed = json.loads(arg_str.replace('&quot;', '"'))
+            assert isinstance(parsed, list), f"data-args must be a JSON array, got {type(parsed)}"
+        except Exception as e:
+            assert False, f"invalid JSON in data-args: {arg_str} -> {e}"

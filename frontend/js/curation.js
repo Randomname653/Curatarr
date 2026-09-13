@@ -330,3 +330,12 @@ export async function downscaleDone(id, btn) {
     loadDownscale();
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
+
+export function curationSection(kind, el) {
+  if (!el.open) return;
+  if (kind === 'protections') loadJudgeProtections();
+  else if (kind === 'downscale') loadDownscale();
+  else if (kind === 'upgrades') loadUpgrades();
+  else if (kind === 'redundancy') loadRedundancy();
+  else if (kind === 'principles') loadPrinciples();
+}
