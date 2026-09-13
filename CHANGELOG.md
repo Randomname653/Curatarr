@@ -218,13 +218,17 @@ a declared intention to watch is acted on by the app after the reply, and
 the real outcome (protected; watchlist added or refused; downscale flagged
 or not) now arrives as a notification instead of a claim.
 
-**Event delegation, first half.** The 109 inline handlers in the markup are
-data attributes dispatched by one listener set in the entry module; a
-registry names what an attribute may call, arguments travel as JSON, and
-handlers that carried a condition or two statements became one-line
-functions. Templates follow in the second half, after which the window
-block goes and the Content-Security-Policy loses `'unsafe-inline'` for
-scripts. Conversion by Jules from a written brief; finished here.
+**Event delegation.** The 217 inline handlers — 109 in the markup, 108 in
+the view templates — are data attributes dispatched by one listener set in
+the entry module; a registry names what an attribute may call, arguments
+travel as JSON, handlers that carried a condition or two statements became
+one-line functions, and the helpers that used to build handler strings
+(retry buttons, menus, pagers, empty-state actions) take attribute text
+instead. Nothing runs in the global scope any more: the window export block
+is gone and the Content-Security-Policy's `script-src` is `'self'`, so
+injected markup cannot execute code. Both halves converted by Jules from
+written briefs; the second arrived without the imports the templates need
+and with variables passed as strings — finished here and pinned by tests.
 
 **Three small ones from a screenshot.** The metadata audit failed its run
 whenever it met the same finding twice in one pass (the app's sessions do

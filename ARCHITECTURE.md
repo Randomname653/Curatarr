@@ -1263,13 +1263,37 @@ with no arguments (never the element implicitly). One dispatcher in app.js
 resolves `closest('[data-action]')` and calls `actions[name]`, a registry of
 the same functions the window block used to expose plus eight one-line
 wrappers for handlers that carried a statement or a condition
-(`curationSection`, `searchOnEnter`, `onRecentOnlyChange`, ...). Templates
-still use inline handlers and the window block (shrunk to the 98 names they
-reference); `ui.js` exports `act()`/`actOn()` and the `EL`/`EVENT`/`OFFSET`
-tokens for PR 3b, which converts the templates and the four string-to-handler
-helpers, removes the block and sets `script-src 'self'`. Hygiene tests pin:
-zero `on*=` in markup, every action name in the registry, every `data-args`
-valid JSON, the window block equal to the template references.
+(`curationSection`, `searchOnEnter`, `onRecentOnlyChange`, ...). Hygiene
+tests pinned at that point: zero `on*=` in markup, every action name in the
+registry, every `data-args` valid JSON, the window block equal to the
+template references.
+
+**Delegation, second half (2026-09-13, PR 3b).** The 108 template handlers
+in `frontend/js/*.js` use `act(name, ...args)` (click) and
+`actOn(event, name, ...args)` from `ui.js`, which render the same data
+attributes with the args JSON-encoded and escaped — raw values go in, never
+`esc()`; the tokens `EL` and `EVENT` stand for the element and the event.
+Click arguments live in `data-args`, a `data-on-<event>` handler's in its
+own `data-args-<event>` (the dispatcher falls back to `data-args`, which
+hand-written markup uses): one element can carry a click handler and any
+number of event handlers with different arguments, where one shared
+attribute would keep only the first — the parser drops duplicates.
+Handlers that read the element or the event at event time became eighteen
+one-line wrappers in their owning modules (`onBrowserSort`, `onDelCheckbox`,
+`keyActivate`, `goToView`, ...). The four string-to-handler helpers take
+attribute text: `_errHtml(e, act('loadUsers'))`, `menuHtml` items carry
+`action`, `emptyHtml(html, label, act(...))`, and `pagerHtml({offset, limit,
+total, page})` calls `page(offset)` for its Prev/Next buttons. The window
+block is gone, `const actions = {...}` in app.js is the only table, and
+`src/middleware.py` sends `script-src 'self'` (`style-src` keeps
+`'unsafe-inline'` for the inline-style budget). `tests/test_frontend_hygiene.py`
+pins: zero `on*=` anywhere, no globals through `window`, the registry equal
+to the set of referenced names in both directions, literal action names, no
+variable passed in quotes (`act('goToView', 't.view')` — the mistake the PR
+review found in ten places, next to 197 missing imports that eslint's
+`no-undef` caught and `node --check` cannot), no leftover `call:` strings
+(three menu items had kept theirs and did nothing), and no markup element
+whose event handler would fire with the click's arguments.
 
 One file, one visual language. The CSS header (DESIGN LANGUAGE) states the
 rules; this section is the map.
