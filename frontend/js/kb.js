@@ -86,7 +86,7 @@ export async function loadProfiles(offset = 0) {
             ${block('Embedding text', p.embedding_text ? esc(p.embedding_text) : '', true)}
           </div>
         </details>`).join('')}
-      ${pagerHtml({offset, limit: PROFILE_PAGE, total: r.total, call: 'loadProfiles({offset})'})}`;
+      ${pagerHtml({offset, limit: PROFILE_PAGE, total: r.total, action: act('loadProfiles', OFFSET)})}`;
   } catch (e) {
     el.innerHTML = _errHtml(e);
   }
@@ -144,7 +144,7 @@ export function _renderKbOverview(o, running, lastRun) {
   const order = ['movie', 'show', 'anime', 'music'];
   // Every count is a door: click → the list behind it (same classification).
   const num = (v, cat, keys, tip, cls) => v
-    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" onclick="loadKbItems('${cat}','${keys}')">${v.toLocaleString()}</button>`
+    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" ${act('loadKbItems', cat, keys)}>${v.toLocaleString()}</button>`
     : `<span class="t3" title="${escAttr(tip)}">0</span>`;
   const rows = order.filter(c => cats[c]).map(cat => {
     const c = cats[cat], d = c.denominator, s = c.states;
@@ -175,7 +175,7 @@ export function _renderKbOverview(o, running, lastRun) {
     const bits = [];
     if (op.due_now) bits.push(`${op.due_now.toLocaleString()} due next run`);
     if (op.waiting) bits.push(`${op.waiting.toLocaleString()} waiting on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
-    if (op.needs_attention) bits.push(`<button type="button" class="link-num t-amber" onclick="showKbTab('attention')">${op.needs_attention.toLocaleString()} need attention</button>`);
+    if (op.needs_attention) bits.push(`<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${op.needs_attention.toLocaleString()} need attention</button>`);
     return `<div class="fs-11 t3"><b class="t2">${esc(CAT_LABELS[cat] || cat)}</b>: ${p(done)}% enriched · ${p(ign)}% ignored · ${p(open)}% open${bits.length ? ' — ' + bits.join(', ') : ''}</div>`;
   }).join('');
 
@@ -222,7 +222,7 @@ export function _renderKbOverview(o, running, lastRun) {
       </section>
       <section class="section grow" style="min-width:280px">
         <div class="section-head"><h3>Storage</h3><span class="section-hint">enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</span>
-          <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="loadCacheInventory(this)" title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button></div></div>
+          <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('loadCacheInventory', EL)} title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button></div></div>
         <div class="section-body"><div id="cache-inventory"></div></div>
       </section>
     </div>`;
@@ -287,7 +287,7 @@ export async function loadEnrichStatus() {
     loadBackfillPanel();
     if (st.running || (cust && cust.ticking)) _kbPollTimer = setTimeout(loadEnrichStatus, 8000);
   } catch (e) {
-    if (el) el.innerHTML = _errHtml(e, 'loadEnrichStatus()');
+    if (el) el.innerHTML = _errHtml(e, act('loadEnrichStatus'));
   }
 }
 
@@ -335,10 +335,10 @@ export function _kbItemActions(it) {
   const d = _kbData(it);
   const ign = it.state === 'ignored';
   return `<div class="panel-actions">
-    <button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbFixMatch(this)" title="Search the arr, TMDB or AniList and pin the entity this item really is">Search &amp; pin</button>
-    <button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbRetry(this)" title="Attempts back to zero — the next enrichment run tries again">Retry now</button>
-    ${ign ? `<button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbUnignore(this)" title="Back into the queue">Un-ignore</button>`
-          : `<button type="button" class="btn btn-secondary btn-sm" ${d} onclick="kbIgnore(this)" title="Accept the gap: no more retries, not counted as open">Ignore</button>`}
+    <button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbFixMatch', EL)} title="Search the arr, TMDB or AniList and pin the entity this item really is">Search &amp; pin</button>
+    <button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbRetry', EL)} title="Attempts back to zero — the next enrichment run tries again">Retry now</button>
+    ${ign ? `<button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbUnignore', EL)} title="Back into the queue">Un-ignore</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbIgnore', EL)} title="Accept the gap: no more retries, not counted as open">Ignore</button>`}
     ${menuHtml([it.arr_url ? {label: `Open in ${it.service}`, href: it.arr_url} : null])}
   </div>`;
 }
@@ -354,7 +354,7 @@ export function _kbItemCard(it, extraBadges) {
   ].filter(Boolean).join(' · ');
   const findings = (it.findings || []).map(f => `<div class="panel-item-meta row mt-4">
       <span class="badge danger badge-sm">${esc(f.label || f.base || f.kind)}</span><span>${esc(_kbFindingText(f))}</span>
-      ${state.currentUser?.is_admin ? `<button type="button" class="btn btn-secondary btn-sm" data-fid="${Number(f.id)}" onclick="kbDismissFinding(this)" title="Silence this finding for good — the audit will not raise it again">Dismiss finding</button>` : ''}
+      ${state.currentUser?.is_admin ? `<button type="button" class="btn btn-secondary btn-sm" data-fid="${Number(f.id)}" ${act('kbDismissFinding', EL)} title="Silence this finding for good — the audit will not raise it again">Dismiss finding</button>` : ''}
     </div>`).join('');
   return `<div class="panel-item">
     <div class="panel-item-head">
@@ -397,11 +397,11 @@ export async function loadKbItems(cat, states, offset = 0) {
       <div class="section-head">
         <h3>${esc(CAT_LABELS[cat] || cat)} · ${esc(defs.map(d => d.label).join(' / '))} <span class="badge muted badge-sm">${r.total.toLocaleString()}</span></h3>
         <span class="section-hint">${esc(defs.map(d => `${d.explainer} ${d.next_step || ''}`).join(' '))}</span>
-        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="closeKbDrilldown()">Close</button></div>
+        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('closeKbDrilldown')}>Close</button></div>
       </div>
       <div class="section-body">
         ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : emptyHtml('Nothing here.')}
-        ${pagerHtml({offset, limit: KB_PAGE, total: r.total, call: `loadKbItems('${cat}','${states}',{offset})`})}
+        ${pagerHtml({offset, limit: KB_PAGE, total: r.total, action: act('loadKbItems', cat, states, OFFSET)})}
       </div>
     </section>`;
     if (fresh) el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -426,7 +426,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
     const r = await api(`/api/enrichment/unmatched?${q.toString()}`);
     el.dataset.loaded = '1';
     const defs = r.reason_definitions || {};
-    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" onclick="loadKbAttention(0, ${key ? `'${key}'` : 'null'})" title="${escAttr(defs[key]?.explainer || 'Everything that needs a human')}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString()}</span></button>`;
+    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" ${act('loadKbAttention', 0, key || null)} title="${escAttr(defs[key]?.explainer || 'Everything that needs a human')}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString()}</span></button>`;
     const chips = [chip('', 'All', r.total_all ?? r.total)]
       .concat(Object.entries(r.by_reason || {}).map(([k, n]) => chip(k, defs[k]?.label || k, n))).join('');
     const badgesFor = it => (it.reasons || []).map(k => `<span class="badge amber badge-sm" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}</span>`).join('');
@@ -442,7 +442,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
         <p class="fs-12 t3 mb-8">Tried twice or more without a hit, found under the wrong year, refused as too far off, matched with middling confidence, or flagged by the weekly audit (wrong entity, shared id, pin contradicted). Pin the right entity, retry, dismiss a finding, or accept the gap.${findingsNote}</p>
         <div class="row mb-12">${chips}</div>
         ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : empty}
-        ${pagerHtml({offset, limit: KB_ATT_PAGE, total: r.total, call: `loadKbAttention({offset}, ${reason ? `'${reason}'` : 'null'})`})}
+        ${pagerHtml({offset, limit: KB_ATT_PAGE, total: r.total, action: act('loadKbAttention', OFFSET, reason || null)})}
       </div>
     </section>`;
   } catch (e) { el.innerHTML = _errHtml(e); }
@@ -489,7 +489,7 @@ export function _renderCustodianBar(c) {
     <div class="section-head">
       <h3>Data custodian ${due ? `<span class="badge amber badge-sm">${due} task${due > 1 ? 's' : ''} due</span>` : '<span class="badge muted badge-sm">all caught up</span>'}</h3>
       <span class="section-hint" title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups.">${esc(line)}</span>
-      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="runMaintenance(this)"${c.ticking ? ' disabled' : ''}>Run maintenance now</button></div>
+      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('runMaintenance', EL)}${c.ticking ? ' disabled' : ''}>Run maintenance now</button></div>
     </div></section>`;
 }
 
@@ -509,8 +509,8 @@ export async function loadBackfillPanel() {
       <div class="panel-item-head">
         <div class="panel-item-title">${esc(s.label)}${s.running ? '<span class="badge amber badge-sm">running</span>' : ''}</div>
         <div class="panel-actions">${s.running
-          ? `<button type="button" class="btn btn-secondary btn-sm" onclick="stopBackfill('${esc(s.key)}',this)">Stop</button>`
-          : `<button type="button" class="btn btn-secondary btn-sm" onclick="startBackfill('${esc(s.key)}',this)">Fetch now</button>`}</div>
+          ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopBackfill', s.key, EL)}>Stop</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${act('startBackfill', s.key, EL)}>Fetch now</button>`}</div>
       </div>
       <div class="panel-item-sub">${esc(s.blurb)}</div>
       <div class="panel-item-foot">

@@ -55,7 +55,7 @@ export async function startTaskStream() {
       const el = document.getElementById('tasks-list');
       if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite" style="color:var(--danger)">
         ${SVG_WARN} Task stream disconnected —
-        <a href="#" onclick="location.reload();return false;" aria-label="Reload page to reconnect" style="color:var(--amber)">reload page</a>
+        <a href="#" ${act('reloadPage', EVENT)} aria-label="Reload page to reconnect" style="color:var(--amber)">reload page</a>
         to reconnect.
       </p>`;
       state.taskStreamRetries = 0; // reset so reload works
@@ -113,7 +113,7 @@ function _taskRowHtml(t) {
       <div class="panel-item-head">
         <div class="panel-item-title">${esc(t.name)}<span class="js-status"><span class="badge ${STATUS_BADGE[t.status] || 'muted'} badge-sm">${esc(label)}</span>
           ${t.status === 'running' ? (t.total > 0 ? `<span class="t-amber b">${t.progress}%</span>` : '<span class="spinner" title="No item count for this job — watch the log line and the elapsed time"></span>') : ''}</span></div>
-        <div class="panel-actions js-actions"${live ? '' : ' hidden'}><button type="button" class="btn btn-danger btn-sm" onclick="cancelTask('${esc(t.id)}',this)">Cancel</button></div>
+        <div class="panel-actions js-actions"${live ? '' : ' hidden'}><button type="button" class="btn btn-danger btn-sm" ${act('cancelTask', t.id, EL)}>Cancel</button></div>
       </div>
       <div class="panel-item-meta mt-4 js-meta"${meta ? '' : ' hidden'}>${meta}</div>
       <div class="panel-item-sub t-danger js-error"${err ? '' : ' hidden'}>${err}</div>
@@ -226,7 +226,7 @@ export async function loadTaskHistory() {
   try {
     await _swrRun('tasks', () => api('/api/tasks/history'), _renderTaskHistory);
   } catch(e) {
-    el.innerHTML = _errHtml(e, 'loadTaskHistory()');
+    el.innerHTML = _errHtml(e, act('loadTaskHistory'));
   }
 }
 
@@ -241,3 +241,6 @@ export async function cancelTask(taskId, btn) {
     btnDone(btn);
   }
 }
+
+// activity.js:58 ${act('reloadPage', EVENT)}
+export function reloadPage(event) { event.preventDefault(); location.reload(); }

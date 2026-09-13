@@ -168,7 +168,7 @@ export async function loadIntegrations() {
     shell.innerHTML = '';
     for (const card of INTEGRATION_CARDS) shell.appendChild(renderIntegrationCard(card, _integrationsCfg));
   } catch (e) {
-    shell.innerHTML = _errHtml(e, 'loadIntegrations()');
+    shell.innerHTML = _errHtml(e, act('loadIntegrations'));
   }
 }
 
@@ -186,7 +186,7 @@ export function renderIntegrationCard(card, cfg) {
       const isSet = !!(cur && cur.set);
       const chip = isSet ? '<span class="badge success badge-sm">set</span>' : '<span class="badge muted badge-sm">not set</span>';
       const clear = (isSet && !f.required)
-        ? `<button type="button" class="btn btn-secondary btn-sm" title="Clear this key" onclick="clearIntegrationSecret('${f.id}', '${card.key}', this)">Clear</button>` : '';
+        ? `<button type="button" class="btn btn-secondary btn-sm" title="Clear this key" ${act('clearIntegrationSecret', f.id, card.key, EL)}>Clear</button>` : '';
       return `<div class="form-group" style="margin:8px 0">
         <label for="int-${f.id}">${esc(f.label)} ${chip}</label>
         <div class="row"><input id="int-${f.id}" class="grow" type="password" autocomplete="new-password" placeholder="${isSet ? 'type to replace' : 'not set'}">${clear}</div></div>`;
@@ -197,15 +197,15 @@ export function renderIntegrationCard(card, cfg) {
       <input id="int-${f.id}" type="${type}" value="${esc(cur === undefined || cur === null ? '' : String(cur))}" placeholder="${esc(f.placeholder || '')}"></div>`;
   }).join('');
   const testBtn = card.test
-    ? `<button type="button" class="btn btn-secondary btn-sm" onclick="testIntegration('${card.key}',this)">Test connection</button>` : '';
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('testIntegration', card.key, EL)}>Test connection</button>` : '';
   const rebuild = card.key === 'models'
-    ? `<button type="button" class="btn btn-secondary btn-sm" onclick="rebuildModels('${card.key}',this)" title="Bake the chosen models via ollama create">Rebuild models</button>` : '';
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>` : '';
   el.innerHTML = `
     <div class="section-head"><h3>${esc(card.title)}</h3></div>
     <div class="section-body">
       <div id="int-form-${card.key}">${rows}</div>
       <div class="row mt-8">
-        <button type="button" class="btn btn-primary btn-sm" id="int-save-${card.key}" onclick="saveIntegrations('${card.key}',this)">Save</button>
+        <button type="button" class="btn btn-primary btn-sm" id="int-save-${card.key}" ${act('saveIntegrations', card.key, EL)}>Save</button>
         ${testBtn}${rebuild}
         <span id="int-msg-${card.key}" class="status"></span>
       </div>
@@ -307,7 +307,7 @@ export async function loadNotificationPreferences() {
     const r = await api('/api/users/me/notification-preferences');
     renderNotificationPreferences(r.triggers || []);
   } catch (e) {
-    host.innerHTML = _errHtml(e, 'loadNotificationPreferences()');
+    host.innerHTML = _errHtml(e, act('loadNotificationPreferences'));
   }
 }
 
@@ -340,7 +340,7 @@ export function renderNotificationPreferences(triggers) {
   host.innerHTML = triggers.map(t => `<div class="panel-item">
     <div class="panel-item-head">
       <div class="grow"><div class="panel-item-title">${esc(t.label || t.type)}</div><div class="panel-item-sub" style="margin-top:2px">${esc(t.description || '')}</div></div>
-      <label class="chip${t.enabled ? ' active' : ''}"><input type="checkbox" ${t.enabled ? 'checked' : ''} data-trigger-type="${escAttr(t.type)}" onchange="_setNotifPref(this)"> <span>${t.enabled ? 'on' : 'off'}</span></label>
+      <label class="chip${t.enabled ? ' active' : ''}"><input type="checkbox" ${t.enabled ? 'checked' : ''} data-trigger-type="${escAttr(t.type)}" ${actOn('change', '_setNotifPref', EL)}> <span>${t.enabled ? 'on' : 'off'}</span></label>
     </div>
   </div>`).join('');
 }

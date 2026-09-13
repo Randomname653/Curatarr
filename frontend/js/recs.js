@@ -25,14 +25,14 @@ export function _recCard(rec) {
   return `
   <div class="card mb-12">
     <div class="poster-card">
-      <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" onclick="onDiscussRec(this.closest('.card').querySelector('[data-discuss]'))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
+      <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
           <div class="panel-item-title" style="font-size:16px">${esc(rec.title)}${laneBadge}<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round((rec.confidence||0.7)*100)}%</span></div>
           <div class="panel-actions">
-            <button type="button" class="btn btn-secondary btn-sm" data-discuss onclick="onDiscussRec(this)" data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
-              ? `<button type="button" class="btn btn-primary btn-sm" onclick="onAddRecToArr(this)" data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`
+              ? `<button type="button" class="btn btn-primary btn-sm" ${act('onAddRecToArr', EL)} data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`
               : ''}
           </div>
         </div>
@@ -94,7 +94,7 @@ export async function searchLibrary() {
     const cat = state.currentRecsCategory ? `&category=${ state.currentRecsCategory }` : '';
     const r = await api(`/api/library/semantic-search?q=${encodeURIComponent(q)}${cat}&limit=12`);
     const hits = r.results || [];
-    const back = `<div class="mb-12"><button type="button" class="btn btn-secondary btn-sm" onclick="reloadRecs()">← Back to recommendations</button></div>`;
+    const back = `<div class="mb-12"><button type="button" class="btn btn-secondary btn-sm" ${act('reloadRecs')}>← Back to recommendations</button></div>`;
     if (!hits.length) {
       el.innerHTML = back + emptyHtml(`No semantic matches for "${esc(q)}" — coverage follows the enrichment index.`);
       return;
@@ -160,14 +160,14 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
       return;
     }
     const cacheNote = r.cached_at
-      ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">Cached ${_fmtRel(r.cached_at)}</span> · <button type="button" class="link-num t-amber" onclick="regenerateRecs()">Regenerate now</button></div>`
+      ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">Cached ${_fmtRel(r.cached_at)}</span> · <button type="button" class="link-num t-amber" ${act('regenerateRecs')}>Regenerate now</button></div>`
       : '';
     const library   = r.recommendations.filter(x => x.lane === 'library');
     const discovery = r.recommendations.filter(x => x.lane !== 'library');
     let body = '';
     if (laneFilter === 'all' || laneFilter === 'library')   body += _recSection('library', library);
     if (laneFilter === 'all' || laneFilter === 'discovery') body += _recSection('discovery', discovery);
-    if (!body) body = emptyHtml('Nothing in this lane yet — regenerate, or switch lane above.', 'Regenerate', 'regenerateRecs()');
+    if (!body) body = emptyHtml('Nothing in this lane yet — regenerate, or switch lane above.', 'Regenerate', act('regenerateRecs'));
     el.innerHTML = cacheNote + body;
   } catch(e) { el.innerHTML = _errHtml(e); }
 }
@@ -224,3 +224,6 @@ export async function regenerateRecs() {
 export function reloadRecs() {
   return loadRecs(state.currentRecsCategory);
 }
+
+// recs.js:28 ${act('discussRecCard', EL)}
+export function discussRecCard(el) { onDiscussRec(el.closest('.card').querySelector('[data-discuss]')); }

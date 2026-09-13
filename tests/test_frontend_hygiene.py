@@ -11,8 +11,7 @@ one.
 
 2026-09-11: index.html became three files (markup, css/app.css, js/app.js
 as an ES module). The regions are the files now; the ceilings did not move.
-A module has its own scope, so every function an inline on*="…" handler
-names must be handed to window explicitly — the last test pins that list.
+The window block is gone; all actions are registered in a single dictionary.
 
     python tests/test_frontend_hygiene.py
 """
@@ -91,74 +90,64 @@ def test_no_second_overlay_or_toast_system():
     assert "DESIGN LANGUAGE" in css, "the design-language header must travel with the stylesheet"
 
 
-def test_every_inline_handler_resolves_to_an_exported_global():
-    """The modules have their own scope: nothing is global unless app.js hands
-    it to window in the Object.assign(window, {...}) block. Handler code — the
-    on*="..." attributes in markup and templates, the strings menuHtml,
-    pagerHtml, emptyHtml and _errHtml turn into handlers — runs in the global
-    scope, so EVERY identifier in it must be an exported function or a browser
-    global. Not just the leading call: the first split missed the
-    ontoggle="if (this.open) loadX()" sections and a "...; _syncDelPosterVisual(this)"
-    second statement, and the second split wrote `state.` into a handler
-    string. All three classes are caught here."""
+
+def test_no_inline_handlers_or_window_assignments():
     m, s = _regions()
-    code = re.sub(r"(?m)^\s*//.*$", "", s)   # a comment may quote an old handler
-    both = m + "\n" + code
-    top_level = set(re.findall(r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\(", code, re.M))
-    handlers = re.findall(r'\bon[a-z]+="([^"]*)"', both)
-    handlers += [x[2] for x in re.findall(r"""(call|ctaCall)\s*[:=]\s*(['"`])(.*?)\2""", both)]
-    handlers += re.findall(r"""_errHtml\([^,()]+,\s*['"]([^'"]*)['"]""", code)
-    allowed = {"this", "event", "if", "else", "true", "false", "null", "undefined", "document",
-               "window", "location", "return", "new", "typeof", "void", "offset"}
-    def _strip_templates(text):
-        """Replace every ${...} — nesting included, as in ${a ? `'${b}'` : 'x'} —
-        with a literal 0: the expression runs at render time, not on click."""
-        out, i, depth = [], 0, 0
-        while i < len(text):
-            if depth == 0 and text.startswith("${", i):
-                depth, i = 1, i + 2
-                out.append("0")
-                continue
-            if depth:
-                if text[i] == "{":
-                    depth += 1
-                elif text[i] == "}":
-                    depth -= 1
-                i += 1
-                continue
-            out.append(text[i])
-            i += 1
-        return "".join(out)
+    code = re.sub(r"(?m)^\s*//.*$", "", s)
+    handlers_m = re.findall(r'\bon[a-z]+="[^"]*"', m)
+    handlers_s = re.findall(r'\bon[a-z]+="[^"]*"', code)
+    assert not handlers_m, f"markup contains inline handlers: {handlers_m}"
+    assert not handlers_s, f"script contains inline handlers: {handlers_s}"
 
-    needed, foreign = set(), set()
-    for h in handlers:
-        h = _strip_templates(h)
-        h = re.sub(r"'[^']*'|&quot;[^&]*&quot;", "''", h)          # string literals are data
-        h = re.sub(r"(?<=[{,])\s*[A-Za-z_$][\w$]*\s*:", ",", h)   # object-literal keys are not identifiers
-        for ident in re.findall(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?![\w$])", h):
-            if ident in allowed:
-                continue
-            (needed if ident in top_level else foreign).add(ident)
-    # calls spelled inside other strings reach a handler too (pagerHtml pages, CTAs)
-    needed |= set(re.findall(r"""['"`]\s*([A-Za-z_$][\w$]*)\(""", code)) & top_level
-    assert not foreign, f"handler code names something that is neither exported nor a browser global: {sorted(foreign)}"
-    block = re.search(r"Object\.assign\(window,\s*\{(.*?)\}\s*\);", s, re.S)
-    assert block, "app.js must carry the Object.assign(window, {...}) block"
-    exposed = {n.strip() for n in block.group(1).split(",") if n.strip()}
-    missing = sorted(needed - exposed)
-    assert not missing, f"inline handlers reference functions app.js does not expose: {missing}"
-    unused = sorted(exposed - needed)
-    assert not unused, f"exposed but no handler names them (export only what is referenced): {unused}"
-    print(f"  {len(exposed)} functions exposed for {len(needed)} handler references")
+    assert "Object.assign(window" not in code, "Object.assign(window still present"
+    window_assignments = [m for m in re.findall(r'window\.[a-zA-Z_$][\w$]*\s*=', code) if 'window.onload' not in m and 'window._notifPollTimer' not in m]
+    assert not window_assignments, f"window.* assignments found: {window_assignments}"
 
+def test_referenced_actions_match_registry():
+    m, s = _regions()
+    code = re.sub(r"(?m)^\s*//.*$", "", s)
 
+    referenced = set()
+    for match in re.finditer(r'data-action=["\'](.*?)["\']', m + "\n" + code):
+        referenced.add(match.group(1))
+    for match in re.finditer(r'data-on-[a-z]+=["\'](.*?)["\']', m + "\n" + code):
+        referenced.add(match.group(1))
+    for match in re.finditer(r"act\(\s*['\"](.*?)['\"]", code):
+        referenced.add(match.group(1))
+    for match in re.finditer(r"actOn\(\s*['\"][^'\"]*?['\"]\s*,\s*['\"](.*?)['\"]", code):
+        referenced.add(match.group(1))
+    for match in re.finditer(r"action:\s*['\"](.*?)['\"]", code):
+        referenced.add(match.group(1))
 
+    if '${name}' in referenced:
+        referenced.remove('${name}')
 
+    actions_match = re.search(r"const actions = \{(.*?)\}", s, re.S)
+    assert actions_match, "app.js must carry the const actions = {...} block"
+    registry = {n.strip() for n in actions_match.group(1).split(",") if n.strip()}
 
-def test_no_inline_handlers_in_markup():
-    m, _ = _regions()
-    handlers = re.findall(r'\bon[a-z]+="[^"]*"', m)
-    assert not handlers, f"markup still contains inline handlers: {handlers}"
+    missing = registry - referenced
+    surplus = referenced - registry
+    print(f"  registry sizes: referenced={len(referenced)}, registry={len(registry)}")
+    assert not missing, f"dead entry in registry (no references): {sorted(missing)}"
+    assert not surplus, f"unregistered action referenced: {sorted(surplus)}"
+
+def test_act_calls_use_string_literals():
+    _, s = _regions()
+    code = re.sub(r"(?m)^\s*//.*$", "", s)
+
+    for match in re.finditer(r"\bact\(\s*([^,)]+)", code):
+        arg = match.group(1).strip()
+        if arg in ["name", "p.action"]: continue
+        if not ((arg.startswith("'") and arg.endswith("'")) or (arg.startswith('\"') and arg.endswith('\"'))):
+            assert False, f"act() name position must be a string literal, found: {arg}"
+
+    for match in re.finditer(r"\bactOn\(\s*[^,]+,\s*([^,)]+)", code):
+        arg = match.group(1).strip()
+        if arg == "name": continue
+        if not ((arg.startswith("'") and arg.endswith("'")) or (arg.startswith('\"') and arg.endswith('\"'))):
+            assert False, f"actOn() name position must be a string literal, found: {arg}"
+
 
 def test_data_attributes_in_markup():
     m, s = _regions()
