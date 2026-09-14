@@ -357,6 +357,15 @@ async def _run_lyrics_sync(task=None) -> bool:
     return await run_lyrics_sync(task=task)
 
 
+async def _run_lyrics_profiles(task=None) -> bool:
+    """One summariser call per artist with enough lyrics on file (step 2 of
+    src/services/lyrics.py): profile, attach to the raw entries, re-polish
+    the artist. needs_llm — waits while a game holds the GPU. False while
+    eligible artists remain (stays due, continues next tick)."""
+    from src.services.lyrics import run_lyrics_profiles
+    return await run_lyrics_profiles(task=task)
+
+
 async def _run_facet_backfill(task=None) -> bool:
     """Multi-vector items stage 1: page the corpus into theme-facet points.
     False while unfinished → the task stays due and every tick advances the
@@ -519,6 +528,8 @@ def _registry() -> list[Task]:
         # sidecar), no GPU; the profile walker of step 2 reads its cache.
         Task("lyrics_sync",      "Lyrics from Plex",     24.0,  _run_lyrics_sync,
              takes_task=True),
+        Task("lyrics_profile",   "Lyrics profiles",      24.0,  _run_lyrics_profiles,
+             needs_llm=True, takes_task=True),
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
         # LLM-free raw-cache warmer: keeps API source data fresh in the

@@ -239,6 +239,19 @@ the log. The Activity view rebuilt every task row on every progress event
 and replayed the card animation each time; rows are patched in place and
 renders coalesce to one per frame.
 
+**The curator reads lyrics.** SoulSync leaves .lrc/.txt sidecars next to
+the tracks and Plex serves them as lyric streams; a collector keeps the
+plain lines in its own cache (13,390 of 18,648 tracks on the owner's
+server carry one) and re-checks every run so late sidecars land, and a
+profiler condenses a sample per artist into a lyrics profile: subjects,
+themes, languages, an explicit flag, motifs, tone, up to three verbatim
+lines. The music summariser makes lyrical claims only from that profile
+(before, it guessed "lyrical themes" from a biography), the verified block
+shows it with its basis, the album dossier adds coverage and one line, the
+constitution caps quotes at two short lines. Raw lyrics never reach a
+prompt or the UI.
+
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

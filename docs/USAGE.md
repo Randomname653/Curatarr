@@ -45,6 +45,7 @@ the data custodian picks up whatever is overdue on the next run.
 | Watch running background jobs | Sidebar → **Activity** |
 | Per-library coverage breakdown | Sidebar → **Libraries** (Library Configuration) |
 | Spotify artists not in Lidarr | Manage → **Music** → **Spotify Backlog** tab |
+| Lyrics on file, artists profiled | Knowledge Base → **Music pipeline** (the line under the stats bar; both walkers run with **Run maintenance now**) |
 
 ## Command-line helpers
 

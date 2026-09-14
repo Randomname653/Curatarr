@@ -95,6 +95,7 @@ yet. Until those sections are rewritten, this is the map:
 | Enrichment healing | `src/services/enrichment_state.py`, `kb_overview.classified_items`, `EnrichmentStatus.attempt_count/next_retry_at/match_basis/match_confidence`, `EnrichmentFinding`, `MediaMatchOverride.rejected_ids`, `/api/enrichment/items · unmatched · findings`, `_audit_enrichments` + `_triage_audit_hit` | ONE classifier for the KB tile, `/library/breakdown` and the producer (the old KB view read a column nothing wrote and counted a live not-found sentinel as enriched). Not-found rows carry an attempt counter with a backoff (2 free tries, then 3/6/12/24 d, capped at 30 d — never given up on; a category abort rolls its attempts back). Fetchers return a falsy `TRANSIENT` marker; a drained run with an unavailable source raises `TransientFetchError` and writes nothing. Sentinels persist their evidence (per-source outcomes, arr year, the rejected same-named hit) → `open_reason()` sentences. Title-search resolutions store a match basis + confidence (≥0.8 accept, 0.5–0.8 accept-and-flag, below with a disagreeing year refuse). Every KB count opens its list; Needs attention unions the row-derived reasons with the audit's persisted findings (SoulSync `repair_findings` contract: pending refreshed, dismissed silent, resolved re-raised after 7 d; each finding gets exactly ONE automatic requeue, then escalates to a human). Owner actions: pin (arr lookup + TMDB/AniList + free ids, category derived server-side), negative pin (all four title-search resolvers skip it; the purge covers title-keyed cache rows too), retry, ignore, dismiss. |
 | Member budgets + untrusted text | `src/services/rate_limit.py` (`enforce`, `InFlight`), `llm_utils.fence_untrusted / scrub_untrusted / UNTRUSTED_RULE`, `format_verified_block` markers, `subtitle_signals._bounded_text`, `image_proxy._read_bounded`, `spotify_import.save_upload` caps, `plex_sync.sync_plex_history` lock | Second security angle (2026-09-06). Every endpoint that turns one request into LLM or external-API work carries a per-user sliding-window budget and, where the work is long, a one-at-a-time guard (chat reply, recommendation generation — including the GET lane that bypassed `/refresh-cache`). The global curator gate serialises the GPU; it never stopped one member from owning the queue. Third-party prose (overviews, reviews, wiki extracts, bios, the verified block) is fenced `<<<UNTRUSTED_SOURCE:…>>>` and scrubbed of markup / special tokens / role markers; every system prompt that receives it carries `UNTRUSTED_RULE`; `clean_llm_text` strips tag-like markup before persistence. The significance template is hashed into its cache stamp, so that path is scrubbed, not fenced. External bodies are capped while streaming (OpenSubtitles 4 MB + metrics off-loop, image proxy 5 MB, zip members 50 MB / 400 MB). One Plex sync at a time (`plex_sync_running`). |
 | UI grammar | `frontend/css/app.css` (DESIGN LANGUAGE header) + `frontend/js/app.js` (helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
+| Lyrics from Plex | `src/services/lyrics.py` (collector `run_lyrics_sync`, profiler `run_lyrics_profiles`, `album_lyrics_line`), `data/cache/lyrics.db`, custodian tasks `lyrics_sync` / `lyrics_profile`, `_lyrics_prompt_block` + `_lyrics_line` in media_enricher | The curator judges music with the artist's own words (2026-09-14): SoulSync drops .lrc/.txt sidecars, Plex serves them as lyric streams, the collector keeps the plain lines in its own SQLite and re-checks every run (the trickle lands, a refused stream backs off a week), the profiler condenses a sample per artist into a lyrics profile (subjects, themes, languages, explicit, motifs, tone, up to three verbatim lines) that is attached to the raw entry, read by the summariser (`LYRICS PROFILE` block; without one, no claims about the words) and shown in the verified block; the constitution caps quotes at two short lines. Raw lyrics never reach a prompt or the UI. |
 
 ---
 
@@ -576,6 +577,29 @@ via the standalone scripts.
   backoff. To actually fix the quota: apply for Spotify Extended Quota
   Mode (slow, uncertain since the 2025 policy change) — or just rely on
   Last.fm, which is plenty for taste-vector genres.
+
+---
+
+**Lyrics (2026-09-14, `src/services/lyrics.py`).** Two custodian walkers.
+`lyrics_sync` (24 h, no GPU) lists every track of the Plex music sections —
+the ones mapped in Libraries, else every artist-type section Plex has — with
+`includeElements=Stream` (one walk = 47 page calls for 18,600 tracks), keeps
+identity and lyric stream per track in `data/cache/lyrics.db`, fetches the
+text of every new or changed stream within a budget of 4,000 per run (LRC
+timestamps and header tags stripped), drops text whose sidecar vanished,
+marks tracks gone only after a COMPLETE listing, and leaves a stream Plex
+refuses (404: SoulSync moved the file since the last scan, 6 % live) alone
+for a week. `lyrics_profile` (24 h, `needs_llm`) takes artists with eight
+texts on file or half their tracks (three at least), shows the summariser an
+album round-robin sample (listened tracks first, first lines of each,
+14,000 chars), keeps only verbatim quotes of at most twelve words, stores the
+profile, attaches it to the artist's raw cache entries as `lyrics` +
+`lyrics_v` (re-attached every run when a raw refresh dropped it), expires
+the polished summary and re-polishes at once. The summariser's music prompt
+reads the `LYRICS PROFILE` block and may make lyrical claims only from it;
+the verified block carries `Lyrics (n of m tracks on file)`; the album
+dossier adds coverage and one line; the Music pipeline tab shows the
+coverage; the explicit flag is collected, not yet acted on.
 
 ---
 

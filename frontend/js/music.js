@@ -28,6 +28,19 @@ export function _renderMusicStatus(s) {
     `<b>${stats.missing_genres ?? '—'}</b> missing genres`,
     s.last_run ? `last run ${new Date(s.last_run).toLocaleString()}` : 'never run',
   ].join(' · ');
+  // Lyrics from Plex: the SoulSync sidecars on file and the artists profiled from them.
+  const ly = s.lyrics;
+  const lyEl = document.getElementById('music-lyrics-line');
+  if (lyEl) {
+    lyEl.hidden = !ly || !ly.tracks;
+    if (ly && ly.tracks) {
+      lyEl.textContent = `Lyrics: ${ly.with_text.toLocaleString()} of ${ly.tracks.toLocaleString()} tracks on file`
+        + ` · ${ly.profiles.toLocaleString()} of ${ly.artists_with_text.toLocaleString()} artists profiled`
+        + (ly.explicit_artists ? ` · ${ly.explicit_artists} explicit` : '')
+        + (ly.unreachable ? ` · ${ly.unreachable} sidecars Plex cannot serve yet` : '')
+        + (ly.last_run ? ` · collected ${new Date(ly.last_run + 'Z').toLocaleString()}` : '');
+    }
+  }
 
   // Running badge + the one Start/Stop slot
   document.getElementById('music-running-badge').hidden = !running;

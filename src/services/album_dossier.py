@@ -132,6 +132,16 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
             logger.debug("[album] history match failed: %s", e)
 
     # Last.fm community numbers + tags
+    # Lyrics on file for this album (Plex sidecars, src/services/lyrics.py) and
+    # the artist's profile sentence: the one place the curator may quote a line.
+    try:
+        from src.services.lyrics import album_lyrics_line
+        ll = album_lyrics_line(artist.get("artistName") or artist_name, alb.get("title") or album_title)
+        if ll:
+            lines.append(ll)
+    except Exception as e:
+        logger.debug("[album] lyrics line failed: %s", e)
+
     if settings.LASTFM_API_KEY:
         try:
             async with httpx.AsyncClient(timeout=15) as c:

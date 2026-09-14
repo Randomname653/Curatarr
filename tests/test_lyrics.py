@@ -200,9 +200,10 @@ def test_music_sections_come_from_plex_when_libraries_has_none_mapped():
 
 def test_the_custodian_runs_the_collector_with_its_activity_card():
     src = (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
-    assert 'Task("lyrics_sync"' in src and "takes_task=True" in src.split('Task("lyrics_sync"')[1][:200]
-    assert "run_lyrics_sync" in src
-    assert 'needs_llm=True' not in src.split('Task("lyrics_sync"')[1][:200], "the collector never needs the GPU"
+    assert 'Task("lyrics_sync"' in src and "run_lyrics_sync" in src
+    entry = src.split('Task("lyrics_sync"')[1].split("),")[0]        # this Task's arguments only
+    assert "takes_task=True" in entry
+    assert "needs_llm=True" not in entry, "the collector never needs the GPU"
 
 
 if __name__ == "__main__":

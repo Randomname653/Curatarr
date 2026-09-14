@@ -138,11 +138,20 @@ async def pipeline_status(user: User = Depends(get_current_user)):
         ).count()
         missing_genres = base.filter(WatchHistoryEntry.genres.is_(None)).count()
 
+    # Lyrics from Plex (src/services/lyrics.py): what is on file and profiled.
+    try:
+        from src.services.lyrics import lyrics_coverage
+        lyrics = lyrics_coverage()
+    except Exception as e:
+        logger.debug("[music] lyrics coverage unavailable: %s", e)
+        lyrics = None
+
     return {
         "running":        running,
         "stop_requested": stopped,
         "last_run":       last_run,
         "progress":       progress,
+        "lyrics":         lyrics,
         "stats": {
             "total_music":       total,
             "source_spotify":    src_spotify,
