@@ -30,7 +30,7 @@ pydantic-settings==2.15.0
 python-dotenv==1.2.3
 
 # Data
-numpy==2.5.2
+numpy==2.5.3
 
 # Logging
 python-json-logger==4.2.0
