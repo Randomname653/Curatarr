@@ -348,6 +348,15 @@ async def _run_raw_refresh(deep: bool = False, task=None) -> bool:
     return await run_raw_refresh(task=task, deep=deep)
 
 
+async def _run_lyrics_sync(task=None) -> bool:
+    """Lyrics from Plex (the SoulSync sidecars): list every music track,
+    fetch new lyric streams into data/cache/lyrics.db, re-check the rest so
+    the trickle lands. No LLM. False while the fetch budget ran out mid-walk
+    (stays due, continues next tick) — see src/services/lyrics.py."""
+    from src.services.lyrics import run_lyrics_sync
+    return await run_lyrics_sync(task=task)
+
+
 async def _run_facet_backfill(task=None) -> bool:
     """Multi-vector items stage 1: page the corpus into theme-facet points.
     False while unfinished → the task stays due and every tick advances the
@@ -506,6 +515,10 @@ def _registry() -> list[Task]:
         # returns False until complete so every tick continues the run,
         # then becomes a stamped no-op). takes_task: page progress lands in
         # the wrapper card (N/total + ETA) instead of console-only logs.
+        # Lyrics collector: cheap (LAN page listings + one text fetch per new
+        # sidecar), no GPU; the profile walker of step 2 reads its cache.
+        Task("lyrics_sync",      "Lyrics from Plex",     24.0,  _run_lyrics_sync,
+             takes_task=True),
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
         # LLM-free raw-cache warmer: keeps API source data fresh in the
