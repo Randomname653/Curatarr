@@ -104,8 +104,10 @@ def test_the_watcher_records_the_lane_and_the_badge_names_it():
         assert mode in watcher, mode
 
     pm = (_ROOT / "src/routers/process_monitor.py").read_text(encoding="utf-8")
-    assert '"lane": lane,' in pm and '"lane_reason"' in pm
+    assert '"lane": lane,' in pm and '"lane_reason": reason,' in pm
     assert 'get_state("llm_lane")' in pm and "before the first tick" in pm
+    assert 'reason = st["reason"] or ""' in pm, \
+        "the pre-first-tick fallback carries its own occupancy, not an empty state row"
 
     js = (_ROOT / "frontend/js/game.js").read_text(encoding="utf-8")
     assert "export function _renderLaneBadge" in js

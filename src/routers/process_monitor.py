@@ -136,14 +136,16 @@ async def game_status(_user: User = Depends(get_current_user)):
     # paused) — the badge names the state instead of calling everything a
     # game. Falls back to a live read before the first tick.
     lane = get_state("llm_lane")
+    reason = get_state("llm_lane_reason") or ""
     if not lane:
         from src.services.llm_lane import status as lane_status
         st = lane_status()
         lane = ("game" if st["game"] else "cpu" if st["summarizer"] == "cpu"
                 else "paused") if st["gpu_pressed"] else "free"
+        reason = st["reason"] or ""     # the state row is still empty here
     return {
         "game_running": is_game_running(),
         "models_unloaded": [],
         "lane": lane,
-        "lane_reason": get_state("llm_lane_reason") or "",
+        "lane_reason": reason,
     }
