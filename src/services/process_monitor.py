@@ -111,14 +111,99 @@ def invalidate_process_cache() -> None:
     _cached_classified_time = 0
 
 
+# ── Foreign GPU load (2026-09-15) ───────────────────────────────────────────
+# The owner's image-generation job held 23.9 of 24.5 GB on the 4090 at 100 %
+# while game_active stayed 0: this module knew game process NAMES, not GPU
+# pressure, so the enrichment ran into summariser timeouts for an hour and
+# the custodian kept starting LLM work. A saturated GPU that Ollama itself is
+# not using counts as a game now; every LLM-heavy path already yields to
+# is_game_running() / the game_active flag. Two looks 30 s apart must agree
+# before it counts (a model load spikes the GPU for seconds), and a host
+# without nvidia-smi is asked again every ten minutes only.
+_GPU_UTIL_BUSY = 85          # percent
+_GPU_FREE_MB_MIN = 2500      # below this there is no room even for the summariser
+_GPU_CACHE_S = 30
+_GPU_HOLD_S = 45             # pressure must persist this long before it counts
+_gpu_cache = {"at": 0.0, "busy": False, "since": 0.0, "reason": ""}
+_gpu_unavailable_until = 0.0
+
+
+def _nvidia_smi() -> "tuple | None":
+    """(memory.used MB, memory.total MB, utilization %) or None."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if out.returncode != 0:
+        return None
+    lines = (out.stdout or "").strip().splitlines()
+    if not lines:
+        return None
+    try:
+        used, total, util = [float(x.strip()) for x in lines[0].split(",")[:3]]
+    except ValueError:
+        return None
+    return used, total, util
+
+
+def _ollama_loaded_models() -> "list | None":
+    """The model names Ollama holds in VRAM (/api/ps); None when it does not answer."""
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{settings.effective_ollama}/api/ps", timeout=2) as r:
+            return [m.get("name") for m in json.load(r).get("models", [])]
+    except Exception:
+        return None
+
+
+def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
+    """True when the GPU has been saturated for _GPU_HOLD_S by something that
+    is not Ollama. ``smi`` / ``ps`` are injectable for tests."""
+    import time
+    global _gpu_unavailable_until
+    if not getattr(settings, "GPU_PRESSURE_GATE", True):
+        return False
+    now = time.time() if now is None else now
+    injected = smi is not None or ps is not None
+    if not injected and now - _gpu_cache["at"] < _GPU_CACHE_S:
+        return _gpu_cache["busy"]
+    if not injected and now < _gpu_unavailable_until:
+        return False
+    stats = (smi or _nvidia_smi)()
+    if stats is None:
+        _gpu_unavailable_until = now + 600
+        _gpu_cache.update(at=now, busy=False, since=0.0, reason="")
+        return False
+    used, total, util = stats
+    pressed = util >= _GPU_UTIL_BUSY or (total - used) < _GPU_FREE_MB_MIN
+    if pressed and (ps or _ollama_loaded_models)():
+        pressed = False                       # Ollama's own work: that is us
+    since = _gpu_cache["since"] or now if pressed else 0.0
+    busy = pressed and now - since >= _GPU_HOLD_S
+    reason = f"{used:.0f}/{total:.0f} MB, {util:.0f} %" if busy else ""
+    if busy != _gpu_cache["busy"]:
+        logger.info("[gpu] %s", f"held by another process ({reason}) — LLM work yields" if busy else "free again")
+    _gpu_cache.update(at=now, busy=busy, since=since, reason=reason)
+    return busy
+
+
 def is_game_running() -> bool:
-    """Return True when a known game or game-launcher signal is detected."""
+    """Return True when a known game or game-launcher signal is detected, or
+    when something other than Ollama has been holding the GPU."""
     import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
     global _cached_targets, _cached_time, _cached_game_pid
     now = time.time()
+
+    if gpu_pressure():
+        return True
 
     # Refresh cache every 60 seconds
     if _cached_targets is None or now - _cached_time > 60:

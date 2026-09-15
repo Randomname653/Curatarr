@@ -188,6 +188,9 @@ class Settings(BaseSettings):
     # owner. Without this, any plex.tv account created in a minute could log
     # in from the LAN. Off only if /accounts does not list a legit member.
     PLEX_LOGIN_REQUIRE_MEMBERSHIP: bool = True
+    # A GPU saturated by something other than Ollama (an image-generation
+    # job, a benchmark) counts as a game: LLM-heavy background work yields.
+    GPU_PRESSURE_GATE: bool = True
     # Poster cache on disk is unauthenticated by design (see image_proxy);
     # a total budget stops a LAN client from filling the disk with variants.
     IMAGE_CACHE_MAX_MB: int = 1024
