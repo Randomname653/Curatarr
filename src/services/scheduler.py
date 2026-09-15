@@ -150,11 +150,16 @@ async def job_game_watcher():
         else:
             mode = "game" if running else "free"
         previous = get_state("llm_lane")
-        set_state("llm_lane", mode)
-        set_state("llm_lane_reason", st["reason"] or "")
         if mode != previous:
+            set_state("llm_lane", mode)
             logger.info("[lane] %s -> %s%s", previous or "unknown", mode,
                         f" ({st['reason']})" if st["reason"] else "")
+        # The reason carries live numbers, so it moves while the card is
+        # held and settles to "" once it is free — written only when it
+        # actually changed, not 2,880 times a day into an idle row.
+        reason = st["reason"] or ""
+        if reason != (get_state("llm_lane_reason") or ""):
+            set_state("llm_lane_reason", reason)
         if running:
             unloaded = await unload_llm_models()
             if unloaded:
