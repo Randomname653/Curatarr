@@ -113,6 +113,30 @@ def test_clean_profile_keeps_only_verbatim_quotes_and_known_moods():
     assert ly._clean_profile(long_quote, block)["quotes"] == [], "twelve words at most"
 
 
+def test_slash_joined_quotes_fall_back_to_their_first_verbatim_line():
+    """Live 2026-09-15: the model handed back three 2Pac quotes as several
+    lines joined with ' / ' — not a line, so all three were dropped."""
+    block = "<<<UNTRUSTED_SOURCE:lyrics>>>\n## Song\nAin't nuttin but a party\nYou done put two of them\n<<<END_UNTRUSTED_SOURCE>>>"
+    joined = {**_GOOD, "quotes": ["Ain't nuttin but a party / You done put two of them / never shown here"]}
+    assert ly._clean_profile(joined, block)["quotes"] == ["Ain't nuttin but a party"]
+    invented = {**_GOOD, "quotes": ["not in the lyrics / neither is this"]}
+    assert ly._clean_profile(invented, block)["quotes"] == []
+
+
+def test_profanity_in_the_shown_lyrics_sets_the_explicit_flag_the_model_missed():
+    """Live 2026-09-15: 2Pac and +44 came back explicit=false with
+    'motherfuckin' and 'fuck' in the model's own quotes."""
+    clean = "<<<UNTRUSTED_SOURCE:lyrics>>>\n## Song\nRiver runs cold tonight\nShitake mushrooms for dinner\n<<<END_UNTRUSTED_SOURCE>>>"
+    assert ly._clean_profile(_GOOD, clean)["explicit"] is False, "whole words only: shitake is not a hit"
+    one = clean.replace("mushrooms", "fuck mushrooms")
+    assert ly._clean_profile(_GOOD, one)["explicit"] is False, "one hit is a lyric, not a rating"
+    two = one.replace("River runs", "Motherfuckin river runs")
+    p = ly._clean_profile(_GOOD, two)
+    assert p["explicit"] is True and p["explicit_note"] == "profanity in the lyrics (2 hits in the sample)"
+    said = ly._clean_profile({**_GOOD, "explicit": True, "explicit_note": "graphic violence"}, clean)
+    assert said["explicit"] is True and said["explicit_note"] == "graphic violence", "the model's own verdict stands"
+
+
 def test_run_profiles_attaches_expires_and_repolishes_then_rests():
     db = _seed("run", {"a1": ("The Band", [("First", 10)]), "a2": ("Other", [("A", 1)])})   # a2: not eligible
     cache = MetadataCache(cache_path=_TMP / "run-cache.db")

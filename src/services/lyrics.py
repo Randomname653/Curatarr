@@ -461,6 +461,29 @@ def _profile_input(artist_key: str, db_path: Optional[Path] = None, listens: Opt
     return fence_untrusted("lyrics", "\n\n".join(parts)), len(used), used
 
 
+# The model under-reports profanity (live 2026-09-15: 2Pac and +44 came back
+# explicit=false with "motherfuckin" and "fuck" in its own quotes), so the
+# flag gets a deterministic backstop: strong words counted in the lyrics the
+# model was shown. Whole words, case-insensitive; two hits make it explicit.
+_PROFANITY = ("fuck", "fucking", "fucked", "motherfucker", "motherfuckin", "motherfucking", "shit", "bitch",
+              "bitches", "cunt", "pussy", "asshole", "whore", "slut", "nigga", "niggas", "nigger",
+              "fick", "ficken", "fotze", "hurensohn", "wichser", "schlampe")
+_PROFANITY_RX = re.compile(r"\b(" + "|".join(_PROFANITY) + r")\b", re.I)
+_PROFANITY_HITS = 2
+
+
+def _verbatim_quote(candidate: str, low_block: str) -> Optional[str]:
+    """The candidate itself, or its first ' / ' segment, when it occurs
+    verbatim in the shown lyrics and fits the word cap — the model likes to
+    join several lines with slashes, which is not a line."""
+    parts = [candidate] + [p.strip() for p in candidate.split(" / ") if p.strip()]
+    for q in parts:
+        q = q.strip().strip('"“”‘’\'')
+        if q and len(q.split()) <= _MAX_QUOTE_WORDS and q.lower() in low_block:
+            return q
+    return None
+
+
 def _clean_profile(obj, block: str) -> Optional[dict]:
     """The model's JSON reduced to what we keep, or None when unusable.
     Quotes survive only when they occur verbatim in what the model was
@@ -473,17 +496,22 @@ def _clean_profile(obj, block: str) -> Optional[dict]:
         return None
     low = block.lower()
     quotes = []
-    for q in (obj.get("quotes") or [])[:6]:
-        q = str(q).strip().strip('"“”‘’\'')
-        if q and len(q.split()) <= _MAX_QUOTE_WORDS and q.lower() in low and q not in quotes:
+    for cand in (obj.get("quotes") or [])[:6]:
+        q = _verbatim_quote(str(cand), low)
+        if q and q not in quotes:
             quotes.append(q)
     tone = [str(x).strip().lower() for x in (obj.get("tone") or []) if str(x).strip().lower() in _MOODS][:3]
+    explicit = bool(obj.get("explicit"))
+    note = str(obj.get("explicit_note") or "").strip()[:160]
+    hits = len(_PROFANITY_RX.findall(block))
+    if hits >= _PROFANITY_HITS and not explicit:
+        explicit, note = True, f"profanity in the lyrics ({hits} hits in the sample)"
     return {
         "lyrical_profile": prof[:600],
         "themes": themes,
         "languages": [str(x).strip() for x in (obj.get("languages") or []) if str(x).strip()][:4],
-        "explicit": bool(obj.get("explicit")),
-        "explicit_note": str(obj.get("explicit_note") or "").strip()[:160],
+        "explicit": explicit,
+        "explicit_note": note if explicit else "",
         "motifs": [str(x).strip() for x in (obj.get("motifs") or []) if str(x).strip()][:6],
         "tone": tone,
         "quotes": quotes[:3],
