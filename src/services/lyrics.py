@@ -41,7 +41,14 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-LYRICS_DB_PATH = Path(str(settings.ENRICHMENT_CACHE)).parent / "lyrics.db"
+# One SQLite for everything the walk learns about the Plex music library:
+# the tracks with their lyric streams and sizes, the artists with their
+# MusicBrainz ids (94 % of the owner's artists carry an mbid:// guid), the
+# lyrics profiles. Since 2026-09-15 this is also the Plex-first MUSIC INDEX —
+# deletion candidates, the Music page and the curator's discography evidence
+# read it when Lidarr is not configured (Lidarr is optional).
+PLEX_MUSIC_DB_PATH = Path(str(settings.ENRICHMENT_CACHE)).parent / "plex_music.db"
+LYRICS_DB_PATH = PLEX_MUSIC_DB_PATH
 _PAGE = 400                  # Plex container size per listing page
 _FETCH_BUDGET = 4000         # stream texts per run (~100 s on the LAN); the rest continues next tick
 _CONCURRENCY = 4             # parallel text fetches against the LAN server
@@ -81,10 +88,26 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
             checked_at      TEXT NOT NULL,      -- last listing that saw the track
             fetched_at      TEXT,
             failed_at       TEXT,               -- last fetch Plex refused (404: sidecar moved)
-            gone            INTEGER NOT NULL DEFAULT 0
+            gone            INTEGER NOT NULL DEFAULT 0,
+            size_bytes      INTEGER NOT NULL DEFAULT 0,   -- every version's part, the real footprint
+            added_at        INTEGER,                      -- Plex addedAt (epoch)
+            album_year      INTEGER
         );
         CREATE INDEX IF NOT EXISTS ix_track_lyrics_artist ON track_lyrics(artist_key);
         CREATE TABLE IF NOT EXISTS lyrics_meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS plex_artists (
+            artist_key      TEXT PRIMARY KEY,
+            name            TEXT,
+            mbid            TEXT,               -- from the mbid:// guid, NULL when Plex has none
+            added_at        INTEGER,
+            albums          INTEGER NOT NULL DEFAULT 0,
+            tracks          INTEGER NOT NULL DEFAULT 0,
+            size_bytes      INTEGER NOT NULL DEFAULT 0,
+            with_text       INTEGER NOT NULL DEFAULT 0,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_plex_artists_mbid ON plex_artists(mbid);
+        CREATE INDEX IF NOT EXISTS ix_plex_artists_name ON plex_artists(name);
         CREATE TABLE IF NOT EXISTS artist_profiles (
             artist_key      TEXT PRIMARY KEY,
             artist          TEXT,
@@ -94,6 +117,12 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
             created_at      TEXT NOT NULL
         );
     """)
+    # additive columns for a DB created before 2026-09-15 (a scratch run)
+    have = {r[1] for r in con.execute("PRAGMA table_info(track_lyrics)")}
+    for col, ddl in (("size_bytes", "INTEGER NOT NULL DEFAULT 0"), ("added_at", "INTEGER"), ("album_year", "INTEGER")):
+        if col not in have:
+            con.execute(f"ALTER TABLE track_lyrics ADD COLUMN {col} {ddl}")
+    con.commit()
     return con
 
 
@@ -146,15 +175,51 @@ def _lyric_stream(item: dict) -> tuple:
 
 # ── the walk ─────────────────────────────────────────────────────────────────
 
+def _artist_mbid(item: dict) -> Optional[str]:
+    for g in item.get("Guid") or []:
+        gid = str(g.get("id") or "")
+        if gid.startswith("mbid://"):
+            return gid[len("mbid://"):] or None
+    return None
+
+
+def _index_artists(con, artists: list, stamp: str, complete: bool) -> int:
+    """Rebuild plex_artists from the artist listing (name, mbid, addedAt) and
+    the live track rows (albums, tracks, size, texts). After a COMPLETE walk
+    an artist without live tracks is dropped. Returns the artist count."""
+    for a in artists:
+        key = str(a.get("ratingKey") or "")
+        if not key:
+            continue
+        con.execute("""INSERT INTO plex_artists (artist_key, name, mbid, added_at, updated_at) VALUES (?,?,?,?,?)
+                       ON CONFLICT(artist_key) DO UPDATE SET name=excluded.name, mbid=excluded.mbid,
+                           added_at=excluded.added_at, updated_at=excluded.updated_at""",
+                    (key, a.get("title"), _artist_mbid(a), a.get("addedAt"), stamp))
+    # artists the track walk knows but the artist listing did not deliver (a broken page)
+    con.execute("""INSERT OR IGNORE INTO plex_artists (artist_key, name, updated_at)
+                   SELECT artist_key, MAX(artist), ? FROM track_lyrics WHERE gone=0 AND artist_key <> ''
+                   GROUP BY artist_key""", (stamp,))
+    con.execute("""UPDATE plex_artists SET
+                       albums = (SELECT COUNT(DISTINCT album_key) FROM track_lyrics t WHERE t.artist_key=plex_artists.artist_key AND t.gone=0),
+                       tracks = (SELECT COUNT(*) FROM track_lyrics t WHERE t.artist_key=plex_artists.artist_key AND t.gone=0),
+                       size_bytes = (SELECT COALESCE(SUM(size_bytes),0) FROM track_lyrics t WHERE t.artist_key=plex_artists.artist_key AND t.gone=0),
+                       with_text = (SELECT COUNT(*) FROM track_lyrics t WHERE t.artist_key=plex_artists.artist_key AND t.gone=0 AND t.lines>0)""")
+    if complete:
+        con.execute("DELETE FROM plex_artists WHERE tracks = 0")
+    return con.execute("SELECT COUNT(*) FROM plex_artists").fetchone()[0]
+
+
 async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: FetchText, *,
-                      db_path: Optional[Path] = None, budget: Optional[int] = None,
+                      list_artists=None, db_path: Optional[Path] = None, budget: Optional[int] = None,
                       task=None, now: Optional[datetime] = None) -> dict:
     """One run over ``sections`` ([(key, title), ...]). Lists every track,
-    upserts its identity and stream, fetches the text of every new or
-    changed stream up to ``budget``, drops text whose stream vanished, and
-    marks tracks a COMPLETE listing no longer contains as gone. A stream
-    Plex refused is left alone for ``_RETRY_DAYS`` unless its key changes.
-    Returns the run's numbers; ``done`` is False when the budget ran out."""
+    upserts its identity, size and stream, fetches the text of every new or
+    changed stream up to ``budget``, drops text whose stream vanished, marks
+    tracks a COMPLETE listing no longer contains as gone, and rebuilds the
+    artist index (``list_artists``: section key → artist items with guids,
+    optional). A stream Plex refused is left alone for ``_RETRY_DAYS`` unless
+    its key changes. Returns the run's numbers; ``done`` is False when the
+    budget ran out."""
     now = now or datetime.utcnow()
     stamp = now.isoformat()
     budget = _FETCH_BUDGET if budget is None else budget
@@ -163,6 +228,7 @@ async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: Fetch
     try:
         seen = 0
         to_fetch = []
+        artists = []
         complete = bool(sections)
         for sec_key, sec_title in sections:
             items = await list_tracks(sec_key)
@@ -170,6 +236,12 @@ async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: Fetch
                 complete = False
                 logger.warning("[lyrics] listing of section %r broke — nothing is marked gone this run", sec_title)
                 continue
+            if list_artists is not None:
+                arts = await list_artists(sec_key)
+                if arts is None:
+                    complete = False
+                else:
+                    artists.extend(arts)
             for it in items:
                 key = str(it.get("ratingKey") or "")
                 if not key:
@@ -179,18 +251,22 @@ async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: Fetch
                 row = con.execute("SELECT stream_key, text, failed_at FROM track_lyrics WHERE plex_rating_key=?",
                                   (key,)).fetchone()
                 changed = row is not None and (row["stream_key"] or None) != skey
+                size = sum((p.get("size") or 0) for m in (it.get("Media") or []) for p in (m.get("Part") or []))
                 con.execute(
                     """INSERT INTO track_lyrics (plex_rating_key, artist_key, album_key, artist, album, title,
-                                                 duration_ms, stream_key, fmt, checked_at, gone)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,0)
+                                                 duration_ms, stream_key, fmt, checked_at, gone,
+                                                 size_bytes, added_at, album_year)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?)
                        ON CONFLICT(plex_rating_key) DO UPDATE SET
                            artist_key=excluded.artist_key, album_key=excluded.album_key,
                            artist=excluded.artist, album=excluded.album, title=excluded.title,
                            duration_ms=excluded.duration_ms, stream_key=excluded.stream_key,
-                           fmt=excluded.fmt, checked_at=excluded.checked_at, gone=0""",
+                           fmt=excluded.fmt, checked_at=excluded.checked_at, gone=0,
+                           size_bytes=excluded.size_bytes, added_at=excluded.added_at,
+                           album_year=excluded.album_year""",
                     (key, str(it.get("grandparentRatingKey") or ""), str(it.get("parentRatingKey") or ""),
                      it.get("grandparentTitle"), it.get("parentTitle"), it.get("title"),
-                     it.get("duration"), skey, fmt, stamp))
+                     it.get("duration"), skey, fmt, stamp, int(size), it.get("addedAt"), it.get("parentYear")))
                 if changed:
                     # a new sidecar replaced the old one, or it went away:
                     # never serve the previous text as if it were current
@@ -238,11 +314,12 @@ async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: Fetch
         gone = 0
         if complete:
             gone = con.execute("UPDATE track_lyrics SET gone=1 WHERE checked_at <> ? AND gone=0", (stamp,)).rowcount
+        n_artists = _index_artists(con, artists, stamp, complete)
         result = {
             "listed": seen, "with_stream": seen and con.execute(
                 "SELECT COUNT(*) FROM track_lyrics WHERE gone=0 AND stream_key IS NOT NULL").fetchone()[0],
             "fetched": fetched, "failed": failed, "pending": len(to_fetch) - len(batch),
-            "gone_marked": gone, "complete": complete, "done": len(to_fetch) <= budget,
+            "gone_marked": gone, "artists": n_artists, "complete": complete, "done": len(to_fetch) <= budget,
         }
         con.execute("INSERT OR REPLACE INTO lyrics_meta (key, value) VALUES ('last_run', ?)", (stamp,))
         con.execute("INSERT OR REPLACE INTO lyrics_meta (key, value) VALUES ('last_result', ?)",
@@ -276,6 +353,8 @@ def lyrics_coverage(db_path: Optional[Path] = None) -> dict:
             "unreachable": r["unreachable"] or 0,
             "artists": r["artists"] or 0, "artists_with_text": r["artists_with_text"] or 0,
             "profiles": p["n"] or 0, "explicit_artists": p["explicit"] or 0,
+            "artists_indexed": con.execute("SELECT COUNT(*) FROM plex_artists WHERE tracks > 0").fetchone()[0],
+            "size_gb": round((con.execute("SELECT COALESCE(SUM(size_bytes),0) FROM track_lyrics WHERE gone=0").fetchone()[0] or 0) / 1e9, 1),
             "last_run": meta.get("last_run"),
             "last_result": json.loads(meta["last_result"]) if meta.get("last_result") else None,
         }
@@ -305,6 +384,65 @@ def artist_tracks(artist_key: str, db_path: Optional[Path] = None) -> list:
             SELECT plex_rating_key, album_key, album, title, lines, text, duration_ms
             FROM track_lyrics WHERE gone=0 AND artist_key=? AND lines > 0
             ORDER BY album, title""", (artist_key,))]
+    finally:
+        con.close()
+
+
+# ── the Plex music index (Lidarr optional, 2026-09-15) ──────────────────────
+
+def plex_artists(db_path: Optional[Path] = None) -> list:
+    """Every artist Plex has, with mbid, album/track counts, footprint and
+    lyrics on file — the music library index when Lidarr is not configured."""
+    con = _connect(db_path)
+    try:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM plex_artists WHERE tracks > 0 ORDER BY name COLLATE NOCASE")]
+    finally:
+        con.close()
+
+
+def plex_artist(artist_key: str, db_path: Optional[Path] = None) -> Optional[dict]:
+    con = _connect(db_path)
+    try:
+        r = con.execute("SELECT * FROM plex_artists WHERE artist_key=?", (str(artist_key),)).fetchone()
+        return dict(r) if r else None
+    finally:
+        con.close()
+
+
+def plex_artist_lookup(name: Optional[str] = None, mbid: Optional[str] = None,
+                       db_path: Optional[Path] = None) -> Optional[dict]:
+    """By MusicBrainz id first (exact), then by name (case-insensitive,
+    dashes folded) — the order every music resolver here uses."""
+    con = _connect(db_path)
+    try:
+        if mbid:
+            r = con.execute("SELECT * FROM plex_artists WHERE mbid=? AND tracks > 0", (mbid,)).fetchone()
+            if r:
+                return dict(r)
+        if name:
+            want = _norm(name)
+            for r in con.execute("SELECT * FROM plex_artists WHERE tracks > 0 AND lower(name)=lower(?)", (name,)):
+                return dict(r)
+            for r in con.execute("SELECT * FROM plex_artists WHERE tracks > 0"):
+                if _norm(r["name"]) == want:
+                    return dict(r)
+        return None
+    finally:
+        con.close()
+
+
+def plex_artist_albums(artist_key: str, db_path: Optional[Path] = None) -> list:
+    """The artist's albums from the track rows: title, year, tracks, size,
+    texts on file — oldest first."""
+    con = _connect(db_path)
+    try:
+        return [dict(r) for r in con.execute("""
+            SELECT album_key, MAX(album) AS album, MAX(album_year) AS year, COUNT(*) AS tracks,
+                   COALESCE(SUM(size_bytes),0) AS size_bytes,
+                   SUM(CASE WHEN lines > 0 THEN 1 ELSE 0 END) AS with_text
+            FROM track_lyrics WHERE gone=0 AND artist_key=?
+            GROUP BY album_key ORDER BY year, album""", (str(artist_key),))]
     finally:
         con.close()
 
@@ -780,6 +918,27 @@ async def run_lyrics_sync(task=None) -> bool:
                 return None
             return r.content if r.status_code == 200 else None
 
-        res = await sync_lyrics(sections, list_tracks, fetch_text, task=task)
+        async def list_artists(sec_key: str):
+            out, start = [], 0
+            while True:
+                try:
+                    r = await client.get(
+                        f"{base}/library/sections/{sec_key}/all",
+                        headers={**headers, "X-Plex-Container-Start": str(start),
+                                 "X-Plex-Container-Size": str(_PAGE)},
+                        params={"type": 8, "includeGuids": "1"})
+                except Exception as e:
+                    logger.warning("[lyrics] artist listing %s at %d failed: %s", sec_key, start, e)
+                    return None
+                if r.status_code != 200:
+                    logger.warning("[lyrics] artist listing %s at %d: HTTP %s", sec_key, start, r.status_code)
+                    return None
+                items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
+                out.extend(items)
+                if len(items) < _PAGE:
+                    return out
+                start += _PAGE
+
+        res = await sync_lyrics(sections, list_tracks, fetch_text, list_artists=list_artists, task=task)
     logger.info("[lyrics] run: %s", res)
     return bool(res.get("done"))

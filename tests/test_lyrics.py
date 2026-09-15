@@ -25,13 +25,20 @@ def _db(name):
     return _TMP / f"{name}.db"
 
 
-def _track(key, artist_key, title, stream=None, fmt="lrc", album_key="al1", artist="Artist", album="Album"):
+def _track(key, artist_key, title, stream=None, fmt="lrc", album_key="al1", artist="Artist", album="Album",
+           size=1000, year=None, versions=1):
     streams = [{"streamType": 2, "codec": "flac"}]
     if stream:
         streams.append({"streamType": 4, "codec": fmt, "key": stream})
     return {"ratingKey": key, "grandparentRatingKey": artist_key, "parentRatingKey": album_key,
             "grandparentTitle": artist, "parentTitle": album, "title": title, "duration": 200000,
-            "Media": [{"Part": [{"Stream": streams}]}]}
+            "parentYear": year, "addedAt": 1700000000,
+            "Media": [{"Part": [{"size": size, "Stream": streams}]}] * versions}
+
+
+def _artist(key, name, mbid=None):
+    return {"ratingKey": key, "title": name, "addedAt": 1690000000,
+            "Guid": ([{"id": f"mbid://{mbid}"}] if mbid else [])}
 
 
 class _Plex:
@@ -196,6 +203,47 @@ def test_music_sections_come_from_plex_when_libraries_has_none_mapped():
     assert asyncio.run(ly._discover_music_sections(ok, "http://plex", {})) == [("14", "Music"), ("16", "Audiobooks")]
     assert asyncio.run(ly._discover_music_sections(_SectionsClient(_Resp(401, {})), "http://plex", {})) == []
     assert asyncio.run(ly._discover_music_sections(_SectionsClient(ConnectionError("down")), "http://plex", {})) == []
+
+
+def test_the_artist_index_follows_the_walk():
+    """Lidarr optional (2026-09-15): the same walk that collects lyrics is the
+    Plex music index — artists with mbid, albums, tracks, footprint."""
+    tracks = {"14": [_track("1", "a1", "One", "/library/streams/11", album_key="al1", album="First", year=1999, size=5000),
+                     _track("2", "a1", "Two", album_key="al1", album="First", year=1999, size=3000, versions=2),
+                     _track("3", "a1", "Three", album_key="al2", album="Second", year=2004, size=2000),
+                     _track("4", "a2", "Four", artist="Other", album_key="al9", album="Solo", size=100)]}
+    artists = {"14": [_artist("a1", "Artist", "11111111-2222-3333-4444-555555555555"), _artist("a2", "Other")]}
+    plex = _Plex(tracks, {"/library/streams/11": b"words\n"})
+
+    async def list_artists(sec):
+        return artists.get(sec)
+
+    res = asyncio.run(ly.sync_lyrics([("14", "Music")], plex.list_tracks, plex.fetch_text,
+                                     list_artists=list_artists, db_path=_db("index")))
+    assert res["artists"] == 2
+    a1 = ly.plex_artist("a1", _db("index"))
+    assert (a1["name"], a1["mbid"], a1["albums"], a1["tracks"], a1["size_bytes"], a1["with_text"]) == \
+        ("Artist", "11111111-2222-3333-4444-555555555555", 2, 3, 13000, 1), a1   # 5000 + 2×3000 + 2000
+    assert ly.plex_artist_lookup(mbid="11111111-2222-3333-4444-555555555555", db_path=_db("index"))["artist_key"] == "a1"
+    assert ly.plex_artist_lookup(name="other", db_path=_db("index"))["artist_key"] == "a2"
+    assert ly.plex_artist_lookup(name="nobody", db_path=_db("index")) is None
+    albums = ly.plex_artist_albums("a1", _db("index"))
+    assert [(x["album"], x["year"], x["tracks"], x["size_bytes"], x["with_text"]) for x in albums] == \
+        [("First", 1999, 2, 11000, 1), ("Second", 2004, 1, 2000, 0)]
+    cov = ly.lyrics_coverage(_db("index"))
+    assert cov["artists_indexed"] == 2 and cov["size_gb"] == 0.0
+    # the artist listing broke: names come from the tracks, nothing is dropped
+    artists["14"] = None
+    del tracks["14"][3]
+    res = asyncio.run(ly.sync_lyrics([("14", "Music")], plex.list_tracks, plex.fetch_text,
+                                     list_artists=list_artists, db_path=_db("index")))
+    assert res["complete"] is False and res["artists"] == 2
+    # a complete walk without the second artist drops it from the index
+    artists["14"] = [_artist("a1", "Artist", "11111111-2222-3333-4444-555555555555")]
+    res = asyncio.run(ly.sync_lyrics([("14", "Music")], plex.list_tracks, plex.fetch_text,
+                                     list_artists=list_artists, db_path=_db("index")))
+    assert res["complete"] is True and res["artists"] == 1
+    assert [a["artist_key"] for a in ly.plex_artists(_db("index"))] == ["a1"]
 
 
 def test_the_custodian_runs_the_collector_with_its_activity_card():
