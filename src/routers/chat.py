@@ -2566,6 +2566,31 @@ async def send_message(
     # to another so topics can't bleed across discussions.
     thread_id = _thread_id_for(message.discuss_context)
 
+    # 0b. Can the curator answer at all? It is a 19.9 GB model, and while
+    # another program holds the GPU Ollama cannot even start its model
+    # server for it — measured 2026-09-15 against the owner's card at
+    # 17.5/24.5 GB and 90 %: the request died after 304 s with "timed out
+    # waiting for llama-server to start", which is what the enrichment's
+    # summariser timeouts had been all along. Checked HERE, ahead of the
+    # context assembly below (discuss lookups, RAG, taste, memories) and
+    # ahead of the in-flight guard and the priority gate: nothing is built
+    # and nothing is held for an answer that cannot come. The user's own
+    # message is still saved, so the thread reads as a normal exchange.
+    from src.services.llm_lane import busy_message, curator_available
+    _curator_ok, _curator_why = curator_available()
+    if not _curator_ok:
+        _busy_text = busy_message(_curator_why)
+        _save_message(user.id, "user", message.message, db, thread_id=thread_id)
+        _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
+        logger.info("[chat] curator unavailable (%s) — answered with the GPU-busy notice",
+                    _curator_why or "GPU held")
+
+        async def _gpu_busy_reply() -> AsyncGenerator[str, None]:
+            yield f"data: {json.dumps({'token': _busy_text})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        return StreamingResponse(_gpu_busy_reply(), media_type="text/event-stream")
+
     # 1. CONTEXT PRE-LOADING & METADATA FETCHING
     active_title = ""
     hidden_metadata_context = ""
@@ -3118,27 +3143,6 @@ FORMATTING RULES:
 
     # 4. Save user message to history (scoped to the active thread)
     _save_message(user.id, "user", message.message, db, thread_id=thread_id)
-
-    # 4b. The curator is a 19.9 GB model. While another program holds the
-    # GPU, Ollama cannot even start its model server for it — measured on
-    # 2026-09-15 against the owner's card at 17.5/24.5 GB and 90 %: the
-    # request died after 304 s with "timed out waiting for llama-server to
-    # start". So say it, in the curator's own bubble, instead of letting the
-    # user watch a spinner die. Checked HERE, before the in-flight guard and
-    # the priority gate are taken, so nothing has to be released.
-    from src.services.llm_lane import busy_message, curator_available
-    _curator_ok, _curator_why = curator_available()
-    if not _curator_ok:
-        _busy_text = busy_message(_curator_why)
-        _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
-        logger.info("[chat] curator unavailable (%s) — answered with the GPU-busy notice",
-                    _curator_why or "GPU held")
-
-        async def _gpu_busy_reply() -> AsyncGenerator[str, None]:
-            yield f"data: {json.dumps({'token': _busy_text})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
-
-        return StreamingResponse(_gpu_busy_reply(), media_type="text/event-stream")
 
     # 5. Stream from Ollama
     async def generate() -> AsyncGenerator[str, None]:

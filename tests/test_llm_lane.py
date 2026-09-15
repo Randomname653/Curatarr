@@ -122,6 +122,11 @@ def test_the_wiring():
     assert "_rl.CHAT_IN_FLIGHT.enter_or_409" not in head, \
         "the notice returns before the in-flight guard is taken"
     assert 'await curator_start("chat")' not in head, "and before the priority gate"
+    assert "# 1. CONTEXT PRE-LOADING" not in head, \
+        "and before the context assembly — nothing is built for an answer that cannot come"
+    branch = chat.split("_curator_ok, _curator_why = curator_available()")[1].split("# 1. CONTEXT")[0]
+    assert '_save_message(user.id, "user"' in branch and '_save_message(user.id, "assistant"' in branch, \
+        "the thread still reads as a normal exchange"
 
     enr = (_ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
     assert "def _llm_yields() -> bool:" in enr and "if _llm_yields():" in enr
