@@ -252,6 +252,8 @@ constitution caps quotes at two short lines. Raw lyrics never reach a
 prompt or the UI.
 
 
+**A busy GPU counts as a game.** An image-generation job held the whole graphics card while the game detector, which knows game process names only, reported nothing: the enrichment ran into summariser timeouts for an hour and the custodian kept starting model work. A GPU saturated by something other than Ollama now sets the same flag every LLM-heavy path already yields to, after 45 seconds of sustained pressure; a host without nvidia-smi is left alone, and `GPU_PRESSURE_GATE=0` switches it off.
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the
