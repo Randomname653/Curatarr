@@ -476,9 +476,12 @@ def write_env(config: dict) -> None:
         f"OPENSUBTITLES_DAILY_BUDGET={config.get('opensubtitles_daily_budget', _live_settings().OPENSUBTITLES_DAILY_BUDGET)}",
         "",
         "# Sharing the GPU with another program (src/services/llm_lane.py)",
-        f"GPU_PRESSURE_GATE={'true' if config.get('gpu_pressure_gate', _live_settings().GPU_PRESSURE_GATE) else 'false'}",
-        f"LLM_CPU_LANE={'true' if config.get('llm_cpu_lane', _live_settings().LLM_CPU_LANE) else 'false'}",
-        f"LLM_CPU_THREADS={config.get('llm_cpu_threads', _live_settings().LLM_CPU_THREADS)}",
+        # getattr, not attribute access: write_env is exercised against stub
+        # settings objects, and a newly added key must not make the writer
+        # explode on one that predates it.
+        f"GPU_PRESSURE_GATE={'true' if config.get('gpu_pressure_gate', getattr(_live_settings(), 'GPU_PRESSURE_GATE', True)) else 'false'}",
+        f"LLM_CPU_LANE={'true' if config.get('llm_cpu_lane', getattr(_live_settings(), 'LLM_CPU_LANE', True)) else 'false'}",
+        f"LLM_CPU_THREADS={config.get('llm_cpu_threads', getattr(_live_settings(), 'LLM_CPU_THREADS', 6))}",
         "",
         "# Sync",
         # Live values, not literals: a wizard re-run used to reset an
