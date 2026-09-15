@@ -36,6 +36,9 @@ const ARR_TABS = {
 
 // Active tab per arr — survives tab switches but resets on page reload.
 const _arrActiveTab = { sonarr: 'all', radarr: 'all', lidarr: 'all' };
+// The tabs actually shown per arr: Lidarr's list shrinks to Library + Spotify
+// Backlog when the page runs on the Plex music index (no arr to add to).
+const _arrTabsEff = {};
 
 export async function loadArrPage(svc) {
   const tabsEl = document.getElementById(`arr-tabs-${svc}`);
@@ -52,7 +55,10 @@ export async function loadArrPage(svc) {
   }
 
   const info = (status || {})[svc] || {};
-  if (!info.configured) {
+  // Lidarr optional: the Music page runs on the Plex music index without it.
+  const viaPlex = svc === 'lidarr' && !info.configured && info.music_source === 'plex';
+  _arrTabsEff[svc] = viaPlex ? ARR_TABS[svc].filter(t => t.id === 'all' || t.id === 'backlog') : ARR_TABS[svc];
+  if (!info.configured && !viaPlex) {
     // Setup banner — admins get a CTA, non-admins get a "ask your admin"
     // message. The Settings → Library pane is admin-only, so showing the
     // Configure button to a non-admin would lead them to a hidden tab
@@ -77,7 +83,7 @@ export async function loadArrPage(svc) {
   }
 
   // Render tabs
-  const tabs = ARR_TABS[svc] || [];
+  const tabs = _arrTabsEff[svc] || ARR_TABS[svc] || [];
   tabsEl.innerHTML = tabs.map(t =>
     `<button class="arr-tab ${_arrActiveTab[svc] === t.id ? 'active' : ''}" ${act('setArrTab', svc, t.id)}>${esc(t.label)}</button>`
   ).join('');
@@ -87,7 +93,7 @@ export async function loadArrPage(svc) {
 export function setArrTab(svc, tabId) {
   _arrActiveTab[svc] = tabId;
   document.querySelectorAll(`#arr-tabs-${svc} .arr-tab`).forEach((b, i) => {
-    b.classList.toggle('active', (ARR_TABS[svc][i] || {}).id === tabId);
+    b.classList.toggle('active', ((_arrTabsEff[svc] || ARR_TABS[svc])[i] || {}).id === tabId);
   });
   renderArrTab(svc, tabId);
 }
@@ -165,6 +171,8 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
     ? `<span class="badge muted badge-sm" title="Fetched from ${esc(svc)} just now">live</span>`
     : ci.source === 'cache'
     ? `<span class="badge muted badge-sm" title="Served from the 15-min server cache (${ageStr})">cached ${ageStr}</span>`
+    : ci.source === 'plex-index'
+    ? '<span class="badge info badge-sm" title="Artists, albums and sizes from the Plex music index — Lidarr is not configured">Plex index</span>'
     : ci.source === 'stale'
     ? `<span class="badge amber badge-sm" title="${esc(svc)} unreachable: ${esc(ci.stale_error || 'connection failed')} — showing cache from ${ageStr}">stale ${ageStr}</span>`
     : '';

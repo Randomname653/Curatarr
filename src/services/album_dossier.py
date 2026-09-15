@@ -68,6 +68,31 @@ async def _lidarr_artist_albums(artist_name: str) -> tuple[Optional[dict], list]
         return None, []
 
 
+def _plex_album(artist_name: str, album_title: str) -> tuple:
+    """(artist_obj, album_obj, track titles) from the Plex music index in the
+    keys the Lidarr objects carry, or (None, None, [])."""
+    try:
+        from src.services.lyrics import plex_artist_lookup, plex_artist_albums, plex_album_tracks
+        a = plex_artist_lookup(name=artist_name)
+        if not a:
+            return None, None, []
+        want = _norm(album_title)
+        alb = next((x for x in plex_artist_albums(a["artist_key"]) if _norm(x.get("album")) == want), None)
+        if not alb:
+            return None, None, []
+        tracks = plex_album_tracks(alb["album_key"])
+    except Exception as e:
+        logger.debug("[album] plex index failed for %r / %r: %s", artist_name, album_title, e)
+        return None, None, []
+    artist_obj = {"id": a["artist_key"], "artistName": a.get("name"), "foreignArtistId": a.get("mbid")}
+    album_obj = {"id": alb["album_key"], "title": alb.get("album"),
+                 "releaseDate": f"{alb['year']}-01-01" if alb.get("year") else "",
+                 "albumType": "Album", "secondaryTypes": [], "monitored": True,
+                 "statistics": {"trackFileCount": alb.get("tracks") or 0, "trackCount": alb.get("tracks") or 0,
+                                "sizeOnDisk": alb.get("size_bytes") or 0}}
+    return artist_obj, album_obj, [t.get("title") for t in tracks if t.get("title")]
+
+
 def find_album(albums: list, album_title: str) -> Optional[dict]:
     want = _norm(album_title)
     return next((a for a in albums if _norm(a.get("title")) == want), None)
@@ -76,11 +101,14 @@ def find_album(albums: list, album_title: str) -> Optional[dict]:
 async def build_album_dossier(artist_name: str, album_title: str) -> Optional[str]:
     """One evidence block for a single album, or None when the album isn't
     in Lidarr under this artist. Deterministic — every number has a source."""
+    tnames_plex = None
     artist, albums = await _lidarr_artist_albums(artist_name)
-    if not artist:
-        return None
-    alb = find_album(albums, album_title)
-    if not alb:
+    if artist:
+        alb = find_album(albums, album_title)
+    else:
+        # Lidarr optional (2026-09-15): the Plex music index in the same shape
+        artist, alb, tnames_plex = _plex_album(artist_name, album_title)
+    if not artist or not alb:
         return None
 
     lines = []
@@ -98,8 +126,10 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
     lines.append(f"On disk: {files}/{total_t} tracks, {size:.2f} GB")
 
     # album tracklist -> owner plays (LAN + one history query)
-    tnames: list[str] = []
+    tnames: list[str] = list(tnames_plex or [])
     try:
+        if tnames or not settings.LIDARR_URL:
+            raise LookupError("tracklist known, or no Lidarr")
         base = settings.LIDARR_URL.rstrip("/")
         async with httpx.AsyncClient(timeout=15) as c:
             tracks = (await c.get(f"{base}/api/v1/track",

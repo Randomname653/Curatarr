@@ -447,6 +447,17 @@ def plex_artist_albums(artist_key: str, db_path: Optional[Path] = None) -> list:
         con.close()
 
 
+def plex_album_tracks(album_key: str, db_path: Optional[Path] = None) -> list:
+    """The album's tracks: key, title, size, lyric lines on file."""
+    con = _connect(db_path)
+    try:
+        return [dict(r) for r in con.execute("""
+            SELECT plex_rating_key, title, size_bytes, lines, duration_ms
+            FROM track_lyrics WHERE gone=0 AND album_key=? ORDER BY title""", (str(album_key),))]
+    finally:
+        con.close()
+
+
 def mark_artist_gone(artist_key: str, db_path: Optional[Path] = None) -> None:
     """After Plex deleted an artist: out of the index at once, so the next
     proposal run (before the daily walk confirms it) cannot re-propose it."""
