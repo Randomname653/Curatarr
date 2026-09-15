@@ -361,6 +361,9 @@ def current_env_config() -> dict:
         "opensubtitles_username":     s.OPENSUBTITLES_USERNAME or "",
         "opensubtitles_password":     s.OPENSUBTITLES_PASSWORD or "",
         "opensubtitles_daily_budget": s.OPENSUBTITLES_DAILY_BUDGET,
+        "gpu_pressure_gate":     bool(getattr(s, "GPU_PRESSURE_GATE", True)),
+        "llm_cpu_lane":          bool(getattr(s, "LLM_CPU_LANE", True)),
+        "llm_cpu_threads":       int(getattr(s, "LLM_CPU_THREADS", 6)),
         "jwt_secret":            s.effective_jwt_secret,
     }
 
@@ -471,6 +474,11 @@ def write_env(config: dict) -> None:
         f"OPENSUBTITLES_USERNAME={config.get('opensubtitles_username', _live_settings().OPENSUBTITLES_USERNAME or '')}",
         f"OPENSUBTITLES_PASSWORD={_plain(config.get('opensubtitles_password', _live_settings().OPENSUBTITLES_PASSWORD or ''))}",
         f"OPENSUBTITLES_DAILY_BUDGET={config.get('opensubtitles_daily_budget', _live_settings().OPENSUBTITLES_DAILY_BUDGET)}",
+        "",
+        "# Sharing the GPU with another program (src/services/llm_lane.py)",
+        f"GPU_PRESSURE_GATE={'true' if config.get('gpu_pressure_gate', _live_settings().GPU_PRESSURE_GATE) else 'false'}",
+        f"LLM_CPU_LANE={'true' if config.get('llm_cpu_lane', _live_settings().LLM_CPU_LANE) else 'false'}",
+        f"LLM_CPU_THREADS={config.get('llm_cpu_threads', _live_settings().LLM_CPU_THREADS)}",
         "",
         "# Sync",
         # Live values, not literals: a wizard re-run used to reset an
@@ -875,6 +883,37 @@ SETUP_FIELDS = [
         "help": "Large model for chat and recommendations. Must be pulled in Ollama.",
         "category": "ollama",
         "type": "model_select",
+    },
+    {
+        "id": "llm_cpu_lane",
+        "label": "Keep working when the GPU is busy",
+        "required": False,
+        "default": True,
+        "type": "toggle",
+        "help": ("While another program holds the graphics card, background work — enrichment, "
+                 "lyrics profiles, memory extraction — runs on the processor instead of stopping. "
+                 "A conversation still needs the card back."),
+        "category": "ollama",
+    },
+    {
+        "id": "llm_cpu_threads",
+        "label": "Processor threads for that work",
+        "required": False,
+        "default": 6,
+        "type": "number",
+        "help": ("Six measured as fast as twelve: generation is limited by memory bandwidth, not "
+                 "cores, so the rest stays with whatever is holding the card."),
+        "category": "ollama",
+    },
+    {
+        "id": "gpu_pressure_gate",
+        "label": "Notice when another program holds the GPU",
+        "required": False,
+        "default": True,
+        "type": "toggle",
+        "help": ("Treat a graphics card saturated by something other than Ollama like a running "
+                 "game. Off means Curatarr competes for it."),
+        "category": "ollama",
     },
     {
         "id": "base_summarizer_model",

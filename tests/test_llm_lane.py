@@ -94,6 +94,72 @@ def test_the_options_helpers_carry_the_placement():
     assert ollama_options(0.1, 10, num_thread=3)["options"]["num_thread"] == 3
 
 
+def test_the_watcher_records_the_lane_and_the_badge_names_it():
+    sched = (_ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
+    watcher = sched.split("async def job_game_watcher()")[1].split("\nasync def ")[0]
+    assert 'set_state("llm_lane", mode)' in watcher and 'set_state("llm_lane_reason"' in watcher
+    assert 'logger.info("[lane] %s -> %s%s"' in watcher, "every change lands in the log"
+    assert "if mode != previous:" in watcher, "logged on transition, not every 30 s"
+    for mode in ('"game"', '"cpu"', '"paused"', '"free"'):
+        assert mode in watcher, mode
+
+    pm = (_ROOT / "src/routers/process_monitor.py").read_text(encoding="utf-8")
+    assert '"lane": lane,' in pm and '"lane_reason"' in pm
+    assert 'get_state("llm_lane")' in pm and "before the first tick" in pm
+
+    js = (_ROOT / "frontend/js/game.js").read_text(encoding="utf-8")
+    assert "export function _renderLaneBadge" in js
+    for key in ("game:", "cpu:", "paused:"):
+        assert key in js.split("const LANE_BADGE")[1][:900], key
+    assert "indicator.classList.toggle('busy'" in js, "amber for a held card, green stays for a game"
+    assert "statusR.lane_reason" in js, "the occupancy shows in the tooltip"
+    html = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    assert 'id="game-indicator-label"' in html
+    css = (_ROOT / "frontend/css/app.css").read_text(encoding="utf-8")
+    assert "#game-indicator.busy" in css and "var(--amber)" in css.split("#game-indicator.busy")[1][:200]
+
+
+def test_the_setting_is_asked_at_setup_and_changeable_later():
+    import tempfile
+    import src.services.setup_wizard as sw
+
+    ids = {f["id"] for f in sw.SETUP_FIELDS}
+    assert {"gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"} <= ids, "the wizard knows them"
+    cfg = sw.current_env_config()
+    assert cfg["llm_cpu_lane"] is True and cfg["llm_cpu_threads"] == 6 and cfg["gpu_pressure_gate"] is True
+
+    from src.routers.setup import ReconfigureRequest, SetupCompleteRequest
+    for model in (ReconfigureRequest, SetupCompleteRequest):
+        assert {"gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"} <= set(model.model_fields), model.__name__
+
+    # write_env round-trip into a throwaway file — never the live .env
+    tmp = pathlib.Path(tempfile.mkdtemp()) / ".env"
+    tmp.write_text("KEEP_ME=yes\n", encoding="utf-8")
+    old_path = sw.ENV_PATH
+    sw.ENV_PATH = tmp
+    try:
+        changed = sw.merge_env_config(cfg, {"llm_cpu_lane": False, "llm_cpu_threads": 12,
+                                            "gpu_pressure_gate": False})
+        sw.write_env(changed)
+        written = tmp.read_text(encoding="utf-8")
+    finally:
+        sw.ENV_PATH = old_path
+    assert "LLM_CPU_LANE=false" in written and "LLM_CPU_THREADS=12" in written
+    assert "GPU_PRESSURE_GATE=false" in written
+    assert "KEEP_ME=yes" in written, "hand-added keys survive a rewrite"
+
+    js = (_ROOT / "frontend/js/settings.js").read_text(encoding="utf-8")
+    card = js.split("{key: 'gpu'")[1].split("]},")[0]
+    for fid in ("gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"):
+        assert fid in card, fid
+    assert "toggle: true" in card and "number: true" in card
+    assert "card.hint" in js, "the card explains itself"
+    wiz = (_ROOT / "frontend/js/setup.js").read_text(encoding="utf-8")
+    assert 'id="s-cpu-lane"' in wiz and 'id="s-cpu-threads"' in wiz
+    assert "state.setupData.llm_cpu_lane = !!document.getElementById('s-cpu-lane')?.checked;" in wiz
+    assert "state.setupData.llm_cpu_threads = parseInt(" in wiz
+
+
 def test_the_wiring():
     utils = (_ROOT / "src/services/llm_utils.py").read_text(encoding="utf-8")
     assert "**placement(SUMMARIZER), **extra" in utils

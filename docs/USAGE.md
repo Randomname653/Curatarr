@@ -118,9 +118,17 @@ Something else (an image generator, a benchmark, a game) is holding the
 graphics card, and the curator's model is too large to load next to it.
 Background work keeps running on the processor, so enrichment and lyrics
 profiles stay current; only the conversation waits. End the job that holds
-the card, or come back when it is done. `LLM_CPU_LANE=0` in `.env` goes
-back to pausing all model work instead, `LLM_CPU_THREADS` (default 6) sets
-how much of the processor the background work may take.
+the card, or come back when it is done. The badge in the top bar shows the
+same state — green **Game mode**, amber **GPU busy · CPU lane** while the
+background work continues, amber **GPU busy · paused** when it does not —
+and its tooltip names the occupancy.
+
+Settings → Integrations → **Sharing the graphics card** changes the
+behaviour without a restart: whether a busy card is noticed at all, whether
+the background work moves to the processor, and how many threads it may
+take (six by default, measured as fast as twelve). The setup wizard asks
+the same question on its Ollama step. In `.env` the keys are
+`GPU_PRESSURE_GATE`, `LLM_CPU_LANE` and `LLM_CPU_THREADS`.
 
 **"Curator running on CPU" banner**
 

@@ -71,6 +71,16 @@ const SETUP_CONTENT = {
         <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (recommended for the split)</option></select>
         <div id="pitcher-note" class="hint"></div>
       </div>
+    </div>
+    <div class="form-group mt-12">
+      <label class="row fs-13">
+        <input type="checkbox" id="s-cpu-lane" ${state.setupData.llm_cpu_lane === false ? '' : 'checked'}>
+        Keep working when something else takes the card
+      </label>
+      <div class="hint">An image generator, a benchmark or a game can hold the graphics card for hours. With this on, the background work — enrichment, lyrics profiles, memory extraction — moves to the processor instead of stopping, measured at about 145 s per item on a loaded 24 GB machine without touching the card. A conversation still needs the card back, and Curatarr says so instead of hanging.</div>
+      <label for="s-cpu-threads" class="mt-8">Processor threads for that work</label>
+      <input id="s-cpu-threads" type="number" min="1" max="64" value="${state.setupData.llm_cpu_threads || 6}">
+      <div class="hint">Six are as fast as twelve — generation is limited by memory bandwidth, not by cores — so the rest of the processor stays with whatever is holding the card.</div>
     </div>`,
 
   metadata: () => `
@@ -203,6 +213,8 @@ export function collectStep() {
     state.setupData.enable_pitcher = !!document.getElementById('s-pitcher-enable')?.checked;
     state.setupData.base_pitcher_model = document.getElementById('s-pitcher-model')?.value || 'qwen3.8:27b';
     state.setupData.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || state.setupData.vram_gb || null;
+    state.setupData.llm_cpu_lane = !!document.getElementById('s-cpu-lane')?.checked;
+    state.setupData.llm_cpu_threads = parseInt(document.getElementById('s-cpu-threads')?.value, 10) || 6;
   } else if (key === 'metadata') {
     state.setupData.listenbrainz_token = document.getElementById('s-listenbrainz')?.value?.trim() || '';
     state.setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';

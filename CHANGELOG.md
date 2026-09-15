@@ -263,8 +263,11 @@ taste vectors and lyrics profiles now keep going on the processor and your
 library stays current; six threads are as fast as twelve, so the rest of
 the machine stays with whatever is holding the card. A conversation needs
 the card back, and Curatarr says so in its own words instead of leaving you
-with a spinner. A detected game still parks everything. `LLM_CPU_LANE=0`
-turns the lane off, `LLM_CPU_THREADS` sets the budget.
+with a spinner. A detected game still parks everything. The badge in the
+top bar says which of the three it is instead of calling everything a
+game, the 30 s watcher records the state and logs every change, and the
+setup wizard asks for the behaviour while Settings → Integrations →
+"Sharing the graphics card" changes it later without a restart.
 
 **A busy GPU counts as a game.** An image-generation job held the whole graphics card while the game detector, which knows game process names only, reported nothing: the enrichment ran into summariser timeouts for an hour and the custodian kept starting model work. A GPU saturated by something other than Ollama now sets the same flag every LLM-heavy path already yields to, after 45 seconds of sustained pressure; a host without nvidia-smi is left alone, and `GPU_PRESSURE_GATE=0` switches it off.
 

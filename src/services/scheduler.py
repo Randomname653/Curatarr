@@ -137,9 +137,24 @@ async def job_game_watcher():
     """
     try:
         from src.services.process_monitor import is_game_running, unload_llm_models
-        from src.services.app_state import set_state
+        from src.services.app_state import get_state, set_state
+        from src.services.llm_lane import status as lane_status
         running = is_game_running()
         set_state("game_active", "1" if running else "0")
+        # The lane is a switch, so it gets watched like the game flag: one
+        # reading per tick, persisted for the UI and logged on every change,
+        # so the log tells the story afterwards instead of only the moment.
+        st = lane_status()
+        if st["gpu_pressed"]:
+            mode = "game" if st["game"] else ("cpu" if st["summarizer"] == "cpu" else "paused")
+        else:
+            mode = "game" if running else "free"
+        previous = get_state("llm_lane")
+        set_state("llm_lane", mode)
+        set_state("llm_lane_reason", st["reason"] or "")
+        if mode != previous:
+            logger.info("[lane] %s -> %s%s", previous or "unknown", mode,
+                        f" ({st['reason']})" if st["reason"] else "")
         if running:
             unloaded = await unload_llm_models()
             if unloaded:

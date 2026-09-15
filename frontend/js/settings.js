@@ -135,6 +135,13 @@ const INTEGRATION_CARDS = [
     {id: 'enable_pitcher', label: 'Dedicated deletion judge (two-bake split)', toggle: true},
     {id: 'base_pitcher_model', label: 'Judge model'},
   ]},
+  {key: 'gpu', title: 'Sharing the graphics card',
+   hint: 'What happens while another program holds the card. Applies live, no restart.',
+   fields: [
+    {id: 'gpu_pressure_gate', label: 'Notice when another program holds the card (treat it like a running game)', toggle: true},
+    {id: 'llm_cpu_lane', label: 'Keep the background work going on the processor instead of stopping it', toggle: true},
+    {id: 'llm_cpu_threads', label: 'Processor threads for that work (six measured as fast as twelve)', number: true},
+  ]},
   {key: 'metadata', title: 'Movies & series metadata', fields: [
     {id: 'tmdb_api_key', label: 'TMDB API key', secret: true, test: 'tmdb'},
     {id: 'omdb_api_key', label: 'OMDb API key', secret: true},
@@ -201,7 +208,7 @@ export function renderIntegrationCard(card, cfg) {
   const rebuild = card.key === 'models'
     ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>` : '';
   el.innerHTML = `
-    <div class="section-head"><h3>${esc(card.title)}</h3></div>
+    <div class="section-head"><h3>${esc(card.title)}</h3>${card.hint ? `<span class="section-hint">${esc(card.hint)}</span>` : ''}</div>
     <div class="section-body">
       <div id="int-form-${card.key}">${rows}</div>
       <div class="row mt-8">

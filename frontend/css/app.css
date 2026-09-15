@@ -573,3 +573,6 @@ select option { background: var(--bg2); }
 /* ── GAME STATUS INDICATOR (topbar) ── */
 #game-indicator { display:none; align-items:center; gap:6px; font-size:11px; color:var(--success); background:var(--success-dim); border:1px solid var(--success); border-radius:12px; padding:3px 10px; }
 #game-indicator.show { display:flex; }
+/* Amber, not green, when the card is held by something that is not a game:
+   background work carries on (CPU lane) or waits — a state, not a success. */
+#game-indicator.busy { color:var(--amber); background:var(--amber-dim); border-color:var(--amber); }

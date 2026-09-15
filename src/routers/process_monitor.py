@@ -129,9 +129,21 @@ async def game_status(_user: User = Depends(get_current_user)):
     ``was_running == True`` and never unloaded). ``models_unloaded`` stays in
     the response shape for frontend compatibility but is always empty now.
     """
+    from src.services.app_state import get_state
     from src.services.process_monitor import is_game_running
 
+    # ``lane`` is what the 30 s watcher last recorded (free / game / cpu /
+    # paused) — the badge names the state instead of calling everything a
+    # game. Falls back to a live read before the first tick.
+    lane = get_state("llm_lane")
+    if not lane:
+        from src.services.llm_lane import status as lane_status
+        st = lane_status()
+        lane = ("game" if st["game"] else "cpu" if st["summarizer"] == "cpu"
+                else "paused") if st["gpu_pressed"] else "free"
     return {
         "game_running": is_game_running(),
         "models_unloaded": [],
+        "lane": lane,
+        "lane_reason": get_state("llm_lane_reason") or "",
     }
