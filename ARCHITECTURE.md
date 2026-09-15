@@ -97,6 +97,7 @@ yet. Until those sections are rewritten, this is the map:
 | UI grammar | `frontend/css/app.css` (DESIGN LANGUAGE header) + `frontend/js/app.js` (helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
 | Lyrics from Plex | `src/services/lyrics.py` (collector `run_lyrics_sync`, profiler `run_lyrics_profiles`, `album_lyrics_line`), `data/cache/lyrics.db`, custodian tasks `lyrics_sync` / `lyrics_profile`, `_lyrics_prompt_block` + `_lyrics_line` in media_enricher | The curator judges music with the artist's own words (2026-09-14): SoulSync drops .lrc/.txt sidecars, Plex serves them as lyric streams, the collector keeps the plain lines in its own SQLite and re-checks every run (the trickle lands, a refused stream backs off a week), the profiler condenses a sample per artist into a lyrics profile (subjects, themes, languages, explicit, motifs, tone, up to three verbatim lines) that is attached to the raw entry, read by the summariser (`LYRICS PROFILE` block; without one, no claims about the words) and shown in the verified block; the constitution caps quotes at two short lines. Raw lyrics never reach a prompt or the UI. |
 | Lidarr optional | `src/services/music_source.py` (`music_service`), `plex_artists`/`plex_artist_lookup`/`plex_artist_albums` in lyrics.py, `_plex_music_candidates` + `_plex_delete_artist` in recommendations.py, `_plex_music_library`/`_reenrich_plex_artist`/wishes in library.py, `plex_discography_summary`, `_plex_album` in album_dossier.py, `MusicWish` | Three set-ups work (2026-09-15): Lidarr alone, Lidarr + SoulSync, none. Without Lidarr the daily Plex walk is the music index (artists with mbid, albums, tracks, footprint), deletion candidates come from it in the Lidarr shape, deletions go through Plex ('Allow media deletion') with a re-read that treats a 200 as failure and an immediate index drop, the Music page shows the index with a Wanted tab, adds become wishes (MusicWish) the owner fulfils in SoulSync, the discography line and the album dossier come from the index, the Knowledge Base counts and the Discogs artist universe read it too. |
+| LLM placement (CPU lane) | `src/services/llm_lane.py` (`lane`, `placement`, `available`, `busy_message`, `status`), `llm_utils.ollama_options` / `curator_options`, `process_monitor.game_process_running` / `gpu_pressure_reason`, `Task.llm_role`, `LLM_CPU_LANE` / `LLM_CPU_THREADS` | Where an LLM call runs while another program holds the GPU (2026-09-15). Measured on the owner's card at 17.5/24.5 GB and 90 %: the 19.9 GB curator never got its model server up (304 s, then "timed out waiting for llama-server to start"), while the 5.3 GB summariser did a real enrichment prompt on six CPU threads in 145 s without touching the card. So summariser-class work (enrichment, significance, reception, memory, taste, lyrics profiles) moves to the processor and the library stays current; curator-class work (chat, starters, recommendations, collections, deletion candidates) waits, and the chat answers with a notice naming the occupancy instead of timing out. A detected game still parks everything — its CPU threads are not ours to take. |
 | Series editions | `src/services/editions.py` (`classify_files`, `anidb_flags`, `sync_editions`, `edition_line`, `upgrade_rows`, `check_releases`), `SeriesEdition`, custodian task `editions_sync`, `SonarrClient.get_episode_files` / `search_releases`, `GET /api/library/editions/{id}/releases` | Which cut is on disk, and is there an uncensored one (2026-09-15)? Owned from Sonarr's episode files: the parsed quality source of every file (Blu-ray / DVD against web / television) and the names and custom formats that say uncensored / uncut / unrated or censored. Exists from the AniDB tags of the offline snapshot, by AniDB's definitions: "tv censoring" (147 of the owner's series) means the disc release is the uncensored cut, "censored uncensored version" (32) means even the disc keeps censoring. Weekly walker, one call per series at 60 requests a minute; the verified block carries an Edition line for shows and anime, the Curation upgrade list shows "TV cut — uncensored disc release exists" (broadcast or web files on disk while AniDB says the disc is uncensored) with a Search-releases button that asks Sonarr's indexers live (seasons 1–2, uncensored by name or from a Blu-ray/DVD source). |
 
 ---
@@ -747,6 +748,28 @@ the "Curator active — pausing enrichment" log fires for both.
 game processes. When a game is running, both models are evicted and the
 enrichment pipeline only does API pre-fetch (`_write_game_mode_db` writes the
 `api_cached` marker, no LLM). Resumes automatically on game exit.
+`is_game_running()` is the union of two causes that `llm_lane` tells apart:
+`game_process_running()` (a game owns the whole box) and `gpu_pressure()`
+(something else owns only the card).
+
+**CPU lane** (`llm_lane.py`, 2026-09-15): a GPU held by another program no
+longer stops the LLM work — it moves the part that can move. Measured on the
+owner's box while an image-generation job held 17.5 of 24.5 GB at 90 %: the
+19.9 GB curator never got its model server up (304 s, then "timed out
+waiting for llama-server to start" — the same failure as the summariser
+timeouts the evening before), while the 5.3 GB summariser ran the app's own
+SUMMARIZE_PROMPT filled from a real cache entry (2,542 tokens in, 440 out) in
+145 s on six CPU threads without the GPU moving a megabyte. Six threads are
+as fast as twelve (17.4 against 17.6 tok/s on a 3B — generation is
+memory-bandwidth bound), so half the CPU stays with whatever else is
+running. `lane(role)` answers gpu / cpu / none; `ollama_options` carries the
+placement into every summariser call site, `curator_options` pins
+`num_gpu=99` because a 19.9 GB model on the CPU is not an answer, it is a
+wait. The custodian reads `Task.llm_role`: the six summariser-class tasks run
+on the lane, the curator-class ones stay deferred. `POST /api/chat/message`
+checks first and returns the notice as a curator reply before the in-flight
+guard and the priority gate are even taken. `LLM_CPU_LANE=0` restores the
+old stop-everything behaviour.
 
 `embedding` model (nomic-embed-text, ~0.5 GB) is intentionally NOT managed by
 the priority system — too small to matter against the 20-27 GB model dance.

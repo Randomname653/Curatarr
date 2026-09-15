@@ -252,6 +252,20 @@ constitution caps quotes at two short lines. Raw lyrics never reach a
 prompt or the UI.
 
 
+**The GPU is busy, so the work moves instead of stopping.** A graphics
+card held by another program used to park every model call, and the chat
+still tried anyway and died in a timeout. Both halves were wrong, and the
+measurement says why: the big curator model cannot even start while the
+card is occupied, while the small summariser model runs a real enrichment
+on six processor threads in about two and a half minutes without touching
+the card at all. So enrichment, significance, reception, memory extraction,
+taste vectors and lyrics profiles now keep going on the processor and your
+library stays current; six threads are as fast as twelve, so the rest of
+the machine stays with whatever is holding the card. A conversation needs
+the card back, and Curatarr says so in its own words instead of leaving you
+with a spinner. A detected game still parks everything. `LLM_CPU_LANE=0`
+turns the lane off, `LLM_CPU_THREADS` sets the budget.
+
 **A busy GPU counts as a game.** An image-generation job held the whole graphics card while the game detector, which knows game process names only, reported nothing: the enrichment ran into summariser timeouts for an hour and the custodian kept starting model work. A GPU saturated by something other than Ollama now sets the same flag every LLM-heavy path already yields to, after 45 seconds of sustained pressure; a host without nvidia-smi is left alone, and `GPU_PRESSURE_GATE=0` switches it off.
 
 **Lidarr is optional.** Three set-ups now work: Lidarr alone, Lidarr with

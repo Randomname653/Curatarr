@@ -191,6 +191,15 @@ class Settings(BaseSettings):
     # A GPU saturated by something other than Ollama (an image-generation
     # job, a benchmark) counts as a game: LLM-heavy background work yields.
     GPU_PRESSURE_GATE: bool = True
+    # While the GPU is held by something else, summariser-class work moves to
+    # the processor instead of stopping (src/services/llm_lane.py). Measured
+    # 2026-09-15 on the owner's box with an image job on the card: a real
+    # enrichment prompt took 145 s on six threads and never touched the GPU,
+    # while the 19.9 GB curator could not even start its model server there.
+    # Six threads are as fast as twelve (generation is memory-bandwidth
+    # bound), so the rest of the CPU stays with whatever else is running.
+    LLM_CPU_LANE: bool = True
+    LLM_CPU_THREADS: int = 6
     # Poster cache on disk is unauthenticated by design (see image_proxy);
     # a total budget stops a LAN client from filling the disk with variants.
     IMAGE_CACHE_MAX_MB: int = 1024

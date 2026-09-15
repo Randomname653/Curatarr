@@ -3031,7 +3031,15 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             # No sentinel needed: the round-robin consumer stops when lanes_done
             # covers all active categories AND every per-category queue is empty.
 
+        from src.services.llm_lane import CPU as _LANE_CPU, lane as _llm_lane
         from src.services.process_monitor import is_game_running
+
+        def _llm_yields() -> bool:
+            """True when this run must skip the LLM and only bank raw API
+            data. A GPU held by another program no longer means that: the
+            summariser keeps going on the CPU lane (slower, but the library
+            stays current). A real game still parks everything."""
+            return is_game_running() and _llm_lane("summarizer") != _LANE_CPU
 
         async def _write_game_mode_db(item: dict, cat: str, raw: dict):
             """Persist raw API data to SQLite and mark item api_cached in EnrichmentStatus.
@@ -3104,7 +3112,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                 fin_ik = raw.pop("_finalize_id_key",     None)
                 fin_ia = raw.pop("_finalize_is_anime",   False)
                 try:
-                    if is_game_running():
+                    if _llm_yields():
                         # Persist raw API data to SQLite, skip LLM, mark for later
                         await _write_game_mode_db(citem, ccat, raw)
                         # Audit #9b: the slow-source fetches spawned for this

@@ -112,6 +112,16 @@ python -c "from src.services.app_state import force_set_state; \
   force_set_state('enrichment_running', '0')"
 ```
 
+**"The GPU is busy with another program right now" in the chat**
+
+Something else (an image generator, a benchmark, a game) is holding the
+graphics card, and the curator's model is too large to load next to it.
+Background work keeps running on the processor, so enrichment and lyrics
+profiles stay current; only the conversation waits. End the job that holds
+the card, or come back when it is done. `LLM_CPU_LANE=0` in `.env` goes
+back to pausing all model work instead, `LLM_CPU_THREADS` (default 6) sets
+how much of the processor the background work may take.
+
 **"Curator running on CPU" banner**
 
 The curator model didn't fit in VRAM. Reduce `num_ctx`, pick a smaller

@@ -192,18 +192,24 @@ def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
     return busy
 
 
-def is_game_running() -> bool:
-    """Return True when a known game or game-launcher signal is detected, or
-    when something other than Ollama has been holding the GPU."""
+def gpu_pressure_reason() -> str:
+    """What the last pressure read saw, e.g. "17467/24564 MB, 90 %". Empty
+    while nothing is holding the card. Call gpu_pressure() first — this only
+    reports the cached verdict."""
+    return str(_gpu_cache.get("reason") or "")
+
+
+def game_process_running() -> bool:
+    """A known game or launcher process is running. Split out of
+    is_game_running so the LLM lane can tell the two causes apart: a game
+    owns the whole box (the CPU lane stays off), a GPU-hungry batch job
+    owns only the card (summariser work moves to the processor)."""
     import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
     global _cached_targets, _cached_time, _cached_game_pid
     now = time.time()
-
-    if gpu_pressure():
-        return True
 
     # Refresh cache every 60 seconds
     if _cached_targets is None or now - _cached_time > 60:
@@ -256,6 +262,12 @@ def is_game_running() -> bool:
             continue
 
     return False
+
+
+def is_game_running() -> bool:
+    """Return True when a known game or game-launcher signal is detected, or
+    when something other than Ollama has been holding the GPU."""
+    return gpu_pressure() or game_process_running()
 
 
 async def unload_llm_models() -> list[str]:
