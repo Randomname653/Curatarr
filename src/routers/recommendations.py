@@ -1820,6 +1820,44 @@ async def _enrich_proposal(p: dict, item_map: dict, fallback_category: str = Non
     return {**p, "category": cat, "genres": genres, "poster_url": poster, "synopsis": synopsis}
 
 
+async def _plex_music_candidates() -> list:
+    """Music deletion candidates from the Plex music index (src/services/
+    lyrics.py, rebuilt by the daily walk) when Lidarr is not configured
+    (owner decision 2026-09-15: Lidarr is optional). The same shape the
+    Lidarr branch produces, so the engine, the cards and the delete path need
+    no special case — service 'plex', media_id = the Plex artist key, which
+    is also the enrichment key of the artist."""
+    try:
+        from src.services.lyrics import plex_artists
+        arts = plex_artists()
+    except Exception as e:
+        logger.warning("Plex music index unavailable: %s", e)
+        return []
+    if not arts:
+        return []
+    mid = None
+    try:
+        from src.services.plex_playlists import get_machine_identifier
+        mid = await get_machine_identifier()
+    except Exception:
+        pass
+    base = str(settings.effective_plex_url).rstrip("/")
+    items = []
+    for a in arts:
+        key = str(a["artist_key"])
+        link = (f"{base}/web/index.html#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
+                if mid else f"{base}/web/index.html")
+        items.append({
+            "title": a.get("name") or "", "year": None, "genres": "",
+            "size_mb": (a.get("size_bytes") or 0) / (1024 * 1024),
+            "service": "plex", "arr_id": key, "plex_rating_key": key, "arr_url": link,
+            "category": "music", "musicbrainz_id": a.get("mbid"), "monitored": True,
+            "album_count": a.get("albums") or 0, "track_count": a.get("tracks") or 0,
+        })
+    logger.debug("Plex music: %d artist candidates", len(items))
+    return items
+
+
 async def _fetch_arr_candidates(category: str = None) -> list:
     """
     Fetch all items from ARR services.
@@ -2082,6 +2120,10 @@ async def _fetch_arr_candidates(category: str = None) -> list:
                     logger.warning("Lidarr: falling back to stale cache (%.0fs old)", age)
                     candidates.extend(hit["items"])
 
+    # ── PLEX MUSIC (Lidarr optional) ──────────────────
+    if (not category or category == "music") and not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
+        candidates.extend(await _plex_music_candidates())
+
     # Apply category filter against cached items (needed when Sonarr cache was
     # populated for category=None and now we want only "show" or only "anime")
     if category:
@@ -2139,6 +2181,45 @@ async def _probe_arr(service: str) -> bool:
         return False
 
 
+async def _plex_delete_artist(key: str, client=None) -> bool:
+    """Delete a Plex artist WITH its files (Plex 'Allow media deletion' must
+    be on — the owner's server has it), then re-read the item: a 200 means
+    Plex kept it (deletion not allowed, or a scan raced) and that is a
+    failure, never a success. On success the artist leaves the Plex music
+    index at once so the next proposal run cannot re-propose it before the
+    daily walk confirms."""
+    base = str(settings.effective_plex_url).rstrip("/")
+    token = settings.effective_plex_token
+    if not base or not token:
+        logger.error("[plex] delete: Plex not configured")
+        return False
+    headers = {"Accept": "application/json", "X-Plex-Token": token}
+    owns = client is None
+    client = client or httpx.AsyncClient(timeout=30)
+    try:
+        r = await client.delete(f"{base}/library/metadata/{key}", headers=headers)
+        if r.status_code not in (200, 204):
+            logger.error("[plex] delete HTTP %s for artist %s — is 'Allow media deletion' "
+                         "enabled on the Plex server?", r.status_code, key)
+            return False
+        chk = await client.get(f"{base}/library/metadata/{key}", headers=headers)
+        if chk.status_code == 200:
+            logger.error("[plex] artist %s is still there after the delete — files kept", key)
+            return False
+        try:
+            from src.services.lyrics import mark_artist_gone
+            mark_artist_gone(key)
+        except Exception as e:
+            logger.debug("[plex] index update after delete failed: %s", e)
+        return True
+    except Exception as e:
+        logger.error("[plex] delete failed for artist %s: %s", key, e)
+        return False
+    finally:
+        if owns:
+            await client.aclose()
+
+
 async def _execute_arr_delete(p: DeletionProposal) -> bool:
     def _check(r, label: str) -> bool:
         if r.status_code in (200, 204):
@@ -2175,6 +2256,8 @@ async def _execute_arr_delete(p: DeletionProposal) -> bool:
                     headers={"X-Api-Key": settings.LIDARR_API_KEY},
                     params={"deleteFiles": "true", "addImportListExclusion": "true"})
             return _check(r, "lidarr")
+        if p.service == "plex":
+            return await _plex_delete_artist(str(p.media_id))
     except Exception as e:
         logger.error("[arr] delete failed: %s", e)
     return False

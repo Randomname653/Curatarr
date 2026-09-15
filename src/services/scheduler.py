@@ -531,7 +531,9 @@ async def job_arr_sync():
         #   • every new row gets the correct category column set
         #   • no stale duplicates survive across scheduler runs
         from sqlalchemy import or_, and_
-        _CAT_TO_SVC = {"movie": "radarr", "show": "sonarr", "anime": "sonarr", "music": "lidarr"}
+        from src.services.music_source import music_service
+        _CAT_TO_SVC = {"movie": "radarr", "show": "sonarr", "anime": "sonarr",
+                       "music": music_service() or "lidarr"}
         by_cat: dict[str, list] = {}
         for p in all_proposals:
             by_cat.setdefault(p.get("category", "movie"), []).append(p)

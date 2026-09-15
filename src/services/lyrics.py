@@ -447,6 +447,18 @@ def plex_artist_albums(artist_key: str, db_path: Optional[Path] = None) -> list:
         con.close()
 
 
+def mark_artist_gone(artist_key: str, db_path: Optional[Path] = None) -> None:
+    """After Plex deleted an artist: out of the index at once, so the next
+    proposal run (before the daily walk confirms it) cannot re-propose it."""
+    con = _connect(db_path)
+    try:
+        con.execute("UPDATE track_lyrics SET gone=1 WHERE artist_key=?", (str(artist_key),))
+        con.execute("DELETE FROM plex_artists WHERE artist_key=?", (str(artist_key),))
+        con.commit()
+    finally:
+        con.close()
+
+
 # ── step 2: the profile walker (LLM) ────────────────────────────────────────
 #
 # One summariser call per eligible artist condenses a sample of the lyrics on
