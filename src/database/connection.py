@@ -172,6 +172,12 @@ def _migrate_columns() -> None:
         ("enrichment_status",     "match_confidence", "FLOAT"),
         # Negative pin: candidates the owner excluded ("Not this one").
         ("media_match_overrides", "rejected_ids",     "TEXT"),
+        # Series editions (2026-09-15): the file-source count and AniDB's
+        # "disc still censored" verdict came a day after the table; rows
+        # without files_disc are re-walked by editions_sync.
+        ("series_editions",       "files_disc",          "INTEGER"),
+        ("series_editions",       "anidb_disc_censored", "BOOLEAN DEFAULT 0"),
+        ("series_editions",       "anidb_tags",          "VARCHAR(200)"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model

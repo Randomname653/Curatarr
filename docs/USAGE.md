@@ -47,7 +47,7 @@ the data custodian picks up whatever is overdue on the next run.
 | Spotify artists not in Lidarr | Manage → **Music** → **Spotify Backlog** tab |
 | Music without Lidarr | nothing to configure — the daily walk indexes your Plex music; Manage → **Music** runs on it (badge "Plex index") |
 | Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify Backlog → **Wish**; Manage → **Music** → **Wanted** tab lists them, green once Plex has them |
-| Uncensored cut: owned? exists? | Curation → **Upgrades** ("TV cut — uncensored version exists", **Search releases** asks Sonarr's indexers); the curator's verified block carries an Edition line |
+| Uncensored cut: owned? exists? | Curation → **Upgrades** ("TV cut — uncensored disc release exists": broadcast or web files on disk while AniDB says the Blu-ray/DVD release is uncensored; **Search releases** asks Sonarr's indexers for releases named uncensored or from Blu-ray); the curator's verified block carries an Edition line with the file sources and AniDB's verdict |
 | Lyrics on file, artists profiled | Knowledge Base → **Music pipeline** (the line under the stats bar; both walkers run with **Run maintenance now**) |
 
 ## Command-line helpers

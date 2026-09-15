@@ -472,12 +472,12 @@ class RadarrClient(MediaService):
 class SonarrClient(MediaService):
     """Sonarr (TV/Anime) API client."""
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str, rate_limit_rpm: int = 20):
         super().__init__(
             base_url=base_url,
             api_key=api_key,
             service_type=ServiceType.SONARR,
-            rate_limit_rpm=20
+            rate_limit_rpm=rate_limit_rpm
         )
 
     def _get_headers(self) -> Dict:

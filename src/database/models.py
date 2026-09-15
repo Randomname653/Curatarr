@@ -265,10 +265,11 @@ class DeletionProposal(Base):
 
 
 class SeriesEdition(Base):
-    """Per Sonarr series (2026-09-15): do we own the uncensored cut, does
-    one exist? Owned from the episode files (release names, custom formats),
-    exists from the AniDB tags of the offline snapshot (anime only). Kept by
-    the weekly editions_sync walker — see src/services/editions.py."""
+    """Per Sonarr series (2026-09-15): which cut is on disk, and what AniDB
+    says about the editions. Owned from the episode files (quality source,
+    release names, custom formats), exists from the AniDB tags of the
+    offline snapshot (anime only, by AniDB's own definitions). Kept by the
+    weekly editions_sync walker — see src/services/editions.py."""
     __tablename__ = "series_editions"
     id = Column(Integer, primary_key=True, autoincrement=True)
     service = Column(String(32), nullable=False, default="sonarr")
@@ -279,12 +280,15 @@ class SeriesEdition(Base):
     title_slug = Column(String(256), nullable=True)
     year = Column(Integer, nullable=True)
     episode_files = Column(Integer, default=0)
+    files_disc = Column(Integer, nullable=True)            # Sonarr quality source bluray / dvd (NULL: not counted yet → re-walked)
     files_uncensored = Column(Integer, default=0)          # release name or custom format says uncensored/uncut/unrated
     files_censored = Column(Integer, default=0)            # …says censored
     custom_formats = Column(String(300), nullable=True)   # names seen, comma-joined
     sample_release = Column(String(300), nullable=True)
-    anidb_uncensored = Column(Boolean, default=False)      # tag "censored uncensored version"
-    anidb_censored = Column(Boolean, default=False)        # tag "censored" / "excessive censoring"
+    anidb_uncensored = Column(Boolean, default=False)      # tags "tv censoring" / "uncensored version available": an uncensored version exists
+    anidb_censored = Column(Boolean, default=False)        # any censoring tag: the airing was censored
+    anidb_disc_censored = Column(Boolean, default=False)   # tag "censored uncensored version": even the disc release keeps censoring
+    anidb_tags = Column(String(200), nullable=True)        # the censoring tags seen, comma-joined
     checked_at = Column(DateTime, nullable=True)
 
 

@@ -255,7 +255,7 @@ export async function loadUpgrades() {
           ${p.arr_url ? `<div class="panel-actions"><a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a></div>` : ''}
         </div>
         <div class="panel-item-sub">Why it qualifies: ${esc(p.love_reason || '')}</div>
-        ${p.kind === 'edition' ? `<div class="row mt-4"><button type="button" class="btn btn-secondary btn-sm" ${act('checkUncensored', p.arr_id, EL)} title="Ask Sonarr's indexers (seasons 1–2) for releases named uncensored">Search releases</button></div>` : ''}
+        ${p.kind === 'edition' ? `<div class="row mt-4"><button type="button" class="btn btn-secondary btn-sm" ${act('checkUncensored', p.arr_id, EL)} title="Ask Sonarr's indexers (seasons 1–2) for releases named uncensored or from Blu-ray/DVD">Search releases</button></div>` : ''}
       </div>`).join('');
   } catch(e) {
     el.innerHTML = _errHtml(e);
@@ -348,7 +348,7 @@ export async function checkUncensored(arrId, btn) {
   try {
     const r = await api(`/api/library/editions/${arrId}/releases`);
     const names = (r.releases || []).slice(0, 3).map(x => x.title).join(' · ');
-    toast(r.total ? `${r.total} uncensored release(s) on your indexers: ${names}` : 'Nothing named uncensored on your indexers (seasons 1–2)', r.total ? 'success' : 'info', {ms: 10000});
+    toast(r.total ? `${r.total} release(s) uncensored by name or from Blu-ray/DVD: ${names}` : 'No release named uncensored or from Blu-ray/DVD on your indexers (seasons 1–2)', r.total ? 'success' : 'info', {ms: 10000});
     btnDone(btn, r.total ? `${r.total} found` : 'None found', {revertMs: 6000});
   } catch (e) {
     toast(_errMsg(e), 'danger', {ms: 8000});
