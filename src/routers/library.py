@@ -827,6 +827,75 @@ def _reenrich_plex_artist(req, row: dict) -> dict:
     return {"ok": True, "service": "plex", "title": title, "mode": req.mode, "queued": True}
 
 
+# ── Music wishes (Lidarr optional, 2026-09-15) ───────────────────────────────
+class WishRequest(BaseModel):
+    title: str
+    mbid: Optional[str] = None
+    source: str = Field("manual", pattern="^(rec|backlog|manual)$")
+    note: Optional[str] = None
+
+
+def _wish_in_library(title: str, mbid: Optional[str]) -> bool:
+    try:
+        from src.services.lyrics import plex_artist_lookup
+        return plex_artist_lookup(name=title, mbid=mbid) is not None
+    except Exception:
+        return False
+
+
+@router.get("/wishes")
+async def list_wishes(user: User = Depends(get_current_user)):
+    """The wanted list: artists asked for while no arr is configured. Each
+    row says whether Plex has the artist meanwhile — the owner fulfils
+    wishes in SoulSync and the daily walk sees the result."""
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    with get_db_session() as db:
+        rows = (db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
+                .order_by(MusicWish.created_at.desc()).all())
+        wishes = [{"id": w.id, "title": w.title, "mbid": w.mbid, "source": w.source, "note": w.note,
+                   "created_at": w.created_at.isoformat() if w.created_at else None,
+                   "in_library": _wish_in_library(w.title, w.mbid)} for w in rows]
+    return {"wishes": wishes, "total": len(wishes)}
+
+
+@router.post("/wish")
+async def add_wish(req: WishRequest, user: User = Depends(require_admin)):
+    """Add a wish; a second one for the same artist (by mbid, else name)
+    returns the existing row. in_library tells the caller when Plex already
+    has the artist — then there is nothing to wish for."""
+    from sqlalchemy import func
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    title = (req.title or "").strip()
+    if not title:
+        raise HTTPException(400, "title required")
+    in_lib = _wish_in_library(title, req.mbid)
+    with get_db_session() as db:
+        q = db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
+        dup = (q.filter(MusicWish.mbid == req.mbid).first() if req.mbid else None) \
+            or q.filter(func.lower(MusicWish.title) == title.lower()).first()
+        if dup:
+            return {"ok": True, "id": dup.id, "already": True, "in_library": in_lib}
+        w = MusicWish(user_id=user.id, title=title, mbid=req.mbid, source=req.source, note=req.note)
+        db.add(w)
+        db.flush()
+        wid = w.id
+    return {"ok": True, "id": wid, "already": False, "in_library": in_lib}
+
+
+@router.delete("/wish/{wish_id}")
+async def remove_wish(wish_id: int, user: User = Depends(require_admin)):
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    with get_db_session() as db:
+        w = db.query(MusicWish).filter(MusicWish.id == wish_id).first()
+        if not w:
+            raise HTTPException(404, "no such wish")
+        w.resolved_at = datetime.utcnow()
+    return {"ok": True}
+
+
 class ReEnrichRequest(BaseModel):
     service: str = Field(..., pattern="^(sonarr|radarr|lidarr)$")
     arr_id: int                                      # the arr's internal id
@@ -1323,6 +1392,12 @@ async def spotify_backlog(
             mbid = raw.get("foreignArtistId")
             if mbid:
                 in_lidarr.add(mbid)
+    # Lidarr optional: artists Plex already has count as "in the library" too
+    try:
+        from src.services.lyrics import plex_artists
+        in_lidarr.update(a["mbid"] for a in plex_artists() if a.get("mbid"))
+    except Exception as e:
+        logger.debug("[backlog] plex index unavailable: %s", e)
 
     # Pass 30: when not_added_only is on, the python-side in_lidarr filter
     # below culls already-added artists AFTER SQL aggregation. Without
@@ -1395,6 +1470,7 @@ async def spotify_backlog(
                 "mbid":        r.mbid,
                 "mbid_resolved":   bool(r.mbid),
                 "in_lidarr":       bool(r.mbid) and r.mbid in in_lidarr,  # 16o
+                "in_library":      bool(r.mbid) and r.mbid in in_lidarr,  # Lidarr ∪ Plex
                 "top_tracks":  top_by_artist.get(r.series_title, []),
             })
 

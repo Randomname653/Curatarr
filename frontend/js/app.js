@@ -1,5 +1,5 @@
 import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openLibrarySettings, openSettingsPane, openUsersSettings, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, submitPinChange, submitPinSet, testIntegration } from './settings.js';
-import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly } from './arr.js';
+import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
 import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
@@ -184,8 +184,10 @@ const actions = {
   reloadPage,
   reloadRecs,
   removeFixMatch,
+  removeWish,
   renderSpotifyBacklog,
   renderSynopsisBrowser,
+  renderWanted,
   respondToMessage,
   runMaintenance,
   runSpotifyImport,
@@ -234,6 +236,7 @@ const actions = {
   topbarSearch,
   updateReclassifyCount,
   useStarter,
+  wishArtist,
   writeYearlyReview,
 };
 

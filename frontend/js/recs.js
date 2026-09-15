@@ -57,6 +57,16 @@ export async function onAddRecToArr(btn) {
   if (!svc) return;
   btnBusy(btn, 'Searching…');
   try {
+    if (svc === 'lidarr') {
+      // Lidarr optional: without it a wanted artist is a wish the owner fulfils in SoulSync
+      const lid = ((await api('/api/library/status')) || {}).lidarr || {};
+      if (!lid.configured && lid.music_source === 'plex') {
+        const w = await api('/api/library/wish', 'POST', {title, source: 'rec'});
+        btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
+        toast(w.in_library ? `"${title}" is already in your Plex music` : `"${title}" is on the wanted list`, w.in_library ? 'info' : 'success');
+        return;
+      }
+    }
     const r = await api(`/api/library/search/${svc}?q=${encodeURIComponent(title)}`);
     const matches = r.matches || [];
     const tl = title.toLowerCase();

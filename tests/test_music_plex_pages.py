@@ -144,7 +144,7 @@ def test_discography_and_album_dossier_fall_back_to_the_index():
 def test_the_page_and_status_know_the_plex_source():
     js = (_ROOT / "frontend/js/arr.js").read_text(encoding="utf-8")
     assert "info.music_source === 'plex'" in js and "_arrTabsEff" in js
-    assert "t.id === 'all' || t.id === 'backlog'" in js, "no arr to add to: no Add-New, no Curatarr-Added tab"
+    assert "['all', 'backlog', 'wanted'].includes(t.id)" in js, "no arr to add to: no Add-New, no Curatarr-Added tab"
     assert "ci.source === 'plex-index'" in js
     lib = (_ROOT / "src/routers/library.py").read_text(encoding="utf-8")
     assert 'out[svc]["music_source"] = music_service()' in lib

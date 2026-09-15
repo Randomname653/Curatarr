@@ -264,6 +264,22 @@ class DeletionProposal(Base):
     )
 
 
+class MusicWish(Base):
+    """Lidarr optional (2026-09-15): without an arr to add to, a wanted
+    artist is a wish the owner fulfils in SoulSync (or wherever). One open
+    row per artist — by MusicBrainz id when known, else by name; resolved_at
+    closes it (removed, or fulfilled)."""
+    __tablename__ = "music_wishes"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String(512), nullable=False)
+    mbid = Column(String(40), nullable=True, index=True)
+    source = Column(String(16), nullable=False, default="manual")   # rec | backlog | manual
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
 class ProtectedMedia(Base):
     """Permanent whitelist for media that should never be proposed for deletion."""
     __tablename__ = "protected_media"

@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView } from './nav.js';
 import { openSettingsPane } from './settings.js';
@@ -30,6 +30,7 @@ const ARR_TABS = {
     { id: 'all',    label: 'All Artists' },
     { id: 'curatarr', label: 'Curatarr-Added' },
     { id: 'backlog', label: 'Spotify Backlog' },
+    { id: 'wanted', label: 'Wanted' },
     { id: 'add',    label: '+ Add New' },
   ],
 };
@@ -39,6 +40,8 @@ const _arrActiveTab = { sonarr: 'all', radarr: 'all', lidarr: 'all' };
 // The tabs actually shown per arr: Lidarr's list shrinks to Library + Spotify
 // Backlog when the page runs on the Plex music index (no arr to add to).
 const _arrTabsEff = {};
+// 'lidarr' | 'plex' | null — what the Music page runs on (from /api/library/status).
+let _arrMusicSource = null;
 
 export async function loadArrPage(svc) {
   const tabsEl = document.getElementById(`arr-tabs-${svc}`);
@@ -57,7 +60,10 @@ export async function loadArrPage(svc) {
   const info = (status || {})[svc] || {};
   // Lidarr optional: the Music page runs on the Plex music index without it.
   const viaPlex = svc === 'lidarr' && !info.configured && info.music_source === 'plex';
-  _arrTabsEff[svc] = viaPlex ? ARR_TABS[svc].filter(t => t.id === 'all' || t.id === 'backlog') : ARR_TABS[svc];
+  _arrMusicSource = svc === 'lidarr' ? (info.music_source || (info.configured ? 'lidarr' : null)) : _arrMusicSource;
+  _arrTabsEff[svc] = viaPlex
+    ? ARR_TABS[svc].filter(t => ['all', 'backlog', 'wanted'].includes(t.id))
+    : ARR_TABS[svc].filter(t => t.id !== 'wanted');
   if (!info.configured && !viaPlex) {
     // Setup banner — admins get a CTA, non-admins get a "ask your admin"
     // message. The Settings → Library pane is admin-only, so showing the
@@ -102,6 +108,7 @@ export function renderArrTab(svc, tabId) {
   // Synopsis Browser tabs (Pass 16d): all, tv, anime, curatarr
   // Add New tab (Pass 16e): add
   // Spotify Backlog tab (Pass 16g, lidarr only): backlog
+  if (tabId === 'wanted') { renderWanted(svc); return; }
   if (['all', 'tv', 'anime', 'curatarr'].includes(tabId)) {
     renderSynopsisBrowser(svc, tabId);
   } else if (tabId === 'add') {
@@ -516,8 +523,13 @@ export function renderBacklogCard(svc, a, idx) {
   // surface a clickable "Add" button for an artist already in Lidarr.
   // Falls back to the previous behaviour if the cache hasn't loaded yet.
   let addBtn;
-  if (a.in_lidarr) {
-    addBtn = '<span class="badge success badge-sm" title="Already in your Lidarr library">in Lidarr</span>';
+  const viaPlex = _arrMusicSource === 'plex';
+  if (a.in_library || a.in_lidarr) {
+    addBtn = viaPlex
+      ? '<span class="badge success badge-sm" title="Already in your Plex music library">in library</span>'
+      : '<span class="badge success badge-sm" title="Already in your Lidarr library">in Lidarr</span>';
+  } else if (viaPlex) {
+    addBtn = `<button type="button" class="btn btn-primary btn-sm" ${act('wishArtist', svc, idx, EL)}>Wish</button>`;
   } else if (a.mbid_resolved) {
     addBtn = `<button type="button" class="btn btn-primary btn-sm" ${act('addBacklogArtist', svc, idx, EL)}>+ Add to Lidarr</button>`;
   } else {
@@ -575,3 +587,61 @@ export function onBrowserSearch(svc, tabId, el) { setBrowserSearch(svc, tabId, e
 // Spotify-backlog filters, same reason.
 export function onBacklogOnlyResolved(svc, el) { setBacklogOnlyResolved(svc, el.checked); }
 export function onBacklogNotAddedOnly(svc, el) { setBacklogNotAddedOnly(svc, el.checked); }
+
+
+// ── Wanted (Lidarr optional): wishes the owner fulfils in SoulSync ──────────
+export async function wishArtist(svc, idx, btn) {
+  const st = state._backlogState[svc] || {};
+  const a = ((st.data || {}).artists || [])[idx];
+  if (!a) return;
+  btnBusy(btn, 'Wishing…');
+  try {
+    const w = await api('/api/library/wish', 'POST', { title: a.artist_name, mbid: a.mbid || null, source: 'backlog' });
+    btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
+  } catch (e) {
+    toast(_errMsg(e), 'danger', {ms: 8000});
+    btnDone(btn);
+  }
+}
+
+export async function renderWanted(svc) {
+  const contentEl = document.getElementById(`arr-content-${svc}`);
+  contentEl.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  let data;
+  try {
+    data = await api('/api/library/wishes');
+  } catch (e) {
+    contentEl.innerHTML = _errHtml(e, act('renderWanted', svc));
+    return;
+  }
+  const rows = data.wishes || [];
+  const isAdmin = !!(state.currentUser && state.currentUser.is_admin);
+  const body = rows.length ? rows.map(w => `
+    <div class="panel-item">
+      <div class="panel-item-head">
+        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? '<span class="badge success badge-sm" title="Plex has the artist now">in library</span>' : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
+        <div class="panel-actions">${isAdmin ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>Remove</button>` : ''}</div>
+      </div>
+      <div class="panel-item-meta">wished ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>
+    </div>`).join('')
+    : emptyHtml('Nothing wanted yet — the Recommendations view and the Spotify Backlog put wishes here; you fulfil them in SoulSync.');
+  contentEl.innerHTML = `<section class="section">
+    <div class="section-head">
+      <h3>Wanted <span class="badge muted badge-sm">${rows.length}</span></h3>
+      <span class="section-hint">Artists asked for while no arr is configured. Fulfil them in SoulSync; the badge turns green once Plex has them.</span>
+      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderWanted', svc)}>Refresh</button></div>
+    </div>
+    <div class="section-body">${body}</div></section>`;
+}
+
+export async function removeWish(id, btn) {
+  btnBusy(btn, 'Removing…');
+  try {
+    await api(`/api/library/wish/${id}`, 'DELETE');
+    btn.closest('.panel-item')?.remove();
+    toast('Wish removed', 'info');
+  } catch (e) {
+    toast(_errMsg(e), 'danger', {ms: 8000});
+    btnDone(btn);
+  }
+}
