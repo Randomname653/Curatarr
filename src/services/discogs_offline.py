@@ -132,6 +132,12 @@ def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
     except Exception as e:
         logger.debug("[discogs] lidarr artist list failed: %s", e)
     try:
+        from src.services.lyrics import plex_artists
+        for a in plex_artists():
+            _add(a.get("name") or "")
+    except Exception as e:
+        logger.debug("[discogs] plex artist list failed: %s", e)
+    try:
         from src.database.connection import get_db_session
         from src.database.models import WatchHistoryEntry as W
         from sqlalchemy import distinct

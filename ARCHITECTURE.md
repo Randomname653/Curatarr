@@ -96,6 +96,7 @@ yet. Until those sections are rewritten, this is the map:
 | Member budgets + untrusted text | `src/services/rate_limit.py` (`enforce`, `InFlight`), `llm_utils.fence_untrusted / scrub_untrusted / UNTRUSTED_RULE`, `format_verified_block` markers, `subtitle_signals._bounded_text`, `image_proxy._read_bounded`, `spotify_import.save_upload` caps, `plex_sync.sync_plex_history` lock | Second security angle (2026-09-06). Every endpoint that turns one request into LLM or external-API work carries a per-user sliding-window budget and, where the work is long, a one-at-a-time guard (chat reply, recommendation generation — including the GET lane that bypassed `/refresh-cache`). The global curator gate serialises the GPU; it never stopped one member from owning the queue. Third-party prose (overviews, reviews, wiki extracts, bios, the verified block) is fenced `<<<UNTRUSTED_SOURCE:…>>>` and scrubbed of markup / special tokens / role markers; every system prompt that receives it carries `UNTRUSTED_RULE`; `clean_llm_text` strips tag-like markup before persistence. The significance template is hashed into its cache stamp, so that path is scrubbed, not fenced. External bodies are capped while streaming (OpenSubtitles 4 MB + metrics off-loop, image proxy 5 MB, zip members 50 MB / 400 MB). One Plex sync at a time (`plex_sync_running`). |
 | UI grammar | `frontend/css/app.css` (DESIGN LANGUAGE header) + `frontend/js/app.js` (helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
 | Lyrics from Plex | `src/services/lyrics.py` (collector `run_lyrics_sync`, profiler `run_lyrics_profiles`, `album_lyrics_line`), `data/cache/lyrics.db`, custodian tasks `lyrics_sync` / `lyrics_profile`, `_lyrics_prompt_block` + `_lyrics_line` in media_enricher | The curator judges music with the artist's own words (2026-09-14): SoulSync drops .lrc/.txt sidecars, Plex serves them as lyric streams, the collector keeps the plain lines in its own SQLite and re-checks every run (the trickle lands, a refused stream backs off a week), the profiler condenses a sample per artist into a lyrics profile (subjects, themes, languages, explicit, motifs, tone, up to three verbatim lines) that is attached to the raw entry, read by the summariser (`LYRICS PROFILE` block; without one, no claims about the words) and shown in the verified block; the constitution caps quotes at two short lines. Raw lyrics never reach a prompt or the UI. |
+| Lidarr optional | `src/services/music_source.py` (`music_service`), `plex_artists`/`plex_artist_lookup`/`plex_artist_albums` in lyrics.py, `_plex_music_candidates` + `_plex_delete_artist` in recommendations.py, `_plex_music_library`/`_reenrich_plex_artist`/wishes in library.py, `plex_discography_summary`, `_plex_album` in album_dossier.py, `MusicWish` | Three set-ups work (2026-09-15): Lidarr alone, Lidarr + SoulSync, none. Without Lidarr the daily Plex walk is the music index (artists with mbid, albums, tracks, footprint), deletion candidates come from it in the Lidarr shape, deletions go through Plex ('Allow media deletion') with a re-read that treats a 200 as failure and an immediate index drop, the Music page shows the index with a Wanted tab, adds become wishes (MusicWish) the owner fulfils in SoulSync, the discography line and the album dossier come from the index, the Knowledge Base counts and the Discogs artist universe read it too. |
 
 ---
 
@@ -600,6 +601,25 @@ reads the `LYRICS PROFILE` block and may make lyrical claims only from it;
 the verified block carries `Lyrics (n of m tracks on file)`; the album
 dossier adds coverage and one line; the Music pipeline tab shows the
 coverage; the explicit flag is collected, not yet acted on.
+
+**Lidarr optional (2026-09-15).** `music_source.music_service()` answers
+`lidarr` when Lidarr is configured (unchanged behaviour: structure index and
+delete write-path stay Lidarr's), `plex` when the Plex music index built by
+the daily walk (`plex_artists`: name, mbid from the `mbid://` guid — 95 % of
+the owner's artists —, albums, tracks, footprint of every version's part)
+has artists, `None` otherwise. On `plex`: the deletion candidates for music
+are the index's artists in the Lidarr shape (service `plex`, media_id = the
+Plex artist key = the enrichment key), a `plex` proposal is deleted through
+`DELETE /library/metadata/<key>` (files included — Plex 'Allow media
+deletion'), re-read, a 200 counts as failure, the artist leaves the index
+at once; the Music page runs on the index (rows in Lidarr's shape, a
+"Plex index" badge, tabs All Artists / Spotify Backlog / Wanted, Re-enrich
+by name + mbid), adds become wishes (`music_wishes`; Recommendations and the
+backlog write them, the Wanted tab lists them, `in_library` turns green once
+Plex has the artist), the curator's discography line and album dossier come
+from the index, the Knowledge Base music row and the Discogs artist universe
+read it. The Libraries mapping still has no music section on the owner's
+instance; the index does not need one.
 
 ---
 

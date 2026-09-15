@@ -198,6 +198,35 @@ async def enrichment_status(
     }
 
 
+def _plex_music_counts(count_vectors=None) -> dict:
+    """The Knowledge Base's music row when Lidarr is not configured (Lidarr
+    optional, 2026-09-15): the same keys the Lidarr branch fills, from the
+    Plex music index — enriched = artists whose profile exists."""
+    from src.services.lyrics import plex_artists
+    arts = plex_artists()
+    if not arts:
+        return {}
+    from src.database.connection import get_db_session
+    from src.database.models import EnrichmentStatus as _ES
+    with get_db_session() as db:
+        enriched_titles = {(t or "").lower() for (t,) in db.query(_ES.title)
+                           .filter(_ES.media_category == "music", _ES.enriched == True).all()}  # noqa: E712
+    names = {(a.get("name") or "").lower() for a in arts}
+    enriched = len(names & enriched_titles)
+    return {
+        "total": len(arts),
+        "total_albums": sum(a.get("albums") or 0 for a in arts),
+        "downloaded": sum(1 for a in arts if (a.get("tracks") or 0) > 0),
+        "monitored": len(arts),
+        "enriched": enriched,
+        "enriched_albums": 0,
+        "vector_count": count_vectors("lidarr") if count_vectors else 0,
+        "pct": min(100, round(100 * enriched / max(len(arts), 1))),
+        "stale": False,
+        "source": "plex",
+    }
+
+
 async def _get_arr_counts() -> dict:
     """
     Fetch item counts from ARR services.
@@ -347,6 +376,13 @@ async def _get_arr_counts() -> dict:
             else:
                 counts["sonarr"] = {"error": "unreachable", "stale": True}
 
+    if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
+        try:
+            plex_counts = _plex_music_counts(_count_vectors)
+            if plex_counts:
+                counts["lidarr"] = plex_counts
+        except Exception as e:
+            logger.debug("[kb] plex music counts failed: %s", e)
     if settings.LIDARR_URL and settings.LIDARR_API_KEY:
         try:
             async with _httpx.AsyncClient(timeout=8) as client:
