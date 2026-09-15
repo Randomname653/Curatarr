@@ -29,7 +29,11 @@ def test_a_held_gpu_moves_the_summarizer_to_the_cpu_and_parks_the_curator():
         "19.9 GB cannot load on a held card and is pointless on the CPU"
     p = L.placement(L.SUMMARIZER, pressed=True, game=False)
     assert p == {"num_gpu": 0, "num_thread": settings.LLM_CPU_THREADS}, p
-    assert p["num_thread"] == 6, "six threads measured as fast as twelve, half the CPU stays free"
+    # The shipped default, not the value this install happens to run: an
+    # operator who set eight threads must not fail the suite.
+    from src.config import Settings
+    assert Settings.model_fields["LLM_CPU_THREADS"].default == 6, \
+        "six threads measured as fast as twelve, half the CPU stays free"
     assert L.placement(L.CURATOR, pressed=True, game=False) == {"num_gpu": 99}, \
         "a caller that ignores available() fails fast instead of grinding on the CPU"
     ok, why = L.available(L.SUMMARIZER, pressed=True, game=False)
@@ -128,7 +132,9 @@ def test_the_setting_is_asked_at_setup_and_changeable_later():
     ids = {f["id"] for f in sw.SETUP_FIELDS}
     assert {"gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"} <= ids, "the wizard knows them"
     cfg = sw.current_env_config()
-    assert cfg["llm_cpu_lane"] is True and cfg["llm_cpu_threads"] == 6 and cfg["gpu_pressure_gate"] is True
+    # Shape, not the operator's choice — this install may run any of them.
+    assert isinstance(cfg["llm_cpu_lane"], bool) and isinstance(cfg["gpu_pressure_gate"], bool)
+    assert isinstance(cfg["llm_cpu_threads"], int) and cfg["llm_cpu_threads"] >= 1
 
     from src.routers.setup import ReconfigureRequest, SetupCompleteRequest
     for model in (ReconfigureRequest, SetupCompleteRequest):
