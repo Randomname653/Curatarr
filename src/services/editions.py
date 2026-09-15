@@ -55,9 +55,12 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-_UNCENSORED = re.compile(r"\b(uncensored|uncut|unrated)\b", re.I)
-_CENSORED = re.compile(r"(?<![a-z])(?<!un)censored\b", re.I)
-_DISC_NAME = re.compile(r"\b(bd|bdrip|bdmv|bd-?remux|blu-?ray)\b", re.I)
+# Release names join words with dots, spaces, brackets or underscores
+# ("[UNCENSORED_BD_1080p]"); \b treats "_" as a word character, so the
+# boundaries are spelled out as "no letter or digit next to it".
+_UNCENSORED = re.compile(r"(?<![a-z0-9])(uncensored|uncut|unrated)(?![a-z0-9])", re.I)
+_CENSORED = re.compile(r"(?<![a-z0-9])censored(?![a-z0-9])", re.I)
+_DISC_NAME = re.compile(r"(?<![a-z0-9])(bd|bdrip|bdmv|bd-?remux|blu-?ray)(?![a-z0-9])", re.I)
 _DISC_SOURCES = {"bluray", "blurayraw", "dvd"}     # Sonarr quality.quality.source, lowercased
 _RECHECK_DAYS = 7
 _BUDGET = 200                # series per run, one episodefile call each. Sonarr itself answers in

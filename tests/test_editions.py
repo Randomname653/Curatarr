@@ -112,6 +112,10 @@ def test_sources_names_and_custom_formats_classify_the_files():
     assert ed.classify_files([_file("Show.Uncensored.S01E01")])["files_censored"] == 0, "uncensored is not censored"
     assert ed.classify_files([_file("Show.S01E01.BD.1080p", source="web")])["files_disc"] == 0, "the parsed source wins over the name"
     assert ed.classify_files([_file("Show.S01E01.1080p", source="blurayRaw")])["files_disc"] == 1
+    # underscores are not word boundaries for \b — the owner's DxD grab
+    c = ed.classify_files([_file("[Remake]_High_School_DxD_(Seasons_1-4)_[UNCENSORED_BD_1080p][HEVC_x265_10bit][Dubbed][Judas]"),
+                           _file("Show_S01E02_[Censored_TV]_1080p"), _file("Show_S01E03_Uncensoredish")])
+    assert (c["files_disc"], c["files_uncensored"], c["files_censored"]) == (1, 1, 1), c
 
 
 def test_anidb_flags_follow_anidbs_own_definitions():
