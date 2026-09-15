@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 _UNCENSORED = re.compile(r"\b(uncensored|uncut|unrated)\b", re.I)
 _CENSORED = re.compile(r"(?<![a-z])(?<!un)censored\b", re.I)
 _RECHECK_DAYS = 7
-_BUDGET = 400                # series per run: one episodefile call each
+_BUDGET = 200                # series per run: one episodefile call each — the owner's Sonarr
+                             # answers in ~3 s, so a tick spends ~10 min here, full coverage in ~15 ticks
 _CURSOR_KEY = "editions_cursor"
 TAG_UNCENSORED_EXISTS = "censored uncensored version"
 TAGS_CENSORED = ("censored", "excessive censoring", "censored uncensored version")
