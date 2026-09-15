@@ -611,6 +611,17 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             f"{r.get('type')}: {r.get('title')}" + (f" ({r['year']})" if r.get("year") else "")
             for r in rels if isinstance(r, dict) and r.get("title")))
     add("AniDB tags", data.get("anidb_tags"), cap=400)
+    if media_type in ("show", "anime"):
+        # Series editions (2026-09-15): which cut is on disk, whether AniDB
+        # knows an uncensored version — a fact from Sonarr and the offline
+        # snapshot, never from prose.
+        try:
+            from src.services.editions import edition_by_title, edition_line
+            _edl = edition_line(edition_by_title(data.get("title") or title, media_type))
+            if _edl:
+                add("Edition", _edl, cap=400)
+        except Exception:
+            pass
     add("Plot", data.get("plot"), cap=700)
     lines.append("<<<END_UNTRUSTED_SOURCE>>>")
     return "\n".join(lines)

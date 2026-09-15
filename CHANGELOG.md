@@ -265,6 +265,17 @@ Wanted artists become wishes you fulfil in SoulSync; the list shows when
 Plex has them.
 
 
+**Which cut do you own, and is there an uncensored one?** A weekly walk
+reads every Sonarr series' episode files (release names, custom formats)
+and the AniDB tags of the offline snapshot; the curator's verified block
+says "Edition: 24 of 24 episode files named censored (the TV cut); AniDB:
+the TV airing was censored and an uncensored version exists", the
+Curation upgrade list shows those titles with a Search-releases button
+that asks your indexers live. The prose the enrichment collects was
+measured first and dropped as a detector: it mentions censorship for half
+a percent of the anime, half of those as plot.
+
+
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
 A patch release one day after the first tag, and it exists because the

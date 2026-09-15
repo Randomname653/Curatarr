@@ -97,6 +97,7 @@ yet. Until those sections are rewritten, this is the map:
 | UI grammar | `frontend/css/app.css` (DESIGN LANGUAGE header) + `frontend/js/app.js` (helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
 | Lyrics from Plex | `src/services/lyrics.py` (collector `run_lyrics_sync`, profiler `run_lyrics_profiles`, `album_lyrics_line`), `data/cache/lyrics.db`, custodian tasks `lyrics_sync` / `lyrics_profile`, `_lyrics_prompt_block` + `_lyrics_line` in media_enricher | The curator judges music with the artist's own words (2026-09-14): SoulSync drops .lrc/.txt sidecars, Plex serves them as lyric streams, the collector keeps the plain lines in its own SQLite and re-checks every run (the trickle lands, a refused stream backs off a week), the profiler condenses a sample per artist into a lyrics profile (subjects, themes, languages, explicit, motifs, tone, up to three verbatim lines) that is attached to the raw entry, read by the summariser (`LYRICS PROFILE` block; without one, no claims about the words) and shown in the verified block; the constitution caps quotes at two short lines. Raw lyrics never reach a prompt or the UI. |
 | Lidarr optional | `src/services/music_source.py` (`music_service`), `plex_artists`/`plex_artist_lookup`/`plex_artist_albums` in lyrics.py, `_plex_music_candidates` + `_plex_delete_artist` in recommendations.py, `_plex_music_library`/`_reenrich_plex_artist`/wishes in library.py, `plex_discography_summary`, `_plex_album` in album_dossier.py, `MusicWish` | Three set-ups work (2026-09-15): Lidarr alone, Lidarr + SoulSync, none. Without Lidarr the daily Plex walk is the music index (artists with mbid, albums, tracks, footprint), deletion candidates come from it in the Lidarr shape, deletions go through Plex ('Allow media deletion') with a re-read that treats a 200 as failure and an immediate index drop, the Music page shows the index with a Wanted tab, adds become wishes (MusicWish) the owner fulfils in SoulSync, the discography line and the album dossier come from the index, the Knowledge Base counts and the Discogs artist universe read it too. |
+| Series editions | `src/services/editions.py` (`classify_files`, `anidb_flags`, `sync_editions`, `edition_line`, `upgrade_rows`, `check_releases`), `SeriesEdition`, custodian task `editions_sync`, `SonarrClient.get_episode_files` / `search_releases`, `GET /api/library/editions/{id}/releases` | Do we own the uncensored cut, does one exist (2026-09-15)? Owned from Sonarr's episode files (release names and custom formats that say uncensored / uncut / unrated, or censored), exists from the AniDB tag "censored uncensored version" of the offline snapshot (30 of the owner's 2,443 anime; the prose mentions censorship for 13 and half of those are plot). Weekly walker, one call per series; the verified block carries an Edition line for shows and anime, the Curation upgrade list shows "TV cut — uncensored version exists" with a Search-releases button that asks Sonarr's indexers live (seasons 1–2). |
 
 ---
 
@@ -620,6 +621,22 @@ Plex has the artist), the curator's discography line and album dossier come
 from the index, the Knowledge Base music row and the Discogs artist universe
 read it. The Libraries mapping still has no music section on the owner's
 instance; the index does not need one.
+
+**Series editions (2026-09-15, `src/services/editions.py`).** Measured
+first: the prose the enrichment collects mentions censorship for 13 of
+2,443 anime and half of those are plot, while the AniDB tags of the offline
+snapshot carry it as a fact — "censored uncensored version" (30 titles) says
+the TV airing was censored and an uncensored version exists. Ownership sits
+in Sonarr: every episode file carries its release name and the custom
+formats the owner defined. `editions_sync` (custodian, weekly, no LLM, one
+episodefile call per series, cursor + budget) keeps `series_editions`:
+files named uncensored / uncut / unrated, files named censored, the custom
+format names seen, a sample release, the AniDB flags for anime. Readers:
+the verified block's "Edition:" line for shows and anime, the Curation
+upgrade list ("TV cut — uncensored version exists" when AniDB knows one and
+no file on disk is named uncensored) with a Search-releases button that
+asks Sonarr's indexers live for seasons 1–2 (`/api/v3/release`, never a
+sweep). Radarr editions (unrated cuts) are not covered.
 
 ---
 

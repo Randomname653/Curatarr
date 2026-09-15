@@ -827,6 +827,23 @@ def _reenrich_plex_artist(req, row: dict) -> dict:
     return {"ok": True, "service": "plex", "title": title, "mode": req.mode, "queued": True}
 
 
+@router.get("/editions/{series_id}/releases")
+async def edition_releases(series_id: int, _user: User = Depends(require_admin)):
+    """On demand: what the owner's indexers offer as uncensored for a series.
+    Sonarr searches live, season by season (1 and 2) — a button, never a sweep."""
+    url, api_key = _get_arr_url_key("sonarr")
+    if not url or not api_key:
+        raise HTTPException(400, "sonarr not configured")
+    from src.services.editions import check_releases
+    client = _make_client("sonarr", url, api_key)
+    try:
+        async with client:
+            rels = await check_releases(client, series_id)
+    except Exception as e:
+        raise HTTPException(502, f"sonarr release search failed: {e}")
+    return {"series_id": series_id, "releases": rels, "total": len(rels)}
+
+
 # ── Music wishes (Lidarr optional, 2026-09-15) ───────────────────────────────
 class WishRequest(BaseModel):
     title: str

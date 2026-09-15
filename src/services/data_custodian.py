@@ -366,6 +366,14 @@ async def _run_lyrics_profiles(task=None) -> bool:
     return await run_lyrics_profiles(task=task)
 
 
+async def _run_editions_sync(task=None) -> bool:
+    """Series editions: which cut is on disk (Sonarr episode files, custom
+    formats) and whether AniDB knows an uncensored version. One API call per
+    series, weekly, resumable — see src/services/editions.py."""
+    from src.services.editions import run_editions_sync
+    return await run_editions_sync(task=task)
+
+
 async def _run_facet_backfill(task=None) -> bool:
     """Multi-vector items stage 1: page the corpus into theme-facet points.
     False while unfinished → the task stays due and every tick advances the
@@ -530,6 +538,8 @@ def _registry() -> list[Task]:
              takes_task=True),
         Task("lyrics_profile",   "Lyrics profiles",      24.0,  _run_lyrics_profiles,
              needs_llm=True, takes_task=True),
+        Task("editions_sync",    "Series editions",      168.0, _run_editions_sync,
+             takes_task=True),
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
         # LLM-free raw-cache warmer: keeps API source data fresh in the

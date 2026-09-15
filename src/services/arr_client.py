@@ -517,6 +517,19 @@ class SonarrClient(MediaService):
         )
         return result
 
+    async def get_episode_files(self, series_id: int) -> List[Dict]:
+        """Every episode file of a series: release name (sceneName),
+        relative path, quality and the custom formats Sonarr matched —
+        the editions walker reads these (uncensored / censored cuts)."""
+        return await self.request("GET", f"/api/v3/episodefile?seriesId={series_id}")
+
+    async def search_releases(self, series_id: int, season_number: int) -> List[Dict]:
+        """Interactive search: what the indexers offer for one season.
+        Sonarr searches live, so this is an on-demand call, never a sweep."""
+        return await self.request(
+            "GET", f"/api/v3/release?seriesId={series_id}&seasonNumber={season_number}",
+            max_retries=1)
+
     async def delete_series(
         self,
         series_id: int,

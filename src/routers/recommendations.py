@@ -728,7 +728,15 @@ async def get_upgrade_candidates(_user: User = Depends(require_admin)):
     1080p or well under its class median. Read-only — acting on it stays a
     manual click in the arr (no auto-regrab)."""
     from src.services.upgrade_curation import upgrade_candidates
-    return {"candidates": upgrade_candidates()}
+    rows = upgrade_candidates()
+    # Series editions (2026-09-15): the TV cut on disk while AniDB knows an
+    # uncensored version — the same list, a different kind of upgrade.
+    try:
+        from src.services.editions import upgrade_rows
+        rows = rows + upgrade_rows()
+    except Exception as e:
+        logger.debug("[upgrades] editions unavailable: %s", e)
+    return {"candidates": rows}
 
 
 @router.get("/redundancy")
