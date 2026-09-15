@@ -61,6 +61,15 @@ export async function loadArrPage(svc) {
   // Lidarr optional: the Music page runs on the Plex music index without it.
   const viaPlex = svc === 'lidarr' && !info.configured && info.music_source === 'plex';
   _arrMusicSource = svc === 'lidarr' ? (info.music_source || (info.configured ? 'lidarr' : null)) : _arrMusicSource;
+  if (svc === 'lidarr') {
+    // the header says what the page runs on
+    const h = document.querySelector('#arr-lidarr-view .view-header');
+    const sub = h && h.querySelector('h1 span'), lead = h && h.querySelector('p');
+    if (sub) sub.textContent = viaPlex ? 'via Plex' : 'via Lidarr';
+    if (lead) lead.textContent = viaPlex
+      ? 'Browse and curate your Plex music; wanted artists become wishes you fulfil in SoulSync.'
+      : 'Browse, add, and curate your Lidarr library.';
+  }
   _arrTabsEff[svc] = viaPlex
     ? ARR_TABS[svc].filter(t => ['all', 'backlog', 'wanted'].includes(t.id))
     : ARR_TABS[svc].filter(t => t.id !== 'wanted');

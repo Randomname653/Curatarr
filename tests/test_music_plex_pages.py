@@ -146,6 +146,7 @@ def test_the_page_and_status_know_the_plex_source():
     assert "info.music_source === 'plex'" in js and "_arrTabsEff" in js
     assert "['all', 'backlog', 'wanted'].includes(t.id)" in js, "no arr to add to: no Add-New, no Curatarr-Added tab"
     assert "ci.source === 'plex-index'" in js
+    assert "sub.textContent = viaPlex ? 'via Plex' : 'via Lidarr'" in js, "the header says what the page runs on"
     lib = (_ROOT / "src/routers/library.py").read_text(encoding="utf-8")
     assert 'out[svc]["music_source"] = music_service()' in lib
     assert "def _plex_music_library()" in lib and "def _reenrich_plex_artist(" in lib
