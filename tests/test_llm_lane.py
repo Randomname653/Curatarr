@@ -24,10 +24,10 @@ def test_a_free_gpu_routes_everything_to_the_card():
 
 
 def test_a_held_gpu_moves_the_summarizer_to_the_cpu_and_parks_the_curator():
-    assert L.lane(L.SUMMARIZER, pressed=True, game=False) == L.CPU
-    assert L.lane(L.CURATOR, pressed=True, game=False) == L.NONE, \
+    assert L.lane(L.SUMMARIZER, pressed=True, game=False, ram=True) == L.CPU
+    assert L.lane(L.CURATOR, pressed=True, game=False, ram=True) == L.NONE, \
         "19.9 GB cannot load on a held card and is pointless on the CPU"
-    p = L.placement(L.SUMMARIZER, pressed=True, game=False)
+    p = L.placement(L.SUMMARIZER, pressed=True, game=False, ram=True)
     assert p == {"num_gpu": 0, "num_thread": settings.LLM_CPU_THREADS}, p
     # The shipped default, not the value this install happens to run: an
     # operator who set eight threads must not fail the suite.
@@ -36,9 +36,9 @@ def test_a_held_gpu_moves_the_summarizer_to_the_cpu_and_parks_the_curator():
         "six threads measured as fast as twelve, half the CPU stays free"
     assert L.placement(L.CURATOR, pressed=True, game=False) == {"num_gpu": 99}, \
         "a caller that ignores available() fails fast instead of grinding on the CPU"
-    ok, why = L.available(L.SUMMARIZER, pressed=True, game=False)
+    ok, why = L.available(L.SUMMARIZER, pressed=True, game=False, ram=True)
     assert ok is True and why == ""
-    assert L.available(L.CURATOR, pressed=True, game=False)[0] is False
+    assert L.available(L.CURATOR, pressed=True, game=False, ram=True)[0] is False
 
 
 def test_a_real_game_parks_everything():
@@ -51,11 +51,48 @@ def test_the_lane_can_be_switched_off():
     old = settings.LLM_CPU_LANE
     settings.LLM_CPU_LANE = False
     try:
-        assert L.lane(L.SUMMARIZER, pressed=True, game=False) == L.NONE
-        assert L.placement(L.SUMMARIZER, pressed=True, game=False) == {"num_gpu": 99}
+        assert L.lane(L.SUMMARIZER, pressed=True, game=False, ram=True) == L.NONE
+        assert L.placement(L.SUMMARIZER, pressed=True, game=False, ram=True) == {"num_gpu": 99}
     finally:
         settings.LLM_CPU_LANE = old
-    assert L.lane(L.SUMMARIZER, pressed=True, game=False) == L.CPU
+    assert L.lane(L.SUMMARIZER, pressed=True, game=False, ram=True) == L.CPU
+
+
+def test_the_lane_also_needs_memory():
+    """Measured: one summariser run took 9.7 GB of system RAM while the
+    program on the card held 29 of 64 GB. Cores are not the only cost."""
+    assert L.lane(L.SUMMARIZER, pressed=True, game=False, ram=False) == L.NONE, \
+        "no room in memory is no lane — swapping helps nobody"
+    assert L.placement(L.SUMMARIZER, pressed=True, game=False, ram=False) == {"num_gpu": 99}
+
+    from src.config import Settings
+    assert Settings.model_fields["LLM_CPU_MIN_FREE_MB"].default == 12000, \
+        "9.7 GB measured plus room for the program holding the card"
+    floor = L.min_free_mb()
+    assert L.ram_ok(reader=lambda: floor - 1) == (False, floor - 1)
+    assert L.ram_ok(reader=lambda: floor) == (True, floor)
+    assert L.ram_ok(reader=lambda: None) == (True, None), \
+        "a host we cannot measure keeps its background work"
+    assert L.ram_ok(reader=lambda: (_ for _ in ()).throw(RuntimeError("x"))) == (True, None)
+
+    old = settings.LLM_CPU_MIN_FREE_MB
+    try:
+        settings.LLM_CPU_MIN_FREE_MB = -5
+        assert L.min_free_mb() == 0
+        settings.LLM_CPU_MIN_FREE_MB = "nonsense"
+        assert L.min_free_mb() == 12000
+    finally:
+        settings.LLM_CPU_MIN_FREE_MB = old
+
+
+def test_the_notice_only_promises_progress_that_is_happening():
+    open_msg = L.busy_message("17544/24564 MB, 92 %", lane_open=True)
+    shut_msg = L.busy_message("17544/24564 MB, 92 %", lane_open=False)
+    assert "keep running on the processor" in open_msg
+    assert "keep running on the processor" not in shut_msg, \
+        "with the memory too tight, promising background progress would be a lie"
+    assert "waiting too" in shut_msg and "nothing is lost" in shut_msg
+    assert "17544/24564 MB, 92 %" in open_msg and "17544/24564 MB, 92 %" in shut_msg
 
 
 def test_the_thread_budget_is_clamped():
@@ -69,19 +106,23 @@ def test_the_thread_budget_is_clamped():
 
 
 def test_the_busy_notice_names_the_cause_and_the_way_out():
-    msg = L.busy_message("17467/24564 MB, 90 %")
+    # lane_open is passed explicitly: left to itself the notice reads the
+    # live machine, and this install's memory is not the subject here.
+    msg = L.busy_message("17467/24564 MB, 90 %", lane_open=True)
     assert "17467/24564 MB, 90 %" in msg
     assert "no room to load my model" in msg
     assert "end the job" in msg and "processor in the background" in msg
     assert "\n\n" in msg, "two paragraphs — it renders as a curator reply"
-    bare = L.busy_message("")
+    bare = L.busy_message("", lane_open=True)
     assert "It is holding" not in bare and bare.startswith("The GPU is busy")
 
 
 def test_the_status_shape():
     s = L.status()
     assert set(s) == {"gpu_pressed", "game", "reason", "curator", "summarizer",
-                      "cpu_threads", "cpu_lane"}
+                      "cpu_threads", "cpu_lane", "ram_free_mb", "ram_min_mb"}
+    assert s["ram_min_mb"] == L.min_free_mb()
+    assert s["ram_free_mb"] is None or isinstance(s["ram_free_mb"], int)
     assert s["curator"] in (L.GPU, L.CPU, L.NONE) and s["summarizer"] in (L.GPU, L.CPU, L.NONE)
 
 
@@ -130,7 +171,8 @@ def test_the_setting_is_asked_at_setup_and_changeable_later():
     import src.services.setup_wizard as sw
 
     ids = {f["id"] for f in sw.SETUP_FIELDS}
-    assert {"gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"} <= ids, "the wizard knows them"
+    knobs = {"gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads", "llm_cpu_min_free_mb"}
+    assert knobs <= ids, "the wizard knows them"
     cfg = sw.current_env_config()
     # Shape, not the operator's choice — this install may run any of them.
     assert isinstance(cfg["llm_cpu_lane"], bool) and isinstance(cfg["gpu_pressure_gate"], bool)
@@ -138,7 +180,7 @@ def test_the_setting_is_asked_at_setup_and_changeable_later():
 
     from src.routers.setup import ReconfigureRequest, SetupCompleteRequest
     for model in (ReconfigureRequest, SetupCompleteRequest):
-        assert {"gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"} <= set(model.model_fields), model.__name__
+        assert knobs <= set(model.model_fields), model.__name__
 
     # write_env round-trip into a throwaway file — never the live .env
     tmp = pathlib.Path(tempfile.mkdtemp()) / ".env"
@@ -147,18 +189,19 @@ def test_the_setting_is_asked_at_setup_and_changeable_later():
     sw.ENV_PATH = tmp
     try:
         changed = sw.merge_env_config(cfg, {"llm_cpu_lane": False, "llm_cpu_threads": 12,
-                                            "gpu_pressure_gate": False})
+                                            "gpu_pressure_gate": False,
+                                            "llm_cpu_min_free_mb": 9000})
         sw.write_env(changed)
         written = tmp.read_text(encoding="utf-8")
     finally:
         sw.ENV_PATH = old_path
     assert "LLM_CPU_LANE=false" in written and "LLM_CPU_THREADS=12" in written
-    assert "GPU_PRESSURE_GATE=false" in written
+    assert "GPU_PRESSURE_GATE=false" in written and "LLM_CPU_MIN_FREE_MB=9000" in written
     assert "KEEP_ME=yes" in written, "hand-added keys survive a rewrite"
 
     js = (_ROOT / "frontend/js/settings.js").read_text(encoding="utf-8")
     card = js.split("{key: 'gpu'")[1].split("]},")[0]
-    for fid in ("gpu_pressure_gate", "llm_cpu_lane", "llm_cpu_threads"):
+    for fid in knobs:
         assert fid in card, fid
     assert "toggle: true" in card and "number: true" in card
     assert "card.hint" in js, "the card explains itself"

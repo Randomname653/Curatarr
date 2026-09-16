@@ -141,6 +141,7 @@ const INTEGRATION_CARDS = [
     {id: 'gpu_pressure_gate', label: 'Notice when another program holds the card (treat it like a running game)', toggle: true},
     {id: 'llm_cpu_lane', label: 'Keep the background work going on the processor instead of stopping it', toggle: true},
     {id: 'llm_cpu_threads', label: 'Processor threads for that work (six measured as fast as twelve)', number: true},
+    {id: 'llm_cpu_min_free_mb', label: 'Free memory it needs before it starts, MB (one run measured 9.7 GB)', number: true},
   ]},
   {key: 'metadata', title: 'Movies & series metadata', fields: [
     {id: 'tmdb_api_key', label: 'TMDB API key', secret: true, test: 'tmdb'},

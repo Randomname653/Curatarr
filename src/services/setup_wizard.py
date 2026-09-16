@@ -364,6 +364,7 @@ def current_env_config() -> dict:
         "gpu_pressure_gate":     bool(getattr(s, "GPU_PRESSURE_GATE", True)),
         "llm_cpu_lane":          bool(getattr(s, "LLM_CPU_LANE", True)),
         "llm_cpu_threads":       int(getattr(s, "LLM_CPU_THREADS", 6)),
+        "llm_cpu_min_free_mb":   int(getattr(s, "LLM_CPU_MIN_FREE_MB", 12000)),
         "jwt_secret":            s.effective_jwt_secret,
     }
 
@@ -482,6 +483,7 @@ def write_env(config: dict) -> None:
         f"GPU_PRESSURE_GATE={'true' if config.get('gpu_pressure_gate', getattr(_live_settings(), 'GPU_PRESSURE_GATE', True)) else 'false'}",
         f"LLM_CPU_LANE={'true' if config.get('llm_cpu_lane', getattr(_live_settings(), 'LLM_CPU_LANE', True)) else 'false'}",
         f"LLM_CPU_THREADS={config.get('llm_cpu_threads', getattr(_live_settings(), 'LLM_CPU_THREADS', 6))}",
+        f"LLM_CPU_MIN_FREE_MB={config.get('llm_cpu_min_free_mb', getattr(_live_settings(), 'LLM_CPU_MIN_FREE_MB', 12000))}",
         "",
         "# Sync",
         # Live values, not literals: a wizard re-run used to reset an
@@ -906,6 +908,16 @@ SETUP_FIELDS = [
         "type": "number",
         "help": ("Six measured as fast as twelve: generation is limited by memory bandwidth, not "
                  "cores, so the rest stays with whatever is holding the card."),
+        "category": "ollama",
+    },
+    {
+        "id": "llm_cpu_min_free_mb",
+        "label": "Free memory that work needs (MB)",
+        "required": False,
+        "default": 12000,
+        "type": "number",
+        "help": ("One summariser run measured 9.7 GB of RAM. Below this much free the "
+                 "background work waits instead of pushing the machine into swap."),
         "category": "ollama",
     },
     {

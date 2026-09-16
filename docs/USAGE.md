@@ -125,10 +125,14 @@ and its tooltip names the occupancy.
 
 Settings → Integrations → **Sharing the graphics card** changes the
 behaviour without a restart: whether a busy card is noticed at all, whether
-the background work moves to the processor, and how many threads it may
-take (six by default, measured as fast as twelve). The setup wizard asks
-the same question on its Ollama step. In `.env` the keys are
-`GPU_PRESSURE_GATE`, `LLM_CPU_LANE` and `LLM_CPU_THREADS`.
+the background work moves to the processor, how many threads it may take
+(six by default, measured as fast as twelve) and how much free memory it
+needs before it starts. That last one matters: one enrichment run took
+9.7 GB of RAM, so below 12 GB free the background work waits rather than
+push the machine into swap — and the chat notice then says it is waiting
+instead of promising progress. The setup wizard asks the same questions on
+its Ollama step. In `.env` the keys are `GPU_PRESSURE_GATE`,
+`LLM_CPU_LANE`, `LLM_CPU_THREADS` and `LLM_CPU_MIN_FREE_MB`.
 
 **"Curator running on CPU" banner**
 

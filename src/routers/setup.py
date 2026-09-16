@@ -188,6 +188,7 @@ class SetupCompleteRequest(BaseModel):
     gpu_pressure_gate: bool = True
     llm_cpu_lane: bool = True
     llm_cpu_threads: int = 6
+    llm_cpu_min_free_mb: int = 12000
 
 
 class ReconfigureRequest(BaseModel):
@@ -222,6 +223,7 @@ class ReconfigureRequest(BaseModel):
     gpu_pressure_gate: Optional[bool] = None
     llm_cpu_lane: Optional[bool] = None
     llm_cpu_threads: Optional[int] = None
+    llm_cpu_min_free_mb: Optional[int] = None
 
 
 @router.post("/complete")

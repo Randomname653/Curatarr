@@ -263,9 +263,12 @@ taste vectors and lyrics profiles now keep going on the processor and your
 library stays current; six threads are as fast as twelve, so the rest of
 the machine stays with whatever is holding the card. A conversation needs
 the card back, and Curatarr says so in its own words instead of leaving you
-with a spinner. A detected game still parks everything. The badge in the
-top bar says which of the three it is instead of calling everything a
-game, the 30 s watcher records the state and logs every change, and the
+with a spinner. That work needs memory as well as cores — one run measured
+9.7 GB — so it also checks that enough is free before it starts, and waits
+instead of pushing the machine into swap; when it waits, Curatarr says
+that too rather than promising progress that is not happening. A detected
+game still parks everything. The badge in the top bar says which of the
+three it is instead of calling everything a game, the 30 s watcher records the state and logs every change, and the
 setup wizard asks for the behaviour while Settings → Integrations →
 "Sharing the graphics card" changes it later without a restart.
 

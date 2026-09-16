@@ -2579,7 +2579,7 @@ async def send_message(
     from src.services.llm_lane import busy_message, curator_available
     _curator_ok, _curator_why = curator_available()
     if not _curator_ok:
-        _busy_text = busy_message(_curator_why)
+        _busy_text = busy_message(_curator_why)   # promises background work only if the lane is open
         _save_message(user.id, "user", message.message, db, thread_id=thread_id)
         _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
         logger.info("[chat] curator unavailable (%s) — answered with the GPU-busy notice",
