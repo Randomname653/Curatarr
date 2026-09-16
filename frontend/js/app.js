@@ -385,3 +385,11 @@ Object.assign(window, {
 });
 
 init();
+
+document.addEventListener('keydown', e => {
+  const el = e.target.closest('[role="button"]');
+  if (el && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    el.click();
+  }
+});
