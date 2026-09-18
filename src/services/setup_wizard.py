@@ -19,7 +19,6 @@ import secrets
 import tempfile
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 
@@ -73,7 +72,7 @@ def is_private_endpoint(url: str) -> bool:
     if not url:
         return False
     try:
-        host = (urlparse(url).hostname or "").lower().strip()
+        host = (httpx.URL(url).host or "").lower().strip()
     except Exception:
         return False
     if not host:
@@ -101,7 +100,7 @@ def endpoint_privacy_note(url: str) -> Optional[str]:
     if not url or is_private_endpoint(url):
         return None
     try:
-        host = urlparse(url).hostname or "?"
+        host = httpx.URL(url).host or "?"
     except Exception:
         host = "?"
     return (
