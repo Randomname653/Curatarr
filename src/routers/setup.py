@@ -184,6 +184,11 @@ class SetupCompleteRequest(BaseModel):
     # at pitches than the chat curator). Off unless the wizard turns it on.
     enable_pitcher: bool = False
     base_pitcher_model: str = "qwen3.8:27b"
+    # Sharing the card with another program (src/services/llm_lane.py).
+    gpu_pressure_gate: bool = True
+    llm_cpu_lane: bool = True
+    llm_cpu_threads: int = 6
+    llm_cpu_min_free_mb: int = 12000
 
 
 class ReconfigureRequest(BaseModel):
@@ -215,6 +220,10 @@ class ReconfigureRequest(BaseModel):
     sonarr_api_key: Optional[str] = None
     lidarr_url: Optional[str] = None
     lidarr_api_key: Optional[str] = None
+    gpu_pressure_gate: Optional[bool] = None
+    llm_cpu_lane: Optional[bool] = None
+    llm_cpu_threads: Optional[int] = None
+    llm_cpu_min_free_mb: Optional[int] = None
 
 
 @router.post("/complete")

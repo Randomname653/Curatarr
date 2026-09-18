@@ -5,7 +5,7 @@
 // redraw these out from under a selection in progress. moveReclassify()
 // invalidates explicitly before its own reload, so a real refresh after an
 // apply still shows the post-apply state, not a stale one.
-import { _errHtml, _errMsg, _posterImg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 export function _renderReclassify(res) {
   const el = document.getElementById('reclassify-content');
@@ -22,7 +22,7 @@ export function _renderReclassify(res) {
   let html = '';
   for (const [label, items, mode] of sections) {
     if (!items || !items.length) continue;
-    const all = mode === 'fix' ? `<label class="chip row-end"><input type="checkbox" onchange="rcToggleSection(this)"> select all</label>` : '';
+    const all = mode === 'fix' ? `<label class="chip row-end"><input type="checkbox" ${actOn('change', 'rcToggleSection', EL)}> select all</label>` : '';
     html += `<div class="list-head"><span>${label}</span><span class="fs-12 t3" style="font-weight:400">${items.length}</span>${all}</div>`;
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px">';
     for (const it of items) html += reclassifyCard(it, mode);
@@ -42,7 +42,7 @@ export async function loadReclassify() {
   try {
     await _swrRun('reclassify', () => api('/api/library/reclassify/scan'), _renderReclassify, { noAutoReplace: true });
   } catch (e) {
-    el.innerHTML = _errHtml(e, 'loadReclassify()');
+    el.innerHTML = _errHtml(e, act('loadReclassify'));
   }
 }
 
@@ -64,7 +64,7 @@ export function reclassifyCard(it, mode) {
     // candidate fixes; the direction chips select one.
     const fa = escAttr(JSON.stringify(it.fix_to_anime || {}));
     const ft = escAttr(JSON.stringify(it.fix_to_tv || {}));
-    const dirBtn = (dir, txt) => `<button type="button" class="chip rc-dir" onclick="rcPickUncertain(this,'${dir}')">${txt}</button>`;
+    const dirBtn = (dir, txt) => `<button type="button" class="chip rc-dir" ${act('rcPickUncertain', EL, dir)}>${txt}</button>`;
     return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix="" data-fa='${fa}' data-ft='${ft}' hidden>
       ${poster}
       <div class="grow">
@@ -79,7 +79,7 @@ export function reclassifyCard(it, mode) {
              + _rcRow(cu.profile, ex.profile, iss.includes('profile'));
   const moveTag = (it.fix && it.fix.moveFiles)
     ? ` <span class="badge amber badge-sm" title="Sonarr queues a physical move of the files">move files</span>` : '';
-  return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' onchange="updateReclassifyCount()" style="margin-top:3px;flex-shrink:0">
+  return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' ${actOn('change', 'updateReclassifyCount')} style="margin-top:3px;flex-shrink:0">
     ${poster}
     <div class="grow">
       <div class="b" style="font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}${moveTag}</div>

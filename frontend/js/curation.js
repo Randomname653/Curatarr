@@ -1,6 +1,6 @@
 // ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 import { api } from './api.js';
-import { SVG_CHECK, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { state } from './state.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
@@ -25,7 +25,7 @@ export async function loadJudgeProtections() {
           <div class="panel-item-title">${esc(p.title || '—')} ${badge}
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="liftProtection(${p.id},this)">Lift protection</button>
+            <button type="button" class="btn btn-secondary btn-sm" ${act('liftProtection', p.id, EL)}>Lift protection</button>
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
           </div>
         </div>
@@ -63,7 +63,7 @@ export async function loadPrinciples() {
     const condenseBar = nActive >= 2 ? `
       <div class="row mb-8">
         <span class="fs-12 t3">${nActive} active rules</span>
-        <button type="button" class="btn btn-secondary btn-sm row-end" onclick="condensePrinciples(this)"
+        <button type="button" class="btn btn-secondary btn-sm row-end" ${act('condensePrinciples', EL)}
           title="Let the curator consolidate near-duplicate active rules (conservative — usually finds nothing on a clean set)">Condense duplicates</button>
       </div>` : '';
     el.innerHTML = condenseBar + rows.map(p => {
@@ -83,8 +83,8 @@ export async function loadPrinciples() {
       const actions = p.status === 'merged'
         ? ''
         : p.status === 'active'
-          ? `<button type="button" class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'shadow',this)">Deactivate</button>`
-          : `<button type="button" class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'activate',this)">Activate</button>`;
+          ? `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'shadow', EL)}>Deactivate</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'activate', EL)}>Activate</button>`;
       return `<div class="panel-item">
         <div class="panel-item-head" style="align-items:flex-start">
           <div class="grow" style="min-width:200px">
@@ -94,7 +94,7 @@ export async function loadPrinciples() {
           </div>
           <div class="panel-actions">
             ${actions}
-            ${p.status === 'merged' ? '' : `<button type="button" class="btn btn-secondary btn-sm" onclick="setPrinciple(${p.id},'reject',this)">Reject</button>`}
+            ${p.status === 'merged' ? '' : `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'reject', EL)}>Reject</button>`}
           </div>
         </div>
       </div>`;
@@ -223,7 +223,7 @@ export async function loadDownscale() {
           <div class="panel-item-title">${esc(p.title || '—')} ${tech}
             <span class="panel-item-meta">${esc(p.category || '')}${when ? ' · ' + when : ''}</span></div>
           <div class="panel-actions">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="downscaleDone(${p.id},this)" title="File has been transcoded — protection stays (HARD_KEEP); leaves this list">Done</button>
+            <button type="button" class="btn btn-secondary btn-sm" ${act('downscaleDone', p.id, EL)} title="File has been transcoded — protection stays (HARD_KEEP); leaves this list">Done</button>
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
           </div>
         </div>
@@ -255,6 +255,7 @@ export async function loadUpgrades() {
           ${p.arr_url ? `<div class="panel-actions"><a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a></div>` : ''}
         </div>
         <div class="panel-item-sub">Why it qualifies: ${esc(p.love_reason || '')}</div>
+        ${p.kind === 'edition' ? `<div class="row mt-4"><button type="button" class="btn btn-secondary btn-sm" ${act('checkUncensored', p.arr_id, EL)} title="Ask Sonarr's indexers (seasons 1–2) for releases named uncensored or from Blu-ray/DVD">Search releases</button></div>` : ''}
       </div>`).join('');
   } catch(e) {
     el.innerHTML = _errHtml(e);
@@ -338,4 +339,19 @@ export function curationSection(kind, el) {
   else if (kind === 'upgrades') loadUpgrades();
   else if (kind === 'redundancy') loadRedundancy();
   else if (kind === 'principles') loadPrinciples();
+}
+
+
+// Series editions: the upgrade row's on-demand release search through Sonarr.
+export async function checkUncensored(arrId, btn) {
+  btnBusy(btn, 'Searching…');
+  try {
+    const r = await api(`/api/library/editions/${arrId}/releases`);
+    const names = (r.releases || []).slice(0, 3).map(x => x.title).join(' · ');
+    toast(r.total ? `${r.total} release(s) uncensored by name or from Blu-ray/DVD: ${names}` : 'No release named uncensored or from Blu-ray/DVD on your indexers (seasons 1–2)', r.total ? 'success' : 'info', {ms: 10000});
+    btnDone(btn, r.total ? `${r.total} found` : 'None found', {revertMs: 6000});
+  } catch (e) {
+    toast(_errMsg(e), 'danger', {ms: 8000});
+    btnDone(btn);
+  }
 }

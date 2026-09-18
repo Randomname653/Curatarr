@@ -162,6 +162,7 @@ decisions and the invariants learned the hard way — lives in
 | **Plex Media Server** | with an admin token |
 | **[Ollama][link-ollama]** | running locally, GPU strongly recommended |
 | **Radarr / Sonarr / Lidarr** | optional — unlocks deletion proposals per category |
+| **Plex music index** | automatic — without Lidarr, music runs on Plex: proposals, deletions (Plex 'Allow media deletion'), a Wanted list instead of adds |
 | **TMDB API key** | recommended — the primary movie/show metadata source |
 | **OMDb / Last.fm / Spotify keys** | optional — extra ratings, awards and music genres |
 

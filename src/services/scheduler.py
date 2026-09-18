@@ -137,9 +137,29 @@ async def job_game_watcher():
     """
     try:
         from src.services.process_monitor import is_game_running, unload_llm_models
-        from src.services.app_state import set_state
+        from src.services.app_state import get_state, set_state
+        from src.services.llm_lane import status as lane_status
         running = is_game_running()
         set_state("game_active", "1" if running else "0")
+        # The lane is a switch, so it gets watched like the game flag: one
+        # reading per tick, persisted for the UI and logged on every change,
+        # so the log tells the story afterwards instead of only the moment.
+        st = lane_status()
+        if st["gpu_pressed"]:
+            mode = "game" if st["game"] else ("cpu" if st["summarizer"] == "cpu" else "paused")
+        else:
+            mode = "game" if running else "free"
+        previous = get_state("llm_lane")
+        if mode != previous:
+            set_state("llm_lane", mode)
+            logger.info("[lane] %s -> %s%s", previous or "unknown", mode,
+                        f" ({st['reason']})" if st["reason"] else "")
+        # The reason carries live numbers, so it moves while the card is
+        # held and settles to "" once it is free — written only when it
+        # actually changed, not 2,880 times a day into an idle row.
+        reason = st["reason"] or ""
+        if reason != (get_state("llm_lane_reason") or ""):
+            set_state("llm_lane_reason", reason)
         if running:
             unloaded = await unload_llm_models()
             if unloaded:
@@ -531,7 +551,9 @@ async def job_arr_sync():
         #   • every new row gets the correct category column set
         #   • no stale duplicates survive across scheduler runs
         from sqlalchemy import or_, and_
-        _CAT_TO_SVC = {"movie": "radarr", "show": "sonarr", "anime": "sonarr", "music": "lidarr"}
+        from src.services.music_source import music_service
+        _CAT_TO_SVC = {"movie": "radarr", "show": "sonarr", "anime": "sonarr",
+                       "music": music_service() or "lidarr"}
         by_cat: dict[str, list] = {}
         for p in all_proposals:
             by_cat.setdefault(p.get("category", "movie"), []).append(p)

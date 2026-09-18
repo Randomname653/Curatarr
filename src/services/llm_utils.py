@@ -247,8 +247,12 @@ CURATOR_NUM_CTX = 16384
 def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
     """ollama_options for CURATOR calls — pins the shared num_ctx so chat,
     judge, proactive and principle calls all reuse one resident instance."""
+    # num_gpu is pinned here: the curator never takes the CPU lane. 19.9 GB
+    # of weights at the summariser's measured 5.9 tok/s is tens of minutes
+    # for one reply — the callers check llm_lane.curator_available() and wait
+    # instead (src/services/llm_lane.py).
     return ollama_options(temperature, num_predict,
-                          num_ctx=CURATOR_NUM_CTX, **extra)
+                          **{"num_ctx": CURATOR_NUM_CTX, "num_gpu": 99, **extra})
 
 
 def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
@@ -266,17 +270,24 @@ def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -
         fully available for actual output.
 
     ``options``
-        Nested Ollama options dict.  ``num_gpu=99`` forces maximum GPU-layer
-        offloading — without it Ollama can silently fall back to 100 % CPU.
+        Nested Ollama options dict.  Placement comes from
+        ``llm_lane.placement`` for the SUMMARISER role: ``num_gpu=99``
+        (maximum GPU-layer offloading — without it Ollama can silently fall
+        back to 100 % CPU) normally, and ``num_gpu=0`` plus a thread budget
+        while another program holds the GPU, so enrichment, lyrics profiles
+        and memory extraction keep running instead of stopping. Curator call
+        sites go through ``curator_options``, which pins ``num_gpu=99``.
 
     Pass any extra Ollama options as keyword arguments::
 
         ollama_options(temperature=0.1, num_predict=700)
         # → {"think": False, "options": {"temperature": 0.1, "num_predict": 700, "num_gpu": 99}}
     """
+    from src.services.llm_lane import SUMMARIZER, placement
     return {
         "think": False,
-        "options": {"temperature": temperature, "num_predict": num_predict, "num_gpu": 99, **extra},
+        "options": {"temperature": temperature, "num_predict": num_predict,
+                    **placement(SUMMARIZER), **extra},
     }
 
 

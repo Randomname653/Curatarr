@@ -11,7 +11,7 @@ import { searchLibrary } from './recs.js';
 // from fresh data; saveLibraries() invalidates explicitly on success since
 // this view doesn't otherwise self-reload after a save.
 import { state } from './state.js';
-import { SVG_CHECK, _errHtml, _errMsg, _fmtRel, btnBusy, btnDone, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, SVG_CHECK, _errHtml, _errMsg, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 export function _renderLibraryConfig([cfg, disc]) {
   const el=document.getElementById('lib-config-content');
@@ -67,7 +67,7 @@ export async function loadLibraryConfig() {
       api('/api/libraries/config'),
       api('/api/libraries/discover').catch(()=>({sections:[]}))
     ]), _renderLibraryConfig, { noAutoReplace: true });
-  } catch(e){el.innerHTML=_errHtml(e, 'loadLibraryConfig()');}
+  } catch(e){el.innerHTML=_errHtml(e, act('loadLibraryConfig'));}
 }
 
 export async function saveLibraries(btn) {
@@ -113,7 +113,7 @@ export async function checkOrphans(btn) {
           </tbody>
         </table>
       </div>
-      <div class="row"><button type="button" class="btn btn-primary" onclick="onApplyOrphanRepair(this)" data-sections="${escAttr(JSON.stringify(sections))}">Import missing entries</button></div>`;
+      <div class="row"><button type="button" class="btn btn-primary" ${act('onApplyOrphanRepair', EL)} data-sections="${escAttr(JSON.stringify(sections))}">Import missing entries</button></div>`;
   } catch(e) {
     el.innerHTML = _errHtml(e);
   } finally {

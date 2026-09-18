@@ -1,27 +1,28 @@
 import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openLibrarySettings, openSettingsPane, openUsersSettings, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, submitPinChange, submitPinSet, testIntegration } from './settings.js';
-import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort } from './arr.js';
-import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange } from './deletions.js';
+import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
+import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn } from './setup.js';
-import { cancelTask, loadTaskHistory } from './activity.js';
+import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
+import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, stopBackfill } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { closeModal, toggleMenu } from './ui.js';
-import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection } from './curation.js';
+import { closeModal, toggleMenu, keyActivate, hideOnError } from './ui.js';
+import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
-import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify } from './spotify_import.js';
+import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzoneOver, dropzoneLeave, openSpotifyPicker, onSpotifyFile } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
-import { loadRecs, onAddRecToArr, regenerateRecs, reloadRecs, searchLibrary, setRecLane } from './recs.js';
+import { loadRecs, onAddRecToArr, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { loadReport, writeYearlyReview } from './report.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
-import { pickerFreePin, pickerPin, pickerReject, removeFixMatch } from './picker.js';
-import { showView, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce } from './nav.js';
+import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
+import { showView, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
 import { setUser, showApp, startPlexLogin } from './auth.js';
 import { api } from './api.js';
 import { state } from './state.js';
+
 export function init() {
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -76,14 +77,15 @@ document.addEventListener('click', ev => {
 
 const actions = {
   _setNotifPref,
-  _syncDelPosterVisual,
   addArrItem,
   addBacklogArtist,
   approveDelete,
   auditRequeueEnrichments,
+  blurOnCtrlEnter,
   buildOnboardingModels,
   bulkDelete,
   cancelTask,
+  checkUncensored,
   checkMappingCoverage,
   checkOrphans,
   cleanupOrphans,
@@ -101,30 +103,35 @@ const actions = {
   detectGpu,
   discussLastPlayed,
   discussPrinciple,
+  discussRecCard,
   downscaleDone,
+  dropzoneLeave,
+  dropzoneOver,
   exitDiscussion,
   fillPrompt,
   finishSetup,
+  freePinOnEnter,
   goToLibrarySettings,
+  goToView,
   handleKey,
   handleSpotifyDrop,
+  hideOnError,
   hideOnboarding,
   kbDismissFinding,
   kbFixMatch,
   kbIgnore,
   kbRetry,
   kbUnignore,
+  keyActivate,
   liftProtection,
   loadArrPage,
   loadArrProfiles,
   loadCacheInventory,
   loadDeletions,
   loadDepsStatus,
-  loadDownscale,
   loadEnrichStatus,
   loadHistoryStatus,
   loadIntegrations,
-  loadJudgeProtections,
   loadKbAttention,
   loadKbItems,
   loadLibraryConfig,
@@ -132,15 +139,12 @@ const actions = {
   loadMappingStats,
   loadMusicStatus,
   loadNotificationPreferences,
-  loadPrinciples,
   loadProfiles,
   loadProfilesOnEnter,
   loadReclassify,
   loadRecs,
-  loadRedundancy,
   loadReport,
   loadTaskHistory,
-  loadUpgrades,
   loadUsers,
   logout,
   moveReclassify,
@@ -148,13 +152,21 @@ const actions = {
   omdbBackfill,
   onAddRecToArr,
   onApplyOrphanRepair,
+  onBacklogNotAddedOnly,
+  onBacklogOnlyResolved,
+  onBrowserFilter,
+  onBrowserSearch,
+  onBrowserSort,
+  onDelCheckbox,
   onDiscussDeletion,
   onDiscussRec,
   onFixMatch,
   onRecentOnlyChange,
   onReevaluateDeletion,
+  onSpotifyFile,
   openLibrarySettings,
   openSettingsPane,
+  openSpotifyPicker,
   openUsersSettings,
   pickerFreePin,
   pickerPin,
@@ -170,10 +182,13 @@ const actions = {
   regenerateRecs,
   rejectDelete,
   reloadDeletions,
+  reloadPage,
   reloadRecs,
   removeFixMatch,
+  removeWish,
   renderSpotifyBacklog,
   renderSynopsisBrowser,
+  renderWanted,
   respondToMessage,
   runMaintenance,
   runSpotifyImport,
@@ -187,11 +202,6 @@ const actions = {
   searchOnEnter,
   sendMessage,
   setArrTab,
-  setBacklogNotAddedOnly,
-  setBacklogOnlyResolved,
-  setBrowserFilter,
-  setBrowserSearch,
-  setBrowserSort,
   setPrinciple,
   setRecLane,
   setupNav,
@@ -221,14 +231,13 @@ const actions = {
   toggleMenu,
   toggleMobileSidebar,
   toggleMsgPanel,
-  toggleRecentOnly,
+  togglePitcherWrap,
   toggleSidebar,
   toggleUser,
   topbarSearch,
-  updateDelBulkCount,
   updateReclassifyCount,
-  uploadSpotify,
   useStarter,
+  wishArtist,
   writeYearlyReview,
 };
 
@@ -242,7 +251,11 @@ function dispatchAction(el, nameAttr, e) {
     return;
   }
 
-  const argsAttr = el.getAttribute('data-args');
+  // Click arguments live in data-args; a data-on-<event> handler reads its own
+  // data-args-<event> first (one element, several handlers, each with its own
+  // arguments) and falls back to data-args, which hand-written markup uses.
+  const own = nameAttr === 'data-action' ? null : el.getAttribute(nameAttr.replace('data-on-', 'data-args-'));
+  const argsAttr = own ?? el.getAttribute('data-args');
   let args = [];
   if (argsAttr) {
     try {
@@ -283,108 +296,8 @@ document.addEventListener('click', e => {
   }, true);
 });
 
-Object.assign(window, {
-  _setNotifPref,
-  _syncDelPosterVisual,
-  addArrItem,
-  addBacklogArtist,
-  approveDelete,
-  buildOnboardingModels,
-  cancelTask,
-  clearIntegrationSecret,
-  closeKbDrilldown,
-  closeModal,
-  condensePrinciples,
-  debouncedAddSearch,
-  detectGpu,
-  discussLastPlayed,
-  discussPrinciple,
-  downscaleDone,
-  fillPrompt,
-  finishSetup,
-  goToLibrarySettings,
-  handleSpotifyDrop,
-  hideOnboarding,
-  kbDismissFinding,
-  kbFixMatch,
-  kbIgnore,
-  kbRetry,
-  kbUnignore,
-  liftProtection,
-  loadArrPage,
-  loadArrProfiles,
-  loadCacheInventory,
-  loadDeletions,
-  loadEnrichStatus,
-  loadHistoryStatus,
-  loadIntegrations,
-  loadKbAttention,
-  loadKbItems,
-  loadLibraryConfig,
-  loadLibrarySettings,
-  loadNotificationPreferences,
-  loadProfiles,
-  loadReclassify,
-  loadReport,
-  loadTaskHistory,
-  loadUsers,
-  onAddRecToArr,
-  onApplyOrphanRepair,
-  onDiscussDeletion,
-  onDiscussRec,
-  onFixMatch,
-  onReevaluateDeletion,
-  pickerFreePin,
-  pickerPin,
-  pickerReject,
-  rcPickUncertain,
-  rcToggleSection,
-  rebuildModels,
-  reEnrich,
-  refreshModelRecs,
-  regenerateRecs,
-  rejectDelete,
-  reloadRecs,
-  removeFixMatch,
-  renderSpotifyBacklog,
-  renderSynopsisBrowser,
-  respondToMessage,
-  runMaintenance,
-  saveArrConfig,
-  saveArrDefaults,
-  saveComment,
-  saveIntegrations,
-  saveOnboardingLibraries,
-  setArrTab,
-  setBacklogNotAddedOnly,
-  setBacklogOnlyResolved,
-  setBrowserFilter,
-  setBrowserSearch,
-  setBrowserSort,
-  setPrinciple,
-  showKbTab,
-  showTasteTab,
-  showView,
-  skipMessage,
-  startArrPreEnrich,
-  startBackfill,
-  startOnboardingSync,
-  stopBackfill,
-  syncHistory,
-  testArr,
-  testConn,
-  testIntegration,
-  toggleDelSelect,
-  toggleMenu,
-  toggleUser,
-  updateDelBulkCount,
-  updateReclassifyCount,
-  uploadSpotify,
-  useStarter,
-  writeYearlyReview,
-});
-
 init();
+
 
 document.addEventListener('keydown', e => {
   const el = e.target.closest('[role="button"]');

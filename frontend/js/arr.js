@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { _errHtml, _errMsg, _posterImg, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView } from './nav.js';
 import { openSettingsPane } from './settings.js';
@@ -30,12 +30,18 @@ const ARR_TABS = {
     { id: 'all',    label: 'All Artists' },
     { id: 'curatarr', label: 'Curatarr-Added' },
     { id: 'backlog', label: 'Spotify Backlog' },
+    { id: 'wanted', label: 'Wanted' },
     { id: 'add',    label: '+ Add New' },
   ],
 };
 
 // Active tab per arr — survives tab switches but resets on page reload.
 const _arrActiveTab = { sonarr: 'all', radarr: 'all', lidarr: 'all' };
+// The tabs actually shown per arr: Lidarr's list shrinks to Library + Spotify
+// Backlog when the page runs on the Plex music index (no arr to add to).
+const _arrTabsEff = {};
+// 'lidarr' | 'plex' | null — what the Music page runs on (from /api/library/status).
+let _arrMusicSource = null;
 
 export async function loadArrPage(svc) {
   const tabsEl = document.getElementById(`arr-tabs-${svc}`);
@@ -47,12 +53,27 @@ export async function loadArrPage(svc) {
   try {
     status = await api('/api/library/status');
   } catch (e) {
-    contentEl.innerHTML = _errHtml(e, `loadArrPage('${svc}')`);
+    contentEl.innerHTML = _errHtml(e, act('loadArrPage', svc));
     return;
   }
 
   const info = (status || {})[svc] || {};
-  if (!info.configured) {
+  // Lidarr optional: the Music page runs on the Plex music index without it.
+  const viaPlex = svc === 'lidarr' && !info.configured && info.music_source === 'plex';
+  _arrMusicSource = svc === 'lidarr' ? (info.music_source || (info.configured ? 'lidarr' : null)) : _arrMusicSource;
+  if (svc === 'lidarr') {
+    // the header says what the page runs on
+    const h = document.querySelector('#arr-lidarr-view .view-header');
+    const sub = h && h.querySelector('h1 span'), lead = h && h.querySelector('p');
+    if (sub) sub.textContent = viaPlex ? 'via Plex' : 'via Lidarr';
+    if (lead) lead.textContent = viaPlex
+      ? 'Browse and curate your Plex music; wanted artists become wishes you fulfil in SoulSync.'
+      : 'Browse, add, and curate your Lidarr library.';
+  }
+  _arrTabsEff[svc] = viaPlex
+    ? ARR_TABS[svc].filter(t => ['all', 'backlog', 'wanted'].includes(t.id))
+    : ARR_TABS[svc].filter(t => t.id !== 'wanted');
+  if (!info.configured && !viaPlex) {
     // Setup banner — admins get a CTA, non-admins get a "ask your admin"
     // message. The Settings → Library pane is admin-only, so showing the
     // Configure button to a non-admin would lead them to a hidden tab
@@ -64,7 +85,7 @@ export async function loadArrPage(svc) {
         <div class="arr-setup-banner">
           <h3>${esc(titleSvc)} not configured</h3>
           <p>Add the URL + API key in Settings → Library to start using this view.</p>
-          <button class="btn btn-primary" onclick="goToLibrarySettings('${svc}')">Configure ${svc}</button>
+          <button class="btn btn-primary" ${act('goToLibrarySettings', svc)}>Configure ${svc}</button>
         </div>
       `
       : `
@@ -77,9 +98,9 @@ export async function loadArrPage(svc) {
   }
 
   // Render tabs
-  const tabs = ARR_TABS[svc] || [];
+  const tabs = _arrTabsEff[svc] || ARR_TABS[svc] || [];
   tabsEl.innerHTML = tabs.map(t =>
-    `<button class="arr-tab ${_arrActiveTab[svc] === t.id ? 'active' : ''}" onclick="setArrTab('${svc}','${t.id}')">${esc(t.label)}</button>`
+    `<button class="arr-tab ${_arrActiveTab[svc] === t.id ? 'active' : ''}" ${act('setArrTab', svc, t.id)}>${esc(t.label)}</button>`
   ).join('');
   renderArrTab(svc, _arrActiveTab[svc]);
 }
@@ -87,7 +108,7 @@ export async function loadArrPage(svc) {
 export function setArrTab(svc, tabId) {
   _arrActiveTab[svc] = tabId;
   document.querySelectorAll(`#arr-tabs-${svc} .arr-tab`).forEach((b, i) => {
-    b.classList.toggle('active', (ARR_TABS[svc][i] || {}).id === tabId);
+    b.classList.toggle('active', ((_arrTabsEff[svc] || ARR_TABS[svc])[i] || {}).id === tabId);
   });
   renderArrTab(svc, tabId);
 }
@@ -96,6 +117,7 @@ export function renderArrTab(svc, tabId) {
   // Synopsis Browser tabs (Pass 16d): all, tv, anime, curatarr
   // Add New tab (Pass 16e): add
   // Spotify Backlog tab (Pass 16g, lidarr only): backlog
+  if (tabId === 'wanted') { renderWanted(svc); return; }
   if (['all', 'tv', 'anime', 'curatarr'].includes(tabId)) {
     renderSynopsisBrowser(svc, tabId);
   } else if (tabId === 'add') {
@@ -152,7 +174,7 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
   } catch (e) {
     contentEl.innerHTML = `${_errHtml(e)}
       <p class="fs-12 t3 mt-8">First-time fetch needs ${esc(svc)} to be reachable. If you've already opened this view once before, retry — cached data is served while the arr recovers.</p>
-      <div class="mt-8"><button type="button" class="btn btn-secondary btn-sm" onclick="renderSynopsisBrowser('${svc}','${tabId}',{forceRefresh:true})">Retry</button></div>`;
+      <div class="mt-8"><button type="button" class="btn btn-secondary btn-sm" ${act('renderSynopsisBrowser', svc, tabId, {forceRefresh: true})}>Retry</button></div>`;
     return;
   }
 
@@ -165,6 +187,8 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
     ? `<span class="badge muted badge-sm" title="Fetched from ${esc(svc)} just now">live</span>`
     : ci.source === 'cache'
     ? `<span class="badge muted badge-sm" title="Served from the 15-min server cache (${ageStr})">cached ${ageStr}</span>`
+    : ci.source === 'plex-index'
+    ? '<span class="badge info badge-sm" title="Artists, albums and sizes from the Plex music index — Lidarr is not configured">Plex index</span>'
     : ci.source === 'stale'
     ? `<span class="badge amber badge-sm" title="${esc(svc)} unreachable: ${esc(ci.stale_error || 'connection failed')} — showing cache from ${ageStr}">stale ${ageStr}</span>`
     : '';
@@ -176,7 +200,7 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
       ${cacheBadge}
       <div class="toolbar-right">
         <label for="arr-sort-${svc}-${tabId}" class="fs-12 t3">Sort</label>
-        <select id="arr-sort-${svc}-${tabId}" class="input" onchange="setBrowserSort('${svc}','${tabId}', this.value)">
+        <select id="arr-sort-${svc}-${tabId}" class="input" ${actOn('change', 'onBrowserSort', svc, tabId, EL)}>
           <option value="size_desc"            ${st.sort === 'size_desc' ? 'selected' : ''}>Size ↓ (biggest first)</option>
           <option value="size_asc"             ${st.sort === 'size_asc' ? 'selected' : ''}>Size ↑ (smallest first)</option>
           <option value="added_desc"           ${st.sort === 'added_desc' ? 'selected' : ''}>Recently added</option>
@@ -185,10 +209,10 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
           <option value="title_asc"            ${st.sort === 'title_asc' ? 'selected' : ''}>Title A→Z</option>
         </select>
         <label class="chip${st.needs_enrichment ? ' active' : ''}" title="Only items without a synopsis or with raw metadata still awaiting the polish">
-          <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} onchange="setBrowserFilter('${svc}','${tabId}', this.checked)"> Needs enrichment</label>
+          <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} ${actOn('change', 'onBrowserFilter', svc, tabId, EL)}> Needs enrichment</label>
         <input type="text" id="arr-search-${svc}-${tabId}" class="input" aria-label="Search items" value="${escAttr(st.search || '')}"
-               placeholder="Search title…" oninput="setBrowserSearch('${svc}','${tabId}', this.value)" style="width:200px">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="renderSynopsisBrowser('${svc}','${tabId}',{forceRefresh:true})" title="Bypass the 15-min cache and re-fetch from ${esc(svc)}">Refresh</button>
+               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', svc, tabId, EL)} style="width:200px">
+        <button type="button" class="btn btn-secondary btn-sm" ${act('renderSynopsisBrowser', svc, tabId, {forceRefresh: true})} title="Bypass the 15-min cache and re-fetch from ${esc(svc)}">Refresh</button>
       </div>
     </div>
   `;
@@ -225,9 +249,9 @@ export function renderArrItemRow(svc, item) {
       <div class="panel-item-head">
         <div class="panel-item-title" style="font-size:14px">${esc(item.title || '(untitled)')}${item.year ? `<span class="t3 fs-12">(${item.year})</span>` : ''}${enrichedBadge}</div>
         <div class="panel-actions">${menuHtml([
-          {label: 'Metadata — re-fetch from TMDB / AniList / MusicBrainz', call: `reEnrich('${svc}',${item.id},'metadata')`},
-          {label: 'Summary — re-run the LLM on the existing data', call: `reEnrich('${svc}',${item.id},'summary')`},
-          {label: 'Both', call: `reEnrich('${svc}',${item.id},'both')`},
+          {label: 'Metadata — re-fetch from TMDB / AniList / MusicBrainz', action: act('reEnrich', svc, item.id, 'metadata')},
+          {label: 'Summary — re-run the LLM on the existing data', action: act('reEnrich', svc, item.id, 'summary')},
+          {label: 'Both', action: act('reEnrich', svc, item.id, 'both')},
         ], 'Re-enrich')}</div>
       </div>
       <div class="panel-item-meta mt-4">${sizeStr} · added ${addedStr}${item.root_folder ? ` · <code class="fs-10">${esc(item.root_folder)}</code>` : ''}${item.status ? ` · ${esc(item.status)}` : ''}</div>
@@ -292,13 +316,13 @@ export function renderAddNew(svc) {
     : 'Search for a TV show…';
   contentEl.innerHTML = `
     <div class="toolbar">
-      <input type="text" id="add-search-${svc}" class="input grow" aria-label="Search title" placeholder="${esc(placeholder)}" oninput="debouncedAddSearch('${svc}')" style="padding:9px 12px;font-size:13px">
+      <input type="text" id="add-search-${svc}" class="input grow" aria-label="Search title" placeholder="${esc(placeholder)}" ${actOn('input', 'debouncedAddSearch', svc)} style="padding:9px 12px;font-size:13px">
       <span id="add-search-status-${svc}" class="status" style="min-width:80px"></span>
     </div>
     <div id="add-search-results-${svc}"></div>
     <p class="fs-11 t3 mt-8">
       Live search via the arr's lookup (TVDB / TMDB / MusicBrainz).
-      Defaults from <button type="button" class="link-num t-amber" onclick="goToLibrarySettings('${svc}')">Settings → Library</button> are applied automatically.
+      Defaults from <button type="button" class="link-num t-amber" ${act('goToLibrarySettings', svc)}>Settings → Library</button> are applied automatically.
       Items added here are tagged <code>curatarr</code> in your arr.
     </p>
   `;
@@ -362,7 +386,7 @@ export function renderAddCard(svc, m, idx) {
   const overview = m.overview ? esc(m.overview) : '';
   const action = m.already_added
     ? '<span class="badge muted badge-sm">already in your library</span>'
-    : `<button type="button" class="btn btn-primary btn-sm" onclick="addArrItem('${svc}',${idx},this)">+ Add to ${svc}</button>`;
+    : `<button type="button" class="btn btn-primary btn-sm" ${act('addArrItem', svc, idx, EL)}>+ Add to ${svc}</button>`;
   const isMusic = svc === 'lidarr';
   const poster = `<div class="glow-interactive${isMusic?' is-music':''}">${_posterImg(m.poster, 174, isMusic?174:261, isMusic)}</div>`;
   return `
@@ -441,7 +465,7 @@ export async function renderSpotifyBacklog(svc) {
     if (st.not_added_only) params.set('not_added_only', 'true');
     data = await api(`/api/library/spotify-backlog?${params.toString()}`);
   } catch (e) {
-    contentEl.innerHTML = _errHtml(e, `renderSpotifyBacklog('${svc}')`);
+    contentEl.innerHTML = _errHtml(e, act('renderSpotifyBacklog', svc));
     return;
   }
   st.data = data;
@@ -459,7 +483,7 @@ export async function renderSpotifyBacklog(svc) {
     <section class="section">
       <div class="section-head"><h3>Spotify backlog</h3>
         <span class="section-hint">artists you stream on Spotify but don't own locally — one click adds them to Lidarr with your saved defaults and the <code>curatarr</code> tag</span>
-        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="renderSpotifyBacklog('${svc}')">Refresh</button></div>
+        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderSpotifyBacklog', svc)}>Refresh</button></div>
       </div>
       <div class="section-body">
         <div class="row fs-12" style="gap:18px">
@@ -469,10 +493,10 @@ export async function renderSpotifyBacklog(svc) {
           ${lidarrCacheLoaded ? `<span><b class="t-success">${inLidarrVisible}</b> <span class="t3">already in Lidarr (this page)</span></span>` : ''}
           <div class="row row-end">
             <label class="chip${st.only_resolved ? ' active' : ''}" title="Only artists whose MusicBrainz ID has been resolved by Phase 1.4 of the music pipeline — the ones with a clickable Add button.">
-              <input type="checkbox" ${st.only_resolved ? 'checked' : ''} onchange="setBacklogOnlyResolved('${svc}', this.checked)"> Resolved only</label>
+              <input type="checkbox" ${st.only_resolved ? 'checked' : ''} ${actOn('change', 'onBacklogOnlyResolved', svc, EL)}> Resolved only</label>
             <label class="chip${st.not_added_only ? ' active' : ''}" style="${lidarrCacheLoaded ? '' : 'opacity:.5'}"
                    title="${lidarrCacheLoaded ? 'Hide artists already in your Lidarr library. Combines with the resolved filter so you see exactly the queue you have not added yet.' : 'Lidarr cache not loaded — this filter is inactive until the Lidarr tab is opened once.'}">
-              <input type="checkbox" ${st.not_added_only ? 'checked' : ''} onchange="setBacklogNotAddedOnly('${svc}', this.checked)" ${lidarrCacheLoaded ? '' : 'disabled'}> Not in Lidarr yet</label>
+              <input type="checkbox" ${st.not_added_only ? 'checked' : ''} ${actOn('change', 'onBacklogNotAddedOnly', svc, EL)} ${lidarrCacheLoaded ? '' : 'disabled'}> Not in Lidarr yet</label>
           </div>
         </div>
         ${pending > 0 && !st.only_resolved ? '<p class="fs-11 t3 mt-8" style="font-style:italic">Pending artists are still being looked up by Phase 1.4 of the music pipeline; they become addable once their MusicBrainz ID is resolved.</p>' : ''}
@@ -508,10 +532,15 @@ export function renderBacklogCard(svc, a, idx) {
   // surface a clickable "Add" button for an artist already in Lidarr.
   // Falls back to the previous behaviour if the cache hasn't loaded yet.
   let addBtn;
-  if (a.in_lidarr) {
-    addBtn = '<span class="badge success badge-sm" title="Already in your Lidarr library">in Lidarr</span>';
+  const viaPlex = _arrMusicSource === 'plex';
+  if (a.in_library || a.in_lidarr) {
+    addBtn = viaPlex
+      ? '<span class="badge success badge-sm" title="Already in your Plex music library">in library</span>'
+      : '<span class="badge success badge-sm" title="Already in your Lidarr library">in Lidarr</span>';
+  } else if (viaPlex) {
+    addBtn = `<button type="button" class="btn btn-primary btn-sm" ${act('wishArtist', svc, idx, EL)}>Wish</button>`;
   } else if (a.mbid_resolved) {
-    addBtn = `<button type="button" class="btn btn-primary btn-sm" onclick="addBacklogArtist('${svc}',${idx},this)">+ Add to Lidarr</button>`;
+    addBtn = `<button type="button" class="btn btn-primary btn-sm" ${act('addBacklogArtist', svc, idx, EL)}>+ Add to Lidarr</button>`;
   } else {
     addBtn = '<button type="button" class="btn btn-secondary btn-sm" disabled title="MusicBrainz ID not resolved yet">MBID pending</button>';
   }
@@ -553,6 +582,73 @@ export async function addBacklogArtist(svc, idx, btn) {
     btnDone(btn, 'Added', {keepDisabled: true});
     toast(`Added "${a.artist_name}" to Lidarr`, 'success');
     // No auto-refresh — the user may want to chain several adds in one go.
+  } catch (e) {
+    toast(_errMsg(e), 'danger', {ms: 8000});
+    btnDone(btn);
+  }
+}
+
+// Synopsis-browser controls: the inline handlers read this.value / this.checked;
+// the dispatcher hands over the element instead, so these small readers do it.
+export function onBrowserSort(svc, tabId, el) { setBrowserSort(svc, tabId, el.value); }
+export function onBrowserFilter(svc, tabId, el) { setBrowserFilter(svc, tabId, el.checked); }
+export function onBrowserSearch(svc, tabId, el) { setBrowserSearch(svc, tabId, el.value); }
+// Spotify-backlog filters, same reason.
+export function onBacklogOnlyResolved(svc, el) { setBacklogOnlyResolved(svc, el.checked); }
+export function onBacklogNotAddedOnly(svc, el) { setBacklogNotAddedOnly(svc, el.checked); }
+
+
+// ── Wanted (Lidarr optional): wishes the owner fulfils in SoulSync ──────────
+export async function wishArtist(svc, idx, btn) {
+  const st = state._backlogState[svc] || {};
+  const a = ((st.data || {}).artists || [])[idx];
+  if (!a) return;
+  btnBusy(btn, 'Wishing…');
+  try {
+    const w = await api('/api/library/wish', 'POST', { title: a.artist_name, mbid: a.mbid || null, source: 'backlog' });
+    btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
+  } catch (e) {
+    toast(_errMsg(e), 'danger', {ms: 8000});
+    btnDone(btn);
+  }
+}
+
+export async function renderWanted(svc) {
+  const contentEl = document.getElementById(`arr-content-${svc}`);
+  contentEl.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  let data;
+  try {
+    data = await api('/api/library/wishes');
+  } catch (e) {
+    contentEl.innerHTML = _errHtml(e, act('renderWanted', svc));
+    return;
+  }
+  const rows = data.wishes || [];
+  const isAdmin = !!(state.currentUser && state.currentUser.is_admin);
+  const body = rows.length ? rows.map(w => `
+    <div class="panel-item">
+      <div class="panel-item-head">
+        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? '<span class="badge success badge-sm" title="Plex has the artist now">in library</span>' : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
+        <div class="panel-actions">${isAdmin ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>Remove</button>` : ''}</div>
+      </div>
+      <div class="panel-item-meta">wished ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>
+    </div>`).join('')
+    : emptyHtml('Nothing wanted yet — the Recommendations view and the Spotify Backlog put wishes here; you fulfil them in SoulSync.');
+  contentEl.innerHTML = `<section class="section">
+    <div class="section-head">
+      <h3>Wanted <span class="badge muted badge-sm">${rows.length}</span></h3>
+      <span class="section-hint">Artists asked for while no arr is configured. Fulfil them in SoulSync; the badge turns green once Plex has them.</span>
+      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderWanted', svc)}>Refresh</button></div>
+    </div>
+    <div class="section-body">${body}</div></section>`;
+}
+
+export async function removeWish(id, btn) {
+  btnBusy(btn, 'Removing…');
+  try {
+    await api(`/api/library/wish/${id}`, 'DELETE');
+    btn.closest('.panel-item')?.remove();
+    toast('Wish removed', 'info');
   } catch (e) {
     toast(_errMsg(e), 'danger', {ms: 8000});
     btnDone(btn);

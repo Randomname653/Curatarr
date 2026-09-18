@@ -188,6 +188,24 @@ class Settings(BaseSettings):
     # owner. Without this, any plex.tv account created in a minute could log
     # in from the LAN. Off only if /accounts does not list a legit member.
     PLEX_LOGIN_REQUIRE_MEMBERSHIP: bool = True
+    # A GPU saturated by something other than Ollama (an image-generation
+    # job, a benchmark) counts as a game: LLM-heavy background work yields.
+    GPU_PRESSURE_GATE: bool = True
+    # While the GPU is held by something else, summariser-class work moves to
+    # the processor instead of stopping (src/services/llm_lane.py). Measured
+    # 2026-09-15 on the owner's box with an image job on the card: a real
+    # enrichment prompt took 145 s on six threads and never touched the GPU,
+    # while the 19.9 GB curator could not even start its model server there.
+    # Six threads are as fast as twelve (generation is memory-bandwidth
+    # bound), so the rest of the CPU stays with whatever else is running.
+    LLM_CPU_LANE: bool = True
+    LLM_CPU_THREADS: int = 6
+    # The lane costs memory, not only cores: one summariser run measured
+    # 9.7 GB of system RAM (weights, KV cache and the mapped file pages),
+    # and the program holding the card usually wants RAM too — the owner's
+    # image job sat at 29 GB of 64. Below this much free the lane stays
+    # closed instead of pushing the machine into swap.
+    LLM_CPU_MIN_FREE_MB: int = 12000
     # Poster cache on disk is unauthenticated by design (see image_proxy);
     # a total budget stops a LAN client from filling the disk with variants.
     IMAGE_CACHE_MAX_MB: int = 1024

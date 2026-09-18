@@ -95,6 +95,10 @@ yet. Until those sections are rewritten, this is the map:
 | Enrichment healing | `src/services/enrichment_state.py`, `kb_overview.classified_items`, `EnrichmentStatus.attempt_count/next_retry_at/match_basis/match_confidence`, `EnrichmentFinding`, `MediaMatchOverride.rejected_ids`, `/api/enrichment/items · unmatched · findings`, `_audit_enrichments` + `_triage_audit_hit` | ONE classifier for the KB tile, `/library/breakdown` and the producer (the old KB view read a column nothing wrote and counted a live not-found sentinel as enriched). Not-found rows carry an attempt counter with a backoff (2 free tries, then 3/6/12/24 d, capped at 30 d — never given up on; a category abort rolls its attempts back). Fetchers return a falsy `TRANSIENT` marker; a drained run with an unavailable source raises `TransientFetchError` and writes nothing. Sentinels persist their evidence (per-source outcomes, arr year, the rejected same-named hit) → `open_reason()` sentences. Title-search resolutions store a match basis + confidence (≥0.8 accept, 0.5–0.8 accept-and-flag, below with a disagreeing year refuse). Every KB count opens its list; Needs attention unions the row-derived reasons with the audit's persisted findings (SoulSync `repair_findings` contract: pending refreshed, dismissed silent, resolved re-raised after 7 d; each finding gets exactly ONE automatic requeue, then escalates to a human). Owner actions: pin (arr lookup + TMDB/AniList + free ids, category derived server-side), negative pin (all four title-search resolvers skip it; the purge covers title-keyed cache rows too), retry, ignore, dismiss. |
 | Member budgets + untrusted text | `src/services/rate_limit.py` (`enforce`, `InFlight`), `llm_utils.fence_untrusted / scrub_untrusted / UNTRUSTED_RULE`, `format_verified_block` markers, `subtitle_signals._bounded_text`, `image_proxy._read_bounded`, `spotify_import.save_upload` caps, `plex_sync.sync_plex_history` lock | Second security angle (2026-09-06). Every endpoint that turns one request into LLM or external-API work carries a per-user sliding-window budget and, where the work is long, a one-at-a-time guard (chat reply, recommendation generation — including the GET lane that bypassed `/refresh-cache`). The global curator gate serialises the GPU; it never stopped one member from owning the queue. Third-party prose (overviews, reviews, wiki extracts, bios, the verified block) is fenced `<<<UNTRUSTED_SOURCE:…>>>` and scrubbed of markup / special tokens / role markers; every system prompt that receives it carries `UNTRUSTED_RULE`; `clean_llm_text` strips tag-like markup before persistence. The significance template is hashed into its cache stamp, so that path is scrubbed, not fenced. External bodies are capped while streaming (OpenSubtitles 4 MB + metrics off-loop, image proxy 5 MB, zip members 50 MB / 400 MB). One Plex sync at a time (`plex_sync_running`). |
 | UI grammar | `frontend/css/app.css` (DESIGN LANGUAGE header) + `frontend/js/app.js` (helpers after `api()`: `toast`, `openModal`/`closeModal`, `confirmDialog`, `menuHtml`, `pagerHtml`, `btnBusy`/`btnDone`, `setBadge`, `emptyHtml`, `setStatus`, `trackDirty`), `tests/test_frontend_hygiene.py` | One anatomy at every depth (2026-09-06, §20): page = header → `.toolbar` → content → `.select-bar`; sub-panels are `.section`; rows are `.panel-item` with ≤3 visible actions + a More menu; outcomes are toasts, decisions are `confirmDialog`, dialogs share one root. The four old mechanisms (native alert/confirm/prompt, `style.cssText` overlays, button-text-only feedback, a `showToast` that never existed) are gone; the hygiene suite pins their counts and the inline-style budget so they only fall. |
+| Lyrics from Plex | `src/services/lyrics.py` (collector `run_lyrics_sync`, profiler `run_lyrics_profiles`, `album_lyrics_line`), `data/cache/lyrics.db`, custodian tasks `lyrics_sync` / `lyrics_profile`, `_lyrics_prompt_block` + `_lyrics_line` in media_enricher | The curator judges music with the artist's own words (2026-09-14): SoulSync drops .lrc/.txt sidecars, Plex serves them as lyric streams, the collector keeps the plain lines in its own SQLite and re-checks every run (the trickle lands, a refused stream backs off a week), the profiler condenses a sample per artist into a lyrics profile (subjects, themes, languages, explicit, motifs, tone, up to three verbatim lines) that is attached to the raw entry, read by the summariser (`LYRICS PROFILE` block; without one, no claims about the words) and shown in the verified block; the constitution caps quotes at two short lines. Raw lyrics never reach a prompt or the UI. |
+| Lidarr optional | `src/services/music_source.py` (`music_service`), `plex_artists`/`plex_artist_lookup`/`plex_artist_albums` in lyrics.py, `_plex_music_candidates` + `_plex_delete_artist` in recommendations.py, `_plex_music_library`/`_reenrich_plex_artist`/wishes in library.py, `plex_discography_summary`, `_plex_album` in album_dossier.py, `MusicWish` | Three set-ups work (2026-09-15): Lidarr alone, Lidarr + SoulSync, none. Without Lidarr the daily Plex walk is the music index (artists with mbid, albums, tracks, footprint), deletion candidates come from it in the Lidarr shape, deletions go through Plex ('Allow media deletion') with a re-read that treats a 200 as failure and an immediate index drop, the Music page shows the index with a Wanted tab, adds become wishes (MusicWish) the owner fulfils in SoulSync, the discography line and the album dossier come from the index, the Knowledge Base counts and the Discogs artist universe read it too. |
+| LLM placement (CPU lane) | `src/services/llm_lane.py` (`lane`, `placement`, `available`, `busy_message`, `status`), `llm_utils.ollama_options` / `curator_options`, `process_monitor.game_process_running` / `gpu_pressure_reason`, `Task.llm_role`, `LLM_CPU_LANE` / `LLM_CPU_THREADS` / `LLM_CPU_MIN_FREE_MB` (wizard + Settings → Integrations), app_state `llm_lane` | Where an LLM call runs while another program holds the GPU (2026-09-15). Measured on the owner's card at 17.5/24.5 GB and 90 %: the 19.9 GB curator never got its model server up (304 s, then "timed out waiting for llama-server to start"), while the 5.3 GB summariser did a real enrichment prompt on six CPU threads in 145 s without touching the card. So summariser-class work (enrichment, significance, reception, memory, taste, lyrics profiles) moves to the processor and the library stays current; curator-class work (chat, starters, recommendations, collections, deletion candidates) waits, and the chat answers with a notice naming the occupancy instead of timing out. A detected game still parks everything — its CPU threads are not ours to take. |
+| Series editions | `src/services/editions.py` (`classify_files`, `anidb_flags`, `sync_editions`, `edition_line`, `upgrade_rows`, `check_releases`), `SeriesEdition`, custodian task `editions_sync`, `SonarrClient.get_episode_files` / `search_releases`, `GET /api/library/editions/{id}/releases` | Which cut is on disk, and is there an uncensored one (2026-09-15)? Owned from Sonarr's episode files: the parsed quality source of every file (Blu-ray / DVD against web / television) and the names and custom formats that say uncensored / uncut / unrated or censored. Exists from the AniDB tags of the offline snapshot, by AniDB's definitions: "tv censoring" (147 of the owner's series) means the disc release is the uncensored cut, "censored uncensored version" (32) means even the disc keeps censoring. Weekly walker, one call per series at 60 requests a minute; the verified block carries an Edition line for shows and anime, the Curation upgrade list shows "TV cut — uncensored disc release exists" (broadcast or web files on disk while AniDB says the disc is uncensored) with a Search-releases button that asks Sonarr's indexers live (seasons 1–2, uncensored by name or from a Blu-ray/DVD source). |
 
 ---
 
@@ -579,6 +583,76 @@ via the standalone scripts.
 
 ---
 
+**Lyrics (2026-09-14, `src/services/lyrics.py`).** Two custodian walkers.
+`lyrics_sync` (24 h, no GPU) lists every track of the Plex music sections —
+the ones mapped in Libraries, else every artist-type section Plex has — with
+`includeElements=Stream` (one walk = 47 page calls for 18,600 tracks), keeps
+identity and lyric stream per track in `data/cache/lyrics.db`, fetches the
+text of every new or changed stream within a budget of 4,000 per run (LRC
+timestamps and header tags stripped), drops text whose sidecar vanished,
+marks tracks gone only after a COMPLETE listing, and leaves a stream Plex
+refuses (404: SoulSync moved the file since the last scan, 6 % live) alone
+for a week. `lyrics_profile` (24 h, `needs_llm`) takes artists with eight
+texts on file or half their tracks (three at least), shows the summariser an
+album round-robin sample (listened tracks first, first lines of each,
+14,000 chars), keeps only verbatim quotes of at most twelve words, stores the
+profile, attaches it to the artist's raw cache entries as `lyrics` +
+`lyrics_v` (re-attached every run when a raw refresh dropped it), expires
+the polished summary and re-polishes at once. The summariser's music prompt
+reads the `LYRICS PROFILE` block and may make lyrical claims only from it;
+the verified block carries `Lyrics (n of m tracks on file)`; the album
+dossier adds coverage and one line; the Music pipeline tab shows the
+coverage; the explicit flag is collected, not yet acted on.
+
+**Lidarr optional (2026-09-15).** `music_source.music_service()` answers
+`lidarr` when Lidarr is configured (unchanged behaviour: structure index and
+delete write-path stay Lidarr's), `plex` when the Plex music index built by
+the daily walk (`plex_artists`: name, mbid from the `mbid://` guid — 95 % of
+the owner's artists —, albums, tracks, footprint of every version's part)
+has artists, `None` otherwise. On `plex`: the deletion candidates for music
+are the index's artists in the Lidarr shape (service `plex`, media_id = the
+Plex artist key = the enrichment key), a `plex` proposal is deleted through
+`DELETE /library/metadata/<key>` (files included — Plex 'Allow media
+deletion'), re-read, a 200 counts as failure, the artist leaves the index
+at once; the Music page runs on the index (rows in Lidarr's shape, a
+"Plex index" badge, tabs All Artists / Spotify Backlog / Wanted, Re-enrich
+by name + mbid), adds become wishes (`music_wishes`; Recommendations and the
+backlog write them, the Wanted tab lists them, `in_library` turns green once
+Plex has the artist), the curator's discography line and album dossier come
+from the index, the Knowledge Base music row and the Discogs artist universe
+read it. The Libraries mapping still has no music section on the owner's
+instance; the index does not need one.
+
+**Series editions (2026-09-15, `src/services/editions.py`).** Measured
+first: the prose the enrichment collects mentions censorship for 13 of
+2,443 anime and half of those are plot, while the AniDB tags of the offline
+snapshot carry it as a fact — read by AniDB's own definitions, after the
+first walk had built on the wrong tag: "tv censoring" (147 of the owner's
+series) says the TV version is censored and the DVD/BD releases are
+uncensored, so the disc is the uncensored cut; "censored uncensored
+version" (32) says even the disc release keeps censoring (no nipples in
+KissXSis, the steam stays in Kanamemo, sometimes more than the TV cut);
+"uncensored version available" is rare; the other censoring tags say the
+airing was cut. Ownership sits in Sonarr: every episode file carries its
+parsed quality source (bluray / dvd against web / television), its release
+name and the custom formats the owner defined; web rips say "uncensored"
+(AT-X, HIDIVE), disc rips rarely bother. `editions_sync` (custodian,
+weekly, no LLM, one episodefile call per series at 60 requests a minute,
+cursor + budget, rows without a source count re-walked) keeps
+`series_editions`: files from a disc source, files named uncensored / uncut
+/ unrated or censored, the custom format names, a sample release, the AniDB
+flags and tags for anime. Readers: the verified block's "Edition:" line for
+shows and anime ("24 episode files, all from Blu-ray/DVD, none named
+uncensored; AniDB: the TV airing was censored, the Blu-ray/DVD release is
+the uncensored cut"), the Curation upgrade list ("TV cut — uncensored disc
+release exists" when broadcast or web files sit on disk, none named
+uncensored, and AniDB says the disc is uncensored; largest TV-cut share
+first) with a Search-releases button that asks Sonarr's indexers live for
+seasons 1–2 (`/api/v3/release`, never a sweep; offers uncensored by name or
+from a Blu-ray/DVD source). Radarr editions (unrated cuts) are not covered.
+
+---
+
 ## 7. Taste engine (`src/services/taste_engine.py`)
 
 Reads watch history + enriched profiles + episodic memories + explicit
@@ -674,6 +748,42 @@ the "Curator active — pausing enrichment" log fires for both.
 game processes. When a game is running, both models are evicted and the
 enrichment pipeline only does API pre-fetch (`_write_game_mode_db` writes the
 `api_cached` marker, no LLM). Resumes automatically on game exit.
+`is_game_running()` is the union of two causes that `llm_lane` tells apart:
+`game_process_running()` (a game owns the whole box) and `gpu_pressure()`
+(something else owns only the card).
+
+**CPU lane** (`llm_lane.py`, 2026-09-15): a GPU held by another program no
+longer stops the LLM work — it moves the part that can move. Measured on the
+owner's box while an image-generation job held 17.5 of 24.5 GB at 90 %: the
+19.9 GB curator never got its model server up (304 s, then "timed out
+waiting for llama-server to start" — the same failure as the summariser
+timeouts the evening before), while the 5.3 GB summariser ran the app's own
+SUMMARIZE_PROMPT filled from a real cache entry (2,542 tokens in, 440 out) in
+145 s on six CPU threads without the GPU moving a megabyte. Six threads are
+as fast as twelve (17.4 against 17.6 tok/s on a 3B — generation is
+memory-bandwidth bound), so half the CPU stays with whatever else is
+running. Cores are not the only cost: the same run took 9.7 GB of system RAM
+(weights, KV cache and mapped file pages, not the 5.3 GB of the file), and
+the program on the card wanted memory too — the owner's image job sat at
+29 of 64 GB, leaving 7.8 GB at the trough. So the lane reads free memory
+before it promises anything and stays closed below `LLM_CPU_MIN_FREE_MB`
+(12 GB) rather than push the machine into swap; a host that cannot be
+measured keeps its background work. `lane(role)` answers gpu / cpu / none;
+`ollama_options` carries the
+placement into every summariser call site, `curator_options` pins
+`num_gpu=99` because a 19.9 GB model on the CPU is not an answer, it is a
+wait. The custodian reads `Task.llm_role`: the six summariser-class tasks run
+on the lane, the curator-class ones stay deferred. `POST /api/chat/message`
+checks first and returns the notice as a curator reply before the in-flight
+guard and the priority gate are even taken. The 30 s game watcher records the state every tick like it
+records `game_active`: `llm_lane` in app_state (free / game / cpu /
+paused) plus `llm_lane_reason`, logged only on a change, served by
+`GET /api/processes/status`, and rendered by the topbar badge — green
+"Game mode" as before, amber "GPU busy · CPU lane" or "GPU busy · paused"
+with the occupancy in the tooltip. `LLM_CPU_LANE=0` restores the old
+stop-everything behaviour; the wizard's Ollama step asks for it and
+Settings → Integrations → "Sharing the graphics card" changes it later
+(together with `GPU_PRESSURE_GATE` and the thread budget, applied live).
 
 `embedding` model (nomic-embed-text, ~0.5 GB) is intentionally NOT managed by
 the priority system — too small to matter against the 20-27 GB model dance.
@@ -1263,13 +1373,37 @@ with no arguments (never the element implicitly). One dispatcher in app.js
 resolves `closest('[data-action]')` and calls `actions[name]`, a registry of
 the same functions the window block used to expose plus eight one-line
 wrappers for handlers that carried a statement or a condition
-(`curationSection`, `searchOnEnter`, `onRecentOnlyChange`, ...). Templates
-still use inline handlers and the window block (shrunk to the 98 names they
-reference); `ui.js` exports `act()`/`actOn()` and the `EL`/`EVENT`/`OFFSET`
-tokens for PR 3b, which converts the templates and the four string-to-handler
-helpers, removes the block and sets `script-src 'self'`. Hygiene tests pin:
-zero `on*=` in markup, every action name in the registry, every `data-args`
-valid JSON, the window block equal to the template references.
+(`curationSection`, `searchOnEnter`, `onRecentOnlyChange`, ...). Hygiene
+tests pinned at that point: zero `on*=` in markup, every action name in the
+registry, every `data-args` valid JSON, the window block equal to the
+template references.
+
+**Delegation, second half (2026-09-13, PR 3b).** The 108 template handlers
+in `frontend/js/*.js` use `act(name, ...args)` (click) and
+`actOn(event, name, ...args)` from `ui.js`, which render the same data
+attributes with the args JSON-encoded and escaped — raw values go in, never
+`esc()`; the tokens `EL` and `EVENT` stand for the element and the event.
+Click arguments live in `data-args`, a `data-on-<event>` handler's in its
+own `data-args-<event>` (the dispatcher falls back to `data-args`, which
+hand-written markup uses): one element can carry a click handler and any
+number of event handlers with different arguments, where one shared
+attribute would keep only the first — the parser drops duplicates.
+Handlers that read the element or the event at event time became eighteen
+one-line wrappers in their owning modules (`onBrowserSort`, `onDelCheckbox`,
+`keyActivate`, `goToView`, ...). The four string-to-handler helpers take
+attribute text: `_errHtml(e, act('loadUsers'))`, `menuHtml` items carry
+`action`, `emptyHtml(html, label, act(...))`, and `pagerHtml({offset, limit,
+total, page})` calls `page(offset)` for its Prev/Next buttons. The window
+block is gone, `const actions = {...}` in app.js is the only table, and
+`src/middleware.py` sends `script-src 'self'` (`style-src` keeps
+`'unsafe-inline'` for the inline-style budget). `tests/test_frontend_hygiene.py`
+pins: zero `on*=` anywhere, no globals through `window`, the registry equal
+to the set of referenced names in both directions, literal action names, no
+variable passed in quotes (`act('goToView', 't.view')` — the mistake the PR
+review found in ten places, next to 197 missing imports that eslint's
+`no-undef` caught and `node --check` cannot), no leftover `call:` strings
+(three menu items had kept theirs and did nothing), and no markup element
+whose event handler would fire with the click's arguments.
 
 One file, one visual language. The CSS header (DESIGN LANGUAGE) states the
 rules; this section is the map.

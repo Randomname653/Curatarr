@@ -32,10 +32,11 @@ export function _errMsg(e) {
 }
 // Standard "this view failed to load" block: reuses the .loading slot's
 // layout but marks it as an error, and always offers a way back in instead
-// of leaving the view stuck on a bare "Loading…" forever.
-export function _errHtml(e, retryFn) {
-  const retry = retryFn ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="${esc(retryFn)}">Retry</button>` : '';
-  return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${retry}`;
+// of leaving the view stuck on a bare "Loading…" forever. `retry` is the
+// attribute text from act(): _errHtml(e, act('loadUsers')).
+export function _errHtml(e, retry) {
+  const button = retry ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" ${retry}>Retry</button>` : '';
+  return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${button}`;
 }
 
 // Shared poster/cover-art thumbnail. Every card that puts a title next to
@@ -60,7 +61,7 @@ export function _posterImg(url, w, h, isMusic) {
     ? ['w185', 'w342', 'w500', 'w780'].map(sz => `${esc(proxyImg(url.replace(sizeMatch[1], sz)))} ${sz.slice(1)}w`).join(', ')
     : '';
   const srcsetAttr = srcset ? ` srcset="${srcset}" sizes="${w}px"` : '';
-  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">`;
+  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" ${actOn('error', 'hideOnError', EL)}>`;
 }
 
 // ── UI GRAMMAR HELPERS ──────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ export function openModal(o = {}) {
   closeModal();
   const root = _mount('modal-root');
   root.innerHTML = `<div class="modal ${o.size || ''}${o.danger ? ' danger' : ''}" role="dialog" aria-modal="true" aria-label="${escAttr(o.title || '')}">
-      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" onclick="closeModal()">×</button></div>
+      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" ${act('closeModal')}>×</button></div>
       <div class="modal-body">${o.body || ''}</div>
       ${o.foot ? `<div class="modal-foot">${o.foot}</div>` : ''}
     </div>`;
@@ -193,10 +194,10 @@ export function confirmDialog(o = {}) {
 export function menuHtml(items, label = 'More') {
   const list = (items || []).filter(Boolean);
   if (!list.length) return '';
-  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" onclick="toggleMenu(this)">${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
+  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
     it.sep ? '<div class="menu-sep"></div>'
     : it.href ? `<a class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" href="${escAttr(it.href)}" target="_blank" rel="noopener"${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</a>`
-    : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" onclick="${escAttr(it.call || '')}"${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;
+    : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" ${it.action || ''}${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;
 }
 export function toggleMenu(btn) {
   const menu = btn.closest('.menu');
@@ -206,18 +207,17 @@ export function toggleMenu(btn) {
   btn.setAttribute('aria-expanded', String(!wasOpen));
 }
 
-// pagerHtml({offset, limit, total, call}) — "1–50 of 812 · Prev · Next";
-// `call` is the loader expression with {offset} as the placeholder, e.g.
-// "loadKbItems('movie','not_found',{offset})". Nothing renders when
-// everything fits on one page.
+// pagerHtml({offset, limit, total, page}) — "1–50 of 812 · Prev · Next";
+// `page(o)` returns the attribute text that loads offset o, e.g.
+// o => act('loadKbItems', cat, states, o). Nothing renders when everything
+// fits on one page.
 export function pagerHtml(p) {
   const total = Number(p.total || 0), limit = Number(p.limit || 50), offset = Number(p.offset || 0);
   if (offset === 0 && total <= limit) return '';
   const from = total ? offset + 1 : 0, to = Math.min(offset + limit, total);
-  const go = o => escAttr(p.call.replace('{offset}', String(o)));
   return `<div class="pager"><span>${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}</span><span class="row-end"></span>
-    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} onclick="${go(Math.max(0, offset - limit))}">Prev</button>
-    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} onclick="${go(offset + limit)}">Next</button></div>`;
+    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.page(Math.max(0, offset - limit))}>Prev</button>
+    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.page(offset + limit)}>Next</button></div>`;
 }
 
 // btnBusy(btn, label) / btnDone(btn, label, {revertMs, keepDisabled}) — the
@@ -245,10 +245,11 @@ export function setBadge(id, n) {
   el.style.display = n > 0 ? 'inline' : 'none';
 }
 
-// emptyHtml(html, ctaLabel, ctaCall, {good}) — one sentence (HTML, the caller
-// escapes), at most one action. good: the empty state is the happy case.
-export function emptyHtml(html, ctaLabel, ctaCall, o = {}) {
-  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" onclick="${escAttr(ctaCall || '')}">${esc(ctaLabel)}</button>` : ''}</div>`;
+// emptyHtml(html, ctaLabel, ctaAction, {good}) — one sentence (HTML, the caller
+// escapes), at most one action; ctaAction is the attribute text from act().
+// good: the empty state is the happy case.
+export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
+  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
 }
 
 // _fmtRel(iso) → "in 3 d" / "2 h ago"; pair it with _fmtAbs(iso) in title=.
@@ -339,15 +340,19 @@ export function escAttr(s){
 }
 
 
-// Template handler mechanism sentinels
+// Template handler mechanism: the two tokens the dispatcher (app.js) replaces
+// at run time — EL becomes the element carrying the attribute, EVENT the event.
 export const EL = '$el';
 export const EVENT = '$event';
-export const OFFSET = '$offset';
 
-// Handler attributes for templates: data-action (click) or data-on-<event>,
-// plus data-args as JSON. EL / EVENT / OFFSET are the tokens the dispatcher
-// (app.js) and pagerHtml replace at run time. Without args the dispatcher
-// calls the function with no arguments — never with the element implicitly.
+// Handler attributes for templates: act(name, ...args) renders data-action
+// (click) with the args as JSON in data-args; actOn(event, name, ...args)
+// renders data-on-<event> with its own data-args-<event>, so one element can
+// carry a click handler and any number of event handlers, each with its own
+// arguments (one shared data-args would keep only the first — the parser drops
+// duplicate attributes). Pass raw values, never esc() them. Without args the
+// dispatcher calls the function with no arguments — never with the element
+// implicitly.
 export function act(name, ...args) {
   const base = `data-action="${name}"`;
   if (!args.length) return base;
@@ -357,5 +362,13 @@ export function act(name, ...args) {
 export function actOn(event, name, ...args) {
   const base = `data-on-${event}="${name}"`;
   if (!args.length) return base;
-  return `${base} data-args="${escAttr(JSON.stringify(args))}"`;
+  return `${base} data-args-${event}="${escAttr(JSON.stringify(args))}"`;
 }
+
+// Keyboard activation for div[role=button] rows: Enter or Space acts like a click.
+export function keyActivate(event, el) {
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); el.click(); }
+}
+
+// A poster whose image failed to load disappears instead of showing the broken-image glyph.
+export function hideOnError(el) { el.style.display = 'none'; }

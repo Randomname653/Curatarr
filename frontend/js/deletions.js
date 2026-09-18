@@ -5,7 +5,7 @@
 // Invalidated whenever a targeted single-category analysis runs (because that
 // category's slice would then be out of sync with the stored full list).
 // Moved state._delProposalsAll to state
-import { SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _posterImg, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, toast } from './ui.js';
+import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, toast } from './ui.js';
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
@@ -35,7 +35,7 @@ export function _recentActivityBadge(p) {
 export function _renderDeletionProposals(proposals) {
   const el = document.getElementById('del-content');
   if (!proposals?.length) {
-    el.innerHTML = emptyHtml('No proposals yet — <b>Analyse library</b> asks the curator for deletion candidates.', 'Analyse library', `loadDeletions(${state.currentDelCategory ? '\'' + state.currentDelCategory + '\'' : 'null'},null,true)`);
+    el.innerHTML = emptyHtml('No proposals yet — <b>Analyse library</b> asks the curator for deletion candidates.', 'Analyse library', act('loadDeletions', state.currentDelCategory || null, null, true));
     updateDelBulkCount();
     return;
   }
@@ -58,8 +58,8 @@ export function _renderDeletionProposals(proposals) {
       return `
       <div class="card mb-12${p.stagnant ? ' is-stagnant' : (p.confidence > .7 ? ' is-hot' : '')}" data-del-id="${p.id}" data-title="${escAttr(p.title)}">
         <div class="poster-card">
-          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" onchange="updateDelBulkCount(); _syncDelPosterVisual(this)" hidden title="Select for bulk delete"/>
-          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" aria-label="Select ${escAttr(p.title)} for bulk delete" onclick="toggleDelSelect(${p.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Click to select for bulk delete">
+          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" ${actOn('change', 'onDelCheckbox', EL)} hidden title="Select for bulk delete"/>
+          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" aria-label="Select ${escAttr(p.title)} for bulk delete" ${act('toggleDelSelect', p.id)} ${actOn('keydown', 'keyActivate', EVENT, EL)} title="Click to select for bulk delete">
             ${_posterImg(p.poster_url, 174, p.category==='music'?174:261, p.category==='music')}
             <div class="del-poster-check">${SVG_CHECK.replace('width="13" height="13"', 'width="34" height="34"')}</div>
           </div>
@@ -71,12 +71,12 @@ export function _renderDeletionProposals(proposals) {
                 ${limbo ? '<span class="badge danger" title="The previous delete attempt failed — the arr was unreachable">delete failed</span>' : ''}
               </div>
               <div class="panel-actions">
-                <button type="button" class="btn btn-danger btn-sm" onclick="approveDelete(${p.id},this)">${limbo?'Retry Delete':'Delete'}</button>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="rejectDelete(${p.id},this)">Keep</button>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="onDiscussDeletion(this)" ${ctx}>Discuss</button>
+                <button type="button" class="btn btn-danger btn-sm" ${act('approveDelete', p.id, EL)}>${limbo?'Retry Delete':'Delete'}</button>
+                <button type="button" class="btn btn-secondary btn-sm" ${act('rejectDelete', p.id, EL)}>Keep</button>
+                <button type="button" class="btn btn-secondary btn-sm" ${act('onDiscussDeletion', EL)} ${ctx}>Discuss</button>
                 ${menuHtml([
-                  {label: 'Reevaluate', call: 'onReevaluateDeletion(this)', attrs: ctx, title: 'Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)'},
-                  p.media_id && p.service ? {label: 'Fix match', call: 'onFixMatch(this)', attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
+                  {label: 'Reevaluate', action: act('onReevaluateDeletion', EL), attrs: ctx, title: 'Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)'},
+                  p.media_id && p.service && p.service !== 'plex' ? {label: 'Fix match', action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
                   p.arr_url ? {label: `Open in ${p.service}`, href: p.arr_url} : null,
                 ])}
               </div>
@@ -86,7 +86,7 @@ export function _renderDeletionProposals(proposals) {
             ${p.synopsis ? `<div class="fs-12 t3 mt-8" style="line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
             <div class="t2 mt-8" style="font-size:13.5px;line-height:1.65;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
             ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Previous delete attempt failed — the arr was unreachable. Retry Delete tries again.</div>` : ''}
-            <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" onblur="saveComment(${p.id})" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))this.blur()">${esc(p.user_comment||'')}</textarea>
+            <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" ${actOn('blur', 'saveComment', p.id)} ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}>${esc(p.user_comment||'')}</textarea>
             <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? 'Note saved.' : 'A note teaches Curatarr your reasoning — it saves when you click away (or Ctrl+Enter).'}</div>
           </div>
         </div>
@@ -251,13 +251,13 @@ export function _renderEnrichmentCoverageBanner(cov) {
     banner.innerHTML = `<span class="banner-icon">${warn}</span>
       <div class="banner-text"><b>ARR enrichment has never run.</b> Curatarr has no rating or genre data for your library — proposals may be inaccurate.
         <div class="fs-11 t3 mt-4">Run enrichment once to populate the metadata cache; afterwards it runs nightly (02:30).</div></div>
-      <button type="button" class="btn btn-primary btn-sm" onclick="startArrPreEnrich(this)">Enrich library now</button>`;
+      <button type="button" class="btn btn-primary btn-sm" ${act('startArrPreEnrich', EL)}>Enrich library now</button>`;
   } else if (cov.low) {
     banner.className = 'banner warn';
     banner.innerHTML = `<span class="banner-icon">${warn}</span>
       <div class="banner-text"><b>Low enrichment coverage: ${cov.pct}% (${cov.enriched}/${cov.total} items)</b> Proposals for unenriched items use neutral rating fallbacks — results are less precise.
         <div class="fs-11 t3 mt-4">Nightly enrichment runs at 02:30; a batch can run now.</div></div>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="startArrPreEnrich(this)">Enrich batch now</button>`;
+      <button type="button" class="btn btn-secondary btn-sm" ${act('startArrPreEnrich', EL)}>Enrich batch now</button>`;
   } else {
     // Coverage is OK — a quiet stat, no warning
     banner.className = 'banner ok';
@@ -520,3 +520,8 @@ export function reloadDeletions(refresh = false) {
 }
 
 export function onRecentOnlyChange(el) { toggleRecentOnly(el.checked); }
+
+// The bulk-select checkbox drives the count and the poster's selected look in one step.
+export function onDelCheckbox(el) { updateDelBulkCount(); _syncDelPosterVisual(el); }
+// Ctrl/Cmd+Enter in the note textarea blurs it, which saves the note.
+export function blurOnCtrlEnter(event, el) { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) el.blur(); }

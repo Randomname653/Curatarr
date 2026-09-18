@@ -24,6 +24,30 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 
+def plex_discography_summary(artist_mbid: str = None, artist_name: str = None) -> Optional[str]:
+    """The same evidence line from the Plex music index when Lidarr is not
+    configured (2026-09-15): albums, tracks, footprint, years, lyrics on file."""
+    try:
+        from src.services.lyrics import plex_artist_lookup, plex_artist_albums
+        a = plex_artist_lookup(name=artist_name, mbid=artist_mbid)
+        if not a:
+            return None
+        albums = plex_artist_albums(a["artist_key"])
+    except Exception as e:
+        logger.debug("[discography] plex index failed for %r: %s", artist_mbid or artist_name, e)
+        return None
+    if not albums:
+        return None
+    years = sorted(y for y in (al.get("year") for al in albums) if y)
+    line = (f"on disk (Plex): {len(albums)} album{'s' if len(albums) != 1 else ''}, "
+            f"{a.get('tracks') or 0} tracks ({(a.get('size_bytes') or 0) / 1e9:.1f} GB)")
+    if years:
+        line += f", {years[0]}–{years[-1]}" if years[0] != years[-1] else f", {years[0]}"
+    if a.get("with_text"):
+        line += f"; lyrics on file for {a['with_text']} tracks"
+    return line
+
+
 async def discography_summary(artist_mbid: str = None,
                               artist_name: str = None) -> Optional[str]:
     """One evidence line describing the artist's on-disk discography, or
@@ -31,8 +55,10 @@ async def discography_summary(artist_mbid: str = None,
     MBID first (robust against typographic-dash names), name second."""
     base = (settings.LIDARR_URL or "").rstrip("/")
     key = settings.LIDARR_API_KEY
-    if not base or not key or not (artist_mbid or artist_name):
+    if not (artist_mbid or artist_name):
         return None
+    if not base or not key:
+        return plex_discography_summary(artist_mbid=artist_mbid, artist_name=artist_name)
     try:
         # 60 s, not 15: the full /artist payload is 15-30 MB (ARCHITECTURE
         # "ARR collect needs >=60s") — cold Lidarr silently cost the judge

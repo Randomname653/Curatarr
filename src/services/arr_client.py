@@ -472,12 +472,12 @@ class RadarrClient(MediaService):
 class SonarrClient(MediaService):
     """Sonarr (TV/Anime) API client."""
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str, rate_limit_rpm: int = 20):
         super().__init__(
             base_url=base_url,
             api_key=api_key,
             service_type=ServiceType.SONARR,
-            rate_limit_rpm=20
+            rate_limit_rpm=rate_limit_rpm
         )
 
     def _get_headers(self) -> Dict:
@@ -516,6 +516,19 @@ class SonarrClient(MediaService):
             cache_key=f"sonarr_episodes_{series_id}"
         )
         return result
+
+    async def get_episode_files(self, series_id: int) -> List[Dict]:
+        """Every episode file of a series: release name (sceneName),
+        relative path, quality and the custom formats Sonarr matched —
+        the editions walker reads these (uncensored / censored cuts)."""
+        return await self.request("GET", f"/api/v3/episodefile?seriesId={series_id}")
+
+    async def search_releases(self, series_id: int, season_number: int) -> List[Dict]:
+        """Interactive search: what the indexers offer for one season.
+        Sonarr searches live, so this is an on-demand call, never a sweep."""
+        return await self.request(
+            "GET", f"/api/v3/release?seriesId={series_id}&seasonNumber={season_number}",
+            max_retries=1)
 
     async def delete_series(
         self,

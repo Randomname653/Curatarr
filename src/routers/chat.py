@@ -1648,6 +1648,10 @@ Announce the protection; say the other two follow if they apply; never
 present them as done. You execute nothing yourself: no deletion, purge,
 downscale, re-encode or file move happens because you say so — the owner's
 'Delete & exit' button is the only path to a deletion.
+LYRICS: when the verified block carries a Lyrics line, argue from it and name
+its basis (n of m tracks on file); quote at most two short lines, never a
+verse or a whole song. Without a Lyrics line say nothing about the words —
+the sound is all you know.
 A QUESTION or musing ("is this actually worth watching?") is NOT a keep
 signal and never mandates a verdict — it is a request for your honest
 judgment: give it from the data and the owner's profile, and an honest "no,
@@ -2561,6 +2565,31 @@ async def send_message(
     # thread; free chat lives on "general". History from one thread is invisible
     # to another so topics can't bleed across discussions.
     thread_id = _thread_id_for(message.discuss_context)
+
+    # 0b. Can the curator answer at all? It is a 19.9 GB model, and while
+    # another program holds the GPU Ollama cannot even start its model
+    # server for it — measured 2026-09-15 against the owner's card at
+    # 17.5/24.5 GB and 90 %: the request died after 304 s with "timed out
+    # waiting for llama-server to start", which is what the enrichment's
+    # summariser timeouts had been all along. Checked HERE, ahead of the
+    # context assembly below (discuss lookups, RAG, taste, memories) and
+    # ahead of the in-flight guard and the priority gate: nothing is built
+    # and nothing is held for an answer that cannot come. The user's own
+    # message is still saved, so the thread reads as a normal exchange.
+    from src.services.llm_lane import busy_message, curator_available
+    _curator_ok, _curator_why = curator_available()
+    if not _curator_ok:
+        _busy_text = busy_message(_curator_why)   # promises background work only if the lane is open
+        _save_message(user.id, "user", message.message, db, thread_id=thread_id)
+        _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
+        logger.info("[chat] curator unavailable (%s) — answered with the GPU-busy notice",
+                    _curator_why or "GPU held")
+
+        async def _gpu_busy_reply() -> AsyncGenerator[str, None]:
+            yield f"data: {json.dumps({'token': _busy_text})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        return StreamingResponse(_gpu_busy_reply(), media_type="text/event-stream")
 
     # 1. CONTEXT PRE-LOADING & METADATA FETCHING
     active_title = ""

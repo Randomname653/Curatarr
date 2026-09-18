@@ -45,6 +45,10 @@ the data custodian picks up whatever is overdue on the next run.
 | Watch running background jobs | Sidebar → **Activity** |
 | Per-library coverage breakdown | Sidebar → **Libraries** (Library Configuration) |
 | Spotify artists not in Lidarr | Manage → **Music** → **Spotify Backlog** tab |
+| Music without Lidarr | nothing to configure — the daily walk indexes your Plex music; Manage → **Music** runs on it (badge "Plex index") |
+| Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify Backlog → **Wish**; Manage → **Music** → **Wanted** tab lists them, green once Plex has them |
+| Uncensored cut: owned? exists? | Curation → **Upgrades** ("TV cut — uncensored disc release exists": broadcast or web files on disk while AniDB says the Blu-ray/DVD release is uncensored; **Search releases** asks Sonarr's indexers for releases named uncensored or from Blu-ray); the curator's verified block carries an Edition line with the file sources and AniDB's verdict |
+| Lyrics on file, artists profiled | Knowledge Base → **Music pipeline** (the line under the stats bar; both walkers run with **Run maintenance now**) |
 
 ## Command-line helpers
 
@@ -107,6 +111,28 @@ it; to force it:
 python -c "from src.services.app_state import force_set_state; \
   force_set_state('enrichment_running', '0')"
 ```
+
+**"The GPU is busy with another program right now" in the chat**
+
+Something else (an image generator, a benchmark, a game) is holding the
+graphics card, and the curator's model is too large to load next to it.
+Background work keeps running on the processor, so enrichment and lyrics
+profiles stay current; only the conversation waits. End the job that holds
+the card, or come back when it is done. The badge in the top bar shows the
+same state — green **Game mode**, amber **GPU busy · CPU lane** while the
+background work continues, amber **GPU busy · paused** when it does not —
+and its tooltip names the occupancy.
+
+Settings → Integrations → **Sharing the graphics card** changes the
+behaviour without a restart: whether a busy card is noticed at all, whether
+the background work moves to the processor, how many threads it may take
+(six by default, measured as fast as twelve) and how much free memory it
+needs before it starts. That last one matters: one enrichment run took
+9.7 GB of RAM, so below 12 GB free the background work waits rather than
+push the machine into swap — and the chat notice then says it is waiting
+instead of promising progress. The setup wizard asks the same questions on
+its Ollama step. In `.env` the keys are `GPU_PRESSURE_GATE`,
+`LLM_CPU_LANE`, `LLM_CPU_THREADS` and `LLM_CPU_MIN_FREE_MB`.
 
 **"Curator running on CPU" banner**
 

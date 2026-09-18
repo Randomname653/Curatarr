@@ -11,6 +11,21 @@
       "file": ".*",
       "type": "(insecure|unencrypted|plain-?text|missing) .*(transport|http|lan|communication|tls)|secrets? transmitted over insecure http",
       "reason": "SECURITY.md, threat model: Curatarr serves one household over the LAN; TLS and access control belong to the operator's reverse proxy, not to the app. Plex, the *arr services and Ollama are reached by the URLs the owner configured."
+    },
+    {
+      "file": "^frontend/.*\\.js$",
+      "type": "missing .*(server-?side )?authori[sz]ation|authori[sz]ation .*(enforcement|check)|privilege escalation",
+      "reason": "Browser code cannot enforce authorization and is not asked to. Verified 2026-09-18 for issue #98: every endpoint it names is gated server-side — /api/setup/reconfigure and /api/setup/build-models by require_admin / require_admin_or_first_run, /api/history/admin/cleanup-orphans and /admin/re-attribute by require_admin, /api/users/me/pin by get_current_user on the caller's own row. SECURITY.md, 'Authorization lives on the routes'."
+    },
+    {
+      "file": "^src/services/setup_wizard\\.py$",
+      "type": "unauthenticated|missing authentication|missing authori[sz]ation",
+      "reason": "A service module with no HTTP surface of its own. Verified 2026-09-18 for issue #99: src/routers/setup.py is the only caller and gates every entry point with require_admin or require_admin_or_first_run, plus the first-run setup-code gate (tests/test_setup_hardening.py::test_setup_code_gate_exempts_localhost_and_demands_it_elsewhere)."
+    },
+    {
+      "file": "^src/vector_store/chromadb_wrapper\\.py$",
+      "type": "missing authori[sz]ation|destructive .*(reset|wipe|delete)",
+      "reason": "reset() is deliberately not wired to any route and has zero callers in the tree (verified 2026-09-18 for issue #101, grep over src/ and scripts/). Its docstring carries the rule. An escape hatch an operator can call from a shell is not an exposed endpoint."
     }
   ]
 }

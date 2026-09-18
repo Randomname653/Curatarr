@@ -589,6 +589,9 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             _lb_line += (f"; top album '{_lb_top['name']}' "
                          f"{_lb_top.get('listeners', 0):,} listeners")
         add("Global listening (ListenBrainz)", _lb_line)
+    _lp_label, _lp_text = _lyrics_line(data.get("lyrics"))
+    if _lp_label:
+        add(_lp_label, _lp_text, cap=700)
     sim = data.get("similar_artists")
     add("Similar artists", sim[:8] if isinstance(sim, list) else sim)
     add("Bio", data.get("bio"), cap=650)
@@ -608,6 +611,19 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             f"{r.get('type')}: {r.get('title')}" + (f" ({r['year']})" if r.get("year") else "")
             for r in rels if isinstance(r, dict) and r.get("title")))
     add("AniDB tags", data.get("anidb_tags"), cap=400)
+    _mt = data.get("media_type")
+    if _mt in ("show", "anime"):
+        # Series editions (2026-09-15): which cut is on disk, whether AniDB
+        # knows an uncensored version — a fact from Sonarr and the offline
+        # snapshot, never from prose. This is the formatter: only `data`
+        # is in scope here (the battery caught a NameError on media_type).
+        try:
+            from src.services.editions import edition_by_title, edition_line
+            _edl = edition_line(edition_by_title(data.get("title"), _mt))
+            if _edl:
+                add("Edition", _edl, cap=400)
+        except Exception:
+            pass
     add("Plot", data.get("plot"), cap=700)
     lines.append("<<<END_UNTRUSTED_SOURCE>>>")
     return "\n".join(lines)
@@ -2969,8 +2985,12 @@ ARTIST: {title}
 GENRES: {genres}
 TAGS: {tags}
 BIO: {bio}
+LYRICS PROFILE: {lyrics}
 SIMILAR ARTISTS: {similar}
 LISTENERS: {listeners}
+
+Lyrical claims — subjects, themes, explicitness — come ONLY from LYRICS PROFILE (the
+artist's own words on file). Without one, describe the sound, never the words.
 
 MOOD REFERENCE — pick ONLY 1-3 moods dominant in this artist's work:
 -- bleak: hopeless, nihilistic atmosphere
@@ -3005,6 +3025,38 @@ Output this exact JSON (no extra text, no markdown fences):
   "similar_artists": {similar_json},
   "rating": {rating}
 }}"""
+
+def _lyrics_prompt_block(raw: dict) -> str:
+    """The artist's lyrics profile for the summariser (attached to the raw
+    entry by src/services/lyrics.py), or its explicit absence — so the model
+    never guesses lyrical themes from a bio."""
+    lp = raw.get("lyrics") if isinstance(raw, dict) else None
+    if not isinstance(lp, dict) or not lp.get("lyrical_profile"):
+        return "none on file — make no claims about the words"
+    b = lp.get("based_on") or {}
+    bits = [f"({b.get('with_text', '?')} of {b.get('tracks', '?')} tracks on file)", lp["lyrical_profile"]]
+    if lp.get("themes"):
+        bits.append("themes: " + ", ".join(str(x) for x in lp["themes"][:8]))
+    if lp.get("languages"):
+        bits.append("languages: " + ", ".join(str(x) for x in lp["languages"][:4]))
+    note = f" ({lp['explicit_note']})" if lp.get("explicit") and lp.get("explicit_note") else ""
+    bits.append("explicit: " + ("yes" + note if lp.get("explicit") else "no"))
+    return fence_untrusted("lyrics_profile", " ".join(bits), 900)
+
+
+def _lyrics_line(lp) -> tuple:
+    """(label, text) for the verified block, or (None, None) without a profile:
+    the profile sentence, the themes, the explicit flag, and how many tracks
+    it rests on — the curator names that basis when it argues from it."""
+    if not isinstance(lp, dict) or not lp.get("lyrical_profile"):
+        return None, None
+    b = lp.get("based_on") or {}
+    text = str(lp["lyrical_profile"]).strip()
+    if lp.get("themes"):
+        text += " Themes: " + ", ".join(str(x) for x in lp["themes"][:8]) + "."
+    text += " Explicit: " + ("yes" if lp.get("explicit") else "no") + "."
+    return f"Lyrics ({b.get('with_text', '?')} of {b.get('tracks', '?')} tracks on file)", text
+
 
 SUMMARIZE_PROMPT = """[MODE: METADATA STRUCTURING]
 Produce a structured JSON profile. Be precise — this data drives semantic vector search and recommendations.
@@ -3137,6 +3189,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
             genres=", ".join(raw_metadata.get("genres", [])),
             tags=", ".join(raw_metadata.get("tags", [])[:15]),
             bio=fence_untrusted("bio", _clean_bio, 500),
+            lyrics=_lyrics_prompt_block(raw_metadata),
             similar=", ".join(similar[:8]),
             similar_json=_json.dumps(similar[:8]),
             listeners=raw_metadata.get("listeners") or "N/A",

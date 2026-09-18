@@ -1,6 +1,6 @@
 /* global DOMPurify, marked */
 // ── CHAT ──────────────────────────────────────────────────────────────────────
-import { _errMsg, _posterImg, confirmDialog, esc, escAttr, proxyImg, toast } from './ui.js';
+import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, proxyImg, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { _updateKbBadge } from './kb.js';
@@ -33,9 +33,9 @@ export async function newChat() {
         <div id="glance-panel"></div>
         <div id="last-played-panel"></div>
         <div id="suggested-prompts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-          <button class="sp-chip" onclick="fillPrompt('What should I watch tonight?')">What should I watch tonight?</button>
-          <button class="sp-chip" onclick="fillPrompt('What can I clean up in my library?')">What can I clean up in my library?</button>
-          <button class="sp-chip" onclick="fillPrompt('What does my watch history say about my taste?')">What does my watch history say about my taste?</button>
+          <button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?')}>What should I watch tonight?</button>
+          <button class="sp-chip" ${act('fillPrompt', 'What can I clean up in my library?')}>What can I clean up in my library?</button>
+          <button class="sp-chip" ${act('fillPrompt', 'What does my watch history say about my taste?')}>What does my watch history say about my taste?</button>
         </div>`;
       loadGlancePanel();
       loadLastPlayed();
@@ -330,7 +330,7 @@ export async function loadGlancePanel() {
   if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
   el.innerHTML = `<div class="stat-row" style="margin:16px 0 4px">` + tiles.map(t => `
-    <div class="stat-box" style="cursor:pointer" onclick="showView('${t.view}', document.querySelector(&quot;.sb-item[onclick*='${t.view}']&quot;))">
+    <div class="stat-box" style="cursor:pointer" ${act('goToView', t.view)}>
       <div class="num"${t.small ? ' style="font-size:16px"' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
     </div>`).join('') + `</div>`;
@@ -366,7 +366,7 @@ export async function loadLastPlayed() {
         let title = e.title;
         if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
         else if ((e.media_type === 'anime' || e.media_type === 'show') && e.series_title) title = `${e.series_title}: ${e.title}`;
-        return `<div class="lp-chip glow-interactive selectable" role="button" tabindex="0" aria-label="Discuss ${escAttr(title)}" onclick="discussLastPlayed(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        return `<div class="lp-chip glow-interactive selectable" role="button" tabindex="0" aria-label="Discuss ${escAttr(title)}" ${act('discussLastPlayed', i)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
           ${_posterImg(e.poster_url, 72, isMusic ? 72 : 108, isMusic)}
           <div class="lp-title">${esc(title)}</div>
         </div>`;
@@ -394,7 +394,7 @@ export async function loadStarters() {
     const starters = (r.starters || []).slice(0, 3);
     if (!starters.length) return;
     el.innerHTML = starters.map(s =>
-      `<button class="sp-chip" onclick="useStarter(${s.id}, this)">${esc(s.text)}</button>`
+      `<button class="sp-chip" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
     ).join('');
   } catch {} // best-effort nicety, keep the static fallback -- fail silent
 }

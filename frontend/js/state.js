@@ -20,6 +20,7 @@ export const state = {
   taskStreamRetries: 0,
   _recsPollTimer: null,
   _recsPollKillswitch: null,
+  _notifPollTimer: null,      // bell poll interval (auth.js)
   setupStep: 0,
   libraryCfg: [],
   _modal: null,

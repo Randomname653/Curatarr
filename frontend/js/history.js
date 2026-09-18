@@ -2,7 +2,7 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, _errHtml, _errMsg, esc, setStatus, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, esc, setStatus, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 export async function recomputeTaste(statusId = null) {
@@ -42,7 +42,7 @@ export async function syncHistory(force = false, statusId = null) {
     setTimeout(loadHistoryStatus, 5000);
   } catch (e) {
     if (status) setStatus(status, _errMsg(e), 'err');
-    else if (el) el.innerHTML = _errHtml(e, `syncHistory(${force})`);
+    else if (el) el.innerHTML = _errHtml(e, act('syncHistory', force));
   }
 }
 
@@ -77,14 +77,14 @@ export async function loadHistoryStatus() {
 
     if (types.length) {
       document.getElementById('taste-tabs').innerHTML = types.map((t,i)=>
-        `<button class="cat-tab ${i===0?'active':''}" onclick="showTasteTab('${t}',this)">${CAT_LABELS[t]||t}</button>`
+        `<button class="cat-tab ${i===0?'active':''}" ${act('showTasteTab', t, EL)}>${CAT_LABELS[t]||t}</button>`
       ).join('');
       showTasteTabData(byType, tv.summary||'', types[0]);
 
       const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
       renderRecent(h.entries, types[0]);
     }
-  } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, 'loadHistoryStatus()'); }
+  } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }
 
 export function showTasteTab(type,btn) {

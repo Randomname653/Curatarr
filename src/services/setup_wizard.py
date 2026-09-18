@@ -19,7 +19,6 @@ import secrets
 import tempfile
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 
@@ -73,7 +72,7 @@ def is_private_endpoint(url: str) -> bool:
     if not url:
         return False
     try:
-        host = (urlparse(url).hostname or "").lower().strip()
+        host = (httpx.URL(url).host or "").lower().strip()
     except Exception:
         return False
     if not host:
@@ -101,7 +100,7 @@ def endpoint_privacy_note(url: str) -> Optional[str]:
     if not url or is_private_endpoint(url):
         return None
     try:
-        host = urlparse(url).hostname or "?"
+        host = httpx.URL(url).host or "?"
     except Exception:
         host = "?"
     return (
@@ -361,6 +360,10 @@ def current_env_config() -> dict:
         "opensubtitles_username":     s.OPENSUBTITLES_USERNAME or "",
         "opensubtitles_password":     s.OPENSUBTITLES_PASSWORD or "",
         "opensubtitles_daily_budget": s.OPENSUBTITLES_DAILY_BUDGET,
+        "gpu_pressure_gate":     bool(getattr(s, "GPU_PRESSURE_GATE", True)),
+        "llm_cpu_lane":          bool(getattr(s, "LLM_CPU_LANE", True)),
+        "llm_cpu_threads":       int(getattr(s, "LLM_CPU_THREADS", 6)),
+        "llm_cpu_min_free_mb":   int(getattr(s, "LLM_CPU_MIN_FREE_MB", 12000)),
         "jwt_secret":            s.effective_jwt_secret,
     }
 
@@ -471,6 +474,15 @@ def write_env(config: dict) -> None:
         f"OPENSUBTITLES_USERNAME={config.get('opensubtitles_username', _live_settings().OPENSUBTITLES_USERNAME or '')}",
         f"OPENSUBTITLES_PASSWORD={_plain(config.get('opensubtitles_password', _live_settings().OPENSUBTITLES_PASSWORD or ''))}",
         f"OPENSUBTITLES_DAILY_BUDGET={config.get('opensubtitles_daily_budget', _live_settings().OPENSUBTITLES_DAILY_BUDGET)}",
+        "",
+        "# Sharing the GPU with another program (src/services/llm_lane.py)",
+        # getattr, not attribute access: write_env is exercised against stub
+        # settings objects, and a newly added key must not make the writer
+        # explode on one that predates it.
+        f"GPU_PRESSURE_GATE={'true' if config.get('gpu_pressure_gate', getattr(_live_settings(), 'GPU_PRESSURE_GATE', True)) else 'false'}",
+        f"LLM_CPU_LANE={'true' if config.get('llm_cpu_lane', getattr(_live_settings(), 'LLM_CPU_LANE', True)) else 'false'}",
+        f"LLM_CPU_THREADS={config.get('llm_cpu_threads', getattr(_live_settings(), 'LLM_CPU_THREADS', 6))}",
+        f"LLM_CPU_MIN_FREE_MB={config.get('llm_cpu_min_free_mb', getattr(_live_settings(), 'LLM_CPU_MIN_FREE_MB', 12000))}",
         "",
         "# Sync",
         # Live values, not literals: a wizard re-run used to reset an
@@ -875,6 +887,47 @@ SETUP_FIELDS = [
         "help": "Large model for chat and recommendations. Must be pulled in Ollama.",
         "category": "ollama",
         "type": "model_select",
+    },
+    {
+        "id": "llm_cpu_lane",
+        "label": "Keep working when the GPU is busy",
+        "required": False,
+        "default": True,
+        "type": "toggle",
+        "help": ("While another program holds the graphics card, background work — enrichment, "
+                 "lyrics profiles, memory extraction — runs on the processor instead of stopping. "
+                 "A conversation still needs the card back."),
+        "category": "ollama",
+    },
+    {
+        "id": "llm_cpu_threads",
+        "label": "Processor threads for that work",
+        "required": False,
+        "default": 6,
+        "type": "number",
+        "help": ("Six measured as fast as twelve: generation is limited by memory bandwidth, not "
+                 "cores, so the rest stays with whatever is holding the card."),
+        "category": "ollama",
+    },
+    {
+        "id": "llm_cpu_min_free_mb",
+        "label": "Free memory that work needs (MB)",
+        "required": False,
+        "default": 12000,
+        "type": "number",
+        "help": ("One summariser run measured 9.7 GB of RAM. Below this much free the "
+                 "background work waits instead of pushing the machine into swap."),
+        "category": "ollama",
+    },
+    {
+        "id": "gpu_pressure_gate",
+        "label": "Notice when another program holds the GPU",
+        "required": False,
+        "default": True,
+        "type": "toggle",
+        "help": ("Treat a graphics card saturated by something other than Ollama like a running "
+                 "game. Off means Curatarr competes for it."),
+        "category": "ollama",
     },
     {
         "id": "base_summarizer_model",

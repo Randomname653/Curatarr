@@ -1,6 +1,6 @@
 // ── Curation Report (admin) ──────────────────────────────────────────────
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
-import { _errHtml, _errMsg, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
 export function _repBar(pct, color) {
   return `<div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden"><div style="width:${Math.min(100, pct)}%;height:100%;background:${color}"></div></div>`;
 }
@@ -11,7 +11,7 @@ export async function loadReport() {
   try {
     await _swrRun('report', () => api('/api/stats/curation?months=12'), _renderReport);
   } catch (e) {
-    el.innerHTML = _errHtml(e, 'loadReport()');
+    el.innerHTML = _errHtml(e, act('loadReport'));
   }
 }
 
@@ -76,7 +76,7 @@ export function _renderReport(d) {
 
   const narrative = section('Yearly review', "in the curator's own words",
     `<div id="report-narrative" class="fs-13 t2" style="line-height:1.7">${d.narrative ? esc(d.narrative) : '<span class="t3">Not written yet.</span>'}</div>`,
-    `<button type="button" class="btn btn-secondary btn-sm" onclick="writeYearlyReview(this)">${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>`);
+    `<button type="button" class="btn btn-secondary btn-sm" ${act('writeYearlyReview', EL)}>${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>`);
 
   el.innerHTML = tiles + resSplit +
     section('Monthly activity', 'resolutions · GB freed', monthRows || emptyHtml('No resolutions in the last twelve months.')) +

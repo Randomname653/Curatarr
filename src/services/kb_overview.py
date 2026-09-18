@@ -336,23 +336,21 @@ async def build_overview() -> dict:
             b["not_found"] += (r.not_found or 0)
 
         # ── music pipeline (Spotify cascade) ──────────────────────────────────
-        spotify_total = (db.query(func.count(WatchHistoryEntry.id))
-                         .filter(WatchHistoryEntry.source == "spotify").scalar()) or 0
-        spotify_matched = (db.query(func.count(WatchHistoryEntry.id))
-                           .filter(WatchHistoryEntry.source == "spotify",
-                                   ~WatchHistoryEntry.plex_item_id.like("spotify%"))
-                           .scalar()) or 0
-        genre_covered = (db.query(func.count(WatchHistoryEntry.id))
-                         .filter(WatchHistoryEntry.source == "spotify",
-                                 WatchHistoryEntry.genres.isnot(None),
-                                 WatchHistoryEntry.genres != "").scalar()) or 0
-        artists_total = (db.query(func.count(distinct(WatchHistoryEntry.series_title)))
-                         .filter(WatchHistoryEntry.media_type == "music",
-                                 WatchHistoryEntry.series_title.isnot(None)).scalar()) or 0
-        artists_mbid = (db.query(func.count(distinct(WatchHistoryEntry.series_title)))
-                        .filter(WatchHistoryEntry.media_type == "music",
-                                WatchHistoryEntry.series_title.isnot(None),
-                                WatchHistoryEntry.artist_mbid.isnot(None)).scalar()) or 0
+        # ⚡ Bolt: Fast path - combined 5 individual aggregate queries into a single
+        # database query using conditional logic to eliminate 4 DB round trips.
+        music_stats = db.query(
+            func.sum(case(((WatchHistoryEntry.source == "spotify"), 1), else_=0)).label("spotify_total"),
+            func.sum(case(((WatchHistoryEntry.source == "spotify") & ~WatchHistoryEntry.plex_item_id.like("spotify%"), 1), else_=0)).label("spotify_matched"),
+            func.sum(case(((WatchHistoryEntry.source == "spotify") & WatchHistoryEntry.genres.isnot(None) & (WatchHistoryEntry.genres != ""), 1), else_=0)).label("genre_covered"),
+            func.count(distinct(case(((WatchHistoryEntry.media_type == "music") & WatchHistoryEntry.series_title.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("artists_total"),
+            func.count(distinct(case(((WatchHistoryEntry.media_type == "music") & WatchHistoryEntry.series_title.isnot(None) & WatchHistoryEntry.artist_mbid.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("artists_mbid"),
+        ).first()
+
+        spotify_total = int(music_stats.spotify_total or 0)
+        spotify_matched = int(music_stats.spotify_matched or 0)
+        genre_covered = int(music_stats.genre_covered or 0)
+        artists_total = int(music_stats.artists_total or 0)
+        artists_mbid = int(music_stats.artists_mbid or 0)
 
     # ── storage ────────────────────────────────────────────────────────────────
     storage = {

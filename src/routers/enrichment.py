@@ -54,7 +54,7 @@ class EnrichRequest(BaseModel):
 
 
 @router.get("/overview")
-@ttl_response(10)
+@ttl_response(10, shared=True)   # library-wide counts, identical for every user
 async def enrichment_overview(user: User = Depends(get_current_user)):
     """The consolidated Knowledge-Base truth (see services/kb_overview.py):
     one denominator per category, states derived from the JOIN of status
@@ -65,7 +65,7 @@ async def enrichment_overview(user: User = Depends(get_current_user)):
 
 
 @router.get("/custodian")
-@ttl_response(10)
+@ttl_response(10, shared=True)   # one maintenance state for the install
 async def custodian_status_endpoint(user: User = Depends(get_current_user)):
     """Debt-based maintenance state: last tick report + per-task due list."""
     from src.services.data_custodian import custodian_status
@@ -195,6 +195,35 @@ async def enrichment_status(
         "arr": arr_counts,
         "last_run": last_run,
         "running": get_state("enrichment_running") == "1",
+    }
+
+
+def _plex_music_counts(count_vectors=None) -> dict:
+    """The Knowledge Base's music row when Lidarr is not configured (Lidarr
+    optional, 2026-09-15): the same keys the Lidarr branch fills, from the
+    Plex music index — enriched = artists whose profile exists."""
+    from src.services.lyrics import plex_artists
+    arts = plex_artists()
+    if not arts:
+        return {}
+    from src.database.connection import get_db_session
+    from src.database.models import EnrichmentStatus as _ES
+    with get_db_session() as db:
+        enriched_titles = {(t or "").lower() for (t,) in db.query(_ES.title)
+                           .filter(_ES.media_category == "music", _ES.enriched == True).all()}  # noqa: E712
+    names = {(a.get("name") or "").lower() for a in arts}
+    enriched = len(names & enriched_titles)
+    return {
+        "total": len(arts),
+        "total_albums": sum(a.get("albums") or 0 for a in arts),
+        "downloaded": sum(1 for a in arts if (a.get("tracks") or 0) > 0),
+        "monitored": len(arts),
+        "enriched": enriched,
+        "enriched_albums": 0,
+        "vector_count": count_vectors("lidarr") if count_vectors else 0,
+        "pct": min(100, round(100 * enriched / max(len(arts), 1))),
+        "stale": False,
+        "source": "plex",
     }
 
 
@@ -347,6 +376,13 @@ async def _get_arr_counts() -> dict:
             else:
                 counts["sonarr"] = {"error": "unreachable", "stale": True}
 
+    if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
+        try:
+            plex_counts = _plex_music_counts(_count_vectors)
+            if plex_counts:
+                counts["lidarr"] = plex_counts
+        except Exception as e:
+            logger.debug("[kb] plex music counts failed: %s", e)
     if settings.LIDARR_URL and settings.LIDARR_API_KEY:
         try:
             async with _httpx.AsyncClient(timeout=8) as client:
@@ -566,7 +602,7 @@ async def _run_backfill_bg(source: str) -> None:
 
 
 @router.get("/backfill-status")
-@ttl_response(15)
+@ttl_response(15, shared=True)   # archive coverage of the shared library
 async def backfill_status(user: User = Depends(get_current_user)):
     """Per-source coverage of the archive metadata, and whether a manual
     catch-up is still worth offering (see archive_backfill.THRESHOLD_PCT)."""
@@ -2995,7 +3031,15 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             # No sentinel needed: the round-robin consumer stops when lanes_done
             # covers all active categories AND every per-category queue is empty.
 
+        from src.services.llm_lane import CPU as _LANE_CPU, lane as _llm_lane
         from src.services.process_monitor import is_game_running
+
+        def _llm_yields() -> bool:
+            """True when this run must skip the LLM and only bank raw API
+            data. A GPU held by another program no longer means that: the
+            summariser keeps going on the CPU lane (slower, but the library
+            stays current). A real game still parks everything."""
+            return is_game_running() and _llm_lane("summarizer") != _LANE_CPU
 
         async def _write_game_mode_db(item: dict, cat: str, raw: dict):
             """Persist raw API data to SQLite and mark item api_cached in EnrichmentStatus.
@@ -3068,7 +3112,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                 fin_ik = raw.pop("_finalize_id_key",     None)
                 fin_ia = raw.pop("_finalize_is_anime",   False)
                 try:
-                    if is_game_running():
+                    if _llm_yields():
                         # Persist raw API data to SQLite, skip LLM, mark for later
                         await _write_game_mode_db(citem, ccat, raw)
                         # Audit #9b: the slow-source fetches spawned for this

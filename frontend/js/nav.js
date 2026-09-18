@@ -84,3 +84,9 @@ export function showView(name, btn) {
 }
 
 export function showLibrariesForce() { showView('libraries', document.querySelector('.sb-item[data-action*=showView][data-args*="libraries"]')); }
+
+// Glance tiles in the chat switch the view and mark its sidebar item, found by
+// the view name inside the item's data-args.
+export function goToView(view) {
+  showView(view, document.querySelector(`.sb-item[data-args*='"${view}"']`));
+}

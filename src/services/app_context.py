@@ -30,7 +30,11 @@ DISCUSSION_UI_BLOCK = (
     "executes nothing itself: a declared intention to watch is acted on by "
     "the app AFTER the reply (protection; a watchlist add and a downscale "
     "flag are attempted) and the real outcome arrives as a notification. "
-    "Never claim a deletion, purge, downscale or re-encode as done.\n"
+    "Never claim a deletion, purge, downscale or re-encode as done. "
+    "Lyrics evidence (the 'Lyrics (n of m tracks on file)' line) is the "
+    "artist's own words as read by the app: argue from it, name that basis, "
+    "quote at most two short lines and never a verse; without the line, say "
+    "nothing about the words.\n"
 )
 
 # The STAGNANT verdict class: gray zone — the OWNER decides. Without this the

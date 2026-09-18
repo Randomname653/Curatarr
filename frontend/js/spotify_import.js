@@ -1,19 +1,19 @@
 // ── SPOTIFY HISTORY IMPORT (shared by the setup step and the admin card) ──
 import { state } from './state.js';
-import { _errMsg, esc } from './ui.js';
+import { EL, EVENT, _errMsg, act, actOn, esc } from './ui.js';
 import { api } from './api.js';
 import { collectStep } from './setup.js';
 export function spotifyDropZone(p) {
   return `
     <div id="${p}-drop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:26px;text-align:center;cursor:pointer"
-         ondragover="event.preventDefault();this.style.borderColor='var(--amber)'"
-         ondragleave="this.style.borderColor='var(--border)'"
-         ondrop="handleSpotifyDrop(event,'${p}')"
-         onclick="document.getElementById('${p}-file').click()">
+         ${actOn('dragover', 'dropzoneOver', EVENT, EL)}
+         ${actOn('dragleave', 'dropzoneLeave', EL)}
+         ${actOn('drop', 'handleSpotifyDrop', EVENT, p)}
+         ${act('openSpotifyPicker', p)}>
       <div style="font-size:13px">Drop your Spotify extended history here</div>
       <div class="hint" style="margin-top:4px">Streaming_History_Audio_*.json, endsong_*.json or the whole my_spotify_data.zip — or click to browse</div>
     </div>
-    <input id="${p}-file" type="file" multiple accept=".json,.zip" style="display:none" onchange="uploadSpotify(this.files,'${p}')">
+    <input id="${p}-file" type="file" multiple accept=".json,.zip" style="display:none" ${actOn('change', 'onSpotifyFile', EL, p)}>
     <div id="${p}-result" style="margin-top:8px"></div>
     <div id="${p}-pending" class="hint" style="margin-top:4px"></div>`;
 }
@@ -82,3 +82,11 @@ export async function finishSetup() {
     el.innerHTML = `<span style="color:var(--danger)">Error: ${esc(_errMsg(e))}</span>`;
   }
 }
+
+// Drop zone of the Spotify import: highlight while a file is dragged over it,
+// reset when it leaves; a click opens the hidden file input, whose change
+// uploads. The inline handlers did all four in place.
+export function dropzoneOver(event, el) { event.preventDefault(); el.style.borderColor = 'var(--amber)'; }
+export function dropzoneLeave(el) { el.style.borderColor = 'var(--border)'; }
+export function openSpotifyPicker(p) { document.getElementById(p + '-file').click(); }
+export function onSpotifyFile(el, p) { uploadSpotify(el.files, p); }

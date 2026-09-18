@@ -1,7 +1,7 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
 import { state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
-import { SETUP_STEPS, SVG_WARN, SVG_X, _errMsg, esc } from './ui.js';
+import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errMsg, act, actOn, esc } from './ui.js';
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
@@ -18,7 +18,7 @@ const SETUP_CONTENT = {
       <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${state.setupData.plex_token||''}">
       <div class="hint">Settings → Troubleshooting → "Show XML" → copy the X-Plex-Token from the URL.</div>
     </div>
-    <button class="btn btn-secondary btn-sm" onclick="testConn('plex')">Test connection</button>
+    <button class="btn btn-secondary btn-sm" ${act('testConn', 'plex')}>Test connection</button>
     <div id="test-plex-result"></div>`,
 
   ollama: () => `
@@ -27,13 +27,13 @@ const SETUP_CONTENT = {
       <label for="s-ollama">Ollama Endpoint</label>
       <input id="s-ollama" placeholder="http://localhost:11434" value="${state.setupData.ollama_endpoint||'http://localhost:11434'}">
     </div>
-    <button class="btn btn-secondary btn-sm" onclick="testConn('ollama')">Detect models</button>
+    <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>Detect models</button>
     <div id="test-ollama-result" style="margin:8px 0"></div>
     <div class="form-group" style="margin-top:12px">
       <label for="s-vram">GPU / VRAM</label>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-secondary btn-sm" onclick="detectGpu()">Detect GPU (nvidia-smi)</button>
-        <select id="s-vram" style="width:auto" onchange="refreshModelRecs()">
+        <button class="btn btn-secondary btn-sm" ${act('detectGpu')}>Detect GPU (nvidia-smi)</button>
+        <select id="s-vram" style="width:auto" ${actOn('change', 'refreshModelRecs')}>
           <option value="">VRAM: pick manually…</option>
           <option value="8">8 GB</option>
           <option value="12">12 GB</option>
@@ -62,7 +62,7 @@ const SETUP_CONTENT = {
     </div>
     <div class="form-group" style="margin-top:12px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="s-pitcher-enable" onchange="document.getElementById('s-pitcher-wrap').style.display=this.checked?'':'none'" ${state.setupData.enable_pitcher?'checked':''}>
+        <input type="checkbox" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${state.setupData.enable_pitcher?'checked':''}>
         Dedicated deletion judge (two-bake split)
       </label>
       <div class="hint">A second bake that ONLY judges deletions — benchmarked more precise and 2.4× faster at pitches than the chat curator. It needs its own VRAM while it runs (the curator is evicted meanwhile), so it pays off on 24 GB cards; below that the curator judges deletions too.</div>
@@ -71,6 +71,16 @@ const SETUP_CONTENT = {
         <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (recommended for the split)</option></select>
         <div id="pitcher-note" class="hint"></div>
       </div>
+    </div>
+    <div class="form-group mt-12">
+      <label class="row fs-13">
+        <input type="checkbox" id="s-cpu-lane" ${state.setupData.llm_cpu_lane === false ? '' : 'checked'}>
+        Keep working when something else takes the card
+      </label>
+      <div class="hint">An image generator, a benchmark or a game can hold the graphics card for hours. With this on, the background work — enrichment, lyrics profiles, memory extraction — moves to the processor instead of stopping, measured at about 145 s per item on a loaded 24 GB machine without touching the card. A conversation still needs the card back, and Curatarr says so instead of hanging.</div>
+      <label for="s-cpu-threads" class="mt-8">Processor threads for that work</label>
+      <input id="s-cpu-threads" type="number" min="1" max="64" value="${state.setupData.llm_cpu_threads || 6}">
+      <div class="hint">Six are as fast as twelve — generation is limited by memory bandwidth, not by cores — so the rest of the processor stays with whatever is holding the card.</div>
     </div>`,
 
   metadata: () => `
@@ -101,7 +111,7 @@ const SETUP_CONTENT = {
     <div class="form-group">
       <label for="s-spotify-secret">Spotify Client Secret</label>
       <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_secret||''}">
-      <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="testConn('spotify')">Test Spotify</button>
+      <button class="btn btn-secondary btn-sm" style="margin-top:6px" ${act('testConn', 'spotify')}>Test Spotify</button>
       <div id="test-spotify-result" style="margin-top:4px;font-size:12px"></div>
     </div>
     <div class="form-group">
@@ -138,7 +148,7 @@ const SETUP_CONTENT = {
           <label for="s-${id}-key">API Key</label>
           <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${state.setupData[id+'_api_key']||''}">
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="testConn('${id}')">Test ${name}</button>
+        <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>Test ${name}</button>
         <div id="test-${id}-result"></div>
       </div>`;
     }).join('')}`,
@@ -164,7 +174,7 @@ const SETUP_CONTENT = {
         Curatarr will save your configuration, build the AI models with <code>ollama create</code>,
         then start the initial sync. This will take a few minutes the first time.
       </p>
-      <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" onclick="finishSetup()">
+      <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" ${act('finishSetup')}>
         Save & Start Curatarr
       </button>
       <div id="setup-saving" style="margin-top:16px;color:var(--text2);font-size:13px"></div>
@@ -203,6 +213,8 @@ export function collectStep() {
     state.setupData.enable_pitcher = !!document.getElementById('s-pitcher-enable')?.checked;
     state.setupData.base_pitcher_model = document.getElementById('s-pitcher-model')?.value || 'qwen3.8:27b';
     state.setupData.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || state.setupData.vram_gb || null;
+    state.setupData.llm_cpu_lane = !!document.getElementById('s-cpu-lane')?.checked;
+    state.setupData.llm_cpu_threads = parseInt(document.getElementById('s-cpu-threads')?.value, 10) || 6;
   } else if (key === 'metadata') {
     state.setupData.listenbrainz_token = document.getElementById('s-listenbrainz')?.value?.trim() || '';
     state.setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
@@ -390,7 +402,7 @@ export async function renderOnboardingStep(step) {
         </tr>`).join('')}
         </tbody></table>
       </div>
-      <button class="btn btn-primary" style="width:100%;padding:12px" onclick="saveOnboardingLibraries()">
+      <button class="btn btn-primary" style="width:100%;padding:12px" ${act('saveOnboardingLibraries')}>
         Save & Continue →
       </button>`;
   }
@@ -403,7 +415,7 @@ export async function renderOnboardingStep(step) {
         <div class="progress-bar" style="margin-bottom:8px"><div class="progress-fill" id="ob-sync-bar" style="width:0%"></div></div>
         <div style="font-size:12px;color:var(--text2)" id="ob-sync-label">Waiting to start…</div>
       </div>
-      <button class="btn btn-primary" style="width:100%;padding:12px" id="ob-sync-btn" onclick="startOnboardingSync()">
+      <button class="btn btn-primary" style="width:100%;padding:12px" id="ob-sync-btn" ${act('startOnboardingSync')}>
         Start sync
       </button>`;
   }
@@ -417,10 +429,10 @@ export async function renderOnboardingStep(step) {
         with Curatarr's system prompt baked in.
       </p>
       <div id="ob-model-status" style="margin-bottom:20px"></div>
-      <button class="btn btn-primary" style="width:100%;padding:12px" onclick="buildOnboardingModels()">
+      <button class="btn btn-primary" style="width:100%;padding:12px" ${act('buildOnboardingModels')}>
         Build models
       </button>
-      <button class="btn btn-secondary" style="width:100%;padding:10px;margin-top:8px" onclick="hideOnboarding()">
+      <button class="btn btn-secondary" style="width:100%;padding:10px;margin-top:8px" ${act('hideOnboarding')}>
         Skip for now (use base models)
       </button>`;
   }
@@ -434,7 +446,7 @@ export async function renderOnboardingStep(step) {
           Watch history synced and taste vectors computed.<br>
           You can now chat with your curator, get recommendations, and manage your library.
         </p>
-        <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" onclick="hideOnboarding()">
+        <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" ${act('hideOnboarding')}>
           Open Curatarr
         </button>
       </div>`;
@@ -548,3 +560,6 @@ export async function logout() {
   try { await api('/api/auth/logout', 'POST'); } catch {}
   state.token=''; localStorage.removeItem('curatarr_token'); location.reload();
 }
+
+// The Pitcher checkbox shows or hides the model picker beneath it.
+export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').style.display = el.checked ? '' : 'none'; }

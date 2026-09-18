@@ -1,6 +1,6 @@
 // ── Pass 16b: Library Settings (admin only) ───────────────────────────────
 import { api } from './api.js';
-import { _errHtml, _errMsg, _showTestResult, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
 export async function loadLibrarySettings() {
   const shell = document.getElementById('library-settings-shell');
   if (!shell) return;
@@ -12,7 +12,7 @@ export async function loadLibrarySettings() {
       shell.appendChild(renderArrCard(svc, status[svc] || {}));
     }
   } catch (e) {
-    shell.innerHTML = _errHtml(e, 'loadLibrarySettings()');
+    shell.innerHTML = _errHtml(e, act('loadLibrarySettings'));
   }
 }
 
@@ -30,6 +30,7 @@ export function renderArrCard(svc, info) {
   card.innerHTML = `
     <div class="section-head"><h3>${esc(ARR_LABELS[svc])} ${state}</h3></div>
     <div class="section-body">
+      ${svc === 'lidarr' ? '<p class="fs-12 t3 mb-12">Optional. Without Lidarr the Music page, the deletion proposals and the curator run on the Plex music index (deletions go through Plex, wanted artists become wishes you fulfil in SoulSync).</p>' : ''}
       <div id="arr-form-${svc}" class="fs-12 mb-12" style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;align-items:center">
         <label for="arr-url-${svc}" class="t3">URL</label>
         <input type="text" id="arr-url-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${port}">
@@ -37,12 +38,12 @@ export function renderArrCard(svc, info) {
         <input type="password" id="arr-key-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}">
       </div>
       <div class="row mb-12">
-        <button type="button" class="btn btn-primary btn-sm" id="arr-save-${svc}" onclick="saveArrConfig('${svc}',this)">Save URL + key</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="testArr('${svc}',this)">Test connection</button>
+        <button type="button" class="btn btn-primary btn-sm" id="arr-save-${svc}" ${act('saveArrConfig', svc, EL)}>Save URL + key</button>
+        <button type="button" class="btn btn-secondary btn-sm" ${act('testArr', svc, EL)}>Test connection</button>
         <span id="arr-msg-${svc}" class="status"></span>
       </div>
       <div id="arr-defaults-${svc}"${info.configured ? '' : ' hidden'} style="border-top:1px solid var(--border);padding-top:10px">
-        ${info.configured ? `<div class="row"><span class="fs-11 t3">Root folder, quality profile and the other defaults come from the arr itself.</span><button type="button" class="btn btn-secondary btn-sm row-end" onclick="loadArrProfiles('${svc}',this)">Load profiles</button></div>` : ''}
+        ${info.configured ? `<div class="row"><span class="fs-11 t3">Root folder, quality profile and the other defaults come from the arr itself.</span><button type="button" class="btn btn-secondary btn-sm row-end" ${act('loadArrProfiles', svc, EL)}>Load profiles</button></div>` : ''}
       </div>
     </div>`;
   trackDirty(card.querySelector(`#arr-form-${svc}`), card.querySelector(`#arr-save-${svc}`));
@@ -138,7 +139,7 @@ export async function loadArrProfiles(svc, btn) {
         ${extra}
       </div>
       <div class="row">
-        <button type="button" class="btn btn-primary btn-sm" id="arr-defaults-save-${svc}" onclick="saveArrDefaults('${svc}',this)">Save defaults</button>
+        <button type="button" class="btn btn-primary btn-sm" id="arr-defaults-save-${svc}" ${act('saveArrDefaults', svc, EL)}>Save defaults</button>
         <span id="arr-defaults-msg-${svc}" class="status"></span>
       </div>
     `;

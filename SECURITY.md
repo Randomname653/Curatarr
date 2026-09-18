@@ -34,8 +34,14 @@ Defaults that matter:
 - Every response carries a Content-Security-Policy: the UI
   loads nothing from other origins, so `connect-src 'self'` means even a
   script injection that survived DOMPurify cannot phone a token home.
+  Scripts are the module tree only (`script-src 'self'`; no inline handlers
+  or inline scripts since 2026-09-13), so injected markup cannot run code
+  either. `style-src` still allows inline styles.
 - Deletion actions require an authenticated session; proposals are never
-  executed without an explicit user approval in the UI.
+  executed without an explicit user approval in the UI. Without Lidarr,
+  music deletions go through Plex's own API (the server's 'Allow media
+  deletion' setting) on the same approval path, and the item is re-read
+  afterwards: a file Plex kept is reported as a failure, never as deleted.
 
 ## Who can log in
 

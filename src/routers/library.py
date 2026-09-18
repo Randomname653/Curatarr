@@ -135,6 +135,12 @@ async def library_status(_user: User = Depends(get_current_user)):
             "last_test": last_test,
             "defaults": _read_defaults(svc),
         }
+        if svc == "lidarr":
+            # Lidarr is optional (2026-09-15): 'plex' means the Music page,
+            # the deletion candidates and the curator's evidence come from
+            # the Plex music index instead.
+            from src.services.music_source import music_service
+            out[svc]["music_source"] = music_service()
     return out
 
 
@@ -595,6 +601,37 @@ async def prewarm_arr_caches() -> None:
         track_task(_bg_refresh(svc), name=f"arr_prewarm_refresh:{svc}")
 
 
+def _plex_music_library() -> "tuple[list, list, dict] | None":
+    """The Music page without Lidarr: the Plex music index rendered in the
+    shape Lidarr's /api/v1/artist has, so _flatten_arr_item, the enrichment
+    lookup and the rows need no second code path. ``id`` is the Plex artist
+    key (numeric, so Re-enrich's int arr_id still fits). None = no index."""
+    try:
+        from src.services.lyrics import plex_artists
+        arts = plex_artists()
+    except Exception as e:
+        logger.debug("[library] plex music index unavailable: %s", e)
+        return None
+    if not arts:
+        return None
+    from datetime import datetime as _dt
+    items_raw = []
+    for a in arts:
+        added = a.get("added_at")
+        items_raw.append({
+            "id": str(a["artist_key"]),
+            "artistName": a.get("name") or "",
+            "foreignArtistId": a.get("mbid"),
+            "statistics": {"sizeOnDisk": a.get("size_bytes") or 0,
+                           "albumCount": a.get("albums") or 0,
+                           "trackFileCount": a.get("tracks") or 0},
+            "added": _dt.utcfromtimestamp(added).isoformat() if added else None,
+            "status": "", "monitored": True, "path": None, "tags": [],
+            "_source": "plex",
+        })
+    return items_raw, [], {"source": "plex-index", "age_s": 0, "ttl_s": 0}
+
+
 async def _fetch_arr_library(service: str, *, force_refresh: bool = False) -> tuple[list, list, dict]:
     """Fetch (items_raw, tags, cache_status) for a service, with TTL cache
     and stale fallback on failure.
@@ -621,6 +658,10 @@ async def _fetch_arr_library(service: str, *, force_refresh: bool = False) -> tu
     # Cache miss / expired / forced — try live fetch
     url, api_key = _get_arr_url_key(service)
     if not url or not api_key:
+        if service == "lidarr":
+            plex = _plex_music_library()
+            if plex is not None:
+                return plex
         raise HTTPException(400, f"{service} not configured")
     client = _make_client(service, url, api_key)
     try:
@@ -747,6 +788,131 @@ async def library_items(
     }
 
 
+def _reenrich_plex_artist(req, row: dict) -> dict:
+    """Re-enrich one artist of the Plex music index (no Lidarr). The
+    enricher keys music by name[:40] (raw:music:<name>, enriched:music:<name>)
+    and the artist's Plex key; metadata mode drops both entries, summary mode
+    only the polished one, then the pipeline runs with the mbid pinned."""
+    title = row.get("name") or ""
+    mbid = row.get("mbid")
+    key = str(row.get("artist_key"))
+    from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
+    cache = MetadataCache()
+    try:
+        drop = [f"enriched:music:{title[:40]}"]
+        if req.mode in ("metadata", "both"):
+            drop += [f"raw:music:{title[:40]}", f"raw:music:{key}", f"raw_prefetch:{key}"]
+        for k in drop:
+            cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (f"{_CACHE_VERSION}:{k}",))
+        cache.conn.execute("DELETE FROM api_cache WHERE cache_key IN (?, ?)",
+                           (f"{_CACHE_VERSION}:emb:{key}", f"{_CACHE_VERSION}:emb_ts:{key}"))
+        cache.conn.commit()
+    except Exception as e:
+        logger.warning("[library] plex re-enrich cache clear failed: %s", e)
+    finally:
+        cache.close()
+
+    async def _run():
+        try:
+            from src.services.media_enricher import enrich_media_item
+            from src.services.llm_priority import priority_enrichment
+            async with priority_enrichment():
+                await enrich_media_item(title=title, media_type="music", mbid=mbid, plex_rating_key=key)
+            logger.info("[library] re-enrich done: plex/%s mode=%s", title, req.mode)
+        except Exception as e:
+            logger.warning("[library] re-enrich failed for plex/%s: %s", title, e)
+
+    from src.services.bg_tasks import track_task
+    track_task(_run(), name=f"library_reenrich:plex:{key}")
+    return {"ok": True, "service": "plex", "title": title, "mode": req.mode, "queued": True}
+
+
+@router.get("/editions/{series_id}/releases")
+async def edition_releases(series_id: int, _user: User = Depends(require_admin)):
+    """On demand: what the owner's indexers offer as uncensored for a series.
+    Sonarr searches live, season by season (1 and 2) — a button, never a sweep."""
+    url, api_key = _get_arr_url_key("sonarr")
+    if not url or not api_key:
+        raise HTTPException(400, "sonarr not configured")
+    from src.services.editions import check_releases
+    client = _make_client("sonarr", url, api_key)
+    try:
+        async with client:
+            rels = await check_releases(client, series_id)
+    except Exception as e:
+        raise HTTPException(502, f"sonarr release search failed: {e}")
+    return {"series_id": series_id, "releases": rels, "total": len(rels)}
+
+
+# ── Music wishes (Lidarr optional, 2026-09-15) ───────────────────────────────
+class WishRequest(BaseModel):
+    title: str
+    mbid: Optional[str] = None
+    source: str = Field("manual", pattern="^(rec|backlog|manual)$")
+    note: Optional[str] = None
+
+
+def _wish_in_library(title: str, mbid: Optional[str]) -> bool:
+    try:
+        from src.services.lyrics import plex_artist_lookup
+        return plex_artist_lookup(name=title, mbid=mbid) is not None
+    except Exception:
+        return False
+
+
+@router.get("/wishes")
+async def list_wishes(user: User = Depends(get_current_user)):
+    """The wanted list: artists asked for while no arr is configured. Each
+    row says whether Plex has the artist meanwhile — the owner fulfils
+    wishes in SoulSync and the daily walk sees the result."""
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    with get_db_session() as db:
+        rows = (db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
+                .order_by(MusicWish.created_at.desc()).all())
+        wishes = [{"id": w.id, "title": w.title, "mbid": w.mbid, "source": w.source, "note": w.note,
+                   "created_at": w.created_at.isoformat() if w.created_at else None,
+                   "in_library": _wish_in_library(w.title, w.mbid)} for w in rows]
+    return {"wishes": wishes, "total": len(wishes)}
+
+
+@router.post("/wish")
+async def add_wish(req: WishRequest, user: User = Depends(require_admin)):
+    """Add a wish; a second one for the same artist (by mbid, else name)
+    returns the existing row. in_library tells the caller when Plex already
+    has the artist — then there is nothing to wish for."""
+    from sqlalchemy import func
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    title = (req.title or "").strip()
+    if not title:
+        raise HTTPException(400, "title required")
+    in_lib = _wish_in_library(title, req.mbid)
+    with get_db_session() as db:
+        q = db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
+        dup = (q.filter(MusicWish.mbid == req.mbid).first() if req.mbid else None) \
+            or q.filter(func.lower(MusicWish.title) == title.lower()).first()
+        if dup:
+            return {"ok": True, "id": dup.id, "already": True, "in_library": in_lib}
+        w = MusicWish(user_id=user.id, title=title, mbid=req.mbid, source=req.source, note=req.note)
+        db.add(w)
+        db.flush()
+        wid = w.id
+    return {"ok": True, "id": wid, "already": False, "in_library": in_lib}
+
+
+@router.delete("/wish/{wish_id}")
+async def remove_wish(wish_id: int, user: User = Depends(require_admin)):
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    with get_db_session() as db:
+        w = db.query(MusicWish).filter(MusicWish.id == wish_id).first()
+        if not w:
+            raise HTTPException(404, "no such wish")
+        w.resolved_at = datetime.utcnow()
+    return {"ok": True}
+
+
 class ReEnrichRequest(BaseModel):
     service: str = Field(..., pattern="^(sonarr|radarr|lidarr)$")
     arr_id: int                                      # the arr's internal id
@@ -769,6 +935,12 @@ async def library_reenrich(
     """
     url, api_key = _get_arr_url_key(req.service)
     if not url or not api_key:
+        if req.service == "lidarr":
+            # Lidarr optional: a Plex-index artist re-enriches by name + mbid
+            from src.services.lyrics import plex_artist
+            row = plex_artist(str(req.arr_id))
+            if row:
+                return _reenrich_plex_artist(req, row)
         raise HTTPException(400, f"{req.service} not configured")
 
     # Resolve arr-side IDs we need for the enrichment lookup
@@ -1237,6 +1409,12 @@ async def spotify_backlog(
             mbid = raw.get("foreignArtistId")
             if mbid:
                 in_lidarr.add(mbid)
+    # Lidarr optional: artists Plex already has count as "in the library" too
+    try:
+        from src.services.lyrics import plex_artists
+        in_lidarr.update(a["mbid"] for a in plex_artists() if a.get("mbid"))
+    except Exception as e:
+        logger.debug("[backlog] plex index unavailable: %s", e)
 
     # Pass 30: when not_added_only is on, the python-side in_lidarr filter
     # below culls already-added artists AFTER SQL aggregation. Without
@@ -1309,6 +1487,7 @@ async def spotify_backlog(
                 "mbid":        r.mbid,
                 "mbid_resolved":   bool(r.mbid),
                 "in_lidarr":       bool(r.mbid) and r.mbid in in_lidarr,  # 16o
+                "in_library":      bool(r.mbid) and r.mbid in in_lidarr,  # Lidarr ∪ Plex
                 "top_tracks":  top_by_artist.get(r.series_title, []),
             })
 

@@ -218,13 +218,17 @@ a declared intention to watch is acted on by the app after the reply, and
 the real outcome (protected; watchlist added or refused; downscale flagged
 or not) now arrives as a notification instead of a claim.
 
-**Event delegation, first half.** The 109 inline handlers in the markup are
-data attributes dispatched by one listener set in the entry module; a
-registry names what an attribute may call, arguments travel as JSON, and
-handlers that carried a condition or two statements became one-line
-functions. Templates follow in the second half, after which the window
-block goes and the Content-Security-Policy loses `'unsafe-inline'` for
-scripts. Conversion by Jules from a written brief; finished here.
+**Event delegation.** The 217 inline handlers — 109 in the markup, 108 in
+the view templates — are data attributes dispatched by one listener set in
+the entry module; a registry names what an attribute may call, arguments
+travel as JSON, handlers that carried a condition or two statements became
+one-line functions, and the helpers that used to build handler strings
+(retry buttons, menus, pagers, empty-state actions) take attribute text
+instead. Nothing runs in the global scope any more: the window export block
+is gone and the Content-Security-Policy's `script-src` is `'self'`, so
+injected markup cannot execute code. Both halves converted by Jules from
+written briefs; the second arrived without the imports the templates need
+and with variables passed as strings — finished here and pinned by tests.
 
 **Three small ones from a screenshot.** The metadata audit failed its run
 whenever it met the same finding twice in one pass (the app's sessions do
@@ -234,6 +238,81 @@ and parameters included, into the status pill; one line now, the rest in
 the log. The Activity view rebuilt every task row on every progress event
 and replayed the card animation each time; rows are patched in place and
 renders coalesce to one per frame.
+
+**The curator reads lyrics.** SoulSync leaves .lrc/.txt sidecars next to
+the tracks and Plex serves them as lyric streams; a collector keeps the
+plain lines in its own cache (13,390 of 18,648 tracks on the owner's
+server carry one) and re-checks every run so late sidecars land, and a
+profiler condenses a sample per artist into a lyrics profile: subjects,
+themes, languages, an explicit flag, motifs, tone, up to three verbatim
+lines. The music summariser makes lyrical claims only from that profile
+(before, it guessed "lyrical themes" from a biography), the verified block
+shows it with its basis, the album dossier adds coverage and one line, the
+constitution caps quotes at two short lines. Raw lyrics never reach a
+prompt or the UI.
+
+
+**The sidebar can be used from the keyboard.** Every navigation item is
+a real button to assistive technology, reachable with Tab and activated
+with Enter or Space, using the same handler the poster cards and chips
+already use.
+
+**Smaller things from the same round.** The endpoint-privacy warning now
+parses a URL with the same library that performs the request, so the check
+and the connection can no longer disagree. The Knowledge Base overview
+gets its music-pipeline numbers in one query instead of five. The proactive
+triggers read the columns they need instead of building five thousand
+objects per run. And a cached endpoint has to say whether its answer is the
+same for everybody or has to be kept per user — the safe default is no
+default.
+
+**The GPU is busy, so the work moves instead of stopping.** A graphics
+card held by another program used to park every model call, and the chat
+still tried anyway and died in a timeout. Both halves were wrong, and the
+measurement says why: the big curator model cannot even start while the
+card is occupied, while the small summariser model runs a real enrichment
+on six processor threads in about two and a half minutes without touching
+the card at all. So enrichment, significance, reception, memory extraction,
+taste vectors and lyrics profiles now keep going on the processor and your
+library stays current; six threads are as fast as twelve, so the rest of
+the machine stays with whatever is holding the card. A conversation needs
+the card back, and Curatarr says so in its own words instead of leaving you
+with a spinner. That work needs memory as well as cores — one run measured
+9.7 GB — so it also checks that enough is free before it starts, and waits
+instead of pushing the machine into swap; when it waits, Curatarr says
+that too rather than promising progress that is not happening. A detected
+game still parks everything. The badge in the top bar says which of the
+three it is instead of calling everything a game, the 30 s watcher records the state and logs every change, and the
+setup wizard asks for the behaviour while Settings → Integrations →
+"Sharing the graphics card" changes it later without a restart.
+
+**A busy GPU counts as a game.** An image-generation job held the whole graphics card while the game detector, which knows game process names only, reported nothing: the enrichment ran into summariser timeouts for an hour and the custodian kept starting model work. A GPU saturated by something other than Ollama now sets the same flag every LLM-heavy path already yields to, after 45 seconds of sustained pressure; a host without nvidia-smi is left alone, and `GPU_PRESSURE_GATE=0` switches it off.
+
+**Lidarr is optional.** Three set-ups now work: Lidarr alone, Lidarr with
+SoulSync, and no Lidarr at all. Without it the daily Plex walk is the music
+index — artists with their MusicBrainz ids, albums, tracks and footprint —
+and everything that used to ask Lidarr reads it: deletion candidates (and
+the deletion itself, through Plex's own API with a re-read that never
+mistakes a kept file for a deletion), the Music page with a Wanted tab,
+the curator's discography and album evidence, the Knowledge Base counts.
+Wanted artists become wishes you fulfil in SoulSync; the list shows when
+Plex has them.
+
+
+**Which cut do you own, and is there an uncensored one?** A weekly walk
+reads every Sonarr series' episode files (quality source, release names,
+custom formats) and the AniDB tags of the offline snapshot, by AniDB's own
+definitions: "tv censoring" means the Blu-ray/DVD release is the uncensored
+cut, "censored uncensored version" means even the disc keeps some
+censoring. The curator's verified block says "Edition: 24 episode files,
+all from broadcast or web, none named uncensored; AniDB: the TV airing was
+censored, the Blu-ray/DVD release is the uncensored cut", the Curation
+upgrade list shows those titles ("TV cut — uncensored disc release
+exists") with a Search-releases button that asks your indexers live for
+releases named uncensored or from Blu-ray. The prose the enrichment
+collects was measured first and dropped as a detector: it mentions
+censorship for half a percent of the anime, half of those as plot.
+
 
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
