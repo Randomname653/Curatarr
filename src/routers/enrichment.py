@@ -54,7 +54,7 @@ class EnrichRequest(BaseModel):
 
 
 @router.get("/overview")
-@ttl_response(10)
+@ttl_response(10, shared=True)   # library-wide counts, identical for every user
 async def enrichment_overview(user: User = Depends(get_current_user)):
     """The consolidated Knowledge-Base truth (see services/kb_overview.py):
     one denominator per category, states derived from the JOIN of status
@@ -65,7 +65,7 @@ async def enrichment_overview(user: User = Depends(get_current_user)):
 
 
 @router.get("/custodian")
-@ttl_response(10)
+@ttl_response(10, shared=True)   # one maintenance state for the install
 async def custodian_status_endpoint(user: User = Depends(get_current_user)):
     """Debt-based maintenance state: last tick report + per-task due list."""
     from src.services.data_custodian import custodian_status
@@ -602,7 +602,7 @@ async def _run_backfill_bg(source: str) -> None:
 
 
 @router.get("/backfill-status")
-@ttl_response(15)
+@ttl_response(15, shared=True)   # archive coverage of the shared library
 async def backfill_status(user: User = Depends(get_current_user)):
     """Per-source coverage of the archive metadata, and whether a manual
     catch-up is still worth offering (see archive_backfill.THRESHOLD_PCT)."""

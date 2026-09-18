@@ -252,6 +252,20 @@ constitution caps quotes at two short lines. Raw lyrics never reach a
 prompt or the UI.
 
 
+**The sidebar can be used from the keyboard.** Every navigation item is
+a real button to assistive technology, reachable with Tab and activated
+with Enter or Space, using the same handler the poster cards and chips
+already use.
+
+**Smaller things from the same round.** The endpoint-privacy warning now
+parses a URL with the same library that performs the request, so the check
+and the connection can no longer disagree. The Knowledge Base overview
+gets its music-pipeline numbers in one query instead of five. The proactive
+triggers read the columns they need instead of building five thousand
+objects per run. And a cached endpoint has to say whether its answer is the
+same for everybody or has to be kept per user — the safe default is no
+default.
+
 **The GPU is busy, so the work moves instead of stopping.** A graphics
 card held by another program used to park every model call, and the chat
 still tried anyway and died in a timeout. Both halves were wrong, and the

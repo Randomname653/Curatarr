@@ -52,7 +52,7 @@ def _guess_category(section: dict) -> str:
 # ── DISCOVER ─────────────────────────────────────────────────────────────────
 
 @router.get("/discover")
-@ttl_response(30)
+@ttl_response(30, shared=True)   # the Plex server's own sections
 async def discover_libraries(user: User = Depends(get_current_user)):
     """
     Fetch all Plex library sections with stats: item count, size, scan time, paths.

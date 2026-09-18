@@ -29,7 +29,7 @@ class ClassifyRequest(BaseModel):
 
 
 @router.get("/unknown")
-@ttl_response(10)
+@ttl_response(10, shared=True)   # processes on this host, not per user
 async def get_unknown_processes(_user: User = Depends(get_current_user)):
     """
     Return running processes that are not yet classified.
@@ -116,7 +116,7 @@ async def delete_classification(
 
 
 @router.get("/status")
-@ttl_response(10)
+@ttl_response(10, shared=True)   # this host's GPU/lane state
 async def game_status(_user: User = Depends(get_current_user)):
     """Return whether a game is currently running (for the UI badge).
 

@@ -77,27 +77,35 @@ def _build_system_prompt(lang_directive: str) -> str:
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
+# The columns the trigger scan selects, in query order. One list so the
+# SELECT and the unpacking cannot drift apart.
+_ROW_FIELDS = ("title", "series_title", "media_type", "viewed_at", "duration_ms",
+               "view_offset_ms", "completed", "season", "episode", "genres")
+
+
 def _to_dicts(entries) -> list[dict]:
-    """Convert SQLAlchemy row tuples to plain dicts."""
-    return [
-        {
-            "title": title,
-            "series_title": series_title,
-            "media_type": media_type,
-            "viewed_at": viewed_at,
-            "last_viewed_at": viewed_at,
-            "duration_ms": duration_ms,
-            "view_offset_ms": view_offset_ms,
-            "completed": completed,
-            "season": season,
-            "episode": episode,
-            "genres": genres,
-            # rating: not yet in WatchHistoryEntry schema — will be non-None once
-            # TMDB ratings are synced; detect_guilty_pleasure stays dormant until then
-            "rating": None,
-        }
-        for title, series_title, media_type, viewed_at, duration_ms, view_offset_ms, completed, season, episode, genres in entries
-    ]
+    """Plain dicts from either shape the two callers hand over.
+
+    The trigger scan selects columns (#102: building 5,000 ORM objects was
+    pure overhead), while the series-progress path still queries whole
+    WatchHistoryEntry rows — unpacking tuples only would have raised there
+    on every run. ORM rows are recognised by their instance state rather
+    than by isinstance, because one test module mocks the model away.
+    """
+    out = []
+    for e in entries:
+        if hasattr(e, "_sa_instance_state"):
+            values = [getattr(e, f, None) for f in _ROW_FIELDS]
+        else:
+            values = list(e)
+        row = dict(zip(_ROW_FIELDS, values))
+        row["last_viewed_at"] = row["viewed_at"]
+        # rating is not a WatchHistoryEntry column yet — read it defensively so
+        # detect_guilty_pleasure wakes up by itself once TMDB ratings land,
+        # whichever shape the caller passes.
+        row["rating"] = getattr(e, "rating", None)
+        out.append(row)
+    return out
 
 
 def _completion_rate(e: dict) -> float:

@@ -111,72 +111,72 @@
    <div class="sb-nav">
     <div class="sb-section">
       <div class="sb-label">Main</div>
-      <div class="sb-item active" data-action="showView" data-args='["chat","$el"]' title="Chat">
+      <div class="sb-item active" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["chat","$el"]' title="Chat">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <span class="sb-text">Chat</span>
       </div>
-      <div class="sb-item" data-action="showView" data-args='["history","$el"]' title="History & Taste">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["history","$el"]' title="History & Taste">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span class="sb-text">History & Taste</span>
       </div>
-      <div class="sb-item" data-action="showView" data-args='["recs","$el"]' title="Recommendations">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["recs","$el"]' title="Recommendations">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         <span class="sb-text">Recommendations</span>
       </div>
-      <div class="sb-item admin-only" id="sb-deletions" data-action="showView" data-args='["deletions","$el"]' style="display:none" title="Deletions">
+      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' id="sb-deletions" data-action="showView" data-args='["deletions","$el"]' style="display:none" title="Deletions">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         <span class="sb-text">Deletions</span>
         <span id="sb-deletions-pulse" class="sb-pulse-dot" style="display:none" title="Deletion analysis running…"></span>
       </div>
-      <div class="sb-item admin-only" data-action="showView" data-args='["curation","$el"]' style="display:none" title="Curation">
+      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["curation","$el"]' style="display:none" title="Curation">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         <span class="sb-text">Curation</span>
       </div>
-      <div class="sb-item admin-only" data-action="showView" data-args='["report","$el"]' style="display:none" title="Report">
+      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["report","$el"]' style="display:none" title="Report">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         <span class="sb-text">Report</span>
       </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">Manage</div>
-      <div class="sb-item" data-action="showView" data-args='["arr-sonarr","$el"]' title="TV Shows">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["arr-sonarr","$el"]' title="TV Shows">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
         <span class="sb-text">TV Shows</span>
       </div>
-      <div class="sb-item" data-action="showView" data-args='["arr-radarr","$el"]' title="Movies">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["arr-radarr","$el"]' title="Movies">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
         <span class="sb-text">Movies</span>
       </div>
-      <div class="sb-item" data-action="showView" data-args='["arr-lidarr","$el"]' title="Music">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["arr-lidarr","$el"]' title="Music">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
         <span class="sb-text">Music</span>
       </div>
-      <div class="sb-item admin-only" data-action="showView" data-args='["reclassify","$el"]' style="display:none" title="Reclassify">
+      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["reclassify","$el"]' style="display:none" title="Reclassify">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
         <span class="sb-text">Reclassify</span>
       </div>
     </div>
     <div class="sb-section">
       <div class="sb-label">System</div>
-      <div class="sb-item" data-action="showView" data-args='["enrich","$el"]' title="Knowledge Base">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["enrich","$el"]' title="Knowledge Base">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
         <span class="sb-text">Knowledge Base</span>
         <span id="kb-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none" title="Items that need a human: wrong year, unsure match, or not found after two or more tries">0</span>
       </div>
-      <div class="sb-item" data-action="showView" data-args='["tasks","$el"]' id="tasks-nav" title="Activity">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["tasks","$el"]' id="tasks-nav" title="Activity">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         <span class="sb-text">Activity</span>
         <span id="tasks-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none">0</span>
       </div>
-      <div class="sb-item admin-only" data-action="showView" data-args='["libraries","$el"]' style="display:none" title="Libraries">
+      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["libraries","$el"]' style="display:none" title="Libraries">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         <span class="sb-text">Libraries</span>
       </div>
-      <div class="sb-item admin-only" data-action="showView" data-args='["admin","$el"]' style="display:none" title="Users">
+      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["admin","$el"]' style="display:none" title="Users">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span class="sb-text">Users</span>
       </div>
-      <div class="sb-item" data-action="showSettingsAccount" data-args='["$el"]' title="Settings">
+      <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showSettingsAccount" data-args='["$el"]' title="Settings">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         <span class="sb-text">Settings</span>
       </div>

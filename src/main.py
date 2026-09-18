@@ -371,7 +371,11 @@ async def shutdown_server():
 
 # ── FRONTEND ──────────────────────────────────────────────────────────────────
 
-_FRONTEND_ROOT = frontend_root()
+# Resolved once: the catch-all compares candidate.resolve() against this,
+# and an unresolved root (symlink, 8.3 short path) can only make that
+# comparison fail spuriously — never pass wrongly, but the fallback would
+# then serve index.html for a legitimate asset.
+_FRONTEND_ROOT = frontend_root().resolve()
 
 
 @app.get("/")
