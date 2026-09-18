@@ -20,7 +20,7 @@ from src.services.ttl_memo import ttl_response
 def test_hits_within_ttl_share_one_execution():
     calls = []
 
-    @ttl_response(60)
+    @ttl_response(60, shared=True)
     async def fn(user=None):
         calls.append(1)
         return {"n": len(calls)}
@@ -58,7 +58,7 @@ def test_keys_separate_cache_entries():
 def test_concurrent_cold_calls_single_flight():
     calls = []
 
-    @ttl_response(60)
+    @ttl_response(60, shared=True)
     async def fn():
         calls.append(1)
         await asyncio.sleep(0.05)
@@ -74,7 +74,7 @@ def test_concurrent_cold_calls_single_flight():
 def test_exceptions_are_never_cached():
     calls = []
 
-    @ttl_response(60)
+    @ttl_response(60, shared=True)
     async def fn():
         calls.append(1)
         if len(calls) == 1:
@@ -97,14 +97,18 @@ def test_the_polled_endpoints_are_actually_memoized():
         return (_ROOT / "src" / rel).read_text(encoding="utf-8")
 
     en = src("routers/enrichment.py")
-    for anchor in ('@ttl_response(10)\nasync def enrichment_overview',
-                   '@ttl_response(10)\nasync def custodian_status_endpoint',
-                   '@ttl_response(10, key=lambda **kw: bool(kw.get("quick")))\nasync def enrichment_status',
-                   '@ttl_response(15)\nasync def backfill_status'):
+    # Since issue #100 every site states its kind — keyed, or shared on
+    # purpose — and the shared ones carry a trailing comment saying why,
+    # so match the decorator head and the function separately.
+    for anchor in ('@ttl_response(10, shared=True)', '@ttl_response(15, shared=True)',
+                   '@ttl_response(10, key=lambda **kw: bool(kw.get("quick")))'):
         assert anchor in en, anchor
+    for fn_name in ('enrichment_overview', 'custodian_status_endpoint',
+                    'enrichment_status', 'backfill_status'):
+        assert f'async def {fn_name}' in en, fn_name
     assert ('@ttl_response(10, key=lambda **kw: kw["user"].id)\nasync def sync_status'
             in src("routers/history.py"))
-    assert '@ttl_response(30)\nasync def discover_libraries' in src("routers/libraries.py")
+    assert '@ttl_response(30, shared=True)' in src("routers/libraries.py")
 
 
 def test_invalidate_forces_the_next_call_to_recompute():
@@ -112,7 +116,7 @@ def test_invalidate_forces_the_next_call_to_recompute():
     process) calls endpoint.invalidate(); until then the TTL rules."""
     calls = []
 
-    @ttl_response(60)
+    @ttl_response(60, shared=True)
     async def fn(user=None):
         calls.append(1)
         return {"n": len(calls)}
