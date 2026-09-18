@@ -99,9 +99,19 @@ class _Client:
 
 
 def test_plex_delete_confirms_the_item_is_gone_and_drops_it_from_the_index():
+    from src.config import settings
     from src.routers import recommendations as rec
     _seed(_use_db("delete"))
+    # Pin the Plex configuration: _plex_delete_artist refuses to touch an
+    # unconfigured server, and CI has no .env — without this the test read
+    # that refusal as the behaviour under test and passed only on a machine
+    # that happens to have Plex set up.
+    _plex = (settings.PLEX_URL, settings.PLEX_TOKEN)
+    from pydantic import SecretStr
+    settings.PLEX_URL = "http://plex.test:32400"
+    settings.PLEX_TOKEN = SecretStr("test-token")   # the field is a SecretStr
     try:
+        assert settings.effective_plex_url and settings.effective_plex_token
         assert ms.plex_music_indexed()
         ok = asyncio.run(rec._plex_delete_artist("a1", client=_Client(200, 404)))
         assert ok is True
@@ -115,6 +125,7 @@ def test_plex_delete_confirms_the_item_is_gone_and_drops_it_from_the_index():
         assert asyncio.run(rec._plex_delete_artist("a2", client=c)) is False
         assert [m for m, _ in c.calls] == ["DELETE", "GET"] and ly.plex_artist("a2") is not None
     finally:
+        settings.PLEX_URL, settings.PLEX_TOKEN = _plex
         ly.LYRICS_DB_PATH = ly.PLEX_MUSIC_DB_PATH = _ORIG_DB
 
 

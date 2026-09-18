@@ -152,11 +152,13 @@ def _nvidia_smi() -> "tuple | None":
 
 def _ollama_loaded_models() -> "list | None":
     """The model names Ollama holds in VRAM (/api/ps); None when it does not answer."""
-    import json
-    import urllib.request
+    # httpx, not urllib.request: the latter also opens file:// and ftp://
+    # (Bandit B310), and the unload path below already uses httpx anyway.
+    import httpx
     try:
-        with urllib.request.urlopen(f"{settings.effective_ollama}/api/ps", timeout=2) as r:
-            return [m.get("name") for m in json.load(r).get("models", [])]
+        r = httpx.get(f"{settings.effective_ollama}/api/ps", timeout=2)
+        r.raise_for_status()
+        return [m.get("name") for m in (r.json().get("models") or [])]
     except Exception:
         return None
 
