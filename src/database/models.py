@@ -292,6 +292,24 @@ class SeriesEdition(Base):
     checked_at = Column(DateTime, nullable=True)
 
 
+class MusicLookupMiss(Base):
+    """A music lookup that found nothing, so it is not asked again tomorrow
+    (2026-09-20). Phase 1.4 of the music pipeline selected on "artist_mbid
+    IS NULL" and wrote nothing on a miss, so 1,696 unresolvable artists were
+    re-queried against MusicBrainz every night forever. The empty-string
+    trick the genre phase uses is not available here: too many readers take
+    "artist_mbid is not null" as "resolved". Each miss earns a longer wait
+    than the last — see src/services/music_misses.py."""
+    __tablename__ = "music_lookup_misses"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(String(24), nullable=False, default="artist_mbid", index=True)
+    name = Column(String(512), nullable=False, index=True)
+    attempts = Column(Integer, default=0)
+    last_attempt_at = Column(DateTime, nullable=True)
+    next_retry_at = Column(DateTime, nullable=True, index=True)
+    last_reason = Column(String(200), nullable=True)
+
+
 class MusicWish(Base):
     """Lidarr optional (2026-09-15): without an arr to add to, a wanted
     artist is a wish the owner fulfils in SoulSync (or wherever). One open

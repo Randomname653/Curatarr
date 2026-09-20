@@ -244,6 +244,15 @@ def _empty_category() -> dict:
     }
 
 
+def _mbid_parked() -> dict:
+    """How much of the artist queue is parked on a recorded miss."""
+    try:
+        from src.services.music_misses import stats
+        return stats()
+    except Exception:                                        # pragma: no cover
+        return {"missed": 0, "waiting": 0, "due": 0, "next_retry_at": None}
+
+
 async def build_overview() -> dict:
     """Assemble the full consolidated payload. Read-only; ~1-2s cold."""
     now = time.time()
@@ -372,6 +381,10 @@ async def build_overview() -> dict:
             "plex_match": {"done": spotify_matched, "of": spotify_total},
             "mbid_resolve": {"done": artists_mbid, "of": artists_total},
             "genre_coverage": {"done": genre_covered, "of": spotify_total},
+            # Names MusicBrainz had no answer for, waiting out their backoff
+            # (services/music_misses.py). Without this the MBID bar looks
+            # stuck a few percent short forever with nothing to explain it.
+            "mbid_parked": _mbid_parked(),
         },
         "storage": storage,
     }

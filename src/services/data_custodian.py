@@ -149,11 +149,16 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
     # Audit #1: the keys MUST match what the phases actually return
     # (enriched_plays / tracks_queried) — the old enriched/queried read 0
     # forever and stamped the pipeline done with thousands of tracks open.
+    # 2026-09-20: the MBID phase reports ATTEMPTS, not successes. Reading
+    # "resolved" said "drained" while a full batch of unresolvable names had
+    # just been queried and would be queried again tomorrow. What decides
+    # whether the queue is empty is how many we got through, not how many
+    # answered — the misses are parked by services/music_misses.py now.
     mbid = (r.get("phase1_4_mbid") or {})
     sp = (r.get("phase1_5_spotify") or {})
     lf = (r.get("phase2_lastfm_genres") or {})
     busy = max(
-        mbid.get("resolved", 0) or 0,
+        mbid.get("queried", 0) or 0,
         sp.get("enriched_plays", 0) or 0,
         lf.get("tracks_queried", 0) or 0,
     )

@@ -252,6 +252,16 @@ constitution caps quotes at two short lines. Raw lyrics never reach a
 prompt or the UI.
 
 
+**A music lookup that finds nothing is remembered.** Artists that
+MusicBrainz has no entry for were asked again every night, for years if you
+let them: seventeen minutes of rate-limited traffic a day on one library,
+for names no database will ever carry. A miss is now written down and waits
+two weeks before the next attempt, then a month, then a quarter, and a
+later success clears it. The Music-pipeline tab says how many names are
+parked, so a progress bar that stops short of full no longer looks broken.
+The pipeline also stops calling itself finished after burning a whole batch
+on names that answered nothing.
+
 **The sidebar can be used from the keyboard.** Every navigation item is
 a real button to assistive technology, reachable with Tab and activated
 with Enter or Space, using the same handler the poster cards and chips

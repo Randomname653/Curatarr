@@ -175,6 +175,7 @@ def _migrate_columns() -> None:
         # Series editions (2026-09-15): the file-source count and AniDB's
         # "disc still censored" verdict came a day after the table; rows
         # without files_disc are re-walked by editions_sync.
+        ("music_lookup_misses",   "last_reason",         "VARCHAR(200)"),
         ("series_editions",       "files_disc",          "INTEGER"),
         ("series_editions",       "anidb_disc_censored", "BOOLEAN DEFAULT 0"),
         ("series_editions",       "anidb_tags",          "VARCHAR(200)"),

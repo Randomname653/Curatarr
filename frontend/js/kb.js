@@ -230,6 +230,12 @@ export function _renderKbOverview(o, running, lastRun) {
   // The Spotify phases live on the Music-pipeline tab, fed by the same payload.
   const mp = o.music_pipeline || {};
   const phase = (label, pp, def) => pp ? `<tr><td title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+  // A queue that never empties used to read as a stuck bar. MusicBrainz
+  // simply does not know every artist a Spotify export carries, and those
+  // names are parked with a growing backoff rather than re-queried nightly.
+  const _parkedNote = (p) => (p && p.waiting)
+    ? `<p class="fs-12 t3 mt-8">${p.waiting.toLocaleString()} artist name${p.waiting === 1 ? '' : 's'} parked — MusicBrainz had no match, so they wait instead of being queried again every night${p.next_retry_at ? `. Next one is due back ${_fmtRel(p.next_retry_at)}` : ''}.</p>`
+    : '';
   const mpEl = document.getElementById('music-phases');
   if (mpEl) mpEl.innerHTML = `<section class="section">
     <div class="section-head"><h3>Coverage</h3><span class="section-hint">where the imported plays stand</span></div>
@@ -237,7 +243,7 @@ export function _renderKbOverview(o, running, lastRun) {
       ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
       ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
       ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
-    </tbody></table></div></div></section>`;
+    </tbody></table></div>${_parkedNote(mp.mbid_parked)}</div></section>`;
 }
 
 export async function loadCacheInventory(btn) {

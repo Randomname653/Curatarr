@@ -268,9 +268,17 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
     a fresh import. With 200 unique artists at 1 req/s this run takes
     ~3.5 minutes; the rest carries over to the next pipeline iteration.
 
-    Returns {resolved: N, failed: M, queried: K, total_unique: ..., remaining: ...}
+    A name MusicBrainz does not know is written down as a miss and skipped
+    until its wait is over (14, then 30, then 90 days — services/
+    music_misses.py). Before that, the selection was "artist_mbid IS NULL"
+    and a miss wrote nothing, so the owner's 1,696 unresolvable artists were
+    re-queried every single night, seventeen minutes of rate-limited traffic
+    for a yield near zero.
+
+    Returns {resolved, failed, queried, total_unique, remaining, parked}
     """
     from src.services.music_metadata import fetch_musicbrainz_artist
+    from src.services import music_misses
 
     # Find unresolved unique artist names (one row per name; we update ALL
     # plays for that name once we have the MBID).
@@ -287,12 +295,14 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
             )
             .all()
         )
-    artist_names = [r[0] for r in rows if r[0]]
+    unresolved = [r[0] for r in rows if r[0]]
+    artist_names = music_misses.due_filter(unresolved)
+    parked = len(unresolved) - len(artist_names)
     total_unique = len(artist_names)
 
     if not artist_names:
         return {"resolved": 0, "failed": 0, "queried": 0,
-                "total_unique": 0, "remaining": 0}
+                "total_unique": 0, "remaining": 0, "parked": parked}
 
     # Apply batch cap
     if batch and batch > 0 and total_unique > batch:
@@ -353,6 +363,8 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
         mbid = (profile or {}).get("mbid")
         if not mbid:
             failed += 1
+            # Write the miss down, or this name is back tomorrow night.
+            music_misses.record_miss(name, reason="musicbrainz: no match")
             continue
 
         # Write MBID back to ALL plays for this artist
@@ -370,6 +382,7 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
                 )
                 db.commit()
                 resolved += 1
+                music_misses.clear_miss(name)
                 if count > 1:
                     logger.debug("[music_matcher] MBID %s -> %d plays for %r",
                                  mbid, count, name)
@@ -391,6 +404,7 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
         "queried":      queried,
         "total_unique": total_unique,
         "remaining":    max(0, total_unique - len(names)),
+        "parked":       parked,
     }
 
 
