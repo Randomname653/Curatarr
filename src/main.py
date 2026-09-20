@@ -194,7 +194,7 @@ async def _startup_sync_if_needed():
         from src.database.models import User
 
         with get_db_session() as db:
-            if db.query(User).filter(User.is_active == True).count() == 0:
+            if db.query(User.id).filter(User.is_active == True).first() is None:
                 logger.info("No users yet — skipping startup sync")
                 return
 
