@@ -115,7 +115,8 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 
 
 def _no_admin_exists(db: Session) -> bool:
-    return db.query(User).filter(User.is_admin == True).count() == 0
+    # ⚡ Bolt: Fast existence check avoiding full table count and ORM instantiation
+    return db.query(User.id).filter(User.is_admin == True).first() is None
 
 
 # One-time first-run setup code. Until the first admin exists, every setup
@@ -365,7 +366,8 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
     # Upsert user
     user = db.query(User).filter(User.plex_user_id == plex_id).first()
     if not user:
-        first_ever = db.query(User).first() is None
+        # ⚡ Bolt: Fast existence check avoiding full ORM object instantiation
+        first_ever = db.query(User.id).first() is None
         if settings.PLEX_LOGIN_REQUIRE_MEMBERSHIP:
             await _assert_plex_membership(plex_id, first_ever)
         user = User(
