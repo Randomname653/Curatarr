@@ -1,0 +1,104 @@
+<<<<<<< SEARCH
+    result = {}
+    for cat in CATEGORIES:
+        # canonical_col: the WatchHistoryEntry column that maps to EnrichmentStatus.title
+        if cat in ("show", "anime", "music"):
+            # series/artist-level: canonical = series_title (artist name for music)
+            total_unique = db.query(
+                _func.count(_func.distinct(WatchHistoryEntry.series_title))
+            ).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+                WatchHistoryEntry.series_title != None,
+            ).scalar() or 0
+            total_raw = db.query(WatchHistoryEntry).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+            ).count()
+            # Subquery: canonical titles this user has in their history
+            user_titles_sq = db.query(
+                _func.distinct(WatchHistoryEntry.series_title)
+            ).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+                WatchHistoryEntry.series_title != None,
+            ).scalar_subquery()
+        else:
+            # movie: canonical = title
+            #
+            # Pass 91a: ``total_unique`` was ``count(*)`` here (= row count)
+            # while the show/anime/music branch above uses
+            # ``count(distinct series_title)``. For a user who re-watched
+            # movies, the row count overcounted unique titles and the
+            # downstream ``not_enriched = total_unique - enriched`` math
+            # became nonsense (37 plays - 31 enriched distinct titles =
+            # "6 pending" even though only 1 distinct title was actually
+            # unenriched). Aligned with the other branches: distinct title
+            # count for ``total_unique``, raw row count kept separately
+            # in ``total_raw`` for the "X plays tracked" display.
+            total_unique = db.query(
+                _func.count(_func.distinct(WatchHistoryEntry.title))
+            ).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+            ).scalar() or 0
+            total_raw = db.query(WatchHistoryEntry).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+            ).count()
+            user_titles_sq = db.query(
+                _func.distinct(WatchHistoryEntry.title)
+            ).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+            ).scalar_subquery()
+=======
+    from sqlalchemy import case as _case
+
+    # ⚡ Bolt: Fast path - calculate total and unique counts for all categories
+    # in a single grouped query rather than 2 queries per iteration.
+    stats_query = db.query(
+        WatchHistoryEntry.media_type,
+        _func.count(WatchHistoryEntry.id).label("total_raw"),
+        _func.count(_func.distinct(
+            _case(
+                ((WatchHistoryEntry.media_type == "movie", WatchHistoryEntry.title)),
+                else_=WatchHistoryEntry.series_title
+            )
+        )).label("total_unique")
+    ).filter(
+        WatchHistoryEntry.user_id == user.id,
+        WatchHistoryEntry.media_type.in_(CATEGORIES)
+    ).group_by(WatchHistoryEntry.media_type).all()
+
+    stats_by_cat = {
+        row.media_type: {"total_raw": row.total_raw, "total_unique": row.total_unique}
+        for row in stats_query
+    }
+
+    result = {}
+    for cat in CATEGORIES:
+        cat_stats = stats_by_cat.get(cat, {"total_raw": 0, "total_unique": 0})
+        total_unique = cat_stats["total_unique"]
+        total_raw = cat_stats["total_raw"]
+
+        # canonical_col: the WatchHistoryEntry column that maps to EnrichmentStatus.title
+        if cat in ("show", "anime", "music"):
+            # series/artist-level: canonical = series_title (artist name for music)
+            # Subquery: canonical titles this user has in their history
+            user_titles_sq = db.query(
+                _func.distinct(WatchHistoryEntry.series_title)
+            ).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+                WatchHistoryEntry.series_title != None,
+            ).scalar_subquery()
+        else:
+            # movie: canonical = title
+            user_titles_sq = db.query(
+                _func.distinct(WatchHistoryEntry.title)
+            ).filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == cat,
+            ).scalar_subquery()
+>>>>>>> REPLACE
