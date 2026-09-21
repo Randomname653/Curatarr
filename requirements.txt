@@ -5,14 +5,14 @@
 
 # Web framework
 fastapi==0.141.1
-uvicorn[standard]==0.52.4
+uvicorn[standard]==0.53.0
 python-multipart==0.0.32
 
 # Database
-sqlalchemy==2.0.52
+sqlalchemy==2.0.54
 
 # Auth & security
-PyJWT==2.13.0
+PyJWT==2.14.0
 
 # HTTP client
 httpx==0.28.1
