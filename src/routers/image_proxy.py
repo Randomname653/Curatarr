@@ -248,7 +248,7 @@ async def proxy_image(
         #    which is fine because the suffix-whitelist still matches.
         try:
             async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=False) as client:
-                next_url = src
+                next_url = str(parsed)
                 r = None
                 for hop in range(4):   # initial + up to 3 redirects
                     # Streamed: the cap is enforced WHILE reading. Before, the
