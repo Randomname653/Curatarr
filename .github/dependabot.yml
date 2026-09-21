@@ -24,4 +24,16 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 3
+    groups:
+      # One action family = one PR. Dependabot sees codeql-action/init,
+      # /analyze and /upload-sarif as three dependencies and offered them
+      # as three PRs; merging two of them (2026-09-21) left init a version
+      # behind analyze, and CodeQL refuses to run on mismatched versions.
+      # The OSV reusable workflow and its PR twin split the same way.
+      # tests/test_workflow_pins.py fails such a split; this stops it from
+      # being offered in the first place.
+      codeql-action:
+        patterns: ["github/codeql-action*"]
+      osv-scanner-action:
+        patterns: ["google/osv-scanner-action*"]
     labels: ["dependencies"]

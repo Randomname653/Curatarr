@@ -1311,6 +1311,13 @@ to its own section (or a §0 delta row) instead of growing this list.
   directory name cannot express). `.github/llm-scan-accepted.json` — the
   owner's by-design decisions the issue step consults (file + type regex +
   the document that carries the reasoning).
+- `.github/workflows/` — tests, CodeQL, Bandit, OSV-Scanner, Scorecard and
+  the LLM scan; every third-party action is pinned to a full commit SHA.
+  `tests/test_workflow_pins.py` keeps the pins full-SHA and one action
+  family on one commit: Dependabot bumps `codeql-action/init`, `/analyze`
+  and `/upload-sarif` (and the OSV reusable workflow and its PR twin) as
+  separate PRs, and CodeQL refuses to run when init and analyze differ
+  (2026-09-21). `.github/dependabot.yml` groups those families into one PR.
 - `tests/benchmarks/` — model/prompt benchmarking harness (curator_bench,
   tournament_bench, auto_benchmark, num_ctx_bench, curator_pipeline_bench +
   `model_baselines.csv`); measurements land in `docs/BENCHMARKS.md`.

@@ -257,7 +257,12 @@ status counts its history in one grouped query instead of two per category.
 Existence checks at boot and login select an id instead of counting rows or
 building an object. The image proxy fetches the URL it validated rather than
 the raw string it was handed. Dependencies: uvicorn 0.53, SQLAlchemy 2.0.54,
-PyJWT 2.14, and the CodeQL and OSV actions on their latest pins.
+PyJWT 2.14, and the CodeQL and OSV actions on their latest pins. The push
+showed what a partial Dependabot round does: osv-scanner 2.6.0 rejects the
+`--skip-git` flag the workflow still passed, and `codeql-action/init` sat a
+version behind `analyze`, which CodeQL refuses to run. Both fixed;
+`test_workflow_pins` keeps every action family on one commit and the
+Dependabot config groups a family into one PR.
 
 **Music that arrives later finds the plays that were waiting.** Matching
 an imported listening history against your own library used to be a
