@@ -252,6 +252,14 @@ constitution caps quotes at two short lines. Raw lyrics never reach a
 prompt or the UI.
 
 
+**Music that arrives later finds the plays that were waiting.** Matching
+an imported listening history against your own library used to be a
+one-shot per play: whatever was not in Plex that night stayed unmatched
+forever, so a collection that grows album by album could never improve its
+own numbers. Every pass now also asks the other question — which of the
+tracks that just arrived has history waiting for it — using the track index
+that is refreshed daily anyway. A quiet day costs a single query.
+
 **A music lookup that finds nothing is remembered.** Artists that
 MusicBrainz has no entry for were asked again every night, for years if you
 let them: seventeen minutes of rate-limited traffic a day on one library,

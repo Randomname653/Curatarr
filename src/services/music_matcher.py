@@ -880,6 +880,19 @@ async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
     phase1 = await match_spotify_to_plex(user_id)
     if "error" in phase1:
         logger.warning("[music_matcher] Phase 1 aborted: %s", phase1["error"])
+    # Phase 1b: the other direction. Phase 1 gives each play one attempt ever,
+    # so music that arrives later never found the history waiting for it —
+    # with a library that grows by trickle that number could only stand still.
+    # This asks the newly arrived tracks instead, off the local Plex index the
+    # lyrics collector keeps, and costs a second (measured 2026-09-21 over
+    # 203,365 unmatched plays; the minute the cursor was built to avoid came
+    # from materialising them as ORM rows).
+    try:
+        from src.services.music_rematch import rematch_arrivals
+        phase1b = rematch_arrivals(user_id)
+    except Exception as e:
+        logger.warning("[music_matcher] Phase 1b (arrivals) failed: %s", e)
+        phase1b = {"error": str(e)}
     _prog(f"Phase 1.4: resolving artist MBIDs (~1/s, batch {batch})…", 1)
     phase_mbid = await resolve_artist_mbids(user_id, batch=batch)
     _prog(f"Phase 1.5: Spotify genres ({(phase_mbid or {}).get('resolved', 0)} MBIDs resolved)…", 2)
@@ -891,6 +904,7 @@ async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
     _prog(f"Done: {(phase2 or {}).get('tracks_queried', 0)} tracks queried on Last.fm", 4)
     return {
         "phase1_plex_match":    phase1,
+        "phase1b_arrivals":     phase1b,
         "phase1_4_mbid":        phase_mbid,
         "phase1_5_spotify":     phase_sp,
         "phase2_lastfm_genres": phase2,
