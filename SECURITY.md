@@ -121,7 +121,13 @@ its server-side authorization providers). Curatarr embeds
 `chromadb.PersistentClient` in-process and never starts the Chroma
 server, so that API surface does not exist in any Curatarr deployment —
 the vulnerable code path is unused. No patched ChromaDB release exists
-yet; the pin will move once one does.
+yet; the pin will move once one does. The same four IDs are excepted in
+`osv-scanner.toml` so the OSV workflow no longer fails on them; the
+reasons are repeated there and `tests/test_osv_config.py` keeps the two
+files in step. That scan covers the pinned direct dependencies only
+(`--no-resolve`): `requirements.txt` does not lock transitive packages,
+and the resolver would otherwise report floor versions no pip install
+produces.
 
 ## Reporting a vulnerability
 

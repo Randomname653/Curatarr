@@ -1,0 +1,31 @@
+# OSV-Scanner exceptions for requirements.txt. The scanner reads this file
+# for manifests in the same directory (it does not propagate downwards).
+# Every id below is explained in SECURITY.md under "Known dependency
+# advisories"; tests/test_osv_config.py fails when the two drift apart.
+# Ignoring an id also ignores its aliases (CVE, PYSEC), so the GHSA id is
+# enough. No expiry on purpose: each entry is void the moment a chromadb
+# release with the fix exists, because the advisory's affected range then
+# ends before the version Dependabot proposes.
+#
+# All four target the ChromaDB HTTP server (its /api/v2 endpoints and its
+# server-side authorization providers). Curatarr embeds
+# chromadb.PersistentClient in-process, never starts the Chroma server and
+# configures no authorization provider, so the vulnerable code is not
+# reachable in any deployment. Dependabot alerts #1, #6, #7, #8 dismissed
+# 2026-08-28 as not_used for the same reason.
+
+[[IgnoredVulns]]
+id = "GHSA-f4j7-r4q5-qw2c"   # CVE-2026-45829, PYSEC-2026-311
+reason = "Pre-auth code injection through the Chroma HTTP server's /api/v2 collection endpoint (trust_remote_code). Curatarr runs chromadb.PersistentClient in-process; the server and its API do not exist here. No fixed release yet."
+
+[[IgnoredVulns]]
+id = "GHSA-2wm9-hf6c-p5cr"   # CVE-2026-45830, PYSEC-2026-3813
+reason = "Cross-tenant read/write for authenticated users of the Chroma HTTP server. No server, no tenants, no remote users: the embedded client serves one process. No fixed release yet."
+
+[[IgnoredVulns]]
+id = "GHSA-36p7-vc44-83pf"   # CVE-2026-45833, PYSEC-2026-3814
+reason = "Authenticated code injection through the Chroma HTTP server's collection endpoint (trust_remote_code). Same server-only surface; not started by Curatarr. No fixed release yet."
+
+[[IgnoredVulns]]
+id = "GHSA-xph7-9rjv-w5fr"   # CVE-2026-45831, PYSEC-2026-3815
+reason = "SimpleRBACAuthorizationProvider ignores tenant/database/collection scope. That provider belongs to the Chroma server's auth stack, which Curatarr never configures or runs. No fixed release yet."

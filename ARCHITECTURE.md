@@ -1318,6 +1318,9 @@ to its own section (or a §0 delta row) instead of growing this list.
   and `/upload-sarif` (and the OSV reusable workflow and its PR twin) as
   separate PRs, and CodeQL refuses to run when init and analyze differ
   (2026-09-21). `.github/dependabot.yml` groups those families into one PR.
+  `osv-scanner.toml` (root) holds the four documented chromadb exceptions;
+  `tests/test_osv_config.py` keeps each one explained in SECURITY.md and
+  both OSV jobs on the same scan-args (`--no-resolve`: direct pins only).
 - `tests/benchmarks/` — model/prompt benchmarking harness (curator_bench,
   tournament_bench, auto_benchmark, num_ctx_bench, curator_pipeline_bench +
   `model_baselines.csv`); measurements land in `docs/BENCHMARKS.md`.

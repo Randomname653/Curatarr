@@ -7,12 +7,24 @@
 # Third-party reusable workflow → pinned to a full commit SHA on purpose
 # (tj-actions lesson). Bump by moving the SHA, never to a floating tag.
 #
-# No `--skip-git` in scan-args: osv-scanner 2.6.0 rejects the flag ("flag
-# provided but not defined") and the job fails before writing results;
-# 2.5.1 still accepted it. Nothing is lost: the v2 default plugin set is
-# lockfile, sbom, directory, so git-hash scanning is off anyway. Both jobs
-# ride ONE reusable-workflow commit; tests/test_workflow_pins.py enforces
-# that because Dependabot bumps each `uses:` path as a PR of its own.
+# scan-args, and why each line is there:
+#   -r             walk the tree (requirements.txt at the root today).
+#   --no-resolve   requirements.txt pins the 17 direct dependencies only;
+#                  2.6.0 otherwise resolves the rest through deps.dev and
+#                  reports floor versions no install ever gets (requests
+#                  2.9.2, anyio 4.9.0, idna 3.9.0, orjson 3.9.15 while pip
+#                  installs 2.34 / 4.13 / 3.18 / 3.11). A lock file of the
+#                  tested install would make transitive scanning honest;
+#                  until then the scan covers the pins, like Dependabot.
+#   no --skip-git  the CLI rejects the flag ("flag provided but not
+#                  defined", exit 127). The 2.5.1 reusable workflow had no
+#                  "scan completed" check, so its reporter read a missing
+#                  results file and printed "No issues found": every green
+#                  OSV run up to 2026-09-19 had scanned nothing. 2.6.0 checks.
+# Exceptions live in osv-scanner.toml (root), are explained in SECURITY.md
+# and kept in step by tests/test_osv_config.py. Both jobs ride ONE
+# reusable-workflow commit (tests/test_workflow_pins.py), because Dependabot
+# bumps each `uses:` path as a PR of its own.
 
 name: OSV-Scanner
 
@@ -40,6 +52,7 @@ jobs:
     with:
       scan-args: |-
         -r
+        --no-resolve
         ./
   scan-pr:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
@@ -51,4 +64,5 @@ jobs:
     with:
       scan-args: |-
         -r
+        --no-resolve
         ./
