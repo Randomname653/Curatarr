@@ -99,8 +99,15 @@ async def enrichment_status(
 
     from sqlalchemy import case as _case
 
-    # ⚡ Bolt: Fast path - calculate total and unique counts for all categories
-    # in a single grouped query rather than 2 queries per iteration.
+    # One grouped query for every category instead of two per category
+    # (#106). total_raw is the row count, shown as "X plays tracked".
+    # total_unique is a DISTINCT count on the canonical title — series_title
+    # for shows / anime / music, title for movies — and it must stay one:
+    # Pass 91a found the movie branch counting rows, so a user who re-watched
+    # films read "6 pending" with one title actually unenriched, because the
+    # downstream not_enriched = total_unique - enriched math ran on plays.
+    # COUNT(DISTINCT …) ignores NULLs, so the old series_title IS NOT NULL
+    # filter is implied.
     stats_query = db.query(
         WatchHistoryEntry.media_type,
         _func.count(WatchHistoryEntry.id).label("total_raw"),

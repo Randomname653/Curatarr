@@ -26,6 +26,11 @@
       "file": "^src/vector_store/chromadb_wrapper\\.py$",
       "type": "missing authori[sz]ation|destructive .*(reset|wipe|delete)",
       "reason": "reset() is deliberately not wired to any route and has zero callers in the tree (verified 2026-09-18 for issue #101, grep over src/ and scripts/). Its docstring carries the rule. An escape hatch an operator can call from a shell is not an exposed endpoint."
+    },
+    {
+      "file": "^src/services/plex_sync\\.py$",
+      "type": "missing authori[sz]ation|idor|insecure direct object",
+      "reason": "A service module with no HTTP surface. Verified 2026-09-21 for issue #114: reattribute_watch_history and cleanup_orphan_watch_history are called only from /api/history/admin/re-attribute and /admin/cleanup-orphans, both behind require_admin; import_plex_history_for_user(user_id) is called only from auth._bootstrap_user_data, which the Plex PIN login schedules with the id of the user row it just created from the PIN exchange — never from a request parameter. SECURITY.md, 'Authorization lives on the routes'."
     }
   ]
 }

@@ -252,6 +252,13 @@ constitution caps quotes at two short lines. Raw lyrics never reach a
 prompt or the UI.
 
 
+**Smaller things from the second September round.** The Knowledge Base
+status counts its history in one grouped query instead of two per category.
+Existence checks at boot and login select an id instead of counting rows or
+building an object. The image proxy fetches the URL it validated rather than
+the raw string it was handed. Dependencies: uvicorn 0.53, SQLAlchemy 2.0.54,
+PyJWT 2.14, and the CodeQL and OSV actions on their latest pins.
+
 **Music that arrives later finds the plays that were waiting.** Matching
 an imported listening history against your own library used to be a
 one-shot per play: whatever was not in Plex that night stayed unmatched
