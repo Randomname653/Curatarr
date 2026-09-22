@@ -219,8 +219,8 @@ class Settings(BaseSettings):
     SYNC_INTERVAL_HOURS: int = 24
 
     # ── Binge detection ──────────────────────────────────────────────────────
-    BINGE_EPISODE_THRESHOLD: int = 3      # episodes in one session = binge
-    BINGE_SESSION_HOURS: int = 6          # session window
+    BINGE_EPISODE_THRESHOLD: int = 3      # episodes in ONE sitting = binge (sittings from the plays' own gaps)
+    BINGE_SESSION_HOURS: int = 6          # a sitting that ended within this many hours still counts as "just now"
     BINGE_SERIES_PERCENT: float = 0.5     # >50% of season in 48h = binge
 
     # ── Enrichment TTL & game-pause ──────────────────────────────────────────

@@ -50,6 +50,7 @@ from src.config import settings
 from src.database.connection import get_db_session
 from src.database.models import ChatStarter, WatchHistoryEntry
 from src.services.llm_utils import strip_think_tags, curator_options, CURATOR_KEEP_ALIVE
+from src.services.viewing_sessions import rhythm as _viewing_rhythm
 
 logger = logging.getLogger(__name__)
 
@@ -167,9 +168,17 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                if v["last"] and 21 <= (now - v["last"]).days <= 120 and v["plays"] >= 3]
     if active:
         k, v = max(active, key=lambda kv: kv[1]["plays"])
-        facts.append({"kind": "current_binge", "title": k,
+        # Sittings from the plays' own timestamps. The fact used to be named
+        # current_binge for any series with three plays in a week, and the
+        # model obliged: an episode or two an evening became "your Tokyo
+        # Ghoul binge" (2026-09-22). Now the rhythm is spelled out and
+        # "binge" is a flag one sitting has to earn.
+        r = _viewing_rhythm([x for x in video if (x["series_title"] or x["title"]) == k], now)
+        facts.append({"kind": "active_series", "title": k,
                       "media_type": v["media_type"],
-                      "plays_recent": v["plays"]})
+                      "episodes_7d": r["episodes"], "sittings_7d": r["sittings"],
+                      "max_in_one_sitting": r["max_in_one_sitting"],
+                      "binge": r["binge"], "rhythm": r["phrase"]})
     if stalled:
         k, v = max(stalled, key=lambda kv: kv[1]["plays"])
         facts.append({"kind": "stalled_series", "title": k,
@@ -237,6 +246,9 @@ Rules:
 - "daypart": morning|day|evening|night|any — when this opener fits best
   (a tonight-pick is evening; most others are any).
 - No two openers may open with the same words.
+- "binge" means three or more episodes in ONE sitting: the active_series fact
+  says so ("binge": true) or it was not one. An episode or two an evening is a
+  routine; repeat the rhythm the fact gives, never inflate it.
 - Name today's weekday only when it genuinely matters — such openers are shown today only.
 
 Return ONLY the JSON array."""

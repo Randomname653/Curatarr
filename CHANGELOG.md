@@ -281,6 +281,19 @@ comparison next to the pins. The Deletions entry in the sidebar now
 pulses while a deletion analysis runs in any tab, and offers a reload
 when one started elsewhere finishes.
 
+**The bell stops repeating itself and stops calling a routine a binge.**
+Proactive messages had no memory for their pattern subjects, so the same
+genre, the same late-night title and the same three dropped shows came
+back every morning, and the first detector in a fixed list always won.
+Every subject is now remembered for weeks and the pick rotates towards
+the types that have been quiet. Binges are measured from real sittings
+(plays chained by their own timestamps and lengths) instead of a
+six-hour window counted from whenever the scheduler ran, bulk
+"mark as watched" rows no longer pass as viewing, and both the bell and
+the chat starters repeat the measured rhythm — "6 episodes in one
+sitting (2 h 13 min)" or "an episode or two an evening" — instead of
+guessing.
+
 **Music that arrives later finds the plays that were waiting.** Matching
 an imported listening history against your own library used to be a
 one-shot per play: whatever was not in Plex that night stayed unmatched

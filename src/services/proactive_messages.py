@@ -3,10 +3,11 @@ Curatarr - Proactive Messaging Service
 
 Generates unsolicited messages from the curator based on watch/listen patterns.
 
-Trigger types (priority order):
+Trigger types (recommendation_followup first; among the rest the pick is
+weighted by how long a type has been quiet, so no pattern hogs the bell):
   1.  rewatch           — non-music item watched 3+ times total
   2.  track_obsession   — single song with 50+ lifetime plays (song-level, full history)
-  3.  binge_episode     — 3+ episodes of same series in one session
+  3.  binge_episode     — 3+ episodes of one series in ONE sitting (viewing_sessions)
   4.  music_marathon    — 3h+ same artist in one session
   5.  series_completion — just powered through 8+ episodes recently
   6.  attention_deficit — 4 items started and dropped at <15% in a row
@@ -43,6 +44,7 @@ from src.services.series_progress import (
     should_reengage_series,
     normalize_title,
 )
+from src.services.viewing_sessions import rhythm as _viewing_rhythm
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,43 @@ def _completion_rate(e: dict) -> float:
     return 1.0 if e.get("completed") else 0.3
 
 
+def _subject_keys_of(ttype: str, td: dict) -> list[str]:
+    """Index keys ("type:subject") for the pattern types that had no subject
+    memory — the same genre, night-owl title, dropped show or artist used to
+    be the bell's news again every morning (new_genre "latin" eight times in
+    three weeks, 2026-09)."""
+    subs: list = []
+    if ttype in ("new_genre", "genre_rut", "genre_absence"):
+        subs = [td.get("genre")]
+    elif ttype == "night_owl":
+        subs = [td.get("media_title") or td.get("title")]
+    elif ttype == "low_completion":
+        subs = [d.get("title") for d in (td.get("dropped") or []) if isinstance(d, dict)]
+    elif ttype == "attention_deficit":
+        subs = list(td.get("titles") or [])
+    elif ttype == "music_marathon":
+        subs = [td.get("artist")]
+    elif ttype == "guilty_pleasure":
+        subs = [td.get("title")]
+    return [f"{ttype}:{normalize_title(s)}" for s in subs if s]
+
+
+def _subject_asked(asked_subjects: dict | None, ttype: str, subject: str | None, *,
+                   days: int, now: datetime | None = None) -> bool:
+    """True when a message of this type about this subject went out within
+    `days`. A subject whose last message is older than the horizon is open
+    again; one never asked is open."""
+    if not asked_subjects or not subject:
+        return False
+    at = (asked_subjects.get("subjects") or {}).get(f"{ttype}:{normalize_title(subject)}")
+    if at is None:
+        return False
+    try:
+        return (now or datetime.utcnow()) - at < timedelta(days=days)
+    except TypeError:
+        return True
+
+
 # ── TRIGGER DETECTION ─────────────────────────────────────────────────────────
 
 def _series_recently_covered(
@@ -156,29 +195,40 @@ def _titled_recently_covered(title: str, asked_subjects: dict | None) -> bool:
 
 def detect_binge(entries: list[dict], now: datetime,
                  asked_subjects: dict | None = None) -> Optional[dict]:
-    cutoff = now - timedelta(hours=settings.BINGE_SESSION_HOURS)
-    recent = [e for e in entries
-              if e["media_type"] in ("show", "anime")
-              and e["viewed_at"] and e["viewed_at"] >= cutoff]
+    """BINGE_EPISODE_THRESHOLD or more episodes of one series in ONE sitting
+    (plays chained by their own timestamps and lengths), and that sitting
+    ended within BINGE_SESSION_HOURS. Six episodes over four evenings are a
+    routine, not a binge — the owner got asked about exactly that. The
+    payload carries the measured facts (count, span, rhythm), never the
+    window constant the old message quoted as "in 6 hours straight"."""
+    threshold = settings.BINGE_EPISODE_THRESHOLD
+    fresh = timedelta(hours=settings.BINGE_SESSION_HOURS)
+    cutoff = now - timedelta(days=2)
     by_series: dict = {}
-    for e in recent:
-        key = e["series_title"] or e["title"]
-        by_series.setdefault(key, []).append(e)
+    for e in entries:
+        if e["media_type"] in ("show", "anime") and e["viewed_at"] and e["viewed_at"] >= cutoff:
+            by_series.setdefault(e["series_title"] or e["title"], []).append(e)
     for series, eps in by_series.items():
-        if len(eps) >= settings.BINGE_EPISODE_THRESHOLD:
-            if _series_recently_covered(series, entries, asked_subjects):
-                continue
-            return {
-                "type": "binge_episode",
-                "series": series,
-                "count": len(eps),
-                "hours": settings.BINGE_SESSION_HOURS,
-                "media_type": eps[0]["media_type"],
-            }
+        r = _viewing_rhythm(eps, now, window_days=2, binge_threshold=threshold)
+        last = r["last"]
+        if not last or last["episodes"] < threshold or now - last["end"] > fresh:
+            continue
+        if _series_recently_covered(series, entries, asked_subjects):
+            continue
+        return {
+            "type": "binge_episode",
+            "series": series,
+            "count": last["episodes"],
+            "span_minutes": last["span_min"],
+            "ended_at": last["end"].isoformat(),
+            "rhythm": r["phrase"],
+            "media_type": eps[0]["media_type"],
+        }
     return None
 
 
-def detect_music_marathon(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_music_marathon(entries: list[dict], now: datetime,
+                          asked_subjects: dict | None = None) -> Optional[dict]:
     cutoff = now - timedelta(hours=4)
     recent = [e for e in entries
               if e["media_type"] == "music" and e["viewed_at"] and e["viewed_at"] >= cutoff]
@@ -188,6 +238,8 @@ def detect_music_marathon(entries: list[dict], now: datetime) -> Optional[dict]:
         by_artist[artist] = by_artist.get(artist, 0) + (e["duration_ms"] or 200_000)
     for artist, ms in by_artist.items():
         if ms / 3_600_000 >= 3.0:
+            if _subject_asked(asked_subjects, "music_marathon", artist, days=7, now=now):
+                continue
             return {"type": "music_marathon", "artist": artist, "hours": round(ms / 3_600_000, 1)}
     return None
 
@@ -198,14 +250,23 @@ def detect_series_completion(entries: list[dict], now: datetime,
     recent = [e for e in entries
               if e["media_type"] in ("show", "anime") and e["viewed_at"] and e["viewed_at"] >= cutoff]
     by_series: dict = {}
+    rows_by_series: dict = {}
     for e in recent:
         key = e["series_title"] or e["title"]
         by_series.setdefault(key, set()).add(e.get("episode"))
+        rows_by_series.setdefault(key, []).append(e)
     for series, eps in by_series.items():
-        if len(eps) >= 8:
-            if _series_recently_covered(series, entries, asked_subjects):
-                continue
-            return {"type": "series_completion", "series": series, "episodes_watched": len(eps)}
+        if len(eps) < 8:
+            continue
+        # Rows are not viewing: 12 episodes of Kakegurui bulk-marked inside one
+        # second fired this as "12 episodes in record time" (2026-09-14).
+        r = _viewing_rhythm(rows_by_series[series], now, window_days=2)
+        if r["episodes"] < 8:
+            continue
+        if _series_recently_covered(series, entries, asked_subjects):
+            continue
+        return {"type": "series_completion", "series": series,
+                "episodes_watched": r["episodes"], "rhythm": r["phrase"]}
     return None
 
 
@@ -374,7 +435,8 @@ def detect_track_obsession(user_id: int,
     }
 
 
-def detect_genre_absence(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_genre_absence(entries: list[dict], now: datetime,
+                         asked_subjects: dict | None = None) -> Optional[dict]:
     """Loved genre (top-3 historically) not seen in 30+ days."""
     if not entries:
         return None
@@ -403,6 +465,8 @@ def detect_genre_absence(entries: list[dict], now: datetime) -> Optional[dict]:
 
     for genre, total in genre_counter.most_common(5):
         if genre not in recent_genres:
+            if _subject_asked(asked_subjects, "genre_absence", genre, days=30, now=now):
+                continue
             return {
                 "type": "genre_absence",
                 "genre": genre,
@@ -412,8 +476,11 @@ def detect_genre_absence(entries: list[dict], now: datetime) -> Optional[dict]:
     return None
 
 
-def detect_low_completion(entries: list[dict], now: datetime) -> Optional[dict]:
-    """3+ shows dropped with <30% completion in the last 60 days."""
+def detect_low_completion(entries: list[dict], now: datetime,
+                          asked_subjects: dict | None = None) -> Optional[dict]:
+    """3+ shows dropped with <30% completion in the last 60 days — and at
+    least one of them not asked about within 30 days, or it is the same
+    question again (nine times in three weeks, 2026-09)."""
     cutoff = now - timedelta(days=60)
     dropped = []
     seen_series: set = set()
@@ -430,6 +497,8 @@ def detect_low_completion(entries: list[dict], now: datetime) -> Optional[dict]:
                 dropped.append({"title": key, "rate": round(rate, 2), "media_type": e["media_type"]})
 
     if len(dropped) >= 3:
+        if all(_subject_asked(asked_subjects, "low_completion", d["title"], days=30, now=now) for d in dropped):
+            return None
         return {
             "type": "low_completion",
             "dropped": dropped[:5],
@@ -478,7 +547,8 @@ def detect_history_deep_dive(entries: list[dict], now: datetime,
     }
 
 
-def detect_new_genre(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_new_genre(entries: list[dict], now: datetime,
+                     asked_subjects: dict | None = None) -> Optional[dict]:
     """A genre appears in last 30d that wasn't in prior 90d history."""
     cutoff_recent = now - timedelta(days=30)
     cutoff_prior_start = now - timedelta(days=120)
@@ -502,11 +572,14 @@ def detect_new_genre(entries: list[dict], now: datetime) -> Optional[dict]:
 
     for genre, count in recent_genres.most_common():
         if count >= 3 and genre not in prior_genres:
+            if _subject_asked(asked_subjects, "new_genre", genre, days=30, now=now):
+                continue
             return {"type": "new_genre", "genre": genre, "count": count}
     return None
 
 
-def detect_night_owl(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_night_owl(entries: list[dict], now: datetime,
+                     asked_subjects: dict | None = None) -> Optional[dict]:
     # Watched something between 2 AM and 5 AM
     cutoff = now - timedelta(days=7)
     recent = [e for e in entries if (e.get("last_viewed_at") or datetime.min) >= cutoff]
@@ -522,6 +595,8 @@ def detect_night_owl(entries: list[dict], now: datetime) -> Optional[dict]:
             mt = e.get("media_type")
             artist = (e.get("series_title") or "").strip()
             display = f"{artist} – {title}" if (mt == "music" and artist) else title
+            if _subject_asked(asked_subjects, "night_owl", display, days=30, now=now):
+                continue
             verb = "listening to" if mt == "music" else "watching"
             return {
                 "type": "night_owl",
@@ -535,7 +610,8 @@ def detect_night_owl(entries: list[dict], now: datetime) -> Optional[dict]:
     return None
 
 
-def detect_genre_rut(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_genre_rut(entries: list[dict], now: datetime,
+                     asked_subjects: dict | None = None) -> Optional[dict]:
     """10+ items in the last 14 days, every single one from the exact same primary genre."""
     cutoff = now - timedelta(days=14)
     recent = [
@@ -553,6 +629,8 @@ def detect_genre_rut(entries: list[dict], now: datetime) -> Optional[dict]:
             genres_seen.add(primary)
 
     if len(genres_seen) == 1:
+        if _subject_asked(asked_subjects, "genre_rut", next(iter(genres_seen)), days=30, now=now):
+            return None
         return {
             "type": "genre_rut",
             "genre": next(iter(genres_seen)),
@@ -561,7 +639,8 @@ def detect_genre_rut(entries: list[dict], now: datetime) -> Optional[dict]:
     return None
 
 
-def detect_attention_deficit(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_attention_deficit(entries: list[dict], now: datetime,
+                             asked_subjects: dict | None = None) -> Optional[dict]:
     """The last 4 distinct titles watched were all dropped at <15% completion."""
     # Only consider unique titles in recency order (entries are newest-first)
     seen: set = set()
@@ -580,6 +659,8 @@ def detect_attention_deficit(entries: list[dict], now: datetime) -> Optional[dic
     dropped = [e for e in recent_4 if _completion_rate(e) < 0.15]
     if len(dropped) == 4:
         titles = [e["series_title"] or e["title"] for e in dropped[:2]]
+        if all(_subject_asked(asked_subjects, "attention_deficit", t, days=14, now=now) for t in titles):
+            return None
         return {"type": "attention_deficit", "titles": titles}
     return None
 
@@ -616,7 +697,8 @@ def detect_procrastinator(entries: list[dict], now: datetime,
     return None
 
 
-def detect_guilty_pleasure(entries: list[dict], now: datetime) -> Optional[dict]:
+def detect_guilty_pleasure(entries: list[dict], now: datetime,
+                           asked_subjects: dict | None = None) -> Optional[dict]:
     """Completed something with an objectively terrible TMDB rating (<5.0) in the last 7 days.
 
     Dormant until WatchHistoryEntry gains a `rating` column populated from TMDB.
@@ -626,6 +708,8 @@ def detect_guilty_pleasure(entries: list[dict], now: datetime) -> Optional[dict]
     for e in recent:
         rating = e.get("rating")
         if rating is not None and rating < 5.0 and _completion_rate(e) > 0.8:
+            if _subject_asked(asked_subjects, "guilty_pleasure", e["series_title"] or e["title"], days=90, now=now):
+                continue
             return {
                 "type": "guilty_pleasure",
                 "title": e["series_title"] or e["title"],
@@ -737,13 +821,33 @@ def detect_recommendation_followup(user_id: int,
     return None
 
 
+def _pick_trigger(hits: list, last_fired: dict, now: datetime, rng=random) -> Optional[dict]:
+    """recommendation_followup wins outright; otherwise a weighted draw in
+    which a type's weight grows with the days it has been quiet (1 + days,
+    capped at 15; never fired = 15). The first detector in the list used to
+    win every morning, so the same three patterns filled the bell for weeks."""
+    if not hits:
+        return None
+    for ttype, result in hits:
+        if ttype == "recommendation_followup":
+            return result
+    weights = []
+    for ttype, _r in hits:
+        at = last_fired.get(ttype)
+        days = 14 if at is None else min(14, max(0, (now - at).days))
+        weights.append(1 + days)
+    return rng.choices([r for _t, r in hits], weights=weights, k=1)[0]
+
+
 def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
                       recently_fired: set[str],
                       disabled: set[str] | None = None,
-                      asked_subjects: dict | None = None) -> Optional[dict]:
+                      asked_subjects: dict | None = None,
+                      last_fired: dict | None = None,
+                      rng=random) -> Optional[dict]:
     """
-    Try each trigger in priority order, skip types that fired recently
-    or that the user has disabled in their notification preferences.
+    Run every trigger that is neither cooling down nor disabled by the user,
+    then let _pick_trigger choose among the hits.
 
     Pass 57: ``user_id`` is now threaded through because
     ``detect_track_obsession`` runs its own SQL aggregate over the full
@@ -765,25 +869,30 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
         ("rewatch",           lambda: detect_rewatch(entries, asked_subjects)),
         ("track_obsession",   lambda: detect_track_obsession(user_id, _tracks)),
         ("binge_episode",     lambda: detect_binge(entries, now, asked_subjects)),
-        ("music_marathon",    lambda: detect_music_marathon(entries, now)),
+        ("music_marathon",    lambda: detect_music_marathon(entries, now, asked_subjects)),
         ("series_completion", lambda: detect_series_completion(entries, now, asked_subjects)),
-        ("attention_deficit", lambda: detect_attention_deficit(entries, now)),
+        ("attention_deficit", lambda: detect_attention_deficit(entries, now, asked_subjects)),
         ("procrastinator",    lambda: detect_procrastinator(entries, now, asked_subjects)),
-        ("genre_rut",         lambda: detect_genre_rut(entries, now)),
-        ("guilty_pleasure",   lambda: detect_guilty_pleasure(entries, now)),
-        ("genre_absence",     lambda: detect_genre_absence(entries, now)),
-        ("low_completion",    lambda: detect_low_completion(entries, now)),
-        ("new_genre",         lambda: detect_new_genre(entries, now)),
-        ("night_owl",         lambda: detect_night_owl(entries, now)),
+        ("genre_rut",         lambda: detect_genre_rut(entries, now, asked_subjects)),
+        ("guilty_pleasure",   lambda: detect_guilty_pleasure(entries, now, asked_subjects)),
+        ("genre_absence",     lambda: detect_genre_absence(entries, now, asked_subjects)),
+        ("low_completion",    lambda: detect_low_completion(entries, now, asked_subjects)),
+        ("new_genre",         lambda: detect_new_genre(entries, now, asked_subjects)),
+        ("night_owl",         lambda: detect_night_owl(entries, now, asked_subjects)),
         ("history_deep_dive", lambda: detect_history_deep_dive(entries, now, asked_subjects)),
     ]
+    hits = []
     for ttype, fn in candidates:
         if ttype in recently_fired or ttype in disabled:
             continue
-        result = fn()
+        try:
+            result = fn()
+        except Exception as e:  # noqa: BLE001 — one broken detector must not silence the bell
+            logger.warning("[proactive] detector %s failed: %s", ttype, e)
+            continue
         if result:
-            return result
-    return None
+            hits.append((ttype, result))
+    return _pick_trigger(hits, last_fired or {}, now, rng)
 
 
 # ── SUBJECT MEMORY (don't repeat the same question) ───────────────────────────
@@ -823,6 +932,8 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
       titles  — normalized movie / deep-dive titles: never re-ask (no progress).
       series  — normalized series key -> the progress ``milestone`` we asked at
                 (or None for pre-milestone messages); re-ask only once advanced.
+      subjects — "type:subject" -> created_at of the last message about it, for
+                the pattern types (genre, night-owl title, dropped show, artist).
 
     Most-recent message wins (``setdefault`` over a newest-first scan), so the
     stored milestone reflects the last position we asked about.
@@ -830,17 +941,21 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     tracks: set = set()
     titles: set = set()
     series: dict = {}
+    subjects: dict = {}      # "type:subject" -> when it was last the message (newest wins)
 
     with get_db_session() as db:
         rows = (
-            db.query(ProactiveMessage.trigger_type, ProactiveMessage.trigger_data)
+            db.query(ProactiveMessage.trigger_type, ProactiveMessage.trigger_data,
+                     ProactiveMessage.created_at)
             .filter(ProactiveMessage.user_id == user_id)
             .order_by(ProactiveMessage.created_at.desc())
             .limit(limit)
             .all()
         )
 
-    for ttype, tdata_raw in rows:
+    for row in rows:
+        ttype, tdata_raw = row[0], row[1]
+        created = row[2] if len(row) > 2 else None
         try:
             td = json.loads(tdata_raw) if tdata_raw else {}
         except (ValueError, TypeError):
@@ -848,6 +963,9 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
 
         if not isinstance(td, dict):
             continue
+
+        for key in _subject_keys_of(ttype, td):
+            subjects.setdefault(key, created)
 
         if ttype == "track_obsession" and td.get("track"):
             tracks.add(normalize_title(td["track"]))
@@ -865,7 +983,7 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
             _handle_recommendation_followup(td, titles, series)
             continue
 
-    return {"tracks": tracks, "titles": titles, "series": series}
+    return {"tracks": tracks, "titles": titles, "series": series, "subjects": subjects}
 
 
 def _series_key_of(trigger: dict) -> Optional[str]:
@@ -1053,6 +1171,8 @@ def _mark_asked(asked_subjects: dict, trigger: dict) -> None:
     """Record a just-generated subject in the in-memory index so the NEXT slot in
     the same generation run doesn't pick it again."""
     t = trigger["type"]
+    for key in _subject_keys_of(t, trigger):
+        asked_subjects.setdefault("subjects", {})[key] = datetime.utcnow()
     if t == "track_obsession":
         if trigger.get("track"):
             asked_subjects["tracks"].add(normalize_title(trigger["track"]))
@@ -1109,10 +1229,11 @@ async def generate_proactive_message(
         )
 
     elif t == "binge_episode":
+        _how = trigger.get("rhythm") or f"{trigger['count']} episodes in one sitting"
         prompt = (
             f"You are Curatarr, an opinionated personal curator. "
             f"The user just watched {trigger['count']} episodes of \"{trigger['series']}\" "
-            f"in {trigger['hours']} hours straight.{taste}{prog_line}\n\n"
+            f"in one sitting: {_how}.{taste}{prog_line}\n\n"
             f"Write a single short message (max 2 sentences): curious, slightly teasing, maybe provocative. "
             f"Ask something specific about the show or their reaction. Reference their taste if relevant."
             + random.choice(_PROVOCATIVE_SUFFIXES)
@@ -1127,11 +1248,13 @@ async def generate_proactive_message(
         )
 
     elif t == "series_completion":
+        _how = trigger.get("rhythm") or "over the last two days"
         prompt = (
-            f"The user just powered through {trigger['episodes_watched']} episodes of "
-            f"\"{trigger['series']}\" in record time.{taste}{prog_line}\n\n"
-            f"Write a short, provocative message. Ask if they finally finished it, or if they just lost "
-            f"control of their life this weekend. Be direct and slightly teasing. Max 2 sentences."
+            f"The user got through {trigger['episodes_watched']} episodes of "
+            f"\"{trigger['series']}\" in the last two days: {_how}.{taste}{prog_line}\n\n"
+            f"Write a short, provocative message about THAT pace: repeat the rhythm as given and "
+            f"call it a binge only if it says 'in one sitting'. Ask if they finished it or just "
+            f"cleared their evenings. Direct, slightly teasing. Max 2 sentences."
             + random.choice(_PROVOCATIVE_SUFFIXES)
         )
 
@@ -1370,6 +1493,16 @@ async def check_and_generate_messages(user_id: int) -> int:
             )
             .all()
         }
+        # When each type was last the message: the pick weights quiet types up.
+        from sqlalchemy import func as _func
+        last_fired = {
+            t: at
+            for t, at in db.query(ProactiveMessage.trigger_type,
+                                  _func.max(ProactiveMessage.created_at))
+            .filter(ProactiveMessage.user_id == user_id)
+            .group_by(ProactiveMessage.trigger_type)
+            .all()
+        }
 
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
         taste_blurb = (tv.summary_text or "") if tv else ""
@@ -1424,6 +1557,7 @@ async def check_and_generate_messages(user_id: int) -> int:
             recently_fired=recent_triggers,
             disabled=disabled_triggers,
             asked_subjects=asked_subjects,
+            last_fired=last_fired,
         )
         if not trigger:
             break
@@ -1461,6 +1595,7 @@ async def check_and_generate_messages(user_id: int) -> int:
             db.commit()
 
         recent_triggers.add(trigger["type"])
+        last_fired[trigger["type"]] = now
         _mark_asked(asked_subjects, trigger)
         generated += 1
 

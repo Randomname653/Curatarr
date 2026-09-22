@@ -80,7 +80,7 @@ yet. Until those sections are rewritten, this is the map:
 | Rows are not viewings | `series_progress` (`replays`, `abandoned_starts`, `count_real_views`), `plex_sync` RESUME_WINDOW_DAYS | One viewing can write two `watch_history` rows: Plex reports the partial view and the finished view through different queries. Counting raw rows also turns repeated ABANDONED starts into "replays", which inverts the signal. Count completed views, collapse those inside one viewing window, and let the finished view promote the unfinished row it belongs to. |
 | FORM guards | `pillars.build_evidence` (`_is_spoken_word`, `_is_factual`) | Some works lose by default when measured with the wrong yardstick — cabaret judged on sonic fit, a documentary judged on narrative subversion. The evidence carries an explicit FORM line telling the judge which criteria apply. Add a guard per form, narrowly; a wrong yardstick is worse than none. |
 | Batch language | `llm_utils.detect_user_language` | Surfaces with no live conversation (deletion pitches, proactive nudges) get English. They used to classify unrelated chat history, so the same title could be pitched in one language and re-evaluated in another. A per-user locale setting is the proper home for the general case. |
-| Conversation starters | `src/services/chat_starters.py`, `/api/chat/starters`, custodian task `chat_starters` | Pooled curator OPENERS replacing the three hardcoded landing prompts: one LLM batch → a code-enforced diversity gate (distinct forms, distinct openings, mandatory fact anchor) → 48 h-TTL pool with impression decay. Clicking one makes the CURATOR say it (`starter:{id}` thread — same server-owned-context pattern as proposals). Day-named openers expire at local midnight and a pick-time guard retires day-mismatches; anchor_title/media_type pin verified data when the opener is about one work. |
+| Conversation starters | `src/services/chat_starters.py`, `/api/chat/starters`, custodian task `chat_starters` | Pooled curator OPENERS replacing the three hardcoded landing prompts: one LLM batch → a code-enforced diversity gate (distinct forms, distinct openings, mandatory fact anchor) → 48 h-TTL pool with impression decay. Clicking one makes the CURATOR say it (`starter:{id}` thread — same server-owned-context pattern as proposals). Day-named openers expire at local midnight and a pick-time guard retires day-mismatches; anchor_title/media_type pin verified data when the opener is about one work. The `active_series` fact spells out the viewing rhythm from real sittings (`viewing_sessions`) and the prompt allows "binge" only when the fact says so. |
 | Status-poll memos | `src/services/ttl_memo.py` | `@ttl_response(seconds, key=…)` — in-process TTL cache + single-flight lock on the polled status endpoints (sync/enrichment/backfill/discover). They recomputed full-table aggregates every 10 s poll; now one compute per window serves all pollers. Exceptions are never cached. |
 | Request telemetry + rolling session | `src/middleware.py`, `src/routers/auth.py` | `SlowRequestLogMiddleware` logs >300 ms-to-first-byte requests (the tool that found the poll hotspots). JWTs last 7 d; after 24 h of age `TokenRefreshMiddleware` re-issues via the `x-curatarr-refreshed-token` header so an active user never hits the mid-conversation 401 cliff. |
 | Watched-title discussion | chat `watched_title` branch, `src/services/episode_context.py`, `src/services/watch_status.py` | Clicking the last-played strip opens a per-work thread (`watched:tmdb:{id}`) anchored on the user's OWN WatchHistoryEntry row. Episode position is stated as fact with an EPISODE-HONESTY rule — there is no per-episode metadata, and the curator must say so instead of inventing plot. |
@@ -728,6 +728,32 @@ shows a badge. Per-trigger toggles in Settings → Notifications.
 **Gotcha**: `created_at` is forward-dated (`now + timedelta(seconds=…)`) to
 force ordering — filters using `created_at <= now` would skip them until
 wall-clock catches up.
+
+**Sittings, not windows** (`src/services/viewing_sessions.py`, 2026-09-22).
+The plays of one series are chained into sittings by their own timestamps
+and lengths (next play within the previous one's length + 45 min); a play
+counts as an episode only when at least half watched AND at least half an
+episode after the previous play — bulk "mark as watched" rows and
+re-imports after a file upgrade (12 episodes of Kakegurui inside one
+second) are plays, not viewing. `rhythm()` writes the result down ("6
+episodes in one sitting this evening (2 h 13 min)" / "11 episodes over 3
+sittings in the last 7 days, at most 6 in one go") and the prompts repeat
+it verbatim: `binge_episode` fires only for a sitting of
+BINGE_EPISODE_THRESHOLD episodes that ended within BINGE_SESSION_HOURS,
+`series_completion` counts viewing, and the chat starters' `active_series`
+fact carries the rhythm with an explicit `binge` flag (the fact used to be
+called `current_binge` for any series with three plays in a week, and the
+model obliged).
+
+**Subject memory and the pick.** `_load_asked_subjects` indexes every
+pattern type's subject (`"new_genre:latin"`, a night-owl title, each
+dropped show, an artist) with the date it was last the message, and the
+detectors skip a subject inside its horizon (30 days for genres, titles and
+drops; 14 for attention lapses; 7 for a marathon) — before this, `new_genre`
+"latin" was the bell's news eight times in three weeks. `_run_all_triggers`
+now runs every detector and `_pick_trigger` draws among the hits weighted
+by how long each type has been quiet (1 + days, capped at 15); a watched
+recommendation still wins outright. Guard: `tests/test_viewing_sessions.py`.
 
 ---
 
