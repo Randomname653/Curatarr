@@ -88,7 +88,9 @@ def test_all_subject_keys_join_pattern_and_title_keys():
     assert "series:frieren" in pm._all_subject_keys("binge_episode", {"series": "Frieren"})
     assert "title:the matrix" in pm._all_subject_keys("rewatch", {"title": "The Matrix", "is_series": False})
     assert "series:frieren" in pm._all_subject_keys("rewatch", {"title": "Frieren", "media_type": "anime"})
-    assert "track:influencer" in pm._all_subject_keys("track_obsession", {"track": "Influencer", "artist": "X"})
+    keys = pm._all_subject_keys("track_obsession", {"track": "Influencer", "artist": "K.I.Z"})
+    assert "track:influencer" in keys and "artist:k.i.z" in keys, "a music thread also keys on the artist"
+    assert "artist:k.i.z" in pm._all_subject_keys("music_marathon", {"artist": "K.I.Z", "hours": 3.2})
     assert pm._all_subject_keys("new_genre", {"genre": "Latin"}) == ["new_genre:latin"]
     assert pm._all_subject_keys("last_night", {"date": "2026-09-22", "series": "Frieren"}) == ["last_night:2026-09-22", "series:frieren"]
 
@@ -110,7 +112,7 @@ def test_the_morning_line_sums_up_last_night_and_only_in_the_morning():
     morning = _local_to_utc(datetime.combine(today, time(8, 30)))
     hit = pm.detect_last_night(entries, morning)
     assert hit and hit["type"] == "last_night" and hit["date"] == "2026-09-22"
-    assert "2 episodes of \"Frieren\"" in hit["summary"] and "the film \"Heat\"" in hit["summary"], hit["summary"]
+    assert "\"Frieren\": 2 episodes" in hit["summary"] and "the film \"Heat\"" in hit["summary"], hit["summary"]
     assert "Otis Redding" not in hit["summary"] and "Old" not in hit["summary"]
     assert hit["ended"] == "22:00" and hit["series"] == "Frieren"
     assert pm.detect_last_night(entries, _local_to_utc(datetime.combine(today, time(14, 0)))) is None, "afternoon: no morning line"

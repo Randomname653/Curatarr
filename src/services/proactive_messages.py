@@ -171,6 +171,10 @@ def _all_subject_keys(ttype: str, td: dict) -> list[str]:
         keys.append(f"{'series' if is_series else 'title'}:{normalize_title(td['title'])}")
     elif ttype == "track_obsession" and td.get("track"):
         keys.append(f"track:{normalize_title(td['track'])}")
+    # Music threads also key on the artist: an answer about one K.I.Z track
+    # is worth quoting when the next nudge is about another of theirs.
+    if ttype in ("track_obsession", "music_marathon") and td.get("artist"):
+        keys.append(f"artist:{normalize_title(td['artist'])}")
     elif ttype == "last_night" and td.get("series"):
         keys.append(f"series:{normalize_title(td['series'])}")
     return keys
@@ -827,7 +831,7 @@ def detect_last_night(entries: list[dict], now: datetime,
         r = _viewing_rhythm(eps, end, window_days=1)
         if r["episodes"]:
             first_series = first_series or name
-            parts.append(f"{r['episodes']} episode{'s' if r['episodes'] != 1 else ''} of \"{name}\" ({r['phrase']})")
+            parts.append(f"\"{name}\": {r['phrase']}")      # the phrase already counts the episodes
     for title in films[:2]:
         parts.append(f"the film \"{title}\"")
     for artist, ms in sorted(music.items(), key=lambda kv: -kv[1])[:1]:
