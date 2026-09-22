@@ -1762,51 +1762,44 @@ async def library_breakdown(
         music_extras = None
         has_music_lib = any(r["category"] == "music" for r in library_rows)
         if has_music_lib:
+            # ⚡ BOLT OPTIMIZATION:
+            # Replaced 5 redundant aggregate queries against WatchHistoryEntry
+            # with a single pass using conditional SUM(CASE...) and COUNT(DISTINCT CASE...).
+            # This cuts database roundtrips for the music phase coverage stats.
+            from sqlalchemy import and_, case as _case
+            spotify_stats = db.query(
+                _func.count(_WH.id).label("total_plays"),
+                _func.sum(_case((_WH.plex_item_id.like("spotify%"), 1), else_=0)).label("unmatched_plays"),
+                _func.count(_func.distinct(_case((
+                    and_(_WH.plex_item_id.like("spotify%"), _WH.series_title.isnot(None)),
+                    _WH.series_title
+                ), else_=None))).label("unique_artists"),
+                _func.count(_func.distinct(_case((
+                    and_(_WH.plex_item_id.like("spotify%"), _WH.series_title.isnot(None), _WH.artist_mbid.isnot(None)),
+                    _WH.series_title
+                ), else_=None))).label("mbid_resolved"),
+                _func.sum(_case((
+                    and_(_WH.plex_item_id.like("spotify%"), _WH.genres.isnot(None)), 1
+                ), else_=0)).label("with_genres")
+            ).filter(
+                _WH.user_id == user.id,
+                _WH.media_type == "music",
+                _WH.source == "spotify"
+            ).first()
+
             # Phase 1: Plex match — spotify-source rows whose plex_item_id no
             # longer starts with 'spotify:' have been rewritten to point at a
             # real Plex track ID by match_spotify_to_plex.
-            spotify_total_plays = (
-                db.query(_func.count(_WH.id))
-                .filter(_WH.user_id == user.id,
-                        _WH.media_type == "music",
-                        _WH.source == "spotify")
-                .scalar() or 0
-            )
-            spotify_unmatched_plays = (
-                db.query(_func.count(_WH.id))
-                .filter(_WH.user_id == user.id,
-                        _WH.media_type == "music",
-                        _WH.source == "spotify",
-                        _WH.plex_item_id.like("spotify%"))
-                .scalar() or 0
-            )
-            spotify_matched_plays = max(
-                0, spotify_total_plays - spotify_unmatched_plays
-            )
+            spotify_total_plays = spotify_stats.total_plays or 0
+            spotify_unmatched_plays = spotify_stats.unmatched_plays or 0
+            spotify_matched_plays = max(0, spotify_total_plays - spotify_unmatched_plays)
 
             # Phase 1.4: MBID resolve — distinct spotify artists with
             # artist_mbid set. Counts only the still-unmatched set (matched
             # rows had their plex_item_id rewritten and already feed
             # taste-vector through the local Plex track).
-            spotify_unique_artists = (
-                db.query(_func.count(_func.distinct(_WH.series_title)))
-                .filter(_WH.user_id == user.id,
-                        _WH.media_type == "music",
-                        _WH.source == "spotify",
-                        _WH.plex_item_id.like("spotify%"),
-                        _WH.series_title.isnot(None))
-                .scalar() or 0
-            )
-            spotify_mbid_resolved = (
-                db.query(_func.count(_func.distinct(_WH.series_title)))
-                .filter(_WH.user_id == user.id,
-                        _WH.media_type == "music",
-                        _WH.source == "spotify",
-                        _WH.plex_item_id.like("spotify%"),
-                        _WH.series_title.isnot(None),
-                        _WH.artist_mbid.isnot(None))
-                .scalar() or 0
-            )
+            spotify_unique_artists = spotify_stats.unique_artists or 0
+            spotify_mbid_resolved = spotify_stats.mbid_resolved or 0
 
             # Phase 1.5 + Phase 2: Genre coverage — both phases write to the
             # same ``genres`` column on the same rows, so we report combined
@@ -1814,15 +1807,7 @@ async def library_breakdown(
             # fallback wrote it" isn't tracked at the row level (would
             # require a new column); the honest number is the combined
             # "rows with genres" / "rows total".
-            spotify_with_genres = (
-                db.query(_func.count(_WH.id))
-                .filter(_WH.user_id == user.id,
-                        _WH.media_type == "music",
-                        _WH.source == "spotify",
-                        _WH.plex_item_id.like("spotify%"),
-                        _WH.genres.isnot(None))
-                .scalar() or 0
-            )
+            spotify_with_genres = spotify_stats.with_genres or 0
 
             music_extras = {
                 "phase_1_plex_match": {
