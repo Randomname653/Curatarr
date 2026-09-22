@@ -114,3 +114,60 @@ def test_music_listening_stats_exception():
 
     with patch("src.database.connection.get_db_session", new=_boom):
         assert music_listening_stats(1, "Artist") is None
+
+
+# ── watched_lookup / watch_tag: music is plays of tracks, never episodes ────────
+
+class _Row:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class _Q:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *a, **k):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _Session:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def query(self, *a, **k):
+        return _Q(self.rows)
+
+
+def test_watched_lookup_counts_music_as_tracks_not_episodes():
+    """Plex/Spotify music rows carry season=1 / episode=<track index>. An artist
+    matched by series_title read '15 episodes played (73 plays)' in chat
+    (Otis Redding, 2026-09-22)."""
+    from src.services.watch_status import watched_lookup, watch_tag
+    when = datetime(2026, 9, 21, 20, 0)
+    rows = [
+        _Row(title="It's Growing", series_title="Otis Redding", completed=True, viewed_at=when, season=1, episode=2, media_type="music"),
+        _Row(title="Louie Louie", series_title="Otis Redding", completed=True, viewed_at=when, season=1, episode=8, media_type="music"),
+        _Row(title="Louie Louie", series_title="Otis Redding", completed=True, viewed_at=when, season=1, episode=8, media_type="music"),
+        _Row(title="Satisfaction", series_title="Otis Redding", completed=True, viewed_at=when, season=1, episode=6, media_type="music"),
+        _Row(title="Frieren E1", series_title="Frieren", completed=True, viewed_at=when, season=1, episode=1, media_type="anime"),
+        _Row(title="Frieren E2", series_title="Frieren", completed=True, viewed_at=when, season=1, episode=2, media_type="anime"),
+        _Row(title="Frieren E2", series_title="Frieren", completed=True, viewed_at=when, season=1, episode=2, media_type="anime"),
+    ]
+    with patch("src.database.connection.get_db_session", new=lambda: _Session(rows)):
+        got = watched_lookup(1, ["Otis Redding", "Frieren"])
+    otis, frieren = got["Otis Redding"], got["Frieren"]
+    assert otis["media_type"] == "music" and otis["count"] == 4 and otis["tracks"] == 3 and otis["episodes"] == 0
+    assert frieren["media_type"] == "video" and frieren["count"] == 3 and frieren["episodes"] == 2 and frieren["tracks"] == 0
+    assert watch_tag(otis) == "4 plays across 3 distinct tracks, last Sep 2026"
+    assert watch_tag(frieren) == "2 episodes played (3 plays), last Sep 2026"
+    assert watch_tag(None) == "NOT watched"

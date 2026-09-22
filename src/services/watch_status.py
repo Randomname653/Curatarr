@@ -72,8 +72,14 @@ def format_listening_line(stats: dict | None) -> str:
 
 
 def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
-    """Map each title → {count, completed, last} from watch_history, in ONE query.
-    Absent from the result = the user never played it.
+    """Map each title → {count, completed, last, episodes, media_type, tracks}
+    from watch_history, in ONE query. Absent from the result = never played.
+
+    Music rows are plays of tracks, never episodes: Plex/Spotify rows carry
+    season=1 and episode=<track index>, so an artist matched by series_title
+    read "15 episodes played (73 plays)" in the curator's chat (Otis
+    Redding, 2026-09-22). Episodes are counted from video rows only, tracks
+    from music rows, and ``media_type`` says which family the plays are.
 
     ``category`` adds the MEDIA-FAMILY guard (same rule as pillars._watch_filters):
     a video title must match a non-music row, a music title a music row. Without
@@ -95,6 +101,7 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
                 WatchHistoryEntry.title, WatchHistoryEntry.series_title,
                 WatchHistoryEntry.completed, WatchHistoryEntry.viewed_at,
                 WatchHistoryEntry.season, WatchHistoryEntry.episode,
+                WatchHistoryEntry.media_type,
             ).filter(
                 WatchHistoryEntry.user_id == user_id,
                 or_(WatchHistoryEntry.title.in_(titles),
@@ -114,15 +121,22 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
         if not key:
             continue
         a = agg.setdefault(key, {"count": 0, "completed": False, "last": None,
-                                 "_eps": set()})
+                                 "_eps": set(), "_tracks": set(), "_music": 0})
         a["count"] += 1
         a["completed"] = a["completed"] or bool(r.completed)
-        if r.episode is not None:
+        if getattr(r, "media_type", None) == "music":
+            a["_music"] += 1
+            a["_tracks"].add(r.title)
+        elif r.episode is not None:
             a["_eps"].add((r.season, r.episode))
         if r.viewed_at and (a["last"] is None or r.viewed_at > a["last"]):
             a["last"] = r.viewed_at
     for a in agg.values():
         a["episodes"] = len(a.pop("_eps"))
+        a["tracks"] = len(a.pop("_tracks"))
+        music = a.pop("_music")
+        a["media_type"] = ("music" if music == a["count"] else
+                           "video" if not music else "mixed")
     return agg
 
 
@@ -264,6 +278,13 @@ def watch_tag(status: dict) -> str:
     if not status:
         return "NOT watched"
     n = status["count"]
+    if status.get("media_type") == "music":
+        tracks = status.get("tracks") or 0
+        base = (f"{n} play{'s' if n != 1 else ''} across {tracks} distinct "
+                f"track{'s' if tracks != 1 else ''}")
+        if status.get("last"):
+            base += f", last {status['last'].strftime('%b %Y')}"
+        return base
     eps = status.get("episodes") or 0
     if eps >= 2:
         base = f"{eps} episodes played" + (f" ({n} plays)" if n > eps else "")
