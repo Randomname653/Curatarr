@@ -228,7 +228,8 @@ def test_selection_decays_and_respects_the_daypart():
 
 def test_proactive_messages_gained_the_same_mortality():
     pm = _src("services/proactive_messages.py")
-    assert "expires_at=now + timedelta(days=7)" in pm
+    # the shelf life moved into _expiry_for: a week by default, local noon for a morning line
+    assert "expires_at=_expiry_for(trigger, now)" in pm and "return now + timedelta(days=7)" in pm
     # surfacing counts, and ignored-past-cap or expired messages retire
     assert "m.impressions = (m.impressions or 0) + 1" in pm
     assert "ProactiveMessage.impressions >= 40" in pm

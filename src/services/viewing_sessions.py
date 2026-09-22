@@ -51,9 +51,15 @@ def _episode_key(e: dict):
     return ("title", e.get("title"))
 
 
+def utc_offset() -> timedelta:
+    """Wall clock of this machine minus UTC — the rows carry naive UTC and
+    the owner's evening is a local notion."""
+    return datetime.now() - datetime.utcnow()
+
+
 def _local(dt: datetime) -> datetime:
     """UTC row timestamp → wall clock of this machine (viewed_at is naive UTC)."""
-    return dt + (datetime.now() - datetime.utcnow())
+    return dt + utc_offset()
 
 
 def _daypart(hour: int) -> str:

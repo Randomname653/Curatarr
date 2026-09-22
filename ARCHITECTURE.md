@@ -755,6 +755,24 @@ now runs every detector and `_pick_trigger` draws among the hits weighted
 by how long each type has been quiet (1 + days, capped at 15); a watched
 recommendation still wins outright. Guard: `tests/test_viewing_sessions.py`.
 
+**One curator, several registers; the thread continues; a morning line**
+(same day, `tests/test_proactive_alive.py`). Every message draws a register
+by weight — provocative 3, curious 3, dry 2, warm 2, analytic 2 — never
+the same as the previous message's (read back from its `trigger_data`),
+and `_compose_prompt` (sync, testable) ends every prompt with that one
+register line; the per-type prompts carry the facts and the ask only, the
+old "provocative, teasing, confrontational" wording and the random "No
+filter." suffixes are gone. Continuity: `_load_asked_subjects` also maps
+every subject key to the ids of earlier messages about it, and
+`_prior_exchange` reads their `proactive_message:{id}` threads for the
+newest one the user actually answered in — the prompt then quotes what we
+asked, what they said and what we replied, and tells the model to build on
+it. `last_night`: between 05:00 and 11:00 local, once per day, the plays
+between 17:00 yesterday and 04:00 today (series with their sitting rhythm,
+films, minutes of an artist) become one morning line; it outranks every
+trigger but a watched recommendation and expires at local noon
+(`_expiry_for`). Settings → Notifications lists it as "Morning line".
+
 ---
 
 ## 11. LLM priority system (`src/services/llm_priority.py`)

@@ -4,7 +4,10 @@ Curatarr - Proactive Messaging Service
 Generates unsolicited messages from the curator based on watch/listen patterns.
 
 Trigger types (recommendation_followup first; among the rest the pick is
-weighted by how long a type has been quiet, so no pattern hogs the bell):
+weighted by how long a type has been quiet, so no pattern hogs the bell;
+each message draws a register — provocative, curious, dry, warm, analytic —
+and picks up the user's earlier answer on the same subject when there is one):
+  0.  last_night        — a morning line about last night (05–11 local), gone by noon
   1.  rewatch           — non-music item watched 3+ times total
   2.  track_obsession   — single song with 50+ lifetime plays (song-level, full history)
   3.  binge_episode     — 3+ episodes of one series in ONE sitting (viewing_sessions)
@@ -24,7 +27,7 @@ weighted by how long a type has been quiet, so no pattern hogs the bell):
 import json
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as _time
 from collections import Counter
 from typing import Optional
 
@@ -32,7 +35,7 @@ import httpx
 
 from src.database.connection import get_db_session
 from src.database.models import (
-    WatchHistoryEntry, ProactiveMessage, TasteVectorEntry, User
+    WatchHistoryEntry, ProactiveMessage, TasteVectorEntry, User, ConversationMessage
 )
 from src.config import settings
 from src.services.llm_utils import strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
@@ -44,7 +47,7 @@ from src.services.series_progress import (
     should_reengage_series,
     normalize_title,
 )
-from src.services.viewing_sessions import rhythm as _viewing_rhythm
+from src.services.viewing_sessions import rhythm as _viewing_rhythm, utc_offset as _utc_offset
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +137,8 @@ def _subject_keys_of(ttype: str, td: dict) -> list[str]:
         subs = [td.get("artist")]
     elif ttype == "guilty_pleasure":
         subs = [td.get("title")]
+    elif ttype == "last_night":
+        subs = [td.get("date")]
     return [f"{ttype}:{normalize_title(s)}" for s in subs if s]
 
 
@@ -151,6 +156,72 @@ def _subject_asked(asked_subjects: dict | None, ttype: str, subject: str | None,
         return (now or datetime.utcnow()) - at < timedelta(days=days)
     except TypeError:
         return True
+
+
+def _all_subject_keys(ttype: str, td: dict) -> list[str]:
+    """Every index key a message is about: the pattern keys plus the series,
+    title or track it names — so an earlier thread on the same subject can be
+    found whatever trigger type raised it."""
+    keys = list(_subject_keys_of(ttype, td))
+    if ttype in _SERIES_TRIGGER_TYPES and td.get("series"):
+        keys.append(f"series:{normalize_title(td['series'])}")
+    elif ttype in ("rewatch", "history_deep_dive", "recommendation_followup") and td.get("title"):
+        is_series = (td.get("is_series") or td.get("media_type") in ("show", "anime")
+                     or td.get("category") in ("show", "anime"))
+        keys.append(f"{'series' if is_series else 'title'}:{normalize_title(td['title'])}")
+    elif ttype == "track_obsession" and td.get("track"):
+        keys.append(f"track:{normalize_title(td['track'])}")
+    elif ttype == "last_night" and td.get("series"):
+        keys.append(f"series:{normalize_title(td['series'])}")
+    return keys
+
+
+def _fetch_prior(user_id: int, ids: list[int]) -> dict:
+    """The earlier messages' texts and their discussion threads
+    (``proactive_message:{id}``), oldest turn first."""
+    with get_db_session() as db:
+        msgs = {m.id: m.message for m in db.query(ProactiveMessage.id, ProactiveMessage.message)
+                .filter(ProactiveMessage.user_id == user_id, ProactiveMessage.id.in_(ids)).all()}
+        threads = [f"proactive_message:{i}" for i in ids]
+        turns = [(int(t.thread_id.split(":", 1)[1]), t.role, t.content, t.created_at)
+                 for t in db.query(ConversationMessage.thread_id, ConversationMessage.role,
+                                   ConversationMessage.content, ConversationMessage.created_at)
+                 .filter(ConversationMessage.user_id == user_id,
+                         ConversationMessage.thread_id.in_(threads))
+                 .order_by(ConversationMessage.created_at.asc()).all()]
+    return {"messages": msgs, "turns": turns}
+
+
+def _prior_exchange(user_id: int, trigger: dict, asked_subjects: dict | None,
+                    fetch=None) -> Optional[dict]:
+    """The newest earlier thread on this subject in which the user actually
+    answered: what we asked, what they said, what we replied. None when the
+    subject is new or every earlier nudge went unanswered."""
+    ids: list = []
+    for key in _all_subject_keys(trigger["type"], trigger):
+        ids.extend((asked_subjects or {}).get("ids", {}).get(key, []))
+    ids = list(dict.fromkeys(ids))[:5]           # newest first, no repeats
+    if not ids:
+        return None
+    data = (fetch or _fetch_prior)(user_id, ids)
+    by_id: dict = {}
+    for mid, role, content, at in data.get("turns", []):
+        by_id.setdefault(mid, []).append((role, content, at))
+    for mid in ids:
+        turns = by_id.get(mid) or []
+        user_turns = [x for x in turns if x[0] == "user"]
+        if not user_turns:
+            continue
+        _r, answer, at = user_turns[-1]
+        later = [x for x in turns if x[0] == "assistant" and x[2] is not None and at is not None and x[2] > at]
+        return {
+            "message_id": mid,
+            "asked": (data.get("messages", {}).get(mid) or "")[:200],
+            "answer": (answer or "")[:300],
+            "reply": (later[-1][1] or "")[:160] if later else None,
+            "when": at.date().isoformat() if hasattr(at, "date") else "earlier",
+        }
+    return None
 
 
 # ── TRIGGER DETECTION ─────────────────────────────────────────────────────────
@@ -719,6 +790,64 @@ def detect_guilty_pleasure(entries: list[dict], now: datetime,
     return None
 
 
+def detect_last_night(entries: list[dict], now: datetime,
+                      asked_subjects: dict | None = None) -> Optional[dict]:
+    """A morning line: between 05:00 and 11:00 local, what the user watched
+    between 17:00 yesterday and 04:00 today, once per day. Series come with
+    their sitting rhythm, films by title, music as minutes per artist. Timely
+    or nothing: the message expires at local noon (see _expiry_for)."""
+    off = _utc_offset()
+    local_now = now + off
+    if not (5 <= local_now.hour < 11):
+        return None
+    key = local_now.date().isoformat()
+    if _subject_asked(asked_subjects, "last_night", key, days=1, now=now):
+        return None
+    start = datetime.combine(local_now.date() - timedelta(days=1), _time(17, 0)) - off
+    end = datetime.combine(local_now.date(), _time(4, 0)) - off
+    rows = [e for e in entries if e.get("viewed_at") and start <= e["viewed_at"] < end]
+    if not rows:
+        return None
+    series: dict = {}
+    films: list = []
+    music: dict = {}
+    for e in rows:
+        mt = e.get("media_type")
+        if mt in ("show", "anime"):
+            series.setdefault(e.get("series_title") or e.get("title"), []).append(e)
+        elif mt == "movie":
+            if _completion_rate(e) >= 0.5 and e.get("title") not in films:
+                films.append(e.get("title"))
+        elif mt == "music":
+            artist = e.get("series_title") or "Unknown"
+            music[artist] = music.get(artist, 0) + (e.get("duration_ms") or 200_000)
+    parts: list = []
+    first_series = None
+    for name, eps in series.items():
+        r = _viewing_rhythm(eps, end, window_days=1)
+        if r["episodes"]:
+            first_series = first_series or name
+            parts.append(f"{r['episodes']} episode{'s' if r['episodes'] != 1 else ''} of \"{name}\" ({r['phrase']})")
+    for title in films[:2]:
+        parts.append(f"the film \"{title}\"")
+    for artist, ms in sorted(music.items(), key=lambda kv: -kv[1])[:1]:
+        mins = int(ms // 60_000)
+        if mins >= 20:
+            parts.append(f"{mins} min of {artist}")
+    if not parts:
+        return None
+    last = max(rows, key=lambda e: e["viewed_at"])
+    return {
+        "type": "last_night",
+        "date": key,
+        "weekday": local_now.strftime("%A"),
+        "summary": "; ".join(parts[:4]),
+        "ended": (last["viewed_at"] + off).strftime("%H:%M"),
+        "series": first_series,
+        "media_type": last.get("media_type"),
+    }
+
+
 # ── TRIGGER RUNNER ────────────────────────────────────────────────────────────
 
 # Canonical list of proactive-message triggers with user-facing copy. Each
@@ -727,6 +856,8 @@ def detect_guilty_pleasure(entries: list[dict], now: datetime,
 TRIGGER_TYPES: list[dict] = [
     {"type": "recommendation_followup", "label": "Recommendation follow-up",
      "description": "When you watch something from your Curatarr Recommended playlist, ask how it landed — your verdict feeds back with extra weight."},
+    {"type": "last_night",        "label": "Morning line",
+     "description": "A short line about last night's watching, delivered in the morning and gone by noon."},
     {"type": "rewatch",           "label": "Rewatch suggestions",
      "description": "When you've watched a title several times, surface a thought about coming back to it."},
     {"type": "binge_episode",     "label": "Binge detection",
@@ -831,6 +962,9 @@ def _pick_trigger(hits: list, last_fired: dict, now: datetime, rng=random) -> Op
     for ttype, result in hits:
         if ttype == "recommendation_followup":
             return result
+    for ttype, result in hits:
+        if ttype == "last_night":          # timely: worth nothing after noon
+            return result
     weights = []
     for ttype, _r in hits:
         at = last_fired.get(ttype)
@@ -866,6 +1000,7 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
         # max one per day — deliberate; the hit queue holds the rest.
         ("recommendation_followup",
          lambda: detect_recommendation_followup(user_id, asked_subjects)),
+        ("last_night",        lambda: detect_last_night(entries, now, asked_subjects)),
         ("rewatch",           lambda: detect_rewatch(entries, asked_subjects)),
         ("track_obsession",   lambda: detect_track_obsession(user_id, _tracks)),
         ("binge_episode",     lambda: detect_binge(entries, now, asked_subjects)),
@@ -942,11 +1077,12 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     titles: set = set()
     series: dict = {}
     subjects: dict = {}      # "type:subject" -> when it was last the message (newest wins)
+    ids: dict = {}           # any subject key -> message ids, newest first (earlier threads)
 
     with get_db_session() as db:
         rows = (
             db.query(ProactiveMessage.trigger_type, ProactiveMessage.trigger_data,
-                     ProactiveMessage.created_at)
+                     ProactiveMessage.created_at, ProactiveMessage.id)
             .filter(ProactiveMessage.user_id == user_id)
             .order_by(ProactiveMessage.created_at.desc())
             .limit(limit)
@@ -956,6 +1092,7 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
     for row in rows:
         ttype, tdata_raw = row[0], row[1]
         created = row[2] if len(row) > 2 else None
+        mid = row[3] if len(row) > 3 else None
         try:
             td = json.loads(tdata_raw) if tdata_raw else {}
         except (ValueError, TypeError):
@@ -966,6 +1103,9 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
 
         for key in _subject_keys_of(ttype, td):
             subjects.setdefault(key, created)
+        if mid is not None:
+            for key in _all_subject_keys(ttype, td):
+                ids.setdefault(key, []).append(mid)
 
         if ttype == "track_obsession" and td.get("track"):
             tracks.add(normalize_title(td["track"]))
@@ -983,7 +1123,7 @@ def _load_asked_subjects(user_id: int, limit: int = 400) -> dict:
             _handle_recommendation_followup(td, titles, series)
             continue
 
-    return {"tracks": tracks, "titles": titles, "series": series, "subjects": subjects}
+    return {"tracks": tracks, "titles": titles, "series": series, "subjects": subjects, "ids": ids}
 
 
 def _series_key_of(trigger: dict) -> Optional[str]:
@@ -1186,24 +1326,75 @@ def _mark_asked(asked_subjects: dict, trigger: dict) -> None:
 
 # ── MESSAGE GENERATION ────────────────────────────────────────────────────────
 
-_PROVOCATIVE_SUFFIXES = [
-    " Don't hold back.",
-    " Be brutally honest.",
-    " Skip the pleasantries.",
-    " No filter.",
+# ── REGISTERS ────────────────────────────────────────────────────────────────
+# One curator, several registers. Every message used to be "provocative,
+# teasing, confrontational" plus a random "No filter." suffix — one voice on
+# loop (owner, 2026-09-22: "sehr statisch"). The register is drawn per
+# message by weight, never the same twice in a row, and persisted in
+# trigger_data so the next generation run knows what the last voice was.
+_REGISTERS: list[tuple[str, int, str]] = [
+    ("provocative", 3, "Register: pointed and a little teasing, a challenge they will want to answer. Don't hold back."),
+    ("curious", 3, "Register: genuinely curious. Ask like someone who wants to know; no edge, no verdict."),
+    ("dry", 2, "Register: dry and laconic. One understated observation; let the fact do the work."),
+    ("warm", 2, "Register: warm. Notice it kindly, like a friend who pays attention; no teasing."),
+    ("analytic", 2, "Register: analytic. Connect it to a pattern in their taste; precise, no judgement."),
 ]
+_REGISTER_LINES = {name: line for name, _w, line in _REGISTERS}
 
 
-async def generate_proactive_message(
-    trigger: dict, taste_blurb: str, lang_directive: str = "",
-) -> Optional[str]:
-    """Generate a provocative, personalised proactive message via LLM.
+def _pick_register(previous: str | None = None, rng=random) -> str:
+    names = [n for n, _w, _l in _REGISTERS]
+    weights = [w for _n, w, _l in _REGISTERS]
+    pick = rng.choices(names, weights=weights, k=1)[0]
+    if pick == previous:
+        rest = [(n, w) for n, w, _l in _REGISTERS if n != previous]
+        pick = rng.choices([n for n, _w in rest], weights=[w for _n, w in rest], k=1)[0]
+    return pick
 
-    Pass 40: ``lang_directive`` is a 1-line string from
-    ``llm_utils.language_directive(...)`` injected into the system
-    prompt. Empty default keeps backwards compatibility for any internal
-    callers that don't yet pass it.
-    """
+
+def _register_line(trigger: dict) -> str:
+    return _REGISTER_LINES.get(trigger.get("register") or "", _REGISTER_LINES["curious"])
+
+
+def _register_of(tdata_raw) -> Optional[str]:
+    """The register stored in a message's trigger_data, or None."""
+    try:
+        td = json.loads(tdata_raw) if tdata_raw else {}
+    except (ValueError, TypeError):
+        return None
+    return td.get("register") if isinstance(td, dict) else None
+
+
+def _expiry_for(trigger: dict, now: datetime) -> datetime:
+    """A week for most nudges; a morning line is worth nothing after local
+    noon, so it retires then (at least half an hour from now)."""
+    if trigger.get("type") == "last_night":
+        off = _utc_offset()
+        noon = datetime.combine((now + off).date(), _time(12, 0)) - off
+        return noon if noon > now + timedelta(minutes=30) else now + timedelta(hours=1)
+    # A week is the whole shelf life: a nudge about last weekend's binge is
+    # stale by the next one, and the same trigger re-fires after the cooldown.
+    return now + timedelta(days=7)
+
+
+def _prior_block(trigger: dict) -> str:
+    """The user's own words from an earlier thread on this subject, for the
+    prompt: the next message builds on the answer instead of asking again."""
+    p = trigger.get("prior") or {}
+    if not p.get("answer"):
+        return ""
+    block = (f"\nEARLIER EXCHANGE about this ({p.get('when', 'earlier')}): you wrote \"{p.get('asked', '')[:200]}\" "
+             f"and they answered \"{p['answer'][:300]}\"")
+    if p.get("reply"):
+        block += f"; you replied \"{p['reply'][:160]}\""
+    block += ". Build on what they said — refer to it, never ask the same thing again.\n"
+    return block
+
+
+def _compose_prompt(trigger: dict, taste_blurb: str) -> Optional[str]:
+    """The user-turn prompt for one trigger: the facts, the ask, the subject
+    rule, the register, and the earlier exchange if there is one. Sync and
+    pure so the tests can read what the model would be asked."""
     t = trigger["type"]
     taste = f"\nUSER TASTE CONTEXT:\n{taste_blurb[:400]}" if taste_blurb else ""
 
@@ -1224,8 +1415,15 @@ async def generate_proactive_message(
             f"user's Curatarr Recommended playlist — and they actually watched into it."
             f"{taste}\n\n"
             f"Write ONE short message (max 2 sentences): you recommended it, they tried "
-            f"it — ask how it landed. Direct, curious, opinionated; invite a real "
-            f"verdict, good or bad."
+            f"it — ask how it landed. Invite a real verdict, good or bad."
+        )
+
+    elif t == "last_night":
+        prompt = (
+            f"It is {trigger.get('weekday', 'this')} morning. Last night the user watched: "
+            f"{trigger['summary']}; the last play ended at {trigger.get('ended', 'late')}.{taste}\n\n"
+            f"Write ONE short morning line (max 2 sentences) about last night specifically: "
+            f"an observation or a question, no recap of everything, name one title."
         )
 
     elif t == "binge_episode":
@@ -1234,17 +1432,14 @@ async def generate_proactive_message(
             f"You are Curatarr, an opinionated personal curator. "
             f"The user just watched {trigger['count']} episodes of \"{trigger['series']}\" "
             f"in one sitting: {_how}.{taste}{prog_line}\n\n"
-            f"Write a single short message (max 2 sentences): curious, slightly teasing, maybe provocative. "
+            f"Write a single short message (max 2 sentences). "
             f"Ask something specific about the show or their reaction. Reference their taste if relevant."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
         )
 
     elif t == "music_marathon":
         prompt = (
             f"The user just listened to {trigger['hours']}h of {trigger['artist']} non-stop.{taste}\n\n"
-            f"Write ONE short, direct message. Ask what's going on — mood, obsession, nostalgia? "
-            f"Be curious and slightly provocative."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"Write ONE short message. Ask what's going on — mood, obsession, nostalgia?"
         )
 
     elif t == "series_completion":
@@ -1252,10 +1447,9 @@ async def generate_proactive_message(
         prompt = (
             f"The user got through {trigger['episodes_watched']} episodes of "
             f"\"{trigger['series']}\" in the last two days: {_how}.{taste}{prog_line}\n\n"
-            f"Write a short, provocative message about THAT pace: repeat the rhythm as given and "
+            f"Write a short message about THAT pace: repeat the rhythm as given and "
             f"call it a binge only if it says 'in one sitting'. Ask if they finished it or just "
-            f"cleared their evenings. Direct, slightly teasing. Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"cleared their evenings. Max 2 sentences."
         )
 
     elif t == "rewatch":
@@ -1267,19 +1461,17 @@ async def generate_proactive_message(
                 f"The user keeps going back to RE-watch episodes of "
                 f"\"{trigger['title']}\" (a {trigger['media_type']}) — "
                 f"{replays} episode-replays beyond a first watch.{taste}{prog_line}\n\n"
-                f"Write one provocative question about WHY this one specifically pulls "
+                f"Write one question about WHY this one specifically pulls "
                 f"them back for repeat viewings — comfort, a character, a particular "
-                f"scene or episode? Be direct, a little cheeky. Max 2 sentences."
-                + random.choice(_PROVOCATIVE_SUFFIXES)
+                f"scene or episode? Max 2 sentences."
             )
         else:
             prompt = (
                 f"The user has watched \"{trigger['title']}\" {trigger['count']} times total. "
                 f"It's a {trigger['media_type']}.{taste}\n\n"
-                f"Write one provocative question about WHY they keep coming back. "
+                f"Write one question about WHY they keep coming back. "
                 f"Is it comfort? A specific character? Nostalgia? Fan service? "
-                f"Be direct, maybe a little cheeky. Max 2 sentences."
-                + random.choice(_PROVOCATIVE_SUFFIXES)
+                f"Max 2 sentences."
             )
 
     elif t == "track_obsession":
@@ -1299,11 +1491,10 @@ async def generate_proactive_message(
             )
         prompt = (
             f"The user has a specific song on heavy repeat: {_ctx}{taste}\n\n"
-            f"Write ONE short, direct question about THIS SONG specifically — "
+            f"Write ONE short question about THIS SONG specifically — "
             f"not the artist in general. What is it about this exact track? A "
             f"mood it locks in, a memory attached to it, a hook they can't "
-            f"shake? Be curious and a little provocative. Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"shake? Max 2 sentences."
         )
 
     elif t == "genre_absence":
@@ -1311,7 +1502,7 @@ async def generate_proactive_message(
             f"The user loves {trigger['genre']} content (watched it {trigger['total_watched']} times) "
             f"but hasn't watched anything in that genre for {trigger['days_absent']}+ days.{taste}\n\n"
             f"Write one short message noticing the absence. Is it a mood thing? Burned out? "
-            f"Suggest they might be missing it. Be warm but slightly provocative. Max 2 sentences."
+            f"Suggest they might be missing it. Max 2 sentences."
         )
 
     elif t == "low_completion":
@@ -1319,10 +1510,9 @@ async def generate_proactive_message(
         prompt = (
             f"The user abandoned {trigger['count']} shows recently without finishing them: "
             f"{dropped_titles}.{taste}\n\n"
-            f"Write a direct, slightly confrontational question about why. "
-            f"Are these bad picks? Wrong mood? Too much commitment required? "
+            f"Write one question about why. "
+            f"Wrong picks? Wrong mood? Too much commitment required? "
             f"Max 2 sentences. Reference specific titles."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
         )
 
     elif t == "history_deep_dive":
@@ -1337,8 +1527,8 @@ async def generate_proactive_message(
         prompt = (
             f"Looking back at the user's watch history, they watched \"{trigger['title']}\" "
             f"({trigger['media_type']}, genres: {trigger['genres'] or 'unknown'}){ago}.{taste}{prog_line}\n\n"
-            f"Write one short, curious message asking if they still think about it, "
-            f"or how their opinion has changed. Make it feel like genuine curiosity, "
+            f"Write one short message asking if they still think about it, "
+            f"or how their opinion has changed. Make it feel like genuine interest, "
             f"not a questionnaire. Max 2 sentences."
         )
 
@@ -1348,7 +1538,7 @@ async def generate_proactive_message(
             f"in the \"{trigger['genre']}\" genre — this genre barely appeared in their "
             f"history before.{taste}\n\n"
             f"Write a short message noticing this shift. Are they exploring something new? "
-            f"Going through something? Be curious and direct. Max 2 sentences."
+            f"Going through something? Max 2 sentences."
         )
 
     elif t == "night_owl":
@@ -1356,17 +1546,16 @@ async def generate_proactive_message(
             f"The user has been watching things late at night: \"{trigger['media_title']}\". "
             f"Context: {trigger['context']}.{taste}\n\n"
             f"Write one short message about this pattern. Insomnia? Comfort watching? "
-            f"Something they wouldn't watch with others? Be curious, slightly teasing. Max 2 sentences."
+            f"Something they wouldn't watch with others? Max 2 sentences."
         )
 
     elif t == "genre_rut":
         prompt = (
             f"The user has watched {trigger['count']} things in the last two weeks, and literally "
             f"EVERY SINGLE ONE was in the '{trigger['genre']}' genre.{taste}\n\n"
-            f"Write a short, confrontational message. Are they hiding in a comfort zone? "
-            f"Do they need background noise that doesn't challenge them? "
-            f"Call out this obsessive streak. Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"Write a short message. Are they settling into a comfort zone, "
+            f"or do they need background noise that doesn't challenge them right now? "
+            f"Max 2 sentences."
         )
 
     elif t == "attention_deficit":
@@ -1374,9 +1563,8 @@ async def generate_proactive_message(
             f"The user just started and immediately quit 4 different things in a row "
             f"(including {', '.join(trigger['titles'])}), barely making it past the 10-minute mark "
             f"on any of them.{taste}\n\n"
-            f"Write a sharp, direct message. Is everything they pick garbage, or is their attention "
-            f"span just completely fried today? Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"Write a short message. Was everything they picked wrong for them, or was it "
+            f"the day? Max 2 sentences."
         )
 
     elif t == "procrastinator":
@@ -1384,19 +1572,16 @@ async def generate_proactive_message(
             f"The user has been dragging out watching \"{trigger['series']}\". "
             f"They started it {trigger['days']} days ago but have only managed to watch "
             f"{trigger['episodes']} episodes.{taste}{prog_line}\n\n"
-            f"Write a short, teasing message. Why are they forcing themselves to finish it? "
-            f"If it was actually good, they would have binged it by now. "
-            f"Tell them it's okay to drop it. Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"Write a short message. Why are they still on it after all this time — "
+            f"is it worth finishing, or is it fine to drop it? Max 2 sentences."
         )
 
     elif t == "guilty_pleasure":
         prompt = (
             f"The user just watched \"{trigger['title']}\" all the way through, even though it has "
             f"a terrible global rating of {trigger['rating']}/10.{taste}\n\n"
-            f"Write a highly provocative message. Are they hate-watching this? "
-            f"Is it a secret trash kink? Call out the horrible quality of the content. Max 2 sentences."
-            + random.choice(_PROVOCATIVE_SUFFIXES)
+            f"Write a short message. Hate-watching, a guilty pleasure, or does the rating "
+            f"miss something? Max 2 sentences."
         )
 
     else:
@@ -1411,6 +1596,25 @@ async def generate_proactive_message(
         "about, verbatim, inside the message itself — never allude to it "
         "only as a mood or category."
     )
+    prompt += _prior_block(trigger)
+    prompt += "\n" + _register_line(trigger)
+    return prompt
+
+
+async def generate_proactive_message(
+    trigger: dict, taste_blurb: str, lang_directive: str = "",
+) -> Optional[str]:
+    """Generate one personalised proactive message via the curator model.
+
+    Pass 40: ``lang_directive`` is a 1-line string from
+    ``llm_utils.language_directive(...)`` injected into the system
+    prompt. Empty default keeps backwards compatibility for any internal
+    callers that don't yet pass it. The prompt itself comes from
+    ``_compose_prompt`` (register, earlier exchange, subject rule).
+    """
+    prompt = _compose_prompt(trigger, taste_blurb)
+    if prompt is None:
+        return None
 
     # Proactive messages use the big curator model — route the generation
     # through the curator gate so a scheduled message can't collide with a
@@ -1506,6 +1710,11 @@ async def check_and_generate_messages(user_id: int) -> int:
 
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
         taste_blurb = (tv.summary_text or "") if tv else ""
+        # The newest message's register, so the next one is not the same voice again.
+        _newest = (db.query(ProactiveMessage.trigger_data)
+                   .filter(ProactiveMessage.user_id == user_id)
+                   .order_by(ProactiveMessage.created_at.desc()).first())
+        prev_register = _register_of(_newest[0] if _newest else None)
 
         # ⚡ Bolt: Query specific columns instead of full ORM objects.
         # Instantiating 5000 WatchHistoryEntry objects adds significant overhead.
@@ -1565,8 +1774,17 @@ async def check_and_generate_messages(user_id: int) -> int:
         # Frame series triggers to the user's actual position and stamp the
         # progress milestone (persisted in trigger_data for future de-dup).
         _attach_series_progress(trigger, user_id, sonarr_index=sonarr_index)
+        # One voice per message, never the same twice in a row; and the
+        # user's earlier answer on this subject, when there is one.
+        trigger["register"] = _pick_register(prev_register)
+        prev_register = trigger["register"]
+        try:
+            trigger["prior"] = _prior_exchange(user_id, trigger, asked_subjects)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[proactive] prior exchange lookup failed: %s", e)
+            trigger["prior"] = None
 
-        logger.info("[proactive] Trigger '%s' for user %d", trigger["type"], user_id)
+        logger.info("[proactive] Trigger '%s' (%s) for user %d", trigger["type"], trigger["register"], user_id)
         # Pass 40: detect the user's chat language so the proactive nudge
         # arrives in the same language they've been writing in. Falls back
         # to English when no recent user chat exists.
@@ -1587,10 +1805,7 @@ async def check_and_generate_messages(user_id: int) -> int:
                 message=message,
                 read=False,
                 created_at=now + timedelta(seconds=generated),
-                # A week is the whole shelf life: a nudge about last
-                # weekend's binge is stale by the next one, and the same
-                # trigger can re-fire fresh after the cooldown anyway.
-                expires_at=now + timedelta(days=7),
+                expires_at=_expiry_for(trigger, now),
             ))
             db.commit()
 

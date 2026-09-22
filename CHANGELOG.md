@@ -294,6 +294,16 @@ the chat starters repeat the measured rhythm — "6 episodes in one
 sitting (2 h 13 min)" or "an episode or two an evening" — instead of
 guessing.
 
+**The curator has more than one voice, remembers what you answered, and
+says good morning.** Every proactive message now draws a register —
+provocative, curious, dry, warm or analytic — never the same twice in a
+row, instead of the one teasing voice every message used to wear. When
+you answered an earlier nudge about the same series, song or genre, the
+next one quotes your answer and builds on it rather than asking again.
+And a new "Morning line" (Settings → Notifications) sums up last
+night's watching between five and eleven in the morning, once a day,
+and is gone by noon.
+
 **Music that arrives later finds the plays that were waiting.** Matching
 an imported listening history against your own library used to be a
 one-shot per play: whatever was not in Plex that night stayed unmatched
