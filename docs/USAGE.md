@@ -102,6 +102,20 @@ pip install -r requirements.txt
 
 `python -m src.deps_check` prints the comparison without installing.
 
+**Settings → Maintenance says packages differ from the tested install**
+
+`lock/requirements.txt` lists every package the pins pull in, at the
+versions the test battery ran with. The launchers reconcile it at every
+start: a package below its lock line is raised, a newer one raises the
+line, nothing is ever lowered. By hand, with the same interpreter:
+
+```bash
+python -m src.deps_lock --apply
+```
+
+Never edit the lock itself; bump `requirements.txt` for a deliberate
+change and let the launcher rewrite the lock.
+
 **A pipeline flag is stuck (`enrichment_running`, `music_pipeline_running`)**
 
 Happens if the process was killed mid-run. The next sync usually clears

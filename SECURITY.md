@@ -127,7 +127,11 @@ reasons are repeated there and `tests/test_osv_config.py` keeps the two
 files in step. That scan covers the pinned direct dependencies only
 (`--no-resolve`): `requirements.txt` does not lock transitive packages,
 and the resolver would otherwise report floor versions no pip install
-produces.
+produces. Transitive packages are scanned through `lock/requirements.txt`
+instead: the closure of the pins as installed on the tested machine,
+written by `src/deps_lock.py` and kept current by the launchers, so an
+advisory such as anyio's of 2026-09-18 shows up against the version that
+actually runs.
 
 ## Reporting a vulnerability
 

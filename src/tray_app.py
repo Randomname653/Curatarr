@@ -122,6 +122,13 @@ def _preflight_deps() -> bool:
                 logger.error("pip failed; continuing with what is installed.")
     except Exception as e:  # noqa: BLE001
         logger.warning("Dependency check skipped: %s", e)
+    # The tested install (lock/requirements.txt): raise what fell below it,
+    # let the lock follow this interpreter. Never lowers anything.
+    try:
+        from src.deps_lock import apply as _lock_apply
+        _lock_apply(log=logger.info)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Lock step skipped: %s", e)
     try:
         import importlib
         for mod in (

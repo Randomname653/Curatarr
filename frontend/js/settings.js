@@ -105,11 +105,26 @@ export async function loadDepsStatus(btn) {
       ...d.missing.map(m => `<tr><td>${esc(m.name)}</td><td class="t-danger">not installed</td><td>${esc(m.pinned)}</td></tr>`),
       ...d.drift.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.pinned)}</td></tr>`),
     ];
-    box.innerHTML = d.clean
+    const pinsHtml = d.clean
       ? `<div class="empty good">All ${d.pins} pinned packages match requirements.txt.</div>`
       : `<div class="banner warn"><span class="banner-icon">!</span><div class="banner-text">${rows.length} of ${d.pins} pinned packages differ. In the Curatarr folder, with this interpreter, run <code class="mono">${esc(d.command)}</code> and restart. start.bat and the tray launcher do this on their own at the next start.</div></div>
          <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th>Package</th><th>Installed</th><th>Pinned</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
          <p class="fs-12 t3 mt-8">Interpreter: <span class="mono">${esc(d.interpreter)}</span></p>`;
+    // The tested install (lock/requirements.txt): what the pins pull in, at
+    // the versions the battery ran with. The launchers reconcile at start.
+    const L = d.lock || {};
+    const lockRows = [
+      ...(L.below || []).map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.locked)}</td><td>raised to the lock</td></tr>`),
+      ...(L.above || []).map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.locked)}</td><td>lock follows</td></tr>`),
+      ...(L.unlocked || []).map(n => `<tr><td>${esc(n)}</td><td>installed</td><td>not listed</td><td>added to the lock</td></tr>`),
+    ];
+    const lockHtml = L.error
+      ? `<p class="fs-12 t3 mt-8">Tested install: ${esc(L.error)}</p>`
+      : L.clean
+        ? `<p class="fs-12 t3 mt-8">Tested install: all ${L.packages} packages in lock/requirements.txt match this interpreter.</p>`
+        : `<div class="banner warn mt-8"><span class="banner-icon">!</span><div class="banner-text">${lockRows.length} package(s) differ from the tested install (lock/requirements.txt). start.bat and the tray launcher reconcile this at the next start, never lowering anything; by hand: <code class="mono">${esc(L.command)}</code>.</div></div>
+           <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th>Package</th><th>Installed</th><th>Lock</th><th>Next start</th></tr></thead><tbody>${lockRows.join('')}</tbody></table></div>`;
+    box.innerHTML = pinsHtml + lockHtml;
   } catch (e) {
     box.innerHTML = `<p class="t-danger fs-12">Could not read the dependency report: ${esc(e.message || e)}</p>`;
   } finally {

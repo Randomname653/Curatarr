@@ -269,6 +269,18 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**The tested install is written down.** `lock/requirements.txt` lists
+every package the 17 pins pull in, at the versions the test battery ran
+with (92 today). The launchers keep it honest at every start: a package
+that fell below its lock line is raised, a newer one raises the line,
+nothing is ever lowered, and the file is rewritten only when something
+changed. The security scanners read it, so an advisory in a transitive
+package — anyio's two of 2026-09-18 were the trigger — is visible against
+the version that actually runs. Settings → Maintenance shows the
+comparison next to the pins. The Deletions entry in the sidebar now
+pulses while a deletion analysis runs in any tab, and offers a reload
+when one started elsewhere finishes.
+
 **Music that arrives later finds the plays that were waiting.** Matching
 an imported listening history against your own library used to be a
 one-shot per play: whatever was not in Plex that night stayed unmatched

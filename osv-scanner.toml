@@ -1,5 +1,6 @@
-# OSV-Scanner exceptions for requirements.txt. The scanner reads this file
-# for manifests in the same directory (it does not propagate downwards).
+# OSV-Scanner exceptions for requirements.txt and lock/requirements.txt.
+# The scanner reads this file for manifests in the same directory; the
+# workflow passes --config=osv-scanner.toml so it covers lock/ as well.
 # Every id below is explained in SECURITY.md under "Known dependency
 # advisories"; tests/test_osv_config.py fails when the two drift apart.
 # Ignoring an id also ignores its aliases (CVE, PYSEC), so the GHSA id is

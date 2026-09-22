@@ -197,7 +197,13 @@ log access and graceful shutdown. Both launchers compare the pinned
 `requirements.txt` with their interpreter before the first import and
 install what is missing or outdated, so a `git pull` is a full update.
 The server itself never installs anything; it reports the same comparison
-in Settings → Maintenance.
+in Settings → Maintenance. `lock/requirements.txt` is the tested install
+written down: every package the pins pull in, at the versions the test
+battery ran with. The launchers raise a package that fell below it and
+let the lock follow anything newer, so it never lowers a version; the
+security scanners read it, which makes an advisory in a transitive
+package visible. Reproduce the exact set with
+`pip install -r requirements.txt -c lock/requirements.txt`.
 
 **Linux / macOS**
 

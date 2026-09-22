@@ -14,8 +14,12 @@
 #                  reports floor versions no install ever gets (requests
 #                  2.9.2, anyio 4.9.0, idna 3.9.0, orjson 3.9.15 while pip
 #                  installs 2.34 / 4.13 / 3.18 / 3.11). A lock file of the
-#                  tested install would make transitive scanning honest;
-#                  until then the scan covers the pins, like Dependabot.
+#                  tested install is lock/requirements.txt (src/deps_lock.py,
+#                  kept current by the launchers), scanned as well: that is
+#                  where a transitive advisory shows up, against the version
+#                  that actually runs.
+#   --config       osv-scanner.toml applies per directory by default; the
+#                  flag makes the root file cover lock/ too.
 #   no --skip-git  the CLI rejects the flag ("flag provided but not
 #                  defined", exit 127). The 2.5.1 reusable workflow had no
 #                  "scan completed" check, so its reporter read a missing
@@ -53,6 +57,7 @@ jobs:
       scan-args: |-
         -r
         --no-resolve
+        --config=osv-scanner.toml
         ./
   scan-pr:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
@@ -65,4 +70,5 @@ jobs:
       scan-args: |-
         -r
         --no-resolve
+        --config=osv-scanner.toml
         ./

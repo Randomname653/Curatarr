@@ -35,6 +35,11 @@ if errorlevel 1 (
     echo.
 )
 
+REM The tested install (lock\requirements.txt): raise what fell below it,
+REM then let the lock follow this interpreter (src\deps_lock.py). Never
+REM lowers anything; a package the lock does not know is added to it.
+python -m src.deps_lock --apply
+
 REM Check if Ollama models are built (curator + summarizer + embedding model).
 REM nomic-embed-text is easy to miss: it is NOT baked like the curatarr-* models,
 REM so a fresh / reinstalled Ollama without it makes every embedding call 404

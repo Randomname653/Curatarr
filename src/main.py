@@ -46,6 +46,12 @@ async def lifespan(app: FastAPI):
         (logger.info if _deps.clean else logger.warning)("[deps] %s", _deps.summary())
     except Exception as e:  # noqa: BLE001
         logger.debug("[deps] check failed: %s", e)
+    try:
+        from src.deps_lock import check as _lock_check
+        _lock = _lock_check()
+        (logger.info if _lock.clean else logger.warning)("[lock] %s", _lock.summary())
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[lock] check failed: %s", e)
 
     (DATA_DIR / "chromadb").mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
@@ -331,7 +337,10 @@ async def system_dependencies():
     the report the lifespan logged, for Settings → Maintenance. Read-only:
     installing is the launchers' job, before the first import."""
     from src.deps_check import check
-    return check().as_dict()
+    from src.deps_lock import check as lock_check
+    out = check().as_dict()
+    out["lock"] = lock_check().as_dict()   # the tested install vs. this interpreter
+    return out
 
 
 @app.post("/api/system/shutdown", dependencies=_ADMIN_ONLY)

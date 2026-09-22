@@ -79,6 +79,7 @@ def test_both_scan_jobs_pass_the_same_scan_args():
     assert len(blocks) == 2, f"expected the push and the PR job to declare scan-args, found {len(blocks)}"
     assert blocks[0] == blocks[1], f"scan-args differ between the jobs: {blocks}"
     assert "--no-resolve" in blocks[0], "requirements.txt pins direct deps only; without --no-resolve the resolver reports floor versions no install gets"
+    assert "--config=osv-scanner.toml" in blocks[0], "the exceptions apply per directory unless --config points at the root file; lock/requirements.txt needs them too"
 
 
 if __name__ == "__main__":
