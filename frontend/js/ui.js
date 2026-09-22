@@ -245,6 +245,21 @@ export function setBadge(id, n) {
   el.style.display = n > 0 ? 'inline' : 'none';
 }
 
+// setPulse(id, source, on) — a pulse dot that several sources may switch
+// on (this tab's own request, the server's task stream): it shows while
+// ANY source holds it, so the two never fight over the display.
+const _pulseSources = new Map();
+export function setPulse(id, source, on) {
+  const set = _pulseSources.get(id) || new Set();
+  if (on) set.add(source); else set.delete(source);
+  _pulseSources.set(id, set);
+  const el = document.getElementById(id);
+  if (el) el.style.display = set.size ? '' : 'none';
+}
+export function pulseHeldBy(id, source) {
+  return !!_pulseSources.get(id)?.has(source);
+}
+
 // emptyHtml(html, ctaLabel, ctaAction, {good}) — one sentence (HTML, the caller
 // escapes), at most one action; ctaAction is the attribute text from act().
 // good: the empty state is the happy case.

@@ -5,7 +5,7 @@
 // Invalidated whenever a targeted single-category analysis runs (because that
 // category's slice would then be out of sync with the stored full list).
 // Moved state._delProposalsAll to state
-import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, toast } from './ui.js';
+import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast } from './ui.js';
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
@@ -140,9 +140,11 @@ export function toggleRecentOnly(checked) {
 let _delAnalysePromise = null;
 let _delAnalyseStartedAt = 0;
 
+// The dot has two sources: this tab's own Analyse request (here) and the
+// server's task stream (activity.js), so an analysis started in another
+// tab — or before this page loaded — pulses here too.
 export function _setAnalysePulse(on) {
-  const dot = document.getElementById('sb-deletions-pulse');
-  if (dot) dot.style.display = on ? '' : 'none';
+  setPulse('sb-deletions-pulse', 'local', on);
 }
 
 export async function loadDeletions(category=null, btn=null, refresh=false) {

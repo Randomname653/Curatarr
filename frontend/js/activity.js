@@ -2,7 +2,7 @@
 // Moved state.taskEventSource to state
 // Moved state.taskStreamRetries to state
 import { state } from './state.js';
-import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, setBadge, toast } from './ui.js';
+import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, pulseHeldBy, setBadge, setPulse, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 
 export async function startTaskStream() {
@@ -66,8 +66,24 @@ export async function startTaskStream() {
   };
 }
 
+// The Deletions entry pulses while a deletion analysis runs ANYWHERE —
+// the task id is del-analysis-<user>, whichever tab pressed Analyse. When
+// it ends and this tab did not start it, the Deletions view still shows
+// the old proposals: offer the reload rather than replacing a list the
+// user may be working in.
+let _delAnalysisSeen = false;
 export function updateTaskBadge(tasks) {
   setBadge('tasks-badge', tasks.filter(t => t.status === 'running' || t.status === 'pending').length);
+  const running = tasks.some(t => (t.status === 'running' || t.status === 'pending') && String(t.id || '').startsWith('del-analysis-'));
+  setPulse('sb-deletions-pulse', 'stream', running);
+  if (_delAnalysisSeen && !running && !pulseHeldBy('sb-deletions-pulse', 'local')
+      && document.getElementById('deletions-view')?.classList.contains('active')) {
+    toast('Deletion analysis finished in another tab.', 'info', {actions: [
+      {label: 'Reload proposals', primary: true, onClick: () => import('./deletions.js').then(m => m.reloadDeletions())},
+      {label: 'Later'},
+    ]});
+  }
+  _delAnalysisSeen = running;
 }
 
 const STATUS_BADGE = { running: 'amber', done: 'success', error: 'danger', pending: 'muted', skipped: 'muted' };
