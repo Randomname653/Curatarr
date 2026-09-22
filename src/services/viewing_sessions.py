@@ -53,8 +53,11 @@ def _episode_key(e: dict):
 
 def utc_offset() -> timedelta:
     """Wall clock of this machine minus UTC — the rows carry naive UTC and
-    the owner's evening is a local notion."""
-    return datetime.now() - datetime.utcnow()
+    the owner's evening is a local notion. Rounded to whole minutes: the two
+    clock reads are microseconds apart, and a noon computed from one read
+    must equal a noon computed from the next."""
+    delta = datetime.now() - datetime.utcnow()
+    return timedelta(minutes=round(delta.total_seconds() / 60))
 
 
 def _local(dt: datetime) -> datetime:
