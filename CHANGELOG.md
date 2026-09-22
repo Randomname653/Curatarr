@@ -302,7 +302,7 @@ you answered an earlier nudge about the same series, song or genre, the
 next one quotes your answer and builds on it rather than asking again.
 And a new "Morning line" (Settings → Notifications) sums up last
 night's watching between five and eleven in the morning, once a day,
-and is gone by noon.
+and is gone by noon. The chat's watch status for a music artist now says plays and distinct tracks; Plex and Spotify rows carry a track index in the episode column, and the curator had read that as "15 episodes".
 
 **Music that arrives later finds the plays that were waiting.** Matching
 an imported listening history against your own library used to be a
