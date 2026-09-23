@@ -262,7 +262,7 @@ showed what a partial Dependabot round does: osv-scanner 2.6.0 rejects the
 `--skip-git` flag the workflow still passed, and `codeql-action/init` sat a
 version behind `analyze`, which CodeQL refuses to run. Both fixed;
 `test_workflow_pins` keeps every action family on one commit and the
-Dependabot config groups a family into one PR. The first OSV run that
+Dependabot config groups a family into one PR. Two more Bolt merges: the Spotify statistics on the Libraries page come from one aggregate query instead of five, and create_user checks for an existing user by id. The first OSV run that
 really scanned (the old reusable workflow had answered "No issues found"
 from a missing results file) listed the four chromadb server advisories
 SECURITY.md already explains, now excepted in `osv-scanner.toml` and
