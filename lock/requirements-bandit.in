@@ -1,0 +1,5 @@
+# Input for lock/requirements-bandit.txt (python -m src.deps_lock --compile):
+# the Bandit workflow installs the compiled, hash-pinned file with
+# --require-hashes. Bump the version here, then --compile; Dependabot
+# proposes bumps for the compiled file.
+bandit[sarif]==1.9.4
