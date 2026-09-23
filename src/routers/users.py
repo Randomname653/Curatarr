@@ -42,7 +42,8 @@ async def create_user(
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if db.query(User).filter(User.plex_user_id == user.plex_user_id).first():
+    # ⚡ Bolt: Fast existence check avoiding full ORM object instantiation
+    if db.query(User.id).filter(User.plex_user_id == user.plex_user_id).first() is not None:
         raise HTTPException(status_code=400, detail="User already exists")
     db_user = User(
         plex_user_id=user.plex_user_id,
