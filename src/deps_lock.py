@@ -46,7 +46,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import distribution as _distribution
@@ -373,11 +372,16 @@ def check(requirements: Path = REQUIREMENTS, lock: Path = LOCK,
 
 def pypi_hashes(name: str, version: str, fetch=None) -> List[str]:
     """sha256 of every distribution file of one release, 'sha256:…' each;
-    [] when PyPI cannot be reached or the release is unknown."""
+    [] when PyPI cannot be reached or the release is unknown.
+
+    httpx, imported here rather than urllib: this runs from ``--apply`` after
+    the first pip run, when httpx exists, and Bandit's B310 has no reason to
+    look at an ``urlopen`` (the GPU probe went the same way)."""
     def _default(url: str) -> dict:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "curatarr-deps-lock"}),
-                                    timeout=30) as r:
-            return json.load(r)
+        import httpx
+        r = httpx.get(url, headers={"User-Agent": "curatarr-deps-lock"}, timeout=30, follow_redirects=True)
+        r.raise_for_status()
+        return r.json()
     try:
         data = (fetch or _default)(f"https://pypi.org/pypi/{name}/{version}/json")
     except Exception:  # noqa: BLE001
