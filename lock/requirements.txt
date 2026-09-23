@@ -424,9 +424,9 @@ fastapi==0.141.1 \
     # via
     #   -c lock/.keep-versions.txt
     #   -r requirements.txt
-filelock==3.29.3 \
-    --hash=sha256:7fc1b3f39cf172fd8203812043c57b8a65aef9969f38b6704f628b881f761a84 \
-    --hash=sha256:e58333029cc9b925f39aad59b1d8f0a1ad836af4e60d7217f4a4dba87461261d
+filelock==4.0.1 \
+    --hash=sha256:481a321a27bef441e23c53371c6abc8d7d16e26b97090074ba44f7538a3fd55a \
+    --hash=sha256:fdefc3f3e87716d855ae2b732c1cfd521dd99799ef2b4d00e8c0d4dcdc7cc94b
     # via
     #   -c lock/.keep-versions.txt
     #   huggingface-hub
