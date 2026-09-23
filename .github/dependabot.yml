@@ -2,13 +2,16 @@
 # settings (Settings → Code security → Dependabot). Security updates use this
 # the moment they are switched on; version updates follow the schedules below.
 #
-# requirements.txt is fully pinned on purpose, so version PRs are meaningful
-# diffs rather than range shuffles. Minor and patch bumps arrive grouped in
-# one PR per week; majors come alone, because a major deserves its own read.
+# The pip target is lock/: the hash-pinned universal lock (and the CI tool
+# locks next to it) are the source of truth for versions, and Dependabot
+# rewrites their hashes itself. requirements.txt repeats the lock's versions
+# for the direct pins (src/deps_lock.py --sync-pins / --apply). Minor and
+# patch bumps arrive grouped in one PR per week; majors come alone, because
+# a major deserves its own read.
 version: 2
 updates:
   - package-ecosystem: "pip"
-    directory: "/"
+    directory: "/lock"
     schedule:
       interval: "weekly"
       day: "monday"

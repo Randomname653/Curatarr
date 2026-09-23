@@ -40,7 +40,7 @@ jobs:
         # --exit-zero: report-only — findings go to the Security tab, the
         # workflow itself stays green (a real bandit CRASH still fails).
         run: |
-          pip install "bandit[sarif]"
+          pip install --require-hashes -r lock/requirements-bandit.txt
           bandit -r . \
             -x ./tests,./frontend,./scripts,./data,./.github \
             --severity-level medium \

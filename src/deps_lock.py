@@ -540,10 +540,16 @@ def uv_command() -> Optional[List[str]]:
 
 
 def compile_locks(targets=COMPILE_TARGETS, run=subprocess.run, log=print, uv: Optional[List[str]] = None,
-                  root: Path = ROOT) -> int:
+                  root: Path = ROOT, keep_versions: bool = False) -> int:
     """uv pip compile --universal --generate-hashes for every target whose
     input exists. Returns the number of locks written; raises when uv is not
-    available, because a half-done lock set is worse than none."""
+    available, because a half-done lock set is worse than none.
+
+    keep_versions: hand the versions the lock ALREADY holds to uv as
+    constraints, so a compile adds hashes and markers without moving a single
+    version — the first compile of a tested install, or a re-compile after
+    editing an input. Without it uv resolves the newest versions the pins
+    allow, and every machine raises to them at its next start."""
     uv = uv or uv_command()
     if not uv:
         raise RuntimeError("uv is not installed for this interpreter: pip install uv")
@@ -553,14 +559,59 @@ def compile_locks(targets=COMPILE_TARGETS, run=subprocess.run, log=print, uv: Op
         if not src_p.exists():
             log(f"[lock] {src}: no such input, skipped")
             continue
-        cmd = uv + ["pip", "compile", str(src_p), "--universal", "--generate-hashes",
-                    "--python-version", PYTHON_TARGET, "--quiet", "-o", str(dst_p)]
-        r = run(cmd, capture_output=True, text=True, cwd=str(root))
+        # Relative paths, cwd=root: uv writes the command line and the
+        # "# via -r <input>" provenance into the file, and an absolute path
+        # would carry the user's home directory into a public repository
+        # (the first compile did: 93 lines with C:\Users\<name>\…).
+        cmd = uv + ["pip", "compile", src, "--universal", "--generate-hashes",
+                    "--python-version", PYTHON_TARGET, "--quiet", "-o", dst]
+        constraints = None
+        if keep_versions and dst_p.exists():
+            current = parse_lock(dst_p.read_text(encoding="utf-8"))
+            if current:
+                constraints = f"{Path(dst).parent.as_posix()}/.keep-versions.txt"
+                (root / constraints).write_text(
+                    "".join(f"{e.name}=={e.version}" + (f" ; {e.marker}" if e.marker else "") + "\n"
+                            for e in current.values()),
+                    encoding="utf-8", newline="\n")
+                cmd += ["-c", constraints]
+        try:
+            r = run(cmd, capture_output=True, text=True, cwd=str(root))
+        finally:
+            if constraints:
+                try:
+                    os.unlink(root / constraints)
+                except OSError:
+                    pass
         if r.returncode != 0:
             raise RuntimeError(f"uv failed for {src}: {(r.stderr or r.stdout or '')[-600:]}")
-        log(f"[lock] compiled {dst} from {src}")
+        if dst_p.exists():
+            leaked = _scrub_paths(dst_p, root)
+            if leaked:
+                log(f"[lock] {dst}: {leaked} line(s) carried a local path, rewritten relative")
+        log(f"[lock] compiled {dst} from {src}" + (" (versions kept)" if constraints else ""))
         written += 1
     return written
+
+
+def _scrub_paths(path: Path, root: Path) -> int:
+    """Replace the repo root and the home directory in a compiled lock with
+    relative spellings; returns the number of lines touched. Belt and braces
+    behind the relative-path invocation."""
+    text = path.read_text(encoding="utf-8")
+    out, touched = [], 0
+    for line in text.splitlines():
+        new = line
+        for absolute, rel in ((str(root), "."), (root.as_posix(), "."),
+                              (str(Path.home()), "~"), (Path.home().as_posix(), "~")):
+            if absolute and absolute in new:
+                new = new.replace(absolute + "\\", rel + "/").replace(absolute + "/", rel + "/").replace(absolute, rel)
+        if new != line:
+            touched += 1
+        out.append(new)
+    if touched:
+        path.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
+    return touched
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -568,13 +619,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--apply", action="store_true", help="raise below, follow above, sync the pins")
     ap.add_argument("--sync-pins", action="store_true", help="repeat the lock's versions in requirements.txt")
     ap.add_argument("--compile", action="store_true", help="regenerate every lock/*.txt with uv")
+    ap.add_argument("--keep-versions", action="store_true",
+                    help="with --compile: constrain uv to the versions the lock already holds (hashes and markers only)")
     ap.add_argument("--requirements", default=str(REQUIREMENTS))
     ap.add_argument("--lock", default=str(LOCK))
     args = ap.parse_args(argv)
     req, lock = Path(args.requirements), Path(args.lock)
     if args.compile:
         try:
-            n = compile_locks()
+            n = compile_locks(keep_versions=args.keep_versions)
         except RuntimeError as e:
             print(f"[lock] {e}")
             return 1

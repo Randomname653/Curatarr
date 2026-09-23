@@ -198,12 +198,15 @@ log access and graceful shutdown. Both launchers compare the pinned
 install what is missing or outdated, so a `git pull` is a full update.
 The server itself never installs anything; it reports the same comparison
 in Settings → Maintenance. `lock/requirements.txt` is the tested install
-written down: every package the pins pull in, at the versions the test
-battery ran with. The launchers raise a package that fell below it and
-let the lock follow anything newer, so it never lowers a version; the
-security scanners read it, which makes an advisory in a transitive
-package visible. Reproduce the exact set with
-`pip install -r requirements.txt -c lock/requirements.txt`.
+written down and hash-pinned: every package the pins pull in, with a
+platform marker where one is platform-specific and the sha256 of every
+distribution file (`uv pip compile --universal --generate-hashes`, run
+through `python -m src.deps_lock --compile`). CI installs it with
+`--require-hashes`; the launchers raise a package that fell below it
+through the same hash check and let the lock follow anything newer, so
+it never lowers a version; the security scanners and Dependabot read it.
+Reproduce the exact set with
+`pip install --require-hashes -r lock/requirements.txt`.
 
 **Linux / macOS**
 

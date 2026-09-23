@@ -104,17 +104,24 @@ pip install -r requirements.txt
 
 **Settings → Maintenance says packages differ from the tested install**
 
-`lock/requirements.txt` lists every package the pins pull in, at the
-versions the test battery ran with. The launchers reconcile it at every
-start: a package below its lock line is raised, a newer one raises the
-line, nothing is ever lowered. By hand, with the same interpreter:
+`lock/requirements.txt` lists every package the pins pull in, hash-pinned
+and with platform markers. The launchers reconcile it at every start: a
+package below its lock line is raised (through pip's hash check), a newer
+one raises the line, nothing is ever lowered, and `requirements.txt` is
+made to repeat the lock's versions for the direct pins. By hand, with the
+same interpreter:
 
 ```bash
 python -m src.deps_lock --apply
 ```
 
-Never edit the lock itself; bump `requirements.txt` for a deliberate
-change and let the launcher rewrite the lock.
+Never edit the lock itself. For a deliberate change, bump the version in
+`requirements.txt` (or the tool version in `lock/requirements-*.in`) and
+regenerate — this needs `uv` once (`pip install uv`):
+
+```bash
+python -m src.deps_lock --compile
+```
 
 **A pipeline flag is stuck (`enrichment_running`, `music_pipeline_running`)**
 

@@ -61,7 +61,7 @@ jobs:
 
       - name: Install dependencies
         if: env.HAS_KEY == 'true'
-        run: pip install openai anthropic
+        run: pip install --require-hashes -r lock/requirements-llm-scan.txt
 
       - name: No API key — skip scan
         if: env.HAS_KEY != 'true'

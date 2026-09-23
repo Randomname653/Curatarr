@@ -18,7 +18,9 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # The hash-pinned universal lock (src/deps_lock.py --compile): every
+        # file pip downloads must match a sha256 written in the repo.
+        run: pip install --require-hashes -r lock/requirements.txt
       - name: Compile check
         run: python -m compileall -q src tests
       - name: Test battery

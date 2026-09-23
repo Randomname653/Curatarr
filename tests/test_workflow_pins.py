@@ -44,6 +44,20 @@ def test_every_action_is_pinned_to_a_full_sha():
     assert not loose, f"floating action refs (pin to a 40-hex commit): {loose}"
 
 
+_PIP = re.compile(r"^\s*(?:run:\s*)?(?:python -m )?pip install\b.*$", re.M)
+
+
+def test_every_pip_install_in_ci_requires_hashes():
+    """Scorecard's pinned-dependencies rule, in code: a pip install on a
+    runner takes a hash-pinned lock, never a bare package name."""
+    loose = []
+    for wf in sorted(_WORKFLOWS.glob("*.yml")):
+        for m in _PIP.finditer(wf.read_text(encoding="utf-8")):
+            if "--require-hashes" not in m.group(0):
+                loose.append(f"{wf.name}: {m.group(0).strip()}")
+    assert not loose, f"pip installs without --require-hashes: {loose}"
+
+
 def test_one_action_family_one_commit():
     by_family = {}
     for wf, path, ref in _references():

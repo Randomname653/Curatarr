@@ -269,6 +269,16 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**Hash-pinned, everywhere it installs.** The lock is now a universal,
+hash-pinned requirements file (`uv pip compile --universal
+--generate-hashes`, wrapped as `python -m src.deps_lock --compile`), and
+so are the two scanning tools CI installs. Every pip install on a runner
+carries `--require-hashes`, the launchers raise a package to the lock
+through the same check, Dependabot targets the lock and rewrites the
+hashes itself, and `requirements.txt` repeats the lock's versions for the
+direct pins. The three "pip not pinned by hash" rows in the Security
+tab go with it.
+
 **The tested install is written down.** `lock/requirements.txt` lists
 every package the 17 pins pull in, at the versions the test battery ran
 with (92 today). The launchers keep it honest at every start: a package

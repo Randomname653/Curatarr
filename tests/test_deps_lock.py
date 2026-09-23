@@ -226,10 +226,29 @@ def test_the_real_lock_is_consistent_with_requirements_and_the_inputs():
     if all(e.hashes for e in entries.values()):
         for e in entries.values():
             assert all(h.startswith("sha256:") for h in e.hashes), e.name
-    for src, _dst in dl.COMPILE_TARGETS[1:]:
-        inp = dl.ROOT / src
-        assert inp.exists(), src
-        assert dl.direct_pins(inp.read_text(encoding="utf-8")), f"{src} must pin its tool(s)"
+    home = pathlib.Path.home()
+    for src, dst in dl.COMPILE_TARGETS:
+        if src != "requirements.txt":
+            inp = dl.ROOT / src
+            assert inp.exists(), src
+            assert dl.direct_pins(inp.read_text(encoding="utf-8")), f"{src} must pin its tool(s)"
+        out = dl.ROOT / dst
+        if out.exists():
+            body = out.read_text(encoding="utf-8")
+            for leak in (str(home), home.as_posix(), str(dl.ROOT), dl.ROOT.as_posix(), "C:\\Users", "/Users/"):
+                assert leak not in body, f"{dst} carries a local path ({leak}); compile writes relative paths"
+
+
+def test_compile_scrubs_a_local_path_uv_wrote():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        f = root / "requirements.txt"
+        f.write_text(f"# uv pip compile {root / 'requirements.txt'} -o out.txt\n"
+                     f"pkg==1.0\n    # via -r {root.as_posix()}/requirements.txt\n", encoding="utf-8")
+        assert dl._scrub_paths(f, root) == 2
+        body = f.read_text(encoding="utf-8")
+        assert str(root) not in body and root.as_posix() not in body
+        assert "# via -r ./requirements.txt" in body
 
 
 if __name__ == "__main__":

@@ -131,7 +131,11 @@ produces. Transitive packages are scanned through `lock/requirements.txt`
 instead: the closure of the pins as installed on the tested machine,
 written by `src/deps_lock.py` and kept current by the launchers, so an
 advisory such as anyio's of 2026-09-18 shows up against the version that
-actually runs.
+actually runs. The lock is hash-pinned (`uv pip compile --universal
+--generate-hashes`): CI installs the app and its scanning tools with
+`pip install --require-hashes`, so a package file that does not match a
+sha256 written in this repository is never installed on a runner, and the
+launchers use the same check when they raise a package to the lock.
 
 ## Reporting a vulnerability
 

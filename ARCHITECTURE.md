@@ -1255,18 +1255,22 @@ to its own section (or a §0 delta row) instead of growing this list.
   `GET /api/system/dependencies` for Settings → Maintenance). Replaced the
   batch sentinel import, which proved presence, not version, and named an
   unpinned `Crypto` that made fresh installs run pip on every start.
-- `src/deps_lock.py` + `lock/requirements.txt` — the tested install
-  written down: the closure of the pins (extras and platform markers
-  evaluated for the running interpreter) at installed versions. The lock
-  follows the install and never lowers anything: the launchers' `--apply`
-  raises a package below its lock line (a merged security bump reaches
-  every machine) and rewrites the line for anything installed above it;
-  direct pins repeat `requirements.txt` and may lag a bump until the next
-  start, never run ahead (`tests/test_deps_lock.py`). OSV-Scanner and the
-  dependency graph read it, so transitive advisories are visible against
-  real versions; `--sync-pins` after a Dependabot merge, `-c` for a
-  reproducible install. Server: lifespan log line + the `lock` block of
-  `GET /api/system/dependencies`, shown in Settings → Maintenance.
+- `src/deps_lock.py` + `lock/requirements.txt` (+ `lock/requirements-*.in`
+  → `.txt` for the CI tools) — the tested install written down and
+  hash-pinned: a universal pip requirements file from `uv pip compile
+  --universal --generate-hashes` (`--compile`; uv is a one-time tool
+  install) with a marker where a package is platform-specific and the
+  sha256 of every distribution file. It is the source of truth for
+  versions: CI installs it with `--require-hashes`, Dependabot targets
+  `lock/` and rewrites the hashes itself, and `requirements.txt` repeats
+  the lock's versions for the direct pins (`--apply` / `--sync-pins`;
+  never ahead of the lock — `tests/test_deps_lock.py`). The lock follows
+  the install and never lowers anything: `--apply` raises a package below
+  its line through a temporary hashed file (`pip install --require-hashes
+  --no-deps`), rewrites the line for anything installed above it with
+  hashes fetched from PyPI (offline: the line stays), and leaves entries
+  its marker rules out here alone. Server: lifespan log line + the `lock`
+  block of `GET /api/system/dependencies`, shown in Settings → Maintenance.
 - `src/services/shutdown_bridge.py` — import-free callback registry letting
   the tray intercept the web shutdown endpoint instead of relying on SIGINT.
 - `src/services/bg_tasks.py` — keeps strong references to fire-and-forget
