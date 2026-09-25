@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Optional
@@ -136,7 +137,12 @@ def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
     the system compared mismatched representations. Preferring the stored
     vector unifies the representation for free and makes the post-migration
     taste rebuild a lookup instead of a re-embed. Same id cascade as the
-    index writer: plex key → tmdb → anilist → title."""
+    index writer: plex key → tmdb → anilist → title.
+
+    That cascade mixes id spaces in ONE doc-id namespace (TMDB movie 603,
+    TMDB TV 603 and AniList 603 are three different titles), so a hit is
+    only used after ``_doc_is_item`` confirms the stored doc describes THIS
+    item — otherwise another title's vector silently joined the centroid."""
     try:
         from src.vector_store.chromadb_wrapper import get_chroma_db
         chroma = get_chroma_db()
@@ -150,10 +156,52 @@ def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
             res = chroma.get_by_id(str(cid))
             emb = res.get("embedding") if res else None
             if emb is not None and len(emb):
+                if not _doc_is_item(res.get("metadata"), entry, profile):
+                    logger.debug("chroma doc %r belongs to another item (%r) — skipped",
+                                 cid, (res.get("metadata") or {}).get("title"))
+                    continue
                 return _unit(list(emb))
     except Exception as e:
         logger.debug("chroma item lookup failed: %s", e)
     return None
+
+
+# Domains a watch-history media_type may legitimately be indexed under. Loose
+# on purpose: an anime film can sit in 'anime' or 'movie', a series in the
+# legacy 'tv' epoch or 'anime' — but a movie is never a series and music is
+# never video, which is exactly the TMDB-movie-vs-TMDB-TV id collision.
+_DOMAIN_COMPAT = {
+    "movie": {"movie", "anime"},
+    "show": {"show", "tv", "anime"},
+    "anime": {"anime", "show", "tv", "movie"},
+    "music": {"music"},
+}
+
+
+def _norm_title(t) -> str:
+    t = re.sub(r"\s*\(\d{4}\)\s*$", "", str(t or ""))   # corpus_repair's "Title (1999)"
+    return re.sub(r"[\W_]+", "", t.casefold())
+
+
+def _doc_is_item(meta: Optional[dict], entry: dict, profile: Optional[dict]) -> bool:
+    """Does a stored chroma doc describe this watch-history item? Domain must
+    be compatible and, when the doc carries a title, it must be one of the
+    item's titles. A doc without metadata cannot be checked — rejected, the
+    caller re-embeds from the profile instead (slower, never wrong)."""
+    if not meta:
+        return False
+    mt = (entry.get("media_type") or "").lower()
+    dom = (meta.get("domain") or meta.get("media_type") or "").lower()
+    if mt in _DOMAIN_COMPAT and dom and dom not in _DOMAIN_COMPAT[mt]:
+        return False
+    doc_title = _norm_title(meta.get("title"))
+    if not doc_title:
+        return True
+    names = [entry.get("series_title"), entry.get("title")]
+    if profile:
+        names += [profile.get("title"), profile.get("original_title"),
+                  profile.get("title_english"), profile.get("title_romaji")]
+    return any(doc_title == _norm_title(n) for n in names if n)
 
 
 def weighted_mean_embedding(embeddings_weights: list) -> tuple:

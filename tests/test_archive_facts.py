@@ -132,7 +132,7 @@ for route in ("/backfill-status", "/backfill/{source}", "/backfill/{source}/stop
 check("starting a backfill is admin-only",
       "async def start_backfill" in _router and "require_admin" in _router)
 check("a running backfill can be asked to stop mid-run",
-      "should_stop=lambda: source not in _backfill_running" in _router)
+      "should_stop=lambda: _backfill_running.get(source) is not token" in _router)
 
 _html = _frontend_everything()
 check("the panel exists and is refreshed with the page",

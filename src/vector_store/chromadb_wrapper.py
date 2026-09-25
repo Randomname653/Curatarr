@@ -318,7 +318,45 @@ class ChromaDBWrapper:
         )
         
         return True
-    
+
+    def upsert_documents(
+        self,
+        documents: List[str],
+        embeddings: List[List[float]],
+        metadatas: List[Dict],
+        ids: List[str]
+    ) -> bool:
+        """Insert-or-replace — the write for RE-enrichment. Chroma's ``add``
+        with an id that already exists does not raise (verified on 1.5.9):
+        it logs a warning and keeps the OLD embedding, document and
+        metadata. The enricher's old add → (except) delete+re-add fallback
+        therefore never fired, and a re-enriched item kept its stale vector
+        forever. ``upsert`` replaces all three."""
+        if embeddings:
+            embeddings = [np.array(e, dtype=np.float32).tolist() for e in embeddings]
+        self.collection.upsert(
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
+        )
+        return True
+
+    def use_collection(self, collection_name: str) -> None:
+        """Re-point THIS wrapper at another collection, in place. Modules
+        bind the wrapper at import (``from … import chroma_db``); swapping
+        the object on a profile flip left them querying the old collection,
+        and query()'s empty-result fallback hid it as "no neighbours"."""
+        if collection_name == self.collection_name:
+            return
+        old = self.collection_name
+        self.collection_name = collection_name
+        try:
+            self.collection = self._get_or_create_collection()
+        except Exception:
+            self.collection_name = old
+            raise
+
     def query(
         self,
         query_embeddings: List[List[float]],
@@ -530,24 +568,32 @@ def get_chroma_db() -> ChromaDBWrapper:
 
     Profile-aware (eval package 2): the active embedding profile names the
     collection to serve; when the migration runner flips the profile, the
-    cached wrapper is rebuilt so queries and writes move to the new
+    wrapper switches collection so queries and writes move to the new
     collection together with the new model — never partially.
+
+    The switch is IN PLACE (``use_collection``), not a new wrapper: every
+    module that did ``from … import chroma_db`` holds this exact object,
+    and a replacement would leave them on the old collection.
     """
     inst = _cached_wrapper()
     try:
-        from src.services.embed_service import get_profile
-        wanted = get_profile().get("collection") or "media_knowledge_v2"
-        if inst.collection_name != wanted:
-            refresh_singleton()
-            inst = _cached_wrapper()
-    except Exception:
-        pass
+        inst.use_collection(_wanted_collection())
+    except Exception as e:
+        logger.debug("[chroma] collection switch skipped: %s", e)
     return inst
 
 
+def _wanted_collection() -> str:
+    from src.services.embed_service import get_profile
+    return get_profile().get("collection") or "media_knowledge_v2"
+
+
 def refresh_singleton() -> None:
-    """Drop the cached wrapper (called by embed_service.set_profile)."""
-    _cached_wrapper.cache_clear()
+    """Re-point the live wrapper at the active profile's collection (called
+    by embed_service.set_profile). No wrapper built yet → nothing to do; the
+    first get_chroma_db() opens the right collection anyway."""
+    if _cached_wrapper.cache_info().currsize:
+        _cached_wrapper().use_collection(_wanted_collection())
 
 
 def __getattr__(name):
