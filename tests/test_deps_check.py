@@ -90,6 +90,25 @@ def test_main_exit_codes_follow_the_report():
         assert dc.main(["--requirements", str(req)]) == 0
 
 
+def test_an_interpreter_below_the_floor_is_refused_before_pip():
+    real_vi, real_install = dc.sys.version_info, dc.install
+    ran = []
+    dc.sys.version_info = (3, 11, 9, "final", 0)
+    dc.install = lambda r: ran.append(r) or True
+    try:
+        assert dc.main(["--install"]) == 1
+        assert ran == [], "pip must not run on an interpreter the pins cannot install on"
+    finally:
+        dc.sys.version_info, dc.install = real_vi, real_install
+
+
+def test_readme_states_the_same_floor():
+    need = ".".join(map(str, dc.MIN_PYTHON))
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"| **Python** | {need} or newer |" in readme
+    assert f"python-{need}%2B" in readme
+
+
 def test_the_real_requirements_file_parses_to_named_pins():
     pins = dc.parse_pins((_ROOT / "requirements.txt").read_text(encoding="utf-8"))
     names = {p.name.lower() for p in pins}
