@@ -247,6 +247,43 @@ def _migrate_columns() -> None:
         conn.commit()
 
 
+def _deletion_proposal_index_ddl() -> list[str]:
+    """``CREATE INDEX IF NOT EXISTS`` for every index the model declares on
+    ``deletion_proposals`` — derived from the model so a newly added index
+    can't be forgotten by the table rebuild below or the repair step."""
+    from sqlalchemy.schema import CreateIndex
+    from src.database.models import DeletionProposal
+    return [str(CreateIndex(ix, if_not_exists=True).compile(dialect=engine.dialect))
+            for ix in sorted(DeletionProposal.__table__.indexes, key=lambda i: i.name)]
+
+
+def _ensure_deletion_proposal_indexes() -> None:
+    """Repair: recreate any missing ``deletion_proposals`` index.
+
+    The first version of the Pass-90c rebuild below lost both of them: index
+    names are global in SQLite, so the renamed-aside table kept owning
+    ``idx_dp_latest_activity`` (the new table's CREATE INDEX IF NOT EXISTS
+    was a no-op) and DROP TABLE then took it along; ``idx_dp_user_status``
+    was never recreated at all. create_all doesn't add indexes to an
+    existing table, so DBs migrated back then have run without them since.
+    Idempotent — a no-op once the indexes exist."""
+    from sqlalchemy import text
+    import logging as _logging
+    _mig_log = _logging.getLogger(__name__)
+    with engine.connect() as conn:
+        exists = conn.execute(text(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='deletion_proposals'"
+        )).first()
+        if not exists:
+            return
+        for ddl in _deletion_proposal_index_ddl():
+            try:
+                conn.execute(text(ddl))
+            except Exception as e:
+                _mig_log.debug("[migrate] deletion_proposals index repair failed: %s", e)
+        conn.commit()
+
+
 def _migrate_deletion_proposals_autoincrement() -> None:
     """Pass 90c: convert ``deletion_proposals.id`` to AUTOINCREMENT.
 
@@ -296,6 +333,14 @@ def _migrate_deletion_proposals_autoincrement() -> None:
             # otherwise a concurrent writer between RENAME and DROP could
             # see the half-migrated state.
             conn.execute(text("BEGIN IMMEDIATE"))
+            # Index names are global in SQLite and RENAME keeps them on the
+            # renamed-aside table — drop them first, or the CREATE INDEX IF
+            # NOT EXISTS below is a no-op and DROP TABLE takes them along.
+            for (idx_name,) in conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND tbl_name='deletion_proposals' AND sql IS NOT NULL"
+            )).fetchall():
+                conn.execute(text(f'DROP INDEX IF EXISTS "{idx_name}"'))
             conn.execute(text("ALTER TABLE deletion_proposals RENAME TO deletion_proposals_old_pre90c"))
             conn.execute(text("""
                 CREATE TABLE deletion_proposals (
@@ -343,12 +388,10 @@ def _migrate_deletion_proposals_autoincrement() -> None:
                 VALUES ('deletion_proposals',
                         COALESCE((SELECT MAX(id) FROM deletion_proposals), 0))
             """))
-            # Recreate the Pass-17 index on the new table (the old one moved
-            # with the rename but only on the renamed-aside table).
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_dp_latest_activity "
-                "ON deletion_proposals (latest_activity_at)"
-            ))
+            # Recreate every model index on the new table (the old ones
+            # were dropped above, before the rename).
+            for ddl in _deletion_proposal_index_ddl():
+                conn.execute(text(ddl))
             conn.execute(text("DROP TABLE deletion_proposals_old_pre90c"))
             conn.execute(text("COMMIT"))
             _mig_log.info("[migrate] Pass 90c: AUTOINCREMENT migration complete")
@@ -394,4 +437,5 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_columns()
     _migrate_deletion_proposals_autoincrement()
+    _ensure_deletion_proposal_indexes()
     _secure_db_files()
