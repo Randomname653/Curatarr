@@ -269,6 +269,37 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**Seven hardening pull requests, reviewed and merged (#122 to #128).** A
+review of the auth, deletion, sync, chat and enrichment paths: model
+output can no longer fire app actions (DOMPurify kept `data-on-*` and the
+dispatcher ran them without a click); the setup gate honours logout and
+deactivation, `.env` values with line breaks are refused, wrong setup
+codes and PIN polls are budgeted, a Plex PIN is bound to the browser that
+asked for it; a deletion re-checks Keep and protection right before the
+DELETE, is claimed atomically, verifies a timed-out delete by GET and
+parks the unclear case in limbo, Plex-music proposals get a real probe,
+and the protection classifier acts only on titles the user meant; the
+Plex sync's watermark is the fetch time, failed or busy jobs are no longer
+stamped done, the deletion-proposal indexes lost by the AUTOINCREMENT
+rebuild are recreated, sqlite work leaves the event loop; the GPU slot
+survives a cancelled eviction, a double-submit is refused before any
+work, verification answers land, background polls are not impressions;
+re-enrichment replaces vectors (Chroma's `add` kept the old one
+silently), stored vectors are checked against the item, cache wipes are
+scoped, one backfill worker per source. Python 3.12 is the stated floor.
+Finished here: a job that merely waits (game, running enrichment) leaves
+no Activity card, and the chat stream's error line no longer carries the
+exception text.
+
+**47 packages raised in the lock** by Dependabot's first weekly round on
+`lock/`, filelock 4, websockets 17 and protobuf 7 among them. One of its
+bumps was impossible: Dependabot edits a uv-compiled lock line by line, no
+resolution behind it, and moved pydantic-core to 2.49.0 while pydantic
+2.13.5 pins 2.46.5, so the first CI install of the merged lock failed
+(ResolutionImpossible). The lock was recompiled with uv, which keeps every
+other version and corrects that one; the launchers install the set on the
+next start.
+
 **Watchlist adds that land.** "Sounds promising, I'll put it on my
 watchlist" has ended deletion debates since August, and every one of those
 adds died with "plex.tv returned 400": Discover's search refuses a request
