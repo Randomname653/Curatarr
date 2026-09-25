@@ -478,12 +478,14 @@ async def job_arr_sync():
     """Daily ARR sync — refreshes deletion proposal candidates."""
     logger.info("[scheduler] Starting daily ARR sync")
     from src.services.task_monitor import task_monitor
+    if _gaming():
+        # Not run, so not done: False keeps the custodian task due. No card
+        # for the wait — the custodian retries every tick, and a game
+        # evening would otherwise leave one skipped card per 30 minutes.
+        logger.info("[scheduler] ARR sync waits: game running, VRAM stays with the game")
+        return False
     task = task_monitor.create(name="ARR Sync", category="arr_sync")
     task_monitor.start(task)
-    if _gaming():
-        # Not run, so not done: False keeps the custodian task due.
-        task_monitor.skip(task, "Game running — skipping to leave VRAM for the game")
-        return False
     _dr_locked = False   # guards release: never clear a lock we don't hold
     try:
         from src.database.connection import get_db_session
@@ -773,42 +775,43 @@ async def job_arr_pre_enrich():
     """
     logger.info("[scheduler] Starting ARR pre-enrichment batch")
     from src.services.task_monitor import task_monitor
-    from src.services.app_state import get_state
+    from src.services.app_state import acquire_state_lock, release_state_lock
+
+    # Don't start if full enrichment is already running. Atomic
+    # compare-and-set so a /start POST coming in at the same moment can't
+    # race past us. Checked BEFORE the Activity card exists: the custodian
+    # retries a False return every tick, so an overnight enrichment pass
+    # would otherwise leave one skipped card per 30 minutes.
+    if not acquire_state_lock("enrichment_running"):
+        logger.info("[scheduler] ARR pre-enrichment waits: an enrichment pass is running")
+        return False   # stays due: retry once the running pass is done
 
     task = task_monitor.create(name="ARR Pre-Enrichment", category="enrichment")
     task_monitor.start(task)
 
+    # Audit #3: the old unconditional finally double-released the lock —
+    # a /start acquiring between _run_enrichment's release and ours got
+    # unlocked from under it. handed_off transfers ownership to the
+    # callee (which releases from its very first line since audit #4).
+    handed_off = False
     try:
-        from src.database.connection import get_db_session
-        from src.database.models import User
-
-        # Must resolve to a real user ID — use admin. Read ``.id`` INSIDE the
-        # session block: get_db_session() commits on exit, and the default
-        # expire_on_commit=True then marks every attribute on ``admin`` stale —
-        # touching ``admin.id`` afterwards tries to refresh it against a closed
-        # session → DetachedInstanceError. Every other scheduler job resolves
-        # the id inside the block; this one closed it a line too early.
-        with get_db_session() as db:
-            admin = db.query(User).filter(User.is_active == True).first()
-            if not admin:
-                task_monitor.skip(task, "No active users — skipping ARR pre-enrichment")
-                return
-            user_id = admin.id
-
-        # Don't start if full enrichment is already running. Atomic
-        # compare-and-set so a /start POST coming in at the same moment
-        # can't race past us.
-        from src.services.app_state import acquire_state_lock, release_state_lock
-        if not acquire_state_lock("enrichment_running"):
-            task_monitor.skip(task, "Enrichment already running — skipping pre-enrich")
-            return False   # stays due: retry once the running pass is done
-
-        # Audit #3: the old unconditional finally double-released the lock —
-        # a /start acquiring between _run_enrichment's release and ours got
-        # unlocked from under it. handed_off transfers ownership to the
-        # callee (which releases from its very first line since audit #4).
-        handed_off = False
         try:
+            from src.database.connection import get_db_session
+            from src.database.models import User
+
+            # Must resolve to a real user ID — use admin. Read ``.id`` INSIDE the
+            # session block: get_db_session() commits on exit, and the default
+            # expire_on_commit=True then marks every attribute on ``admin`` stale —
+            # touching ``admin.id`` afterwards tries to refresh it against a closed
+            # session → DetachedInstanceError. Every other scheduler job resolves
+            # the id inside the block; this one closed it a line too early.
+            with get_db_session() as db:
+                admin = db.query(User).filter(User.is_active == True).first()
+                if not admin:
+                    task_monitor.skip(task, "No active users — skipping ARR pre-enrichment")
+                    return
+                user_id = admin.id
+
             batch = int(getattr(settings, "ARR_PRE_ENRICH_BATCH", 80))
             task_monitor.update(task, message=f"Enriching up to {batch} ARR items (movie/show/anime/music)")
 

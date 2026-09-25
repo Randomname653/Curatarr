@@ -3343,7 +3343,11 @@ FORMATTING RULES:
             raise
 
         except Exception as e:
-            msg = f"Error: {e}"
+            # The log gets the exception, the client a fixed line: str(e)
+            # can carry an endpoint, a path or a model's raw reply (CodeQL
+            # py/stack-trace-exposure, 2026-09-25).
+            logger.error("[chat] stream failed: %s: %s", type(e).__name__, e, exc_info=True)
+            msg = "Error: the curator could not finish this reply. The server log has the details."
             full_response = msg
             yield f"data: {json.dumps({'token': msg})}\n\n"
 

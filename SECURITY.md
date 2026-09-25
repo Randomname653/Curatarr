@@ -55,6 +55,11 @@ Plex is unreachable; existing users are unaffected. `PLEX_LOGIN_REQUIRE_
 MEMBERSHIP=false` disables the gate for the rare setup where `/accounts`
 does not list a legitimate member.
 
+The Plex PIN itself is bound to the browser that requested it: `/plex/pin`
+returns a nonce that `/plex/poll` must echo, so another LAN client that
+learns a pending PIN id cannot collect the session it approves, and polls
+are budgeted per client address as well as per PIN (2026-09-25).
+
 ## Sessions
 
 JWTs live 7 days and are silently re-issued once a day old — but always
@@ -72,7 +77,10 @@ nobody can authenticate yet. Because the server binds the whole LAN, a
 browser on the machine itself may drive setup freely, while any other
 device must present the one-time **setup code** the server prints to its
 console (and log) at startup. That closes the window in which a LAN
-neighbour could have pointed a fresh install at their own Plex.
+neighbour could have pointed a fresh install at their own Plex. Wrong codes
+are budgeted — ten per address and a hundred in all per fifteen minutes,
+then the gate answers 429 for the rest of the window — and a browser on the
+machine itself is never locked out (2026-09-25).
 
 ## What a member can make the server do
 

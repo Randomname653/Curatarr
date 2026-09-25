@@ -123,10 +123,22 @@ async def _orphans_boom():
 orphan_repair.detect_orphaned_sections = _orphans_boom
 check("orphan_check: exception -> False", run(sched.job_orphan_check()) is False)
 
+from src.services.task_monitor import task_monitor as _tm
+
 sched._gaming = lambda: True
+_cards = len(_tm._tasks)
 check("arr_sync: skipped for a game -> False (not run, not done)",
       run(sched.job_arr_sync()) is False)
+check("arr_sync: a game-time wait leaves no Activity card (one per tick otherwise)",
+      len(_tm._tasks) == _cards)
 sched._gaming = lambda: False
+
+_real_acquire = app_state.acquire_state_lock
+app_state.acquire_state_lock = lambda name: False        # an enrichment pass holds it
+_cards = len(_tm._tasks)
+check("arr_pre_enrich: waits without a card while an enrichment pass runs",
+      run(sched.job_arr_pre_enrich()) is False and len(_tm._tasks) == _cards)
+app_state.acquire_state_lock = _real_acquire
 
 
 # ── the custodian honours False, and _tracked does too ──────────────────────

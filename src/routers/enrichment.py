@@ -2364,11 +2364,11 @@ def _clear_emb_caches(conn, item_keys: set) -> tuple:
             continue
         if rest.endswith(suffixes):
             bucket.append(key)
-    doomed =doomed_emb + doomed_ts
+    doomed = doomed_emb + doomed_ts
     for i in range(0, len(doomed), 500):
         chunk = doomed[i:i + 500]
         conn.execute(
-            f"DELETE FROM api_cache WHERE cache_key IN ({','.join('?' * len(chunk))})",
+            f"DELETE FROM api_cache WHERE cache_key IN ({','.join('?' * len(chunk))})",  # nosec B608 - placeholders are literal "?" marks, values bound below
             chunk)
     return len(doomed_emb), len(doomed_ts)
 
