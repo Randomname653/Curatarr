@@ -176,6 +176,9 @@ class Settings(BaseSettings):
     OPENSUBTITLES_PASSWORD: Optional[str] = None
     OPENSUBTITLES_DAILY_BUDGET: int = 400
     OMDB_API_KEY: Optional[str] = None   # optional — free at omdbapi.com, 1000 req/day
+    # Calls per UTC day before OMDb lookups wait for tomorrow (the free
+    # tier's 1,000; a patron key allows more). 0 = no budget.
+    OMDB_DAILY_LIMIT: int = 1000
     LASTFM_API_KEY: Optional[str] = None         # music tags + similar artists (optional)
     SPOTIFY_CLIENT_ID: Optional[str] = None      # Client Credentials — no user login needed
     SPOTIFY_CLIENT_SECRET: Optional[str] = None  # from developer.spotify.com

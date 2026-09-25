@@ -56,7 +56,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -106,6 +108,51 @@ def _host_allowed(host: str) -> bool:
     if host in _ALLOWED_HOSTS_EXACT:
         return True
     return any(host.endswith(suf) for suf in _ALLOWED_HOST_SUFFIXES)
+
+
+# ── DNS rebinding guard ─────────────────────────────────────────────────────
+# The whitelist checks the NAME. A name is only as trustworthy as the
+# resolver that answers for it: a CDN host pointed at 192.168.x.x would make
+# this proxy fetch from the LAN on a browser's behalf. So the address a name
+# resolves to is checked before every upstream connection (initial and each
+# redirect hop); verdicts are cached per host for a few minutes. What
+# remains is the window between this lookup and httpx's own — theory on a
+# home LAN, and nothing a cheaper check would close (2026-09-25).
+_RESOLVE_TTL_S = 300.0
+_resolved: dict[str, tuple[bool, float]] = {}
+
+
+def _ip_is_public(ip: str) -> bool:
+    try:
+        a = ipaddress.ip_address(ip.split("%", 1)[0])
+    except ValueError:
+        return False
+    return not (a.is_private or a.is_loopback or a.is_link_local or a.is_multicast
+                or a.is_reserved or a.is_unspecified)
+
+
+async def _host_resolves_public(host: str, resolver=None) -> bool:
+    """True when every address ``host`` resolves to is public; False when it
+    resolves to a private, loopback or link-local one, or not at all."""
+    host = (host or "").lower()
+    now = time.time()
+    hit = _resolved.get(host)
+    if hit and now - hit[1] < _RESOLVE_TTL_S:
+        return hit[0]
+    try:
+        if resolver is not None:
+            ips = set(resolver(host))
+        else:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+            ips = {i[4][0] for i in infos}
+    except Exception as e:  # noqa: BLE001 - NXDOMAIN, no resolver, timeout
+        logger.debug("[image_proxy] resolve %s failed: %s", host, e)
+        ips = set()
+    ok = bool(ips) and all(_ip_is_public(ip) for ip in ips)
+    if not ok:
+        logger.info("[image_proxy] %s resolves to a non-public address — refused", host)
+    _resolved[host] = (ok, now)
+    return ok
 
 
 # ── Disk cache ───────────────────────────────────────────────────────────────
@@ -246,6 +293,9 @@ async def proxy_image(
         #    on each. ``image.tmdb.org`` serves direct 200s in practice;
         #    Deezer's CDN occasionally 301s within the dzcdn.net family
         #    which is fine because the suffix-whitelist still matches.
+        if not await _host_resolves_public(parsed.host or ""):
+            _inflight.pop(src, None)
+            raise HTTPException(403, f"Host resolves to a non-public address: {parsed.host}")
         try:
             async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=False) as client:
                 next_url = str(parsed)
@@ -272,6 +322,11 @@ async def proxy_image(
                         _inflight.pop(src, None)
                         raise HTTPException(
                             403, f"Redirect target not whitelisted: {target_host}",
+                        )
+                    if not await _host_resolves_public(target_host):
+                        _inflight.pop(src, None)
+                        raise HTTPException(
+                            403, f"Redirect target resolves to a non-public address: {target_host}",
                         )
                     next_url = str(target)
                 else:

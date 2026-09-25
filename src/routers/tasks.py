@@ -7,6 +7,7 @@ Live task monitoring via Server-Sent Events.
 import asyncio
 import json
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -20,20 +21,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# Tasks are server-wide, and their names say what the server is doing for
+# whom ("Deletion analysis: anime", "Plex sync", a memory extraction for a
+# thread). A member sees the tasks that are theirs — the ids carry the user
+# id for those — and nothing else; an admin sees everything (2026-09-25).
+_OWNED_TASK_ID = re.compile(r"^(?:del-analysis|recs-cache)-(\d+)$|^memx-(\d+)-")
+
+
+def _owner_of(task_id: str):
+    m = _OWNED_TASK_ID.match(task_id or "")
+    if not m:
+        return None
+    return int(m.group(1) or m.group(2))
+
+
+def _visible(tasks: list, user_id: int, is_admin: bool) -> list:
+    if is_admin:
+        return tasks
+    return [t for t in tasks if _owner_of(t.get("id", "")) == user_id]
+
+
+def _is_admin(user_id: int) -> bool:
+    from src.database.connection import get_db_session
+    with get_db_session() as db:
+        row = db.query(User.is_admin).filter(User.id == user_id).first()
+    return bool(row and row[0])
+
+
 @router.get("/")
 async def get_tasks(user: User = Depends(get_current_user)):
-    return {"tasks": task_monitor.get_all()}
+    return {"tasks": _visible(task_monitor.get_all(), user.id, bool(user.is_admin))}
 
 
 @router.get("/running")
 async def get_running(user: User = Depends(get_current_user)):
-    return {"tasks": task_monitor.get_running()}
+    return {"tasks": _visible(task_monitor.get_running(), user.id, bool(user.is_admin))}
 
 
 @router.get("/history")
 async def get_task_history(user: User = Depends(get_current_user)):
-    """Last completed run per category (in-memory, resets on restart)."""
-    return {"last_runs": task_monitor.last_runs}
+    """Last completed run per category (in-memory, resets on restart).
+    Per category means one entry can be another user's run, so members get
+    none; their own tasks are in the list above."""
+    return {"last_runs": task_monitor.last_runs if user.is_admin else {}}
 
 
 @router.get("/ticket")
@@ -76,12 +106,13 @@ async def stream_tasks(ticket: str = Query(None)):
         # behavior) made the failure look like a successful stream.
         raise HTTPException(status_code=401, detail="missing_or_invalid_ticket")
 
+    is_admin = _is_admin(user_id)
     queue = task_monitor.subscribe()
 
     async def generate():
         from src.services.task_monitor import shutdown_event
         try:
-            snapshot = task_monitor.get_all()
+            snapshot = _visible(task_monitor.get_all(), user_id, is_admin)
             yield f"data: {json.dumps(snapshot)}\n\n"
 
             while not shutdown_event.is_set():
@@ -103,7 +134,7 @@ async def stream_tasks(ticket: str = Query(None)):
                 if shut_t in done:
                     break
                 if get_t in done:
-                    yield f"data: {json.dumps(get_t.result())}\n\n"
+                    yield f"data: {json.dumps(_visible(get_t.result(), user_id, is_admin))}\n\n"
                 else:
                     yield ": keepalive\n\n"
         finally:

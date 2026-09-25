@@ -269,6 +269,17 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**The audit's residuals, closed.** A household member's Activity view
+now lists only the tasks that carry their user id, the task stream the
+same, and the library status tells a member which arr services exist
+without their LAN addresses, root folders or test results. OMDb calls are
+counted per day and stop at the budget (`OMDB_DAILY_LIMIT`, the free
+tier's 1,000) instead of running into refusals until midnight. The
+protection classifier's action line splits only before a known field
+label, so a title with a pipe in it is protected as one title. The image
+proxy resolves a whitelisted name and refuses private, loopback and
+link-local answers before every upstream connection.
+
 **What the review left open, closed.** A Plex library answering an error
 no longer moves the sync watermark past its plays (the next sync asks for
 them again; the result names the library); the library router's

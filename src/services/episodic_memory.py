@@ -1277,6 +1277,20 @@ async def flush_all_pending_extractions() -> None:
 
 # ── PROTECTION INTENT (MODE 2: MEMORY EXTRACTION) ────────────────────────────
 
+# The classifier's action line is "ACTION: PROTECT_MEDIA | TITLE: … |
+# REASON: … | …". A bare split on "|" cut titles that carry one ("Cowboy
+# Bebop | Knockin' on Heaven's Door") into a title and a nameless field, so
+# the wrong title was protected. Split only where the next field's label
+# follows (2026-09-25).
+_ACTION_FIELD_SPLIT = re.compile(
+    r"\s*\|\s*(?=(?:TITLE|REASON|RESOLUTION|CURATOR_STANCE|OVERRIDE_REASON|WATCHLIST)\s*:)",
+    re.IGNORECASE)
+
+
+def _split_action_line(line: str) -> list:
+    return _ACTION_FIELD_SPLIT.split(line)
+
+
 async def handle_protection_intent(
     user_id: int,
     llm_output: str,
@@ -1318,7 +1332,7 @@ async def handle_protection_intent(
                 if not line.startswith("ACTION: PROTECT_MEDIA"):
                     continue
                     
-                parts = line.split("|")
+                parts = _split_action_line(line)
                 title = parts[1].replace("TITLE:", "").strip() if len(parts) > 1 else ""
                 reason = parts[2].replace("REASON:", "").strip() if len(parts) > 2 else "User requested"
 
@@ -1829,7 +1843,7 @@ def _ground_protection_actions(
         if not line.startswith("ACTION: PROTECT_MEDIA"):
             kept.append(raw)
             continue
-        parts = line.split("|")
+        parts = _split_action_line(line)
         title = parts[1].replace("TITLE:", "").strip() if len(parts) > 1 else ""
         t_norm = normalize_title(title)
         if not t_norm:

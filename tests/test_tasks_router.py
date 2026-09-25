@@ -12,7 +12,9 @@ from src.routers.auth import get_current_user
 from src.database.models import User
 
 # Dummy user for dependency override
-mock_user = User(id=1, plex_username="test_user", plex_user_id="123", is_active=True)
+# An admin: since 2026-09-25 a member sees only the tasks whose id names
+# them, and these mocked server tasks name nobody.
+mock_user = User(id=1, plex_username="test_user", plex_user_id="123", is_active=True, is_admin=True)
 
 def override_get_current_user():
     return mock_user

@@ -123,17 +123,21 @@ async def library_status(_user: User = Depends(get_current_user)):
     last-known connection status (from cache; we DON'T spam test calls
     on every page load — use /test for fresh checks).
     """
+    # Members get the shape the arr browser and the recs page need
+    # (configured, music source); the LAN address, root folders and test
+    # results are the admin's (2026-09-25).
+    admin = bool(getattr(_user, "is_admin", False))
     out = {}
     for svc in ("sonarr", "radarr", "lidarr"):
         url, key = _get_arr_url_key(svc)
         configured = bool(url and key)
-        last_test = get_state(f"lib_test:{svc}:last")
+        last_test = get_state(f"lib_test:{svc}:last") if admin else None
         out[svc] = {
             "configured": configured,
-            "url": url or "",
+            "url": (url or "") if admin else "",
             "has_key": bool(key),
             "last_test": last_test,
-            "defaults": _read_defaults(svc),
+            "defaults": _read_defaults(svc) if admin else {},
         }
         if svc == "lidarr":
             # Lidarr is optional (2026-09-15): 'plex' means the Music page,

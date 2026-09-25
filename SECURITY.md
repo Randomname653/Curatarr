@@ -96,6 +96,13 @@ ten minutes. Budgets are generous for a human and tight for a script; the
 guards expire on their own, so a dropped stream cannot lock anyone out.
 Administrative work (enrichment runs, backfills, migrations, process
 classification, deletions, arr writes) is admin-only at the router mount.
+What a member *sees* is scoped the same way (2026-09-25): the Activity
+view lists only the tasks that carry their user id (their own analyses,
+recommendation refreshes, memory extractions), never the server's, and the
+library status tells a member which arr services exist, not their LAN
+addresses, root folders or test results. The OMDb key has a daily budget
+(`OMDB_DAILY_LIMIT`, the free tier's 1,000): once spent, lookups wait for
+tomorrow instead of hammering a refusing API.
 
 ## Third-party text in prompts
 
@@ -117,7 +124,11 @@ Subtitle downloads, proxied poster images and uploaded Spotify archives are
 read through bounds enforced *while* streaming (4 MB, 5 MB, 50 MB per zip
 member / 400 MB per archive), never buffered first and measured after; the
 CPU-bound subtitle metrics run off the event loop so one oversized file
-cannot stall every other user's request.
+cannot stall every other user's request. The image proxy accepts a name
+only from its whitelist and, since 2026-09-25, only when that name
+resolves to a public address — checked before the first connection and
+before every redirect hop, so a rebinding CDN name cannot turn the proxy
+into a LAN fetcher.
 
 ## Known dependency advisories
 

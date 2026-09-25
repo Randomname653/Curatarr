@@ -2515,14 +2515,57 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
     }
 
 
+# OMDb's free tier is 1,000 calls per UTC day. Nothing counted them: a
+# backfill could spend the day in an hour, and every lookup after that got
+# "Request limit reached!" until midnight — a transient that was at least
+# not stamped, but the semaphore, the HTTP round trip and the log line were
+# paid for each. The day's calls live in app_state (omdb_calls:<date>); at
+# the budget the request is skipped (None = transient, nothing stamped), and
+# OMDb's own limit answer marks the day spent so the rest waits at once.
+def _omdb_day() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def omdb_calls_today() -> int:
+    from src.services.app_state import get_state
+    try:
+        return int(get_state(f"omdb_calls:{_omdb_day()}") or 0)
+    except Exception:  # noqa: BLE001 - no app_state yet (fresh DB): count from zero
+        return 0
+
+
+def omdb_quota_left() -> int:
+    """Calls left today; a huge number when no budget is configured."""
+    limit = int(getattr(settings, "OMDB_DAILY_LIMIT", 1000) or 0)
+    if limit <= 0:
+        return 10 ** 9
+    return limit - omdb_calls_today()
+
+
+def _omdb_note_call(spent: bool = False) -> None:
+    from src.services.app_state import get_state, set_state
+    key = f"omdb_calls:{_omdb_day()}"
+    try:
+        n = int(get_state(key) or 0) + 1
+        if spent:
+            n = max(n, int(getattr(settings, "OMDB_DAILY_LIMIT", 1000) or 0))
+        set_state(key, str(n))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[omdb] budget note failed: %s", e)
+
+
 async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
     """
     Fetch additional metadata from OMDB (free, 1000 req/day).
     Returns plot, awards, Rotten Tomatoes score, Metacritic.
-    Requires OMDB_API_KEY in .env — silently returns None if unavailable.
+    Requires OMDB_API_KEY in .env — silently returns None if unavailable,
+    and None (transient, never stamped) once the day's budget is spent.
     """
     omdb_key = getattr(settings, "OMDB_API_KEY", None)
     if not omdb_key or not imdb_id:
+        return None
+    if omdb_quota_left() <= 0:
+        logger.debug("[omdb] daily budget spent — %s waits for tomorrow", imdb_id)
         return None
     _ensure_concurrency_primitives()
     try:
@@ -2532,6 +2575,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
                 "i": imdb_id,
                 "plot": "full",
             })
+        _omdb_note_call()
         if r.status_code != 200:
             return None
         d = r.json()
@@ -2546,6 +2590,9 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             err = (d.get("Error") or "").lower()
             if "not found" in err or "incorrect imdb" in err:
                 return {}          # definitive — this id has no OMDb record
+            if "limit" in err:
+                _omdb_note_call(spent=True)   # the rest of today waits at once
+                logger.info("[omdb] OMDb reports the daily limit — lookups resume tomorrow")
             return None            # transient — quota, bad key, anything else
 
         # Extract Rotten Tomatoes and Metacritic scores
