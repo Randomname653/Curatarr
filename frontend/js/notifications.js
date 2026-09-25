@@ -80,7 +80,7 @@ export async function respondToMessage(id, msgText, triggerType) {
   // processed, and only matches unread questions. Marking it read here, before
   // the user has typed a word, meant no answer was ever recorded.
   if (triggerType !== 'verification') {
-    await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+    await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST').catch(()=>{});
   }
   toggleMsgPanel();
 
@@ -109,7 +109,7 @@ export async function respondToMessage(id, msgText, triggerType) {
 export async function skipMessage(id, btn) {
   btn.disabled = true;
   btn.textContent = '…';
-  await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST').catch(()=>{});
   await loadUnreadMessages(true);   // panel still open: the next one is shown
 }
 
