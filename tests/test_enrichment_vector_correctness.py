@@ -262,6 +262,10 @@ check("no item keys → nothing deleted", en._clear_emb_caches(conn, set()) == (
 en_src = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
 check("the blanket '%:emb:%' wipe is gone", '"%:emb:%"' not in en_src
       and "(f\"%:emb:%\",)" not in en_src)
+lib_src = (ROOT / "src/routers/library.py").read_text(encoding="utf-8")
+check("library.py no longer builds bare {ver}:emb:{pid} keys (they matched nothing)",
+      "{_CACHE_VERSION}:emb:{" not in lib_src and "{_CACHE_VERSION}:emb_ts:{" not in lib_src
+      and lib_src.count("_clear_emb_caches(") == 2)
 
 
 # ── 5. backfill stop + quick restart: one worker, state kept ────────────────

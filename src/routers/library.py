@@ -807,8 +807,10 @@ def _reenrich_plex_artist(req, row: dict) -> dict:
             drop += [f"raw:music:{title[:40]}", f"raw:music:{key}", f"raw_prefetch:{key}"]
         for k in drop:
             cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (f"{_CACHE_VERSION}:{k}",))
-        cache.conn.execute("DELETE FROM api_cache WHERE cache_key IN (?, ?)",
-                           (f"{_CACHE_VERSION}:emb:{key}", f"{_CACHE_VERSION}:emb_ts:{key}"))
+        # The embedding keys carry the model tag ({ver}:emb:{model}:{pid});
+        # the bare {ver}:emb:{pid} this used to delete matched nothing.
+        from src.routers.enrichment import _clear_emb_caches
+        _clear_emb_caches(cache.conn, {key})
         cache.conn.commit()
     except Exception as e:
         logger.warning("[library] plex re-enrich cache clear failed: %s", e)
@@ -1027,15 +1029,11 @@ async def library_reenrich(
                     ).all()
                     pids = [r.plex_rating_key for r in rows if r.plex_rating_key]
                 if pids:
-                    keys_to_delete = []
-                    for pid in pids:
-                        keys_to_delete.extend((f"{_CACHE_VERSION}:emb:{pid}", f"{_CACHE_VERSION}:emb_ts:{pid}"))
-
-                    placeholders = ",".join("?" for _ in keys_to_delete)
-                    cache.conn.execute(
-                        f"DELETE FROM api_cache WHERE cache_key IN ({placeholders})",  # nosec B608 - placeholders are literal "?" marks, values bound below
-                        tuple(keys_to_delete),
-                    )
+                    # Keys carry the model tag ({ver}:emb:{model}:{pid}); the
+                    # bare {ver}:emb:{pid} this built matched nothing, so the
+                    # stale vector survived every "re-fetch metadata".
+                    from src.routers.enrichment import _clear_emb_caches
+                    _clear_emb_caches(cache.conn, set(pids))
                     cleared_embs = len(pids)
 
                 cache.conn.commit()

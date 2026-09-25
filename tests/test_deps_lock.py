@@ -202,6 +202,19 @@ def test_compile_uses_uv_universal_with_hashes_and_refuses_without_uv():
     assert n == 2, "the llm-scan input is missing here and is skipped, not invented"
     assert cmds[0][:3] == ["uv", "pip", "compile"] and "--universal" in cmds[0] and "--generate-hashes" in cmds[0]
     assert "--python-version" in cmds[0] and cmds[0][cmds[0].index("-o") + 1].endswith("requirements.txt")
+    assert "--upgrade" not in cmds[0], "a plain compile keeps the versions the lock holds"
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "requirements.txt").write_text("fastapi==0.141.1\n", encoding="utf-8")
+        (root / "lock").mkdir()
+        dl.compile_locks(run=fake_run, log=lambda s: None, uv=["uv"], root=root, upgrade=True)
+    assert "--upgrade" in cmds[-1], "the deliberate refresh passes uv --upgrade"
+    try:
+        dl.compile_locks(run=fake_run, log=lambda s: None, uv=["uv"], root=root, upgrade=True, keep_versions=True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("--upgrade with --keep-versions must be refused")
     try:
         dl.compile_locks(run=fake_run, log=lambda s: None, uv=None if dl.uv_command() is None else ["nonexistent-uv"],
                          root=root)

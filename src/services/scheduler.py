@@ -679,6 +679,7 @@ async def job_proactive_messages():
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] Proactive messages failed: %s", e)
+        return False   # not stamped: the startup catch-up gets another go
 
 
 async def job_memory_decay():
@@ -944,6 +945,7 @@ async def job_source_upgrade():
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] Source-upgrade pass failed: %s", e, exc_info=True)
+        return False   # not stamped: the startup catch-up gets another go
 
 
 async def _recompute_and_cache_recs(user_id: int = None):

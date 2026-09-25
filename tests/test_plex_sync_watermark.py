@@ -14,6 +14,7 @@ that honours ``lastViewedAt>>`` — no network, no real data touched.
     python tests/test_plex_sync_watermark.py
 """
 import asyncio
+import re
 import sys
 import threading
 import types
@@ -90,6 +91,7 @@ state: dict = {}
 # returns rows at/after the lastViewedAt>> filter, like the real one.
 plays: list = []
 plex_down = {"on": False}
+failing_sections: set = set()        # section keys whose watched-items fetch answers 503
 section_params: list = []
 # Called after the watched-items fetch: models time passing (and new plays
 # landing) while the rest of the sync runs.
@@ -125,12 +127,17 @@ class FakeClient:
         if plex_down["on"]:
             raise ConnectionError("Plex unreachable")
         params = params or {}
-        if url.endswith("/library/sections/1/all") and "viewCount>>" in params:
+        m = re.search(r"/library/sections/(\d+)/all$", url)
+        if m and "viewCount>>" in params:
+            sec = m.group(1)
+            if sec in failing_sections:
+                return FakeResp(503)
             section_params.append(dict(params))
             since = int(params.get("lastViewedAt>>", 0))
+            # the plays live in section 1; any other section is empty
             rows = [{"ratingKey": rk, "lastViewedAt": at, "title": f"Film {rk}",
                      "type": "movie", "duration": 1000, "Genre": [{"tag": "Drama"}]}
-                    for rk, at in plays if at >= since]
+                    for rk, at in plays if at >= since] if sec == "1" else []
             if after_section_fetch["fn"]:
                 after_section_fetch["fn"]()
             return FakeResp(200, {"MediaContainer": {"Metadata": rows}})
@@ -233,6 +240,34 @@ n_cards = len(sync_cards())
 r5 = run(force=True)
 check("no library config -> error result, no orphaned card",
       "error" in r5 and len(sync_cards()) == n_cards)
+
+# ── a library answering an error must not move the watermark past it ───────
+with fake_db_session() as db:
+    db.add(LibraryConfig(plex_section_key="1", plex_section_title="Movies",
+                         plex_section_type="movie", media_category="movie"))
+    db.add(LibraryConfig(plex_section_key="2", plex_section_title="Anime",
+                         plex_section_type="show", media_category="anime"))
+stamp_before = state.get("last_sync_at")
+plays.append(("300", _ts(T0 + timedelta(hours=7))))
+failing_sections.add("2")
+clock["now"] = T0 + timedelta(hours=8)
+r6 = run(force=True)
+failing_sections.clear()
+check("a failed library keeps the old watermark while the others' plays still land",
+      state.get("last_sync_at") == stamp_before and "300" in rows())
+check("...and the result names the library", r6.get("skipped_sections") == ["Anime"])
+clock["now"] = T0 + timedelta(hours=10)
+run(force=True)
+check("once every library answers, the watermark moves again",
+      state.get("last_sync_at") == T0 + timedelta(hours=10))
+failing_sections.add("1")
+failing_sections.add("2")
+clock["now"] = T0 + timedelta(hours=12)
+r7 = run(force=True)
+failing_sections.clear()
+check("an empty sync with failures says so too and leaves the watermark alone",
+      r7.get("skipped_sections") == ["Movies", "Anime"]
+      and state.get("last_sync_at") == T0 + timedelta(hours=10))
 
 src = (Path(__file__).resolve().parents[1] / "src/services/plex_sync.py").read_text(encoding="utf-8")
 check("busy skip is marked so the scheduler can tell it from the cooldown",

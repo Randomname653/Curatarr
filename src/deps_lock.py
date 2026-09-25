@@ -544,16 +544,21 @@ def uv_command() -> Optional[List[str]]:
 
 
 def compile_locks(targets=COMPILE_TARGETS, run=subprocess.run, log=print, uv: Optional[List[str]] = None,
-                  root: Path = ROOT, keep_versions: bool = False) -> int:
+                  root: Path = ROOT, keep_versions: bool = False, upgrade: bool = False) -> int:
     """uv pip compile --universal --generate-hashes for every target whose
     input exists. Returns the number of locks written; raises when uv is not
     available, because a half-done lock set is worse than none.
 
-    keep_versions: hand the versions the lock ALREADY holds to uv as
-    constraints, so a compile adds hashes and markers without moving a single
-    version — the first compile of a tested install, or a re-compile after
-    editing an input. Without it uv resolves the newest versions the pins
-    allow, and every machine raises to them at its next start."""
+    Three moods. Plain: uv prefers the versions the existing lock holds and
+    changes only what cannot stand (2026-09-25: it corrected one impossible
+    Dependabot bump and kept the other 47). keep_versions: the current
+    versions become constraints, so a compile adds hashes and markers without
+    moving a single one — the first compile of a tested install, or a
+    re-compile after editing an input. upgrade: uv's --upgrade, the
+    deliberate refresh that lets every version move to the newest the pins
+    allow; every machine raises to them at its next start."""
+    if keep_versions and upgrade:
+        raise ValueError("--keep-versions and --upgrade contradict each other")
     uv = uv or uv_command()
     if not uv:
         raise RuntimeError("uv is not installed for this interpreter: pip install uv")
@@ -569,6 +574,8 @@ def compile_locks(targets=COMPILE_TARGETS, run=subprocess.run, log=print, uv: Op
         # (the first compile did: 93 lines with C:\Users\<name>\…).
         cmd = uv + ["pip", "compile", src, "--universal", "--generate-hashes",
                     "--python-version", PYTHON_TARGET, "--quiet", "-o", dst]
+        if upgrade:
+            cmd.append("--upgrade")
         constraints = None
         if keep_versions and dst_p.exists():
             current = parse_lock(dst_p.read_text(encoding="utf-8"))
@@ -623,6 +630,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--apply", action="store_true", help="raise below, follow above, sync the pins")
     ap.add_argument("--sync-pins", action="store_true", help="repeat the lock's versions in requirements.txt")
     ap.add_argument("--compile", action="store_true", help="regenerate every lock/*.txt with uv")
+    ap.add_argument("--upgrade", action="store_true",
+                    help="with --compile: let every version move to the newest the pins allow "
+                         "(uv otherwise keeps what the lock already holds)")
     ap.add_argument("--keep-versions", action="store_true",
                     help="with --compile: constrain uv to the versions the lock already holds (hashes and markers only)")
     ap.add_argument("--requirements", default=str(REQUIREMENTS))
@@ -631,7 +641,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     req, lock = Path(args.requirements), Path(args.lock)
     if args.compile:
         try:
-            n = compile_locks(keep_versions=args.keep_versions)
+            n = compile_locks(keep_versions=args.keep_versions, upgrade=args.upgrade)
         except RuntimeError as e:
             print(f"[lock] {e}")
             return 1

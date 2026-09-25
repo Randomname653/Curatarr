@@ -406,11 +406,13 @@ async def _assert_plex_membership(plex_id: str, first_ever: bool) -> None:
 
 @router.get("/plex/poll/{pin_id}")
 async def poll_plex_pin(pin_id: int, request: Request, background_tasks: BackgroundTasks,
-                        nonce: str = "", db: Session = Depends(get_db)):
+                        db: Session = Depends(get_db)):
     """Step 2 – Poll until the user has authenticated; returns JWT on success.
 
-    ``nonce`` is the value /plex/pin returned to the browser that created
-    this PIN; nobody else can poll it."""
+    The ``X-Plex-Pin-Nonce`` header carries the value /plex/pin returned to
+    the browser that created this PIN; nobody else can poll it. A header,
+    not a query parameter, so the nonce never lands in an access log."""
+    nonce = request.headers.get("X-Plex-Pin-Nonce", "")
     from src.services import rate_limit
     rate_limit.enforce("plex-poll-ip", (request.client.host if request.client else "") or "?",
                        MAX_POLLS_PER_IP_PER_MINUTE, 60,

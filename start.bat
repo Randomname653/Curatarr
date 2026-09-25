@@ -40,18 +40,21 @@ REM then let the lock follow this interpreter (src\deps_lock.py). Never
 REM lowers anything; a package the lock does not know is added to it.
 python -m src.deps_lock --apply
 
-REM Check if Ollama models are built (curator + summarizer + embedding model).
-REM nomic-embed-text is easy to miss: it is NOT baked like the curatarr-* models,
-REM so a fresh / reinstalled Ollama without it makes every embedding call 404
-REM and leaves all items vector_ready=0. build_models.py pulls whatever
-REM EMBEDDING_MODEL is set to, so re-running it covers a custom .env value too.
+REM Check that the Ollama models THIS install runs on are present: curator,
+REM summarizer, the embedding model of the stored profile (not the .env
+REM default - a hardcoded nomic-embed-text probe here cried "missing" on an
+REM install running v2-moe), the pitcher when enabled. build_models.py
+REM --check returns 0 = all present, 1 = some missing (built below),
+REM 2 = Ollama not answering (nothing can be said, so nothing is pulled).
 echo Checking Ollama models...
-set "_MODELS_OK=1"
-ollama show curatarr-curator >nul 2>&1
-if errorlevel 1 set "_MODELS_OK=0"
-ollama show nomic-embed-text >nul 2>&1
-if errorlevel 1 set "_MODELS_OK=0"
-if "%_MODELS_OK%"=="0" (
+set "_MODELS_RC=0"
+python build_models.py --check
+if errorlevel 1 set "_MODELS_RC=1"
+if errorlevel 2 set "_MODELS_RC=2"
+if "%_MODELS_RC%"=="2" (
+    echo  [WARN] Ollama is not answering - model check skipped. The app checks again at startup.
+)
+if "%_MODELS_RC%"=="1" (
     echo.
     echo  [SETUP] Ollama models missing. Building / pulling now...
     echo  This only happens once.

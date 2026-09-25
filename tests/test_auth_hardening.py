@@ -197,12 +197,14 @@ try:
           "clientID=curatarr-install-a" in pin["auth_url"] and seen_client_ids[-1] == "curatarr-install-a")
 
     def poll(nonce, host="192.168.1.20"):
-        return auth.poll_plex_pin(pin["pin_id"], _Req(host), BackgroundTasks(), nonce=nonce, db=db)
+        return auth.poll_plex_pin(pin["pin_id"], _Req(host, {"X-Plex-Pin-Nonce": nonce}),
+                                  BackgroundTasks(), db=db)
 
     check("poll: no nonce is refused", status_of(poll, "") == 403)
     check("poll: a wrong nonce is refused", status_of(poll, "x" * 32, host="192.168.1.66") == 403)
     check("poll: an unknown pin is refused",
-          status_of(auth.poll_plex_pin, 999, _Req(), BackgroundTasks(), nonce=pin["nonce"], db=db) == 403)
+          status_of(auth.poll_plex_pin, 999, _Req(headers={"X-Plex-Pin-Nonce": pin["nonce"]}),
+                    BackgroundTasks(), db=db) == 403)
     settings.PLEX_CLIENT_ID = "changed-by-a-reload"
     out = asyncio.run(poll(pin["nonce"]))
     check("poll: the creator's nonce polls it", out == {"status": "pending"})
@@ -211,8 +213,8 @@ try:
 
     # Per-IP budget: across pin ids, not just per pin.
     rate_limit.reset("plex-poll-ip")
-    codes = [status_of(auth.poll_plex_pin, 1000 + i, _Req("192.168.1.77"), BackgroundTasks(),
-                       nonce="guess", db=db)
+    codes = [status_of(auth.poll_plex_pin, 1000 + i, _Req("192.168.1.77", {"X-Plex-Pin-Nonce": "guess"}),
+                       BackgroundTasks(), db=db)
              for i in range(auth.MAX_POLLS_PER_IP_PER_MINUTE + 1)]
     check("poll: one client walking pin ids hits the per-IP budget", codes[-1] == 429 and codes[0] == 403)
     check("poll: other clients are unaffected", status_of(poll, pin["nonce"]) == 200)
@@ -225,7 +227,8 @@ finally:
     auth._pin_bindings.clear()
 
 frontend = (_ROOT / "frontend/js/auth.js").read_text(encoding="utf-8")
-check("frontend: the poll sends the nonce back", "nonce=${encodeURIComponent(data.nonce)}" in frontend)
+check("frontend: the poll sends the nonce back as a header, not in the URL",
+      "{'X-Plex-Pin-Nonce': data.nonce}" in frontend and "?nonce=" not in frontend)
 
 
 print(f"\n{PASS} passed, {FAIL} failed")

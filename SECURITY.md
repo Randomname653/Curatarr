@@ -56,7 +56,7 @@ MEMBERSHIP=false` disables the gate for the rare setup where `/accounts`
 does not list a legitimate member.
 
 The Plex PIN itself is bound to the browser that requested it: `/plex/pin`
-returns a nonce that `/plex/poll` must echo, so another LAN client that
+returns a nonce that `/plex/poll` must echo in a header, so another LAN client that
 learns a pending PIN id cannot collect the session it approves, and polls
 are budgeted per client address as well as per PIN (2026-09-25).
 

@@ -269,6 +269,22 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**What the review left open, closed.** A Plex library answering an error
+no longer moves the sync watermark past its plays (the next sync asks for
+them again; the result names the library); the library router's
+"re-fetch metadata" clears embedding caches under the key format they
+actually use (the bare `emb:{id}` it deleted matched nothing since the
+model tag joined the key); the Plex PIN nonce travels as a header instead
+of in the URL; a parked proposal says "parked" and why, not "delete
+failed — unreachable"; the proactive and source-upgrade jobs report a
+failure as a failure. `python -m src.deps_lock --compile --upgrade` is the
+deliberate lock refresh that moves every version, plain `--compile` keeps
+what the lock holds. One model check for every launcher: start.bat asked
+`ollama show nomic-embed-text` by name and printed "models missing" on an
+install that runs v2-moe from the stored profile; start.bat, the tray and
+`build_models.py --check` now share one list, and an Ollama that does not
+answer is reported as that, not as every model missing.
+
 **Seven hardening pull requests, reviewed and merged (#122 to #128).** A
 review of the auth, deletion, sync, chat and enrichment paths: model
 output can no longer fire app actions (DOMPurify kept `data-on-*` and the

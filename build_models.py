@@ -79,4 +79,23 @@ async def main():
         sys.exit(1)
 
 
-asyncio.run(main())
+def check() -> int:
+    """``--check``: 0 = every model this install runs on is present, 1 =
+    some are missing (named), 2 = Ollama does not answer. The list comes
+    from src/services/model_check.py — the tray and start.bat use the same."""
+    from src.services.model_check import expected_models, missing_models
+    missing = missing_models()
+    if missing is None:
+        print("Ollama is not answering - the models cannot be checked.")
+        return 2
+    if missing:
+        print("Missing Ollama models: " + ", ".join(missing))
+        return 1
+    print("Ollama models present: " + ", ".join(expected_models()))
+    return 0
+
+
+if __name__ == "__main__":
+    if "--check" in sys.argv:
+        sys.exit(check())
+    asyncio.run(main())

@@ -155,30 +155,14 @@ def _preflight_deps() -> bool:
 
 
 def _preflight_ollama() -> str | None:
-    """Returns a warning string when models are missing (server still starts)."""
-    missing = []
-    from src.config import settings
-    # Check the model the runtime ACTUALLY uses (stored profile, v2-moe) —
-    # settings.EMBEDDING_MODEL is the legacy v1 default and green-lit the
-    # wrong model after the migration (external eval catch).
-    try:
-        from src.services.embed_service import effective_embedding_model
-        _emb = effective_embedding_model()
-    except Exception:
-        _emb = settings.EMBEDDING_MODEL
-    checked = [settings.CURATOR_MODEL, _emb]
-    # Two-bake split: warn-only nudge when enabled but not built — the app
-    # runs fine without it (deletion runs fall back to the curator bake).
-    if (settings.PITCHER_MODEL or "").strip():
-        checked.append(settings.PITCHER_MODEL.strip())
-    for model in checked:
-        try:
-            r = subprocess.run(["ollama", "show", model], capture_output=True,
-                               timeout=20, creationflags=_CREATE_NO_WINDOW)
-            if r.returncode != 0:
-                missing.append(model)
-        except Exception:
-            missing.append(model)
+    """Returns a warning string when models are missing (server still starts).
+    The list and the probe live in src/services/model_check.py, shared with
+    build_models.py --check and, through it, start.bat."""
+    from src.services.model_check import missing_models
+    missing = missing_models(creationflags=_CREATE_NO_WINDOW)
+    if missing is None:
+        return ("Ollama is not answering — the models could not be checked; "
+                "start Ollama, the app checks again.")
     if missing:
         return ("Ollama models missing: " + ", ".join(missing)
                 + " — run start.bat once to build them.")

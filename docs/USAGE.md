@@ -123,6 +123,10 @@ regenerate — this needs `uv` once (`pip install uv`):
 python -m src.deps_lock --compile
 ```
 
+That keeps every version the lock already holds and changes only what
+cannot stand. For the deliberate refresh that moves everything to the
+newest the pins allow, add `--upgrade`.
+
 **A pipeline flag is stuck (`enrichment_running`, `music_pipeline_running`)**
 
 Happens if the process was killed mid-run. The next sync usually clears

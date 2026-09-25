@@ -1,9 +1,10 @@
 // ── API ───────────────────────────────────────────────────────────────────────
 import { state } from './state.js';
 import { API, confirmDialog } from './ui.js';
-export async function api(path, method='GET', body=null, _retried=false) {
+export async function api(path, method='GET', body=null, _retried=false, headers=null) {
   const opts = {method, headers:{'Content-Type':'application/json'}};
   if (state.token) opts.headers['Authorization']='Bearer '+state.token;
+  if (headers) Object.assign(opts.headers, headers);   // per-call extras (the PIN nonce)
   // First-run wizard from ANOTHER device: the server prints a one-time
   // setup code to its console and requires it on every setup call until
   // the first admin exists (a browser on the server itself is exempt).
@@ -22,7 +23,7 @@ export async function api(path, method='GET', body=null, _retried=false) {
       const entered = ask.ok ? ask.reason : '';
       if (entered && entered.trim()) {
         sessionStorage.setItem('curatarr_setup_code', entered.trim().toUpperCase());
-        return api(path, method, body, true);
+        return api(path, method, body, true, headers);
       }
     }
   }

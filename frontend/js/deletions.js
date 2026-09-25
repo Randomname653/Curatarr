@@ -68,7 +68,7 @@ export function _renderDeletionProposals(proposals) {
               <div class="panel-item-title" style="font-size:16px">${esc(p.title)}
                 <span class="badge ${p.confidence>.7?'danger':'muted'}" title="How sure the judge is that this can go">${Math.round((p.confidence||0)*100)}%</span>
                 ${p.stagnant?`<span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}
-                ${limbo ? '<span class="badge danger" title="The previous delete attempt failed — the arr was unreachable">delete failed</span>' : ''}
+                ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">parked</span>' : ''}
               </div>
               <div class="panel-actions">
                 <button type="button" class="btn btn-danger btn-sm" ${act('approveDelete', p.id, EL)}>${limbo?'Retry Delete':'Delete'}</button>
@@ -85,7 +85,7 @@ export function _renderDeletionProposals(proposals) {
             ${genreTags ? `<div class="row mt-8" style="gap:5px">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div class="fs-12 t3 mt-8" style="line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
             <div class="t2 mt-8" style="font-size:13.5px;line-height:1.65;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
-            ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Previous delete attempt failed — the arr was unreachable. Retry Delete tries again.</div>` : ''}
+            ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Parked: the arr was unreachable, its index drifted, or the last attempt's outcome is unconfirmed. Retry Delete checks again before it deletes anything.</div>` : ''}
             <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" ${actOn('blur', 'saveComment', p.id)} ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}>${esc(p.user_comment||'')}</textarea>
             <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? 'Note saved.' : 'A note teaches Curatarr your reasoning — it saves when you click away (or Ctrl+Enter).'}</div>
           </div>
@@ -397,7 +397,7 @@ export async function approveDelete(id, btn) {
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
     if (r.limbo) {
       // ARR unreachable — the proposal stays in limbo, the button becomes a retry
-      toast(r.error || 'The arr was unreachable — the proposal stays, retry when it is back', 'amber', {ms: 8000});
+      toast(r.error || 'The proposal is parked — retry once the arr is back or its index is refreshed', 'amber', {ms: 8000});
       btnDone(btn, 'Retry Delete');
       return;
     }

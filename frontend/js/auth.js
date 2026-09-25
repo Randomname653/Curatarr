@@ -39,8 +39,9 @@ export async function startPlexLogin() {
     }
     try {
       // The nonce binds the PIN to this browser: the server refuses a poll
-      // for it from anyone else (auth.py _check_pin_binding).
-      const r = await api(`/api/auth/plex/poll/${data.pin_id}?nonce=${encodeURIComponent(data.nonce)}`);
+      // for it from anyone else (auth.py _check_pin_binding). Sent as a
+      // header so it never lands in an access log.
+      const r = await api(`/api/auth/plex/poll/${data.pin_id}`, 'GET', null, false, {'X-Plex-Pin-Nonce': data.nonce});
       if (r.status==='ok') {
         clearInterval(state.pollInterval);
         state.pollInterval = null;

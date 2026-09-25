@@ -300,6 +300,10 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # never entered watch history and the recently-watched deletion veto
     # never saw them.
     sync_started = datetime.utcnow()
+    # Libraries whose fetch answered with an error: their plays were not
+    # seen, so the watermark must not move past them (below) — the next sync
+    # asks for them again from the old point.
+    failed_sections: list = []
 
     async with httpx.AsyncClient(timeout=60) as client:
         for sec_key, (category, plex_sec_type, sec_title) in lib_configs.items():
@@ -334,6 +338,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 continue
             if resp.status_code != 200:
                 logger.warning("Library fetch failed for %r: HTTP %s", sec_title, resp.status_code)
+                failed_sections.append(sec_title)
                 continue
 
             items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
@@ -404,8 +409,14 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
 
 
     if not all_entries:
-        task_monitor.done(_sync_task, "No new watched items")
-        return {"synced": 0, "message": "No watched items found. Have you watched anything on Plex?"}
+        msg = "No new watched items"
+        if failed_sections:
+            msg += f" — {', '.join(failed_sections)} not fetched, retried next sync"
+            logger.warning("Plex sync: %s answered with an error — their plays are fetched next time",
+                           ", ".join(failed_sections))
+        task_monitor.done(_sync_task, msg)
+        return {"synced": 0, "message": "No watched items found. Have you watched anything on Plex?",
+                "skipped_sections": failed_sections}
 
     # Genres come inline from /library/sections/all — no separate metadata fetch needed.
     # We keep a small fallback cache for items missing Genre tags.
@@ -810,8 +821,18 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     except Exception as e:
         logger.warning("[ratings] sweep failed: %s", e)
 
-    set_datetime("last_sync_at", sync_started)
     _done_msg = f"Done: {synced} new entries, {skipped} skipped"
+    if failed_sections:
+        # Their plays were never fetched: keep the old watermark so the next
+        # sync (the hourly cooldown reads the same stamp) asks for them again.
+        if last_sync is not None:
+            set_datetime("last_sync_at", last_sync)
+        logger.warning("Plex sync: %s answered with an error — watermark kept at %s, "
+                       "those plays are fetched next time",
+                       ", ".join(failed_sections), last_sync)
+        _done_msg += f" — {', '.join(failed_sections)} not fetched, retried next sync"
+    else:
+        set_datetime("last_sync_at", sync_started)
     if unattributed:
         _done_msg += f" ({unattributed} parked on admin — run Re-Attribution after the user logs in)"
     task_monitor.done(_sync_task, _done_msg)
@@ -842,6 +863,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
         "resumed": resumed,
         "unattributed": unattributed,
         "total_fetched": len(all_entries),
+        "skipped_sections": failed_sections,
     }
 
 

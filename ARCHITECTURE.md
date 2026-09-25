@@ -1274,7 +1274,9 @@ to its own section (or a §0 delta row) instead of growing this list.
   `tests/test_deps_lock.py`). Dependabot's VERSION PRs for pip are off
   (2026-09-25): it edits the compiled lock line by line without a
   resolver and moved pydantic-core past what pydantic pins; the lock is
-  refreshed with `--compile`, which resolves and keeps what it can. The lock follows
+  refreshed with `--compile`, which resolves and keeps what it can, or
+  `--compile --upgrade` for the deliberate refresh that moves every version
+  to the newest the pins allow. The lock follows
   the install and never lowers anything: `--apply` raises a package below
   its line through a temporary hashed file (`pip install --require-hashes
   --no-deps`), rewrites the line for anything installed above it with
