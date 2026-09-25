@@ -1760,6 +1760,12 @@ async def generate_deletion_proposals(
             logger.debug("[deletions] pre-judge warm-up failed: %s", _e)
         _gate_label = f"deletion scan: {category}"
         await curator_start(_gate_label, exclusive_model=pitch_model)
+        # Whether THIS run currently owns a slot. The yield below drops it and
+        # re-acquires; a cancel (scan stopped) landing in that re-acquire
+        # leaves us holding nothing, and an unconditional curator_done() in
+        # the finally would release the slot of whoever holds it now (the
+        # waiting chat) — letting a third caller onto the GPU alongside it.
+        _holds_gate = True
         try:
             for cand in scored_candidates:
                 if len(final_proposals) >= TARGET_CUTS or judged >= JUDGE_CAP:
@@ -1774,8 +1780,10 @@ async def generate_deletion_proposals(
                 # adjudicate would load the pitcher AGAINST resident gemma.
                 if gate_contested():
                     _msg(f"{category}: yielding GPU to a waiting request…")
+                    _holds_gate = False
                     curator_done()
                     await curator_start(_gate_label, exclusive_model=pitch_model)
+                    _holds_gate = True
                 item = cand["item"]
                 judged += 1
                 _msg(f"{category}: pillar-judging {judged} "
@@ -1881,12 +1889,15 @@ async def generate_deletion_proposals(
             # VRAM free"): a chat right after the run loads the curator
             # without waiting out the pitcher's 10m keep_alive. Guarded +
             # best-effort — an eviction hiccup must never eat the proposals.
-            if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
-                try:
-                    await evict_if_resident(pitch_model)
-                except Exception as _ee:
-                    logger.debug("[deletions] pitcher evict failed: %s", _ee)
-            curator_done()
+            # Only as the holder: without the slot the GPU belongs to someone
+            # else, whose model choice is not ours to touch.
+            if _holds_gate:
+                if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
+                    try:
+                        await evict_if_resident(pitch_model)
+                    except Exception as _ee:
+                        logger.debug("[deletions] pitcher evict failed: %s", _ee)
+                curator_done()
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged"
              + (f" ({thin_skipped} skipped: not yet enriched)" if thin_skipped else "")

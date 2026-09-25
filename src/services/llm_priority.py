@@ -298,23 +298,34 @@ async def curator_start(owner: str = "curator request", *,
     _active += 1
     is_first = (_active == 1)
 
-    # Pass 14.7: cancel any pending idle-eviction. The user is back; we want
-    # the curator to stay in VRAM, not get evicted mid-conversation.
-    if _curator_evict_task and not _curator_evict_task.done():
-        _curator_evict_task.cancel()
-        logger.debug("Cancelled pending curator eviction (new chat activity)")
+    # From here on we hold a slot. The eviction below awaits network calls,
+    # and a cancel landing there (client disconnect during the chat's
+    # pre-stream, a scan being stopped) propagates out of curator_start
+    # BEFORE the caller has entered the try whose finally calls
+    # curator_done() — the slot would leak and every later curator call
+    # would queue forever behind a dead holder. Undo our own acquire on any
+    # failure so callers only ever own a slot once curator_start returns.
+    try:
+        # Pass 14.7: cancel any pending idle-eviction. The user is back; we
+        # want the curator to stay in VRAM, not get evicted mid-conversation.
+        if _curator_evict_task and not _curator_evict_task.done():
+            _curator_evict_task.cancel()
+            logger.debug("Cancelled pending curator eviction (new chat activity)")
 
-    if is_first:
-        # Clear the gate immediately — before any await — so any enrichment
-        # worker hitting wait_for_curator() right now blocks correctly.
-        _get_event().clear()
-    logger.debug("curator_start  active=%d", _active)
+        if is_first:
+            # Clear the gate immediately — before any await — so any
+            # enrichment worker hitting wait_for_curator() right now blocks.
+            _get_event().clear()
+        logger.debug("curator_start  active=%d", _active)
 
-    if is_first:
-        from src.config import settings
-        target = (exclusive_model or settings.CURATOR_MODEL
-                  or settings.BASE_CURATOR_MODEL)
-        await evict_others(target)
+        if is_first:
+            from src.config import settings
+            target = (exclusive_model or settings.CURATOR_MODEL
+                      or settings.BASE_CURATOR_MODEL)
+            await evict_others(target)
+    except BaseException:
+        curator_done()
+        raise
 
 
 async def evict_others(target_model: str) -> None:

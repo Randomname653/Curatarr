@@ -790,7 +790,33 @@ async def _run_memory_extraction(
             logger.debug("[memory] LLM returned empty list — nothing to extract")
             return True
 
+    except Exception as e:
+        # Pass 14.13: include exception class — httpx timeouts often have
+        # an empty str(e), making logs unhelpful ("ERROR: 💥 [...]: " with
+        # nothing after).
+        logger.error(
+            "💥 [MEMORY EXTRACTION ERROR]: %s: %s",
+            type(e).__name__, e or "(no message)",
+        )
+        return False
+
+    # Writing phase. A False return makes the caller re-offer the whole
+    # window on the next flush — right when nothing was stored, but once a
+    # memory has been written a retry would store it AGAIN (duplicates that
+    # accumulate on every flush while a later item keeps failing). So a
+    # malformed item is skipped instead of raising, and a failure after the
+    # first write reports success: the window is consumed, the written
+    # memories stand.
+    wrote_any = False
+    try:
         for fact in facts[:2]: # Max 2 Items verarbeiten
+            # Small models occasionally emit a bare string or a nested list
+            # inside the JSON list — not a memory, and fact.get() on it used
+            # to raise and fail the whole window.
+            if not isinstance(fact, dict) or not isinstance(fact.get("content"), str):
+                logger.debug("[memory] skipping malformed extraction item: %r",
+                             fact if not isinstance(fact, str) else fact[:80])
+                continue
             if fact.get("content"):
                 # Pass 80c: backstop against pronoun-only memories. Even with
                 # the extraction prompt's rule 11 in place, the summarizer
@@ -800,7 +826,7 @@ async def _run_memory_extraction(
                 # ranking (no embedding anchor, no taste-vector merge target)
                 # and just pollutes the memory bank. Drop these on the way in.
                 content_lc = fact["content"].lower()
-                title_field = (fact.get("title") or "").strip()
+                title_field = str(fact.get("title") or "").strip()
                 if not title_field and any(
                     ref in content_lc
                     for ref in (
@@ -827,6 +853,7 @@ async def _run_memory_extraction(
                     or classify_memory_category(fact["content"], title_field),
                 )
                 if mem_id:
+                    wrote_any = True
                     logger.info(f"🧠 [MEMORY SAVED] ID: {mem_id} | Type: {fact.get('type')} | Content: {fact['content']}")
                     await resolve_memory_conflicts(
                         user_id=user_id,
@@ -836,14 +863,11 @@ async def _run_memory_extraction(
                     )
         return True
     except Exception as e:
-        # Pass 14.13: include exception class — httpx timeouts often have
-        # an empty str(e), making logs unhelpful ("ERROR: 💥 [...]: " with
-        # nothing after).
         logger.error(
             "💥 [MEMORY EXTRACTION ERROR]: %s: %s",
             type(e).__name__, e or "(no message)",
         )
-        return False
+        return wrote_any
 
 
 # ── DEBOUNCED THREAD-LEVEL MEMORY EXTRACTION (Pass 61) ───────────────────────
@@ -871,6 +895,11 @@ async def _run_memory_extraction(
 _THREAD_EXTRACT_DEBOUNCE_S = 300.0
 # keyed by f"{user_id}:{thread_id}" → the pending asyncio debounce task
 _pending_thread_extracts: dict[str, asyncio.Task] = {}
+# The media_category each pending extraction was scheduled with, same key.
+# A flush (New chat / Exit / shutdown) cancels the debounce task and runs
+# the extraction itself — without this it ran category-less, so memories
+# from a music discussion fell back to content classification.
+_pending_thread_categories: dict[str, str | None] = {}
 # strong refs to in-flight principle-capture tasks (fire-and-forget would
 
 
@@ -962,8 +991,13 @@ async def extract_memories_from_thread(
         if thread_id.startswith("proactive_message:"):
             from src.database.models import ProactiveMessage
             with get_db_session() as db:
+                # user_id filter: the thread id comes from the client's
+                # discuss_context, so without it any user could anchor their
+                # extraction on (and have the summarizer read) another
+                # user's message.
                 pm = db.query(ProactiveMessage).filter(
-                    ProactiveMessage.id == int(thread_id.split(":", 1)[1])).first()
+                    ProactiveMessage.id == int(thread_id.split(":", 1)[1]),
+                    ProactiveMessage.user_id == user_id).first()
             if pm and pm.message:
                 anchor_line = ("CONVERSATION SUBJECT (the assistant's opening that the "
                                "user is replying to — context ONLY, extract nothing "
@@ -980,7 +1014,8 @@ async def extract_memories_from_thread(
             from src.database.models import DeletionProposal
             with get_db_session() as db:
                 dp = db.query(DeletionProposal).filter(
-                    DeletionProposal.id == int(thread_id.split(":", 1)[1])).first()
+                    DeletionProposal.id == int(thread_id.split(":", 1)[1]),
+                    DeletionProposal.user_id == user_id).first()
             if dp and dp.title:
                 anchor_line = (f"CONVERSATION SUBJECT: the deletion of "
                                f"'{dp.title}' ({dp.category or 'title'}).\n\n")
@@ -1137,6 +1172,7 @@ async def _debounced_thread_extract(
         # a reschedule may have replaced us between the sleep ending and here.
         if _pending_thread_extracts.get(key) is asyncio.current_task():
             _pending_thread_extracts.pop(key, None)
+            _pending_thread_categories.pop(key, None)
 
 
 def schedule_thread_extraction(
@@ -1158,20 +1194,26 @@ def schedule_thread_extraction(
         # No running loop (sync test harness) — skip silently.
         return
     _pending_thread_extracts[key] = task
+    _pending_thread_categories[key] = media_category
 
 
-async def flush_thread_extraction(user_id: int, thread_id: str) -> None:
+async def flush_thread_extraction(user_id: int, thread_id: str,
+                                  media_category: str = None) -> None:
     """Fire a thread's pending extraction NOW instead of waiting out the
     debounce. Called on explicit end-of-conversation signals (New chat,
     Exit discussion, Delete & exit). Safe to call when nothing is pending —
     the cursor means a no-op extraction just returns immediately.
+    ``media_category`` defaults to the one the pending run was scheduled with.
     """
     key = _extract_key(user_id, thread_id)
     pending = _pending_thread_extracts.pop(key, None)
+    scheduled_category = _pending_thread_categories.pop(key, None)
     if pending and not pending.done():
         pending.cancel()
     try:
-        await extract_memories_from_thread(user_id, thread_id)
+        await extract_memories_from_thread(
+            user_id, thread_id,
+            media_category=media_category or scheduled_category)
     except Exception as e:
         logger.error("💥 [MEMORY EXTRACTION] flush failed for thread %s: %s", thread_id, e)
 
@@ -1222,11 +1264,13 @@ async def flush_all_pending_extractions() -> None:
     logger.info("[memory] shutdown flush: %d pending thread extraction(s)", len(keys))
     for key in keys:
         pending = _pending_thread_extracts.pop(key, None)
+        category = _pending_thread_categories.pop(key, None)
         if pending and not pending.done():
             pending.cancel()
         try:
             uid_str, _, tid = key.partition(":")
-            await extract_memories_from_thread(int(uid_str), tid)
+            await extract_memories_from_thread(int(uid_str), tid,
+                                               media_category=category)
         except Exception as e:
             logger.error("💥 [MEMORY EXTRACTION] shutdown flush failed for %s: %s", key, e)
 
