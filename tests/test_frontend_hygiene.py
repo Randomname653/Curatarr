@@ -38,8 +38,14 @@ CEILINGS = {
     "confirm(": 0,
     "prompt(": 0,
     "style.cssText": 0,
-    'style= in JS templates': 218,
-    'style= in static markup': 60,
+    # Step 6 (2026-09-25, the CSP pass): 218 / 60 -> 0 / 0. style-src is
+    # 'self' now, so an inline style attribute would simply be refused by
+    # the browser. A COMPUTED value (a progress width, a poster size, a bar
+    # colour) travels as data-style, applied by ui.hydrateStyles — that is
+    # the only place a style may still be assembled in a template.
+    'style= in JS templates': 0,
+    'style= in static markup': 0,
+    'data-style= in JS templates': 8,
 }
 
 
@@ -60,8 +66,9 @@ def test_old_mechanisms_only_go_down():
         "confirm(": _count(r"(?<![\w.])confirm\(", code),       # confirmDialog( does not match
         "prompt(": _count(r"(?<![\w.])prompt\(", code),
         "style.cssText": _count(r"\.style\.cssText", code),
-        'style= in JS templates': _count(r'style="', js),
-        'style= in static markup': _count(r'style="', static),
+        'style= in JS templates': _count(r'(?<![\w-])style="', js),
+        'style= in static markup': _count(r'(?<![\w-])style="', static),
+        'data-style= in JS templates': _count(r'data-style="', js),
     }
     over = {k: (v, CEILINGS[k]) for k, v in seen.items() if v > CEILINGS[k]}
     assert not over, f"ceiling exceeded (seen, ceiling): {over}"

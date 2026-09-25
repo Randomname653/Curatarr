@@ -33,8 +33,9 @@
    dirty forms → trackDirty(). Never alert()/confirm()/prompt(), never a
    hand-built overlay, never a hardcoded colour. Utilities (.t2 .t3
    .t-amber .fs-12 .row .row-end .grow .mt-8 …) replace inline styles;
-   inline style= is for data-driven values only. tests/test_frontend_hygiene
-   pins the counts.
+   style= is refused by the CSP (style-src 'self', 2026-09-25) — a computed
+   value goes into data-style and ui.hydrateStyles applies it.
+   tests/test_frontend_hygiene pins the counts.
    New prompt-visible UI labels additionally go through app_context.py.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
@@ -507,7 +508,7 @@ details.panel-item > summary::-webkit-details-marker { display: none; }
 
 /* ── PROGRESS ── */
 .progress-bar { background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; margin-top: 8px; }
-.progress-fill { height: 100%; background: var(--amber); border-radius: 4px; transition: width .3s; }
+.progress-fill { height: 100%; width: 0; background: var(--amber); border-radius: 4px; transition: width .3s; }
 .progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 4px; }
 
 /* ── SETUP WIZARD ── */
@@ -576,3 +577,60 @@ select option { background: var(--bg2); }
 /* Amber, not green, when the card is held by something that is not a game:
    background work carries on (CPU lane) or waits — a state, not a success. */
 #game-indicator.busy { color:var(--amber); background:var(--amber-dim); border-color:var(--amber); }
+
+/* ── UTILITIES 2 — the CSP pass (2026-09-25). style-src is 'self' now: every
+   static inline style became one of these, a computed value (a width, a
+   poster size, a bar colour) travels as data-style and ui.hydrateStyles
+   applies it from script. Named by property, one job each. ── */
+.flex { display: flex; } .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; } .shrink-0 { flex-shrink: 0; }
+.items-start { align-items: flex-start; } .items-stretch { align-items: stretch; }
+.gap-4 { gap: 4px; } .gap-5 { gap: 5px; } .gap-6 { gap: 6px; } .gap-8 { gap: 8px; } .gap-16 { gap: 16px; } .gap-18 { gap: 18px; } .gap-24 { gap: 24px; }
+.fs-12-5 { font-size: 12.5px; } .fs-14 { font-size: 14px; } .fs-15 { font-size: 15px; } .fs-16 { font-size: 16px; } .fs-18 { font-size: 18px; } .fs-22 { font-size: 22px; }
+.fw-400 { font-weight: 400; } .fw-500 { font-weight: 500; } .fw-700 { font-weight: 700; } .italic { font-style: italic; }
+.t-info { color: var(--info); } .bg-amber { background: var(--amber); }
+.lh-15 { line-height: 1.5; } .lh-16 { line-height: 1.6; } .lh-17 { line-height: 1.7; }
+.m-0 { margin: 0; } .my-8 { margin: 8px 0; }
+.mt-0 { margin-top: 0; } .mt-2 { margin-top: 2px; } .mt-3 { margin-top: 3px; } .mt-6 { margin-top: 6px; } .mt-10 { margin-top: 10px; } .mt-14 { margin-top: 14px; } .mt-16 { margin-top: 16px; }
+.mb-0 { margin-bottom: 0; } .mb-3 { margin-bottom: 3px; } .mb-4 { margin-bottom: 4px; } .mb-6 { margin-bottom: 6px; } .mb-10 { margin-bottom: 10px; } .mb-16 { margin-bottom: 16px; } .mb-20 { margin-bottom: 20px; } .mb-24 { margin-bottom: 24px; }
+.ml-0 { margin-left: 0; } .ml-6 { margin-left: 6px; } .ml-8 { margin-left: 8px; } .mr-4 { margin-right: 4px; } .mr-10 { margin-right: 10px; }
+.p-10 { padding: 10px; } .p-12 { padding: 12px; } .py-20 { padding: 20px 0; } .pad-9-12 { padding: 9px 12px; } .pad-12-28 { padding: 12px 28px; } .pad-12-32 { padding: 12px 32px; } .pad-24-28 { padding: 24px 28px; }
+.w-0 { width: 0; } .w-auto { width: auto; } .w-full { width: 100%; } .w-70 { width: 70px; } .w-180 { width: 180px; } .w-200 { width: 200px; } .w-220 { width: 220px; }
+.h-4 { height: 4px; } .h-10 { height: 10px; }
+.minw-80 { min-width: 80px; } .minw-140 { min-width: 140px; } .minw-160 { min-width: 160px; } .minw-200 { min-width: 200px; } .minw-280 { min-width: 280px; }
+.maxw-260 { max-width: 260px; } .maxw-280 { max-width: 280px; } .maxw-520 { max-width: 520px; }
+.pointer { cursor: pointer; } .cursor-default { cursor: default; } .invisible { visibility: hidden; } .transition-transform { transition: transform .15s; }
+.nowrap { white-space: nowrap; } .pre-wrap { white-space: pre-wrap; } .pre-line { white-space: pre-line; } .break-word { word-break: break-word; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .scroll-x { overflow-x: auto; }
+.clamp-2 { line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp-3 { line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.caps { text-transform: uppercase; letter-spacing: .6px; } .eyebrow { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; }
+.no-underline { text-decoration: none; } .strike { text-decoration: line-through; } .dim { opacity: .5; }
+.icon-inline { vertical-align: -2px; flex-shrink: 0; }
+.quote-text { font-size: 13.5px; line-height: 1.65; } .note-text { font-size: 12.5px; line-height: 1.55; }
+.rule-top { border-top: 1px solid var(--border); padding-top: 10px; }
+.footnote { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text2); line-height: 1.7; }
+.empty-note { padding: 24px; text-align: center; color: var(--text3); font-size: 13px; }
+.error-box { font-size: 12px; color: var(--danger); margin-bottom: 12px; padding: 8px 12px; background: var(--danger-dim); border-radius: var(--radius); }
+.boxed { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.dropzone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 26px; text-align: center; cursor: pointer; }
+.field-sm { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: var(--radius); font-size: 12px; }
+.btn-plain { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 16px; }
+.btn-ghost-amber { background: transparent; border: 1px solid rgba(229,160,13,.4); color: var(--amber); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
+.btn-ghost-danger { background: rgba(229,83,83,.15); border: 1px solid rgba(229,83,83,.5); color: var(--danger); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
+.discuss-banner { display: flex; background: var(--amber-dim); border-bottom: 1px solid rgba(229,160,13,.3); padding: 8px 16px; font-size: 12px; color: var(--text2); align-items: center; gap: 10px; }
+.sb-badge { margin-left: auto; background: var(--amber); color: #000; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; }
+.bar-track { background: var(--bg3); border-radius: 3px; height: 8px; overflow: hidden; } .bar-fill { height: 100%; width: 0; }
+.grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
+.grid-row-4 { display: grid; grid-template-columns: 64px 1fr 1fr 90px; gap: 10px; align-items: center; margin-bottom: 6px; }
+.grid-form-140 { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; align-items: center; }
+.grid-form-120 { display: grid; grid-template-columns: 120px 1fr; gap: 6px 10px; align-items: center; }
+.col-wide { flex: 1 1 480px; min-width: 280px; }
+.side-col-200 { flex: 0 0 200px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); padding: 8px; }
+.stack-center-16 { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; color: var(--text); }
+.overlay-dim { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 90; display: flex; align-items: center; justify-content: center; }
+.dialog-box-520 { width: 520px; max-height: 90vh; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
+.box-head { padding: 24px 28px 16px; border-bottom: 1px solid var(--border); }
+.setup-heading { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--amber); }
+.setup-lead { font-size: 13px; color: var(--text2); line-height: 1.6; max-width: 380px; margin: 0 auto 20px; }
+.poster-ph { background: var(--bg3); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--text3); }
+.poster-img { object-fit: cover; flex-shrink: 0; background: var(--bg3); }

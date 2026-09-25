@@ -53,9 +53,9 @@ export async function startTaskStream() {
     // After 3 retries, likely an auth issue — show message and stop retrying
     if (state.taskStreamRetries >= 3) {
       const el = document.getElementById('tasks-list');
-      if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite" style="color:var(--danger)">
+      if (el) el.innerHTML = `<p class="t-danger loading" role="status" aria-live="polite">
         ${SVG_WARN} Task stream disconnected —
-        <a href="#" ${act('reloadPage', EVENT)} aria-label="Reload page to reconnect" style="color:var(--amber)">reload page</a>
+        <a class="t-amber" href="#" ${act('reloadPage', EVENT)} aria-label="Reload page to reconnect">reload page</a>
         to reconnect.
       </p>`;
       state.taskStreamRetries = 0; // reset so reload works
@@ -133,7 +133,7 @@ function _taskRowHtml(t) {
       </div>
       <div class="panel-item-meta mt-4 js-meta"${meta ? '' : ' hidden'}>${meta}</div>
       <div class="panel-item-sub t-danger js-error"${err ? '' : ' hidden'}>${err}</div>
-      <div class="progress-bar js-progress"${bar ? '' : ' hidden'}><div class="progress-fill" style="width:${bar ? t.progress : 0}%"></div></div>
+      <div class="progress-bar js-progress"${bar ? '' : ' hidden'}><div class="progress-fill" data-style="width:${bar ? t.progress : 0}%"></div></div>
       <div class="panel-item-foot fs-11 t3 mono js-foot"${recentLog ? '' : ' hidden'}>${esc(recentLog)}</div>
     </div>`;
 }
@@ -181,8 +181,8 @@ function _enrichRowHtml(t) {
   const current = t.logs && t.logs.length ? t.logs[t.logs.length - 1].msg : '';
   return `<div class="mb-8" data-enrich-cat="${escAttr(t.category)}">
         <div class="row fs-12 js-count-line"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString()} / ${(t.total || 0).toLocaleString()}${rate}${eta}</span></div>
-        <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <div class="fs-10 t3 mono mt-4 js-current" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${current ? '' : ' hidden'} title="${escAttr(current)}">${esc(current)}</div>
+        <div class="mt-4 progress-bar"><div class="progress-fill" data-style="width:${pct}%"></div></div>
+        <div class="ellipsis fs-10 t3 mono mt-4 js-current"${current ? '' : ' hidden'} title="${escAttr(current)}">${esc(current)}</div>
       </div>`;
 }
 
@@ -228,7 +228,7 @@ export function _renderTaskHistory(r) {
   // The task table: relative time in the cell, the absolute one in its tooltip.
   el.innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Task</th><th>Status</th><th>Last run</th><th class="t-right">Duration</th></tr></thead><tbody>
     ${entries.map(([cat, run]) => `<tr>
-      <td><div class="b">${esc(run.name || cat)}</div>${run.message ? `<div class="fs-11 t3" style="max-width:520px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escAttr(run.message)}">${esc(run.message)}</div>` : ''}</td>
+      <td><div class="b">${esc(run.name || cat)}</div>${run.message ? `<div class="maxw-520 ellipsis fs-11 t3" title="${escAttr(run.message)}">${esc(run.message)}</div>` : ''}</td>
       <td><span class="badge ${STATUS_BADGE[run.status] || 'muted'} badge-sm">${esc(run.status || '')}</span></td>
       <td class="t3" title="${escAttr(_fmtAbs(run.at))}">${run.at ? _fmtRel(run.at) : '—'}</td>
       <td class="t-right t3">${run.elapsed_s > 0 ? fmtTime(Math.round(run.elapsed_s)) : ''}</td>

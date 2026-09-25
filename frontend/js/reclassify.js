@@ -23,8 +23,8 @@ export function _renderReclassify(res) {
   for (const [label, items, mode] of sections) {
     if (!items || !items.length) continue;
     const all = mode === 'fix' ? `<label class="chip row-end"><input type="checkbox" ${actOn('change', 'rcToggleSection', EL)}> select all</label>` : '';
-    html += `<div class="list-head"><span>${label}</span><span class="fs-12 t3" style="font-weight:400">${items.length}</span>${all}</div>`;
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px">';
+    html += `<div class="list-head"><span>${label}</span><span class="fw-400 fs-12 t3">${items.length}</span>${all}</div>`;
+    html += '<div class="grid-cards">';
     for (const it of items) html += reclassifyCard(it, mode);
     html += '</div>';
   }
@@ -49,14 +49,14 @@ export async function loadReclassify() {
 // One settings row: greyed when unchanged, struck-through → green when it's an issue.
 export function _rcRow(from, to, changed) {
   if (!changed) return `<div class="fs-11 t3">${esc(from || '—')}</div>`;
-  return `<div class="fs-11"><span class="t-danger" style="text-decoration:line-through">${esc(from || '—')}</span> <span class="t3">→</span> <span class="t-success b">${esc(to || '—')}</span></div>`;
+  return `<div class="fs-11"><span class="strike t-danger">${esc(from || '—')}</span> <span class="t3">→</span> <span class="t-success b">${esc(to || '—')}</span></div>`;
 }
 
 export function reclassifyCard(it, mode) {
   const cu = it.current, ex = it.expected || {}, iss = it.issues || [];
   const poster = _posterImg(it.poster, 48, 72, false);
   const link = it.sonarr_link
-    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(it.title)} in Sonarr" title="Open in Sonarr" class="t-amber fs-11" style="text-decoration:none">↗</a>` : '';
+    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(it.title)} in Sonarr" title="Open in Sonarr" class="no-underline t-amber fs-11">↗</a>` : '';
   const card = (inner) => `<div class="panel-item rc-card">${inner}</div>`;
 
   if (mode === 'uncertain') {
@@ -68,9 +68,9 @@ export function reclassifyCard(it, mode) {
     return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix="" data-fa='${fa}' data-ft='${ft}' hidden>
       ${poster}
       <div class="grow">
-        <div class="b" style="font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}</div>
+        <div class="fs-12-5 mb-3 b">${esc(it.title)}${link}</div>
         <div class="fs-11 t3">${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>
-        <div class="row mt-8" style="gap:5px">${dirBtn('tv', '→ TV')}${dirBtn('anime', '→ Anime')}${dirBtn('skip', 'skip')}</div>
+        <div class="gap-5 row mt-8">${dirBtn('tv', '→ TV')}${dirBtn('anime', '→ Anime')}${dirBtn('skip', 'skip')}</div>
       </div>`);
   }
 
@@ -79,10 +79,10 @@ export function reclassifyCard(it, mode) {
              + _rcRow(cu.profile, ex.profile, iss.includes('profile'));
   const moveTag = (it.fix && it.fix.moveFiles)
     ? ` <span class="badge amber badge-sm" title="Sonarr queues a physical move of the files">move files</span>` : '';
-  return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' ${actOn('change', 'updateReclassifyCount')} style="margin-top:3px;flex-shrink:0">
+  return card(`<input type="checkbox" class="mt-3 shrink-0 rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' ${actOn('change', 'updateReclassifyCount')}>
     ${poster}
     <div class="grow">
-      <div class="b" style="font-size:12.5px;margin-bottom:3px">${esc(it.title)}${link}${moveTag}</div>
+      <div class="fs-12-5 mb-3 b">${esc(it.title)}${link}${moveTag}</div>
       ${body}
     </div>`);
 }

@@ -132,16 +132,18 @@ class SecurityHeadersMiddleware:
         (b"x-content-type-options", b"nosniff"),
         (b"x-frame-options", b"DENY"),  # no iframes anywhere in the frontend
         (b"referrer-policy", b"same-origin"),
-        # Scripts are the module tree only, so script-src is 'self'.
-        # 'unsafe-inline' remains for style-src because ~280 inline style attributes
-        # are a separate budget and have not been converted yet. Everything else is
-        # locked to the origin - the frontend loads no external resource
-        # (posters go through /api/image/proxy, Plex login is a window.open),
-        # so connect-src 'self' means a script injection that survived
-        # DOMPurify still cannot phone the token home.
+        # Scripts are the module tree only, so script-src is 'self'; styles
+        # are the stylesheet only since 2026-09-25 (the 278 inline style
+        # attributes became classes, computed values travel as data-style and
+        # are applied from script - see ui.hydrateStyles), so style-src is
+        # 'self' too: injected markup can neither run nor style. Everything
+        # else is locked to the origin - the frontend loads no external
+        # resource (posters go through /api/image/proxy, Plex login is a
+        # window.open), so connect-src 'self' means a script injection that
+        # survived DOMPurify still cannot phone the token home.
         (b"content-security-policy",
          b"default-src 'self'; script-src 'self'; "
-         b"style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+         b"style-src 'self'; img-src 'self' data: blob:; "
          b"connect-src 'self'; font-src 'self' data:; object-src 'none'; "
          b"base-uri 'self'; form-action 'self'; frame-ancestors 'none'"),
         (b"permissions-policy",

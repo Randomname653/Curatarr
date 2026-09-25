@@ -115,6 +115,11 @@ The shared verified-data block — the one renderer behind chat answers,
 deletion verdicts and pitches — is fenced as a whole. Model output is
 stripped of tag-like markup before it is stored, the chat sink renders
 through DOMPurify, and names pushed into Plex are plain printable text.
+The Content-Security-Policy allows no inline script and, since
+2026-09-25, no inline style either: every static style is a class, a
+computed size travels as a data attribute applied from script, and the
+sanitizer drops data attributes from anything untrusted — markup that
+survives it can neither run nor style.
 Studio and director notes distilled from Wikipedia cache for a year, not a
 decade, so an upstream correction reaches the evidence.
 

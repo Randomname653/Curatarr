@@ -54,12 +54,12 @@ export function _renderHistoryStats(s) {
     <div class="stat-row">
       <div class="stat-box"><div class="num">${s.watch_history_entries.toLocaleString()}</div><div class="lbl">Entries synced</div></div>
       <div class="stat-box">
-        <div class="num" style="color:${coverageOk?'var(--amber)':'var(--danger)'}">${tv.watch_count?.toLocaleString()||0}</div>
-        <div class="lbl">In taste profile ${coverageOk?'':'<span style="color:var(--amber)">— outdated</span>'}</div>
+        <div class="num ${coverageOk ? 't-amber' : 't-danger'}">${tv.watch_count?.toLocaleString()||0}</div>
+        <div class="lbl">In taste profile ${coverageOk?'':'<span class="t-amber">— outdated</span>'}</div>
       </div>
-      <div class="stat-box"><div class="num" style="font-size:16px">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
+      <div class="stat-box"><div class="fs-16 num">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
     </div>
-    ${tv.note?`<div style="font-size:12px;color:var(--danger);margin-bottom:12px;padding:8px 12px;background:var(--danger-dim);border-radius:var(--radius)">${esc(tv.note)}</div>`:''}`;
+    ${tv.note?`<div class="error-box">${esc(tv.note)}</div>`:''}`;
 }
 
 // Only the stats tile above goes through the SWR cache -- the taste-tabs /
@@ -102,19 +102,19 @@ export function showTasteTabData(byType, summary, type) {
   const typeSummary=match?match[1].trim():'';
   const cb = d.completion_breakdown || {};
   const compRow = cb.total
-    ? `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-        <span><strong style="color:var(--success)">${cb.completed||0}</strong> <span style="font-size:12px;color:var(--text2)">finished</span></span>
-        ${cb.in_progress?`<span><strong style="color:var(--amber)">${cb.in_progress}</strong> <span style="font-size:12px;color:var(--text2)">in progress</span></span>`:''}
-        ${cb.dropped?`<span><strong style="color:var(--danger)">${cb.dropped}</strong> <span style="font-size:12px;color:var(--text2)">dropped &lt;40%</span></span>`:''}
-        ${cb.nearly_done?`<span><strong style="color:var(--info)">${cb.nearly_done}</strong> <span style="font-size:12px;color:var(--text2)">&gt;80% done</span></span>`:''}
+    ? `<div class="flex gap-16 flex-wrap mb-12">
+        <span><strong class="t-success">${cb.completed||0}</strong> <span class="fs-12 t2">finished</span></span>
+        ${cb.in_progress?`<span><strong class="t-amber">${cb.in_progress}</strong> <span class="fs-12 t2">in progress</span></span>`:''}
+        ${cb.dropped?`<span><strong class="t-danger">${cb.dropped}</strong> <span class="fs-12 t2">dropped &lt;40%</span></span>`:''}
+        ${cb.nearly_done?`<span><strong class="t-info">${cb.nearly_done}</strong> <span class="fs-12 t2">&gt;80% done</span></span>`:''}
       </div>`
-    : `<div style="margin-bottom:12px"><span style="font-size:22px;font-weight:700;color:var(--amber)">${d.watch_count?.toLocaleString()||0}</span><span style="font-size:12px;color:var(--text2);margin-left:6px">items</span></div>`;
+    : `<div class="mb-12"><span class="fs-22 fw-700 t-amber">${d.watch_count?.toLocaleString()||0}</span><span class="fs-12 t2 ml-6">items</span></div>`;
   document.getElementById('taste-content').innerHTML=`
-    <div class="card" style="margin-bottom:16px">
+    <div class="mb-16 card">
       ${compRow}
-      ${d.top_genres?.length?`<div style="margin-bottom:8px"><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Top genres</span><div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${d.top_genres.slice(0,8).map(g=>`<span class="badge amber">${esc(g)}</span>`).join('')}</div></div>`:''}
-      ${d.top_titles?.length?`<div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Most watched</span><div style="margin-top:4px;font-size:12px;color:var(--text2)">${d.top_titles.slice(0,8).map(esc).join(' · ')}</div></div>`:''}
-      ${typeSummary?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text2);line-height:1.7">${esc(typeSummary)}</div>`:''}
+      ${d.top_genres?.length?`<div class="mb-8"><span class="eyebrow">Top genres</span><div class="mt-6 flex gap-6 flex-wrap">${d.top_genres.slice(0,8).map(g=>`<span class="badge amber">${esc(g)}</span>`).join('')}</div></div>`:''}
+      ${d.top_titles?.length?`<div><span class="eyebrow">Most watched</span><div class="mt-4 fs-12 t2">${d.top_titles.slice(0,8).map(esc).join(' · ')}</div></div>`:''}
+      ${typeSummary?`<div class="footnote">${esc(typeSummary)}</div>`:''}
     </div>`;
 }
 
@@ -122,13 +122,13 @@ export function renderRecent(entries, category) {
   if(!entries?.length){document.getElementById('recent-history').innerHTML=`<p class="loading" role="status" aria-live="polite">No ${CAT_LABELS[category]||category} history yet.</p>`;return;}
   const label = CAT_LABELS[category]||category;
   document.getElementById('recent-history').innerHTML=`
-    <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Recent ${label}</div>
+    <div class="eyebrow mb-8">Recent ${label}</div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Title</th><th>Genre</th><th>Date</th></tr></thead><tbody>
     ${entries.slice(0,50).map(e=>{
       let title=e.title;
       if(e.media_type==='music'&&e.series_title) title=`${e.title} — ${e.series_title}`;
       else if((e.media_type==='anime'||e.media_type==='show')&&e.series_title) title=`${e.series_title}: ${e.title}`;
-      return `<tr><td>${esc(title)}</td><td><span style="color:var(--text3);font-size:12px">${esc((e.genres||'').split(',')[0])}</span></td><td style="color:var(--text3);font-size:12px;white-space:nowrap">${(e.viewed_at||'').slice(0,10)}</td></tr>`;
+      return `<tr><td>${esc(title)}</td><td><span class="t3 fs-12">${esc((e.genres||'').split(',')[0])}</span></td><td class="t3 fs-12 nowrap">${(e.viewed_at||'').slice(0,10)}</td></tr>`;
     }).join('')}
     </tbody></table></div>`;
 }

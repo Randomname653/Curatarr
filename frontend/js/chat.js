@@ -31,7 +31,7 @@ export async function newChat() {
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
         <div id="glance-panel"></div>
         <div id="last-played-panel"></div>
-        <div id="suggested-prompts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts">
           <button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?')}>What should I watch tonight?</button>
           <button class="sp-chip" ${act('fillPrompt', 'What can I clean up in my library?')}>What can I clean up in my library?</button>
           <button class="sp-chip" ${act('fillPrompt', 'What does my watch history say about my taste?')}>What does my watch history say about my taste?</button>
@@ -328,9 +328,9 @@ export async function loadGlancePanel() {
 
   if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
-  el.innerHTML = `<div class="stat-row" style="margin:16px 0 4px">` + tiles.map(t => `
-    <div class="stat-box" style="cursor:pointer" ${act('goToView', t.view)}>
-      <div class="num"${t.small ? ' style="font-size:16px"' : ''}>${esc(String(t.num))}</div>
+  el.innerHTML = `<div class="mt-16 mb-4 stat-row">` + tiles.map(t => `
+    <div class="pointer stat-box" ${act('goToView', t.view)}>
+      <div class="fs-16 num"${t.small ? '' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
     </div>`).join('') + `</div>`;
 }
@@ -533,21 +533,21 @@ export function _setDiscussBanner(text) {
   if (!banner || !txt) return;
   if (text) {
     txt.textContent = text;
-    banner.style.display = 'flex';
+    banner.hidden = false;
     // Pass 53: the "Delete & exit" button only makes sense for deletion
     // discussions — proactive-message threads have nothing to delete.
     // Relies on state.pendingDiscussContext being set BEFORE this call, which
     // both call sites (discussDeletion, discussInChat/proactive) do.
     if (delBtn) {
       const isDeletion = state.pendingDiscussContext?.kind === 'deletion_proposal';
-      delBtn.style.display = isDeletion ? 'inline-block' : 'none';
+      delBtn.hidden = !isDeletion;
       delBtn.disabled = false;
       delBtn.textContent = 'Delete & exit';
     }
   } else {
-    banner.style.display = 'none';
+    banner.hidden = true;
     txt.textContent = '';
-    if (delBtn) delBtn.style.display = 'none';
+    if (delBtn) delBtn.hidden = true;
   }
   // B4: every set/clear of the banner already means state.pendingDiscussContext
   // just changed (both happen together at every call site), so this is

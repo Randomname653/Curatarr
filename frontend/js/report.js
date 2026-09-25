@@ -2,7 +2,7 @@
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
 export function _repBar(pct, color) {
-  return `<div style="background:var(--bg3);border-radius:3px;height:8px;overflow:hidden"><div style="width:${Math.min(100, pct)}%;height:100%;background:${color}"></div></div>`;
+  return `<div class="bar-track"><div class="bar-fill" data-style="width:${Math.min(100, pct)}%;background:${color}"></div></div>`;
 }
 
 export async function loadReport() {
@@ -23,17 +23,17 @@ export function _renderReport(d) {
   const maxGb = Math.max(1, ...(d.months || []).map(m => m.gb_freed || 0));
 
   const tiles = `
-    <div class="stat-row" style="flex-wrap:wrap">
+    <div class="flex-wrap stat-row">
       ${[['GB freed', t.gb_freed || 0], ['Deleted', t.deleted || 0],
          ['Kept after debate', t.kept || 0],
          ['Override rate', resTotal ? Math.round(100 * (t.overrides || 0) / resTotal) + '%' : '—'],
          ['Redundant on disk', (d.duplicates?.total_redundant_gb || 0) + ' GB']]
-        .map(([l, v]) => `<div class="stat-box" style="min-width:140px;text-align:center"><div class="num">${esc(String(v))}</div><div class="lbl">${esc(l)}</div></div>`).join('')}
+        .map(([l, v]) => `<div class="minw-140 t-center stat-box"><div class="num">${esc(String(v))}</div><div class="lbl">${esc(l)}</div></div>`).join('')}
     </div>`;
 
   const monthRows = (d.months || []).map(m => {
     const act = m.deleted + m.kept;
-    return `<div class="fs-11 t3" style="display:grid;grid-template-columns:64px 1fr 1fr 90px;gap:10px;align-items:center;margin-bottom:6px">
+    return `<div class="grid-row-4 fs-11 t3">
       <span>${esc(m.month)}</span>
       <div title="${m.deleted} deleted / ${m.kept} kept">${_repBar(100 * act / maxAct, 'var(--amber)')}</div>
       <div title="${m.gb_freed} GB freed">${_repBar(100 * (m.gb_freed || 0) / maxGb, 'var(--success)')}</div>
@@ -44,9 +44,9 @@ export function _renderReport(d) {
   const resSplit = resTotal ? `
     <div class="mb-12">
       <div class="fs-12 t2 mb-8">How debates ended: <b>${t.consensus} consensus</b> · <b class="t-amber">${t.overrides} overrides</b></div>
-      <div class="progress-bar" style="margin-top:0;height:10px;display:flex">
-        <div style="width:${Math.round(100 * t.consensus / resTotal)}%;background:var(--border2)"></div>
-        <div style="flex:1;background:var(--amber)"></div>
+      <div class="mt-0 h-10 flex progress-bar">
+        <div data-style="width:${Math.round(100 * t.consensus / resTotal)}%;background:var(--border2)"></div>
+        <div class="flex-1 bg-amber"></div>
       </div>
     </div>` : '';
 
@@ -75,7 +75,7 @@ export function _renderReport(d) {
     : '';
 
   const narrative = section('Yearly review', "in the curator's own words",
-    `<div id="report-narrative" class="fs-13 t2" style="line-height:1.7">${d.narrative ? esc(d.narrative) : '<span class="t3">Not written yet.</span>'}</div>`,
+    `<div id="report-narrative" class="lh-17 fs-13 t2">${d.narrative ? esc(d.narrative) : '<span class="t3">Not written yet.</span>'}</div>`,
     `<button type="button" class="btn btn-secondary btn-sm" ${act('writeYearlyReview', EL)}>${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>`);
 
   el.innerHTML = tiles + resSplit +

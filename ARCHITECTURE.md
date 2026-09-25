@@ -1481,8 +1481,9 @@ attribute text: `_errHtml(e, act('loadUsers'))`, `menuHtml` items carry
 `action`, `emptyHtml(html, label, act(...))`, and `pagerHtml({offset, limit,
 total, page})` calls `page(offset)` for its Prev/Next buttons. The window
 block is gone, `const actions = {...}` in app.js is the only table, and
-`src/middleware.py` sends `script-src 'self'` (`style-src` keeps
-`'unsafe-inline'` for the inline-style budget). `tests/test_frontend_hygiene.py`
+`src/middleware.py` sends `script-src 'self'` and, since 2026-09-25,
+`style-src 'self'` (the inline-style budget went to zero: classes for static
+styles, `data-style` + `ui.hydrateStyles` for the eight computed values). `tests/test_frontend_hygiene.py`
 pins: zero `on*=` anywhere, no globals through `window`, the registry equal
 to the set of referenced names in both directions, literal action names, no
 variable passed in quotes (`act('goToView', 't.view')` — the mistake the PR
@@ -1546,7 +1547,8 @@ for controls outside a `.form-group`, `.chip(.active)` for filters,
 **Guard.** `tests/test_frontend_hygiene.py` pins the counts of the old
 mechanisms and the inline-style budget as ceilings that only go down
 (2026-09-06: alert/confirm/prompt/cssText 0; inline styles in JS templates
-≤ 218 and in static markup ≤ 60, down from 651 / 198), checks that every
+≤ 218 and in static markup ≤ 60, down from 651 / 198; 2026-09-25: both 0,
+`data-style` ≤ 8 for computed values), checks that every
 shared helper exists and that no second overlay or toast system appears.
 `test_app_context_drift` keeps prompt-visible labels in sync with
 `app_context.py`; `test_frontend_syntax` runs every inline script through

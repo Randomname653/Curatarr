@@ -29,7 +29,7 @@ export async function loadJudgeProtections() {
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
           </div>
         </div>
-        <div class="panel-item-sub" style="white-space:pre-line">${esc(p.reason || '')}</div>
+        <div class="pre-line panel-item-sub">${esc(p.reason || '')}</div>
       </div>`;
     }).join('');
   } catch(e) {
@@ -86,8 +86,8 @@ export async function loadPrinciples() {
           ? `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'shadow', EL)}>Deactivate</button>`
           : `<button type="button" class="btn btn-secondary btn-sm" ${act('setPrinciple', p.id, 'activate', EL)}>Activate</button>`;
       return `<div class="panel-item">
-        <div class="panel-item-head" style="align-items:flex-start">
-          <div class="grow" style="min-width:200px">
+        <div class="items-start panel-item-head">
+          <div class="minw-200 grow">
             <div>${st}${nov}${reinf}</div>
             <div class="fs-13 mt-4">${esc(p.text || '')}</div>
             <div class="panel-item-meta fs-11 mt-4">${meta}${when ? ' · ' + when : ''}${p.related ? ' · vs: ' + esc(p.related) : ''}</div>
@@ -134,7 +134,7 @@ export async function shutdownServer() {
   ov.className = 'sd-overlay';
   ov.innerHTML =
     '<div class="sd-ripple"></div><div class="sd-ripple"></div><div class="sd-ripple"></div>' +
-    '<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:16px;color:var(--text)">' +
+    '<div class="stack-center-16">' +
     '<svg class="sd-logo" width="96" height="96" viewBox="0 0 64 64">' +
     '<defs><linearGradient id="sdg" x1="0" y1="0" x2="1" y2="1">' +
     '<stop offset="0" stop-color="#f7c14a"/><stop offset="1" stop-color="#e5a00d"/></linearGradient></defs>' +
@@ -144,8 +144,8 @@ export async function shutdownServer() {
     '<path d="M 18.2 49.1 A 22 22 0 0 0 48.9 46.1"/></g>' +
     '<path d="M 40.5 23.5 A 12 12 0 1 0 40.5 40.5" fill="none" stroke="#f0b93a" stroke-width="3.6" stroke-linecap="round"/>' +
     '<circle cx="32" cy="32" r="5" fill="url(#sdg)"/><circle cx="32" cy="32" r="2" fill="#ffd873"/></svg>' +
-    '<h2 style="font-weight:600">Curatarr is shutting down…</h2>' +
-    '<p style="color:var(--text3);font-size:13px">You can close this tab. Start the server again to come back.</p></div>';
+    '<h2 class="b">Curatarr is shutting down…</h2>' +
+    '<p class="t3 fs-13">You can close this tab. Start the server again to come back.</p></div>';
   document.body.appendChild(ov);
 
   // Wind-down: pulse + ripples run at full speed, then decelerate to a
@@ -316,9 +316,9 @@ export async function loadRedundancy() {
 
     el.innerHTML =
       `<div class="fs-12 t2 mb-8">Total reclaimable: <b class="t-amber">${r.total_redundant_gb || 0} GB</b> · ${intra.length + cross.length} title(s)</div>` +
-      (intra.length ? `<div class="list-head"><span>Multiple qualities of one item</span><span class="fs-12 t3" style="font-weight:400">${r.intra_redundant_gb} GB</span></div>` +
+      (intra.length ? `<div class="list-head"><span>Multiple qualities of one item</span><span class="fw-400 fs-12 t3">${r.intra_redundant_gb} GB</span></div>` +
         intra.map(intraCard).join('') : '') +
-      (cross.length ? `<div class="list-head"><span>Same title as separate items</span><span class="fs-12 t3" style="font-weight:400">${r.cross_redundant_gb} GB</span></div>` +
+      (cross.length ? `<div class="list-head"><span>Same title as separate items</span><span class="fw-400 fs-12 t3">${r.cross_redundant_gb} GB</span></div>` +
         cross.map(crossCard).join('') : '');
   } catch(e) {
     el.innerHTML = _errHtml(e);

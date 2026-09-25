@@ -29,7 +29,7 @@ export function _recCard(rec) {
       <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
-          <div class="panel-item-title" style="font-size:16px">${esc(rec.title)}${laneBadge}<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round((rec.confidence||0.7)*100)}%</span></div>
+          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round((rec.confidence||0.7)*100)}%</span></div>
           <div class="panel-actions">
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
@@ -38,9 +38,9 @@ export function _recCard(rec) {
           </div>
         </div>
         <div class="fs-12 t3 mt-4">${esc(rec.category_label||'')}</div>
-        ${genreTags ? `<div class="row mt-8" style="gap:5px">${genreTags}</div>` : ''}
-        ${rec.synopsis ? `<div class="fs-12 t3 mt-8" style="line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(rec.synopsis)}</div>` : ''}
-        <div class="t2 mt-8" style="font-size:13.5px;line-height:1.65">${esc(rec.reason||rec.pitch||'')}</div>
+        ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
+        ${rec.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(rec.synopsis)}</div>` : ''}
+        <div class="quote-text t2 mt-8">${esc(rec.reason||rec.pitch||'')}</div>
       </div>
     </div>
   </div>`;
@@ -122,15 +122,15 @@ export async function searchLibrary() {
       hits.map(h => `
       <div class="card mb-8">
         <div class="panel-item-head">
-          <div class="panel-item-title" style="font-size:14px">${esc(h.title)}</div>
+          <div class="fs-14 panel-item-title">${esc(h.title)}</div>
           <div class="row">
             <span class="badge ${/unwatched|not/i.test(h.watch_tag || '') ? 'muted' : 'amber'}">${esc(h.watch_tag || '')}</span>
             ${h.size_tag ? `<span class="badge muted">${esc(h.size_tag)}</span>` : ''}
           </div>
         </div>
         ${h.genres ? `<div class="fs-11 t3 mt-4">${esc(h.genres)}${h.themes ? ` · ${esc(h.themes)}` : ''}</div>` : ''}
-        ${h.fit_note ? `<div class="fs-11 t3 mt-4" style="font-style:italic">${esc(h.fit_note)}</div>` : ''}
-        ${h.doc ? `<div class="fs-12 t2 mt-8" style="line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(h.doc.slice(0, 220))}</div>` : ''}
+        ${h.fit_note ? `<div class="italic fs-11 t3 mt-4">${esc(h.fit_note)}</div>` : ''}
+        ${h.doc ? `<div class="clamp-2 fs-12 t2 mt-8">${esc(h.doc.slice(0, 220))}</div>` : ''}
       </div>`).join('');
   } catch (e) {
     el.innerHTML = _errHtml(e);
@@ -140,7 +140,7 @@ export async function searchLibrary() {
 export function _recSection(lane, recs) {
   if (!recs || !recs.length) return '';
   const m = _LANE_META[lane] || { title:lane, sub:'' };
-  return `<div class="list-head"><span>${esc(m.title)}</span><span class="fs-12 t3" style="font-weight:400">· ${esc(m.sub)} · ${recs.length}</span></div>` + recs.map(_recCard).join('');
+  return `<div class="list-head"><span>${esc(m.title)}</span><span class="fw-400 fs-12 t3">· ${esc(m.sub)} · ${recs.length}</span></div>` + recs.map(_recCard).join('');
 }
 
 export async function loadRecs(category=null, btn=null, refresh=false) {

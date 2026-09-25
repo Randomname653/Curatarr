@@ -40,7 +40,8 @@ def test_security_headers_include_a_locked_down_csp():
         assert directive in csp, directive
     assert "script-src 'self';" in csp
     assert "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
-    assert "style-src 'self' 'unsafe-inline'" in csp
+    assert "style-src 'self';" in csp, "no inline styles since 2026-09-25 (they are classes / data-style)"
+    assert "unsafe-inline" not in csp
     assert b"permissions-policy" in hdrs
     assert hdrs[b"x-frame-options"] == b"DENY"
 

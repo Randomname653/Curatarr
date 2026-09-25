@@ -15,11 +15,11 @@ export const CAT_LABELS = {music:'Music', movie:'Movies', show:'TV Shows', anime
 // Small inline status glyphs — reuse the sidebar's stroke-icon language
 // (currentColor so they follow whatever text color already wraps them)
 // instead of platform emoji, which render inconsistently across OSes.
-export const SVG_WARN = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;flex-shrink:0"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
-export const SVG_CHECK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-2px;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>';
-export const SVG_X = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-2px;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+export const SVG_WARN = '<svg class="icon-inline" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+export const SVG_CHECK = '<svg class="icon-inline" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+export const SVG_X = '<svg class="icon-inline" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 export const SVG_TRASH = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
-export const SVG_STAR = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;flex-shrink:0"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>';
+export const SVG_STAR = '<svg class="icon-inline" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>';
 
 // A failed api() call throws the raw response body as e.message -- for a
 // FastAPI error that's a JSON blob like {"detail":"..."}. Pull the human
@@ -36,7 +36,7 @@ export function _errMsg(e) {
 // of leaving the view stuck on a bare "Loading…" forever. `retry` is the
 // attribute text from act(): _errHtml(e, act('loadUsers')).
 export function _errHtml(e, retry) {
-  const button = retry ? `<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" ${retry}>Retry</button>` : '';
+  const button = retry ? `<br><button class="mt-8 btn btn-secondary btn-sm" ${retry}>Retry</button>` : '';
   return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${button}`;
 }
 
@@ -49,7 +49,7 @@ export function _errHtml(e, retry) {
 export function _posterImg(url, w, h, isMusic) {
   const radius = isMusic ? '50%' : '4px';
   if (!url) {
-    return `<div style="width:${w}px;height:${h}px;background:var(--bg3);border-radius:${radius};flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:${Math.round(w*0.4)}px">?</div>`;
+    return `<div class="poster-ph" data-style="width:${w}px;height:${h}px;border-radius:${radius};font-size:${Math.round(w*0.4)}px">?</div>`;
   }
   // TMDB carries its size as a path segment (.../t/p/w92/xyz.jpg) --
   // swapping just that segment gets a sharper (or smaller) variant of the
@@ -62,7 +62,7 @@ export function _posterImg(url, w, h, isMusic) {
     ? ['w185', 'w342', 'w500', 'w780'].map(sz => `${esc(proxyImg(url.replace(sizeMatch[1], sz)))} ${sz.slice(1)}w`).join(', ')
     : '';
   const srcsetAttr = srcset ? ` srcset="${srcset}" sizes="${w}px"` : '';
-  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:${radius};flex-shrink:0;background:var(--bg3)" ${actOn('error', 'hideOnError', EL)}>`;
+  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" class="poster-img" data-style="width:${w}px;height:${h}px;border-radius:${radius}" ${actOn('error', 'hideOnError', EL)}>`;
 }
 
 // ── UI GRAMMAR HELPERS ──────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ export function confirmDialog(o = {}) {
     };
     const reasonHtml = o.reason
       ? `<label class="stack mt-12 fs-12 t2" for="confirm-reason">${esc(o.reason.label || 'Reason (optional — Curatarr learns from it)')}
-           <input id="confirm-reason" class="input" style="width:100%" placeholder="${escAttr(o.reason.placeholder || '')}" value="${escAttr(o.reason.value || '')}"></label>`
+           <input id="confirm-reason" class="w-full input" placeholder="${escAttr(o.reason.placeholder || '')}" value="${escAttr(o.reason.value || '')}"></label>`
       : '';
     openModal({
       title: o.title || 'Are you sure?', size: 'narrow', danger: !!o.danger,
@@ -243,7 +243,7 @@ export function setBadge(id, n) {
   if (!el) return;
   n = Number(n) || 0;
   el.textContent = n > 999 ? '999+' : String(n);
-  el.style.display = n > 0 ? 'inline' : 'none';
+  el.hidden = !(n > 0);
 }
 
 // setPulse(id, source, on) — a pulse dot that several sources may switch
@@ -255,7 +255,7 @@ export function setPulse(id, source, on) {
   if (on) set.add(source); else set.delete(source);
   _pulseSources.set(id, set);
   const el = document.getElementById(id);
-  if (el) el.style.display = set.size ? '' : 'none';
+  if (el) el.hidden = !set.size;
 }
 export function pulseHeldBy(id, source) {
   return !!_pulseSources.get(id)?.has(source);
@@ -334,6 +334,30 @@ export function sanitizeHtml(html) {
 }
 
 export function renderMarkdown(md) { return sanitizeHtml(marked.parse(md)); }
+
+// ── data-style: the one road for a COMPUTED style. The CSP allows no inline
+// style since 2026-09-25 (style-src 'self'): an inline style attribute in
+// markup or a template is refused by the browser, el.style.* from script is not.
+// Static styles are classes; a template puts a computed width, size or
+// colour into data-style, and this applies it once the node is in the
+// document (the observer sees every insertion, innerHTML included).
+// Untrusted HTML cannot ride it: the sanitizer drops every data-* attribute.
+export function hydrateStyles(root = document) {
+  const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('[data-style]')) : [];
+  if (root.matches && root.matches('[data-style]')) nodes.unshift(root);
+  for (const el of nodes) {
+    for (const decl of el.dataset.style.split(';')) {
+      const i = decl.indexOf(':');
+      if (i > 0) el.style.setProperty(decl.slice(0, i).trim(), decl.slice(i + 1).trim());
+    }
+    delete el.dataset.style;   // applied once; a re-render brings a fresh value
+  }
+}
+if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+  new MutationObserver(muts => {
+    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) hydrateStyles(n);
+  }).observe(document.documentElement, {childList: true, subtree: true});
+}
 
 // Pass 97: image proxy front-end helper.
 //

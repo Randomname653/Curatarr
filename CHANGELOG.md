@@ -269,6 +269,15 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**No inline styles.** The Content-Security-Policy's `style-src` is
+`'self'`: the 278 inline style attributes in the markup and the module
+templates became classes (a utilities block named by property, a handful
+of named boxes), the eight computed values (progress widths, poster sizes,
+bar colours) travel as `data-style` and are applied from script by
+`ui.hydrateStyles`, and every element that started hidden uses the
+`hidden` attribute. The frontend-hygiene ceilings for inline styles are
+zero now; a `data-style` ceiling of eight takes their place.
+
 **The audit's residuals, closed.** A household member's Activity view
 now lists only the tasks that carry their user id, the task stream the
 same, and the library status tells a member which arr services exist

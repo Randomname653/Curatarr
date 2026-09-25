@@ -32,7 +32,7 @@ export function _renderLibraryConfig([cfg, disc]) {
       return `
       <div class="panel-item">
         <div class="panel-item-head">
-          <div class="panel-item-title" style="font-size:15px">${esc(s.title)}<span class="badge muted badge-sm">${esc(s.type)}</span></div>
+          <div class="fs-15 panel-item-title">${esc(s.title)}<span class="badge muted badge-sm">${esc(s.type)}</span></div>
           <div class="panel-actions">
             <label for="libcat-${s.key}" class="fs-11 t3">Category</label>
             <select id="libcat-${s.key}" class="input" aria-label="Select category for library">
@@ -41,16 +41,16 @@ export function _renderLibraryConfig([cfg, disc]) {
           </div>
         </div>
         ${paths ? `<div class="fs-11 t3 mono mt-4">${paths}</div>` : ''}
-        <div class="panel-item-meta row mt-8" style="gap:16px">
+        <div class="gap-16 panel-item-meta row mt-8">
           <span title="Items in Plex">${s.plex_item_count.toLocaleString()} items in Plex</span>
           <span title="Playback events in Curatarr DB">${s.db_entry_count.toLocaleString()} plays tracked</span>
           <span title="Enriched with metadata">${s.enriched_count.toLocaleString()} enriched</span>
           <span>last scan <span class="t2" title="${escAttr(fmtDate(s.scanned_at))}">${s.scanned_at ? _fmtRel(s.scanned_at) : '—'}</span> · last update <span class="t2" title="${escAttr(fmtDate(s.updated_at))}">${s.updated_at ? _fmtRel(s.updated_at) : '—'}</span></span>
         </div>
         ${s.plex_item_count > 0 ? `
-        <div class="panel-item-foot" style="max-width:260px">
+        <div class="maxw-260 panel-item-foot">
           <div class="fs-11 t3 mb-4">Enrichment ${enrichPct}%</div>
-          <div class="progress-bar" style="margin-top:0;height:4px"><div class="progress-fill" style="width:${Math.min(enrichPct,100)}%"></div></div>
+          <div class="mt-0 h-4 progress-bar"><div class="progress-fill" data-style="width:${Math.min(enrichPct,100)}%"></div></div>
         </div>` : ''}
       </div>`;
     }).join('') || emptyHtml('No Plex libraries found.');

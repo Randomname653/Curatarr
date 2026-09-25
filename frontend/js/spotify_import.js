@@ -5,17 +5,17 @@ import { api } from './api.js';
 import { collectStep } from './setup.js';
 export function spotifyDropZone(p) {
   return `
-    <div id="${p}-drop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:26px;text-align:center;cursor:pointer"
+    <div class="dropzone" id="${p}-drop"
          ${actOn('dragover', 'dropzoneOver', EVENT, EL)}
          ${actOn('dragleave', 'dropzoneLeave', EL)}
          ${actOn('drop', 'handleSpotifyDrop', EVENT, p)}
          ${act('openSpotifyPicker', p)}>
-      <div style="font-size:13px">Drop your Spotify extended history here</div>
-      <div class="hint" style="margin-top:4px">Streaming_History_Audio_*.json, endsong_*.json or the whole my_spotify_data.zip — or click to browse</div>
+      <div class="fs-13">Drop your Spotify extended history here</div>
+      <div class="mt-4 hint">Streaming_History_Audio_*.json, endsong_*.json or the whole my_spotify_data.zip — or click to browse</div>
     </div>
-    <input id="${p}-file" type="file" multiple accept=".json,.zip" style="display:none" ${actOn('change', 'onSpotifyFile', EL, p)}>
-    <div id="${p}-result" style="margin-top:8px"></div>
-    <div id="${p}-pending" class="hint" style="margin-top:4px"></div>`;
+    <input hidden id="${p}-file" type="file" multiple accept=".json,.zip" ${actOn('change', 'onSpotifyFile', EL, p)}>
+    <div class="mt-8" id="${p}-result"></div>
+    <div id="${p}-pending" class="mt-4 hint"></div>`;
 }
 
 export function handleSpotifyDrop(ev, p) {
@@ -79,7 +79,7 @@ export async function finishSetup() {
     el.innerHTML = 'Saved! Building Ollama models in background… <strong>Please close and reopen Curatarr.</strong>';
     setTimeout(()=>location.reload(), 5000);
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">Error: ${esc(_errMsg(e))}</span>`;
+    el.innerHTML = `<span class="t-danger">Error: ${esc(_errMsg(e))}</span>`;
   }
 }
 

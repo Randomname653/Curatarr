@@ -7,7 +7,7 @@ import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
 const SETUP_CONTENT = {
   plex: () => `
-    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Plex Connection</h2>
+    <h2 class="setup-heading">Plex Connection</h2>
     <div class="form-group">
       <label for="s-plex-url">Plex Server URL</label>
       <input id="s-plex-url" placeholder="http://192.168.1.100:32400" value="${state.setupData.plex_url||''}">
@@ -22,18 +22,18 @@ const SETUP_CONTENT = {
     <div id="test-plex-result"></div>`,
 
   ollama: () => `
-    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Ollama — Local AI</h2>
+    <h2 class="setup-heading">Ollama — Local AI</h2>
     <div class="form-group">
       <label for="s-ollama">Ollama Endpoint</label>
       <input id="s-ollama" placeholder="http://localhost:11434" value="${state.setupData.ollama_endpoint||'http://localhost:11434'}">
     </div>
     <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>Detect models</button>
-    <div id="test-ollama-result" style="margin:8px 0"></div>
-    <div class="form-group" style="margin-top:12px">
+    <div class="my-8" id="test-ollama-result"></div>
+    <div class="mt-12 form-group">
       <label for="s-vram">GPU / VRAM</label>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="row">
         <button class="btn btn-secondary btn-sm" ${act('detectGpu')}>Detect GPU (nvidia-smi)</button>
-        <select id="s-vram" style="width:auto" ${actOn('change', 'refreshModelRecs')}>
+        <select class="w-auto" id="s-vram" ${actOn('change', 'refreshModelRecs')}>
           <option value="">VRAM: pick manually…</option>
           <option value="8">8 GB</option>
           <option value="12">12 GB</option>
@@ -42,11 +42,11 @@ const SETUP_CONTENT = {
           <option value="32">32+ GB</option>
         </select>
       </div>
-      <div id="gpu-result" style="margin-top:6px"></div>
+      <div class="mt-6" id="gpu-result"></div>
       <div class="hint">Detection runs on the Curatarr host. If Ollama runs on a different machine, pick that machine's VRAM manually — the model recommendations below follow it.</div>
     </div>
-    <div id="model-recs" style="margin:8px 0"></div>
-    <div class="form-group" style="margin-top:12px">
+    <div class="my-8" id="model-recs"></div>
+    <div class="mt-12 form-group">
       <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
       <select id="s-curator-model"><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
       <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
@@ -60,13 +60,13 @@ const SETUP_CONTENT = {
       <label for="s-embed-model">Embedding model</label>
       <select id="s-embed-model"><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe (recommended)</option></select>
     </div>
-    <div class="form-group" style="margin-top:12px">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+    <div class="mt-12 form-group">
+      <label class="inline-flex pointer">
         <input type="checkbox" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${state.setupData.enable_pitcher?'checked':''}>
         Dedicated deletion judge (two-bake split)
       </label>
       <div class="hint">A second bake that ONLY judges deletions — benchmarked more precise and 2.4× faster at pitches than the chat curator. It needs its own VRAM while it runs (the curator is evicted meanwhile), so it pays off on 24 GB cards; below that the curator judges deletions too.</div>
-      <div id="s-pitcher-wrap" style="margin-top:8px;${state.setupData.enable_pitcher?'':'display:none'}">
+      <div id="s-pitcher-wrap" class="mt-8"${state.setupData.enable_pitcher ? '' : ' hidden'}>
         <label for="s-pitcher-model">Judge model</label>
         <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (recommended for the split)</option></select>
         <div id="pitcher-note" class="hint"></div>
@@ -84,38 +84,38 @@ const SETUP_CONTENT = {
     </div>`,
 
   metadata: () => `
-    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Metadata APIs</h2>
-    <p style="font-size:12px;color:var(--text2);margin-bottom:16px">These are optional but significantly improve recommendation quality. Skip any you don't need.</p>
+    <h2 class="setup-heading">Metadata APIs</h2>
+    <p class="fs-12 t2 mb-16">These are optional but significantly improve recommendation quality. Skip any you don't need.</p>
     <div class="form-group">
-      <label for="s-tmdb">TMDB API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
+      <label for="s-tmdb">TMDB API Key <span class="fs-10 badge muted">Movies &amp; Series</span></label>
       <input id="s-tmdb" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.tmdb_api_key||''}">
-      <div class="hint">Free at <a href="https://www.themoviedb.org/settings/api" style="color:var(--amber)" target="_blank">themoviedb.org/settings/api</a>. Needed for movie and TV metadata, cast, themes.</div>
+      <div class="hint">Free at <a class="t-amber" href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org/settings/api</a>. Needed for movie and TV metadata, cast, themes.</div>
     </div>
     <div class="form-group">
-      <label for="s-omdb">OMDb API Key <span class="badge muted" style="font-size:10px">Movies &amp; Series</span></label>
+      <label for="s-omdb">OMDb API Key <span class="fs-10 badge muted">Movies &amp; Series</span></label>
       <input id="s-omdb" placeholder="xxxxxxxx" value="${state.setupData.omdb_api_key||''}">
-      <div class="hint">Free at <a href="https://www.omdbapi.com/apikey.aspx" style="color:var(--amber)" target="_blank">omdbapi.com</a> (1,000 req/day). Adds Rotten Tomatoes / Metacritic scores, awards, richer plots.</div>
+      <div class="hint">Free at <a class="t-amber" href="https://www.omdbapi.com/apikey.aspx" target="_blank">omdbapi.com</a> (1,000 req/day). Adds Rotten Tomatoes / Metacritic scores, awards, richer plots.</div>
     </div>
     <div class="form-group">
-      <label for="s-lastfm">Last.fm API Key <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <label for="s-lastfm">Last.fm API Key <span class="fs-10 badge muted">Music only</span></label>
       <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.lastfm_api_key||''}">
       <div class="hint">Free at last.fm/api. Adds music tags, similar artists, and bio. MusicBrainz works without a key.</div>
       <div class="used-for">Skip if you don't use Curatarr for music.</div>
     </div>
     <div class="form-group">
-      <label for="s-spotify-id">Spotify Client ID <span class="badge muted" style="font-size:10px">Music only</span></label>
+      <label for="s-spotify-id">Spotify Client ID <span class="fs-10 badge muted">Music only</span></label>
       <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_id||''}">
-      <div class="hint">Free at <a href="https://developer.spotify.com/dashboard" style="color:var(--amber)" target="_blank">developer.spotify.com</a> → Create App. Enables genre enrichment via Client Credentials — no user login needed.</div>
+      <div class="hint">Free at <a class="t-amber" href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com</a> → Create App. Enables genre enrichment via Client Credentials — no user login needed.</div>
       <div class="used-for">Skip if you don't use Curatarr for music.</div>
     </div>
     <div class="form-group">
       <label for="s-spotify-secret">Spotify Client Secret</label>
       <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_secret||''}">
-      <button class="btn btn-secondary btn-sm" style="margin-top:6px" ${act('testConn', 'spotify')}>Test Spotify</button>
-      <div id="test-spotify-result" style="margin-top:4px;font-size:12px"></div>
+      <button class="mt-6 btn btn-secondary btn-sm" ${act('testConn', 'spotify')}>Test Spotify</button>
+      <div class="mt-4 fs-12" id="test-spotify-result"></div>
     </div>
     <div class="form-group">
-      <label for="s-soulsync-url">SoulSync URL <span class="badge muted" style="font-size:10px">Optional · Music</span></label>
+      <label for="s-soulsync-url">SoulSync URL <span class="fs-10 badge muted">Optional · Music</span></label>
       <input id="s-soulsync-url" placeholder="http://192.168.1.100:12279" value="${state.setupData.soulsync_url||''}">
       <div class="hint">A SoulSync instance on your LAN adds a second music-metadata opinion. Read-only — Curatarr never triggers its downloads. Skip if you don't run one.</div>
     </div>
@@ -124,27 +124,27 @@ const SETUP_CONTENT = {
       <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${state.setupData.soulsync_api_key||''}">
     </div>
     <div class="form-group">
-      <label for="s-listenbrainz">ListenBrainz user token <span class="badge muted" style="font-size:10px">Optional · Music</span></label>
+      <label for="s-listenbrainz">ListenBrainz user token <span class="fs-10 badge muted">Optional · Music</span></label>
       <input id="s-listenbrainz" type="password" placeholder="free account state.token" value="${state.setupData.listenbrainz_token||''}">
-      <div class="hint">Global listener counts as deletion evidence for music. Free account at <a href="https://listenbrainz.org/settings/" style="color:var(--amber)" target="_blank">listenbrainz.org/settings</a> — ListenBrainz requires the state.token since it auth-locked its API.</div>
+      <div class="hint">Global listener counts as deletion evidence for music. Free account at <a class="t-amber" href="https://listenbrainz.org/settings/" target="_blank">listenbrainz.org/settings</a> — ListenBrainz requires the state.token since it auth-locked its API.</div>
     </div>`,
 
   arr: () => `
-    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">*arr Services</h2>
-    <p style="font-size:12px;color:var(--text2);margin-bottom:16px">Skip services you don't use. These enable library management and deletion proposals.</p>
+    <h2 class="setup-heading">*arr Services</h2>
+    <p class="fs-12 t2 mb-16">Skip services you don't use. These enable library management and deletion proposals.</p>
     ${['Radarr:Movies:7878','Sonarr:TV & Anime:8989','Lidarr:Music:8686'].map(s=>{
       const [name,what,port] = s.split(':');
       const id = name.toLowerCase();
-      return `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-          <strong style="font-size:13px">${name}</strong>
-          <span class="badge muted" style="font-size:10px">${what}</span>
+      return `<div class="boxed mb-12">
+        <div class="inline-flex mb-10">
+          <strong class="fs-13">${name}</strong>
+          <span class="fs-10 badge muted">${what}</span>
         </div>
-        <div class="form-group" style="margin-bottom:8px">
+        <div class="mb-8 form-group">
           <label for="s-${id}-url">URL</label>
           <input id="s-${id}-url" placeholder="http://192.168.1.100:${port}" value="${state.setupData[id+'_url']||''}">
         </div>
-        <div class="form-group" style="margin-bottom:8px">
+        <div class="mb-8 form-group">
           <label for="s-${id}-key">API Key</label>
           <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${state.setupData[id+'_api_key']||''}">
         </div>
@@ -154,8 +154,8 @@ const SETUP_CONTENT = {
     }).join('')}`,
 
   import: () => `
-    <h2 style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--amber)">Listening history import</h2>
-    <p style="font-size:12px;color:var(--text2);margin-bottom:16px">
+    <h2 class="setup-heading">Listening history import</h2>
+    <p class="fs-12 t2 mb-16">
       Optional. If you have a Spotify <strong>extended streaming history</strong>
       (privacy.spotify.com → Download your data → extended streaming history),
       drop it here — years of listening give the music curator a head start.
@@ -163,21 +163,21 @@ const SETUP_CONTENT = {
       under <strong>Admin → Spotify history import</strong>.
     </p>
     ${spotifyDropZone('su-sp')}
-    <p style="font-size:11px;color:var(--text3);margin-top:12px">
+    <p class="fs-11 t3 mt-12">
       Nothing yet? Skip this — you can always do it later from the Admin view.
     </p>`,
 
   done: () => `
-    <div style="text-align:center;padding:20px 0">
-      <h2 style="font-size:16px;font-weight:600;color:var(--amber);margin-bottom:8px">Ready to launch!</h2>
-      <p style="font-size:13px;color:var(--text2);line-height:1.6;max-width:380px;margin:0 auto 20px">
+    <div class="t-center py-20">
+      <h2 class="fs-16 b t-amber mb-8">Ready to launch!</h2>
+      <p class="setup-lead">
         Curatarr will save your configuration, build the AI models with <code>ollama create</code>,
         then start the initial sync. This will take a few minutes the first time.
       </p>
-      <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" ${act('finishSetup')}>
+      <button class="pad-12-32 fs-14 btn btn-primary" ${act('finishSetup')}>
         Save & Start Curatarr
       </button>
-      <div id="setup-saving" style="margin-top:16px;color:var(--text2);font-size:13px"></div>
+      <div class="mt-16 t2 fs-13" id="setup-saving"></div>
     </div>`,
 };
 
@@ -270,7 +270,7 @@ export async function testConn(service) {
     // yellow banner under the connection result. Doesn't block the user
     // from continuing — informational only.
     const warnBlock = r.privacy_warning
-      ? `<div class="test-status" style="color:var(--amber);margin-top:4px">${SVG_WARN} ${esc(r.privacy_warning)}</div>`
+      ? `<div class="t-amber mt-4 test-status">${SVG_WARN} ${esc(r.privacy_warning)}</div>`
   : '';
     if (resultEl) resultEl.innerHTML = (r.ok
       ? `<div class="test-status ok">Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
@@ -331,7 +331,7 @@ export async function refreshModelRecs() {
     const pn = document.getElementById('pitcher-note');
     if (pn) pn.textContent = r.pitcher_note || '';
     if (panel) panel.innerHTML = r.floor_note
-      ? `<div class="test-status" style="color:var(--amber)">${SVG_WARN} ${esc(r.floor_note)}</div>`
+      ? `<div class="t-amber test-status">${SVG_WARN} ${esc(r.floor_note)}</div>`
       : '';
   } catch(e) {
     if (panel) panel.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
@@ -391,18 +391,18 @@ export async function renderOnboardingStep(step) {
     state.discoverSections = disc.sections || [];
 
     body.innerHTML = `
-      <div class="tbl-wrap" style="margin-bottom:20px">
+      <div class="mb-20 tbl-wrap">
         <table class="tbl"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
         ${state.discoverSections.map(s=>`<tr>
-          <td style="font-weight:500">${esc(s.title)}</td>
-          <td style="color:var(--text3);font-size:12px">${esc(s.type)}</td>
-          <td><select id="ob-libcat-${s.key}" aria-label="Select category for library" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);font-size:12px">
+          <td class="fw-500">${esc(s.title)}</td>
+          <td class="t3 fs-12">${esc(s.type)}</td>
+          <td><select class="field-sm" id="ob-libcat-${s.key}" aria-label="Select category for library">
             ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${o}</option>`).join('')}
           </select></td>
         </tr>`).join('')}
         </tbody></table>
       </div>
-      <button class="btn btn-primary" style="width:100%;padding:12px" ${act('saveOnboardingLibraries')}>
+      <button class="w-full p-12 btn btn-primary" ${act('saveOnboardingLibraries')}>
         Save & Continue →
       </button>`;
   }
@@ -411,11 +411,11 @@ export async function renderOnboardingStep(step) {
     title.textContent = 'Step 2 — Initial sync';
     sub.textContent = 'Curatarr will now pull your complete watch history from Plex and compute your taste profile. This takes a moment.';
     body.innerHTML = `
-      <div id="ob-sync-status" style="margin-bottom:20px">
-        <div class="progress-bar" style="margin-bottom:8px"><div class="progress-fill" id="ob-sync-bar" style="width:0%"></div></div>
-        <div style="font-size:12px;color:var(--text2)" id="ob-sync-label">Waiting to start…</div>
+      <div class="mb-20" id="ob-sync-status">
+        <div class="mb-8 progress-bar"><div class="w-0 progress-fill" id="ob-sync-bar"></div></div>
+        <div class="fs-12 t2" id="ob-sync-label">Waiting to start…</div>
       </div>
-      <button class="btn btn-primary" style="width:100%;padding:12px" id="ob-sync-btn" ${act('startOnboardingSync')}>
+      <button class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
         Start sync
       </button>`;
   }
@@ -424,15 +424,15 @@ export async function renderOnboardingStep(step) {
     title.textContent = 'Step 3 — Build AI models';
     sub.textContent = 'Curatarr will bake its personality into the Ollama models. This only happens once.';
     body.innerHTML = `
-      <p style="font-size:13px;color:var(--text2);margin-bottom:16px">
+      <p class="fs-13 t2 mb-16">
         This creates <code>curatarr-curator</code> and <code>curatarr-summarizer</code>
         with Curatarr's system prompt baked in.
       </p>
-      <div id="ob-model-status" style="margin-bottom:20px"></div>
-      <button class="btn btn-primary" style="width:100%;padding:12px" ${act('buildOnboardingModels')}>
+      <div class="mb-20" id="ob-model-status"></div>
+      <button class="w-full p-12 btn btn-primary" ${act('buildOnboardingModels')}>
         Build models
       </button>
-      <button class="btn btn-secondary" style="width:100%;padding:10px;margin-top:8px" ${act('hideOnboarding')}>
+      <button class="w-full p-10 mt-8 btn btn-secondary" ${act('hideOnboarding')}>
         Skip for now (use base models)
       </button>`;
   }
@@ -441,12 +441,12 @@ export async function renderOnboardingStep(step) {
     title.textContent = 'All set!';
     sub.textContent = 'Curatarr is ready. Your taste profile has been computed.';
     body.innerHTML = `
-      <div style="text-align:center;padding:20px 0">
-        <p style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:24px">
+      <div class="t-center py-20">
+        <p class="fs-13 t2 lh-17 mb-24">
           Watch history synced and taste vectors computed.<br>
           You can now chat with your curator, get recommendations, and manage your library.
         </p>
-        <button class="btn btn-primary" style="padding:12px 32px;font-size:14px" ${act('hideOnboarding')}>
+        <button class="pad-12-32 fs-14 btn btn-primary" ${act('hideOnboarding')}>
           Open Curatarr
         </button>
       </div>`;
@@ -523,7 +523,7 @@ export async function buildOnboardingModels() {
   try {
     const r = await api('/api/setup/build-models','POST');
     if (r.curator && r.summarizer) {
-      const okLine = '<p style="color:var(--success)">curatarr-curator and curatarr-summarizer created!</p>';
+      const okLine = '<p class="t-success">curatarr-curator and curatarr-summarizer created!</p>';
       el.innerHTML = okLine + '<p class="loading" role="status" aria-live="polite">Warm-up check: loading the curator once to verify it runs on the GPU…</p>';
       // A model that doesn't quite fit VRAM runs silently part-on-CPU and
       // the whole app just feels broken-slow. Catch that HERE, not on the
@@ -533,11 +533,11 @@ export async function buildOnboardingModels() {
       let verdict = '';
       if (warm && warm.ok) {
         if (warm.verdict === 'cpu_spill')
-          verdict = `<p style="color:var(--amber)">${SVG_WARN} ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
+          verdict = `<p class="t-amber">${SVG_WARN} ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
         else if (warm.verdict === 'slow')
-          verdict = `<p style="color:var(--amber)">${SVG_WARN} Generation is slow (${warm.tokens_per_s} tok/s) despite full GPU residency.</p>`;
+          verdict = `<p class="t-amber">${SVG_WARN} Generation is slow (${warm.tokens_per_s} tok/s) despite full GPU residency.</p>`;
         else
-          verdict = `<p style="color:var(--success)">Fully on GPU${warm.tokens_per_s ? ` · ${warm.tokens_per_s} tok/s` : ''}${warm.load_s ? ` (one-time load ${warm.load_s}s)` : ''}</p>`;
+          verdict = `<p class="t-success">Fully on GPU${warm.tokens_per_s ? ` · ${warm.tokens_per_s} tok/s` : ''}${warm.load_s ? ` (one-time load ${warm.load_s}s)` : ''}</p>`;
       }
       el.innerHTML = okLine + verdict;
       setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; },
@@ -547,10 +547,10 @@ export async function buildOnboardingModels() {
       if (!r.curator) msg += `${SVG_X} curatarr-curator failed<br>`;
       if (!r.summarizer) msg += `${SVG_X} curatarr-summarizer failed<br>`;
       msg += '<br>Make sure base models are pulled in Ollama.';
-      el.innerHTML = `<div style="color:var(--danger);font-size:13px">${msg}</div>`;
+      el.innerHTML = `<div class="t-danger fs-13">${msg}</div>`;
     }
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger)">${esc(_errMsg(e))}</div>`;
+    el.innerHTML = `<div class="t-danger">${esc(_errMsg(e))}</div>`;
   }
 }
 
@@ -562,4 +562,4 @@ export async function logout() {
 }
 
 // The Pitcher checkbox shows or hides the model picker beneath it.
-export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').style.display = el.checked ? '' : 'none'; }
+export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').hidden = !el.checked; }

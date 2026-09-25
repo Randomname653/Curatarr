@@ -12,7 +12,7 @@ import { startProcessMonitor } from './game.js';
 
 export async function startPlexLogin() {
   const data = await api('/api/auth/plex/pin','POST');
-  document.getElementById('pin-box').style.display='block';
+  document.getElementById('pin-box').hidden = false;
   document.getElementById('pin-code').textContent = data.code.slice(0,4)+' '+data.code.slice(4);
   window.open(data.auth_url,'_blank');
   if (state.pollInterval) clearInterval(state.pollInterval);
@@ -74,9 +74,9 @@ export function setUser(u) {
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
   if (u.is_admin) {
     // Show admin nav item in sidebar (needs flex), but NOT the admin view panel
-    document.querySelectorAll('.sb-item.admin-only').forEach(el => el.style.display = 'flex');
+    document.querySelectorAll('.sb-item.admin-only').forEach(el => el.hidden = false);
     // Inline admin action rows (e.g. history maintenance) — let CSS decide layout
-    document.querySelectorAll('.admin-action-row').forEach(el => el.style.display = '');
+    document.querySelectorAll('.admin-action-row').forEach(el => el.hidden = false);
     // Admin view panel stays hidden until user navigates to it
   }
   document.getElementById('auth-overlay').classList.add('hidden');

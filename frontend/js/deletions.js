@@ -65,7 +65,7 @@ export function _renderDeletionProposals(proposals) {
           </div>
           <div class="grow">
             <div class="panel-item-head">
-              <div class="panel-item-title" style="font-size:16px">${esc(p.title)}
+              <div class="fs-16 panel-item-title">${esc(p.title)}
                 <span class="badge ${p.confidence>.7?'danger':'muted'}" title="How sure the judge is that this can go">${Math.round((p.confidence||0)*100)}%</span>
                 ${p.stagnant?`<span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}
                 ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">parked</span>' : ''}
@@ -82,9 +82,9 @@ export function _renderDeletionProposals(proposals) {
               </div>
             </div>
             <div class="fs-12 t3 mt-4">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
-            ${genreTags ? `<div class="row mt-8" style="gap:5px">${genreTags}</div>` : ''}
-            ${p.synopsis ? `<div class="fs-12 t3 mt-8" style="line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(p.synopsis)}</div>` : ''}
-            <div class="t2 mt-8" style="font-size:13.5px;line-height:1.65;font-style:italic">"${esc(p.pitch||p.reason||'')}"</div>
+            ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
+            ${p.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(p.synopsis)}</div>` : ''}
+            <div class="quote-text italic t2 mt-8">"${esc(p.pitch||p.reason||'')}"</div>
             ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Parked: the arr was unreachable, its index drifted, or the last attempt's outcome is unconfirmed. Retry Delete checks again before it deletes anything.</div>` : ''}
             <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" ${actOn('blur', 'saveComment', p.id)} ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}>${esc(p.user_comment||'')}</textarea>
             <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? 'Note saved.' : 'A note teaches Curatarr your reasoning — it saves when you click away (or Ctrl+Enter).'}</div>

@@ -31,7 +31,7 @@ export function renderArrCard(svc, info) {
     <div class="section-head"><h3>${esc(ARR_LABELS[svc])} ${state}</h3></div>
     <div class="section-body">
       ${svc === 'lidarr' ? '<p class="fs-12 t3 mb-12">Optional. Without Lidarr the Music page, the deletion proposals and the curator run on the Plex music index (deletions go through Plex, wanted artists become wishes you fulfil in SoulSync).</p>' : ''}
-      <div id="arr-form-${svc}" class="fs-12 mb-12" style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;align-items:center">
+      <div id="arr-form-${svc}" class="grid-form-120 fs-12 mb-12">
         <label for="arr-url-${svc}" class="t3">URL</label>
         <input type="text" id="arr-url-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${port}">
         <label for="arr-key-${svc}" class="t3">API key</label>
@@ -42,7 +42,7 @@ export function renderArrCard(svc, info) {
         <button type="button" class="btn btn-secondary btn-sm" ${act('testArr', svc, EL)}>Test connection</button>
         <span id="arr-msg-${svc}" class="status"></span>
       </div>
-      <div id="arr-defaults-${svc}"${info.configured ? '' : ' hidden'} style="border-top:1px solid var(--border);padding-top:10px">
+      <div class="rule-top" id="arr-defaults-${svc}"${info.configured ? '' : ' hidden'}>
         ${info.configured ? `<div class="row"><span class="fs-11 t3">Root folder, quality profile and the other defaults come from the arr itself.</span><button type="button" class="btn btn-secondary btn-sm row-end" ${act('loadArrProfiles', svc, EL)}>Load profiles</button></div>` : ''}
       </div>
     </div>`;
@@ -127,7 +127,7 @@ export async function loadArrProfiles(svc, btn) {
       `;
     }
     target.innerHTML = `
-      <div id="arr-defaults-form-${svc}" class="fs-12 mb-8" style="display:grid;grid-template-columns:140px 1fr;gap:6px 10px;align-items:center">
+      <div id="arr-defaults-form-${svc}" class="grid-form-140 fs-12 mb-8">
         <label for="arr-root-${svc}" class="t3">Root folder</label>
         <select id="arr-root-${svc}" class="input">
           ${rootFolderOptions || '<option value="">(none configured in arr)</option>'}

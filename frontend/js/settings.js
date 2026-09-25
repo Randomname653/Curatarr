@@ -203,19 +203,19 @@ export function renderIntegrationCard(card, cfg) {
   const rows = card.fields.map(f => {
     const cur = cfg[f.id];
     if (f.toggle) {
-      return `<label class="row fs-13" style="margin:8px 0"><input type="checkbox" id="int-${f.id}" ${cur ? 'checked' : ''}> ${esc(f.label)}</label>`;
+      return `<label class="my-8 row fs-13"><input type="checkbox" id="int-${f.id}" ${cur ? 'checked' : ''}> ${esc(f.label)}</label>`;
     }
     if (f.secret) {
       const isSet = !!(cur && cur.set);
       const chip = isSet ? '<span class="badge success badge-sm">set</span>' : '<span class="badge muted badge-sm">not set</span>';
       const clear = (isSet && !f.required)
         ? `<button type="button" class="btn btn-secondary btn-sm" title="Clear this key" ${act('clearIntegrationSecret', f.id, card.key, EL)}>Clear</button>` : '';
-      return `<div class="form-group" style="margin:8px 0">
+      return `<div class="my-8 form-group">
         <label for="int-${f.id}">${esc(f.label)} ${chip}</label>
         <div class="row"><input id="int-${f.id}" class="grow" type="password" autocomplete="new-password" placeholder="${isSet ? 'type to replace' : 'not set'}">${clear}</div></div>`;
     }
     const type = f.number ? 'number' : 'text';
-    return `<div class="form-group" style="margin:8px 0">
+    return `<div class="my-8 form-group">
       <label for="int-${f.id}">${esc(f.label)}</label>
       <input id="int-${f.id}" type="${type}" value="${esc(cur === undefined || cur === null ? '' : String(cur))}" placeholder="${esc(f.placeholder || '')}"></div>`;
   }).join('');
@@ -362,7 +362,7 @@ export function renderNotificationPreferences(triggers) {
   if (!triggers.length) { host.innerHTML = emptyHtml('No triggers are configured on this server.'); return; }
   host.innerHTML = triggers.map(t => `<div class="panel-item">
     <div class="panel-item-head">
-      <div class="grow"><div class="panel-item-title">${esc(t.label || t.type)}</div><div class="panel-item-sub" style="margin-top:2px">${esc(t.description || '')}</div></div>
+      <div class="grow"><div class="panel-item-title">${esc(t.label || t.type)}</div><div class="mt-2 panel-item-sub">${esc(t.description || '')}</div></div>
       <label class="chip${t.enabled ? ' active' : ''}"><input type="checkbox" ${t.enabled ? 'checked' : ''} data-trigger-type="${escAttr(t.type)}" ${actOn('change', '_setNotifPref', EL)}> <span>${t.enabled ? 'on' : 'off'}</span></label>
     </div>
   </div>`).join('');

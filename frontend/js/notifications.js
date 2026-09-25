@@ -30,10 +30,10 @@ export async function loadUnreadMessages(seen) {
     if (principles.length) {
       html += `<div class="mp-section">Principles awaiting review</div>`;
       html += principles.slice(0, 3).map(p => `
-        <div class="msg-item" style="cursor:default">
-          <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="badge danger" style="font-size:10px;margin-right:4px">contradiction</span>' : ''}${esc(p.text)}</div>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" style="flex:1" ${act('discussPrinciple', p.id, p.text)}>Review together</button>
+        <div class="cursor-default msg-item">
+          <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="fs-10 mr-4 badge danger">contradiction</span>' : ''}${esc(p.text)}</div>
+          <div class="flex gap-8 mt-10">
+            <button class="flex-1 btn btn-primary btn-sm" ${act('discussPrinciple', p.id, p.text)}>Review together</button>
           </div>
         </div>`).join('');
       if (principles.length > 3) {
@@ -43,14 +43,14 @@ export async function loadUnreadMessages(seen) {
     if (r.message) {
       const m = r.message;
       html += `<div class="mp-section">Curator messages</div>
-      <div class="msg-item" style="cursor:default">
+      <div class="cursor-default msg-item">
         <div class="mi-text">${esc(m.message)}</div>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
+        <div class="inline-flex gap-6 mt-8">
           <span class="mi-badge">${esc(m.trigger_type.replace('_',' '))}</span>
           <span class="mi-time">${new Date(m.created_at).toLocaleString()}</span>
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-primary btn-sm" style="flex:1" ${act('respondToMessage', m.id, m.message, m.trigger_type)}>Respond</button>
+        <div class="flex gap-8 mt-10">
+          <button class="flex-1 btn btn-primary btn-sm" ${act('respondToMessage', m.id, m.message, m.trigger_type)}>Respond</button>
           <button class="btn btn-secondary btn-sm" ${act('skipMessage', m.id, EL)} title="Skip — may come back later">Skip</button>
         </div>
       </div>`;

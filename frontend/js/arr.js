@@ -91,7 +91,7 @@ export async function loadArrPage(svc) {
       : `
         <div class="arr-setup-banner">
           <h3>${esc(titleSvc)} not configured</h3>
-          <p style="color:var(--text2)">This integration hasn't been set up yet. Ask your admin to add ${esc(svc)} in <em>Settings → Library</em>.</p>
+          <p class="t2">This integration hasn't been set up yet. Ask your admin to add ${esc(svc)} in <em>Settings → Library</em>.</p>
         </div>
       `;
     return;
@@ -128,9 +128,9 @@ export function renderArrTab(svc, tabId) {
     const tabLabel = (ARR_TABS[svc].find(t => t.id === tabId) || {}).label || tabId;
     const contentEl = document.getElementById(`arr-content-${svc}`);
     contentEl.innerHTML = `
-      <div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">
-        <p style="margin:0 0 6px"><strong>${esc(tabLabel)}</strong></p>
-        <p style="margin:0;font-size:12px">Coming in upcoming pass — skeleton only.</p>
+      <div class="empty-note">
+        <p class="m-0 mb-6"><strong>${esc(tabLabel)}</strong></p>
+        <p class="m-0 fs-12">Coming in upcoming pass — skeleton only.</p>
       </div>
     `;
   }
@@ -210,8 +210,8 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
         </select>
         <label class="chip${st.needs_enrichment ? ' active' : ''}" title="Only items without a synopsis or with raw metadata still awaiting the polish">
           <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} ${actOn('change', 'onBrowserFilter', svc, tabId, EL)}> Needs enrichment</label>
-        <input type="text" id="arr-search-${svc}-${tabId}" class="input" aria-label="Search items" value="${escAttr(st.search || '')}"
-               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', svc, tabId, EL)} style="width:200px">
+        <input type="text" id="arr-search-${svc}-${tabId}" class="w-200 input" aria-label="Search items" value="${escAttr(st.search || '')}"
+               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', svc, tabId, EL)}>
         <button type="button" class="btn btn-secondary btn-sm" ${act('renderSynopsisBrowser', svc, tabId, {forceRefresh: true})} title="Bypass the 15-min cache and re-fetch from ${esc(svc)}">Refresh</button>
       </div>
     </div>
@@ -247,7 +247,7 @@ export function renderArrItemRow(svc, item) {
   return `
     <div class="panel-item">
       <div class="panel-item-head">
-        <div class="panel-item-title" style="font-size:14px">${esc(item.title || '(untitled)')}${item.year ? `<span class="t3 fs-12">(${item.year})</span>` : ''}${enrichedBadge}</div>
+        <div class="fs-14 panel-item-title">${esc(item.title || '(untitled)')}${item.year ? `<span class="t3 fs-12">(${item.year})</span>` : ''}${enrichedBadge}</div>
         <div class="panel-actions">${menuHtml([
           {label: 'Metadata — re-fetch from TMDB / AniList / MusicBrainz', action: act('reEnrich', svc, item.id, 'metadata')},
           {label: 'Summary — re-run the LLM on the existing data', action: act('reEnrich', svc, item.id, 'summary')},
@@ -257,7 +257,7 @@ export function renderArrItemRow(svc, item) {
       <div class="panel-item-meta mt-4">${sizeStr} · added ${addedStr}${item.root_folder ? ` · <code class="fs-10">${esc(item.root_folder)}</code>` : ''}${item.status ? ` · ${esc(item.status)}` : ''}</div>
       ${item.synopsis
         ? `<div class="panel-item-sub">${esc(item.synopsis)}</div>`
-        : '<div class="panel-item-sub" style="font-style:italic">No synopsis on file — Re-enrich fetches one.</div>'}
+        : '<div class="italic panel-item-sub">No synopsis on file — Re-enrich fetches one.</div>'}
     </div>
   `;
 }
@@ -316,8 +316,8 @@ export function renderAddNew(svc) {
     : 'Search for a TV show…';
   contentEl.innerHTML = `
     <div class="toolbar">
-      <input type="text" id="add-search-${svc}" class="input grow" aria-label="Search title" placeholder="${esc(placeholder)}" ${actOn('input', 'debouncedAddSearch', svc)} style="padding:9px 12px;font-size:13px">
-      <span id="add-search-status-${svc}" class="status" style="min-width:80px"></span>
+      <input type="text" id="add-search-${svc}" class="pad-9-12 fs-13 input grow" aria-label="Search title" placeholder="${esc(placeholder)}" ${actOn('input', 'debouncedAddSearch', svc)}>
+      <span id="add-search-status-${svc}" class="minw-80 status"></span>
     </div>
     <div id="add-search-results-${svc}"></div>
     <p class="fs-11 t3 mt-8">
@@ -395,10 +395,10 @@ export function renderAddCard(svc, m, idx) {
         ${poster}
         <div class="grow">
           <div class="panel-item-head">
-            <div class="panel-item-title" style="font-size:16px">${esc(m.title)}${m.year ? `<span class="t3 fs-12">(${m.year})</span>` : ''}${m.status ? `<span class="badge muted badge-sm">${esc(m.status)}</span>` : ''}</div>
+            <div class="fs-16 panel-item-title">${esc(m.title)}${m.year ? `<span class="t3 fs-12">(${m.year})</span>` : ''}${m.status ? `<span class="badge muted badge-sm">${esc(m.status)}</span>` : ''}</div>
             <div class="panel-actions">${action}</div>
           </div>
-          ${overview ? `<div class="t2 mt-8" style="font-size:12.5px;line-height:1.55">${overview}</div>` : ''}
+          ${overview ? `<div class="note-text t2 mt-8">${overview}</div>` : ''}
         </div>
       </div>
     </div>
@@ -486,7 +486,7 @@ export async function renderSpotifyBacklog(svc) {
         <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderSpotifyBacklog', svc)}>Refresh</button></div>
       </div>
       <div class="section-body">
-        <div class="row fs-12" style="gap:18px">
+        <div class="gap-18 row fs-12">
           <span><b>${total}</b> <span class="t3">unique artists</span></span>
           <span><b class="t-success">${resolved}</b> <span class="t3">MBID resolved (${pct}%)</span></span>
           <span><b class="t-amber">${pending}</b> <span class="t3">pending lookup</span></span>
@@ -494,13 +494,13 @@ export async function renderSpotifyBacklog(svc) {
           <div class="row row-end">
             <label class="chip${st.only_resolved ? ' active' : ''}" title="Only artists whose MusicBrainz ID has been resolved by Phase 1.4 of the music pipeline — the ones with a clickable Add button.">
               <input type="checkbox" ${st.only_resolved ? 'checked' : ''} ${actOn('change', 'onBacklogOnlyResolved', svc, EL)}> Resolved only</label>
-            <label class="chip${st.not_added_only ? ' active' : ''}" style="${lidarrCacheLoaded ? '' : 'opacity:.5'}"
+            <label class="chip${st.not_added_only ? ' active' : ''}${lidarrCacheLoaded ? '' : ' dim'}"
                    title="${lidarrCacheLoaded ? 'Hide artists already in your Lidarr library. Combines with the resolved filter so you see exactly the queue you have not added yet.' : 'Lidarr cache not loaded — this filter is inactive until the Lidarr tab is opened once.'}">
               <input type="checkbox" ${st.not_added_only ? 'checked' : ''} ${actOn('change', 'onBacklogNotAddedOnly', svc, EL)} ${lidarrCacheLoaded ? '' : 'disabled'}> Not in Lidarr yet</label>
           </div>
         </div>
-        ${pending > 0 && !st.only_resolved ? '<p class="fs-11 t3 mt-8" style="font-style:italic">Pending artists are still being looked up by Phase 1.4 of the music pipeline; they become addable once their MusicBrainz ID is resolved.</p>' : ''}
-        ${!lidarrCacheLoaded ? '<p class="fs-11 t-amber mt-8" style="font-style:italic" title="The Lidarr library cache has not been loaded yet — the already-in-Lidarr badges appear after the next refresh.">Lidarr cache not loaded yet — duplicates are not flagged. Open the Lidarr tab once or wait for the next 30-min refresh.</p>' : ''}
+        ${pending > 0 && !st.only_resolved ? '<p class="italic fs-11 t3 mt-8">Pending artists are still being looked up by Phase 1.4 of the music pipeline; they become addable once their MusicBrainz ID is resolved.</p>' : ''}
+        ${!lidarrCacheLoaded ? '<p class="italic fs-11 t-amber mt-8" title="The Lidarr library cache has not been loaded yet — the already-in-Lidarr badges appear after the next refresh.">Lidarr cache not loaded yet — duplicates are not flagged. Open the Lidarr tab once or wait for the next 30-min refresh.</p>' : ''}
       </div>
     </section>
   `;
@@ -522,7 +522,7 @@ export async function renderSpotifyBacklog(svc) {
 export function renderBacklogCard(svc, a, idx) {
   const tracks = (a.top_tracks || []).slice(0, 3);
   const tracksHTML = tracks.length
-    ? `<div class="panel-item-sub" style="margin-top:4px"><span class="t2">Top tracks:</span> ${tracks.map(t => `<span style="margin-right:10px">${esc(t.title)} <span class="t3">×${t.plays}</span></span>`).join('')}</div>`
+    ? `<div class="mt-4 panel-item-sub"><span class="t2">Top tracks:</span> ${tracks.map(t => `<span class="mr-10">${esc(t.title)} <span class="t3">×${t.plays}</span></span>`).join('')}</div>`
     : '';
   const mbidBadge = a.mbid_resolved
     ? '<span class="badge success badge-sm" title="MusicBrainz ID resolved by Phase 1.4">MBID</span>'
@@ -548,7 +548,7 @@ export function renderBacklogCard(svc, a, idx) {
   return `
     <div class="panel-item">
       <div class="panel-item-head">
-        <div class="panel-item-title" style="font-size:14px">${esc(a.artist_name || '(unknown)')}<span class="fs-11 t3">${a.play_count} plays</span>${mbidBadge}</div>
+        <div class="fs-14 panel-item-title">${esc(a.artist_name || '(unknown)')}<span class="fs-11 t3">${a.play_count} plays</span>${mbidBadge}</div>
         <div class="panel-actions">${addBtn}</div>
       </div>
       ${tracksHTML}

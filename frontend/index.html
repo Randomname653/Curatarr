@@ -41,8 +41,8 @@
     </div>
     <div class="setup-body" id="setup-body"></div>
     <div class="setup-nav">
-      <button class="btn btn-secondary" id="setup-back" data-action="setupNav" data-args='[-1]' style="visibility:hidden">← Back</button>
-      <span id="setup-step-label" style="font-size:12px;color:var(--text3)">Step 1 of 5</span>
+      <button class="invisible btn btn-secondary" id="setup-back" data-action="setupNav" data-args='[-1]'>← Back</button>
+      <span class="fs-12 t3" id="setup-step-label">Step 1 of 5</span>
       <button class="btn btn-primary" id="setup-next" data-action="setupNav" data-args='[1]'>Next →</button>
     </div>
   </div>
@@ -52,9 +52,9 @@
 <div id="auth-overlay" class="hidden">
   <div class="logo-big">Curatarr</div>
   <p>Your personal AI media curator for Plex. Sign in to continue.</p>
-  <button class="btn btn-primary" style="padding:12px 28px;font-size:14px" data-action="startPlexLogin">Sign in with Plex</button>
-  <div id="pin-box" style="display:none">
-    <p style="font-size:13px;color:var(--text2)">Enter this PIN at plex.tv/link</p>
+  <button class="pad-12-28 fs-14 btn btn-primary" data-action="startPlexLogin">Sign in with Plex</button>
+  <div hidden id="pin-box">
+    <p class="fs-13 t2">Enter this PIN at plex.tv/link</p>
     <div class="pin-code" id="pin-code">···· ····</div>
     <small id="poll-status">Waiting for authentication…</small>
   </div>
@@ -64,19 +64,19 @@
 <div id="msg-panel">
   <div class="mp-header">
     <span>Notifications</span>
-    <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px" data-action="toggleMsgPanel" aria-label="Close notifications">×</button>
+    <button class="btn-plain" data-action="toggleMsgPanel" aria-label="Close notifications">×</button>
   </div>
   <div id="msg-list"><div id="msg-empty">No new notifications</div></div>
 </div>
 
 <!-- ONBOARDING OVERLAY -->
-<div id="onboarding-overlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:90;display:flex;align-items:center;justify-content:center">
-  <div style="width:520px;max-height:90vh;overflow-y:auto;background:var(--bg2);border:1px solid var(--border);border-radius:10px">
-    <div style="padding:24px 28px 16px;border-bottom:1px solid var(--border)">
-      <h1 id="onboarding-title" style="font-size:18px;font-weight:700;color:var(--amber)"></h1>
-      <p id="onboarding-sub" style="font-size:13px;color:var(--text2);margin-top:6px;line-height:1.5"></p>
+<div id="onboarding-overlay" class="overlay-dim hidden">
+  <div class="dialog-box-520">
+    <div class="box-head">
+      <h1 class="fs-18 fw-700 t-amber" id="onboarding-title"></h1>
+      <p class="fs-13 t2 mt-6 lh-15" id="onboarding-sub"></p>
     </div>
-    <div id="onboarding-body" style="padding:24px 28px"></div>
+    <div class="pad-24-28" id="onboarding-body"></div>
   </div>
 </div>
 
@@ -123,16 +123,16 @@
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         <span class="sb-text">Recommendations</span>
       </div>
-      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' id="sb-deletions" data-action="showView" data-args='["deletions","$el"]' style="display:none" title="Deletions">
+      <div class="sb-item admin-only" hidden role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' id="sb-deletions" data-action="showView" data-args='["deletions","$el"]' title="Deletions">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         <span class="sb-text">Deletions</span>
-        <span id="sb-deletions-pulse" class="sb-pulse-dot" style="display:none" title="Deletion analysis running…"></span>
+        <span hidden id="sb-deletions-pulse" class="sb-pulse-dot" title="Deletion analysis running…"></span>
       </div>
-      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["curation","$el"]' style="display:none" title="Curation">
+      <div class="sb-item admin-only" hidden role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["curation","$el"]' title="Curation">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         <span class="sb-text">Curation</span>
       </div>
-      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["report","$el"]' style="display:none" title="Report">
+      <div class="sb-item admin-only" hidden role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["report","$el"]' title="Report">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         <span class="sb-text">Report</span>
       </div>
@@ -151,7 +151,7 @@
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
         <span class="sb-text">Music</span>
       </div>
-      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["reclassify","$el"]' style="display:none" title="Reclassify">
+      <div class="sb-item admin-only" hidden role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["reclassify","$el"]' title="Reclassify">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
         <span class="sb-text">Reclassify</span>
       </div>
@@ -161,18 +161,18 @@
       <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["enrich","$el"]' title="Knowledge Base">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
         <span class="sb-text">Knowledge Base</span>
-        <span id="kb-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none" title="Items that need a human: wrong year, unsure match, or not found after two or more tries">0</span>
+        <span class="sb-badge" hidden id="kb-badge" title="Items that need a human: wrong year, unsure match, or not found after two or more tries">0</span>
       </div>
       <div class="sb-item" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["tasks","$el"]' id="tasks-nav" title="Activity">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         <span class="sb-text">Activity</span>
-        <span id="tasks-badge" style="margin-left:auto;background:var(--amber);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;display:none">0</span>
+        <span class="sb-badge" hidden id="tasks-badge">0</span>
       </div>
-      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["libraries","$el"]' style="display:none" title="Libraries">
+      <div class="sb-item admin-only" hidden role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["libraries","$el"]' title="Libraries">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         <span class="sb-text">Libraries</span>
       </div>
-      <div class="sb-item admin-only" role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["admin","$el"]' style="display:none" title="Users">
+      <div class="sb-item admin-only" hidden role="button" tabindex="0" data-on-keydown="keyActivate" data-args-keydown='["$event","$el"]' data-action="showView" data-args='["admin","$el"]' title="Users">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span class="sb-text">Users</span>
       </div>
@@ -187,13 +187,13 @@
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         <span class="sb-text">Sign out</span>
       </button>
-      <button class="admin-action-row" data-action="shutdownServer" style="display:none;color:var(--danger)"
+      <button class="t-danger admin-action-row" hidden data-action="shutdownServer"
               title="Gracefully stop the Curatarr server (running jobs are finalized)" aria-label="Shutdown server">
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
         <span class="sb-text">Shutdown</span>
       </button>
       <button id="sb-collapse-toggle" data-action="toggleSidebar" title="Collapse sidebar" aria-label="Collapse sidebar">
-        <svg aria-hidden="true" id="sb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform .15s"><polyline points="15 18 9 12 15 6"/></svg>
+        <svg class="transition-transform" aria-hidden="true" id="sb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
         <span class="sb-text">Collapse</span>
       </button>
     </div>
@@ -208,11 +208,11 @@
            straight from the discussion thread — no bounce back to the
            Deletions view. Hidden by default; _setDiscussBanner reveals it
            only for kind === 'deletion_proposal'. -->
-      <div id="discuss-banner" style="display:none;background:var(--amber-dim);border-bottom:1px solid rgba(229,160,13,.3);padding:8px 16px;font-size:12px;color:var(--text2);align-items:center;gap:10px">
-        <span class="sb-pulse-dot" style="margin-left:0"></span>
-        <span id="discuss-banner-text" style="flex:1"></span>
-        <button id="discuss-delete-btn" data-action="deleteFromDiscussion" style="display:none;background:rgba(229,83,83,.15);border:1px solid rgba(229,83,83,.5);color:var(--danger);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Delete &amp; exit</button>
-        <button data-action="exitDiscussion" style="background:transparent;border:1px solid rgba(229,160,13,.4);color:var(--amber);padding:3px 10px;border-radius:var(--radius);cursor:pointer;font-size:11px">Exit discussion</button>
+      <div class="discuss-banner" hidden id="discuss-banner">
+        <span class="ml-0 sb-pulse-dot"></span>
+        <span class="flex-1" id="discuss-banner-text"></span>
+        <button class="btn-ghost-danger" hidden id="discuss-delete-btn" data-action="deleteFromDiscussion">Delete &amp; exit</button>
+        <button class="btn-ghost-amber" data-action="exitDiscussion">Exit discussion</button>
       </div>
       <div id="messages">
         <div class="msg assistant">
@@ -220,7 +220,7 @@
         </div>
         <div id="glance-panel"></div>
         <div id="last-played-panel"></div>
-        <div id="suggested-prompts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts">
           <button class="sp-chip" data-action="fillPrompt" data-args='["What should I watch tonight?"]'>What should I watch tonight?</button>
           <button class="sp-chip" data-action="fillPrompt" data-args='["What can I clean up in my library?"]'>What can I clean up in my library?</button>
           <button class="sp-chip" data-action="fillPrompt" data-args='["What does my watch history say about my taste?"]'>What does my watch history say about my taste?</button>
@@ -250,7 +250,7 @@
             <button class="btn btn-secondary" data-action="showLibrariesForce">Library Config</button>
           </div>
         </div>
-        <div id="history-stats" style="margin-bottom:20px"></div>
+        <div class="mb-20" id="history-stats"></div>
         <div class="cat-tabs" id="taste-tabs"></div>
         <div id="taste-content"></div>
         <hr class="divider">
@@ -281,7 +281,7 @@
           <button class="btn btn-secondary" data-action="regenerateRecs">Regenerate</button>
           <span class="fs-12 t3" id="recs-source-hint">you own it, still unwatched · not in your library, worth acquiring</span>
           <div class="toolbar-right">
-            <input id="lib-search" class="input" aria-label="Search your library" placeholder="Search your library…" style="width:220px" data-on-keydown="searchOnEnter" data-args='["$event"]'>
+            <input id="lib-search" class="w-220 input" aria-label="Search your library" placeholder="Search your library…" data-on-keydown="searchOnEnter" data-args='["$event"]'>
             <button class="btn btn-secondary btn-sm" data-action="searchLibrary" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
           </div>
         </div>
@@ -401,7 +401,7 @@
       <div class="view-body">
         <div class="cat-tabs" id="kb-tabs">
           <button class="cat-tab active" data-kbtab="overview" data-action="showKbTab" data-args='["overview"]'>Overview</button>
-          <button class="cat-tab" data-kbtab="attention" data-action="showKbTab" data-args='["attention"]'>Needs attention <span class="badge amber badge-sm" id="kb-tab-badge" style="display:none">0</span></button>
+          <button class="cat-tab" data-kbtab="attention" data-action="showKbTab" data-args='["attention"]'>Needs attention <span class="badge amber badge-sm" hidden id="kb-tab-badge">0</span></button>
           <button class="cat-tab" data-kbtab="maintenance" data-action="showKbTab" data-args='["maintenance"]'>Maintenance</button>
           <button class="cat-tab" data-kbtab="music" data-action="showKbTab" data-args='["music"]'>Music pipeline</button>
           <button class="cat-tab" data-kbtab="profiles" data-action="showKbTab" data-args='["profiles"]'>Profile browser</button>
@@ -439,7 +439,7 @@
                 <label class="fs-12" for="enrich-src-arr"><input type="radio" name="enrich-src" value="arr" id="enrich-src-arr"> Arr libraries only</label>
                 <label class="fs-12" for="enrich-src-both"><input type="radio" name="enrich-src" value="both" id="enrich-src-both"> Both</label>
               </div>
-              <div class="toolbar" style="margin-bottom:0">
+              <div class="mb-0 toolbar">
                 <button class="btn btn-primary" data-action="startEnrichNew" data-args='["$el"]'>Start Enrichment</button>
                 <button class="btn btn-secondary" data-action="computeTaste" data-args='["$el"]'>Recompute taste vectors</button>
                 <!-- Pass 55: audit-requeue — finds profiles with missing metadata
@@ -476,7 +476,7 @@
             <div class="section-head"><h3>Spotify import pipeline <span class="badge amber badge-sm" id="music-running-badge" hidden>Running</span></h3>
               <div class="section-actions">
                 <label class="fs-12 t2 row" for="music-batch-input" title="Cap unique tracks per enrichment phase per run. Applies to BOTH Spotify and Last.fm. Tracks not covered this run carry over to the next.">Batch (per phase)
-                  <input id="music-batch-input" class="input" type="number" min="50" max="2000" value="300" style="width:70px"></label>
+                  <input id="music-batch-input" class="w-70 input" type="number" min="50" max="2000" value="300"></label>
                 <button class="btn btn-primary btn-sm" id="music-start-btn" data-action="startMusicPipeline" data-args='["$el"]'>Start</button>
                 <button class="btn btn-secondary btn-sm" id="music-stop-btn" data-action="stopMusicPipeline" data-args='["$el"]' hidden>Stop</button>
                 <button class="btn btn-secondary btn-sm" data-action="loadMusicStatus">Refresh</button>
@@ -488,7 +488,7 @@
               <div id="music-stats-bar" class="fs-12 t3 mb-12">Loading…</div>
               <div id="music-progress-bar" class="mb-12" hidden>
                 <div class="fs-12 t-amber mb-4" id="music-progress-label">Starting…</div>
-                <div class="progress-bar" style="margin-top:0"><div class="progress-fill" id="music-progress-fill" style="width:0%"></div></div>
+                <div class="mt-0 progress-bar"><div class="w-0 progress-fill" id="music-progress-fill"></div></div>
               </div>
             </div>
           </section>
@@ -509,7 +509,7 @@
               <option value="watch_history">Watch history</option>
               <option value="arr">ARR libraries</option>
             </select>
-            <input id="profile-search" class="input" aria-label="Search profiles by title" placeholder="Search title…" style="width:200px" data-on-keydown="loadProfilesOnEnter" data-args='["$event"]'>
+            <input id="profile-search" class="w-200 input" aria-label="Search profiles by title" placeholder="Search title…" data-on-keydown="loadProfilesOnEnter" data-args='["$event"]'>
             <button class="btn btn-secondary btn-sm" data-action="loadProfiles">Browse</button>
             <span class="fs-12 t3 row-end">Inspect enriched metadata profiles</span>
           </div>
@@ -544,7 +544,7 @@
     <!-- LIBRARY MANAGER — Sonarr / Radarr / Lidarr (Pass 16c skeleton) -->
     <div class="view" id="arr-sonarr-view">
       <div class="view-header">
-        <h1>TV Shows <span class="fs-13 t3" style="font-weight:400;margin-left:8px">viaSonarr</span></h1>
+        <h1>TV Shows <span class="fw-400 ml-8 fs-13 t3">viaSonarr</span></h1>
         <p>Browse, add, and curate your Sonarr library.</p>
       </div>
       <div class="view-body">
@@ -557,7 +557,7 @@
 
     <div class="view" id="arr-radarr-view">
       <div class="view-header">
-        <h1>Movies <span class="fs-13 t3" style="font-weight:400;margin-left:8px">viaRadarr</span></h1>
+        <h1>Movies <span class="fw-400 ml-8 fs-13 t3">viaRadarr</span></h1>
         <p>Browse, add, and curate your Radarr library.</p>
       </div>
       <div class="view-body">
@@ -570,7 +570,7 @@
 
     <div class="view" id="arr-lidarr-view">
       <div class="view-header">
-        <h1>Music <span class="fs-13 t3" style="font-weight:400;margin-left:8px">viaLidarr</span></h1>
+        <h1>Music <span class="fw-400 ml-8 fs-13 t3">viaLidarr</span></h1>
         <p>Browse, add, and curate your Lidarr library.</p>
       </div>
       <div class="view-body">
@@ -584,7 +584,7 @@
     <!-- RECLASSIFY (anime ↔ TV library sorting) -->
     <div class="view" id="reclassify-view">
       <div class="view-header">
-        <h1>Reclassify <span class="fs-13 t3" style="font-weight:400;margin-left:8px">anime ↔ TV</span></h1>
+        <h1>Reclassify <span class="fw-400 ml-8 fs-13 t3">anime ↔ TV</span></h1>
         <p>Series filed in the wrong Sonarr library. Review and move — nothing happens until you confirm.</p>
       </div>
       <div class="view-body">
@@ -636,7 +636,7 @@
             <div id="adm-sp-zone"></div>
             <div class="row mt-12">
               <label for="adm-sp-user" class="fs-12 t2">Attach to user</label>
-              <select id="adm-sp-user" class="input" aria-label="Select user to attach history" style="min-width:160px"></select>
+              <select id="adm-sp-user" class="minw-160 input" aria-label="Select user to attach history"></select>
               <button class="btn btn-primary btn-sm" data-action="runSpotifyImport" data-args='["adm-sp"]'>Import</button>
             </div>
           </div>
@@ -651,20 +651,20 @@
         <p>Account, security, and (for admins) server maintenance</p>
       </div>
       <div class="view-body">
-        <div class="settings-shell" style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap">
+        <div class="flex gap-24 items-start flex-wrap settings-shell">
 
           <!-- LEFT SUB-NAV -->
-          <nav class="settings-nav" style="flex:0 0 200px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);padding:8px">
+          <nav class="side-col-200 settings-nav">
             <button class="settings-tab active" data-pane="account" data-action="openSettingsPane" data-args='["account","$el"]'>Account</button>
             <button class="settings-tab" data-pane="notifications" data-action="openSettingsPane" data-args='["notifications","$el"]'>Notifications</button>
-            <button class="settings-tab admin-action-row" data-pane="library" data-action="openLibrarySettings" data-args='["$el"]' style="display:none">Library</button>
-            <button class="settings-tab admin-action-row" data-pane="integrations" data-action="openSettingsPane" data-args='["integrations","$el"]' style="display:none">Integrations</button>
-            <button class="settings-tab admin-action-row" data-pane="maintenance" data-action="openSettingsPane" data-args='["maintenance","$el"]' style="display:none">Maintenance</button>
-            <button class="settings-tab admin-action-row" data-pane="users" data-action="openUsersSettings" data-args='["$el"]' style="display:none">Users</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="library" data-action="openLibrarySettings" data-args='["$el"]'>Library</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="integrations" data-action="openSettingsPane" data-args='["integrations","$el"]'>Integrations</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="maintenance" data-action="openSettingsPane" data-args='["maintenance","$el"]'>Maintenance</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="users" data-action="openUsersSettings" data-args='["$el"]'>Users</button>
           </nav>
 
           <!-- RIGHT PANES: one .section per topic, the status next to its Save -->
-          <div class="settings-content" style="flex:1 1 480px;min-width:280px">
+          <div class="col-wide settings-content">
 
             <!-- Account pane -->
             <section class="settings-pane" data-pane="account">
@@ -678,21 +678,21 @@
               <section class="section">
                 <div class="section-head"><h3>PIN</h3><span class="section-hint" id="settings-pin-state">checking…</span></div>
                 <div class="section-body">
-                  <p class="fs-12 t3 mb-12" style="line-height:1.5">
+                  <p class="lh-15 fs-12 t3 mb-12">
                     Optional. Used to derive an AES-256 key for encrypting your taste vector at rest.
                     Recommended for shared servers; if you skip it, your data stays unencrypted (the
                     default today). Encryption is registered on PIN-set; encryption-at-rest activates
                     in a follow-up release.
                   </p>
                   <div id="settings-pin-form-set" hidden>
-                    <div class="form-group" style="max-width:280px"><label for="pin-new">New PIN (≥ 6 chars)</label><input type="password" id="pin-new" minlength="6" autocomplete="new-password"></div>
-                    <div class="form-group" style="max-width:280px"><label for="pin-new-confirm">Confirm PIN</label><input type="password" id="pin-new-confirm" minlength="6" autocomplete="new-password"></div>
+                    <div class="maxw-280 form-group"><label for="pin-new">New PIN (≥ 6 chars)</label><input type="password" id="pin-new" minlength="6" autocomplete="new-password"></div>
+                    <div class="maxw-280 form-group"><label for="pin-new-confirm">Confirm PIN</label><input type="password" id="pin-new-confirm" minlength="6" autocomplete="new-password"></div>
                     <div class="row"><button class="btn btn-primary" data-action="submitPinSet" data-args='["$el"]'>Set PIN</button><span id="pin-set-status" class="status"></span></div>
                   </div>
                   <div id="settings-pin-form-change" hidden>
-                    <div class="form-group" style="max-width:280px"><label for="pin-current">Current PIN</label><input type="password" id="pin-current" autocomplete="current-password"></div>
-                    <div class="form-group" style="max-width:280px"><label for="pin-change-new">New PIN (≥ 6 chars)</label><input type="password" id="pin-change-new" minlength="6" autocomplete="new-password"></div>
-                    <div class="form-group" style="max-width:280px"><label for="pin-change-confirm">Confirm new PIN</label><input type="password" id="pin-change-confirm" minlength="6" autocomplete="new-password"></div>
+                    <div class="maxw-280 form-group"><label for="pin-current">Current PIN</label><input type="password" id="pin-current" autocomplete="current-password"></div>
+                    <div class="maxw-280 form-group"><label for="pin-change-new">New PIN (≥ 6 chars)</label><input type="password" id="pin-change-new" minlength="6" autocomplete="new-password"></div>
+                    <div class="maxw-280 form-group"><label for="pin-change-confirm">Confirm new PIN</label><input type="password" id="pin-change-confirm" minlength="6" autocomplete="new-password"></div>
                     <div class="row"><button class="btn btn-primary" data-action="submitPinChange" data-args='["$el"]'>Change PIN</button><span id="pin-change-status" class="status"></span></div>
                   </div>
                 </div>
@@ -731,18 +731,18 @@
                 <div class="section-head"><h3>Re-attribute history</h3>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="reattributeHistory" data-args='["$el"]'>Run re-attribution</button></div></div>
                 <div class="section-body">
-                  <p class="fs-12 t3" style="line-height:1.5">
+                  <p class="lh-15 fs-12 t3">
                     Re-pulls Plex's play history and fixes per-user attribution on existing rows. Run after a new user logs in via Plex OAuth so their pre-existing plays move from admin to their account. Idempotent.<br>
                     Plex only retains a limited window of play events; plays older than that stay attributed to admin — expected, not a failure. Every new sync attributes correctly per Plex account from the start.
                   </p>
-                  <div id="admin-action-status" class="status mt-8" style="white-space:pre-wrap;line-height:1.5"></div>
+                  <div id="admin-action-status" class="pre-wrap lh-15 status mt-8"></div>
                 </div>
               </section>
               <section class="section">
                 <div class="section-head"><h3>Cleanup orphans <span class="badge danger badge-sm">destructive</span></h3>
                   <div class="section-actions"><button class="btn btn-danger btn-sm" data-action="cleanupOrphans" data-args='["$el"]'>Run cleanup</button></div></div>
                 <div class="section-body">
-                  <p class="fs-12 t3" style="line-height:1.5">Delete watch_history rows pointing to media that's no longer in any Plex library. Spotify entries are preserved. Aborts safely if any library section can't be read.</p>
+                  <p class="lh-15 fs-12 t3">Delete watch_history rows pointing to media that's no longer in any Plex library. Spotify entries are preserved. Aborts safely if any library section can't be read.</p>
                   <div id="maint-cleanup-status" class="status mt-8"></div>
                 </div>
               </section>
@@ -750,7 +750,7 @@
 
             <!-- Library pane (admin only) — Sonarr/Radarr/Lidarr URLs, keys and defaults -->
             <section class="settings-pane" data-pane="library" hidden>
-              <p class="fs-12 t3 mb-12" style="line-height:1.5">
+              <p class="lh-15 fs-12 t3 mb-12">
                 URLs, API keys and per-arr defaults (root folder, quality profile, …). Defaults apply automatically
                 when you add to Sonarr/Radarr/Lidarr from the library views. Save enables once a field changed.
               </p>
@@ -761,7 +761,7 @@
                  changeable after the fact. Secrets are never echoed back - the
                  server reports set / not set, typing a value replaces it. -->
             <section class="settings-pane" data-pane="integrations" hidden>
-              <p class="fs-12 t3 mb-12" style="line-height:1.5">
+              <p class="lh-15 fs-12 t3 mb-12">
                 Plex, Ollama, the model bakes and every metadata source. Saving writes
                 <code>.env</code> and reloads settings live; a model change also needs
                 <strong>Rebuild models</strong> and a restart — the panel says so.

@@ -48,7 +48,7 @@ export async function renderMatchPicker(box, opts) {
       <div class="row mt-12">
         <span class="fs-12 t2">Pin an id directly:</span>
         <select class="input" aria-label="Id kind">${PIN_ID_KINDS.map(k => `<option value="${k}">${k}</option>`).join('')}</select>
-        <input class="input" style="width:180px" aria-label="Id" placeholder="e.g. 603 or tt0133093" ${actOn('keydown', 'freePinOnEnter', EVENT, EL)}>
+        <input class="w-180 input" aria-label="Id" placeholder="e.g. 603 or tt0133093" ${actOn('keydown', 'freePinOnEnter', EVENT, EL)}>
         <button type="button" class="btn btn-secondary btn-sm" ${ctx} ${act('pickerFreePin', EL)}>Pin this id</button>
       </div>`;
   } catch (e) { box.innerHTML = _errHtml(e); }

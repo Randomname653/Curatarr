@@ -11,7 +11,7 @@ export async function loadMappingStats(btn) {
   try {
     const s = await api('/api/enrichment/mapping-stats');
     el.innerHTML = `
-      <div class="row mt-4" style="gap:16px">
+      <div class="gap-16 row mt-4">
         <span><b class="t-amber">${(s.total_entries || 0).toLocaleString()}</b> <span class="t2">total entries</span></span>
         <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString()}</b> <span class="t2">TVDB mapped</span></span>
         <span><b>${(s.anilist_resolved || 0).toLocaleString()}</b> <span class="t2">AniList resolved</span></span>
@@ -30,7 +30,7 @@ export async function checkMappingCoverage(btn) {
     const c = await api('/api/enrichment/mapping-coverage');
     if (c.error) el.innerHTML = `<p class="load-err">${esc(c.error)}</p>`;
     else el.innerHTML = `
-      <div class="row mt-8" style="gap:16px">
+      <div class="gap-16 row mt-8">
         <span><b class="t-amber">${c.total_anime}</b> <span class="t2">anime in Sonarr</span></span>
         <span><b class="t-success">${c.covered} (${c.coverage_pct}%)</b> <span class="t2">in mapping</span></span>
         <span><b>${c.anilist_resolved}</b> <span class="t2">AniList ready</span></span>
@@ -38,7 +38,7 @@ export async function checkMappingCoverage(btn) {
       </div>
       ${c.missing_sample?.length ? `
       <details class="mt-8">
-        <summary class="fs-11 t3" style="cursor:pointer">Not mapped (${c.missing} total)</summary>
+        <summary class="pointer fs-11 t3">Not mapped (${c.missing} total)</summary>
         <div class="mt-4">${c.missing_sample.map(m => `<div class="fs-11 t-danger">${esc(m.title)} tvdb:${m.tvdb_id || '?'} — ${esc(m.reason)}</div>`).join('')}</div>
       </details>` : ''}`;
   } catch (e) { el.innerHTML = _errHtml(e); }
@@ -61,7 +61,7 @@ export async function loadProfiles(offset = 0) {
     const srcLabel = p => p.profile_source === 'watch_history' ? 'watched'
       : (p.profile_source || '').startsWith('arr:') ? p.profile_source.slice(4) : (p.profile_source || '?');
     const block = (label, html, mono) => html
-      ? `<div class="mb-8"><div class="fs-10 t3" style="text-transform:uppercase;letter-spacing:.6px">${label}</div><div class="${mono ? 'fs-11 t3 mono' : 'fs-12 t2'} mt-4" style="line-height:1.6;word-break:break-word">${html}</div></div>` : '';
+      ? `<div class="mb-8"><div class="caps fs-10 t3">${label}</div><div class="lh-16 break-word ${mono ? 'fs-11 t3 mono' : 'fs-12 t2'} mt-4">${html}</div></div>` : '';
     el.innerHTML = `
       <div class="fs-12 t3 mb-8">${r.total.toLocaleString()} enriched · showing ${offset + 1}–${Math.min(offset + PROFILE_PAGE, r.total)}</div>
       ${r.profiles.map(p => `
@@ -75,11 +75,11 @@ export async function loadProfiles(offset = 0) {
                 ${p.rating ? `<span class="fs-11 t-amber">${SVG_STAR} ${p.rating}</span>` : ''}
                 <span class="fs-11 t3">${p.enriched_at ? new Date(p.enriched_at).toLocaleDateString() : '?'}</span>
               </div>
-              ${p.genres?.length ? `<div class="row mt-4" style="gap:4px">${p.genres.slice(0, 5).map(g => `<span class="badge muted badge-sm">${esc(g)}</span>`).join('')}</div>` : ''}
+              ${p.genres?.length ? `<div class="gap-4 row mt-4">${p.genres.slice(0, 5).map(g => `<span class="badge muted badge-sm">${esc(g)}</span>`).join('')}</div>` : ''}
             </div>
             <span class="fs-11 t3">details</span>
           </summary>
-          <div class="panel-item-foot" style="border-top:1px solid var(--border);padding-top:10px">
+          <div class="rule-top panel-item-foot">
             ${block('Themes', p.themes?.length ? esc(p.themes.join(' · ')) : '')}
             ${block('Mood', p.mood?.length ? esc(p.mood.join(' · ')) : '')}
             ${block('Summary', p.plot_summary ? esc(p.plot_summary) : '')}
@@ -194,7 +194,7 @@ export function _renderKbOverview(o, running, lastRun) {
         </div>
       </div>
       <div class="section-body">
-        <div class="tbl-wrap" style="overflow-x:auto">
+        <div class="scroll-x tbl-wrap">
           <table class="tbl"><thead><tr>
             <th>Library</th>
             <th class="t-right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
@@ -215,12 +215,12 @@ export function _renderKbOverview(o, running, lastRun) {
         <p class="fs-11 t3 mt-8">Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
       </div>
     </section>
-    <div class="row" style="align-items:stretch">
-      <section class="section grow" style="min-width:280px">
+    <div class="items-stretch row">
+      <section class="minw-280 section grow">
         <div class="section-head"><h3>Watch-history tracking</h3><span class="section-hint" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages">own set, not part of the percentages</span></div>
         <div class="section-body"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
       </section>
-      <section class="section grow" style="min-width:280px">
+      <section class="minw-280 section grow">
         <div class="section-head"><h3>Storage</h3><span class="section-hint">enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</span>
           <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('loadCacheInventory', EL)} title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button></div></div>
         <div class="section-body"><div id="cache-inventory"></div></div>
@@ -251,19 +251,19 @@ export async function loadCacheInventory(btn) {
   try {
     const r = await api('/api/enrichment/cache-inventory');
     const rows = r.classes.map(c =>
-      `<tr><td>${esc(c.name)}</td><td style="text-align:right">${c.rows.toLocaleString()}</td>
-       <td style="text-align:right">${c.live.toLocaleString()}</td>
-       <td style="text-align:right;color:var(--text3)">${c.expired.toLocaleString()}</td>
-       <td style="text-align:right">${c.mb}</td></tr>`).join('');
+      `<tr><td>${esc(c.name)}</td><td class="t-right">${c.rows.toLocaleString()}</td>
+       <td class="t-right">${c.live.toLocaleString()}</td>
+       <td class="t-right t3">${c.expired.toLocaleString()}</td>
+       <td class="t-right">${c.mb}</td></tr>`).join('');
     const cov = r.coverage;
     document.getElementById('cache-inventory').innerHTML = `
-      <div class="tbl-wrap" style="margin-top:8px"><table class="tbl">
-        <thead><tr><th>Source class</th><th style="text-align:right">Rows</th>
-          <th style="text-align:right">Live</th>
-          <th style="text-align:right" title="Expired — unreadable through the cache API. Kept only where the stale row is still the last record (raw/prefetch of deleted media); the raw-cache refresh task re-pulls what matters.">Stale</th>
-          <th style="text-align:right">MB</th></tr></thead>
+      <div class="mt-8 tbl-wrap"><table class="tbl">
+        <thead><tr><th>Source class</th><th class="t-right">Rows</th>
+          <th class="t-right">Live</th>
+          <th class="t-right" title="Expired — unreadable through the cache API. Kept only where the stale row is still the last record (raw/prefetch of deleted media); the raw-cache refresh task re-pulls what matters.">Stale</th>
+          <th class="t-right">MB</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-      <p style="font-size:11px;color:var(--text3);margin-top:6px">
+      <p class="fs-11 t3 mt-6">
         Raw-layer coverage: Wikipedia significance ${cov.significance_text.toLocaleString()} with text / ${cov.significance_checked.toLocaleString()} checked ·
         OMDb writer ${cov.omdb_writer.toLocaleString()} · awards ${cov.omdb_awards.toLocaleString()} ·
         reception ${cov.reception_checked.toLocaleString()} — of ${cov.raw_total.toLocaleString()} raw entries.
@@ -520,7 +520,7 @@ export async function loadBackfillPanel() {
       </div>
       <div class="panel-item-sub">${esc(s.blurb)}</div>
       <div class="panel-item-foot">
-        <div class="progress-bar" style="margin-top:0"><div class="progress-fill" style="width:${Number(s.pct) || 0}%"></div></div>
+        <div class="mt-0 progress-bar"><div class="progress-fill" data-style="width:${Number(s.pct) || 0}%"></div></div>
         <div class="fs-11 t3 mt-4">${s.pct}% · ${s.missing.toLocaleString()} to go</div>
       </div>
     </div>`).join('');
