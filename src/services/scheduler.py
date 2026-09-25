@@ -77,13 +77,17 @@ def _tracked(job_id: str):
     """Decorator: record successful run timestamp after the job completes.
 
     Failed runs DON'T record — that way the next startup catch-up still
-    triggers and we get another chance.
+    triggers and we get another chance. A job reports failure by raising
+    or by returning False (the jobs catch their own exceptions to close
+    their Activity card, so returning False is the usual signal) — the
+    same contract the data custodian applies to these jobs.
     """
     def decorator(fn):
         @functools.wraps(fn)
         async def wrapped(*args, **kwargs):
             result = await fn(*args, **kwargs)
-            _record_job_run(job_id)
+            if result is not False:
+                _record_job_run(job_id)
             return result
         return wrapped
     return decorator
@@ -423,21 +427,36 @@ async def _resume_enrichment_if_needed(user_id: int):
 
 
 async def job_plex_sync():
-    """Daily Plex sync. If new items found, chains taste recompute + recs cache."""
+    """Daily Plex sync. If new items found, chains taste recompute + recs cache.
+
+    Returns False when the sync failed, errored out or found another sync
+    running, so the custodian keeps the task due and retries next tick —
+    swallowing the exception and returning None stamped a failed day as
+    done, and the next attempt waited a full cadence."""
     logger.info("[scheduler] Starting daily Plex sync")
+    ok = True
     try:
         from src.services.plex_sync import sync_plex_history
-        from src.services.task_monitor import task_monitor
 
         result = await sync_plex_history(force=False)
+        if result.get("error"):
+            logger.warning("[scheduler] Plex sync not run: %s", result["error"])
+            ok = False
+        elif result.get("busy"):
+            # Another sync holds the single-flight lock: this run did
+            # nothing, so it must not count as today's sync.
+            logger.info("[scheduler] Plex sync skipped: %s", result.get("reason"))
+            ok = False
         synced = result.get("synced", 0)
-        logger.info("[scheduler] Plex sync complete: %d new entries", synced)
+        if ok and not result.get("skipped"):
+            logger.info("[scheduler] Plex sync complete: %d new entries", synced)
 
         if synced > 0:
             # Chain: taste recompute → recommendations cache
             await _recompute_and_cache_recs()
     except Exception as e:
         logger.error("[scheduler] Plex sync failed: %s", e)
+        ok = False
 
     # Size-outlier intelligence: refresh per-item tech profiles (resolution /
     # codec / size / runtime) for the whole library, then recompute the
@@ -451,6 +470,8 @@ async def job_plex_sync():
             logger.info("[scheduler] tech profiles: %s → size norms recomputed", tech)
     except Exception as e:
         logger.error("[scheduler] tech sync / norms failed: %s", e)
+        ok = False
+    return ok
 
 
 async def job_arr_sync():
@@ -460,8 +481,9 @@ async def job_arr_sync():
     task = task_monitor.create(name="ARR Sync", category="arr_sync")
     task_monitor.start(task)
     if _gaming():
+        # Not run, so not done: False keeps the custodian task due.
         task_monitor.skip(task, "Game running — skipping to leave VRAM for the game")
-        return
+        return False
     _dr_locked = False   # guards release: never clear a lock we don't hold
     try:
         from src.database.connection import get_db_session
@@ -625,6 +647,7 @@ async def job_arr_sync():
                 pass
         task_monitor.error(task, str(e))
         logger.error("[scheduler] ARR sync failed: %s", e)
+        return False
 
 
 async def job_proactive_messages():
@@ -686,6 +709,7 @@ async def job_memory_decay():
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] Memory decay failed: %s", e)
+        return False
 
 
 async def job_orphan_check():
@@ -731,6 +755,7 @@ async def job_orphan_check():
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] Orphan check failed: %s", e)
+        return False
 
 
 async def job_arr_pre_enrich():
@@ -776,7 +801,7 @@ async def job_arr_pre_enrich():
         from src.services.app_state import acquire_state_lock, release_state_lock
         if not acquire_state_lock("enrichment_running"):
             task_monitor.skip(task, "Enrichment already running — skipping pre-enrich")
-            return
+            return False   # stays due: retry once the running pass is done
 
         # Audit #3: the old unconditional finally double-released the lock —
         # a /start acquiring between _run_enrichment's release and ours got
@@ -809,6 +834,7 @@ async def job_arr_pre_enrich():
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] ARR pre-enrichment failed: %s", e, exc_info=True)
+        return False
 
 
 async def job_source_upgrade():
@@ -1020,6 +1046,33 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
         return 0
 
 
+def _vacuum_sqlite_file(path: str) -> None:
+    """Blocking VACUUM of one SQLite file — run it off the event loop.
+
+    A dedicated connection, because VACUUM must NOT be in a transaction
+    (isolation_level=None → autocommit mode). The 60 s timeout matches the
+    app's busy_timeout: with the loop no longer frozen, a request may hold
+    the write lock at the moment VACUUM starts, and the default 5 s would
+    give up on the weekly pass."""
+    import sqlite3
+    conn = sqlite3.connect(path, isolation_level=None, timeout=60)
+    try:
+        # incremental_vacuum reclaims pages from the freelist when
+        # auto_vacuum is enabled. Harmless when not.
+        try:
+            conn.execute("PRAGMA incremental_vacuum;")
+        except sqlite3.OperationalError:
+            pass
+        conn.execute("VACUUM;")
+        # Refresh query optimiser stats after page reorg.
+        try:
+            conn.execute("PRAGMA optimize;")
+        except sqlite3.OperationalError:
+            pass
+    finally:
+        conn.close()
+
+
 async def job_db_vacuum():
     """
     Pass 15b: weekly off-hours SQLite VACUUM.
@@ -1035,9 +1088,13 @@ async def job_db_vacuum():
     its own connection so a failure on one doesn't block the other.
 
     Logs old vs new file size per DB so the impact is visible.
+
+    The VACUUM itself runs in a worker thread: it rewrites the whole file
+    (minutes on a large DB), and run inline it froze every request, the
+    Activity stream and every other job for as long as it took. Returns
+    False when a file failed, so the task stays due.
     """
     import os
-    import sqlite3
     from src.services.task_monitor import task_monitor
     from src.config import settings as _s
 
@@ -1060,27 +1117,11 @@ async def job_db_vacuum():
         return
 
     summary_lines = []
+    failed = False
     for label, path in targets:
         try:
             size_before = os.path.getsize(path)
-            # Open a dedicated connection (must NOT be in a transaction
-            # for VACUUM to work). isolation_level=None → autocommit mode.
-            conn = sqlite3.connect(path, isolation_level=None)
-            try:
-                # incremental_vacuum reclaims pages from the freelist when
-                # auto_vacuum is enabled. Harmless when not.
-                try:
-                    conn.execute("PRAGMA incremental_vacuum;")
-                except sqlite3.OperationalError:
-                    pass
-                conn.execute("VACUUM;")
-                # Refresh query optimiser stats after page reorg.
-                try:
-                    conn.execute("PRAGMA optimize;")
-                except sqlite3.OperationalError:
-                    pass
-            finally:
-                conn.close()
+            await asyncio.to_thread(_vacuum_sqlite_file, path)
             size_after = os.path.getsize(path)
             saved_mb = (size_before - size_after) / (1024 * 1024)
             line = f"{label}: {size_before/1024/1024:.1f}MB → {size_after/1024/1024:.1f}MB (saved {saved_mb:+.1f}MB)"
@@ -1090,8 +1131,35 @@ async def job_db_vacuum():
             line = f"{label}: vacuum failed — {type(e).__name__}: {e}"
             summary_lines.append(line)
             logger.warning("[scheduler] %s", line)
+            failed = True
 
+    if failed:
+        task_monitor.error(task, " | ".join(summary_lines))
+        return False
     task_monitor.done(task, " | ".join(summary_lines))
+
+
+def _snapshot_sqlite(db_path: str, dest: str) -> bool:
+    """Blocking online backup of *db_path* into *dest*, then a quick_check of
+    the copy. True when the snapshot is sound. Runs in a worker thread —
+    ``backup()`` in one step copies every page before returning."""
+    import sqlite3
+    # Online backup: page-by-page snapshot of the live DB (handles WAL).
+    src = sqlite3.connect(db_path, timeout=60)
+    dst = sqlite3.connect(dest)
+    try:
+        with dst:
+            src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+
+    # A backup that fails integrity_check is worse than none — verify it.
+    chk = sqlite3.connect(dest)
+    try:
+        return (chk.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
+    finally:
+        chk.close()
 
 
 async def job_db_backup():
@@ -1105,10 +1173,14 @@ async def job_db_backup():
     are rotated. Backups live in data/backups/ (Syncthing-excluded with the
     rest of data/) — a real restore point against a corrupt live DB, the gap
     that turned a corrupt ``-wal`` into a scare with no fallback.
+
+    The copy and the check run in a worker thread (both read the whole
+    file; inline they froze the app for the duration). Returns False on
+    failure so the custodian retries next tick instead of stamping a day
+    without a backup as done.
     """
     import os
     import glob
-    import sqlite3
     from datetime import datetime
     from src.services.task_monitor import task_monitor
     from src.config import settings as _s
@@ -1130,27 +1202,12 @@ async def job_db_backup():
     dest = os.path.join(bdir, f"curatarr_{stamp}.db")
 
     try:
-        # Online backup: page-by-page snapshot of the live DB (handles WAL).
-        src = sqlite3.connect(db_path, timeout=60)
-        dst = sqlite3.connect(dest)
-        try:
-            with dst:
-                src.backup(dst)
-        finally:
-            dst.close()
-            src.close()
-
-        # A backup that fails integrity_check is worse than none — verify it.
-        chk = sqlite3.connect(dest)
-        try:
-            ok = (chk.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
-        finally:
-            chk.close()
+        ok = await asyncio.to_thread(_snapshot_sqlite, db_path, dest)
         if not ok:
             os.remove(dest)
             task_monitor.error(task, "snapshot failed integrity check — discarded")
             logger.warning("[backup] snapshot failed integrity check — discarded")
-            return
+            return False
 
         # Rotate: keep the newest KEEP snapshots, drop older ones.
         snaps = sorted(glob.glob(os.path.join(bdir, "curatarr_*.db")))
@@ -1174,6 +1231,7 @@ async def job_db_backup():
             pass
         task_monitor.error(task, f"{type(e).__name__}: {e}")
         logger.error("[backup] DB backup failed: %s: %s", type(e).__name__, e)
+        return False
 
 
 def _attach_rec_ids(recs: list, arr_lib: list, category: str) -> None:

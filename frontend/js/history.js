@@ -91,7 +91,7 @@ export function showTasteTab(type,btn) {
   document.querySelectorAll('#taste-tabs .cat-tab').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   api('/api/history/status').then(s=>showTasteTabData(s.taste_vector.by_type||{},s.taste_vector.summary||'',type)).catch(()=>{});
-  api(`/api/history/recent?limit=100&category=${type}`).then(h=>renderRecent(h.entries,type)).catch(()=>{});
+  api(`/api/history/recent?limit=100&category=${encodeURIComponent(type)}`).then(h=>renderRecent(h.entries,type)).catch(()=>{});
 }
 
 export function showTasteTabData(byType, summary, type) {

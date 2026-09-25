@@ -582,10 +582,14 @@ async def rollback_embedding(user: User = Depends(get_current_user)):
 # hour ago. These endpoints expose the same walkers on demand, together with
 # the coverage figure that decides whether offering them is still useful.
 
-_backfill_running: set = set()
+# source -> run token of the worker that currently owns it. A bare set let a
+# stop + quick restart revive the OLD worker (it only asked "is the source
+# still running?"), so two walkers ran — and whichever finished first
+# discarded the source, stopping the other and showing "not running".
+_backfill_running: dict = {}
 
 
-async def _run_backfill_bg(source: str) -> None:
+async def _run_backfill_bg(source: str, token: object) -> None:
     from src.services.task_monitor import task_monitor
     from src.services.archive_backfill import SOURCES, run_source
     label = SOURCES[source]["label"]
@@ -593,14 +597,17 @@ async def _run_backfill_bg(source: str) -> None:
     task_monitor.start(task)
     try:
         res = await run_source(source, task=task,
-                               should_stop=lambda: source not in _backfill_running)
+                               should_stop=lambda: _backfill_running.get(source) is not token)
         task_monitor.done(task, f"{label} — {res['added']} added "
                                 f"across {res['visited']} titles")
     except Exception as e:
         logger.error("[backfill] %s failed: %s", source, e)
         task_monitor.done(task, f"{label} failed: {e}")
     finally:
-        _backfill_running.discard(source)
+        # Only the owner clears the flag — a stopped worker finishing after a
+        # restart must not unregister its successor.
+        if _backfill_running.get(source) is token:
+            del _backfill_running[source]
 
 
 @router.get("/backfill-status")
@@ -628,8 +635,9 @@ async def start_backfill(
         raise HTTPException(status_code=404, detail=f"unknown source {source!r}")
     if source in _backfill_running:
         raise HTTPException(status_code=409, detail="already running")
-    _backfill_running.add(source)
-    background_tasks.add_task(_run_backfill_bg, source)
+    token = object()
+    _backfill_running[source] = token
+    background_tasks.add_task(_run_backfill_bg, source, token)
     return {"status": "started", "source": source}
 
 
@@ -637,7 +645,7 @@ async def start_backfill(
 async def stop_backfill(source: str, user: User = Depends(require_admin)):
     """Ask a running backfill to stop after the current title. What it has
     already written stays written."""
-    _backfill_running.discard(source)
+    _backfill_running.pop(source, None)
     return {"status": "stopping", "source": source}
 
 
@@ -2310,6 +2318,61 @@ def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
     return None
 
 
+def _emb_cache_item_keys(categories: list) -> set:
+    """Item keys the taste engine files embedding caches under for these
+    categories: watch-history plex_item_ids (per media_type) plus the
+    enrichment rows' keys (music embeds per ARTIST, keyed by the enrichment
+    row's plex_rating_key, not the play row's)."""
+    keys: set = set()
+    with get_db_session() as db:
+        for (k,) in db.query(WatchHistoryEntry.plex_item_id).filter(
+                WatchHistoryEntry.media_type.in_(categories)).distinct():
+            if k:
+                keys.add(str(k))
+        for (k,) in db.query(EnrichmentStatus.plex_rating_key).filter(
+                EnrichmentStatus.media_category.in_(categories)):
+            if k:
+                keys.add(str(k))
+    return keys
+
+
+def _clear_emb_caches(conn, item_keys: set) -> tuple:
+    """Delete the ``emb:`` / ``emb_ts:`` cache rows of ``item_keys`` only.
+
+    The key (``{ver}:emb:{model}:{pid}``, legacy ``{ver}:emb:{pid}``) carries
+    no category, and both the model tag and the pid may contain colons, so
+    rows are matched on the ``:{pid}`` suffix. That can over-match a pid
+    that is a suffix of another ("107" vs "radarr:107") — harmless, the
+    other item just re-embeds once; under-matching would keep stale vectors.
+    Returns (emb rows, emb_ts rows) deleted."""
+    from src.cache.metadata_cache import _CACHE_VERSION as _CV
+    if not item_keys:
+        return 0, 0
+    suffixes = tuple(f":{k}" for k in item_keys)
+    emb_pre, ts_pre = f"{_CV}:emb:", f"{_CV}:emb_ts:"
+    # Coarse LIKE (also hits e.g. "embed…" keys); the startswith below decides.
+    rows = conn.execute(
+        "SELECT cache_key FROM api_cache WHERE cache_key LIKE ?", (f"{_CV}:emb%",),
+    ).fetchall()
+    doomed_emb, doomed_ts = [], []
+    for (key,) in rows:
+        if key.startswith(ts_pre):
+            rest, bucket = key[len(ts_pre) - 1:], doomed_ts
+        elif key.startswith(emb_pre):
+            rest, bucket = key[len(emb_pre) - 1:], doomed_emb
+        else:
+            continue
+        if rest.endswith(suffixes):
+            bucket.append(key)
+    doomed =doomed_emb + doomed_ts
+    for i in range(0, len(doomed), 500):
+        chunk = doomed[i:i + 500]
+        conn.execute(
+            f"DELETE FROM api_cache WHERE cache_key IN ({','.join('?' * len(chunk))})",
+            chunk)
+    return len(doomed_emb), len(doomed_ts)
+
+
 async def _run_enrichment(user_id: int, categories: list, source: str,
                           limit: Optional[int], force: bool = False,
                           fast_only: bool = False,
@@ -2385,20 +2448,17 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     # and gate re-embedding by ts comparison; force-re-enrich
                     # MUST drop them or the next taste-vector recompute keeps
                     # reusing vectors built from the now-deleted old profiles.
-                    # ``LIKE 'emb:%'`` matches both emb: and emb_ts: in one go.
                     # Only run on watch_history / both — emb caches are keyed
                     # by plex_rating_key, which arr-only items don't have.
+                    # Scoped to the REQUESTED categories: the old blanket
+                    # LIKE '%:emb:%' made a one-category force re-enrich
+                    # throw away every other category's vectors too.
                     if source in ("watch_history", "both"):
-                        emb_deleted = _mc.conn.execute(
-                            "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                            (f"%:emb:%",),
-                        ).rowcount
-                        emb_ts_deleted = _mc.conn.execute(
-                            "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                            (f"%:emb_ts:%",),
-                        ).rowcount
+                        emb_deleted, emb_ts_deleted = _clear_emb_caches(
+                            _mc.conn, _emb_cache_item_keys(categories))
                         logger.info(
-                            "Cleared %d emb + %d emb_ts cache rows", emb_deleted, emb_ts_deleted,
+                            "Cleared %d emb + %d emb_ts cache rows for %s",
+                            emb_deleted, emb_ts_deleted, categories,
                         )
 
                     _mc.conn.commit()

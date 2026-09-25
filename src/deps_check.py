@@ -31,6 +31,12 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS = ROOT / "requirements.txt"
 INSTALL_CMD = "pip install -r requirements.txt"
 
+# The pins decide the floor, not the README: numpy 2.5 ships wheels for
+# 3.12+ only, so on 3.11 pip dies with a bare "No matching distribution
+# found for numpy==2.5.3" that reads like a broken mirror. Say it plainly
+# before pip gets the chance to.
+MIN_PYTHON = (3, 12)
+
 # name, optional [extras], == version; anything else in the file (comments,
 # blank lines, ranges) is not a pin and is ignored.
 _PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*==\s*([^\s;#]+)")
@@ -135,6 +141,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--install", action="store_true", help="run pip for the pinned file when anything is off")
     ap.add_argument("--requirements", default=str(REQUIREMENTS))
     args = ap.parse_args(argv)
+    if tuple(sys.version_info[:2]) < MIN_PYTHON:
+        need = ".".join(map(str, MIN_PYTHON))
+        print(f"[deps] Python {need} or newer is required "
+              f"(this is {sys.version_info[0]}.{sys.version_info[1]}); "
+              f"the pinned requirements do not install on it.")
+        return 1
     req = Path(args.requirements)
     rep = check(req)
     if not rep.clean and args.install:

@@ -79,6 +79,20 @@ async def lifespan(app: FastAPI):
         set_state("game_active", "1" if _igr() else "0")
     except Exception:
         pass
+    # A proposal claimed "deleting" when the process died mid-delete: the
+    # outcome is unknown, so park it in limbo (listed, retryable) rather
+    # than leave it invisible forever.
+    try:
+        from src.database.connection import get_db_session as _gds
+        from src.database.models import DeletionProposal as _DP
+        with _gds() as _db:
+            _n = (_db.query(_DP).filter(_DP.status == "deleting")
+                  .update({"status": "limbo"}, synchronize_session=False))
+            _db.commit()
+        if _n:
+            logger.warning("Boot: %d interrupted deletion(s) parked in limbo", _n)
+    except Exception:
+        pass
 
     # Pass 41: all startup background tasks now go through ``track_task``
     # which retains a strong reference until the task completes. Without

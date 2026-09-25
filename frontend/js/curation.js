@@ -42,7 +42,7 @@ export async function liftProtection(id, btn) {
   if (!res.ok) return;
   btnBusy(btn);
   try {
-    await api('/api/recommendations/protections/' + id, 'DELETE');
+    await api('/api/recommendations/protections/' + encodeURIComponent(id), 'DELETE');
     toast('Protection lifted — re-judged on the next analysis', 'success');
     loadJudgeProtections();
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
@@ -112,7 +112,9 @@ export async function setPrinciple(id, action, btn) {
   }
   btnBusy(btn);
   try {
-    await api('/api/recommendations/principles/' + id + '/' + action, 'POST');
+    // Encoded: action arguments come from markup, and a "../" segment would
+    // otherwise walk the POST onto any other endpoint.
+    await api('/api/recommendations/principles/' + encodeURIComponent(id) + '/' + encodeURIComponent(action), 'POST');
     toast({activate: 'Principle activated', shadow: 'Principle deactivated', reject: 'Principle rejected'}[action] || 'Saved', 'success');
     loadPrinciples();
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
@@ -326,7 +328,7 @@ export async function loadRedundancy() {
 export async function downscaleDone(id, btn) {
   btnBusy(btn);
   try {
-    await api('/api/recommendations/downscale/' + id + '/done', 'POST');
+    await api('/api/recommendations/downscale/' + encodeURIComponent(id) + '/done', 'POST');
     toast('Marked done — the protection stays', 'success');
     loadDownscale();
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
@@ -346,7 +348,7 @@ export function curationSection(kind, el) {
 export async function checkUncensored(arrId, btn) {
   btnBusy(btn, 'Searching…');
   try {
-    const r = await api(`/api/library/editions/${arrId}/releases`);
+    const r = await api(`/api/library/editions/${encodeURIComponent(arrId)}/releases`);
     const names = (r.releases || []).slice(0, 3).map(x => x.title).join(' · ');
     toast(r.total ? `${r.total} release(s) uncensored by name or from Blu-ray/DVD: ${names}` : 'No release named uncensored or from Blu-ray/DVD on your indexers (seasons 1–2)', r.total ? 'success' : 'info', {ms: 10000});
     btnDone(btn, r.total ? `${r.total} found` : 'None found', {revertMs: 6000});

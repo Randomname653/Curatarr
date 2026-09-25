@@ -45,7 +45,7 @@ export async function toggleUser(id, active, btn) {
   }
   btnBusy(btn);
   try {
-    await api(`/api/users/${id}`, 'PATCH', {is_active: active});
+    await api(`/api/users/${encodeURIComponent(id)}`, 'PATCH', {is_active: active});
     toast(active ? 'User enabled' : 'User disabled — their sessions are gone', 'success');
     loadUsers(true);
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }

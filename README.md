@@ -158,7 +158,7 @@ decisions and the invariants learned the hard way — lives in
 
 | | |
 |---|---|
-| **Python** | 3.11 or newer |
+| **Python** | 3.12 or newer |
 | **Plex Media Server** | with an admin token |
 | **[Ollama][link-ollama]** | running locally, GPU strongly recommended |
 | **Radarr / Sonarr / Lidarr** | optional — unlocks deletion proposals per category |
@@ -324,7 +324,7 @@ keep their original licenses, listed in
 <!-- badges -->
 [badge-license]: https://img.shields.io/badge/license-AGPL--3.0-blue
 [badge-tests]: https://github.com/Randomname653/Curatarr/actions/workflows/tests.yml/badge.svg
-[badge-python]: https://img.shields.io/badge/python-3.11%2B-blue
+[badge-python]: https://img.shields.io/badge/python-3.12%2B-blue
 [badge-local]: https://img.shields.io/badge/LLM-100%25%20local-E5A00D
 [badge-platform]: https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey
 [badge-scorecard]: https://api.scorecard.dev/projects/github.com/Randomname653/Curatarr/badge

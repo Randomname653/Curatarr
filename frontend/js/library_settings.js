@@ -92,7 +92,7 @@ export async function loadArrProfiles(svc, btn) {
   target.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading profiles…</p>';
   try {
     const [profiles, defaults] = await Promise.all([
-      api(`/api/library/profiles/${svc}`),
+      api(`/api/library/profiles/${encodeURIComponent(svc)}`),
       api('/api/library/defaults'),
     ]);
     const cur = (defaults || {})[svc] || {};
@@ -166,7 +166,7 @@ export async function saveArrDefaults(svc, btn) {
   if (svc === 'lidarr' && meta) body.metadata_profile_id = meta;
   if (mon) body.monitor_option = mon;
   try {
-    await api(`/api/library/defaults/${svc}`, 'PUT', body);
+    await api(`/api/library/defaults/${encodeURIComponent(svc)}`, 'PUT', body);
     setStatus(msg, 'saved', 'ok');
     toast(`${ARR_LABELS[svc]} defaults saved`, 'success');
     btnDone(btn, null, {keepDisabled: true});

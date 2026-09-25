@@ -991,6 +991,10 @@ async def get_deletion_proposals(
         name=f"Deletion analysis: {category or 'all categories'}",
         category="curation", task_id=f"del-analysis-{user.id}")
     task_monitor.start(mtask)
+    # try/finally: the enrich + DB-write block below can raise too (TMDB,
+    # a constraint, a locked DB) — before, only a generation error released
+    # the lock, and anything later left "deletion_run" held until restart,
+    # blocking every Analyze and the scheduled scan.
     try:
         if not category:
             # Run sequentially — Ollama is single-threaded and can't handle
@@ -1007,109 +1011,105 @@ async def get_deletion_proposals(
         else:
             proposals = await generate_deletion_proposals(
                 user.id, arr_items, category, monitor_task=mtask)
+
+        # Enrich each proposal with poster, synopsis, genres from TMDB + ARR
+        # metadata. arr-id-first keying — see build_proposal_item_map (the
+        # Devil-Wears-Prada cross-service collision AND the same-service
+        # same-title Good-Boy collision).
+        item_map = build_proposal_item_map(arr_items)
+        enriched = await asyncio.gather(*[
+            _enrich_proposal(p, item_map, category) for p in proposals])
+
+        if not enriched:
+            # Generation produced nothing — keep whatever is in the DB rather than
+            # wiping it, so the user still sees the last known proposals.
+            task_monitor.done(mtask, "No candidates — previous proposals retained")
+            return {"proposals": [], "total_gb": 0,
+                    "message": "Analysis returned no candidates. Previous proposals retained."}
+
+        with get_db_session() as dbs:
+            # Only now — after successful generation — remove the stale proposals.
+            # This prevents the "wiped cache with no replacement" failure mode.
+            from sqlalchemy import or_, and_
+
+            old_q = dbs.query(DeletionProposal).filter(
+                DeletionProposal.user_id == user.id,
+                DeletionProposal.status == "pending",
+            )
+            if category and category in _CATEGORY_TO_SERVICE:
+                svc = _CATEGORY_TO_SERVICE[category]
+                # Match rows where category column is set correctly OR where category
+                # is NULL (legacy rows written before the column existed) but the
+                # service matches.  This cleans up scheduler-generated NULL-category
+                # rows without accidentally deleting "show" rows when refreshing "anime"
+                # (both share sonarr — the category column disambiguates).
+                old_q = old_q.filter(
+                    or_(
+                        DeletionProposal.category == category,
+                        and_(
+                            DeletionProposal.category.is_(None),
+                            DeletionProposal.service == svc,
+                        ),
+                    )
+                )
+            # Pass 90b: SOFT delete via status='superseded' instead of hard
+            # ``DELETE``. The hard-delete freed ROWIDs that SQLite (without
+            # AUTOINCREMENT) reused for the new rows below — and stale
+            # frontend caches that still held an old proposal_id then
+            # silently pointed at a DIFFERENT title in the new batch
+            # (the cross-render bug Pass 90a documented). Soft-delete
+            # preserves the IDs (no reuse can happen for these rows even
+            # without AUTOINCREMENT) AND gives us an audit trail of
+            # superseded proposals. All status filters elsewhere in the
+            # codebase look for ``pending`` / ``limbo`` / ``rejected`` /
+            # ``deleted`` so ``superseded`` rows are silently ignored by
+            # the UI and the deletion flows — exactly what we want.
+            old_q.update(
+                {"status": "superseded", "resolved_at": datetime.utcnow()},
+                synchronize_session=False,
+            )
+
+            saved = []
+            for p in enriched:
+                # Pass 17: parse latest_activity_at iso string back to datetime
+                # (or None if the helper couldn't fill it).
+                la = p.get("latest_activity_at")
+                la_dt = None
+                if la:
+                    try:
+                        la_dt = datetime.fromisoformat(str(la).replace("Z", "+00:00"))
+                        if la_dt.tzinfo is not None:
+                            la_dt = la_dt.replace(tzinfo=None)
+                    except Exception:
+                        la_dt = None
+                row = DeletionProposal(
+                    user_id=user.id, media_id=str(p.get("arr_id", "")),
+                    title=p["title"], service=p.get("service", ""),
+                    arr_url=p.get("arr_url", ""), reason=p["pitch"],
+                    confidence=p["confidence"], storage_mb=p.get("size_mb", 0),
+                    status="pending",
+                    category=p.get("category"),
+                    poster_url=p.get("poster_url"),
+                    synopsis=p.get("synopsis"),
+                    genres=p.get("genres"),
+                    tvdb_id=p.get("tvdb_id"),
+                    tmdb_id=p.get("tmdb_id"),
+                    latest_activity_at=la_dt,
+                    stagnant=p.get("stagnant", False),
+                )
+                dbs.add(row)
+                saved.append((p, row))
+            dbs.flush()
+            proposals_with_ids = [
+                {**p, "id": row.id, "size_gb": round((p.get("size_mb") or 0) / 1024, 1)}
+                for p, row in saved
+            ]
+            dbs.commit()
     except Exception as e:
-        release_state_lock("deletion_run")
         task_monitor.error(mtask, str(e))
         raise
-
-    # Enrich each proposal with poster, synopsis, genres from TMDB + ARR
-    # metadata. arr-id-first keying — see build_proposal_item_map (the
-    # Devil-Wears-Prada cross-service collision AND the same-service
-    # same-title Good-Boy collision).
-    item_map = build_proposal_item_map(arr_items)
-    enriched = await asyncio.gather(*[
-        _enrich_proposal(p, item_map, category) for p in proposals])
-
-    if not enriched:
-        # Generation produced nothing — keep whatever is in the DB rather than
-        # wiping it, so the user still sees the last known proposals.
+    finally:
         release_state_lock("deletion_run")
-        task_monitor.done(mtask, "No candidates — previous proposals retained")
-        return {"proposals": [], "total_gb": 0,
-                "message": "Analysis returned no candidates. Previous proposals retained."}
-
-    with get_db_session() as dbs:
-        # Only now — after successful generation — remove the stale proposals.
-        # This prevents the "wiped cache with no replacement" failure mode.
-        from sqlalchemy import or_, and_
-
-        old_q = dbs.query(DeletionProposal).filter(
-            DeletionProposal.user_id == user.id,
-            DeletionProposal.status == "pending",
-        )
-        if category and category in _CATEGORY_TO_SERVICE:
-            svc = _CATEGORY_TO_SERVICE[category]
-            # Match rows where category column is set correctly OR where category
-            # is NULL (legacy rows written before the column existed) but the
-            # service matches.  This cleans up scheduler-generated NULL-category
-            # rows without accidentally deleting "show" rows when refreshing "anime"
-            # (both share sonarr — the category column disambiguates).
-            old_q = old_q.filter(
-                or_(
-                    DeletionProposal.category == category,
-                    and_(
-                        DeletionProposal.category.is_(None),
-                        DeletionProposal.service == svc,
-                    ),
-                )
-            )
-        # Pass 90b: SOFT delete via status='superseded' instead of hard
-        # ``DELETE``. The hard-delete freed ROWIDs that SQLite (without
-        # AUTOINCREMENT) reused for the new rows below — and stale
-        # frontend caches that still held an old proposal_id then
-        # silently pointed at a DIFFERENT title in the new batch
-        # (the cross-render bug Pass 90a documented). Soft-delete
-        # preserves the IDs (no reuse can happen for these rows even
-        # without AUTOINCREMENT) AND gives us an audit trail of
-        # superseded proposals. All status filters elsewhere in the
-        # codebase look for ``pending`` / ``limbo`` / ``rejected`` /
-        # ``deleted`` so ``superseded`` rows are silently ignored by
-        # the UI and the deletion flows — exactly what we want.
-        old_q.update(
-            {"status": "superseded", "resolved_at": datetime.utcnow()},
-            synchronize_session=False,
-        )
-
-        saved = []
-        for p in enriched:
-            # Pass 17: parse latest_activity_at iso string back to datetime
-            # (or None if the helper couldn't fill it).
-            la = p.get("latest_activity_at")
-            la_dt = None
-            if la:
-                try:
-                    la_dt = datetime.fromisoformat(str(la).replace("Z", "+00:00"))
-                    if la_dt.tzinfo is not None:
-                        la_dt = la_dt.replace(tzinfo=None)
-                except Exception:
-                    la_dt = None
-            row = DeletionProposal(
-                user_id=user.id, media_id=str(p.get("arr_id", "")),
-                title=p["title"], service=p.get("service", ""),
-                arr_url=p.get("arr_url", ""), reason=p["pitch"],
-                confidence=p["confidence"], storage_mb=p.get("size_mb", 0),
-                status="pending",
-                category=p.get("category"),
-                poster_url=p.get("poster_url"),
-                synopsis=p.get("synopsis"),
-                genres=p.get("genres"),
-                tvdb_id=p.get("tvdb_id"),
-                tmdb_id=p.get("tmdb_id"),
-                latest_activity_at=la_dt,
-                stagnant=p.get("stagnant", False),
-            )
-            dbs.add(row)
-            saved.append((p, row))
-        dbs.flush()
-        proposals_with_ids = [
-            {**p, "id": row.id, "size_gb": round((p.get("size_mb") or 0) / 1024, 1)}
-            for p, row in saved
-        ]
-        dbs.commit()
-    # Release here, not in a finally: the response shaping below is lock-free,
-    # and a crash between generation and this line is cleared by the lifespan
-    # boot reset ("deletion_run" is on the stuck-flag list).
-    release_state_lock("deletion_run")
     task_monitor.done(mtask, f"{len(proposals_with_ids)} proposal(s) saved")
 
     # Pass 24: apply the same recent_only filter+sort the read path uses,
@@ -1173,7 +1173,10 @@ async def update_comment(
     db.commit()
 
     is_kept = False
-    if comment:
+    # A closed proposal (already deleted, or mid-delete) must not learn a
+    # "Keeping: …" note from a stale card: the protection path would log a
+    # kept resolution for files that are gone.
+    if comment and p.status in _OPEN_STATUSES:
         from src.services.episodic_memory import analyze_deletion_comment
         # pass the proposal's REAL category — the old default ("show") routed
         # every movie/music/anime comment into the show taste vector, which
@@ -1245,6 +1248,77 @@ def _latest_curator_stance_for_proposal(
     return (fallback_pitch.strip()[:500] if fallback_pitch else None), None
 
 
+# Statuses a proposal can still be acted on from (approve / keep). Every
+# status write on the delete path is a CONDITIONAL update against this set:
+# the Lidarr freshness guard alone can hold an item for ~120 s, and a Keep
+# click, a chat "keep X" or a second approve landing in that window used to
+# be silently overwritten by the in-flight delete.
+_OPEN_STATUSES = ("pending", "limbo")
+
+
+def _transition_if_open(db: Session, p, new_status: str, **extra) -> bool:
+    """Atomically move ``p`` from an open status to ``new_status``.
+
+    A conditional UPDATE (not an ORM attribute write) so two sessions can
+    never both win — rowcount says who did. Commits at once so the claim is
+    visible to every other session before anything slow or destructive runs,
+    then refreshes ``p`` so the caller sees the row's REAL status either way.
+    Pending ORM edits (the Lidarr guard's storage_mb true-up, a comment) are
+    flushed FIRST — flushed after, a stale in-memory status would overwrite
+    the claim this just made.
+    """
+    db.flush()
+    n = (db.query(DeletionProposal)
+         .filter(DeletionProposal.id == p.id,
+                 DeletionProposal.status.in_(_OPEN_STATUSES))
+         .update({"status": new_status, **extra}, synchronize_session=False))
+    db.commit()
+    db.refresh(p)
+    return n == 1
+
+
+def _protection_for(db: Session, user_id: int, p):
+    """The ProtectedMedia row that covers this proposal, or None.
+
+    Identifiers are the exact title (discussion / manual keeps) or the TMDB
+    id string (judge protections — see _persist_judge_protection). Title
+    matches in any category: a false block costs a retry, a missed one costs
+    the files. TMDB ids are per-type (movie 1399 != tv 1399), so those only
+    count within the proposal's category."""
+    from sqlalchemy import func, or_
+    from src.database.models import ProtectedMedia
+    conds = []
+    if p.title:
+        conds.append(func.lower(ProtectedMedia.identifier) == p.title.lower())
+    if p.tmdb_id:
+        conds.append((ProtectedMedia.identifier == str(p.tmdb_id))
+                     & or_(ProtectedMedia.category == p.category,
+                           ProtectedMedia.category.is_(None)))
+    if not conds:
+        return None
+    return (db.query(ProtectedMedia)
+            .filter(ProtectedMedia.user_id == user_id, or_(*conds))
+            .first())
+
+
+def _blocked_reason(db: Session, user_id: int, p) -> Optional[str]:
+    """Fresh re-check right before a destructive step: None when the delete
+    may proceed, else why not. A protected title's proposal is closed as
+    rejected (same non-destructive outcome as the chat protection path)."""
+    # commit before refresh: a bare refresh would discard pending edits
+    # (the freshness guard's storage_mb true-up) along with the stale status
+    db.commit()
+    db.refresh(p)
+    if p.status not in _OPEN_STATUSES:
+        return f"proposal is {p.status}"
+    prot = _protection_for(db, user_id, p)
+    if prot is not None:
+        _transition_if_open(db, p, "rejected", resolved_at=datetime.utcnow(),
+                            user_comment="Auto-rejected by ProtectedMedia entry")
+        return "title is protected"
+    return None
+
+
 @router.post("/deletions/{proposal_id}/approve")
 async def approve_deletion(
     proposal_id: int,
@@ -1254,36 +1328,52 @@ async def approve_deletion(
     p = db.query(DeletionProposal).filter(
         DeletionProposal.id == proposal_id,
         DeletionProposal.user_id == user.id,
-        DeletionProposal.status.in_(["pending", "limbo"]),
     ).first()
     if not p:
         raise HTTPException(404, "Not found")
+    if p.status not in _OPEN_STATUSES:
+        # Double click / approve during a bulk run: the first request owns
+        # the delete; a second DELETE would 404 at the arr and overwrite
+        # "deleted" with "error".
+        raise HTTPException(409, f"Proposal is already {p.status}")
 
     # Probe before committing to a destructive, irreversible action.
     reachable = await _probe_arr(p.service)
     if not reachable:
         # Keep the proposal alive in "limbo" — the user can retry at any time.
-        p.status = "limbo"
-        db.commit()
+        _transition_if_open(db, p, "limbo")
         service_name = p.service.capitalize()
         return {
             "ok": False,
-            "limbo": True,
-            "status": "limbo",
+            "limbo": p.status == "limbo",
+            "status": p.status,
             "error": f"{service_name} is currently unreachable. The item has NOT been deleted and can be retried.",
         }
 
     success = await _delete_one_and_log(db, user.id, p)
     db.commit()
-    # limbo can now come from the freshness guard too, not only the probe
-    return {"ok": success, "limbo": p.status == "limbo", "status": p.status}
+    out = {"ok": success, "limbo": p.status == "limbo", "status": p.status}
+    if not success and p.status == "rejected":
+        out["error"] = f'"{p.title}" was kept / is protected — it was NOT deleted.'
+    elif not success and p.status not in ("limbo", "error"):
+        out["error"] = f'"{p.title}" is {p.status} — it was NOT deleted again.'
+    return out
 
 
 async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
     """Execute the arr delete for ONE proposal: status/resolved_at plus the
     CuratorResolutionLog row. Shared by the single-approve endpoint and the
-    bulk runner so both paths stay behaviourally identical. Does NOT commit
-    — the caller owns the transaction.
+    bulk runner so both paths stay behaviourally identical.
+
+    Race safety: status + ProtectedMedia are re-read from the DB right
+    before the (slow) Lidarr guard AND again right before the DELETE, and
+    the row is then CLAIMED ("deleting") with a conditional UPDATE that is
+    committed immediately — so a Keep / chat keep / second approve that
+    lands mid-run wins instead of being overwritten, and two concurrent
+    approvals can never both send a DELETE. The claim commit is the only
+    commit in here; the final status + log row are left for the caller.
+    Returns False with ``p.status`` telling why (limbo / rejected / error /
+    whatever another path set) when nothing was deleted.
 
     Pass 66 / 81e resolution logging: originally hardcoded to
     ``resolution_type="consensus"`` with ``curator_stance = p.reason`` —
@@ -1302,17 +1392,43 @@ async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
     # file stays on disk — so refresh the ONE artist, wait, then require
     # actual track files. Drift parks the proposal in LIMBO (retryable
     # after a refresh), never in error.
+    blocked = _blocked_reason(db, user_id, p)
+    if blocked:
+        logger.info("[deletion] %r not deleted: %s", p.title, blocked)
+        return False
     if p.service == "lidarr":
         drift = await _lidarr_freshness_guard(p)
         if drift:
             logger.warning("[deletion] lidarr delete BLOCKED for %r: %s",
                            p.title, drift)
-            p.status = "limbo"
+            _transition_if_open(db, p, "limbo")
+            return False
+        # The guard can take ~120 s — long enough for a Keep to land.
+        blocked = _blocked_reason(db, user_id, p)
+        if blocked:
+            logger.info("[deletion] %r not deleted (changed during the "
+                        "freshness check): %s", p.title, blocked)
             return False
 
-    success = await _execute_arr_delete(p)
-    p.status = "deleted" if success else "error"
-    p.resolved_at = datetime.utcnow()
+    if not _transition_if_open(db, p, "deleting"):
+        logger.info("[deletion] %r already claimed (%s) — not deleting twice",
+                    p.title, p.status)
+        return False
+    try:
+        result = await _execute_arr_delete(p)
+    except Exception as e:
+        # Never leave the claim hanging in "deleting" (invisible, unactionable).
+        logger.error("[deletion] delete raised for %r: %s", p.title, e)
+        result = False
+    success = result is True
+    if result is None:
+        # Outcome unknown (arr accepted the connection then went silent and
+        # the follow-up check could not confirm either way): limbo, which
+        # the list shows with a Retry button — "error" is a dead end.
+        p.status = "limbo"
+    else:
+        p.status = "deleted" if success else "error"
+        p.resolved_at = datetime.utcnow()
 
     if success:
         try:
@@ -1447,7 +1563,7 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
     from src.services.task_monitor import task_monitor, TaskStatus
     from src.services.episodic_memory import analyze_deletion_comment
     task_monitor.start(task)
-    ok = failed = limbo = 0
+    ok = failed = limbo = skipped = 0
     drift_hits = 0          # lidarr freshness-guard blocks this run
     freed_mb = 0.0
     try:
@@ -1469,9 +1585,18 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                                         level="warn")
                     break
                 title = p.title
+                # Fresh re-read per item: the run can take minutes (Lidarr
+                # guard ~120 s each), and a Keep / chat keep / single approve
+                # that landed since the list was loaded must win.
+                blocked = _blocked_reason(db, user_id, p)
+                if blocked:
+                    skipped += 1
+                    task_monitor.update(task, processed=i,
+                                        message=f"{title}: skipped — {blocked}",
+                                        level="warn")
+                    continue
                 if not reachable.get(p.service):
-                    p.status = "limbo"
-                    db.commit()
+                    _transition_if_open(db, p, "limbo")
                     limbo += 1
                     task_monitor.update(task, processed=i,
                                         message=f"{title}: {p.service} unreachable → limbo",
@@ -1482,8 +1607,7 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                 # the index. Stop touching music, tell the owner to run a
                 # full Lidarr refresh first.
                 if p.service == "lidarr" and drift_hits >= 3:
-                    p.status = "limbo"
-                    db.commit()
+                    _transition_if_open(db, p, "limbo")
                     limbo += 1
                     task_monitor.update(task, processed=i,
                                         message=f"{title}: skipped — mass drift "
@@ -1511,13 +1635,21 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                         freed_mb += float(p.storage_mb or 0)
                         task_monitor.update(task, processed=i, message=f"Deleted {title}")
                     elif p.status == "limbo":
-                        # freshness guard parked it (stale index / drift)
+                        # freshness guard parked it (stale index / drift), or
+                        # the delete's outcome could not be confirmed
                         limbo += 1
                         if p.service == "lidarr":
                             drift_hits += 1
                         task_monitor.update(task, processed=i,
                                             message=f"{title}: parked in limbo "
-                                                    "(index drift — refresh & retry)",
+                                                    "(refresh & retry)",
+                                            level="warn")
+                    elif p.status != "error":
+                        # kept / protected / claimed by another approve while
+                        # this run was busy — not a failure, nothing deleted
+                        skipped += 1
+                        task_monitor.update(task, processed=i,
+                                            message=f"{title}: skipped — now {p.status}",
                                             level="warn")
                     else:
                         failed += 1
@@ -1531,8 +1663,9 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                                         message=f"{title}: {e}", level="error")
         task_monitor.done(
             task,
-            f"{ok} deleted, {failed} failed, {limbo} limbo — "
-            f"{freed_mb / 1024:.1f} GB freed",
+            f"{ok} deleted, {failed} failed, {limbo} limbo"
+            + (f", {skipped} skipped" if skipped else "")
+            + f" — {freed_mb / 1024:.1f} GB freed",
         )
     except Exception as e:
         logger.error("[bulk-delete] run failed: %s", e)
@@ -1578,8 +1711,14 @@ async def reject_deletion(
         # which has its own log-writing. Don't write a duplicate.
         return {"ok": True, "already_rejected": True}
 
-    p.status = "rejected"
-    p.resolved_at = datetime.utcnow()
+    # Only an OPEN proposal can be kept. Keep on a stale card used to flip
+    # "deleted" → "rejected": a false "kept" resolution in the log and the
+    # freed GB gone from the stats, while the files were already deleted.
+    # Conditional, so it also loses cleanly to an in-flight delete's claim.
+    if not _transition_if_open(db, p, "rejected", resolved_at=datetime.utcnow()):
+        if p.status == "rejected":
+            return {"ok": True, "already_rejected": True}
+        raise HTTPException(409, f"Proposal is already {p.status}")
 
     try:
         stance, polarity = _latest_curator_stance_for_proposal(
@@ -2168,6 +2307,21 @@ async def _probe_arr(service: str) -> bool:
     Hits the /system/status endpoint (read-only, fast) with a tight timeout.
     Returns True only when the service responds with HTTP 200.
     """
+    if service == "plex":
+        # Plex-music proposals (Lidarr not configured) — without this branch
+        # every one of them went straight to limbo and _plex_delete_artist
+        # was unreachable. /identity is Plex's cheapest endpoint.
+        base, token = settings.effective_plex_url, settings.effective_plex_token
+        if not base or not token:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(f"{str(base).rstrip('/')}/identity",
+                                     headers={"X-Plex-Token": token,
+                                              "Accept": "application/json"})
+            return r.status_code == 200
+        except Exception:
+            return False
     _STATUS = {
         "radarr": (settings.RADARR_URL,  settings.RADARR_API_KEY,  "v3"),
         "sonarr": (settings.SONARR_URL,  settings.SONARR_API_KEY,  "v3"),
@@ -2228,7 +2382,39 @@ async def _plex_delete_artist(key: str, client=None) -> bool:
             await client.aclose()
 
 
-async def _execute_arr_delete(p: DeletionProposal) -> bool:
+# A delete with deleteFiles=true is synchronous on the arr side: it returns
+# only once every file is gone, and on a NAS a big series takes minutes. The
+# old flat 15 s read timeout marked those "error" while the arr finished the
+# delete — and "error" is not approvable, so the row was stuck. Generous read
+# timeout, short connect timeout (a down arr still fails fast).
+_DELETE_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
+# After a read timeout the arr may still be mid-delete: poll the item until
+# it 404s (deleted) or give up (outcome unknown → limbo, retryable).
+_DELETE_VERIFY_POLLS = 6
+_DELETE_VERIFY_INTERVAL_S = 10.0
+
+
+async def _verify_arr_item_gone(client, url: str, headers: dict) -> Optional[bool]:
+    """True once the arr answers 404 for the item, None if that never
+    happened (still present, or the arr stayed silent) — never False: a
+    timed-out delete may still complete, so "still there" is not proof of
+    failure either."""
+    for attempt in range(_DELETE_VERIFY_POLLS):
+        try:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 404:
+                return True
+        except Exception as e:
+            logger.debug("[arr] post-timeout verify GET failed: %s", e)
+        if attempt < _DELETE_VERIFY_POLLS - 1:
+            await asyncio.sleep(_DELETE_VERIFY_INTERVAL_S)
+    return None
+
+
+async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
+    """True = deleted, False = the arr refused / failed, None = outcome
+    unknown (connection lost or timed out and the follow-up check could not
+    confirm) — the caller parks None in limbo instead of a dead-end error."""
     def _check(r, label: str) -> bool:
         if r.status_code in (200, 204):
             return True
@@ -2242,28 +2428,46 @@ async def _execute_arr_delete(p: DeletionProposal) -> bool:
     # NOTE: the parameter name differs by service — Radarr calls it
     # ``addImportExclusion``, Sonarr and Lidarr ``addImportListExclusion``
     # (verified against each project's OpenAPI spec, not guessed).
+    _ARRS = {
+        "radarr": (settings.RADARR_URL, settings.RADARR_API_KEY,
+                   settings.effective_radarr_url, "api/v3/movie",
+                   {"deleteFiles": "true", "addImportExclusion": "true"}),
+        "sonarr": (settings.SONARR_URL, settings.SONARR_API_KEY,
+                   settings.effective_sonarr_url, "api/v3/series",
+                   {"deleteFiles": "true", "addImportListExclusion": "true"}),
+        "lidarr": (settings.LIDARR_URL, settings.LIDARR_API_KEY,
+                   settings.effective_lidarr_url, "api/v1/artist",
+                   {"deleteFiles": "true", "addImportListExclusion": "true"}),
+    }
     try:
-        if p.service == "radarr" and settings.RADARR_URL and settings.RADARR_API_KEY:
-            async with httpx.AsyncClient(timeout=15) as client:
-                r = await client.delete(
-                    f"{settings.effective_radarr_url}/api/v3/movie/{p.media_id}",
-                    headers={"X-Api-Key": settings.RADARR_API_KEY},
-                    params={"deleteFiles": "true", "addImportExclusion": "true"})
-            return _check(r, "radarr")
-        if p.service == "sonarr" and settings.SONARR_URL and settings.SONARR_API_KEY:
-            async with httpx.AsyncClient(timeout=15) as client:
-                r = await client.delete(
-                    f"{settings.effective_sonarr_url}/api/v3/series/{p.media_id}",
-                    headers={"X-Api-Key": settings.SONARR_API_KEY},
-                    params={"deleteFiles": "true", "addImportListExclusion": "true"})
-            return _check(r, "sonarr")
-        if p.service == "lidarr" and settings.LIDARR_URL and settings.LIDARR_API_KEY:
-            async with httpx.AsyncClient(timeout=15) as client:
-                r = await client.delete(
-                    f"{settings.effective_lidarr_url}/api/v1/artist/{p.media_id}",
-                    headers={"X-Api-Key": settings.LIDARR_API_KEY},
-                    params={"deleteFiles": "true", "addImportListExclusion": "true"})
-            return _check(r, "lidarr")
+        if p.service in _ARRS:
+            conf_url, api_key, base, path, params = _ARRS[p.service]
+            if not (conf_url and api_key):
+                return False
+            url = f"{base}/{path}/{p.media_id}"
+            headers = {"X-Api-Key": api_key}
+            async with httpx.AsyncClient(timeout=_DELETE_TIMEOUT) as client:
+                try:
+                    r = await client.delete(url, headers=headers, params=params)
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                    # never reached the arr — nothing was deleted; retryable
+                    logger.error("[%s] delete could not connect: %s", p.service, e)
+                    return None
+                except (httpx.TimeoutException, httpx.RemoteProtocolError,
+                        httpx.ReadError) as e:
+                    logger.warning(
+                        "[%s] delete of %r got no answer (%s) — checking "
+                        "whether the arr finished it anyway",
+                        p.service, p.title, type(e).__name__)
+                    gone = await _verify_arr_item_gone(client, url, headers)
+                    if gone:
+                        logger.info("[%s] %r is gone — delete completed "
+                                    "after the timeout", p.service, p.title)
+                    else:
+                        logger.error("[%s] %r delete outcome unknown — parked "
+                                     "for retry", p.service, p.title)
+                    return gone
+            return _check(r, p.service)
         if p.service == "plex":
             return await _plex_delete_artist(str(p.media_id))
     except Exception as e:

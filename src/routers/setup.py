@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _write_env_or_400(cfg: dict) -> None:
+    """write_env refuses values it must not persist (a line break that would
+    inject another .env key, a masked secret placeholder) with ValueError -
+    that is the caller's bad input, not a server fault."""
+    try:
+        write_env(cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/status")
 async def setup_status():
     """Return whether setup is complete and what's configured."""
@@ -244,7 +254,7 @@ async def complete_setup(
     # Write .env - enable_pitcher becomes the baked name the runtime keys on
     cfg = req.dict()
     cfg["pitcher_model"] = "curatarr-pitcher" if req.enable_pitcher else ""
-    write_env(cfg)
+    _write_env_or_400(cfg)
 
     # Build Ollama models in background (takes a moment). The pitcher bake
     # used to be unreachable from here - only the post-setup rebuild built it.
@@ -322,7 +332,7 @@ async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
         raise HTTPException(status_code=422, detail="Plex token cannot be empty")
     before = current_env_config()
     merged = merge_env_config(before, changes)
-    write_env(merged)
+    _write_env_or_400(merged)
     settings.__init__()   # live reload, same as the library panel does
     models_changed = any(before.get(k) != merged.get(k) for k in _MODEL_KEYS)
     endpoints_changed = any(before.get(k) != merged.get(k)

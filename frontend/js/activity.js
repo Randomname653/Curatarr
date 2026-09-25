@@ -249,7 +249,7 @@ export async function loadTaskHistory() {
 export async function cancelTask(taskId, btn) {
   btnBusy(btn, 'Cancelling…');
   try {
-    await api(`/api/tasks/${taskId}/cancel`, 'POST');
+    await api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, 'POST');
     _swrInvalidate('tasks'); // next visit reflects the cancellation instead of a stale pre-cancel snapshot
     toast('Cancel requested — the task stops at its next checkpoint', 'info');
   } catch (e) {
