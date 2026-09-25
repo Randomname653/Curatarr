@@ -1364,12 +1364,14 @@ async def handle_protection_intent(
                 # wiped the proposal entirely — Pass 34 tightens the
                 # detector but legacy rows already destroyed data; this
                 # ensures it never happens again going forward.
+                # limbo too: a limbo row is still approvable (Retry Delete),
+                # so leaving it open let a protected title be deleted anyway.
                 rejected = (
                     db.query(DeletionProposal)
                     .filter(
                         DeletionProposal.user_id == user_id,
                         DeletionProposal.title == title,
-                        DeletionProposal.status == "pending",
+                        DeletionProposal.status.in_(["pending", "limbo"]),
                     )
                     .update({
                         "status":      "rejected",
@@ -1378,7 +1380,7 @@ async def handle_protection_intent(
                     }, synchronize_session=False)
                 )
                 if rejected > 0:
-                    logger.info("🛡️ [PROTECTION] Marked %d pending proposals as rejected for '%s' (non-destructive)",
+                    logger.info("🛡️ [PROTECTION] Marked %d open proposals as rejected for '%s' (non-destructive)",
                                 rejected, title)
 
                 # Pass 66: append a resolution-log row (history; distinct from
@@ -1749,6 +1751,64 @@ def _check_protection_pre_gate(user_message: str) -> bool:
     return False
 
 
+# Per-turn ceiling on protections one classifier reply may apply. A real
+# user names one title, occasionally two or three ("keep X and Y"); a reply
+# listing a dozen is a runaway model or injected text.
+_MAX_PROTECT_ACTIONS_PER_TURN = 3
+
+
+def _ground_protection_actions(
+    llm_output: str,
+    user_message: str,
+    anchor_title: Optional[str],
+) -> str:
+    """Keep only PROTECT_MEDIA lines whose TITLE the USER actually meant.
+
+    The classifier is a small model whose prompt also carries curator
+    replies and recent turns — text built from third-party metadata
+    (synopses, reviews). Every line it emits protects a title, closes its
+    deletion proposals and may add it to the plex.tv watchlist, so a title
+    planted in that text must not become an action. A title is grounded
+    when it is the discussion's anchor (the "keep it" pronoun case) or
+    occurs, as whole words, in the user's OWN message (the free-chat "keep
+    Breaking Bad" case) — both compared via normalize_title (case,
+    punctuation, trailing "(year)"). Anchor matches are rewritten to the
+    anchor's exact spelling so the DB title lookups hit. Capped at
+    _MAX_PROTECT_ACTIONS_PER_TURN. Non-action lines pass through."""
+    from src.services.library_memory import normalize_title
+
+    anchor_norm = normalize_title(anchor_title) if anchor_title else ""
+    msg_norm = f" {normalize_title(user_message)} "
+    kept, accepted, seen = [], 0, set()
+    for raw in (llm_output or "").split("\n"):
+        line = raw.strip()
+        if not line.startswith("ACTION: PROTECT_MEDIA"):
+            kept.append(raw)
+            continue
+        parts = line.split("|")
+        title = parts[1].replace("TITLE:", "").strip() if len(parts) > 1 else ""
+        t_norm = normalize_title(title)
+        if not t_norm:
+            continue
+        if anchor_norm and t_norm == anchor_norm:
+            parts[1] = f" TITLE: {anchor_title} "
+        elif f" {t_norm} " not in msg_norm:
+            logger.warning(
+                "[protection] dropping ungrounded PROTECT_MEDIA for %r — not the "
+                "anchor (%r) and not in the user's message", title, anchor_title)
+            continue
+        if t_norm in seen:
+            continue
+        if accepted >= _MAX_PROTECT_ACTIONS_PER_TURN:
+            logger.warning("[protection] per-turn cap (%d) reached — dropping %r",
+                           _MAX_PROTECT_ACTIONS_PER_TURN, title)
+            continue
+        seen.add(t_norm)
+        accepted += 1
+        kept.append("|".join(parts))
+    return "\n".join(kept)
+
+
 async def detect_and_handle_protection(
     user_id: int,
     user_message: str,
@@ -1793,6 +1853,7 @@ async def detect_and_handle_protection(
     llm_output = await _call_protection_classifier(prompt)
     if not llm_output:
         return None
+    llm_output = _ground_protection_actions(llm_output, user_message, anchor_title)
 
     # Pass 79: user-side delete-intent VETO. Symmetric to the Pass-50
     # curator-side backstop. If the user's message contains an explicit
