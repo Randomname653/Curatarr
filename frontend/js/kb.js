@@ -531,7 +531,7 @@ export async function loadBackfillPanel() {
 
 export async function startBackfill(source, btn) {
   btnBusy(btn, 'Starting…');
-  try { await api('/api/enrichment/backfill/' + source, 'POST'); toast('Backfill started — progress shows in Activity', 'success'); }
+  try { await api('/api/enrichment/backfill/' + encodeURIComponent(source), 'POST'); toast('Backfill started — progress shows in Activity', 'success'); }
   catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   // The panel re-reads coverage, so a finished source removes its own row.
   setTimeout(loadBackfillPanel, 1500);
@@ -539,7 +539,7 @@ export async function startBackfill(source, btn) {
 
 export async function stopBackfill(source, btn) {
   btnBusy(btn, 'Stopping…');
-  try { await api('/api/enrichment/backfill/' + source + '/stop', 'POST'); toast('Stop requested', 'info'); }
+  try { await api('/api/enrichment/backfill/' + encodeURIComponent(source) + '/stop', 'POST'); toast('Stop requested', 'info'); }
   catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadBackfillPanel, 1200);
 }

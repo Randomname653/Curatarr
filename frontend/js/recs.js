@@ -67,7 +67,7 @@ export async function onAddRecToArr(btn) {
         return;
       }
     }
-    const r = await api(`/api/library/search/${svc}?q=${encodeURIComponent(title)}`);
+    const r = await api(`/api/library/search/${encodeURIComponent(svc)}?q=${encodeURIComponent(title)}`);
     const matches = r.matches || [];
     const tl = title.toLowerCase();
     const m = (year && matches.find(x => (x.title||'').toLowerCase() === tl && x.year === year))

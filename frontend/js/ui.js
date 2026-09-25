@@ -1,3 +1,4 @@
+/* global DOMPurify, marked */
 import { state } from './state.js';
 
 export const API = '';
@@ -308,7 +309,31 @@ export function _showTestResult(span, r) {
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
-export function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+// Quotes too: esc() lands inside quoted attributes (title="${esc(...)}")
+// often enough that a text-only escape lets a " in library metadata break
+// out of the attribute. &quot; and &#39; render as the same glyphs in text.
+export function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+// The one way untrusted HTML (model output rendered through marked) reaches
+// innerHTML. DOMPurify's defaults keep data-* attributes, and app.js
+// dispatches any registered action named in data-action / data-on-<event>
+// (error in the capture phase, so <img src=x data-on-error=...> fires with no
+// click at all). Data attributes are off wholesale; the hook also strips the
+// dispatcher's own attributes by name, so turning data-* back on for some
+// other reason cannot reopen the hole.
+const _DISPATCH_ATTR = /^data-(action|on-|args)/i;
+let _purifyHooked = false;
+export function sanitizeHtml(html) {
+  if (!_purifyHooked) {
+    DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+      if (_DISPATCH_ATTR.test(data.attrName)) data.keepAttr = false;
+    });
+    _purifyHooked = true;
+  }
+  return DOMPurify.sanitize(html, {ALLOW_DATA_ATTR: false});
+}
+
+export function renderMarkdown(md) { return sanitizeHtml(marked.parse(md)); }
 
 // Pass 97: image proxy front-end helper.
 //
