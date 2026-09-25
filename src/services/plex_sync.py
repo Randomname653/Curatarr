@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # piece of history instead of being rewritten as today's viewing.
 RESUME_WINDOW_DAYS = 30
 
-from src.services.task_monitor import task_monitor
+from src.services.task_monitor import task_monitor, TaskStatus
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.services.llm_utils import (
     strip_think_tags, ollama_options, curator_options,
@@ -206,7 +206,9 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
     state lock is the same mutex the enrichment and music runs use; the
     lifespan clears a stale one at boot."""
     if not acquire_state_lock("plex_sync_running"):
-        return {"skipped": True, "reason": "A sync is already running"}
+        # ``busy`` tells the scheduler this run did nothing — unlike the
+        # cooldown skip below, which means history is already fresh.
+        return {"skipped": True, "busy": True, "reason": "A sync is already running"}
     try:
         return await _sync_plex_history_impl(job_id, force)
     finally:
@@ -231,21 +233,8 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
         if age_min < 60:
             return {"skipped": True, "reason": f"Synced {age_min:.0f}m ago", "last_sync": last_sync.isoformat()}
 
-    is_initial = last_sync is None
-    logger.info("Starting %s Plex sync", "initial" if is_initial else "incremental")
-    _sync_task = task_monitor.create(
-        name=f"{'Initial' if is_initial else 'Incremental'} Plex sync",
-        category="sync"
-    )
-    task_monitor.start(_sync_task)
-
-    headers = {
-        "Accept": "application/json",
-        "X-Plex-Token": plex_token,
-        "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
-    }
-
-    # Load library config from DB
+    # Load library config from DB — before the Activity card exists, so a
+    # not-yet-configured install doesn't leave a card behind on every trigger.
     from src.database.models import LibraryConfig
     with get_db_session() as db:
         lib_configs = {
@@ -255,6 +244,38 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
 
     if not lib_configs:
         return {"error": "No library config. Configure libraries first via the setup wizard."}
+
+    is_initial = last_sync is None
+    logger.info("Starting %s Plex sync", "initial" if is_initial else "incremental")
+    _sync_task = task_monitor.create(
+        name=f"{'Initial' if is_initial else 'Incremental'} Plex sync",
+        category="sync"
+    )
+    task_monitor.start(_sync_task)
+    # Every exit must close the card: an early return or an unguarded Plex
+    # call raising used to leave it RUNNING forever — and create() then
+    # handed that same stuck card to every later sync of the same name.
+    try:
+        return await _run_plex_sync(_sync_task, plex_url, plex_token,
+                                    last_sync, lib_configs)
+    except Exception as e:
+        task_monitor.error(_sync_task, f"Plex sync failed: {type(e).__name__}: {e}")
+        raise
+    finally:
+        if _sync_task.status == TaskStatus.RUNNING:   # cancelled mid-run
+            task_monitor.error(_sync_task, "Plex sync ended without finishing")
+
+
+async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
+                         last_sync: Optional[datetime], lib_configs: dict) -> dict:
+    """The sync proper; ``_sync_plex_history_impl`` owns the Activity card
+    and closes it on whatever path this takes out."""
+    is_initial = last_sync is None
+    headers = {
+        "Accept": "application/json",
+        "X-Plex-Token": plex_token,
+        "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
+    }
 
     # /library/sections/{key}/all?viewCount>>=0 returns ALL ever-watched items.
     # For incremental syncs we add lastViewedAt>>=<last_sync_ts> so Plex
@@ -271,6 +292,14 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
                     last_sync_ts, last_sync.isoformat())
 
     all_entries: list = []
+
+    # The watermark for the NEXT sync is taken now, before Plex is asked —
+    # not when this sync finishes. Stamping the end time skipped every play
+    # that landed between these fetches and the stamp (minutes on a large
+    # library): the next lastViewedAt filter started after them, so they
+    # never entered watch history and the recently-watched deletion veto
+    # never saw them.
+    sync_started = datetime.utcnow()
 
     async with httpx.AsyncClient(timeout=60) as client:
         for sec_key, (category, plex_sec_type, sec_title) in lib_configs.items():
@@ -375,6 +404,7 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
 
 
     if not all_entries:
+        task_monitor.done(_sync_task, "No new watched items")
         return {"synced": 0, "message": "No watched items found. Have you watched anything on Plex?"}
 
     # Genres come inline from /library/sections/all — no separate metadata fetch needed.
@@ -485,271 +515,279 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
             return best[1]
         return None
 
-    # Write to DB
+    # Write to DB — in a worker thread. This loop is pure SQLAlchemy (no
+    # Plex calls) over every fetched entry with several queries per entry;
+    # run inline it held the event loop for the whole walk, freezing every
+    # request and the Activity stream on a large initial sync. The session
+    # is opened and closed inside the thread, never shared with the loop.
     synced = 0
     skipped = 0
     resumed = 0   # unfinished rows promoted to the finished view
     unattributed = 0  # play events whose accountID couldn't be resolved → fell back to admin
     new_play_hits: list[dict] = []   # inserted rows, for the rec-watch matcher below
 
-    with get_db_session() as db:
-        users = db.query(User).all()
+    def _write_entries() -> None:
+        nonlocal synced, skipped, resumed, unattributed
+        with get_db_session() as db:
+            users = db.query(User).all()
 
-        # Primary map: plex.tv global ID -> local user (set on OAuth login)
-        plex_id_to_user = {u.plex_user_id: u for u in users}
+            # Primary map: plex.tv global ID -> local user (set on OAuth login)
+            plex_id_to_user = {u.plex_user_id: u for u in users}
 
-        # Resolve name strings in local_account_map to actual User objects
-        # accountID=1 is always the local server owner → map to admin
-        admin_user = next((u for u in users if u.is_admin), users[0] if users else None)
-        single_user = users[0] if len(users) == 1 else None
-        resolved_account_map: dict = {}
-        for local_id, name in local_account_map.items():
-            if local_id == "1":
-                # accountID=1 is always the Plex server owner
-                resolved_account_map[local_id] = admin_user
-            elif name:
-                matched = next(
-                    (u for u in users if u.plex_username.lower() == name.lower()),
-                    None
-                )
-                if matched:
-                    resolved_account_map[local_id] = matched
-            # High numeric IDs (like 216511115) are plex.tv managed users
-            # — they'll be caught by plex_id_to_user instead
+            # Resolve name strings in local_account_map to actual User objects
+            # accountID=1 is always the local server owner → map to admin
+            admin_user = next((u for u in users if u.is_admin), users[0] if users else None)
+            single_user = users[0] if len(users) == 1 else None
+            resolved_account_map: dict = {}
+            for local_id, name in local_account_map.items():
+                if local_id == "1":
+                    # accountID=1 is always the Plex server owner
+                    resolved_account_map[local_id] = admin_user
+                elif name:
+                    matched = next(
+                        (u for u in users if u.plex_username.lower() == name.lower()),
+                        None
+                    )
+                    if matched:
+                        resolved_account_map[local_id] = matched
+                # High numeric IDs (like 216511115) are plex.tv managed users
+                # — they'll be caught by plex_id_to_user instead
 
-        logger.info("Resolved account map: %s",
-                    {k: v.plex_username for k, v in resolved_account_map.items()})
-        logger.info("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
-        logger.info("local_account_map (raw names): %s", local_account_map)
+            logger.info("Resolved account map: %s",
+                        {k: v.plex_username for k, v in resolved_account_map.items()})
+            logger.info("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
+            logger.info("local_account_map (raw names): %s", local_account_map)
 
-        # Get existing entries to deduplicate
-        existing = set()
-        for row in db.query(
-            WatchHistoryEntry.user_id,
-            WatchHistoryEntry.plex_item_id,
-            WatchHistoryEntry.viewed_at,
-        ).all():
-            existing.add((row.user_id, row.plex_item_id, row.viewed_at))
+            # Get existing entries to deduplicate
+            existing = set()
+            for row in db.query(
+                WatchHistoryEntry.user_id,
+                WatchHistoryEntry.plex_item_id,
+                WatchHistoryEntry.viewed_at,
+            ).all():
+                existing.add((row.user_id, row.plex_item_id, row.viewed_at))
 
-        # Local cache to avoid duplicate MediaIdentity queries within same sync
-        local_mi_cache = {}
+            # Local cache to avoid duplicate MediaIdentity queries within same sync
+            local_mi_cache = {}
 
-        for entry in all_entries:
-            rating_key = str(entry.get("ratingKey", ""))
-            if not rating_key:
-                continue
+            for entry in all_entries:
+                rating_key = str(entry.get("ratingKey", ""))
+                if not rating_key:
+                    continue
 
-            # /library/sections/all uses lastViewedAt (unix ts), not viewedAt
-            viewed_at_ts = entry.get("lastViewedAt") or entry.get("viewedAt")
-            if not viewed_at_ts:
-                continue
+                # /library/sections/all uses lastViewedAt (unix ts), not viewedAt
+                viewed_at_ts = entry.get("lastViewedAt") or entry.get("viewedAt")
+                if not viewed_at_ts:
+                    continue
 
-            viewed_at = datetime.utcfromtimestamp(int(viewed_at_ts))
+                viewed_at = datetime.utcfromtimestamp(int(viewed_at_ts))
 
-            # ── Per-event user attribution ────────────────────────────────────
-            # Cross-reference with the history endpoint to find the accountID
-            # that actually watched this play. In-progress entries have no
-            # corresponding history row yet, so they always fall back to the
-            # admin (current Plex API limitation — fixed once the play
-            # completes and shows up in /status/sessions/history/all).
-            is_in_progress = entry.get("_in_progress", False)
-            account_id = None
-            if not is_in_progress:
-                account_id = _resolve_account_for_event(rating_key, int(viewed_at_ts))
+                # ── Per-event user attribution ────────────────────────────────────
+                # Cross-reference with the history endpoint to find the accountID
+                # that actually watched this play. In-progress entries have no
+                # corresponding history row yet, so they always fall back to the
+                # admin (current Plex API limitation — fixed once the play
+                # completes and shows up in /status/sessions/history/all).
+                is_in_progress = entry.get("_in_progress", False)
+                account_id = None
+                if not is_in_progress:
+                    account_id = _resolve_account_for_event(rating_key, int(viewed_at_ts))
 
-            user = None
-            if account_id is not None:
-                user = resolved_account_map.get(str(account_id))
-            if user is None:
-                # Either no history row matched (in-progress / cleared history)
-                # or the accountID resolves to a Plex user who hasn't logged
-                # into Curatarr yet. Park the row on admin and remember the
-                # actual Plex accountID so a later re-attribution pass (Pass
-                # 4b admin tool) can fix it.
-                user = admin_user
+                user = None
                 if account_id is not None:
-                    unattributed += 1
-            if not user:
-                continue
+                    user = resolved_account_map.get(str(account_id))
+                if user is None:
+                    # Either no history row matched (in-progress / cleared history)
+                    # or the accountID resolves to a Plex user who hasn't logged
+                    # into Curatarr yet. Park the row on admin and remember the
+                    # actual Plex accountID so a later re-attribution pass (Pass
+                    # 4b admin tool) can fix it.
+                    user = admin_user
+                    if account_id is not None:
+                        unattributed += 1
+                if not user:
+                    continue
 
-            # The Plex accountID lives on plex_user_id so re-attribution can
-            # find the row even if the Curatarr user_id was a fallback.
-            entry_plex_account = str(account_id) if account_id is not None else str(user.plex_user_id or "")
+                # The Plex accountID lives on plex_user_id so re-attribution can
+                # find the row even if the Curatarr user_id was a fallback.
+                entry_plex_account = str(account_id) if account_id is not None else str(user.plex_user_id or "")
 
-            duration_ms = entry.get("duration")
-            view_offset_ms = entry.get("viewOffset", 0) if is_in_progress else duration_ms
+                duration_ms = entry.get("duration")
+                view_offset_ms = entry.get("viewOffset", 0) if is_in_progress else duration_ms
 
-            # Completion rate
-            if is_in_progress and duration_ms and duration_ms > 0:
-                completion_pct = min(1.0, (view_offset_ms or 0) / duration_ms)
-                completed = completion_pct >= 0.9
-            else:
-                completion_pct = 1.0
-                completed = True
+                # Completion rate
+                if is_in_progress and duration_ms and duration_ms > 0:
+                    completion_pct = min(1.0, (view_offset_ms or 0) / duration_ms)
+                    completed = completion_pct >= 0.9
+                else:
+                    completion_pct = 1.0
+                    completed = True
 
-            dedup_key = (user.id, rating_key, viewed_at)
-            if dedup_key in existing:
-                # Update completion if this is in-progress and we have better data.
-                # Filter on the FULL dedup key (incl. viewed_at) so we don't
-                # clobber prior plays of the same item.
-                if is_in_progress and view_offset_ms:
-                    row = db.query(WatchHistoryEntry).filter(
-                        WatchHistoryEntry.user_id == user.id,
-                        WatchHistoryEntry.plex_item_id == rating_key,
-                        WatchHistoryEntry.viewed_at == viewed_at,
-                    ).first()
-                    if row:
-                        row.view_offset_ms = int(view_offset_ms)
-                        row.completed = completed
-                skipped += 1
-                continue
-
-            # audit 11d: Plex moves lastViewedAt on every sync for IN-
-            # PROGRESS items — the (user, key, viewed_at) dedup then turned
-            # each evening of the same unfinished film into a NEW row
-            # (playcount inflation). Advance the unfinished row instead.
-            if is_in_progress:
-                _prev = db.query(WatchHistoryEntry).filter(
-                    WatchHistoryEntry.user_id == user.id,
-                    WatchHistoryEntry.plex_item_id == rating_key,
-                    WatchHistoryEntry.completed == False,  # noqa: E712
-                ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
-                if _prev is not None and _prev.viewed_at != viewed_at:
-                    existing.discard((user.id, rating_key, _prev.viewed_at))
-                    _prev.viewed_at = viewed_at
-                    _prev.view_offset_ms = int(view_offset_ms or 0)
-                    _prev.completed = completed
-                    existing.add(dedup_key)
+                dedup_key = (user.id, rating_key, viewed_at)
+                if dedup_key in existing:
+                    # Update completion if this is in-progress and we have better data.
+                    # Filter on the FULL dedup key (incl. viewed_at) so we don't
+                    # clobber prior plays of the same item.
+                    if is_in_progress and view_offset_ms:
+                        row = db.query(WatchHistoryEntry).filter(
+                            WatchHistoryEntry.user_id == user.id,
+                            WatchHistoryEntry.plex_item_id == rating_key,
+                            WatchHistoryEntry.viewed_at == viewed_at,
+                        ).first()
+                        if row:
+                            row.view_offset_ms = int(view_offset_ms)
+                            row.completed = completed
                     skipped += 1
                     continue
-            else:
-                # The mirror of the case above, which was missing: an item
-                # finished LATER arrives through the separate completed-items
-                # query, where none of the in-progress merge logic runs. The
-                # partial row stayed behind and the finished view was inserted
-                # next to it, so ONE viewing became TWO rows — read downstream
-                # as a replay ("Four replays already?" for a series with none).
-                # Promote the unfinished row instead of inserting beside it.
-                # Bounded: an abandonment from months ago is real history, not
-                # the first half of today's viewing.
-                _stale = db.query(WatchHistoryEntry).filter(
-                    WatchHistoryEntry.user_id == user.id,
-                    WatchHistoryEntry.plex_item_id == rating_key,
-                    WatchHistoryEntry.completed == False,  # noqa: E712
-                    WatchHistoryEntry.viewed_at <= viewed_at,
-                    WatchHistoryEntry.viewed_at >= viewed_at - timedelta(days=RESUME_WINDOW_DAYS),
-                ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
-                if _stale is not None:
-                    existing.discard((user.id, rating_key, _stale.viewed_at))
-                    _stale.viewed_at = viewed_at
-                    _stale.view_offset_ms = int(view_offset_ms) if view_offset_ms else None
-                    _stale.completed = True
-                    existing.add(dedup_key)
-                    resumed += 1
-                    continue
 
-            genres_list = [g.get("tag", "") for g in (entry.get("Genre") or [])]
-            genres_str = ",".join(g for g in genres_list if g)
-            if not genres_str:
-                meta = metadata_cache.get(rating_key, {})
-                genres_str = ",".join(meta.get("genres", []))
-
-            media_type = entry.get("_category", "other")
-            series_title = entry.get("grandparentTitle")
-            season = entry.get("parentIndex")
-            episode_num = entry.get("index")
-            # For episodes: use grandparentRatingKey to get Series-level IDs
-            # Episode-level TMDB IDs are episode-specific and not usable for enrichment
-            grandparent_key = entry.get("grandparentRatingKey")
-            is_episode = media_type in ("show", "anime") and grandparent_key
-
-            # For series/anime: prefer grandparent (series) IDs over episode IDs
-            # Episode TMDB IDs like 4096836 are episode-specific, not series IDs
-            if is_episode:
-                # Use cached series IDs if already resolved
-                from src.database.models import MediaIdentity as _MI
-                _series_mi = db.query(_MI).filter(
-                    _MI.plex_rating_key == str(grandparent_key)
-                ).first()
-                if _series_mi:
-                    tmdb_id    = _series_mi.tmdb_id
-                    tvdb_id    = _series_mi.tvdb_id
-                    anilist_id = _series_mi.anilist_id
-                    anidb_id   = _series_mi.anidb_id
-                    imdb_id    = _series_mi.imdb_id
-                    mal_id     = _series_mi.mal_id
+                # audit 11d: Plex moves lastViewedAt on every sync for IN-
+                # PROGRESS items — the (user, key, viewed_at) dedup then turned
+                # each evening of the same unfinished film into a NEW row
+                # (playcount inflation). Advance the unfinished row instead.
+                if is_in_progress:
+                    _prev = db.query(WatchHistoryEntry).filter(
+                        WatchHistoryEntry.user_id == user.id,
+                        WatchHistoryEntry.plex_item_id == rating_key,
+                        WatchHistoryEntry.completed == False,  # noqa: E712
+                    ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
+                    if _prev is not None and _prev.viewed_at != viewed_at:
+                        existing.discard((user.id, rating_key, _prev.viewed_at))
+                        _prev.viewed_at = viewed_at
+                        _prev.view_offset_ms = int(view_offset_ms or 0)
+                        _prev.completed = completed
+                        existing.add(dedup_key)
+                        skipped += 1
+                        continue
                 else:
-                    # Series not yet resolved — store episode IDs, mark for resolution
-                    tmdb_id    = None  # Don't store episode TMDB ID as series TMDB ID
+                    # The mirror of the case above, which was missing: an item
+                    # finished LATER arrives through the separate completed-items
+                    # query, where none of the in-progress merge logic runs. The
+                    # partial row stayed behind and the finished view was inserted
+                    # next to it, so ONE viewing became TWO rows — read downstream
+                    # as a replay ("Four replays already?" for a series with none).
+                    # Promote the unfinished row instead of inserting beside it.
+                    # Bounded: an abandonment from months ago is real history, not
+                    # the first half of today's viewing.
+                    _stale = db.query(WatchHistoryEntry).filter(
+                        WatchHistoryEntry.user_id == user.id,
+                        WatchHistoryEntry.plex_item_id == rating_key,
+                        WatchHistoryEntry.completed == False,  # noqa: E712
+                        WatchHistoryEntry.viewed_at <= viewed_at,
+                        WatchHistoryEntry.viewed_at >= viewed_at - timedelta(days=RESUME_WINDOW_DAYS),
+                    ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
+                    if _stale is not None:
+                        existing.discard((user.id, rating_key, _stale.viewed_at))
+                        _stale.viewed_at = viewed_at
+                        _stale.view_offset_ms = int(view_offset_ms) if view_offset_ms else None
+                        _stale.completed = True
+                        existing.add(dedup_key)
+                        resumed += 1
+                        continue
+
+                genres_list = [g.get("tag", "") for g in (entry.get("Genre") or [])]
+                genres_str = ",".join(g for g in genres_list if g)
+                if not genres_str:
+                    meta = metadata_cache.get(rating_key, {})
+                    genres_str = ",".join(meta.get("genres", []))
+
+                media_type = entry.get("_category", "other")
+                series_title = entry.get("grandparentTitle")
+                season = entry.get("parentIndex")
+                episode_num = entry.get("index")
+                # For episodes: use grandparentRatingKey to get Series-level IDs
+                # Episode-level TMDB IDs are episode-specific and not usable for enrichment
+                grandparent_key = entry.get("grandparentRatingKey")
+                is_episode = media_type in ("show", "anime") and grandparent_key
+
+                # For series/anime: prefer grandparent (series) IDs over episode IDs
+                # Episode TMDB IDs like 4096836 are episode-specific, not series IDs
+                if is_episode:
+                    # Use cached series IDs if already resolved
+                    from src.database.models import MediaIdentity as _MI
+                    _series_mi = db.query(_MI).filter(
+                        _MI.plex_rating_key == str(grandparent_key)
+                    ).first()
+                    if _series_mi:
+                        tmdb_id    = _series_mi.tmdb_id
+                        tvdb_id    = _series_mi.tvdb_id
+                        anilist_id = _series_mi.anilist_id
+                        anidb_id   = _series_mi.anidb_id
+                        imdb_id    = _series_mi.imdb_id
+                        mal_id     = _series_mi.mal_id
+                    else:
+                        # Series not yet resolved — store episode IDs, mark for resolution
+                        tmdb_id    = None  # Don't store episode TMDB ID as series TMDB ID
+                        tvdb_id    = entry.get("_tvdb_id")
+                        imdb_id    = entry.get("_imdb_id")
+                        anidb_id   = entry.get("_anidb_id")
+                        anilist_id = entry.get("_anilist_id")
+                        mal_id     = entry.get("_mal_id")
+                else:
+                    tmdb_id    = entry.get("_tmdb_id")
                     tvdb_id    = entry.get("_tvdb_id")
                     imdb_id    = entry.get("_imdb_id")
                     anidb_id   = entry.get("_anidb_id")
                     anilist_id = entry.get("_anilist_id")
                     mal_id     = entry.get("_mal_id")
-            else:
-                tmdb_id    = entry.get("_tmdb_id")
-                tvdb_id    = entry.get("_tvdb_id")
-                imdb_id    = entry.get("_imdb_id")
-                anidb_id   = entry.get("_anidb_id")
-                anilist_id = entry.get("_anilist_id")
-                mal_id     = entry.get("_mal_id")
 
-            # Upsert MediaIdentity — store series key for episodes
-            from src.database.models import MediaIdentity as _MI
-            identity_key = str(grandparent_key) if is_episode else rating_key
+                # Upsert MediaIdentity — store series key for episodes
+                from src.database.models import MediaIdentity as _MI
+                identity_key = str(grandparent_key) if is_episode else rating_key
 
-            # Check local cache first to avoid repeated DB queries for same series
-            _mi = local_mi_cache.get(identity_key)
-            if not _mi:
-                _mi = db.query(_MI).filter(_MI.plex_rating_key == identity_key).first()
+                # Check local cache first to avoid repeated DB queries for same series
+                _mi = local_mi_cache.get(identity_key)
                 if not _mi:
-                    _mi = _MI(
-                        plex_rating_key=identity_key,
-                        media_type=media_type,
-                        title=series_title or entry.get("title", ""),
-                        year=entry.get("year"),
-                    )
-                    db.add(_mi)
-                local_mi_cache[identity_key] = _mi
-            if tmdb_id and str(tmdb_id).isdigit():       _mi.tmdb_id    = int(tmdb_id)
-            if tvdb_id and str(tvdb_id).isdigit():       _mi.tvdb_id    = int(tvdb_id)
-            if imdb_id:                                  _mi.imdb_id    = str(imdb_id)
-            if anidb_id and str(anidb_id).isdigit():     _mi.anidb_id   = int(anidb_id)
-            if anilist_id and str(anilist_id).isdigit(): _mi.anilist_id = int(anilist_id)
-            if mal_id and str(mal_id).isdigit():         _mi.mal_id     = int(mal_id)
+                    _mi = db.query(_MI).filter(_MI.plex_rating_key == identity_key).first()
+                    if not _mi:
+                        _mi = _MI(
+                            plex_rating_key=identity_key,
+                            media_type=media_type,
+                            title=series_title or entry.get("title", ""),
+                            year=entry.get("year"),
+                        )
+                        db.add(_mi)
+                    local_mi_cache[identity_key] = _mi
+                if tmdb_id and str(tmdb_id).isdigit():       _mi.tmdb_id    = int(tmdb_id)
+                if tvdb_id and str(tvdb_id).isdigit():       _mi.tvdb_id    = int(tvdb_id)
+                if imdb_id:                                  _mi.imdb_id    = str(imdb_id)
+                if anidb_id and str(anidb_id).isdigit():     _mi.anidb_id   = int(anidb_id)
+                if anilist_id and str(anilist_id).isdigit(): _mi.anilist_id = int(anilist_id)
+                if mal_id and str(mal_id).isdigit():         _mi.mal_id     = int(mal_id)
 
-            db.add(WatchHistoryEntry(
-                user_id=user.id,
-                plex_user_id=entry_plex_account or str(user.plex_user_id),
-                plex_item_id=rating_key,
-                title=entry.get("title", ""),
-                media_type=media_type,
-                series_title=series_title,
-                season=int(season) if season else None,
-                episode=int(episode_num) if episode_num else None,
-                viewed_at=viewed_at,
-                duration_ms=int(duration_ms) if duration_ms else None,
-                view_offset_ms=int(view_offset_ms) if view_offset_ms else None,
-                completed=completed,
-                genres=genres_str,
-                tmdb_id=int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
-            ))
-            # Collect the hit for the watched-a-recommendation follow-up:
-            # identity_key is already the SERIES-level ratingKey for episodes
-            # — exactly what CachedRecommendation.plex_rating_key stores.
-            new_play_hits.append({
-                "user_id": user.id,
-                "identity_key": identity_key,
-                "title": entry.get("title", ""),
-                "series_title": series_title,
-                "media_type": media_type,
-                "tmdb_id": int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
-                "viewed_at": viewed_at.isoformat() if viewed_at else None,
-            })
-            existing.add(dedup_key)
-            synced += 1
+                db.add(WatchHistoryEntry(
+                    user_id=user.id,
+                    plex_user_id=entry_plex_account or str(user.plex_user_id),
+                    plex_item_id=rating_key,
+                    title=entry.get("title", ""),
+                    media_type=media_type,
+                    series_title=series_title,
+                    season=int(season) if season else None,
+                    episode=int(episode_num) if episode_num else None,
+                    viewed_at=viewed_at,
+                    duration_ms=int(duration_ms) if duration_ms else None,
+                    view_offset_ms=int(view_offset_ms) if view_offset_ms else None,
+                    completed=completed,
+                    genres=genres_str,
+                    tmdb_id=int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
+                ))
+                # Collect the hit for the watched-a-recommendation follow-up:
+                # identity_key is already the SERIES-level ratingKey for episodes
+                # — exactly what CachedRecommendation.plex_rating_key stores.
+                new_play_hits.append({
+                    "user_id": user.id,
+                    "identity_key": identity_key,
+                    "title": entry.get("title", ""),
+                    "series_title": series_title,
+                    "media_type": media_type,
+                    "tmdb_id": int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
+                    "viewed_at": viewed_at.isoformat() if viewed_at else None,
+                })
+                existing.add(dedup_key)
+                synced += 1
 
-        db.commit()
+            db.commit()
+
+    await asyncio.to_thread(_write_entries)
 
     logger.info(
         "Plex sync done: %d new entries, %d skipped, %d resumed-view merges, "
@@ -772,7 +810,7 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
     except Exception as e:
         logger.warning("[ratings] sweep failed: %s", e)
 
-    set_datetime("last_sync_at", datetime.utcnow())
+    set_datetime("last_sync_at", sync_started)
     _done_msg = f"Done: {synced} new entries, {skipped} skipped"
     if unattributed:
         _done_msg += f" ({unattributed} parked on admin — run Re-Attribution after the user logs in)"
