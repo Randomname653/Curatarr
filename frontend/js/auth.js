@@ -38,7 +38,9 @@ export async function startPlexLogin() {
       return;
     }
     try {
-      const r = await api(`/api/auth/plex/poll/${data.pin_id}`);
+      // The nonce binds the PIN to this browser: the server refuses a poll
+      // for it from anyone else (auth.py _check_pin_binding).
+      const r = await api(`/api/auth/plex/poll/${data.pin_id}?nonce=${encodeURIComponent(data.nonce)}`);
       if (r.status==='ok') {
         clearInterval(state.pollInterval);
         state.pollInterval = null;
@@ -47,7 +49,20 @@ export async function startPlexLogin() {
         if (state.taskEventSource) { state.taskEventSource.close(); state.taskEventSource = null; state.taskStreamRetries = 0; }
         setUser(r.user); showApp();
       }
-    } catch (e) { if (e.status === 429) schedulePoll(POLL_MS_BACKOFF); }
+    } catch (e) {
+      if (e.status === 429) schedulePoll(POLL_MS_BACKOFF);
+      // 403 is final - the server no longer knows this PIN (restarted
+      // mid-login, binding expired) or refused the account: polling on can
+      // never succeed, so stop and say why.
+      else if (e.status === 403) {
+        clearInterval(state.pollInterval);
+        state.pollInterval = null;
+        let why = 'Sign-in expired — click Sign in again';
+        try { why = JSON.parse(e.message).detail || why; } catch { /* plain-text body */ }
+        const codeEl = document.getElementById('pin-code');
+        if (codeEl) codeEl.textContent = why;
+      }
+    }
   }
   schedulePoll(POLL_MS);
 }

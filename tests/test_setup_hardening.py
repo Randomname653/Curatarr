@@ -114,6 +114,66 @@ def test_write_env_is_owner_only_from_the_first_byte():
     assert not list(tmpdir.glob("*.tmp"))
 
 
+def test_write_env_refuses_line_breaks_that_would_inject_keys():
+    """A value is written as KEY={value}; a CR/LF in it used to start a new
+    line of the caller's choosing - e.g. switching the Plex membership check
+    off from the wizard's token field."""
+    for evil in ("tok\nPLEX_LOGIN_REQUIRE_MEMBERSHIP=false",
+                 "tok\rPLEX_LOGIN_REQUIRE_MEMBERSHIP=false", "tok\x00"):
+        for field in ("plex_token", "tmdb_api_key", "plex_url"):
+            cfg = {"plex_url": "http://p", "plex_token": "t", field: evil}
+            try:
+                _write(cfg)
+                assert False, f"{field}={evil!r} must be refused"
+            except ValueError as e:
+                assert "line breaks" in str(e)
+
+
+def test_setup_routes_turn_a_refused_value_into_a_400():
+    import src.routers.setup as setup_router
+    seen = []
+
+    def _refuse(cfg):
+        seen.append(cfg)
+        raise ValueError("PLEX_TOKEN: line breaks and NUL are not allowed in settings values")
+    real = setup_router.write_env
+    setup_router.write_env = _refuse
+    try:
+        setup_router._write_env_or_400({"plex_token": "x\ny"})
+        assert False, "must raise"
+    except auth.HTTPException as e:
+        assert e.status_code == 400 and "line breaks" in e.detail
+    finally:
+        setup_router.write_env = real
+    assert seen
+    src = (_ROOT / "src/routers/setup.py").read_text(encoding="utf-8")
+    assert src.count("_write_env_or_400(") == 3, "complete + reconfigure both go through it"
+
+
+class _FreshInstall(_LiveSettings):
+    effective_jwt_secret = ""
+
+
+def test_plex_client_id_is_per_install_for_fresh_installs_only():
+    """Every install presented plex.tv the same client id "Curatarr". A fresh
+    install now gets its own; an established one keeps its id (its users'
+    Plex sign-ins and the plex.tv device entry belong to it)."""
+    real = sw._live_settings
+    try:
+        sw._live_settings = lambda: _FreshInstall()
+        a, b = sw._plex_client_id({}), sw._plex_client_id({})
+        assert a.startswith("curatarr-") and len(a) > 20 and a != b, (a, b)
+        sw._live_settings = lambda: _LiveSettings()           # has a JWT secret
+        assert sw._plex_client_id({}) == "Curatarr"
+        custom = type("S", (_FreshInstall,), {"PLEX_CLIENT_ID": "my-own-id"})
+        sw._live_settings = lambda: custom()
+        assert sw._plex_client_id({}) == "my-own-id"
+    finally:
+        sw._live_settings = real
+    text, _ = _write({"plex_url": "http://p", "plex_token": "t"})
+    assert "PLEX_CLIENT_ID=Curatarr" in text, "an established install keeps the shared id"
+
+
 class _Req:
     def __init__(self, host, code=None):
         self.client = type("C", (), {"host": host})()
@@ -211,8 +271,10 @@ def test_blank_url_values_in_env_do_not_brick_startup():
     """An older wizard wrote PLEX_URL= for blank fields; Settings() then died
     on HttpUrl parsing before the app could even show the wizard again."""
     from src.config import Settings
-    s = Settings(_env_file=None, PLEX_URL="", OLLAMA_ENDPOINT="", PLEX_REDIRECT_URI="  ")
+    s = Settings(_env_file=None, PLEX_URL="", OLLAMA_ENDPOINT="", PLEX_REDIRECT_URI="  ",
+                 PLEX_CLIENT_ID="")
     assert s.PLEX_URL is None
+    assert s.PLEX_CLIENT_ID == "Curatarr", ".env.example ships PLEX_CLIENT_ID= blank"
     assert str(s.OLLAMA_ENDPOINT).startswith("http://localhost:11434")
     assert str(s.PLEX_REDIRECT_URI).startswith("http://localhost:8000")
 

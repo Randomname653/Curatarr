@@ -105,6 +105,10 @@ async def delete_user(
             detail="Cannot delete an admin account. Demote them first.",
         )
     db_user.is_active = False
+    # Same as PATCH deactivation: every token this user holds dies now. The
+    # is_active check alone would lapse the moment the account is re-enabled,
+    # reviving whatever tokens were out there when it was deleted.
+    db_user.token_version = (db_user.token_version or 0) + 1
     db.commit()
 
 

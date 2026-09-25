@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # ── Plex ─────────────────────────────────────────────────────────────────
     PLEX_URL: Optional[HttpUrl] = None
     PLEX_TOKEN: Optional[SecretStr] = None
+    # The historical shared default, kept for installs that never had their
+    # own: the setup wizard writes a random per-install id on a FRESH install
+    # (setup_wizard._plex_client_id) and leaves an established one alone.
     PLEX_CLIENT_ID: str = "Curatarr"
     PLEX_REDIRECT_URI: HttpUrl = "http://localhost:8000"
 
@@ -66,7 +69,7 @@ class Settings(BaseSettings):
         # means unset - the setup wizard, not a traceback, handles unset.
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("OLLAMA_ENDPOINT", "PLEX_REDIRECT_URI", mode="before")
+    @field_validator("OLLAMA_ENDPOINT", "PLEX_REDIRECT_URI", "PLEX_CLIENT_ID", mode="before")
     @classmethod
     def _blank_url_falls_back_to_default(cls, v, info):
         if isinstance(v, str) and not v.strip():
