@@ -1,6 +1,5 @@
-/* global DOMPurify, marked */
 // ── CHAT ──────────────────────────────────────────────────────────────────────
-import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, proxyImg, toast } from './ui.js';
+import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, proxyImg, renderMarkdown, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { _updateKbBadge } from './kb.js';
@@ -231,10 +230,10 @@ export async function sendMessage() {
               firstTokenSeen = true;
             }
             fullResponseText += data.token;
-            // marked.parse wandelt den String in HTML um, innerHTML rendert es.
-            // DOMPurify dazwischen, weil marked rohes HTML durchreicht und der
-            // Modell-Output Metadaten-Text aus fremden Quellen zitieren kann.
-            thinking.innerHTML = DOMPurify.sanitize(marked.parse(fullResponseText));
+            // marked passes raw HTML through and the model can quote metadata
+            // text from foreign sources: renderMarkdown sanitizes it and strips
+            // the data-action / data-on-* attributes the dispatcher would run.
+            thinking.innerHTML = renderMarkdown(fullResponseText);
           }
           if (data.done) {
             // Stream ended without any tokens (unusual — empty response).
@@ -414,7 +413,7 @@ export async function loadStarters() {
 // the curator.
 export function useStarter(id, btn) {
   const text = btn.textContent;
-  api(`/api/chat/starters/${id}/used`, 'POST').catch(() => {});
+  api(`/api/chat/starters/${encodeURIComponent(id)}/used`, 'POST').catch(() => {});
   addMsg(text, 'assistant');
   state.pendingDiscussContext = { kind: 'starter', starter_id: id };
   _setDiscussBanner('Curator opened this thread');
@@ -510,7 +509,7 @@ export async function saveComment(id) {
   if (comment === (ta.dataset.saved || '')) return;   // nothing new
   if (hint) hint.textContent = 'Saving…';
   try {
-    const r = await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent(comment)}`, 'POST');
+    const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent(comment)}`, 'POST');
     ta.dataset.saved = comment;
     if (r && r.is_kept) {
       if (hint) hint.textContent = 'Saved — read as "keep", the proposal is closed.';
@@ -637,11 +636,11 @@ export async function deleteFromDiscussion() {
     // Lightweight audit trail — the actual reasoning lives in the thread
     // history, this is just a marker on the proposal row.
     await api(
-      `/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent('Deleted after in-chat discussion')}`,
+      `/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent('Deleted after in-chat discussion')}`,
       'POST',
     ).catch(() => {});
 
-    const r = await api(`/api/recommendations/deletions/${id}/approve`, 'POST');
+    const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
 
     if (r.limbo) {
       // ARR unreachable — proposal kept in limbo, user can retry.

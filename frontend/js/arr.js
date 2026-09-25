@@ -170,7 +170,7 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
 
   let data;
   try {
-    data = await api(`/api/library/items/${svc}?${params.toString()}`);
+    data = await api(`/api/library/items/${encodeURIComponent(svc)}?${params.toString()}`);
   } catch (e) {
     contentEl.innerHTML = `${_errHtml(e)}
       <p class="fs-12 t3 mt-8">First-time fetch needs ${esc(svc)} to be reachable. If you've already opened this view once before, retry — cached data is served while the arr recovers.</p>
@@ -359,7 +359,7 @@ export async function addSearchExec(svc) {
   try {
     const headers = {};
     if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
-    const r = await fetch(`/api/library/search/${svc}?q=${encodeURIComponent(q)}`, {
+    const r = await fetch(`/api/library/search/${encodeURIComponent(svc)}?q=${encodeURIComponent(q)}`, {
       headers, signal: st.controller.signal,
     });
     if (!r.ok) {
@@ -646,7 +646,7 @@ export async function renderWanted(svc) {
 export async function removeWish(id, btn) {
   btnBusy(btn, 'Removing…');
   try {
-    await api(`/api/library/wish/${id}`, 'DELETE');
+    await api(`/api/library/wish/${encodeURIComponent(id)}`, 'DELETE');
     btn.closest('.panel-item')?.remove();
     toast('Wish removed', 'info');
   } catch (e) {

@@ -392,9 +392,9 @@ export async function approveDelete(id, btn) {
   btnBusy(btn, 'Deleting…');
   try {
     if (res.reason) {
-      await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent('Deleted: ' + res.reason)}`, 'POST').catch(()=>{});
+      await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent('Deleted: ' + res.reason)}`, 'POST').catch(()=>{});
     }
-    const r = await api(`/api/recommendations/deletions/${id}/approve`, 'POST');
+    const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
     if (r.limbo) {
       // ARR unreachable — the proposal stays in limbo, the button becomes a retry
       toast(r.error || 'The arr was unreachable — the proposal stays, retry when it is back', 'amber', {ms: 8000});
@@ -430,9 +430,9 @@ export async function rejectDelete(id, btn) {
   btnBusy(btn, 'Keeping…');
   try {
     if (reason) {
-      await api(`/api/recommendations/deletions/${id}/comment?comment=${encodeURIComponent('Keeping: ' + reason)}`, 'POST').catch(()=>{});
+      await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent('Keeping: ' + reason)}`, 'POST').catch(()=>{});
     }
-    await api(`/api/recommendations/deletions/${id}/reject`, 'POST');
+    await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/reject`, 'POST');
     if (state._delProposalsAll) state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
     card?.classList.add('done');
     btnDone(btn, 'Kept', {keepDisabled: true});

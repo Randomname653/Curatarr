@@ -71,7 +71,7 @@ export async function discussPrinciple(id, text) {
 }
 
 export async function respondToMessage(id, msgText, triggerType) {
-  await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST').catch(()=>{});
   toggleMsgPanel();
 
   // Switch to chat — same pattern as discussDeletion
@@ -99,7 +99,7 @@ export async function respondToMessage(id, msgText, triggerType) {
 export async function skipMessage(id, btn) {
   btn.disabled = true;
   btn.textContent = '…';
-  await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST').catch(()=>{});
   await loadUnreadMessages();
 }
 
