@@ -298,7 +298,9 @@ resolution behind it, and moved pydantic-core to 2.49.0 while pydantic
 2.13.5 pins 2.46.5, so the first CI install of the merged lock failed
 (ResolutionImpossible). The lock was recompiled with uv, which keeps every
 other version and corrects that one; the launchers install the set on the
-next start.
+next start. Dependabot's version PRs for pip are off from here: the lock
+is refreshed with `python -m src.deps_lock --compile`, security PRs still
+arrive.
 
 **Watchlist adds that land.** "Sounds promising, I'll put it on my
 watchlist" has ended deletion debates since August, and every one of those

@@ -3,11 +3,15 @@
 # the moment they are switched on; version updates follow the schedules below.
 #
 # The pip target is lock/: the hash-pinned universal lock (and the CI tool
-# locks next to it) are the source of truth for versions, and Dependabot
-# rewrites their hashes itself. requirements.txt repeats the lock's versions
-# for the direct pins (src/deps_lock.py --sync-pins / --apply). Minor and
-# patch bumps arrive grouped in one PR per week; majors come alone, because
-# a major deserves its own read.
+# locks next to it) are the source of truth for versions. VERSION-update
+# PRs for pip are off (open-pull-requests-limit 0, 2026-09-25): Dependabot
+# edits a uv-compiled lock line by line with no resolver behind it — its
+# first grouped round moved pydantic-core past what pydantic pins, and the
+# merged lock could not install. The lock is refreshed with
+# `python -m src.deps_lock --compile` instead (uv resolves and keeps what it
+# can), then `--sync-pins`; requirements.txt repeats the lock's versions
+# for the direct pins. SECURITY updates are not touched by the limit: they
+# still arrive as PRs from the dependency graph, which reads the lock.
 version: 2
 updates:
   - package-ecosystem: "pip"
@@ -15,10 +19,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
     labels: ["dependencies"]
 
   - package-ecosystem: "github-actions"

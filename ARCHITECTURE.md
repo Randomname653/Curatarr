@@ -1267,10 +1267,14 @@ to its own section (or a §0 delta row) instead of growing this list.
   --universal --generate-hashes` (`--compile`; uv is a one-time tool
   install) with a marker where a package is platform-specific and the
   sha256 of every distribution file. It is the source of truth for
-  versions: CI installs it with `--require-hashes`, Dependabot targets
-  `lock/` and rewrites the hashes itself, and `requirements.txt` repeats
-  the lock's versions for the direct pins (`--apply` / `--sync-pins`;
-  never ahead of the lock — `tests/test_deps_lock.py`). The lock follows
+  versions: CI installs it with `--require-hashes`, the dependency graph
+  reads it for security alerts and Dependabot's security PRs, and
+  `requirements.txt` repeats the lock's versions for the direct pins
+  (`--apply` / `--sync-pins`; never ahead of the lock —
+  `tests/test_deps_lock.py`). Dependabot's VERSION PRs for pip are off
+  (2026-09-25): it edits the compiled lock line by line without a
+  resolver and moved pydantic-core past what pydantic pins; the lock is
+  refreshed with `--compile`, which resolves and keeps what it can. The lock follows
   the install and never lowers anything: `--apply` raises a package below
   its line through a temporary hashed file (`pip install --require-hashes
   --no-deps`), rewrites the line for anything installed above it with

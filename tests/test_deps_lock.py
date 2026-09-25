@@ -251,6 +251,23 @@ def test_compile_scrubs_a_local_path_uv_wrote():
         assert "# via -r ./requirements.txt" in body
 
 
+def test_dependabot_version_updates_for_pip_are_off():
+    """Dependabot edits a uv-compiled lock line by line, no resolver behind
+    it (2026-09-25: pydantic-core 2.49.0 next to pydantic 2.13.5, which pins
+    2.46.5 — the merged lock could not install). Version PRs for pip stay
+    off; the lock moves through --compile. Security PRs are not limited by
+    this setting."""
+    import pathlib
+    import re
+    text = (pathlib.Path(__file__).resolve().parents[1] / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    blocks = re.split(r"(?m)^  - package-ecosystem:", text)[1:]
+    pip = [b for b in blocks if b.lstrip().startswith('"pip"')]
+    assert len(pip) == 1, "exactly one pip entry (security updates need it)"
+    assert re.search(r"(?m)^\s+directory: \"/lock\"", pip[0]), "security updates target the lock"
+    assert re.search(r"(?m)^\s+open-pull-requests-limit: 0\s*$", pip[0]), \
+        "pip version updates must stay off — a textual bump of the lock cannot be trusted to resolve"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

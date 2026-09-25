@@ -48,6 +48,12 @@ def check(name, cond):
 state: dict = {}
 app_state.get_state = lambda k: state.get(k)
 app_state.set_state = lambda k, v: state.__setitem__(k, v)
+# The state locks too: job_arr_pre_enrich takes "enrichment_running" before
+# anything else now, and the real acquire is a compare-and-set on the DB
+# (CI has none: "no such table: app_state").
+_held: set = set()
+app_state.acquire_state_lock = lambda name: (name not in _held) and (_held.add(name) or True)
+app_state.release_state_lock = lambda name: _held.discard(name)
 sched._gaming = lambda: False
 
 

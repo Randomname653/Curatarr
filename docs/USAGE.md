@@ -91,7 +91,7 @@ state locks as the in-app pipeline, so they cannot collide with it.
 
 **Settings → Maintenance says the dependencies differ from requirements.txt**
 
-The pins moved (Dependabot bumps them weekly) and this interpreter still
+The lock moved (a dependency bump landed) and this interpreter still
 has the old versions. `start.bat` and the tray launcher install the pinned
 versions on their own at the next start; if you run uvicorn by hand, do it
 yourself with the same interpreter, then restart:
