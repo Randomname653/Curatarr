@@ -265,7 +265,8 @@ def test_the_release_search_keeps_uncensored_and_disc_offers():
 def test_the_wiring():
     cust = (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
     entry = cust.split('Task("editions_sync"')[1].split("),")[0]
-    assert "168.0" in entry and "takes_task=True" in entry and "needs_llm=True" not in entry
+    # 24 h look, weekly per-row recheck: a finished walk no longer stamps a week of silence
+    assert "24.0" in entry and "takes_task=True" in entry and "needs_llm=True" not in entry
     enr = (_ROOT / "src/services/media_enricher.py").read_text(encoding="utf-8")
     assert 'add("Edition", _edl, cap=400)' in enr
     rec = (_ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")

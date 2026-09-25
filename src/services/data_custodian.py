@@ -547,7 +547,12 @@ def _registry() -> list[Task]:
              takes_task=True),
         Task("lyrics_profile",   "Lyrics profiles",      24.0,  _run_lyrics_profiles,
              needs_llm=True, takes_task=True, llm_role="summarizer"),
-        Task("editions_sync",    "Series editions",      168.0, _run_editions_sync,
+        # Daily look, weekly per-row recheck (editions._RECHECK_DAYS): a walk
+        # the budget cut short continues next tick regardless, but a FINISHED
+        # walk used to stamp seven days of silence — a series added to Sonarr
+        # or a classification corrected in between waited a week (2026-09-15:
+        # the disc-source correction sat behind the stamp until 09-22).
+        Task("editions_sync",    "Series editions",      24.0,  _run_editions_sync,
              takes_task=True),
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),

@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 
 _DISCOVER = "https://discover.provider.plex.tv"
 
+# Discover search refuses a request without ``searchProviders`` — HTTP 400
+# "Missing required param searchProviders!" — which is what every add since
+# 2026-08-31 died of ("plex.tv returned 400" in the log, nothing else). The
+# params and device headers below are the ones plex.tv's own clients send;
+# probed 2026-09-25: search 200 with a real hit, addToWatchlist 200 on this
+# host, the title listed under /library/sections/watchlist/all afterwards.
+_SEARCH_PARAMS = {"limit": 10, "searchTypes": "movies,tv", "includeMetadata": 1,
+                  "searchProviders": "discover"}
+
+
+def _headers(token: str) -> dict:
+    from src.config import settings
+    return {"X-Plex-Token": token, "Accept": "application/json",
+            "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
+            "X-Plex-Product": "Curatarr", "X-Plex-Version": "1.0"}
+
+
+def _plex_error(resp) -> str:
+    """'plex.tv returned 400: Missing required param searchProviders!' — the
+    body's message is the only clue plex.tv gives, keep it."""
+    msg = ""
+    try:
+        err = (resp.json() or {}).get("Error") or {}
+        msg = str(err.get("message") or "")[:120]
+    except Exception:  # noqa: BLE001
+        pass
+    return f"plex.tv returned {resp.status_code}" + (f": {msg}" if msg else "")
+
 # Curatarr category → Discover metadata type. Anime series live as "show".
 _TYPE_FOR = {"movie": "movie", "show": "show", "anime": "show"}
 
@@ -91,11 +119,10 @@ async def add_to_watchlist(user_id: int, title: str,
         if not token:
             return {"ok": False, "error": "user has no plex.tv token on file"}
 
-        headers = {"X-Plex-Token": token, "Accept": "application/json"}
+        headers = _headers(token)
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(f"{_DISCOVER}/library/search", headers=headers,
-                                 params={"query": title, "limit": 10,
-                                         "searchTypes": "movies,tv"})
+                                 params={"query": title, **_SEARCH_PARAMS})
             r.raise_for_status()
             container = (r.json() or {}).get("MediaContainer", {})
             results = []
@@ -121,6 +148,6 @@ async def add_to_watchlist(user_id: int, title: str,
                         user_id, matched)
             return {"ok": True, "matched": matched}
     except httpx.HTTPStatusError as e:
-        return {"ok": False, "error": f"plex.tv returned {e.response.status_code}"}
+        return {"ok": False, "error": _plex_error(e.response)}
     except Exception as e:
         return {"ok": False, "error": str(e)}

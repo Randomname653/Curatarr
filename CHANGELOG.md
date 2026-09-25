@@ -269,6 +269,19 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**Watchlist adds that land.** "Sounds promising, I'll put it on my
+watchlist" has ended deletion debates since August, and every one of those
+adds died with "plex.tv returned 400": Discover's search refuses a request
+without `searchProviders`. The search now sends the parameters and device
+headers plex.tv's own clients send, the error keeps plex.tv's message, and
+the add was proved end to end against a real account (search hit, add,
+listed, removed again). `tests/test_plex_watchlist_request.py`.
+
+**Series editions looked at daily.** The custodian task ran weekly, so a
+series added to Sonarr or a corrected classification could wait seven days
+behind a finished walk; the task now looks every day while each row keeps
+its weekly recheck.
+
 **Hash-pinned, everywhere it installs.** The lock is now a universal,
 hash-pinned requirements file (`uv pip compile --universal
 --generate-hashes`, wrapped as `python -m src.deps_lock --compile`), and
