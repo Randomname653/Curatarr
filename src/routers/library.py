@@ -235,7 +235,10 @@ async def library_configure(
     cfg[f"{req.service}_url"]     = req.url
     cfg[f"{req.service}_api_key"] = req.api_key
 
-    write_env(cfg)
+    try:
+        write_env(cfg)
+    except ValueError as e:   # a value .env must not hold (line break, mask)
+        raise HTTPException(status_code=400, detail=str(e))
     # Live-reload the in-process settings so the next request sees the
     # new values without a full app restart.
     settings.__init__()

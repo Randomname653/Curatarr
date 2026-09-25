@@ -29,16 +29,25 @@ from src.database.models import User
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-PLEX_HEADERS = {
-    "Accept": "application/json",
-    "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
-    "X-Plex-Product": "Curatarr",
-    "X-Plex-Version": "1.0",
-}
+def _plex_headers(client_id: Optional[str] = None) -> dict:
+    """plex.tv request headers from the LIVE settings. A module-level dict
+    froze the client id at import time while the auth URL read it per
+    request, so a settings reload could make the two disagree - and plex.tv
+    only links a PIN for the client id that created it."""
+    return {
+        "Accept": "application/json",
+        "X-Plex-Client-Identifier": client_id or settings.PLEX_CLIENT_ID,
+        "X-Plex-Product": "Curatarr",
+        "X-Plex-Version": "1.0",
+    }
+
 
 # Simple in-memory rate limiting (in production, use Redis or similar)
 poll_rate_limit = {}
 MAX_POLLS_PER_MINUTE = 5
+# Per client IP, across pin ids: the per-pin budget alone let one client
+# walk the pin-id space at 5 polls per guessed id.
+MAX_POLLS_PER_IP_PER_MINUTE = 30
 
 
 def _signing_key() -> str:
@@ -84,6 +93,13 @@ def _decode_jwt(token: str) -> dict:
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     """FastAPI dependency – validates Bearer JWT and returns User."""
+    return _user_from_bearer(request, db)
+
+
+def _user_from_bearer(request: Request, db: Session) -> User:
+    """The one place a Bearer token becomes a User: signature, subject,
+    account still active, token version not revoked. Every gate goes through
+    here so none of them can skip a logout or a deactivation."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
@@ -127,12 +143,39 @@ SETUP_CODE = f"{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
+# The code is 32 bits: plenty against a person, not against a script left
+# guessing for the days an unfinished install can sit on the LAN. Wrong codes
+# are budgeted per client IP and - so rotating addresses buys nothing -
+# across all clients. Only a WRONG code counts: a missing header is the
+# frontend's first probe before it asks for the code. Localhost is exempt
+# above all of this, so the owner can always finish setup on the machine.
+SETUP_CODE_FAILS_PER_IP = 10
+SETUP_CODE_FAILS_GLOBAL = 100
+SETUP_CODE_FAIL_WINDOW_S = 15 * 60
+_SETUP_LOCKED_DETAIL = ("Too many wrong setup codes - wait 15 minutes, or finish "
+                        "setup from a browser on the Curatarr machine itself")
+
+
 def _require_setup_code(request: Request) -> None:
+    from src.services import rate_limit
     client = (request.client.host if request.client else "") or ""
     if client in _LOCAL_HOSTS:
         return
     given = (request.headers.get("X-Setup-Code") or "").strip().upper()
+    # Checked before the compare: once locked, a guess must not be able to
+    # find out that it was the right one.
+    if (rate_limit.remaining("setup-code-fail", client, SETUP_CODE_FAILS_PER_IP,
+                             SETUP_CODE_FAIL_WINDOW_S) <= 0
+            or rate_limit.remaining("setup-code-fail", "*", SETUP_CODE_FAILS_GLOBAL,
+                                    SETUP_CODE_FAIL_WINDOW_S) <= 0):
+        raise HTTPException(status_code=429, detail=_SETUP_LOCKED_DETAIL,
+                            headers={"Retry-After": str(SETUP_CODE_FAIL_WINDOW_S)})
     if not hmac.compare_digest(given, SETUP_CODE):
+        if given:
+            rate_limit.enforce("setup-code-fail", client, SETUP_CODE_FAILS_PER_IP,
+                               SETUP_CODE_FAIL_WINDOW_S, detail=_SETUP_LOCKED_DETAIL)
+            rate_limit.enforce("setup-code-fail", "*", SETUP_CODE_FAILS_GLOBAL,
+                               SETUP_CODE_FAIL_WINDOW_S, detail=_SETUP_LOCKED_DETAIL)
         raise HTTPException(
             status_code=401,
             detail="Setup code required: it is printed in the Curatarr console "
@@ -153,17 +196,11 @@ def require_admin_or_first_run(
     if _no_admin_exists(db):
         _require_setup_code(request)
         return None
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token")
-    payload = _decode_jwt(auth[7:])
-    sub = payload.get("sub")
-    try:
-        user_id = int(sub) if sub is not None else 0
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid token subject")
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.is_admin:
+    # Same validation as every other authenticated route: this gate used to
+    # decode the JWT itself and check only the admin flag, so a logged-out
+    # or deactivated admin's token kept rewriting .env for up to a week.
+    user = _user_from_bearer(request, db)
+    if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
@@ -244,14 +281,50 @@ def _enforce_pin_create_rate_limit(client_host: str) -> None:
         _pin_create_rate_limit.clear()
 
 
+# PINs this server handed out, bound to the browser that asked for them.
+# /plex/poll used to accept any pin_id from anyone: a LAN client that learned
+# or guessed a pending pin id could poll it and walk off with the JWT minted
+# for whoever approved it. Now the creator gets a random nonce that poll must
+# echo, and the plex.tv client id the PIN was created under is remembered so
+# the poll asks plex.tv as the same client even across a settings reload.
+# In-memory on purpose: a restart mid-login costs one "Sign in again".
+PIN_BINDING_TTL_S = 30 * 60          # outlives plex.tv's own strong-PIN expiry
+_MAX_PIN_BINDINGS = 1000
+_pin_bindings: dict[int, tuple[str, str, float]] = {}   # pin_id -> (nonce, client_id, created)
+
+
+def _bind_pin(pin_id: int, client_id: str) -> str:
+    now = time.time()
+    for stale in [k for k, v in _pin_bindings.items() if now - v[2] >= PIN_BINDING_TTL_S]:
+        _pin_bindings.pop(stale, None)
+    if len(_pin_bindings) >= _MAX_PIN_BINDINGS:
+        for k, _ in sorted(_pin_bindings.items(), key=lambda kv: kv[1][2])[:_MAX_PIN_BINDINGS // 2]:
+            _pin_bindings.pop(k, None)
+    nonce = secrets.token_urlsafe(24)
+    _pin_bindings[int(pin_id)] = (nonce, client_id, now)
+    return nonce
+
+
+def _check_pin_binding(pin_id: int, nonce: str) -> str:
+    """The plex.tv client id the PIN belongs to, or 403 when the caller is
+    not the browser that created it (or the binding expired)."""
+    entry = _pin_bindings.get(int(pin_id))
+    if (entry is None or time.time() - entry[2] >= PIN_BINDING_TTL_S
+            or not hmac.compare_digest((nonce or "").encode(), entry[0].encode())):
+        raise HTTPException(status_code=403,
+                            detail="Unknown or expired sign-in - click Sign in again")
+    return entry[1]
+
+
 @router.post("/plex/pin")
 async def request_plex_pin(request: Request):
     """Step 1 – Request a fresh PIN from Plex."""
     _enforce_pin_create_rate_limit((request.client.host if request.client else "") or "?")
+    client_id = settings.PLEX_CLIENT_ID
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://plex.tv/api/v2/pins",
-            headers=PLEX_HEADERS,
+            headers=_plex_headers(client_id),
             params={"strong": "true"},
             timeout=10,
         )
@@ -262,10 +335,11 @@ async def request_plex_pin(request: Request):
     pin_id = data["id"]
     code = data["code"]
     auth_url = (
-        f"https://app.plex.tv/auth#?clientID={settings.PLEX_CLIENT_ID}"
+        f"https://app.plex.tv/auth#?clientID={client_id}"
         f"&code={code}&forwardUrl={settings.PLEX_REDIRECT_URI}"
     )
-    return {"pin_id": pin_id, "code": code, "auth_url": auth_url}
+    return {"pin_id": pin_id, "code": code, "auth_url": auth_url,
+            "nonce": _bind_pin(pin_id, client_id)}
 
 
 async def _plex_owner_id() -> Optional[str]:
@@ -276,7 +350,7 @@ async def _plex_owner_id() -> Optional[str]:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get("https://plex.tv/api/v2/user",
-                                 headers={**PLEX_HEADERS, "X-Plex-Token": token},
+                                 headers={**_plex_headers(), "X-Plex-Token": token},
                                  timeout=10)
         if r.status_code != 200:
             return None
@@ -331,14 +405,25 @@ async def _assert_plex_membership(plex_id: str, first_ever: bool) -> None:
 
 
 @router.get("/plex/poll/{pin_id}")
-async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Step 2 – Poll until the user has authenticated; returns JWT on success."""
+async def poll_plex_pin(pin_id: int, request: Request, background_tasks: BackgroundTasks,
+                        nonce: str = "", db: Session = Depends(get_db)):
+    """Step 2 – Poll until the user has authenticated; returns JWT on success.
+
+    ``nonce`` is the value /plex/pin returned to the browser that created
+    this PIN; nobody else can poll it."""
+    from src.services import rate_limit
+    rate_limit.enforce("plex-poll-ip", (request.client.host if request.client else "") or "?",
+                       MAX_POLLS_PER_IP_PER_MINUTE, 60,
+                       detail="Too many requests")
+    # Binding before the per-pin budget: a stranger's polls must not be able
+    # to spend the real browser's allowance for its own PIN.
+    client_id = _check_pin_binding(pin_id, nonce)
     _enforce_poll_rate_limit(pin_id)
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"https://plex.tv/api/v2/pins/{pin_id}",
-            headers=PLEX_HEADERS,
+            headers=_plex_headers(client_id),
             timeout=10,
         )
     if resp.status_code != 200:
@@ -353,7 +438,7 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
     async with httpx.AsyncClient() as client:
         user_resp = await client.get(
             "https://plex.tv/api/v2/user",
-            headers={**PLEX_HEADERS, "X-Plex-Token": auth_token},
+            headers={**_plex_headers(client_id), "X-Plex-Token": auth_token},
             timeout=10,
         )
     if user_resp.status_code != 200:
@@ -400,6 +485,7 @@ async def poll_plex_pin(pin_id: int, background_tasks: BackgroundTasks, db: Sess
         db.commit()
 
     token = _create_jwt(user.id, user.is_admin, user.token_version or 0)
+    _pin_bindings.pop(int(pin_id), None)   # one PIN, one session
     return {
         "status": "ok",
         "token": token,
