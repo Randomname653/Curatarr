@@ -1291,13 +1291,19 @@ async def ensure_verified_data(
             if fresh:
                 # Re-read through the resolved IDs: enrich_media_item writes the
                 # raw cache under whatever id_key it resolved (often a tmdb_id we
-                # weren't given), so a title-only re-read would miss it.
+                # weren't given), so a title-only re-read would miss it. The
+                # resolved ids REPLACE the caller's for the rest of this
+                # function: every top-up below writes under, and rebuilds from,
+                # these ids — passing the original (often None) ones rebuilt
+                # `data` from a title-only lookup and filed top-ups under keys
+                # the next read never consults.
+                tmdb_id = fresh.get("tmdb_id") or tmdb_id
+                tvdb_id = fresh.get("tvdb_id") or tvdb_id
+                anilist_id = fresh.get("anilist_id") or anilist_id
+                anidb_id = fresh.get("anidb_id") or anidb_id
                 data = build_verified_data(
-                    title, media_type,
-                    tmdb_id=fresh.get("tmdb_id") or tmdb_id,
-                    tvdb_id=fresh.get("tvdb_id") or tvdb_id,
-                    anilist_id=fresh.get("anilist_id") or anilist_id,
-                    anidb_id=fresh.get("anidb_id") or anidb_id,
+                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                    anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
@@ -3988,15 +3994,14 @@ async def process_and_save(raw: dict) -> Optional[dict]:
                                      if isinstance(profile.get("mood"), list) else []),
                     "year": profile.get("year") or 0,
                 }
-                try:
-                    chroma_db.add_documents(
-                        documents=[text_to_embed],
-                        embeddings=[vec],
-                        metadatas=[chroma_meta],
-                        ids=[doc_id],
-                    )
-                except Exception:
-                    chroma_db.update_metadata(doc_id, chroma_meta)
+                # Upsert, not add: a re-enrich must replace the vector too
+                # (add keeps the old one for an existing id — see the wrapper).
+                chroma_db.upsert_documents(
+                    documents=[text_to_embed],
+                    embeddings=[vec],
+                    metadatas=[chroma_meta],
+                    ids=[doc_id],
+                )
                 # Facet points (multi-vector items, stage 1) — isolated so a
                 # facet failure can never break the main index write.
                 try:
@@ -4210,15 +4215,12 @@ async def enrich_media_item(
                     "mood": ", ".join(profile.get("mood", [])),
                     "year": 0,
                 }
-                try:
-                    chroma_db.add_documents(
-                        documents=[text_to_embed],
-                        embeddings=[vec],
-                        metadatas=[chroma_meta],
-                        ids=[doc_id],
-                    )
-                except Exception:
-                    chroma_db.update_metadata(doc_id, chroma_meta)
+                chroma_db.upsert_documents(
+                    documents=[text_to_embed],
+                    embeddings=[vec],
+                    metadatas=[chroma_meta],
+                    ids=[doc_id],
+                )
                 try:
                     from src.services.facet_index import write_facets
                     await write_facets(doc_id, title, "music",
@@ -4431,37 +4433,15 @@ async def enrich_media_item(
                 # Pick a stable unique ID for the document
                 doc_id = str(plex_rating_key or tmdb_id or anilist_id or profile["title"])
 
-                # In ChromaDB upserten — duplicate-id raises on `add`, so we
-                # fall back to deleting + re-adding to refresh the embedding
-                # too (update_metadata alone leaves a stale vector).
-                try:
-                    chroma_db.add_documents(
-                        documents=[text_to_embed],
-                        embeddings=[embedding_vector],
-                        metadatas=[chroma_metadata],
-                        ids=[doc_id]
-                    )
-                except Exception as add_exc:
-                    logger.debug("ChromaDB add failed for '%s' (%s) — re-adding",
-                                 doc_id, add_exc)
-                    try:
-                        chroma_db.delete_by_id(doc_id)
-                    except Exception as _e:
-                        # Pass 47 (B3-rest): a silent failure here masks vector-
-                        # consistency problems — we'd re-add over the existing
-                        # doc but the old vector might still leak through if
-                        # delete_by_id partially succeeded. Log loudly enough
-                        # to spot but don't escalate (re-add usually wins).
-                        logger.warning(
-                            "[enricher] chroma delete_by_id failed before re-add (%s): %s",
-                            doc_id, _e,
-                        )
-                    chroma_db.add_documents(
-                        documents=[text_to_embed],
-                        embeddings=[embedding_vector],
-                        metadatas=[chroma_metadata],
-                        ids=[doc_id]
-                    )
+                # Upsert so a re-enrich replaces the embedding too. The old
+                # add → (except) delete+re-add never re-added: Chroma's `add`
+                # with an existing id does not raise, it keeps the old vector.
+                chroma_db.upsert_documents(
+                    documents=[text_to_embed],
+                    embeddings=[embedding_vector],
+                    metadatas=[chroma_metadata],
+                    ids=[doc_id]
+                )
                 try:
                     from src.services.facet_index import write_facets
                     await write_facets(doc_id, profile.get("title", ""),

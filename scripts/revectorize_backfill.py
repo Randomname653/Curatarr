@@ -105,17 +105,9 @@ def _chroma_payload(profile: dict, row: dict):
 
 
 def _store_vector(chroma_db, doc_id, text, vec, metadata):
-    """Upsert into ChromaDB — add, falling back to delete+re-add (media_enricher)."""
-    try:
-        chroma_db.add_documents(documents=[text], embeddings=[vec],
-                                metadatas=[metadata], ids=[doc_id])
-    except Exception:
-        try:
-            chroma_db.delete_by_id(doc_id)
-        except Exception:
-            pass
-        chroma_db.add_documents(documents=[text], embeddings=[vec],
-                                metadatas=[metadata], ids=[doc_id])
+    """Upsert into ChromaDB (``add`` silently keeps an existing id's vector)."""
+    chroma_db.upsert_documents(documents=[text], embeddings=[vec],
+                               metadatas=[metadata], ids=[doc_id])
 
 
 async def main():
