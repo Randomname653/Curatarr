@@ -9,8 +9,10 @@ router = APIRouter()
 
 
 @router.get("/unread")
-async def get_unread(user: User = Depends(get_current_user)):
-    result = await get_unread_messages(user.id)
+async def get_unread(seen: bool = False, user: User = Depends(get_current_user)):
+    # seen=1 only from the open notification panel: a background badge poll
+    # is not an impression (see get_unread_messages).
+    result = await get_unread_messages(user.id, seen=seen)
     return result
 
 

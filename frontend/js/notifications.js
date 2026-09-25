@@ -4,9 +4,13 @@ import { state } from './state.js';
 import { EL, act, esc, escAttr } from './ui.js';
 import { showView } from './nav.js';
 import { _setDiscussBanner, addMsg, sendMessage } from './chat.js';
-export async function loadUnreadMessages() {
+// seen === true only when the panel is open and the message is on screen —
+// the 60 s badge poll must not count as an impression, or every message
+// retires unread after ~40 minutes of an open tab. Strict === because
+// setInterval may hand the callback a stray argument.
+export async function loadUnreadMessages(seen) {
   try {
-    const r = await api('/api/messages/unread');
+    const r = await api(seen === true ? '/api/messages/unread?seen=1' : '/api/messages/unread');
     // System notifications: learned principles awaiting review (admin only —
     // the endpoint is admin-gated anyway, this just avoids a guaranteed 403).
     let principles = [];
@@ -71,7 +75,13 @@ export async function discussPrinciple(id, text) {
 }
 
 export async function respondToMessage(id, msgText, triggerType) {
-  await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+  // A verification question stays unread until it is ANSWERED: the backend
+  // claims it (read → true) when the user's reply in this thread is
+  // processed, and only matches unread questions. Marking it read here, before
+  // the user has typed a word, meant no answer was ever recorded.
+  if (triggerType !== 'verification') {
+    await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
+  }
   toggleMsgPanel();
 
   // Switch to chat — same pattern as discussDeletion
@@ -100,7 +110,7 @@ export async function skipMessage(id, btn) {
   btn.disabled = true;
   btn.textContent = '…';
   await api(`/api/messages/${id}/read`, 'POST').catch(()=>{});
-  await loadUnreadMessages();
+  await loadUnreadMessages(true);   // panel still open: the next one is shown
 }
 
 export function toggleMsgPanel() {
@@ -109,5 +119,5 @@ export function toggleMsgPanel() {
   p.classList.toggle('open');
   // Refresh on open so the list is never the boot-time snapshot — shadow
   // principles land in the background long after the page loaded.
-  if (opening) loadUnreadMessages();
+  if (opening) loadUnreadMessages(true);
 }

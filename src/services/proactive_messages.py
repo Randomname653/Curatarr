@@ -1823,12 +1823,17 @@ async def check_and_generate_messages(user_id: int) -> int:
     return generated
 
 
-async def get_unread_messages(user_id: int) -> dict:
+async def get_unread_messages(user_id: int, seen: bool = False) -> dict:
     """
     Returns the next unread message and the total unread count.
     Only one message is surfaced at a time — the user reads or skips it,
     then the next one becomes visible. Skipping (mark_message_read) removes
     it from the queue; the same trigger type can re-fire after the cooldown.
+
+    ``seen`` is True only when the user actually has the notification panel
+    open. The bell badge polls this every minute in the background, and
+    counting those polls as impressions retired every message after ~40
+    minutes of an open tab — unread, never shown to anyone.
     """
     now = datetime.utcnow()
     with get_db_session() as db:
@@ -1862,8 +1867,9 @@ async def get_unread_messages(user_id: int) -> dict:
             return {"message": None, "total": 0}
 
         m = all_unread[0]
-        m.impressions = (m.impressions or 0) + 1
-        db.commit()
+        if seen:
+            m.impressions = (m.impressions or 0) + 1
+            db.commit()
         return {
             "message": {
                 "id": m.id,

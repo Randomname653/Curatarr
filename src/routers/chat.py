@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import weakref
 from collections import OrderedDict
 from datetime import datetime
 from typing import AsyncGenerator
@@ -371,6 +372,10 @@ def _extract_title_via_regex(query: str) -> str | None:
 
 _LIB_TITLE_INDEX: dict = {"ts": 0.0, "items": []}
 _LIB_TITLE_TTL_S = 600.0
+# An EMPTY build (arr caches not filled yet, no arr configured, a failed
+# read) is remembered too, just briefly: an uncached empty result made
+# every chat turn decode all three arr blobs on the event loop again.
+_LIB_TITLE_EMPTY_TTL_S = 60.0
 
 
 def _norm_for_match(s: str) -> str:
@@ -384,7 +389,8 @@ def _library_title_index() -> list:
     ground truth — 25k known names — so extraction can't be defeated by
     phrasing, typos around the title, or non-native grammar."""
     import time as _time
-    if _time.time() - _LIB_TITLE_INDEX["ts"] < _LIB_TITLE_TTL_S and _LIB_TITLE_INDEX["items"]:
+    ttl = _LIB_TITLE_TTL_S if _LIB_TITLE_INDEX["items"] else _LIB_TITLE_EMPTY_TTL_S
+    if _time.time() - _LIB_TITLE_INDEX["ts"] < ttl:
         return _LIB_TITLE_INDEX["items"]
     items = []
     try:
@@ -416,6 +422,10 @@ def _library_title_index() -> list:
         logger.debug("[chat] library title index failed: %s", e)
     if items:
         _LIB_TITLE_INDEX.update(ts=_time.time(), items=items)
+    else:
+        # Keep the last good index (if any) but stamp the attempt, so the
+        # next rebuild waits out a TTL instead of running on every turn.
+        _LIB_TITLE_INDEX["ts"] = _time.time()
     return _LIB_TITLE_INDEX["items"] or items
 
 
@@ -2552,11 +2562,9 @@ async def send_message(
     db: Session = Depends(get_db),
 ):
     """Send a message — returns streaming response word by word."""
-    ollama_url = settings.effective_ollama
     # Per-user budget: a human sends a few messages a minute; a script with a
     # member token could queue hundreds of curator generations and own the
-    # single GPU for everyone. The in-flight guard (one reply at a time per
-    # user) is taken right before the stream starts, released when it ends.
+    # single GPU for everyone.
     from src.services import rate_limit as _rl
     _rl.enforce("chat", user.id, _rl.CHAT_MESSAGES_PER_5MIN, 300,
                 "Too many messages in a short time — give the curator a moment")
@@ -2590,6 +2598,28 @@ async def send_message(
             yield f"data: {json.dumps({'done': True})}\n\n"
 
         return StreamingResponse(_gpu_busy_reply(), media_type="text/event-stream")
+
+    # One reply in flight per user, taken BEFORE anything is persisted or
+    # built. It used to be taken right before the stream started — after
+    # the user turn was committed and the whole pre-stream pipeline (discuss
+    # lookups, RAG, taste, memories) had run — so a double-click saved the
+    # message twice and paid for two context builds before the second one
+    # got its 409. From here the stream generator's finally owns the
+    # release; every exit before it is handed over releases here.
+    _rl.CHAT_IN_FLIGHT.enter_or_409(
+        user.id, "Your previous reply is still streaming — wait for it to finish")
+    try:
+        return await _send_message_guarded(message, user, db, _rl, thread_id)
+    except BaseException:
+        _rl.CHAT_IN_FLIGHT.leave(user.id)
+        raise
+
+
+async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
+                                _rl, thread_id: str) -> StreamingResponse:
+    """send_message body, run while CHAT_IN_FLIGHT is held for the user.
+    Returns a response whose generator releases the guard when it ends."""
+    ollama_url = settings.effective_ollama
 
     # 1. CONTEXT PRE-LOADING & METADATA FETCHING
     active_title = ""
@@ -3145,7 +3175,10 @@ FORMATTING RULES:
     _save_message(user.id, "user", message.message, db, thread_id=thread_id)
 
     # 5. Stream from Ollama
+    stream_state = {"started": False}
+
     async def generate() -> AsyncGenerator[str, None]:
+        stream_state["started"] = True
         from src.services.llm_priority import (
             curator_start, curator_done, check_curator_vram_health, curator_busy,
             gate_owner,
@@ -3156,22 +3189,30 @@ FORMATTING RULES:
         # ("Looking up X", "Found in tv", "Loaded 3 memories"). They arrive
         # in a quick burst right before the curator stream — frontend animates
         # each one for a beat so the sequence reads as progressive feedback.
-        for status_msg in pre_stream_status:
-            yield f"data: {json.dumps({'status': status_msg})}\n\n"
+        # A disconnect before the slot is ours (on these yields, or while
+        # queued in curator_start) never reaches the main try's finally, so
+        # the in-flight guard is released here. curator_start undoes its own
+        # acquire when cancelled, so there is no slot to release.
+        try:
+            for status_msg in pre_stream_status:
+                yield f"data: {json.dumps({'status': status_msg})}\n\n"
 
-        # If another big-model generation is already running (another user
-        # chatting, or a recs / proactive / verification job), tell the user
-        # they're queued: a single GPU serves ONE curator generation at a
-        # time, so we wait for the slot instead of thrashing it. The
-        # curator_start() call below blocks until the slot frees.
-        if curator_busy():
-            _holder = gate_owner()
-            _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
-                     if _holder else
-                     "Curatarr is busy with another request — you are next in line…")
-            yield f"data: {json.dumps({'status': _busy})}\n\n"
+            # If another big-model generation is already running (another
+            # user chatting, or a recs / proactive / verification job), tell
+            # the user they're queued: a single GPU serves ONE curator
+            # generation at a time, so we wait for the slot instead of
+            # thrashing it. curator_start() below blocks until it frees.
+            if curator_busy():
+                _holder = gate_owner()
+                _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
+                         if _holder else
+                         "Curatarr is busy with another request — you are next in line…")
+                yield f"data: {json.dumps({'status': _busy})}\n\n"
 
-        await curator_start("chat")
+            await curator_start("chat")
+        except BaseException:
+            _rl.CHAT_IN_FLIGHT.leave(user.id)
+            raise
 
         # Slot acquired — Curator is now actually working. From here on EVERY
         # yield/await must live inside the try below: a client disconnect
@@ -3403,10 +3444,20 @@ FORMATTING RULES:
             if not client_disconnected:
                 yield f"data: {json.dumps({'done': True})}\n\n"
 
-    # One reply in flight per user: the generator's finally releases it.
-    _rl.CHAT_IN_FLIGHT.enter_or_409(
-        user.id, "Your previous reply is still streaming — wait for it to finish")
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    # The generator's finally releases the in-flight guard — but only once
+    # it has started. A client gone before the first chunk leaves the
+    # generator un-iterated, its finally never runs, and the user would sit
+    # behind 409s until the guard's TTL. Release on collection instead,
+    # gated on "never started" so a late GC can't drop a NEWER turn's entry.
+    stream = generate()
+    weakref.finalize(stream, _release_unstarted_chat, _rl.CHAT_IN_FLIGHT,
+                     user.id, stream_state)
+    return StreamingResponse(stream, media_type="text/event-stream")
+
+
+def _release_unstarted_chat(guard, user_id, stream_state: dict) -> None:
+    if not stream_state["started"]:
+        guard.leave(user_id)
 
 
 class CorrectAnchorRequest(BaseModel):
