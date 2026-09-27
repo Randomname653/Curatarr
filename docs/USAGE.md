@@ -127,6 +127,21 @@ That keeps every version the lock already holds and changes only what
 cannot stand. For the deliberate refresh that moves everything to the
 newest the pins allow, add `--upgrade`.
 
+**Which Python runs Curatarr**
+
+`start.bat` and `start_tray.bat` pick one interpreter and say which: a
+`venv` (or `.venv`) in the Curatarr folder first, else Python 3.12 through
+the Python launcher (`py -3.12`), else whatever `python` is on PATH. The
+console window prints it, and the app log has a `[python]` line for every
+start. A shared Python works, but the launcher raises packages to the lock
+in it, which can push other tools in the same environment past their own
+pins. A venv keeps Curatarr apart; create it once and the next start
+installs everything into it:
+
+```bash
+py -3.12 -m venv venv
+```
+
 **A pipeline flag is stuck (`enrichment_running`, `music_pipeline_running`)**
 
 Happens if the process was killed mid-run. The next sync usually clears

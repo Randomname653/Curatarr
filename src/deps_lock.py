@@ -662,6 +662,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception:  # noqa: BLE001 — logging is a nicety here, not a requirement
             pass
         file_log = logging.getLogger("curatarr.deps_lock")
+        file_log.info("[lock] interpreter: %s", sys.executable)
 
         def both(msg: str) -> None:
             print(msg)

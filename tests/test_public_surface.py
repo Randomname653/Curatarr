@@ -70,7 +70,7 @@ def test_launchers_preflight_the_dependencies_we_actually_ship():
     # Dependabot bump passed it) and named Crypto, unpinned and unused (a
     # fresh install ran pip on every start). Both launchers go through
     # src.deps_check now: pinned versions, this interpreter, pip on drift.
-    assert "python -m src.deps_check --install" in bat, "start.bat must pull the pinned versions"
+    assert '"!PY!" -m src.deps_check --install' in bat, "start.bat must pull the pinned versions"
     assert 'python -c "import' not in bat and " jose" not in bat, "the sentinel import is back"
     assert "from src.deps_check import check, install" in tray, "the tray must pull like start.bat"
     assert '"jwt"' in tray and '"Crypto"' not in tray

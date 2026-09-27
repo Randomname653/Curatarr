@@ -37,6 +37,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("[sync-guard] enable failed: %s", e)
 
+    # Which Python this is, on record for every start: start.bat once picked
+    # a different interpreter depending on how its window was opened
+    # (2026-09-25 / 09-27) and nothing in the log said so.
+    try:
+        import platform as _platform
+        import sys as _sys
+        logger.info("[python] %s (%s)", _sys.executable, _platform.python_version())
+    except Exception:  # noqa: BLE001
+        pass
+
     # Pinned requirements vs. this interpreter: reported, never installed from
     # inside the server — the launchers do that before the first import.
     # Settings → Maintenance shows the same report to admins.

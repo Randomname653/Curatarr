@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 REM Curatarr tray launcher — starts the tray app on the SAME interpreter
 REM start.bat uses (PATH resolution + venv activation), then closes.
 REM
@@ -16,5 +17,13 @@ if exist venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 )
 
-start "" pythonw.exe curatarr_tray.pyw
+REM Same order as start.bat: a venv here, else Python 3.12 through the
+REM launcher, else pythonw on PATH - PATH alone gave different starts
+REM different interpreters (2026-09-25 / 09-27).
+set "PYW="
+if exist "venv\Scripts\pythonw.exe" set "PYW=venv\Scripts\pythonw.exe"
+if not defined PYW if exist ".venv\Scripts\pythonw.exe" set "PYW=.venv\Scripts\pythonw.exe"
+if not defined PYW for /f "usebackq delims=" %%i in (`py -3.12 -c "import os, sys; print(os.path.join(os.path.dirname(sys.executable), 'pythonw.exe'))" 2^>nul`) do set "PYW=%%i"
+if not defined PYW set "PYW=pythonw.exe"
+start "" "!PYW!" curatarr_tray.pyw
 exit
