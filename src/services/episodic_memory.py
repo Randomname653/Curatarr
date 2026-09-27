@@ -1280,15 +1280,34 @@ async def flush_all_pending_extractions() -> None:
 # The classifier's action line is "ACTION: PROTECT_MEDIA | TITLE: … |
 # REASON: … | …". A bare split on "|" cut titles that carry one ("Cowboy
 # Bebop | Knockin' on Heaven's Door") into a title and a nameless field, so
-# the wrong title was protected. Split only where the next field's label
-# follows (2026-09-25).
-_ACTION_FIELD_SPLIT = re.compile(
-    r"\s*\|\s*(?=(?:TITLE|REASON|RESOLUTION|CURATOR_STANCE|OVERRIDE_REASON|WATCHLIST)\s*:)",
-    re.IGNORECASE)
+# the wrong title was protected: a pipe only separates fields where the next
+# field's label follows (2026-09-25). Done without a regex since 2026-09-27:
+# the first version, whitespace runs on both sides of the pipe plus a
+# lookahead, was quadratic on long runs of spaces (CodeQL
+# py/polynomial-redos; 16,000 spaces took a third of a second). Split on
+# every pipe, then glue a piece that does not open with a label back onto
+# the one before — linear, and every piece keeps its text exactly.
+_ACTION_FIELDS = ("TITLE", "REASON", "RESOLUTION", "CURATOR_STANCE",
+                  "OVERRIDE_REASON", "WATCHLIST")
 
 
-def _split_action_line(line: str) -> list:
-    return _ACTION_FIELD_SPLIT.split(line)
+def _opens_with_field_label(piece: str) -> bool:
+    head = piece.lstrip().upper()
+    for label in _ACTION_FIELDS:
+        if head.startswith(label) and head[len(label):].lstrip().startswith(":"):
+            return True
+    return False
+
+
+def _split_action_line(text: str) -> list:
+    groups: list = []
+    for piece in text.split("|"):
+        if groups and not _opens_with_field_label(piece):
+            groups[-1].append(piece)
+        else:
+            groups.append([piece])
+    return ["|".join(g) for g in groups]
+
 
 
 async def handle_protection_intent(

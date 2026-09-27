@@ -76,5 +76,21 @@ src = (Path(__file__).resolve().parents[1] / "src/services/episodic_memory.py").
 check("no bare split on the pipe is left in the parser", 'line.split("|")' not in src
       and src.count("_split_action_line(") == 3)
 
+# 2026-09-27, CodeQL py/polynomial-redos: the first splitter was a regex
+# with whitespace runs on both sides of the pipe — quadratic on long runs
+# of spaces. The line is model output; linear is the only acceptable cost.
+import time  # noqa: E402
+t0 = time.perf_counter()
+em._split_action_line("ACTION: PROTECT_MEDIA | TITLE: x" + " " * 200_000 + "y | REASON: r")
+em._split_action_line("ACTION: PROTECT_MEDIA | TITLE: " + "a|" * 50_000 + " | REASON: r")
+em._split_action_line("|" * 100_000)
+check("the splitter stays linear on long runs of spaces and pipes",
+      time.perf_counter() - t0 < 1.0)
+check("no regex around the pipe any more", "_ACTION_FIELD_SPLIT" not in src
+      and "re.compile(" not in src.split("_ACTION_FIELDS = ")[1].split("async def handle_protection_intent")[0])
+check("a run of spaces inside a title survives verbatim",
+      em._split_action_line("ACTION: PROTECT_MEDIA | TITLE: a" + " " * 50 + "b | REASON: r")[1]
+      == " TITLE: a" + " " * 50 + "b ")
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
