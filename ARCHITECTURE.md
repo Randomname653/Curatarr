@@ -1284,6 +1284,12 @@ to its own section (or a §0 delta row) instead of growing this list.
   hashes fetched from PyPI (offline: the line stays), and leaves entries
   its marker rules out here alone. Server: lifespan log line + the `lock`
   block of `GET /api/system/dependencies`, shown in Settings → Maintenance.
+  A fresh environment is filled from the lock itself (`deps_check.install_source`,
+  2026-09-27): whenever nothing installed stands above the lock and nothing
+  is installed that it does not know, the launchers run `pip install
+  --require-hashes -r lock/requirements.txt` instead of requirements.txt,
+  whose unpinned transitive packages would float past the tested set. An
+  empty install no longer reads as "lock matches": missing pins count.
 - `src/services/shutdown_bridge.py` — import-free callback registry letting
   the tray intercept the web shutdown endpoint instead of relying on SIGINT.
 - `src/services/bg_tasks.py` — keeps strong references to fire-and-forget

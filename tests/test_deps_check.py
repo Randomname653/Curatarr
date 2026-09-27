@@ -75,6 +75,62 @@ def test_install_uses_this_interpreter_and_reports_failure():
     assert dc.install(pathlib.Path("req.txt"), run=lambda argv, **kw: _R(1)) is False
 
 
+def test_a_fresh_environment_installs_the_tested_lock_with_hashes():
+    """2026-09-27: an empty venv filled from requirements.txt floated every
+    unpinned package past the lock (12 of them in a dry run) and --apply
+    would then have rewritten the lock. The lock goes in instead, whenever
+    that can only add and raise."""
+    import tempfile
+    from src import deps_lock as dl
+
+    class _Rep:
+        error = None
+        hashed = True
+        above: list = []
+        unlocked: list = []
+
+    class _R:
+        returncode, stdout, stderr = 0, "", ""
+
+    calls = []
+
+    def run(argv, **kw):
+        calls.append(argv)
+        return _R()
+
+    real = dl.check
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        req = root / "requirements.txt"
+        req.write_text("fastapi==0.141.1\n", encoding="utf-8")
+        (root / "lock").mkdir()
+        lock = root / "lock" / "requirements.txt"
+        lock.write_text("fastapi==0.141.1 \\\n    --hash=sha256:" + "0" * 64 + "\n", encoding="utf-8")
+        try:
+            dl.check = lambda r, l: _Rep()
+            assert dc.install_source(req) == lock
+            assert dc.install(req, run=run) is True
+            assert calls[-1][4:7] == ["--require-hashes", "-r", str(lock)], calls[-1]
+            for attr, value in (("above", [("anyio", "4.16.0", "4.15.1")]), ("unlocked", ["extra"]),
+                                ("hashed", False), ("error", "boom")):
+                rep = _Rep()
+                setattr(rep, attr, value)
+                dl.check = lambda r, l, rep=rep: rep
+                assert dc.install_source(req) is None, f"{attr} must fall back to requirements.txt"
+                dc.install(req, run=run)
+                assert calls[-1][4:6] == ["-r", str(req)], attr
+
+            def boom(r, l):
+                raise RuntimeError("no verdict")
+            dl.check = boom
+            assert dc.install_source(req) is None
+            lock.unlink()
+            dl.check = lambda r, l: _Rep()
+            assert dc.install_source(req) is None, "no lock next to it, no lock install"
+        finally:
+            dl.check = real
+
+
 def test_main_exit_codes_follow_the_report():
     with tempfile.TemporaryDirectory() as d:
         req = pathlib.Path(d) / "requirements.txt"

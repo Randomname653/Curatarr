@@ -53,7 +53,8 @@ REM unnoticed -- and imported Crypto, which is neither pinned nor used, so a
 REM fresh install ran pip on every start.
 "!PY!" -m src.deps_check >nul 2>&1
 if errorlevel 1 (
-    echo  [SETUP] Dependencies missing or outdated - installing from requirements.txt...
+    echo  [SETUP] Dependencies missing or outdated - installing. A fresh venv gets the
+    echo          tested lock, exact and hash-checked - a few minutes the first time.
     "!PY!" -m src.deps_check --install
     echo.
 )

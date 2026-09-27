@@ -281,6 +281,19 @@ def test_dependabot_version_updates_for_pip_are_off():
         "pip version updates must stay off — a textual bump of the lock cannot be trusted to resolve"
 
 
+def test_an_empty_environment_is_not_reported_as_matching():
+    """A fresh venv has nothing below, above or unlocked; the report said
+    "lock matches this interpreter" until the missing pins counted."""
+    rep = dl.LockReport(lock={"fastapi": dl.Entry("fastapi", "0.141.1")}, installed={},
+                        missing_roots=["fastapi"])
+    assert not rep.clean
+    assert rep.summary().startswith("nothing installed yet: 1 pinned package(s) missing")
+    part = dl.LockReport(lock={"fastapi": dl.Entry("fastapi", "0.141.1")},
+                         installed={"anyio": "4.15.1"}, missing_roots=["fastapi"])
+    assert not part.clean and "1 missing" in part.summary()
+    assert "fastapi: pinned in requirements.txt, not installed" in part.lines()
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

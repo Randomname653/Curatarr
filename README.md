@@ -206,7 +206,8 @@ through `python -m src.deps_lock --compile`). CI installs it with
 through the same hash check and let the lock follow anything newer, so
 it never lowers a version; the security scanners and Dependabot read it.
 Reproduce the exact set with
-`pip install --require-hashes -r lock/requirements.txt`.
+`pip install --require-hashes -r lock/requirements.txt` — a fresh
+environment gets exactly that on its first launcher start.
 
 **Linux / macOS**
 

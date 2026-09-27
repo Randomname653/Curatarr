@@ -288,7 +288,9 @@ Python, the next on Python 3.12, each raised only when it happened to run,
 and both environments are shared with other tools whose own pins the raises
 broke. The launchers now pick a venv in the folder, else `py -3.12`, else
 PATH, print the choice, and every start logs it; USAGE explains how to give
-Curatarr its own venv.
+Curatarr its own venv. A fresh venv is filled with the tested lock, exact
+and hash-checked, instead of whatever requirements.txt resolves to that
+day, and an empty environment no longer reports that it matches the lock.
 
 **Smaller.** The user pill in the top bar opens Settings → Account and is
 reachable by keyboard (from Jules' #129), and the sidebar marks the open

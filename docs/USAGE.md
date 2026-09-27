@@ -136,7 +136,8 @@ console window prints it, and the app log has a `[python]` line for every
 start. A shared Python works, but the launcher raises packages to the lock
 in it, which can push other tools in the same environment past their own
 pins. A venv keeps Curatarr apart; create it once and the next start
-installs everything into it:
+fills it with the tested lock, exact and hash-checked (a few minutes the
+first time):
 
 ```bash
 py -3.12 -m venv venv

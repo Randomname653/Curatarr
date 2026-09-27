@@ -279,24 +279,32 @@ class LockReport:
 
     @property
     def clean(self) -> bool:
-        return not (self.below or self.above or self.unlocked or self.pins_behind or self.error)
+        # missing_roots too: an empty environment has nothing below, above or
+        # unlocked, and was reported as "lock matches" (2026-09-27, a fresh venv).
+        return not (self.below or self.above or self.unlocked or self.pins_behind
+                    or self.missing_roots or self.error)
 
     def lines(self) -> List[str]:
         out = [f"{n}: installed {i}, lock says {l} (will be raised)" for n, i, l in self.below]
         out += [f"{n}: installed {i}, lock says {l} (lock follows)" for n, i, l in self.above]
         out += [f"{n}: installed, not in the lock" for n in self.unlocked]
         out += [f"{n}: requirements.txt says {r}, lock says {l} (pin follows the lock)" for n, r, l in self.pins_behind]
+        out += [f"{n}: pinned in requirements.txt, not installed" for n in self.missing_roots]
         return out
 
     def summary(self) -> str:
         if self.error:
             return f"lock not checked: {self.error}"
+        if self.missing_roots and not self.installed:
+            return (f"nothing installed yet: {len(self.missing_roots)} pinned package(s) missing; "
+                    f"a launcher start installs the lock ({len(self.lock)} packages)")
         if self.clean:
             return (f"lock matches this interpreter ({len(self.lock)} packages, "
                     f"{'hash-pinned' if self.hashed else 'no hashes yet'})")
         shown = self.lines()
         return (f"lock differs: {len(self.below)} below, {len(self.above)} above, "
-                f"{len(self.unlocked)} unlocked, {len(self.pins_behind)} pins behind: "
+                f"{len(self.unlocked)} unlocked, {len(self.pins_behind)} pins behind, "
+                f"{len(self.missing_roots)} missing: "
                 + "; ".join(shown[:8]) + (" …" if len(shown) > 8 else "") + f". Run: {APPLY_CMD}")
 
     def as_dict(self) -> dict:

@@ -121,11 +121,41 @@ def check(requirements: Path = REQUIREMENTS,
     return rep
 
 
+def install_source(requirements: Path = REQUIREMENTS) -> Optional[Path]:
+    """The hashed lock next to ``requirements`` when installing it can only
+    add and raise; None otherwise (pip then runs on requirements.txt).
+
+    A fresh environment — an empty venv above all — should get the tested
+    set, exact and hash-checked. pip on requirements.txt floats every
+    package the file does not pin: a dry run into an empty venv on
+    2026-09-27 resolved 12 packages newer than the lock and one it does not
+    know, and deps_lock --apply would then have rewritten the lock to follow
+    them. The lock is used only when nothing installed stands ABOVE it and
+    nothing is installed that it does not know, so an environment somebody
+    raised by hand is never lowered."""
+    requirements = Path(requirements)
+    lock = requirements.parent / "lock" / "requirements.txt"
+    if not (requirements.exists() and lock.exists()):
+        return None
+    try:
+        from src import deps_lock
+        rep = deps_lock.check(requirements, lock)
+    except Exception:  # noqa: BLE001 — no verdict, no lock install
+        return None
+    if rep.error or not rep.hashed or rep.above or rep.unlocked:
+        return None
+    return lock
+
+
 def install(requirements: Path = REQUIREMENTS, run=subprocess.run) -> bool:
-    """pip for THIS interpreter, the one that will import the packages. Output
-    is captured (the tray has no console) and the tail is returned via the
-    log on failure; the caller re-checks afterwards."""
-    r = run([sys.executable, "-m", "pip", "install", "-r", str(requirements),
+    """pip for THIS interpreter, the one that will import the packages: the
+    tested lock with --require-hashes when that can only add and raise
+    (install_source), else requirements.txt. Output is captured (the tray has
+    no console) and the tail is returned via the log on failure; the caller
+    re-checks afterwards."""
+    lock = install_source(requirements)
+    target = ["--require-hashes", "-r", str(lock)] if lock else ["-r", str(requirements)]
+    r = run([sys.executable, "-m", "pip", "install", *target,
              "--quiet", "--disable-pip-version-check"],
             capture_output=True, text=True)
     if r.returncode != 0:
@@ -151,7 +181,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     rep = check(req)
     if not rep.clean and args.install:
         print(f"[deps] {rep.summary()}")
-        print("[deps] installing ...")
+        print("[deps] installing the tested lock (exact versions, hash-checked) ..."
+              if install_source(req) else "[deps] installing from requirements.txt ...")
         if install(req):
             rep = check(req)
         else:
