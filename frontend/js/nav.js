@@ -43,7 +43,7 @@ export function topbarSearch(ev) {
   const q = box.value.trim();
   if (q.length < 2) return;
   _skipNextRecsLoad = true;
-  showView('recs', document.querySelector(".sb-item[onclick*=\"'recs'\"]"));
+  showView('recs');
   const libInput = document.getElementById('lib-search');
   if (libInput) libInput.value = q;
   box.value = '';
@@ -59,7 +59,13 @@ export function showView(name, btn) {
   if (!state.currentUser?.is_admin && ['deletions','curation','libraries','admin','reclassify','report'].includes(name)) return;
   toggleMobileSidebar(false); // picking a view closes the mobile drawer
   document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  // The view's own sidebar entry lights up, whoever opened it. A caller
+  // outside the sidebar (the user pill, a glance tile, a bell action)
+  // passes its own element or nothing; every sidebar entry names its view
+  // in data-view (2026-09-27, PR #129).
+  const item = btn && btn.classList && btn.classList.contains('sb-item')
+    ? btn : document.querySelector(`.sb-item[data-view="${CSS.escape(name)}"]`);
+  if (item) item.classList.add('active');
   // Clear all views — remove active class AND reset any inline display styles
   document.querySelectorAll('.view').forEach(v => {
     v.classList.remove('active');

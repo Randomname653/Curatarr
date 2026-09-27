@@ -163,7 +163,7 @@ export async function computeTaste(btn) {
     const qs = cats.map(c => `categories=${encodeURIComponent(c)}`).join('&');
     await api(qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste', 'POST');
     toast(`Taste vector computation started for ${label}`, 'success');
-    setTimeout(() => showView('history', document.querySelector('.sb-item[onclick*=history]')), 3000);
+    setTimeout(() => showView('history'), 3000);
   } catch (e) { el.innerHTML = _errHtml(e); }
   btnDone(btn);
 }

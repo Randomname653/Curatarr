@@ -122,6 +122,27 @@ def test_the_sidebar_is_reachable_by_keyboard():
     assert "Object.assign(window" not in app, "the window block stayed gone"
 
 
+def test_the_user_pill_opens_the_account_settings():
+    """PR #129 (Jules, 2026-09-27), built in this codebase's idiom: the pill
+    in the top bar is a keyboard-reachable button to Settings → Account,
+    and the Settings sidebar entry lights up however the view was opened
+    (the PR passed the pill itself, so nothing in the sidebar was marked)."""
+    html = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    pill = next(line for line in html.splitlines() if 'id="user-pill"' in line)
+    for attr in ('role="button"', 'tabindex="0"', 'data-action="showSettingsAccount"',
+                 'data-on-keydown="keyActivate"', 'aria-label="Account settings"'):
+        assert attr in pill, attr
+    items = [line for line in html.splitlines() if '<div class="sb-item' in line]
+    assert all('data-view="' in line for line in items), "every sidebar entry names its view"
+    assert any('data-view="settings"' in line for line in items)
+    nav = (_ROOT / "frontend/js/nav.js").read_text(encoding="utf-8")
+    assert '.sb-item[data-view="${CSS.escape(name)}"]' in nav
+    js = "".join(p.read_text(encoding="utf-8") for p in (_ROOT / "frontend/js").glob("*.js"))
+    assert "[onclick*=" not in js, "a selector for handlers that no longer exist"
+    css = (_ROOT / "frontend/css/app.css").read_text(encoding="utf-8")
+    assert '[role="button"]:focus-visible' in css, "keyboard focus on div buttons must show"
+
+
 def test_the_endpoint_privacy_check_parses_like_the_client_that_connects():
     """PR #104. Filed as a HIGH SSRF; it is a warning helper, not a gate —
     but validating with the same parser that performs the request is right,

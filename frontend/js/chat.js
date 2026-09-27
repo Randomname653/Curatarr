@@ -478,7 +478,7 @@ export function addThinkingMsg() {
 // ── DISCUSS IN CHAT ───────────────────────────────────────────────────────────
 export function discussInChat(type, data) {
   // Switch to chat view
-  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+  showView('chat');
 
   // Prime the chat with context
   let primer = '';
@@ -700,7 +700,7 @@ export function discussDeletion(id, title, pitch, category, poster_url) {
   _setDiscussBanner(`Discussing deletion of "${title}"`);
 
   // 2. Switch to the chat view
-  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+  showView('chat');
 
   // 3. Show the pitch IMMEDIATELY as an Assistant message in the chat window
   //    (UI-only; this is what the user sees, NOT what the backend persists).

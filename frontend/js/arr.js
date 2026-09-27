@@ -426,7 +426,7 @@ export async function addArrItem(svc, idx, btn) {
 
 export function goToLibrarySettings(svc) {
   // Open Settings view + Library pane + scroll to the right card.
-  showView('settings', document.querySelector('.sb-item[onclick*=settings]'));
+  showView('settings');
   setTimeout(() => {
     openSettingsPane('library', document.querySelector('.settings-tab[data-pane="library"]'));
   }, 50);

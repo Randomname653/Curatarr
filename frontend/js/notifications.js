@@ -65,7 +65,7 @@ export async function loadUnreadMessages(seen) {
 // settled decision is applied automatically post-turn.
 export async function discussPrinciple(id, text) {
   toggleMsgPanel();
-  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+  showView('chat');
   addMsg(`I've learned a new rule from our debates and want to settle it with you: "${text}"`, 'assistant');
   state.pendingDiscussContext = { kind: 'principle', principle_id: id };
   _setDiscussBanner('Reviewing a learned principle');
@@ -85,7 +85,7 @@ export async function respondToMessage(id, msgText, triggerType) {
   toggleMsgPanel();
 
   // Switch to chat — same pattern as discussDeletion
-  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+  showView('chat');
 
   // Show the curator's proactive message as an assistant bubble (UI-only; the
   // backend looks up the message by id and injects it as a RAG context block,

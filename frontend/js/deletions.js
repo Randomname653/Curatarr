@@ -498,7 +498,7 @@ export function onReevaluateDeletion(btn) {
   // 2. Switch to chat view and show the original verdict as an assistant
   //    bubble — same UX as Discuss, so the user always sees what they're
   //    challenging before the new answer streams in.
-  showView('chat', document.querySelector('.sb-item[onclick*=chat]'));
+  showView('chat');
   addMsg(`I have suggested "${title}" for deletion. Reason: "${pitch}"`, 'assistant');
 
   // 3. Pre-fill a short, readable user message and auto-send. The actual

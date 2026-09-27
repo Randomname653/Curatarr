@@ -400,6 +400,8 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
 /* Amber focus everywhere — one interaction language for every input */
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--amber); }
 button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: var(--radius); }
+/* div role=button (sidebar entries, the user pill) had no ring at all: keyboard focus was invisible */
+[role="button"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .form-group input:focus-visible, .form-group select:focus-visible { outline: none; border-color: var(--amber); }
 .form-group .hint { font-size: 11px; color: var(--text3); margin-top: 4px; line-height: 1.5; }
 .form-group .used-for { font-size: 11px; color: var(--amber); margin-top: 3px; }
