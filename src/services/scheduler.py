@@ -192,9 +192,12 @@ def start_scheduler():
     # recompute / enrichment cycle. enrichment_ttl_refresh is RETIRED —
     # change-based invalidation (_source_hash + dead-cache revive in the
     # pre-filter) replaced its purpose.
-    from src.services.data_custodian import custodian_tick
+    # custodian_tick_background returns once the idle queues are started:
+    # the model queue may run for hours, and an interval job that waited for
+    # it would block its own next run — and with it the background queue.
+    from src.services.data_custodian import custodian_tick_background
     scheduler.add_job(
-        custodian_tick,
+        custodian_tick_background,
         IntervalTrigger(minutes=30),
         id="data_custodian",
         name="Data custodian tick (debt-based maintenance)",
@@ -317,7 +320,7 @@ async def _startup_check():
         # first tick sleeps a settle window so the user's first clicks never
         # compete with maintenance.
         from src.services.data_custodian import custodian_tick
-        _track_task(asyncio.create_task(custodian_tick(first_tick=True)))
+        _track_task(asyncio.create_task(custodian_tick(first_tick=True, wait=False)))
 
         # Resume enrichment if there are unfinished items (stopped mid-run or
         # game-mode items waiting for LLM). Runs in background after a short delay
@@ -426,8 +429,13 @@ async def _resume_enrichment_if_needed(user_id: int):
         logger.debug("[startup] Enrichment resume check failed: %s", e)
 
 
-async def job_plex_sync():
+async def job_plex_sync(chain_llm: bool = True):
     """Daily Plex sync. If new items found, chains taste recompute + recs cache.
+
+    ``chain_llm=False`` (the custodian's background queue) leaves the model
+    half — taste vectors with the curator's summary, the recs cache — to the
+    model queue's plex_followup: it sets the flag instead of running it, and
+    the sync itself skips its inline taste recompute.
 
     Returns False when the sync failed, errored out or found another sync
     running, so the custodian keeps the task due and retries next tick —
@@ -438,7 +446,8 @@ async def job_plex_sync():
     try:
         from src.services.plex_sync import sync_plex_history
 
-        result = await sync_plex_history(force=False)
+        result = (await sync_plex_history(force=False) if chain_llm
+                  else await sync_plex_history(force=False, recompute_taste=False))
         if result.get("error"):
             logger.warning("[scheduler] Plex sync not run: %s", result["error"])
             ok = False
@@ -452,8 +461,13 @@ async def job_plex_sync():
             logger.info("[scheduler] Plex sync complete: %d new entries", synced)
 
         if synced > 0:
-            # Chain: taste recompute → recommendations cache
-            await _recompute_and_cache_recs()
+            if chain_llm:
+                # Chain: taste recompute → recommendations cache
+                await _recompute_and_cache_recs()
+            else:
+                # The model half runs in the custodian's model queue.
+                from src.services.app_state import set_state
+                set_state("plex_followup_pending", "1")
     except Exception as e:
         logger.error("[scheduler] Plex sync failed: %s", e)
         ok = False

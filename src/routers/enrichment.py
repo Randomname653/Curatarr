@@ -80,11 +80,14 @@ async def custodian_run(
 ):
     """Force a full maintenance cycle NOW (ignores cadences; deep = catch-up
     budgets). The one button that replaced the old zoo of specialized ones."""
-    from src.services.data_custodian import custodian_tick, _tick_lock
-    if _tick_lock.locked():
+    from src.services.data_custodian import custodian_tick, queues_busy
+    busy = queues_busy()
+    if all(busy.values()):
         return {"status": "already_running"}
-    background_tasks.add_task(custodian_tick, False, True, deep)
-    return {"status": "started", "deep": deep}
+    # wait=False: the background task only STARTS the idle queue(s); a model
+    # run can take hours and must not hold the request's background slot.
+    background_tasks.add_task(custodian_tick, first_tick=False, force=True, deep=deep, wait=False)
+    return {"status": "started", "deep": deep, "busy": [q for q, b in busy.items() if b]}
 
 
 @router.get("/status")

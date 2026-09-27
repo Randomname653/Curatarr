@@ -197,7 +197,8 @@ async def _sync_music_ratings(
 # PLEX SYNC
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -> dict:
+async def sync_plex_history(job_id: Optional[int] = None, force: bool = False,
+                            recompute_taste: bool = True) -> dict:
     """Single-flight wrapper: one Plex sync at a time, server-wide.
 
     The hourly cooldown below is read from ``last_sync_at``, which is only
@@ -210,12 +211,13 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False) -
         # cooldown skip below, which means history is already fresh.
         return {"skipped": True, "busy": True, "reason": "A sync is already running"}
     try:
-        return await _sync_plex_history_impl(job_id, force)
+        return await _sync_plex_history_impl(job_id, force, recompute_taste)
     finally:
         release_state_lock("plex_sync_running")
 
 
-async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = False) -> dict:
+async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = False,
+                                  recompute_taste: bool = True) -> dict:
     """
     Incremental sync: fetch watched items per Plex library.
     Rate-limited to once per hour unless force=True.
@@ -257,7 +259,7 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
     # handed that same stuck card to every later sync of the same name.
     try:
         return await _run_plex_sync(_sync_task, plex_url, plex_token,
-                                    last_sync, lib_configs)
+                                    last_sync, lib_configs, recompute_taste)
     except Exception as e:
         task_monitor.error(_sync_task, f"Plex sync failed: {type(e).__name__}: {e}")
         raise
@@ -267,7 +269,8 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
 
 
 async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
-                         last_sync: Optional[datetime], lib_configs: dict) -> dict:
+                         last_sync: Optional[datetime], lib_configs: dict,
+                         recompute_taste: bool = True) -> dict:
     """The sync proper; ``_sync_plex_history_impl`` owns the Activity card
     and closes it on whatever path this takes out."""
     is_initial = last_sync is None
@@ -848,12 +851,17 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
             _process_rec_watch_hits(new_play_hits)
         except Exception as e:
             logger.warning("[rec-hits] processing failed: %s", e)
-        from src.services.taste_engine import compute_all_taste_vectors
-        with get_db_session() as db:
-            active_users = db.query(User).filter(User.is_active == True).all()
-            user_ids = [u.id for u in active_users]
-        for uid in user_ids:
-            await compute_all_taste_vectors(uid)
+        if recompute_taste:
+            from src.services.taste_engine import compute_all_taste_vectors
+            with get_db_session() as db:
+                active_users = db.query(User).filter(User.is_active == True).all()
+                user_ids = [u.id for u in active_users]
+            for uid in user_ids:
+                await compute_all_taste_vectors(uid)
+        else:
+            # The custodian's model queue does it (plex_followup): the taste
+            # summary is a curator call, and the sync must not wait for the card.
+            logger.info("Taste recompute handed to the custodian's model queue")
     else:
         logger.info("No new entries — skipping taste vector recompute")
 

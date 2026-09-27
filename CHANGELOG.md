@@ -269,6 +269,32 @@ SECURITY.md already explains, now excepted in `osv-scanner.toml` and
 guarded by `test_osv_config`, plus floor versions of transitive packages
 no install gets, so the scan now resolves the direct pins only.
 
+**GPU work no longer holds up the rest.** The data custodian ran every
+maintenance task in one line: a scheduled deletion scan held the GPU for
+almost two hours, every tick in between was skipped, and the editions walk,
+which needs no model at all, never ran. Tasks that drive a model now run in
+one queue and everything else in a second, side by side. The few
+dependencies across them are explicit: the deletion scan and the post-sync
+taste run wait for the Plex sync so the recently-watched veto sees last
+night's plays, and the playlist pushes defer until the recommendation
+refresh is through instead of blocking. The Plex sync's model half (taste
+vectors with the curator's summary, the recommendations cache) moved into
+the model queue, the ARR prefetch, which runs the summariser, is filed as
+model work, and the Knowledge Base names what each queue is on.
+
+**One Python per start.** `start.bat` ran whichever `python` came first on
+PATH, and PATH differs between consoles: one start ran on PlatformIO's
+Python, the next on Python 3.12, each raised only when it happened to run,
+and both environments are shared with other tools whose own pins the raises
+broke. The launchers now pick a venv in the folder, else `py -3.12`, else
+PATH, print the choice, and every start logs it; USAGE explains how to give
+Curatarr its own venv.
+
+**Smaller.** The user pill in the top bar opens Settings → Account and is
+reachable by keyboard (from Jules' #129), and the sidebar marks the open
+view however it was opened. The classifier's action-line splitter is linear
+again after CodeQL found the first version quadratic on long runs of spaces.
+
 **No inline styles.** The Content-Security-Policy's `style-src` is
 `'self'`: the 278 inline style attributes in the markup and the module
 templates became classes (a utilities block named by property, a handful

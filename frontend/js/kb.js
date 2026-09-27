@@ -478,9 +478,18 @@ export function _renderCustodianBar(c) {
   const el = document.getElementById('custodian-bar');
   if (!el) return;
   const due = (c.tasks || []).filter(t => t.due).length;
+  // Two queues since 2026-09-27: model work and everything else, side by
+  // side. Name what each one is on, so a long deletion scan no longer reads
+  // as "maintenance is stuck".
+  const Q = c.queues || {};
+  const labelOf = id => ((c.tasks || []).find(t => t.job_id === id) || {}).label || id;
+  const running = [['model', 'GPU work'], ['background', 'other work']]
+    .filter(([q]) => Q[q] && Q[q].busy)
+    .map(([q, name]) => `${name}: ${Q[q].current ? labelOf(Q[q].current) : 'starting'}`);
+  const allBusy = !!(Q.model && Q.model.busy && Q.background && Q.background.busy);
   let line;
   if (c.ticking) {
-    line = 'Maintenance running in the background…';
+    line = running.length ? `Running — ${running.join(' · ')}` : 'Maintenance running in the background…';
   } else if (c.report && c.report.ts) {
     const ago = Math.max(0, Math.round((Date.now() - new Date(c.report.ts + 'Z').getTime()) / 60000));
     const acts = (c.report.actions || []);
@@ -494,8 +503,8 @@ export function _renderCustodianBar(c) {
   el.innerHTML = `<section class="section">
     <div class="section-head">
       <h3>Data custodian ${due ? `<span class="badge amber badge-sm">${due} task${due > 1 ? 's' : ''} due</span>` : '<span class="badge muted badge-sm">all caught up</span>'}</h3>
-      <span class="section-hint" title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups.">${esc(line)}</span>
-      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('runMaintenance', EL)}${c.ticking ? ' disabled' : ''}>Run maintenance now</button></div>
+      <span class="section-hint" title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups. Work that needs the GPU and everything else run in two queues side by side, so a long model job never holds up the rest.">${esc(line)}</span>
+      <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('runMaintenance', EL)}${allBusy ? ' disabled' : ''}>Run maintenance now</button></div>
     </div></section>`;
 }
 

@@ -64,7 +64,7 @@ yet. Until those sections are rewritten, this is the map:
 
 | Subsystem | Files | One-liner |
 |---|---|---|
-| Data Custodian | `src/services/data_custodian.py` | Debt-based maintenance: ~20 tasks with cadences + persisted last-run stamps; a 30-min tick runs whatever is overdue, one at a time. Replaces most cron-shaped scheduler jobs. Every runner either creates its own Activity card or gets the tick's wrapper card (tested invariant). |
+| Data Custodian | `src/services/data_custodian.py` | Debt-based maintenance: ~20 tasks with cadences + persisted last-run stamps; a 30-min tick runs whatever is overdue in two queues side by side (2026-09-27): tasks that drive a model one at a time in the model queue, everything else one at a time in the background queue, so a deletion scan holding the GPU for hours no longer stops the syncs and walkers. `Task.after` orders the few cross-queue dependencies: a model task waits (bounded) for the Plex sync it needs, a background task that needs model work defers instead of waiting. The Plex sync's model half (taste vectors with the curator summary, the recs cache) runs as `plex_followup` in the model queue. Replaces most cron-shaped scheduler jobs. Every runner either creates its own Activity card or gets the tick's wrapper card (tested invariant). |
 | Curated search v3 | `src/services/semantic_search.py` | LLM parses the query once (anchor/constraints); scoring is deterministic over raw enrichment tags (lexical-first, concept/tone families, negation, guards) with per-constraint evidence notes + coverage honesty. |
 | Multi-vector facets | `src/services/facet_index.py`, collection `media_facets_v1` | Each title's theme phrases are individual vector points (separate collection — mixing into `media_knowledge_v2` breaks n_results math, the anchor resolver, and taste calibration). Gives contrast queries resolution. |
 | 4-pillar judge | `src/services/pillars.py` | Deletion verdicts (HARD_KEEP/KEEP_WITH_FLAG/CUT/STAGNANT/EVALUATE) from assembled evidence facts; KEEPs persist to ProtectedMedia; thin evidence skips the judge. `del_score` only pre-ranks. |
@@ -825,7 +825,7 @@ measured keeps its background work. `lane(role)` answers gpu / cpu / none;
 `ollama_options` carries the
 placement into every summariser call site, `curator_options` pins
 `num_gpu=99` because a 19.9 GB model on the CPU is not an answer, it is a
-wait. The custodian reads `Task.llm_role`: the six summariser-class tasks run
+wait. The custodian reads `Task.llm_role`: the seven summariser-class tasks run
 on the lane, the curator-class ones stay deferred. `POST /api/chat/message`
 checks first and returns the notice as a curator reply before the in-flight
 guard and the priority gate are even taken. The 30 s game watcher records the state every tick like it

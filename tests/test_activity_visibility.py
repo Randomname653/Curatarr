@@ -75,7 +75,7 @@ check("registry loads", len(reg) >= 20)
 # this set gets the tick's wrapper card — extend this list ONLY when the new
 # runner really cards itself (grep it for task_monitor.create first).
 EXPECTED_SELF_REPORTING = {
-    "db_backup", "plex_sync", "arr_sync", "arr_pre_enrich", "memory_catchup",
+    "db_backup", "plex_sync", "plex_followup", "arr_sync", "arr_pre_enrich", "memory_catchup",
     "custodian_enrich", "custodian_taste", "custodian_recs",
     "memory_decay", "orphan_check", "db_vacuum",
 }

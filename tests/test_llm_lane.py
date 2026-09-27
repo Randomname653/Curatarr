@@ -222,12 +222,12 @@ def test_the_wiring():
 
     cust = (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
     assert 'llm_role: str = "curator"' in cust, "curator is the safe default"
-    assert cust.count('llm_role="summarizer"') == 6, "the six summariser-class tasks"
+    assert cust.count('llm_role="summarizer"') == 7, "the seven summariser-class tasks"
     for job in ("memory_catchup", "custodian_enrich", "custodian_signif",
-                "custodian_recept", "custodian_taste", "lyrics_profile"):
+                "custodian_recept", "custodian_taste", "lyrics_profile", "arr_pre_enrich"):
         entry = cust.split(f'Task("{job}"')[1].split("),")[0]
         assert 'llm_role="summarizer"' in entry, job
-    for job in ("arr_sync", "chat_starters", "custodian_recs", "plex_collections"):
+    for job in ("arr_sync", "chat_starters", "custodian_recs", "plex_collections", "plex_followup"):
         entry = cust.split(f'Task("{job}"')[1].split("),")[0]
         assert "llm_role" not in entry, f"{job} drives the curator — it must keep waiting"
     assert 'result": "skipped (GPU busy)"' in cust

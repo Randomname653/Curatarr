@@ -8,10 +8,17 @@ and OMDb/significance backfills only ever ran when a button was clicked.
 The custodian is the anacron answer: every maintenance task carries a CADENCE
 and a last-run timestamp (the scheduler's existing _tracked/_job_overdue
 plumbing). A TICK runs 5 minutes after app start (settle window) and then
-every 30 minutes: whatever is overdue runs, in priority order, one task at a
-time, as a background trickle — yielding to the curator between items and
-stopping when a game grabs the GPU. Turn the PC on and it catches up; no
-clicking required.
+every 30 minutes: whatever is overdue runs, in priority order, as a
+background trickle — yielding to the curator between items and stopping when
+a game grabs the GPU. Turn the PC on and it catches up; no clicking required.
+
+Two queues side by side (2026-09-27): tasks that drive a model run one at a
+time in the MODEL queue, everything else — syncs, walkers, backups, API
+top-ups — one at a time in the BACKGROUND queue. The GPU does one thing at a
+time; the rest of the house does not have to wait for it. Before, one line
+ran everything: the deletion scan held the GPU from 09:13 until the app was
+closed at 10:56, every tick in between was skipped, and the editions walk,
+which needs no model at all, never ran.
 
 Partial tasks (enrichment backlog, OMDb, significance, Spotify phases) report
 done=False when work remains — the custodian then leaves them due, so the
@@ -39,9 +46,22 @@ def _short_error(e: BaseException) -> str:
     msg = msg.split(" [SQL:", 1)[0].strip()
     return f"{type(e).__name__}: {msg[:140]}" if msg else type(e).__name__
 
-# One tick at a time; "run now" and the interval tick share this.
-_tick_lock = asyncio.Lock()
-_first_tick_done = False
+# ── the two queues ───────────────────────────────────────────────────────────
+# Order across them where it matters (Task.after): a model task waits for a
+# background task it depends on — the deletion scan and the post-sync taste
+# run wait for the Plex sync, so the recently-watched veto sees last night's
+# plays; the background queue is quick, so the wait is short and bounded. A
+# background task that depends on model work never waits (that would bring
+# the starvation back): it defers, stays due, and a later tick runs it.
+QUEUE_BACKGROUND, QUEUE_MODEL = "background", "model"
+_QUEUES = (QUEUE_BACKGROUND, QUEUE_MODEL)
+_AFTER_POLL_S = 5.0
+_AFTER_CAP_S = 1800.0
+
+_queue_busy = {q: False for q in _QUEUES}
+_queue_current: dict = {q: None for q in _QUEUES}    # job_id running right now
+_queue_pending: dict = {q: set() for q in _QUEUES}   # due job_ids not reached yet
+_first_run_done = {q: False for q in _QUEUES}
 
 _SETTLE_SECONDS = 300          # first tick waits this long after app start
 _REPORT_KEY = "custodian_report"
@@ -451,6 +471,46 @@ async def _run_chat_starters(task=None) -> str:
     return f"{made} starters generated ({skipped} pools already full)"
 
 
+_FOLLOWUP_FLAG = "plex_followup_pending"
+
+
+def _active_user_ids() -> list:
+    from src.database.connection import get_db_session
+    from src.database.models import User
+    with get_db_session() as db:
+        return [u for (u,) in db.query(User.id).filter(User.is_active == True).all()]  # noqa: E712
+
+
+async def _run_plex_sync() -> bool:
+    """The Plex sync without its model half. New plays leave a flag; the
+    model queue's plex_followup does the taste and recommendation work, so
+    the background queue never waits for the card (2026-09-27)."""
+    from src.services import scheduler as sched
+    return await sched.job_plex_sync(chain_llm=False)
+
+
+async def _run_plex_followup() -> bool:
+    """What a sync with new plays used to run inline: taste vectors for every
+    active user (the curator writes the taste summary), then the admin's
+    recommendation cache and verification questions. A no-op unless the sync
+    left the flag; stays due while a game holds the card."""
+    from src.services.app_state import get_state, set_state
+    if get_state(_FOLLOWUP_FLAG) != "1":
+        return True
+    from src.services import scheduler as sched
+    if sched._gaming():
+        return False
+    from src.services.taste_engine import compute_all_taste_vectors
+    admin = _admin_id()
+    for uid in _active_user_ids():
+        if uid != admin:
+            await compute_all_taste_vectors(uid)
+    if admin is not None:
+        await sched._recompute_and_cache_recs(admin)   # the admin's taste + recs + verification
+    set_state(_FOLLOWUP_FLAG, "0")
+    return True
+
+
 @dataclass
 class Task:
     job_id: str
@@ -471,6 +531,14 @@ class Task:
     # generic Activity card — the DEFAULT, so newly added maintenance work is
     # visible in the Activity view without remembering to instrument it.
     reports_own: bool = False
+    # job_ids in the OTHER queue this task must not overtake within a run —
+    # see the two-queue notes above. Empty for almost everything.
+    after: tuple = ()
+
+
+def queue_of(t: Task) -> str:
+    """Model work (the task drives a model) or background work."""
+    return QUEUE_MODEL if t.needs_llm else QUEUE_BACKGROUND
 
 
 def _registry() -> list[Task]:
@@ -483,12 +551,22 @@ def _registry() -> list[Task]:
     return [
         Task("db_backup",        "DB backup",            24.0,  sched.job_db_backup,
              reports_own=True),
-        Task("plex_sync",        "Plex sync",            24.0,  sched.job_plex_sync,
+        Task("plex_sync",        "Plex sync",            24.0,  _run_plex_sync,
              reports_own=True),
+        # The model half of a sync that brought new plays (taste vectors with
+        # the curator's summary, the admin's recs cache). A no-op without the
+        # flag, so the short cadence costs nothing; after=plex_sync lets it
+        # run in the same tick as the sync that set the flag.
+        Task("plex_followup",    "Taste + recommendations after new plays", 0.4,
+             _run_plex_followup, needs_llm=True, reports_own=True, after=("plex_sync",)),
+        # after=plex_sync: the recently-watched veto must see the plays the
+        # sync is fetching right now, not the ones from before it.
         Task("arr_sync",         "ARR sync + deletion candidates", 24.0,
-             sched.job_arr_sync, needs_llm=True, reports_own=True),
+             sched.job_arr_sync, needs_llm=True, reports_own=True, after=("plex_sync",)),
+        # Runs the full enrichment pipeline (the summariser) on an ARR batch:
+        # model work, although it was filed as a prefetch (2026-09-27).
         Task("arr_pre_enrich",   "ARR metadata prefetch", 24.0, sched.job_arr_pre_enrich,
-             reports_own=True),
+             needs_llm=True, reports_own=True, llm_role="summarizer"),
         # 0.4h cadence — a wrapper card every 24 min would drown the Activity
         # view, so extract_memories_from_thread cards itself only when a
         # thread actually gets extracted.
@@ -523,11 +601,11 @@ def _registry() -> list[Task]:
         Task("custodian_recs",   "Recommendation cache refresh", 168.0,
              _run_recs, needs_llm=True, reports_own=True),
         Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
-             _run_playlist_push, takes_task=True),
+             _run_playlist_push, takes_task=True, after=("custodian_recs",)),
         # Music variant: one unheard album per recommended artist, per user.
         # Plex reads/writes only — no LLM gate.
         Task("plex_music_playlist", "Curatarr music playlists", 168.0,
-             _run_music_playlist_push, takes_task=True),
+             _run_music_playlist_push, takes_task=True, after=("custodian_recs",)),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
@@ -573,7 +651,8 @@ def _registry() -> list[Task]:
 
 
 def custodian_status() -> dict:
-    """Pure read: the report of the last tick + per-task due state."""
+    """Pure read: the merged report of the latest queue runs, per-task due
+    state, and what each queue is doing right now."""
     from src.services.app_state import get_state
     from src.services.scheduler import _last_job_run, _job_overdue
     report = None
@@ -591,38 +670,101 @@ def custodian_status() -> dict:
             "cadence_h": t.cadence_h,
             "last_run": last.isoformat() if last else None,
             "due": _job_overdue(t.job_id, t.cadence_h),
+            "queue": queue_of(t),
         })
-    return {"report": report, "tasks": tasks, "ticking": _tick_lock.locked()}
+    return {"report": report, "tasks": tasks, "ticking": any(_queue_busy.values()),
+            "queues": {q: {"busy": _queue_busy[q], "current": _queue_current[q]}
+                       for q in _QUEUES}}
 
 
-async def custodian_tick(first_tick: bool = False, force: bool = False,
-                         deep: bool = False) -> dict:
-    """Run every overdue task, in priority order, one at a time.
+def queues_busy() -> dict:
+    """{queue: busy}. "Run maintenance now" is refused only when both are."""
+    return dict(_queue_busy)
 
-    ``first_tick`` sleeps the settle window first (called once at startup);
-    ``force`` ignores cadence (the "Run maintenance now" button);
-    ``deep`` raises the partial-task budgets for a catch-up sprint.
-    """
-    global _first_tick_done
-    if first_tick:
-        await asyncio.sleep(_SETTLE_SECONDS)
-    if _tick_lock.locked():
-        logger.info("[custodian] tick skipped — previous tick still running")
+
+def _ahead_in(queue: str) -> set:
+    ahead = set(_queue_pending[queue])
+    if _queue_current[queue]:
+        ahead.add(_queue_current[queue])
+    return ahead
+
+
+async def _wait_for(queue: str, job_ids: tuple, waiter: str) -> None:
+    """Hold a model-queue task until the background tasks it depends on are
+    through in this run. Bounded: a stuck background task must not park the
+    model queue for good."""
+    deadline = time.monotonic() + _AFTER_CAP_S
+    announced = False
+    while set(job_ids) & _ahead_in(queue):
+        blocking = ", ".join(sorted(set(job_ids) & _ahead_in(queue)))
+        if time.monotonic() >= deadline:
+            logger.warning("[custodian] %s stopped waiting for %s after %.0f s",
+                           waiter, blocking, _AFTER_CAP_S)
+            return
+        if not announced:
+            logger.info("[custodian] %s waits for %s in the %s queue", waiter, blocking, queue)
+            announced = True
+        await asyncio.sleep(_AFTER_POLL_S)
+
+
+def _merge_reports(reports: list, busy=()) -> dict:
+    reports = [r for r in reports if r]
+    if not reports:
         return {"skipped": "busy"}
+    return {
+        "ts": max(r["ts"] for r in reports),
+        "duration_s": max(r.get("duration_s", 0) for r in reports),
+        "forced": any(r.get("forced") for r in reports),
+        "deep": any(r.get("deep") for r in reports),
+        "actions": [a for r in reports for a in r.get("actions", [])],
+        "queues": {r["queue"]: {k: r.get(k) for k in ("ts", "duration_s", "actions")}
+                   for r in reports if r.get("queue")},
+        "busy": list(busy),
+    }
 
-    from src.services.app_state import set_state
+
+def _store_report(queue: str, report: dict) -> None:
+    """The queue's own report, plus the merged view the Knowledge Base shows:
+    the latest run of each queue side by side."""
+    from src.services.app_state import get_state, set_state
+    try:
+        set_state(f"{_REPORT_KEY}:{queue}", json.dumps(report))
+        latest = []
+        for q in _QUEUES:
+            raw = get_state(f"{_REPORT_KEY}:{q}")
+            if raw:
+                latest.append(json.loads(raw))
+        set_state(_REPORT_KEY, json.dumps(_merge_reports(latest)))
+    except Exception:
+        pass
+
+
+async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
+    """One queue's run: its overdue tasks in priority order, one at a time."""
     from src.services.scheduler import _job_overdue, _record_job_run
     from src.services.task_monitor import task_monitor
+    other = QUEUE_MODEL if queue == QUEUE_BACKGROUND else QUEUE_BACKGROUND
     actions = []
-    async with _tick_lock:
-        started = time.time()
-        for t in _registry():
+    started = time.time()
+    try:
+        for t in tasks:
+            _queue_pending[queue].discard(t.job_id)
             mon = None
             try:
-                if t.settle_only and _first_tick_done and not force:
+                if t.settle_only and _first_run_done[queue] and not force:
                     continue
                 if not force and not _job_overdue(t.job_id, t.cadence_h):
                     continue
+                blocking = set(t.after) & _ahead_in(other)
+                if blocking and queue == QUEUE_BACKGROUND:
+                    # Never wait on the GPU from here — that is the
+                    # starvation the two queues exist to end. Stay due; a
+                    # later tick runs it once the model work is through.
+                    actions.append({"task": t.job_id,
+                                    "result": f"deferred (after {', '.join(sorted(blocking))})"})
+                    continue
+                if blocking:
+                    await _wait_for(other, t.after, t.job_id)
                 if t.needs_llm and _gaming():
                     # Not a stop any more: summariser-class work moves to the
                     # CPU while another program holds the card, curator-class
@@ -635,6 +777,7 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
                     logger.info("[custodian] %s runs on the CPU lane — the GPU is busy",
                                 t.job_id)
                 logger.info("[custodian] running %s …", t.job_id)
+                _queue_current[queue] = t.job_id
                 t0 = time.time()
                 # Activity card for every runner that doesn't card itself.
                 # Stable task_id: each run REPLACES the previous card instead
@@ -666,18 +809,77 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
                 if mon is not None:
                     task_monitor.error(mon, _short_error(e))
                 actions.append({"task": t.job_id, "result": f"error: {_short_error(e)}"})
-        _first_tick_done = True
-        report = {
-            "ts": datetime.utcnow().isoformat(),
-            "duration_s": round(time.time() - started, 1),
-            "forced": force, "deep": deep,
-            "actions": actions,
-        }
+            finally:
+                _queue_current[queue] = None
+        _first_run_done[queue] = True
+    finally:
+        _queue_pending[queue] = set()
+        _queue_current[queue] = None
+        _queue_busy[queue] = False
+    report = {
+        "queue": queue,
+        "ts": datetime.utcnow().isoformat(),
+        "duration_s": round(time.time() - started, 1),
+        "forced": force, "deep": deep,
+        "actions": actions,
+    }
+    _store_report(queue, report)
+    if actions:
+        logger.info("[custodian] %s queue done in %.0fs: %s", queue, report["duration_s"],
+                    ", ".join(f"{a['task']}={a['result']}" for a in actions))
+    return report
+
+
+async def custodian_tick(first_tick: bool = False, force: bool = False,
+                         deep: bool = False, wait: bool = True) -> dict:
+    """Start every idle queue on its overdue tasks.
+
+    ``first_tick`` sleeps the settle window first (called once at startup);
+    ``force`` ignores cadence (the "Run maintenance now" button);
+    ``deep`` raises the partial-task budgets for a catch-up sprint;
+    ``wait`` returns the merged report once the started queues are through —
+    False returns at once (the interval job: a queue may run for hours, and
+    a job that waited for it would block its own next run). A queue still
+    busy from an earlier tick is left alone and the other starts anyway —
+    that is the point of having two.
+    """
+    if first_tick:
+        await asyncio.sleep(_SETTLE_SECONDS)
+    from src.services.scheduler import _job_overdue, _track_task
+    registry = _registry()
+    started, busy = [], []
+    for q in _QUEUES:
+        if _queue_busy[q]:
+            busy.append(q)
+            continue
+        tasks = [t for t in registry if queue_of(t) == q]
         try:
-            set_state(_REPORT_KEY, json.dumps(report))
+            due = {t.job_id for t in tasks
+                   if force or (_job_overdue(t.job_id, t.cadence_h)
+                                and not (t.settle_only and _first_run_done[q]))}
+        except Exception:  # noqa: BLE001 — unknown due state: count them all as ahead
+            due = {t.job_id for t in tasks}
+        # Claimed before the first await, so two ticks can never both start it.
+        _queue_busy[q] = True
+        _queue_pending[q] = due
+        try:
+            started.append(_track_task(asyncio.create_task(_run_queue(q, tasks, force, deep))))
         except Exception:
-            pass
-        if actions:
-            logger.info("[custodian] tick done in %.0fs: %s", report["duration_s"],
-                        ", ".join(f"{a['task']}={a['result']}" for a in actions))
-        return report
+            _queue_busy[q] = False
+            _queue_pending[q] = set()
+            raise
+    for q in busy:
+        logger.info("[custodian] %s queue still on %s — the other queue is not held up by it",
+                    q, _queue_current[q] or "its run")
+    if not started:
+        logger.info("[custodian] tick skipped — both queues still running")
+        return {"skipped": "busy"}
+    if not wait:
+        return {"started": [q for q in _QUEUES if q not in busy], "busy": busy}
+    reports = await asyncio.gather(*started)
+    return _merge_reports(list(reports), busy)
+
+
+async def custodian_tick_background() -> dict:
+    """The 30-minute interval job: start whichever queue is idle and return."""
+    return await custodian_tick(wait=False)
