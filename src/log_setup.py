@@ -5,6 +5,7 @@ The server used to log to stderr only; in tray mode (pythonw.exe) there IS no
 stderr, so every diagnostic vanished. This sets up:
 
 - a RotatingFileHandler at data/logs/curatarr.log (5 MB x 3, utf-8) — always;
+  a test process writes data/logs/tests.log instead (``log_file``);
 - a StreamHandler ONLY when a real stderr exists (start.bat dev console).
   Under pythonw ``sys.stderr`` is None and an unconditional StreamHandler
   would raise on every emit.
@@ -17,8 +18,30 @@ from __future__ import annotations
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-from src.paths import LOG_DIR
+from src.paths import LOG_DIR, ROOT
+
+
+def log_file(script: str | None = None) -> Path:
+    """curatarr.log, or tests.log when the process was started from a script
+    under tests/ (the battery, CI, one suite run by hand).
+
+    Every suite that imports src.main runs init_logging, and until 2026-09-28
+    that meant the live log: two "[slow] GET /api/history/recent" lines from a
+    battery run sat in it while the app was down, reading like traffic.
+    ``script`` defaults to the __main__ module's file (absolute since Python
+    3.9, so a chdir cannot move it); uvicorn, the tray's .pyw,
+    ``-m src.deps_lock`` and ``-c`` are the app."""
+    if script is None:
+        script = getattr(sys.modules.get("__main__"), "__file__", None) or ""
+    try:
+        path = Path(script).resolve()
+    except Exception:  # noqa: BLE001 — no verdict, the app's log
+        return LOG_DIR / "curatarr.log"
+    if path.suffix == ".py" and (ROOT / "tests") in path.parents:
+        return LOG_DIR / "tests.log"
+    return LOG_DIR / "curatarr.log"
 
 
 def init_logging(level: str = "INFO") -> None:
@@ -32,7 +55,7 @@ def init_logging(level: str = "INFO") -> None:
 
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        fh = RotatingFileHandler(LOG_DIR / "curatarr.log", maxBytes=5_000_000,
+        fh = RotatingFileHandler(log_file(), maxBytes=5_000_000,
                                  backupCount=3, encoding="utf-8")
         fh.setFormatter(fmt)
         root.addHandler(fh)

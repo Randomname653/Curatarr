@@ -296,6 +296,8 @@ day, and an empty environment no longer reports that it matches the lock.
 reachable by keyboard (from Jules' #129), and the sidebar marks the open
 view however it was opened. The classifier's action-line splitter is linear
 again after CodeQL found the first version quadratic on long runs of spaces.
+The test battery logs to `data/logs/tests.log`, so the app's own log shows
+only the app.
 
 **No inline styles.** The Content-Security-Policy's `style-src` is
 `'self'`: the 278 inline style attributes in the markup and the module
