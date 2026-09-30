@@ -1508,8 +1508,8 @@ async def spotify_backlog(
             WatchHistoryEntry.plex_item_id.like("spotify%"),
             WatchHistoryEntry.series_title.isnot(None)
         ).first()
-        total_unique = stats.total_unique or 0 if stats else 0
-        total_resolved = stats.total_resolved or 0 if stats else 0
+        total_unique = stats.total_unique if stats and stats.total_unique else 0
+        total_resolved = stats.total_resolved if stats and stats.total_resolved else 0
 
     in_lidarr_count = sum(1 for a in artists if a.get("in_lidarr"))
 
