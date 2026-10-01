@@ -276,8 +276,8 @@ async def _run_recs(deep: bool = False) -> bool:
     from src.services import scheduler as sched
 
     with get_db_session() as db:
-        users = [(u.id, u.plex_username) for u in
-                 db.query(User).filter(User.is_active == True).all()]
+        users = [(u_id, uname) for u_id, uname in
+                 db.query(User.id, User.plex_username).filter(User.is_active == True).all()]
     all_ok = True
     for uid, uname in users:
         sampled_flag = get_state(f"recs_all_sampled:user_id={uid}") or ""
@@ -310,10 +310,10 @@ async def _run_playlist_push(deep: bool = False, task=None) -> bool:
     from src.services.plex_playlists import push_user_playlists
 
     with get_db_session() as db:
-        users = db.query(User).filter(User.is_active == True).all()
+        rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()
         # detach the attributes we need before the session closes
-        users = [type("U", (), {"id": u.id, "plex_username": u.plex_username,
-                                "plex_token": u.plex_token})() for u in users]
+        users = [type("U", (), {"id": u_id, "plex_username": uname,
+                                "plex_token": token})() for u_id, uname, token in rows]
     all_ok = True
     for i, u in enumerate(users):
         _prog(task, message=f"Pushing playlists for {u.plex_username}…",
@@ -337,9 +337,9 @@ async def _run_music_playlist_push(deep: bool = False, task=None) -> bool:
     from src.services.plex_playlists import push_user_music_playlist
 
     with get_db_session() as db:
-        users = db.query(User).filter(User.is_active == True).all()  # noqa: E712
-        users = [type("U", (), {"id": u.id, "plex_username": u.plex_username,
-                                "plex_token": u.plex_token})() for u in users]
+        rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()  # noqa: E712
+        users = [type("U", (), {"id": u_id, "plex_username": uname,
+                                "plex_token": token})() for u_id, uname, token in rows]
     all_ok = True
     for i, u in enumerate(users):
         _prog(task, message=f"Pushing music playlist for {u.plex_username}…",
