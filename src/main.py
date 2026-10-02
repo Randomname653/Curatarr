@@ -152,8 +152,9 @@ async def lifespan(app: FastAPI):
         from src.database.connection import get_db_session
         from src.database.models import User
         with get_db_session() as db:
-            user_count = db.query(User).count()
-        if user_count == 0:
+            # ⚡ Bolt: Fast existence check avoiding full table counts
+            has_users = db.query(User.id).first() is not None
+        if not has_users:
             logger.info("No users yet — first login via Plex will create the admin account.")
 
         if settings.SYNC_ON_STARTUP:

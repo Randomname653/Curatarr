@@ -302,12 +302,13 @@ async def _startup_check():
             if not admin:
                 return
             user_id = admin.id
-            rec_count = db.query(CachedRecommendation).filter(
+            # ⚡ Bolt: Fast existence check avoiding full table counts
+            has_recs = db.query(CachedRecommendation.id).filter(
                 CachedRecommendation.user_id == user_id
-            ).count()
+            ).first() is not None
 
         # Cache recommendations if none exist
-        if rec_count == 0:
+        if not has_recs:
             logger.info("[startup] No cached recommendations — generating now")
             await _cache_recommendations(user_id)
 
