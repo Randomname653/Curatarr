@@ -2263,11 +2263,11 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
         if cat in ("show", "anime") and item.get("series_title"):
             with get_db_session() as _db:
                 related_pids = [
-                    r.plex_item_id
-                    for r in _db.query(WatchHistoryEntry).filter(
+                    pid
+                    for (pid,) in _db.query(WatchHistoryEntry.plex_item_id).filter(
                         WatchHistoryEntry.series_title == item["series_title"],
                         WatchHistoryEntry.media_type == cat,
-                    ).with_entities(WatchHistoryEntry.plex_item_id).limit(1000).all()
+                    ).limit(1000).all()
                 ]
             for rpid in related_pids:
                 if rpid != item["plex_rating_key"]:
@@ -2284,11 +2284,11 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
         elif cat == "music" and item.get("series_title"):
             with get_db_session() as _db:
                 related_pids = [
-                    r.plex_item_id
-                    for r in _db.query(WatchHistoryEntry).filter(
+                    pid
+                    for (pid,) in _db.query(WatchHistoryEntry.plex_item_id).filter(
                         WatchHistoryEntry.series_title == item["series_title"],
                         WatchHistoryEntry.media_type == "music",
-                    ).with_entities(WatchHistoryEntry.plex_item_id).limit(5000).all()
+                    ).limit(5000).all()
                 ]
             for rpid in related_pids:
                 if rpid != item["plex_rating_key"]:

@@ -1,0 +1,6 @@
+1. Modify `src/routers/history.py` to optimize the `WatchHistoryEntry` count query in the `sync_status` endpoint by selecting a lightweight column instead of the entire ORM model object.
+2. Modify `src/main.py` to optimize the `User` count query during startup by selecting a lightweight column instead of the entire ORM model object.
+3. Modify `src/routers/enrichment.py` to avoid instantiating full `WatchHistoryEntry` ORM objects when only `plex_item_id` is needed (by moving `WatchHistoryEntry.plex_item_id` directly into the `query()` call).
+4. Run all tests to ensure the application still functions correctly.
+5. Complete pre commit steps to ensure proper testing, verification, review, and reflection are done.
+6. Submit PR with performance improvement descriptions.

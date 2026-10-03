@@ -53,7 +53,7 @@ async def sync_status(
     db: Session = Depends(get_db),
 ):
     """Return history count + taste vector summary for the current user."""
-    count = db.query(WatchHistoryEntry).filter(WatchHistoryEntry.user_id == user.id).count()
+    count = db.query(WatchHistoryEntry.id).filter(WatchHistoryEntry.user_id == user.id).count()
     tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user.id).first()
 
     # Aggregate completion stats per type via SQL instead of loading all rows
