@@ -36,7 +36,7 @@ class PipelineRequest(BaseModel):
     # Old name `lastfm_batch` kept as alias for backwards compatibility — older
     # frontends may still send it; new frontends send `batch`.
     batch: int | None = None
-    lastfm_batch: int | None = None   # legacy alias
+    lastfm_batch: int | None = None  # legacy alias
 
     @property
     def effective_batch(self) -> int:
@@ -48,6 +48,7 @@ class PipelineRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/ping")
 async def pipeline_ping():
     """
@@ -55,7 +56,8 @@ async def pipeline_ping():
     No user-specific data. Use this to check status from the browser without a token.
     """
     import json as _json
-    running  = get_state("music_pipeline_running") == "1"
+
+    running = get_state("music_pipeline_running") == "1"
     raw_prog = get_state("music_pipeline_progress")
     progress = _json.loads(raw_prog) if raw_prog else {}
     last_run = get_state("music_pipeline_last_run")
@@ -78,6 +80,7 @@ async def start_pipeline(
     # fast starts (or a custodian tick) both passed the check.
     from src.services.app_state import acquire_state_lock
     from src.services import rate_limit as _rl
+
     # Hours of MusicBrainz / Last.fm / Spotify spend per run — two starts per
     # ten minutes per user is plenty for a human, not for a loop.
     _rl.enforce("music-start", user.id, _rl.MUSIC_STARTS_PER_10MIN, 600)
@@ -103,8 +106,10 @@ async def stop_pipeline(user: User = Depends(get_current_user)):
     # One global slot: only the member who started the run (or an admin)
     # may abort it - a housemate's in-flight matching is not yours to kill.
     if not user.is_admin and get_state("music_pipeline_owner") != str(user.id):
-        raise HTTPException(status_code=403,
-                            detail="Only the user who started the pipeline (or an admin) can stop it")
+        raise HTTPException(
+            status_code=403,
+            detail="Only the user who started the pipeline (or an admin) can stop it",
+        )
     set_state("music_pipeline_stop_requested", "1")
     return {"status": "stop_requested"}
 
@@ -118,52 +123,75 @@ async def pipeline_status(user: User = Depends(get_current_user)):
     from src.database.connection import get_db_session
     from src.database.models import WatchHistoryEntry
 
-    running   = get_state("music_pipeline_running") == "1"
-    stopped   = get_state("music_pipeline_stop_requested") == "1"
-    last_run  = get_state("music_pipeline_last_run")
+    running = get_state("music_pipeline_running") == "1"
+    stopped = get_state("music_pipeline_stop_requested") == "1"
+    last_run = get_state("music_pipeline_last_run")
 
-    raw_prog  = get_state("music_pipeline_progress")
-    progress  = _json.loads(raw_prog) if raw_prog else {}
+    raw_prog = get_state("music_pipeline_progress")
+    progress = _json.loads(raw_prog) if raw_prog else {}
 
     with get_db_session() as db:
-        base = db.query(WatchHistoryEntry).filter(
-            WatchHistoryEntry.user_id    == user.id,
-            WatchHistoryEntry.media_type == "music",
+        from sqlalchemy import func, case
+
+        # ⚡ Bolt: Single-pass database aggregation
+        # Replaced four separate .count() queries with a single grouped query using func.sum(case(...))
+        # to eliminate N+1 DB roundtrips when evaluating different filter conditions on the same base table.
+        res = (
+            db.query(
+                func.count(WatchHistoryEntry.id),
+                func.sum(case(((WatchHistoryEntry.source == "spotify"), 1), else_=0)),
+                func.sum(
+                    case(
+                        (
+                            (WatchHistoryEntry.source == "spotify")
+                            & (WatchHistoryEntry.plex_item_id.like("spotify%")),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                func.sum(case(((WatchHistoryEntry.genres.is_(None)), 1), else_=0)),
+            )
+            .filter(
+                WatchHistoryEntry.user_id == user.id,
+                WatchHistoryEntry.media_type == "music",
+            )
+            .first()
         )
-        total          = base.count()
-        src_spotify    = base.filter(WatchHistoryEntry.source == "spotify").count()
-        unmatched      = base.filter(
-            WatchHistoryEntry.source == "spotify",
-            WatchHistoryEntry.plex_item_id.like("spotify%"),
-        ).count()
-        missing_genres = base.filter(WatchHistoryEntry.genres.is_(None)).count()
+
+        total = res[0] if res and res[0] else 0
+        src_spotify = res[1] if res and res[1] else 0
+        unmatched = res[2] if res and res[2] else 0
+        missing_genres = res[3] if res and res[3] else 0
 
     # Lyrics from Plex (src/services/lyrics.py): what is on file and profiled.
     try:
         from src.services.lyrics import lyrics_coverage
+
         lyrics = lyrics_coverage()
     except Exception as e:
         logger.debug("[music] lyrics coverage unavailable: %s", e)
         lyrics = None
 
     return {
-        "running":        running,
+        "running": running,
         "stop_requested": stopped,
-        "last_run":       last_run,
-        "progress":       progress,
-        "lyrics":         lyrics,
+        "last_run": last_run,
+        "progress": progress,
+        "lyrics": lyrics,
         "stats": {
-            "total_music":       total,
-            "source_spotify":    src_spotify,
-            "source_plex":       total - src_spotify,
+            "total_music": total,
+            "source_spotify": src_spotify,
+            "source_plex": total - src_spotify,
             "unmatched_spotify": unmatched,
-            "missing_genres":    missing_genres,
-            "has_genres":        total - missing_genres,
+            "missing_genres": missing_genres,
+            "has_genres": total - missing_genres,
         },
     }
 
 
 # ── Background task ───────────────────────────────────────────────────────────
+
 
 async def _run_music_pipeline(user_id: int, batch: int) -> None:
     """
@@ -180,10 +208,18 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
     # acquired it atomically before this task was scheduled.
     set_state("music_pipeline_interrupted", "1")
     set_state("music_pipeline_stop_requested", "0")
-    set_state("music_pipeline_progress", _json.dumps({
-        "phase": "starting", "processed": 0, "total": 0,
-        "tracks_queried": 0, "enriched_plays": 0,
-    }))
+    set_state(
+        "music_pipeline_progress",
+        _json.dumps(
+            {
+                "phase": "starting",
+                "processed": 0,
+                "total": 0,
+                "tracks_queried": 0,
+                "enriched_plays": 0,
+            }
+        ),
+    )
 
     task = task_monitor.create(name="Music Pipeline", category="music")
     task_monitor.start(task)
@@ -197,22 +233,39 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
         )
 
         # ── Phase 1: Plex match ───────────────────────────────────────────────
-        task_monitor.update(task, message="Phase 1: Matching Spotify plays to Plex tracks…")
-        set_state("music_pipeline_progress", _json.dumps({
-            "phase": "plex_match", "processed": 0, "total": 0,
-            "tracks_queried": 0, "enriched_plays": 0,
-        }))
+        task_monitor.update(
+            task, message="Phase 1: Matching Spotify plays to Plex tracks…"
+        )
+        set_state(
+            "music_pipeline_progress",
+            _json.dumps(
+                {
+                    "phase": "plex_match",
+                    "processed": 0,
+                    "total": 0,
+                    "tracks_queried": 0,
+                    "enriched_plays": 0,
+                }
+            ),
+        )
 
         p1 = await match_spotify_to_plex(user_id)
-        set_state("music_pipeline_progress", _json.dumps({
-            "phase":           "plex_match_done",
-            "matched":         p1.get("matched", 0),
-            "unmatched":       p1.get("unmatched", 0),
-            "tracks_queried":  0,
-            "enriched_plays":  0,
-        }))
-        task_monitor.update(task,
-            message=f"Phase 1 done — matched={p1.get('matched',0)} unmatched={p1.get('unmatched',0)}")
+        set_state(
+            "music_pipeline_progress",
+            _json.dumps(
+                {
+                    "phase": "plex_match_done",
+                    "matched": p1.get("matched", 0),
+                    "unmatched": p1.get("unmatched", 0),
+                    "tracks_queried": 0,
+                    "enriched_plays": 0,
+                }
+            ),
+        )
+        task_monitor.update(
+            task,
+            message=f"Phase 1 done — matched={p1.get('matched', 0)} unmatched={p1.get('unmatched', 0)}",
+        )
 
         # Check stop after Phase 1
         if get_state("music_pipeline_stop_requested") == "1":
@@ -227,14 +280,18 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
         # ``music_matcher.run_music_pipeline`` helper. Add it here so the
         # Spotify-Backlog "Add to Lidarr" button actually has a pre-resolved
         # MBID to ship.
-        task_monitor.update(task, message="Phase 1.4: Resolving artist MBIDs via MusicBrainz…")
+        task_monitor.update(
+            task, message="Phase 1.4: Resolving artist MBIDs via MusicBrainz…"
+        )
         p_mbid = await resolve_artist_mbids(user_id, batch=batch)
-        task_monitor.update(task,
+        task_monitor.update(
+            task,
             message=(
-                f"Phase 1.4 done — resolved={p_mbid.get('resolved',0)}, "
-                f"failed={p_mbid.get('failed',0)} "
-                f"({p_mbid.get('remaining',0)} artists remain for next run)"
-            ))
+                f"Phase 1.4 done — resolved={p_mbid.get('resolved', 0)}, "
+                f"failed={p_mbid.get('failed', 0)} "
+                f"({p_mbid.get('remaining', 0)} artists remain for next run)"
+            ),
+        )
 
         # Check stop after Phase 1.4
         if get_state("music_pipeline_stop_requested") == "1":
@@ -245,29 +302,37 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
 
         # ── Phase 1.5: Spotify genre enrichment ──────────────────────────────
         task_monitor.update(task, message="Phase 1.5: Fetching genres from Spotify…")
-        set_state("music_pipeline_progress", _json.dumps({
-            "phase":          "spotify_enrich",
-            "matched":        p1.get("matched", 0),
-            "unmatched":      p1.get("unmatched", 0),
-            "tracks_queried": 0,
-            "enriched_plays": 0,
-        }))
+        set_state(
+            "music_pipeline_progress",
+            _json.dumps(
+                {
+                    "phase": "spotify_enrich",
+                    "matched": p1.get("matched", 0),
+                    "unmatched": p1.get("unmatched", 0),
+                    "tracks_queried": 0,
+                    "enriched_plays": 0,
+                }
+            ),
+        )
 
         psp = await enrich_music_genres_spotify(user_id, batch=batch)
         if psp.get("spotify_rate_limited"):
             spot_msg = (
-                f"Spotify rate-limited at {psp.get('tracks_queried',0)} tracks — "
+                f"Spotify rate-limited at {psp.get('tracks_queried', 0)} tracks — "
                 f"handing remainder to Last.fm"
             )
             logger.warning("[music_pipeline] %s", spot_msg)
             task_monitor.update(task, message=spot_msg)
         else:
-            task_monitor.update(task,
+            task_monitor.update(
+                task,
                 message=(
-                    f"Spotify done — {psp.get('enriched_plays',0)} plays enriched "
-                    f"({psp.get('tracks_resolved',0)}/{psp.get('tracks_queried',0)} tracks resolved)"
-                    if not psp.get("note") else f"Spotify skipped: {psp.get('note')}"
-                ))
+                    f"Spotify done — {psp.get('enriched_plays', 0)} plays enriched "
+                    f"({psp.get('tracks_resolved', 0)}/{psp.get('tracks_queried', 0)} tracks resolved)"
+                    if not psp.get("note")
+                    else f"Spotify skipped: {psp.get('note')}"
+                ),
+            )
 
         if get_state("music_pipeline_stop_requested") == "1":
             task_monitor.skip(task, "Stopped after Phase 1.5 (Spotify genres)")
@@ -277,49 +342,62 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
 
         # ── Phase 2: Last.fm genres ───────────────────────────────────────────
         task_monitor.update(task, message="Phase 2: Fetching genres from Last.fm…")
-        set_state("music_pipeline_progress", _json.dumps({
-            "phase":                "lastfm_enrich",
-            "matched":              p1.get("matched", 0),
-            "unmatched":            p1.get("unmatched", 0),
-            "spotify_enriched":     psp.get("enriched_plays", 0),
-            "tracks_queried":       0,
-            "enriched_plays":       0,
-        }))
+        set_state(
+            "music_pipeline_progress",
+            _json.dumps(
+                {
+                    "phase": "lastfm_enrich",
+                    "matched": p1.get("matched", 0),
+                    "unmatched": p1.get("unmatched", 0),
+                    "spotify_enriched": psp.get("enriched_plays", 0),
+                    "tracks_queried": 0,
+                    "enriched_plays": 0,
+                }
+            ),
+        )
 
         p2 = await enrich_music_genres_lastfm(user_id, batch=batch)
         final_progress = {
-            "phase":                  "done",
-            "matched":                p1.get("matched", 0),
-            "unmatched":              p1.get("unmatched", 0),
+            "phase": "done",
+            "matched": p1.get("matched", 0),
+            "unmatched": p1.get("unmatched", 0),
             # Pass 16n: Phase 1.4 stats so the "done" summary in the UI
             # actually reflects all four phases, not just 1/1.5/2.
-            "mbid_resolved":          p_mbid.get("resolved", 0),
-            "mbid_remaining":         p_mbid.get("remaining", 0),
-            "spotify_enriched":       psp.get("enriched_plays", 0),
-            "spotify_rate_limited":   psp.get("spotify_rate_limited", False),
-            "tracks_queried":         p2.get("tracks_queried", 0),
-            "enriched_plays":         p2.get("enriched_plays", 0),
-            "artist_fallback":        p2.get("artist_fallback", 0),
-            "no_data":                p2.get("no_data", 0),
+            "mbid_resolved": p_mbid.get("resolved", 0),
+            "mbid_remaining": p_mbid.get("remaining", 0),
+            "spotify_enriched": psp.get("enriched_plays", 0),
+            "spotify_rate_limited": psp.get("spotify_rate_limited", False),
+            "tracks_queried": p2.get("tracks_queried", 0),
+            "enriched_plays": p2.get("enriched_plays", 0),
+            "artist_fallback": p2.get("artist_fallback", 0),
+            "no_data": p2.get("no_data", 0),
         }
         set_state("music_pipeline_progress", _json.dumps(final_progress))
 
         spotify_note = (
-            f" | Spotify: {psp.get('enriched_plays',0)} plays enriched"
+            f" | Spotify: {psp.get('enriched_plays', 0)} plays enriched"
             + (" (RATE-LIMITED)" if psp.get("spotify_rate_limited") else "")
             if psp.get("enriched_plays") or psp.get("spotify_rate_limited")
             else ""
         )
         mbid_note = (
-            f" | MBIDs: {p_mbid.get('resolved',0)} resolved"
-            + (f", {p_mbid.get('remaining',0)} pending" if p_mbid.get("remaining") else "")
-        ) if p_mbid.get("resolved") or p_mbid.get("remaining") else ""
+            (
+                f" | MBIDs: {p_mbid.get('resolved', 0)} resolved"
+                + (
+                    f", {p_mbid.get('remaining', 0)} pending"
+                    if p_mbid.get("remaining")
+                    else ""
+                )
+            )
+            if p_mbid.get("resolved") or p_mbid.get("remaining")
+            else ""
+        )
         summary = (
-            f"Plex matched={p1.get('matched',0)}{mbid_note}{spotify_note} | "
-            f"Last.fm: {p2.get('enriched_plays',0)} plays enriched "
-            f"({p2.get('tracks_queried',0)} queried, "
-            f"{p2.get('artist_fallback',0)} via artist fallback, "
-            f"{p2.get('no_data',0)} no-data cached)"
+            f"Plex matched={p1.get('matched', 0)}{mbid_note}{spotify_note} | "
+            f"Last.fm: {p2.get('enriched_plays', 0)} plays enriched "
+            f"({p2.get('tracks_queried', 0)} queried, "
+            f"{p2.get('artist_fallback', 0)} via artist fallback, "
+            f"{p2.get('no_data', 0)} no-data cached)"
         )
         task_monitor.done(task, summary)
         set_state("music_pipeline_interrupted", "0")
@@ -331,5 +409,5 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
         task_monitor.error(task, str(exc))
         # Keep interrupted="1" so startup auto-resumes
     finally:
-        set_state("music_pipeline_running",        "0")
+        set_state("music_pipeline_running", "0")
         set_state("music_pipeline_stop_requested", "0")
