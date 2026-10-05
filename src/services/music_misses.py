@@ -122,15 +122,23 @@ def stats(kind: str = ARTIST_MBID, *, now: Optional[datetime] = None) -> dict:
     now = now or datetime.utcnow()
     from src.database.connection import get_db_session
     from src.database.models import MusicLookupMiss
+    from sqlalchemy import func, case
     try:
         with get_db_session() as db:
-            q = db.query(MusicLookupMiss).filter(MusicLookupMiss.kind == kind)
-            total = q.count()
-            waiting = q.filter(MusicLookupMiss.next_retry_at > now).count()
-            nxt = (q.filter(MusicLookupMiss.next_retry_at > now)
+            # Bolt: Optimizing 2 separate count queries into a single query
+            res = db.query(
+                func.count(MusicLookupMiss.id),
+                func.sum(case((MusicLookupMiss.next_retry_at > now, 1), else_=0))
+            ).filter(MusicLookupMiss.kind == kind).first()
+
+            total = res[0] or 0 if res else 0
+            waiting = res[1] or 0 if res else 0
+
+            nxt = (db.query(MusicLookupMiss.next_retry_at)
+                   .filter(MusicLookupMiss.kind == kind, MusicLookupMiss.next_retry_at > now)
                    .order_by(MusicLookupMiss.next_retry_at.asc()).first())
             return {"missed": total, "waiting": waiting, "due": total - waiting,
-                    "next_retry_at": nxt.next_retry_at.isoformat() if nxt else None}
+                    "next_retry_at": nxt[0].isoformat() if nxt else None}
     except Exception as e:                                   # pragma: no cover
         logger.debug("[music-misses] stats failed: %s", e)
         return {"missed": 0, "waiting": 0, "due": 0, "next_retry_at": None}

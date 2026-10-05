@@ -1785,15 +1785,23 @@ def _arr_enrichment_coverage(category: Optional[str] = None) -> dict:
             "music": ["lidarr"],
         }
 
+        from sqlalchemy import func, case
+
         with get_db_session() as db:
-            q = db.query(ArrEnrichmentStatus)
+            # Bolt: Optimizing 2 separate count queries into a single query
+            q = db.query(
+                func.count(ArrEnrichmentStatus.id),
+                func.sum(case((ArrEnrichmentStatus.enriched == True, 1), else_=0))
+            )
             if category and category in _CAT_TO_SVC:
                 svcs = _CAT_TO_SVC[category]
                 q = q.filter(ArrEnrichmentStatus.service.in_(svcs))
                 if category in ("show", "anime"):
                     q = q.filter(ArrEnrichmentStatus.category == category)
-            total    = q.count()
-            enriched = q.filter(ArrEnrichmentStatus.enriched == True).count()
+            res = q.first()
+
+            total    = res[0] or 0 if res else 0
+            enriched = res[1] or 0 if res else 0
 
         pct = round(100 * enriched / max(total, 1))
         return {
