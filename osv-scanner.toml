@@ -30,3 +30,19 @@ reason = "Authenticated code injection through the Chroma HTTP server's collecti
 [[IgnoredVulns]]
 id = "GHSA-xph7-9rjv-w5fr"   # CVE-2026-45831, PYSEC-2026-3815
 reason = "SimpleRBACAuthorizationProvider ignores tenant/database/collection scope. That provider belongs to the Chroma server's auth stack, which Curatarr never configures or runs. No fixed release yet."
+
+# oauthlib (2026-10-06) reaches the lock only through kubernetes ->
+# requests-oauthlib, and chromadb imports kubernetes in its distributed
+# segment mode alone (chromadb/segment/impl/distributed); the embedded
+# PersistentClient never loads it, so oauthlib is never imported in a
+# Curatarr process. Both advisories sit on the OAuth provider side, which
+# Curatarr does not run. The fix is oauthlib 4.0.0, a new major line under
+# requests-oauthlib 2.0.0: untested churn for code that is never loaded.
+
+[[IgnoredVulns]]
+id = "GHSA-xpv3-w29h-x7cv"   # CVE-2026-49265, PYSEC-2026-4114
+reason = "Timing attack on the PKCE code_verifier comparison of an oauthlib OAuth2 provider. Curatarr runs no OAuth provider, and oauthlib comes in only through kubernetes, which chromadb imports for its distributed mode alone: it is never loaded."
+
+[[IgnoredVulns]]
+id = "GHSA-hj66-6f7g-4r5v"   # CVE-2026-49264, PYSEC-2026-4113
+reason = "JSONP callback injection in oauthlib's RevocationEndpoint, a provider-side endpoint. Curatarr serves no OAuth endpoints and never imports oauthlib (kubernetes pulls it in, for chromadb's distributed mode only)."

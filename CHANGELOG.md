@@ -317,6 +317,11 @@ budgets, and asks Windows not to idle-sleep, which it otherwise does after
 once nothing is due. The enrichment cycle also stays due while its budget
 leaves items behind, instead of resting a day after 400 of 2,300.
 
+**Dependencies.** PyJWT 2.15.0 (GHSA-42vr-xj54-vc7v; Curatarr only verifies
+signed tokens, so the pre-verification path was never used). oauthlib's two
+provider-side advisories are excepted with their reasons: it arrives only
+through kubernetes, which the embedded ChromaDB never loads.
+
 **No inline styles.** The Content-Security-Policy's `style-src` is
 `'self'`: the 278 inline style attributes in the markup and the module
 templates became classes (a utilities block named by property, a handful
