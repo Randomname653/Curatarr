@@ -204,36 +204,58 @@ def test_in_a_sprint_the_queue_leaves_enrichment_to_the_chunks():
     dc._admin_id = lambda: 1
     try:
         dc.set_sprint(4)
-        state["enrichment_left"] = "9000"
-        assert asyncio.run(dc._run_enrichment_cycle(deep=True)) is False and calls == []
-        state["enrichment_left"] = "0"                # the chunks are through
-        assert asyncio.run(dc._run_enrichment_cycle(deep=True)) is True and calls == [2000]
+        for left in ("9000", "0", None):              # whatever is left: the chunks have it
+            state.pop("enrichment_left", None)
+            if left is not None:
+                state["enrichment_left"] = left
+            assert asyncio.run(dc._run_enrichment_cycle(deep=True)) is False, left
+        assert calls == []
         dc.set_sprint(0)
         state["enrichment_left"] = "9000"             # no sprint: the cycle works as before
-        assert asyncio.run(dc._run_enrichment_cycle(deep=False)) is False and calls == [2000, 400]
+        assert asyncio.run(dc._run_enrichment_cycle(deep=False)) is False and calls == [400]
     finally:
         enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id = real
 
 
-def test_the_chunk_takes_the_lock_and_skips_music():
+def test_the_chunk_takes_the_lock_and_stamps_a_covered_backlog():
+    """Every category, music included (beside the queue its pace holds
+    nothing up); a chunk that leaves nothing behind stamps the cycle."""
     _reset()
     import src.routers.enrichment as enr
-    calls = []
+    calls, stamped = [], []
+    left_after = ["14000", "0"]
 
     async def fake_run(uid, cats, source, limit):
         calls.append((cats, source, limit))
+        state["enrichment_left"] = left_after.pop(0)
 
-    locks = iter([True, False])
-    real = (enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id)
+    locks = iter([True, True, False])
+    real = (enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id, sched._record_job_run)
     enr._run_enrichment = fake_run
     app_state.acquire_state_lock = lambda key: next(locks)
     dc._admin_id = lambda: 1
+    sched._record_job_run = lambda job_id: stamped.append(job_id)
     try:
-        asyncio.run(dc._sprint_enrichment())
+        asyncio.run(dc._sprint_enrichment())          # 14,000 left: not covered
+        assert stamped == []
+        asyncio.run(dc._sprint_enrichment())          # nothing left: done for the day
+        assert stamped == ["custodian_enrich"]
         asyncio.run(dc._sprint_enrichment())          # lock taken: nothing
-        assert calls == [(["movie", "show", "anime"], "both", dc._SPRINT_CHUNK)], calls
+        assert calls == [(list(enr.CATEGORIES), "both", dc._SPRINT_CHUNK)] * 2, calls
     finally:
-        enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id = real
+        enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id, sched._record_job_run = real
+
+
+def test_a_due_cycle_starts_a_chunk_without_a_count():
+    """After a restart nothing may be recorded yet; a due cycle is reason
+    enough for a chunk, which then writes the count."""
+    _reset()
+    sched._job_overdue = lambda job_id, cadence_h: job_id == "custodian_enrich"
+    dc.set_sprint(4)
+    dc._queue_busy[dc.QUEUE_MODEL] = True
+    state["enrichment_running"] = "0"
+    asyncio.run(dc.custodian_sprint_tick())
+    assert len(launched) == 1
 
 
 def test_after_the_sprint_the_power_request_goes():

@@ -32,9 +32,8 @@ power request keeps the machine from idle-sleeping under it (the Balanced
 plan sleeps after 15 minutes without input, and a sleeping PC works through
 nothing). The background queue keeps its rhythm: its walkers pace
 themselves against outside APIs. Beside the queue the enrichment pipeline
-keeps going in large chunks of movies, shows and anime while items are left,
-so a queue task that mostly fetches (reception) no longer leaves the card
-idle. The sprint ends at that time, on Stop, or by itself once no model work
+keeps going in large chunks while items are left, so a queue task that
+mostly fetches (reception) no longer leaves the card idle. The sprint ends at that time, on Stop, or by itself once no model work
 is due and no enrichment runs.
 """
 from __future__ import annotations
@@ -86,10 +85,9 @@ _STARTED = time.monotonic()
 _SPRINT_KEY = "custodian_sprint_until"
 SPRINT_TICK_MINUTES = 2
 SPRINT_MAX_HOURS = 24
-# Music stays with the custodian's own cycle: its MusicBrainz lane (one
-# request a second) would hold a chunk open long after the GPU lanes are done.
+# A chunk takes every category: it runs beside the queue, so music's pace
+# (one MusicBrainz request a second) holds no other GPU work up.
 _SPRINT_CHUNK = 2000
-_SPRINT_CATEGORIES = ("movie", "show", "anime")
 _ES_CONTINUOUS, _ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
 _awake_stop: threading.Event | None = None
 _sprint_seen: datetime | None = None      # the end this process last announced
@@ -138,9 +136,10 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
     skipping. Respects the same lock as the manual /start endpoint."""
     from src.services.app_state import acquire_state_lock
     from src.routers.enrichment import _run_enrichment, CATEGORIES
-    if sprint_until() is not None and _enrichment_left() > 0:
-        # The sprint runs the pipeline beside the queue; this slot would
-        # only wait on its lock or hold the queue for hours.
+    if sprint_until() is not None:
+        # The sprint runs the pipeline beside the queue in chunks; in here a
+        # chunk would only wait on its lock, or hold the queue for hours
+        # behind MusicBrainz once only music is left.
         return False
     uid = _admin_id()
     if uid is None:
@@ -1019,13 +1018,28 @@ async def _sprint_enrichment() -> None:
     """One chunk of the enrichment pipeline beside the model queue. It has
     its own lock and yields to curator calls (llm_priority); without it the
     card waited whenever the queue was on a task that mostly fetches (3 % for
-    minutes on 2026-10-06 while reception ran)."""
+    minutes on 2026-10-06 while reception ran). A chunk that leaves nothing
+    behind stamps the cycle: the backlog is covered, the next run is due in
+    a day as usual."""
     from src.services.app_state import acquire_state_lock
-    from src.routers.enrichment import _run_enrichment
+    from src.routers.enrichment import CATEGORIES, _run_enrichment
+    from src.services.scheduler import _record_job_run
     uid = _admin_id()
     if uid is None or not acquire_state_lock("enrichment_running"):
         return
-    await _run_enrichment(uid, list(_SPRINT_CATEGORIES), "both", _SPRINT_CHUNK)
+    await _run_enrichment(uid, list(CATEGORIES), "both", _SPRINT_CHUNK)
+    if _enrichment_left() == 0:
+        _record_job_run("custodian_enrich")
+        logger.info("[sprint] enrichment backlog covered")
+
+
+def _enrichment_due() -> bool:
+    from src.services.scheduler import _job_overdue
+    try:
+        t = next(t for t in _registry() if t.job_id == "custodian_enrich")
+        return _job_overdue(t.job_id, t.cadence_h)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _launch_sprint_enrichment() -> None:
@@ -1064,10 +1078,11 @@ async def custodian_sprint_tick() -> dict:
     _keep_awake(True)
     if time.monotonic() - _STARTED < _SETTLE_SECONDS:
         return {"sprint": until.isoformat()}
-    chunk = not _enrichment_running() and _enrichment_left() > 0
+    left = _enrichment_left()
+    chunk = not _enrichment_running() and (left > 0 or _enrichment_due())
     if chunk:
-        logger.info("[sprint] enrichment beside the model queue: %d item(s) left",
-                    _enrichment_left())
+        logger.info("[sprint] enrichment chunk beside the model queue (%s)",
+                    f"{left} item(s) left" if left else "the cycle is due")
         _launch_sprint_enrichment()
     if _queue_busy[QUEUE_MODEL]:
         return {"sprint": until.isoformat(), "enrichment": chunk}
