@@ -268,6 +268,8 @@ async def proxy_image(
         logger.debug("[image_proxy] reject non-whitelisted host: %s", parsed.host)
         raise HTTPException(403, f"Host not on image-proxy whitelist: {parsed.host}")
 
+    src = str(parsed)
+
     # 2. Disk cache hit?
     cached = _find_existing(src)
     if cached:
