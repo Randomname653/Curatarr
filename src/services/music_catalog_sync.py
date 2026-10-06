@@ -73,6 +73,12 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
     if not soulsync_client._configured():
         logger.info("[catalog-sync] SoulSync not configured — nothing to do")
         return {"ok": True, "skipped": "no_soulsync"}
+    # Lidarr first: without it there is nothing to complete, and the
+    # SoulSync catalogue walk alone took nine minutes (2026-10-06).
+    from src.routers.library import _get_arr_url_key, _make_client, _read_defaults
+    url, key = _get_arr_url_key("lidarr")
+    if not url or not key:
+        return {"ok": True, "skipped": "no_lidarr"}
 
     # ── 1. full SoulSync catalogue ───────────────────────────────────────
     ss_artists: list = []
@@ -91,10 +97,6 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
         return {"ok": False, "reason": "soulsync_empty_or_unreachable"}
 
     # ── 2. Lidarr side, mapped by MBID ───────────────────────────────────
-    from src.routers.library import _get_arr_url_key, _make_client, _read_defaults
-    url, key = _get_arr_url_key("lidarr")
-    if not url or not key:
-        return {"ok": True, "skipped": "no_lidarr"}
     client = _make_client("lidarr", url, key)
     async with client:
         _prog(message=f"{len(ss_artists):,} SoulSync artists — "

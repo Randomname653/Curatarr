@@ -108,6 +108,15 @@ check("grown artist reported", res["grown_artists"] == ["Grown Artist"])
 check("healthy artist NOT refreshed", 11 not in refreshed)
 check("state stamped", mcs._STATE_KEY in _state)
 
+walked = []
+real_pages, real_key = sc.list_artists_page, lib._get_arr_url_key
+sc.list_artists_page = lambda page=1, limit=100: walked.append(page) or fake_pages(page, limit)
+lib._get_arr_url_key = lambda svc: (None, None)
+res_nl = asyncio.run(mcs.sync_soulsync_to_lidarr())
+check("no Lidarr -> clean skip before the SoulSync walk",
+      res_nl == {"ok": True, "skipped": "no_lidarr"} and walked == [])
+sc.list_artists_page, lib._get_arr_url_key = real_pages, real_key
+
 sc._configured = lambda: False
 res2 = asyncio.run(mcs.sync_soulsync_to_lidarr())
 check("no SoulSync -> clean skip (task never stays due)",

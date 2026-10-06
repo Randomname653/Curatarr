@@ -544,6 +544,9 @@ def _load_lib_cache_from_db() -> int:
         mc = MetadataCache()
         try:
             for svc in ("sonarr", "radarr", "lidarr"):
+                url, key = _get_arr_url_key(svc)
+                if not url or not key:
+                    continue   # not configured: its old list must not come back
                 row = mc.get_cache(_lib_cache_key(svc))
                 if not row:
                     continue
@@ -639,30 +642,74 @@ def _plex_music_library() -> "tuple[list, list, dict] | None":
     return items_raw, [], {"source": "plex-index", "age_s": 0, "ttl_s": 0}
 
 
+async def _live_arr_library(service: str, url: str, api_key: str,
+                            hit: Optional[dict]) -> tuple[list, list]:
+    """One live fetch of an arr's library and tags into L1 and L2. Raises
+    on failure."""
+    now = time.time()
+    client = _make_client(service, url, api_key)
+    async with client:
+        if service == "sonarr":
+            items_raw = await client.get_series()
+        elif service == "radarr":
+            items_raw = await client.get_movies()
+        else:
+            items_raw = await client.get_artists()
+        try:
+            tags = await client.list_tags()
+        except Exception as e:
+            logger.debug("[library] %s tags fetch failed: %s", service, e)
+            tags = (hit or {}).get("tags", [])
+    # L1 (in-memory) + L2 (persisted DB row) populated together so the
+    # next process restart starts warm.
+    _LIB_CACHE[service] = {"items_raw": items_raw, "tags": tags, "at": now}
+    _persist_lib_cache(service, items_raw, tags, now)
+    return items_raw, tags
+
+
+_LIB_REFRESHING: dict = {}   # service -> the background refresh in flight
+
+
+def _refresh_behind(service: str, url: str, api_key: str, hit: dict) -> None:
+    """Refresh an expired copy behind the request that is being served it;
+    one refresh per service at a time, a failure leaves the copy as it was."""
+    running = _LIB_REFRESHING.get(service)
+    if running is not None and not running.done():
+        return
+
+    async def run():
+        try:
+            await _live_arr_library(service, url, api_key, hit)
+        except Exception as e:
+            logger.warning("[library] %s background refresh failed (%s) — still serving the "
+                           "copy from %.0fs ago", service, _format_arr_error(service, e),
+                           time.time() - hit["at"])
+
+    from src.services.bg_tasks import track_task
+    _LIB_REFRESHING[service] = track_task(run(), name=f"arr_refresh:{service}")
+
+
 async def _fetch_arr_library(service: str, *, force_refresh: bool = False) -> tuple[list, list, dict]:
-    """Fetch (items_raw, tags, cache_status) for a service, with TTL cache
-    and stale fallback on failure.
+    """Fetch (items_raw, tags, cache_status) for a service.
 
     Returns ``(items_raw, tags, cache_info)`` where cache_info is a dict
     suitable for surfacing in the response so the UI can render a "from
     cache" / "stale" badge:
 
-      ``{"source": "live"|"cache"|"stale", "age_s": int, "stale_error": str?}``
+      ``{"source": "live"|"cache"|"stale", "age_s": int, "stale_error": str?,
+        "refreshing": bool?}``
+
+    An expired copy is served at once and refreshed behind the request. The
+    Knowledge Base used to wait for the live fetch whenever the 15-minute
+    window had run out, and Lidarr's artist list takes a minute, or two
+    90-second attempts when it hangs (185-198 s overview loads on
+    2026-10-06; the background refresher only comes every 30 minutes). Only
+    a missing copy or a forced refresh waits. An arr that is not configured
+    never serves its old copy: Lidarr falls back to the Plex music index.
 
     Raises HTTPException(502) only when there's NO cached data to fall
     back on — first-time failure with a broken arr.
     """
-    now = time.time()  # wall clock so cache age survives restarts (Pass 16k)
-    hit = _LIB_CACHE.get(service)
-    age = (now - hit["at"]) if hit else float("inf")
-
-    # Serve fresh cache directly
-    if hit and not force_refresh and age < _LIB_CACHE_TTL:
-        return hit["items_raw"], hit["tags"], {
-            "source": "cache", "age_s": int(age), "ttl_s": _LIB_CACHE_TTL,
-        }
-
-    # Cache miss / expired / forced — try live fetch
     url, api_key = _get_arr_url_key(service)
     if not url or not api_key:
         if service == "lidarr":
@@ -670,24 +717,20 @@ async def _fetch_arr_library(service: str, *, force_refresh: bool = False) -> tu
             if plex is not None:
                 return plex
         raise HTTPException(400, f"{service} not configured")
-    client = _make_client(service, url, api_key)
+    now = time.time()  # wall clock so cache age survives restarts (Pass 16k)
+    hit = _LIB_CACHE.get(service)
+    age = (now - hit["at"]) if hit else float("inf")
+    if hit and not force_refresh:
+        expired = age >= _LIB_CACHE_TTL
+        if expired:
+            _refresh_behind(service, url, api_key, hit)
+        info = {"source": "cache", "age_s": int(age), "ttl_s": _LIB_CACHE_TTL}
+        if expired:
+            info["refreshing"] = True
+        return hit["items_raw"], hit["tags"], info
+
     try:
-        async with client:
-            if service == "sonarr":
-                items_raw = await client.get_series()
-            elif service == "radarr":
-                items_raw = await client.get_movies()
-            else:
-                items_raw = await client.get_artists()
-            try:
-                tags = await client.list_tags()
-            except Exception as e:
-                logger.debug("[library] %s tags fetch failed: %s", service, e)
-                tags = (hit or {}).get("tags", [])
-        # L1 (in-memory) + L2 (persisted DB row) populated together so the
-        # next process restart starts warm.
-        _LIB_CACHE[service] = {"items_raw": items_raw, "tags": tags, "at": now}
-        _persist_lib_cache(service, items_raw, tags, now)
+        items_raw, tags = await _live_arr_library(service, url, api_key, hit)
         return items_raw, tags, {"source": "live", "age_s": 0, "ttl_s": _LIB_CACHE_TTL}
     except Exception as e:
         if hit:
@@ -1408,7 +1451,7 @@ async def spotify_backlog(
     # add button stays clickable; Lidarr will return 400 if it's truly
     # already there, which we already surface to the user).
     in_lidarr: set[str] = set()
-    lidarr_hit = _LIB_CACHE.get("lidarr")
+    lidarr_hit = _LIB_CACHE.get("lidarr") if all(_get_arr_url_key("lidarr")) else None
     if lidarr_hit:
         for raw in lidarr_hit.get("items_raw", []):
             mbid = raw.get("foreignArtistId")

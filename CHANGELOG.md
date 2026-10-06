@@ -319,6 +319,16 @@ network no longer leaves the card idle. It ends at that time, on **Stop**,
 or by itself once nothing is due. The enrichment cycle also stays due while
 its budget leaves items behind, instead of resting a day after 400 of 2,300.
 
+**The Knowledge Base no longer waits for Lidarr.** Its overview needs the
+library lists of Sonarr, Radarr and Lidarr, and once the 15-minute cache
+window had run out the next page load fetched them itself. Lidarr's artist
+list takes a minute, or two 90-second attempts when it hangs: 185 to 198
+seconds per load on 2026-10-06. An expired list is now served at once and
+refreshed behind the request; only a forced refresh or a first start
+waits. An arr that is not configured no longer serves its old list, so
+switching Lidarr off moves music to the Plex index at once, and the
+SoulSync catalogue sync skips its nine-minute walk without Lidarr.
+
 **MyAnimeList instead of Jikan.** Jikan, the unofficial MyAnimeList
 scraper, has failed since 2026-08-28. Anime that AniList could not match
 waited on it in every run, and anime reception, which wanted MAL's scores
