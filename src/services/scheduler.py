@@ -204,6 +204,17 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=900,
     )
+    # Keep working (2026-10-06): a no-op unless a sprint runs; then the
+    # queues restart every two minutes instead of every thirty.
+    from src.services.data_custodian import SPRINT_TICK_MINUTES, custodian_sprint_tick
+    scheduler.add_job(
+        custodian_sprint_tick,
+        IntervalTrigger(minutes=SPRINT_TICK_MINUTES),
+        id="custodian_sprint",
+        name="Data custodian sprint (keep working)",
+        replace_existing=True,
+        misfire_grace_time=60,
+    )
     scheduler.add_job(
         _tracked("proactive_messages")(job_proactive_messages),
         IntervalTrigger(minutes=30),

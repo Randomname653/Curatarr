@@ -90,6 +90,22 @@ async def custodian_run(
     return {"status": "started", "deep": deep, "busy": [q for q, b in busy.items() if b]}
 
 
+@router.post("/custodian/sprint")
+async def custodian_sprint(
+    background_tasks: BackgroundTasks,
+    hours: float = 10.0,
+    user: User = Depends(get_current_user),
+):
+    """Keep working: until now + ``hours`` the custodian looks for due work
+    every two minutes with the deep budgets and keeps the PC from
+    idle-sleeping; 0 stops. It also ends by itself once nothing is left."""
+    from src.services.data_custodian import custodian_sprint_tick, set_sprint
+    until = set_sprint(hours)
+    if until:
+        background_tasks.add_task(custodian_sprint_tick)
+    return {"until": until.isoformat() if until else None}
+
+
 @router.get("/status")
 @ttl_response(10, key=lambda **kw: bool(kw.get("quick")))
 async def enrichment_status(
@@ -2802,6 +2818,9 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             logger.info("Priority sort: %d fresh-import items moved to front of %d total",
                         fresh_count, len(items))
 
+        # Before the cut: the custodian's cycle reads it to tell a finished
+        # backlog from a budget that ran out.
+        set_state("enrichment_candidates", str(len(items)))
         if limit:
             items = items[:limit]
 

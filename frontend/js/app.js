@@ -4,7 +4,7 @@ import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, del
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
 import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
-import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, stopBackfill } from './kb.js';
+import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
 import { closeModal, toggleMenu, keyActivate, hideOnError } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
@@ -219,8 +219,10 @@ const actions = {
   startMusicPipeline,
   startOnboardingSync,
   startPlexLogin,
+  startSprint,
   stopBackfill,
   stopMusicPipeline,
+  stopSprint,
   submitPinChange,
   submitPinSet,
   syncHistory,

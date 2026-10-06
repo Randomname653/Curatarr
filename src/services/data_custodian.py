@@ -24,15 +24,26 @@ Partial tasks (enrichment backlog, OMDb, significance, Spotify phases) report
 done=False when work remains — the custodian then leaves them due, so the
 next tick continues where they stopped. The whole state is observable in the
 Knowledge-Base view (custodian status line + report).
+
+Keep working (2026-10-06): with the PC to itself for a night, the owner
+starts a sprint. Until a set time the model queue looks for due work every
+two minutes instead of every thirty, with the deep budgets, and a Windows
+power request keeps the machine from idle-sleeping under it (the Balanced
+plan sleeps after 15 minutes without input, and a sleeping PC works through
+nothing). The background queue keeps its rhythm: its walkers pace
+themselves against outside APIs. The sprint ends at that time, on Stop, or
+by itself once no model work is due and no enrichment runs.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import sys
+import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +76,16 @@ _first_run_done = {q: False for q in _QUEUES}
 
 _SETTLE_SECONDS = 300          # first tick waits this long after app start
 _REPORT_KEY = "custodian_report"
+_STARTED = time.monotonic()
+
+# Keep working: the sprint's end lives in app_state, so a restart (or an
+# uvicorn --reload) carries on with it; the power request is per process.
+_SPRINT_KEY = "custodian_sprint_until"
+SPRINT_TICK_MINUTES = 2
+SPRINT_MAX_HOURS = 24
+_ES_CONTINUOUS, _ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+_awake_stop: threading.Event | None = None
+_sprint_seen: datetime | None = None      # the end this process last announced
 
 
 def _gaming() -> bool:
@@ -118,7 +139,15 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
         return False
     limit = 2000 if deep else 400
     await _run_enrichment(uid, list(CATEGORIES), "both", limit)
-    return True
+    # Done only when the budget covered the backlog. A run that stopped at
+    # its limit stays due and the next tick carries on, like every other
+    # partial task; it used to stamp 24 hours of silence after 400 of 2,300
+    # items (2026-10-06).
+    from src.services.app_state import get_state
+    try:
+        return int(get_state("enrichment_candidates") or 0) <= limit
+    except ValueError:
+        return True
 
 
 async def _run_omdb(deep: bool = False, task=None) -> bool:
@@ -674,7 +703,8 @@ def custodian_status() -> dict:
         })
     return {"report": report, "tasks": tasks, "ticking": any(_queue_busy.values()),
             "queues": {q: {"busy": _queue_busy[q], "current": _queue_current[q]}
-                       for q in _QUEUES}}
+                       for q in _QUEUES},
+            "sprint": sprint_status()}
 
 
 def queues_busy() -> dict:
@@ -831,7 +861,8 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
 
 
 async def custodian_tick(first_tick: bool = False, force: bool = False,
-                         deep: bool = False, wait: bool = True) -> dict:
+                         deep: bool = False, wait: bool = True,
+                         quiet: bool = False, queues: tuple = _QUEUES) -> dict:
     """Start every idle queue on its overdue tasks.
 
     ``first_tick`` sleeps the settle window first (called once at startup);
@@ -841,14 +872,16 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
     False returns at once (the interval job: a queue may run for hours, and
     a job that waited for it would block its own next run). A queue still
     busy from an earlier tick is left alone and the other starts anyway —
-    that is the point of having two.
+    that is the point of having two. ``quiet`` drops the "still running"
+    lines, which a sprint would otherwise write every two minutes; ``queues``
+    limits the tick to some of them (the sprint starts the model queue).
     """
     if first_tick:
         await asyncio.sleep(_SETTLE_SECONDS)
     from src.services.scheduler import _job_overdue, _track_task
     registry = _registry()
     started, busy = [], []
-    for q in _QUEUES:
+    for q in queues:
         if _queue_busy[q]:
             busy.append(q)
             continue
@@ -868,14 +901,15 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
             _queue_busy[q] = False
             _queue_pending[q] = set()
             raise
-    for q in busy:
+    for q in busy if not quiet else ():
         logger.info("[custodian] %s queue still on %s — the other queue is not held up by it",
                     q, _queue_current[q] or "its run")
     if not started:
-        logger.info("[custodian] tick skipped — both queues still running")
+        if not quiet:
+            logger.info("[custodian] tick skipped — both queues still running")
         return {"skipped": "busy"}
     if not wait:
-        return {"started": [q for q in _QUEUES if q not in busy], "busy": busy}
+        return {"started": [q for q in queues if q not in busy], "busy": busy}
     reports = await asyncio.gather(*started)
     return _merge_reports(list(reports), busy)
 
@@ -883,3 +917,142 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
 async def custodian_tick_background() -> dict:
     """The 30-minute interval job: start whichever queue is idle and return."""
     return await custodian_tick(wait=False)
+
+
+# ── keep working ─────────────────────────────────────────────────────────────
+
+def _sprint_end(hours: float) -> datetime | None:
+    hours = max(0.0, min(float(hours), SPRINT_MAX_HOURS))
+    return datetime.utcnow() + timedelta(hours=hours) if hours else None
+
+
+def _local(dt: datetime) -> str:
+    return dt.replace(tzinfo=timezone.utc).astimezone().strftime("%H:%M")
+
+
+def sprint_until() -> datetime | None:
+    """When the running sprint ends (naive UTC), or None."""
+    from src.services.app_state import get_state
+    try:
+        raw = get_state(_SPRINT_KEY)
+        until = datetime.fromisoformat(raw) if raw else None
+    except Exception:  # noqa: BLE001 — unreadable is no sprint
+        return None
+    return until if until and until > datetime.utcnow() else None
+
+
+def sprint_status() -> dict:
+    until = sprint_until()
+    return {"until": until.isoformat() if until else None,
+            "awake": _awake_stop is not None}
+
+
+def set_sprint(hours: float, why: str = "") -> datetime | None:
+    """Start a sprint of ``hours`` (at most SPRINT_MAX_HOURS), or stop it
+    with 0. Returns its end (naive UTC) or None."""
+    global _sprint_seen
+    from src.services.app_state import set_state
+    until = _sprint_end(hours)
+    set_state(_SPRINT_KEY, until.isoformat() if until else "")
+    _keep_awake(until is not None)
+    logger.info("[sprint] %s", f"keep working until {_local(until)}" if until
+                else "stopped" + (f": {why}" if why else ""))
+    _sprint_seen = until
+    return until
+
+
+def _keep_awake(on: bool) -> None:
+    """While a sprint runs, ask Windows not to idle-sleep. A power request
+    held by a thread of its own: SetThreadExecutionState with ES_CONTINUOUS
+    lasts until that thread clears it or ends, so it ends with the sprint or
+    with the process. No setting changes; ``powercfg /requests`` lists it.
+    Elsewhere a no-op."""
+    global _awake_stop
+    if sys.platform != "win32" or on == (_awake_stop is not None):
+        return
+    if not on:
+        _awake_stop.set()
+        _awake_stop = None
+        return
+    stop = threading.Event()
+
+    def hold() -> None:
+        import ctypes
+        request = ctypes.windll.kernel32.SetThreadExecutionState
+        request.argtypes, request.restype = [ctypes.c_uint32], ctypes.c_uint32
+        request(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED)
+        try:
+            stop.wait()
+        finally:
+            request(_ES_CONTINUOUS)
+
+    threading.Thread(target=hold, name="custodian-keep-awake", daemon=True).start()
+    _awake_stop = stop
+
+
+def _enrichment_running() -> bool:
+    from src.services.app_state import get_state
+    try:
+        return get_state("enrichment_running") == "1"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _model_work_due() -> bool:
+    from src.services.scheduler import _job_overdue
+    try:
+        return any(_job_overdue(t.job_id, t.cadence_h) for t in _registry()
+                   if queue_of(t) == QUEUE_MODEL
+                   and not (t.settle_only and _first_run_done[QUEUE_MODEL]))
+    except Exception:  # noqa: BLE001 — unknown due state: keep going
+        return True
+
+
+async def custodian_sprint_tick() -> dict:
+    """The SPRINT_TICK_MINUTES job. Outside a sprint it only lets go of a
+    power request left from one. Inside, it starts the model queue when idle
+    on what is due, with the deep budgets, and ends the sprint once the model
+    queue is idle, no model work is due and no enrichment holds its lock. It
+    leaves the settle window after a start to the first tick."""
+    global _sprint_seen
+    until = sprint_until()
+    if until is None:
+        _sprint_seen = None
+        if _awake_stop is not None:
+            _keep_awake(False)
+            logger.info("[sprint] over, back to the 30-minute rhythm")
+        return {"sprint": None}
+    if until != _sprint_seen:
+        _sprint_seen = until
+        logger.info("[sprint] keep working until %s%s", _local(until),
+                    ", the PC stays awake" if sys.platform == "win32" else "")
+    _keep_awake(True)
+    if time.monotonic() - _STARTED < _SETTLE_SECONDS or _queue_busy[QUEUE_MODEL]:
+        return {"sprint": until.isoformat()}
+    if not (_enrichment_running() or _model_work_due()):
+        set_sprint(0, "no model work due, no enrichment running")
+        return {"sprint": None, "done": True}
+    return await custodian_tick(deep=True, wait=False, quiet=True, queues=(QUEUE_MODEL,))
+
+
+def _cli(argv: list) -> int:
+    """python -m src.services.data_custodian --sprint HOURS   (0 stops)
+
+    Writes the sprint's end into app_state directly; the running app's
+    two-minute job picks it up and holds the power request itself."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="python -m src.services.data_custodian")
+    ap.add_argument("--sprint", type=float, required=True, metavar="HOURS",
+                    help="keep working for HOURS (at most 24); 0 stops")
+    args = ap.parse_args(argv)
+    from src.services.app_state import force_set_state
+    until = _sprint_end(args.sprint)
+    if not force_set_state(_SPRINT_KEY, until.isoformat() if until else ""):
+        print("[sprint] app_state not writable")
+        return 1
+    print(f"[sprint] keep working until {_local(until)}" if until else "[sprint] stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli(sys.argv[1:]))

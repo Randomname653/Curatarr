@@ -26,12 +26,22 @@ has caught up with your library:
 Everything is resumable. Closing the app mid-pipeline costs nothing —
 the data custodian picks up whatever is overdue on the next run.
 
+**Leaving the PC to Curatarr for a while?** Knowledge Base → Maintenance →
+pick the hours next to **Keep working**. Until then the custodian works
+through the GPU work that is due (enrichment, Wikipedia significance,
+reception, lyrics profiles, taste, recommendations) without its 30-minute
+pauses and keeps Windows from falling asleep (a power request, no setting
+changes); it stops by itself once nothing is left, or press **Stop**. From
+a console:
+`python -m src.services.data_custodian --sprint 10` (0 stops).
+
 ## Where things live in the UI
 
 | Task | Where |
 |---|---|
 | Re-run Plex sync now | History → **Force sync** |
 | Start / resume enrichment | Knowledge Base → Maintenance tab → **Start Enrichment** |
+| Work through the backlog while you are away | Knowledge Base → Maintenance tab → hours → **Keep working** |
 | Recompute taste vectors | Knowledge Base → Maintenance tab → **Recompute taste vectors** |
 | Audit + self-heal metadata | Knowledge Base → Maintenance tab → **Audit metadata** |
 | Titles that need a human (wrong match, low confidence, repeatedly not found) | Knowledge Base → **Needs attention** tab: filter by reason, then **Search & pin**, **Retry now** or **Ignore** on the row |

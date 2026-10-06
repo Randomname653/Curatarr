@@ -309,6 +309,14 @@ five in a row ended the movie lane of every run within a minute while
 (the Anime section, Sonarr's anime type), and only an outage where no
 source answered at all counts toward ending a lane.
 
+**Keep working while you are away.** Knowledge Base → Maintenance has a
+**Keep working** button with an hour picker. Until then the custodian looks
+for due GPU work every two minutes instead of every thirty, with the large
+budgets, and asks Windows not to idle-sleep, which it otherwise does after
+15 minutes without input. It ends at that time, on **Stop**, or by itself
+once nothing is due. The enrichment cycle also stays due while its budget
+leaves items behind, instead of resting a day after 400 of 2,300.
+
 **No inline styles.** The Content-Security-Policy's `style-src` is
 `'self'`: the 278 inline style attributes in the markup and the module
 templates became classes (a utilities block named by property, a handful
