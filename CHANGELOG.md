@@ -329,6 +329,13 @@ waits. An arr that is not configured no longer serves its old list, so
 switching Lidarr off moves music to the Plex index at once, and the
 SoulSync catalogue sync skips its nine-minute walk without Lidarr.
 
+**Clean genres from SoulSync.** SoulSync hands out its artist genres as a
+JSON list cut at the commas and mixed with clean values (`'["Comedy'`,
+`'Comedy Rock"]'`), for 100 of 120 artists in a sample. Since SoulSync's
+fields win the artist-profile merge, the pieces reached the profile, its
+embedding text and the summariser's input. Curatarr now strips the brackets
+and quotes from each piece; similar-artist names keep quotes of their own.
+
 **MyAnimeList instead of Jikan.** Jikan, the unofficial MyAnimeList
 scraper, has failed since 2026-08-28. Anime that AniList could not match
 waited on it in every run, and anime reception, which wanted MAL's scores

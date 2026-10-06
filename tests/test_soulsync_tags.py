@@ -41,8 +41,15 @@ check("plain list passes through",
       sc._norm_genres(["Pop/Rock", "Punk"]) == ["Pop/Rock", "Punk"])
 check("bare plain string becomes a one-element list, never characters",
       sc._norm_genres("rock") == ["rock"])
-check("broken JSON string degrades to one element, never characters",
-      sc._norm_genres('["rock') == ['["rock'])
+check("broken JSON string degrades to one clean element, never characters",
+      sc._norm_genres('["rock') == ["rock"])
+check("a JSON array cut at its commas comes back clean (2026-10-06, live shape)",
+      sc._norm_genres(['"Comedy/Spoken', 'Pop', 'Comedy Rock"]', 'Polka', 'Rock"',
+                       'Comedy', '["Comedy', 'Comedy Rock'])
+      == ["Comedy/Spoken", "Pop", "Comedy Rock", "Polka", "Rock", "Comedy"])
+check("names keep their own quotes, lose a bracket and its quote",
+      sc._norm_genres(['"Weird Al" Yankovic', '["Muse', 'Royce Da 5\'9"', 'Placebo"]'], names=True)
+      == ['"Weird Al" Yankovic', "Muse", 'Royce Da 5\'9"', "Placebo"])
 check("None/empty -> []",
       sc._norm_genres(None) == [] and sc._norm_genres([]) == [])
 check("case-insensitive dedup survives",

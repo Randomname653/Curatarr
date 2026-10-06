@@ -53,12 +53,35 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower().translate(_DASHES)).strip()
 
 
-def _norm_genres(raw) -> list[str]:
+def _unfragment(piece: str, names: bool) -> str:
+    """One piece of a JSON array that was cut at its commas, without the
+    brackets and quotes at its ends. A name keeps quotes that are its own
+    ("Weird Al" Yankovic): only a bracket and the quote next to it go."""
+    s = piece.strip()
+    if not names:
+        return s.strip('[]"').strip()
+    if s.startswith('["'):
+        s = s[2:]
+    elif s.startswith("["):
+        s = s[1:]
+    if s.endswith('"]'):
+        s = s[:-2]
+    elif s.endswith("]"):
+        s = s[:-1]
+    return s.strip()
+
+
+def _norm_genres(raw, names: bool = False) -> list[str]:
     """Flatten SoulSync's genre/tag fields: a list whose elements may
     themselves be JSON-encoded arrays ('["Electronic"]'), plain strings, or —
     per-album lastfm_tags arrive this way — a BARE JSON-encoded array string
     ('["rock", "punk"]'). A bare string must not hit the for-loop directly:
-    iterating it walks character-wise and yields ['[', '"', 'r', ...]."""
+    iterating it walks character-wise and yields ['[', '"', 'r', ...].
+
+    Artist genres also arrive as a JSON array cut at its commas and merged
+    with clean values (2026-10-06, 100 of 120 sampled artists: '["Comedy',
+    'Comedy Rock"]', '"Comedy/Spoken'); every piece loses the brackets and
+    quotes at its ends. ``names`` is for the similar-artists list."""
     if isinstance(raw, str):
         raw = [raw]
     out: list[str] = []
@@ -69,8 +92,10 @@ def _norm_genres(raw) -> list[str]:
                 continue
             except Exception:
                 pass
-        if isinstance(g, str) and g.strip():
-            out.append(g.strip())
+        if isinstance(g, str):
+            piece = _unfragment(g, names)
+            if piece:
+                out.append(piece)
     seen = set()
     return [g for g in out if not (g.lower() in seen or seen.add(g.lower()))]
 
@@ -128,7 +153,7 @@ async def artist_info(name: str) -> Optional[dict]:
     if not hit:
         return None
     tags = _norm_genres(hit.get("lastfm_tags"))
-    similar = _norm_genres(hit.get("lastfm_similar"))
+    similar = _norm_genres(hit.get("lastfm_similar"), names=True)
     ext = {k: hit.get(k) for k in
            ("musicbrainz_id", "deezer_id", "itunes_artist_id", "qobuz_id",
             "audiodb_id", "genius_url", "lastfm_url") if hit.get(k)}
