@@ -25,7 +25,7 @@ def test_current_config_is_plain_and_complete():
     cfg = sw.current_env_config()
     for key in ("plex_url", "plex_token", "ollama_endpoint", "base_curator_model",
                 "embedding_model", "pitcher_model", "base_pitcher_model",
-                "listenbrainz_token", "opensubtitles_api_key", "jwt_secret"):
+                "listenbrainz_token", "opensubtitles_api_key", "mal_client_id", "jwt_secret"):
         assert key in cfg, key
     assert all(type(v).__name__ != "SecretStr" for v in cfg.values()), \
         "secrets must be unwrapped here, or write_env stores a mask"
@@ -34,7 +34,9 @@ def test_current_config_is_plain_and_complete():
 def test_masking_hides_every_secret_and_drops_the_jwt():
     masked = sw.mask_secrets({"plex_url": "http://p", "plex_token": "tok",
                               "tmdb_api_key": "", "jwt_secret": "s3cret",
+                              "mal_client_id": "mal-id",
                               "base_curator_model": "gemma4:31b"})
+    assert masked["mal_client_id"] == {"set": True}
     assert masked["plex_url"] == "http://p"
     assert masked["plex_token"] == {"set": True}
     assert masked["tmdb_api_key"] == {"set": False}
@@ -66,6 +68,7 @@ class _Live:
     LISTENBRAINZ_TOKEN = "lb-live"
     OPENSUBTITLES_API_KEY = None; OPENSUBTITLES_USERNAME = None
     OPENSUBTITLES_PASSWORD = None; OPENSUBTITLES_DAILY_BUDGET = 400
+    MAL_CLIENT_ID = "mal-live"
 
 
 def test_write_env_manages_listenbrainz_and_opensubtitles():
@@ -82,6 +85,7 @@ def test_write_env_manages_listenbrainz_and_opensubtitles():
     assert "OPENSUBTITLES_API_KEY=os-key" in text
     assert "OPENSUBTITLES_DAILY_BUDGET=250" in text
     assert "OPENSUBTITLES_USERNAME=" in text
+    assert "MAL_CLIENT_ID=mal-live" in text, "an id added by hand survives a settings save"
 
 
 def test_complete_setup_builds_the_pitcher_when_enabled():
@@ -112,7 +116,7 @@ def test_reconfigure_model_exists_with_every_wizard_key_optional():
     fields = st.ReconfigureRequest.model_fields
     for key in ("plex_url", "plex_token", "ollama_endpoint", "base_curator_model",
                 "enable_pitcher", "listenbrainz_token", "opensubtitles_api_key",
-                "radarr_url", "soulsync_api_key"):
+                "radarr_url", "soulsync_api_key", "mal_client_id"):
         assert key in fields, key
     assert st.ReconfigureRequest().model_dump(exclude_none=True) == {}
 

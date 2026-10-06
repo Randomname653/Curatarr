@@ -158,8 +158,8 @@ def test_anilist_and_jikan_skip_rejected():
     try:
         assert asyncio.run(me.search_anilist_by_title("Golden Boy"))["anilist_id"] == 1
         assert asyncio.run(me.search_anilist_by_title("Golden Boy", rejected={1}))["anilist_id"] == 2
-        assert asyncio.run(me.fetch_jikan_data(title="Golden Boy"))["mal_id"] == 1
-        assert asyncio.run(me.fetch_jikan_data(title="Golden Boy", rejected={1}))["mal_id"] == 2
+        assert asyncio.run(me._fetch_jikan(title="Golden Boy"))["mal_id"] == 1
+        assert asyncio.run(me._fetch_jikan(title="Golden Boy", rejected={1}))["mal_id"] == 2
     finally:
         me.httpx.AsyncClient, me._anilist_wait = real
 

@@ -175,6 +175,10 @@ class Settings(BaseSettings):
     OPENSUBTITLES_USERNAME: Optional[str] = None
     OPENSUBTITLES_PASSWORD: Optional[str] = None
     OPENSUBTITLES_DAILY_BUDGET: int = 400
+    # MyAnimeList API v2 client id (a free app at myanimelist.net/apiconfig,
+    # type "other"): anime scores, genres and the title search when AniList
+    # misses. Without it Curatarr asks Jikan (services/mal_source.py).
+    MAL_CLIENT_ID: Optional[str] = None
     OMDB_API_KEY: Optional[str] = None   # optional — free at omdbapi.com, 1000 req/day
     # Calls per UTC day before OMDb lookups wait for tomorrow (the free
     # tier's 1,000; a patron key allows more). 0 = no budget.

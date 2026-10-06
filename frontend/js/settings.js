@@ -161,6 +161,7 @@ const INTEGRATION_CARDS = [
   {key: 'metadata', title: 'Movies & series metadata', fields: [
     {id: 'tmdb_api_key', label: 'TMDB API key', secret: true, test: 'tmdb'},
     {id: 'omdb_api_key', label: 'OMDb API key', secret: true},
+    {id: 'mal_client_id', label: 'MyAnimeList client ID (anime scores, genres, search)', secret: true},
   ]},
   {key: 'music', title: 'Music metadata', fields: [
     {id: 'lastfm_api_key', label: 'Last.fm API key', secret: true, test: 'lastfm'},

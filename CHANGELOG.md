@@ -319,6 +319,15 @@ network no longer leaves the card idle. It ends at that time, on **Stop**,
 or by itself once nothing is due. The enrichment cycle also stays due while
 its budget leaves items behind, instead of resting a day after 400 of 2,300.
 
+**MyAnimeList instead of Jikan.** Jikan, the unofficial MyAnimeList
+scraper, has failed since 2026-08-28. Anime that AniList could not match
+waited on it in every run, and anime reception, which wanted MAL's scores
+and reviews from it, stood still for every title with a MAL id. With a free
+MyAnimeList client ID (Settings → Integrations) Curatarr now asks the
+official API for scores, genres, the content rating and the title search.
+Without one it still asks Jikan, but no longer than three failures in a
+row before an hour's pause; reception then goes on with the AniList reviews.
+
 **Dependencies.** PyJWT 2.15.0 (GHSA-42vr-xj54-vc7v; Curatarr only verifies
 signed tokens, so the pre-verification path was never used). oauthlib's two
 provider-side advisories are excepted with their reasons: it arrives only

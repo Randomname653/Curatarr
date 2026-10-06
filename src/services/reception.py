@@ -164,6 +164,41 @@ async def _jikan(client: httpx.AsyncClient, path: str):
         return None
 
 
+async def _mal_reception(client: httpx.AsyncClient, mal_id) -> tuple[dict, list]:
+    """MyAnimeList's half of an anime's reception: the scores from the
+    official API when a client id is configured (else Jikan), the written
+    reviews from Jikan only - the official API has none.
+
+    A Jikan miss holds the title for a retry, so one rate-limited pass cannot
+    stamp it "checked" with MAL's half missing. While Jikan is paused (down
+    since 2026-08-28, services/mal_source.py) waiting means never: the
+    AniList reviews carry the verdict alone."""
+    from src.services import mal_source
+    official = bool(mal_source.client_id())
+    stats: dict = {}
+    if official:
+        got = await mal_source.reception_stats(client, mal_id)
+        if got is mal_source.UNAVAILABLE:
+            raise TransientSourceError("myanimelist did not answer")
+        stats = got
+    if mal_source.jikan_paused():
+        return stats, []
+    core = None
+    if not official:
+        core = await _jikan(client, f"/anime/{mal_id}")
+        await asyncio.sleep(_JIKAN_PAUSE_S)
+    revs = await _jikan(client, f"/anime/{mal_id}/reviews")
+    ok = revs is not None and (official or core is not None)
+    mal_source.jikan_result(ok)
+    if not ok:
+        if mal_source.jikan_paused():
+            return stats, []
+        raise TransientSourceError("jikan did not answer")
+    if core is not None:
+        stats = core.get("data") or {}
+    return stats, (revs.get("data") or [])[:_MAX_REVIEWS]
+
+
 async def _tmdb_reviews(client: httpx.AsyncClient, tmdb_id, media_type: str) -> list[dict]:
     if not settings.TMDB_API_KEY or not tmdb_id:
         return []
@@ -251,15 +286,7 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             staff = _extract_staff(al)
             mal_stats, mal_reviews = {}, []
             if al.get("idMal"):
-                core = await _jikan(client, f"/anime/{al['idMal']}")
-                await asyncio.sleep(_JIKAN_PAUSE_S)
-                revs = await _jikan(client, f"/anime/{al['idMal']}/reviews")
-                if core is None or revs is None:
-                    # Jikan rate-limits hard; one silent pass here used to
-                    # stamp the title as "checked" with MAL's half missing.
-                    raise TransientSourceError("jikan did not answer")
-                mal_stats = core.get("data") or {}
-                mal_reviews = (revs.get("data") or [])[:_MAX_REVIEWS]
+                mal_stats, mal_reviews = await _mal_reception(client, al["idMal"])
             stats = _anime_stats_line(al, mal_stats)
             tags = _anime_tags_line(al)
             al_reviews = (al.get("reviews") or {}).get("nodes") or []

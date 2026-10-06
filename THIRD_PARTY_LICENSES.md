@@ -11,7 +11,7 @@ with the AGPL-3.0.
   anime id mapping (`src/services/anime_mapping.py`)
 - [manami-project anime-offline-database](https://github.com/manami-project/anime-offline-database)
   — offline anime metadata (`src/services/anime_offline.py`)
-- TMDB, OMDb, AniList, MusicBrainz, Last.fm, Spotify, Discogs, Wikipedia —
+- TMDB, OMDb, AniList, MyAnimeList, Jikan, MusicBrainz, Last.fm, Spotify, Discogs, Wikipedia —
   live metadata APIs, used per their respective terms with API keys the
   operator supplies.
 

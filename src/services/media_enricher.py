@@ -1657,7 +1657,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
 # callers stay under its 5 req/sec cap with margin to spare.
 _SEM_TMDB:     "asyncio.Semaphore | None" = None  # 16 — TMDB has no published cap on free tier; 16 generous
 _SEM_OMDB:     "asyncio.Semaphore | None" = None  # 4 — OMDb 1000/day; 4 concurrent safe
-_SEM_JIKAN:    "asyncio.Semaphore | None" = None  # 2 — Jikan 3 req/sec; 2 leaves headroom
+_SEM_JIKAN:    "asyncio.Semaphore | None" = None  # 2 — MyAnimeList, official API or Jikan (3 req/sec)
 _LOCK_ANILIST: "asyncio.Lock | None"      = None  # serialises AniList; _anilist_wait isn't reentrant-safe
 
 
@@ -1942,7 +1942,7 @@ async def _fetch_source(source: str, ctx: dict) -> Optional[dict]:
                                                  rejected=rejected.get("anilist_id"))
         if source == "jikan":
             mal_id = _ok("mal_id", ctx.get("mal_id"))
-            return await fetch_jikan_data(
+            return await fetch_mal_data(
                 mal_id=mal_id,
                 title=None if mal_id else title,
                 rejected=rejected.get("mal_id"),
@@ -2657,8 +2657,44 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
         return None
 
 
-async def fetch_jikan_data(mal_id: int = None, title: str = None,
-                           rejected=None) -> Optional[dict]:
+async def fetch_mal_data(mal_id: int = None, title: str = None,
+                         rejected=None) -> Optional[dict]:
+    """MyAnimeList's supplement for an anime: the official API when a client
+    id is configured, Jikan otherwise, and Jikan not at all while it is
+    paused (services/mal_source.py). The same return shape either way."""
+    from src.services import mal_source
+    if mal_source.client_id():
+        return await _fetch_mal_official(mal_id, title, rejected)
+    if mal_source.jikan_paused():
+        return TRANSIENT
+    result = await _fetch_jikan(mal_id, title, rejected)
+    mal_source.jikan_result(result is not TRANSIENT)
+    return result
+
+
+async def _fetch_mal_official(mal_id: int = None, title: str = None,
+                              rejected=None) -> Optional[dict]:
+    """The official API v2: a title search when no MAL id is known (the
+    same closeness check as Jikan's), then the detail record."""
+    from src.services import mal_source
+    _ensure_concurrency_primitives()
+    async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:
+        if not mal_id and title:
+            found = await mal_source.search(client, title, _titles_close_enough,
+                                            set(rejected or ()))
+            if found is mal_source.UNAVAILABLE:
+                return TRANSIENT
+            mal_id = found
+        if not mal_id:
+            return None
+        data = await mal_source.anime(client, mal_id)
+    if data is mal_source.UNAVAILABLE:
+        return TRANSIENT
+    return mal_source.to_supplement(data) if data else None
+
+
+async def _fetch_jikan(mal_id: int = None, title: str = None,
+                       rejected=None) -> Optional[dict]:
     """
     Fetch additional anime metadata from Jikan (MAL API proxy).
     Free, no key needed. Returns synopsis, genres, themes, demographics, score.
@@ -4362,7 +4398,7 @@ async def enrich_media_item(
         # Get MAL ID from raw data if AniList stored it
         mal_id_val = mal_id or raw.get("mal_id")
         await asyncio.sleep(0.3)
-        jikan_data = await fetch_jikan_data(
+        jikan_data = await fetch_mal_data(
             mal_id=mal_id_val,
             title=None if mal_id_val else title,
         )

@@ -50,6 +50,7 @@ class _LiveSettings:
     OPENSUBTITLES_USERNAME = None
     OPENSUBTITLES_PASSWORD = None
     OPENSUBTITLES_DAILY_BUDGET = 400
+    MAL_CLIENT_ID = None
 
 
 def _write(config):

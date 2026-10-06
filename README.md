@@ -272,7 +272,7 @@ the ones most people touch:
 - **Your history stays local.** SQLite and ChromaDB live under `data/`;
   that directory, `.env` and personal exports are all gitignored.
 - **Titles go out, behaviour does not.** Enrichment queries public
-  metadata APIs — TMDB, Wikipedia, Wikidata, Jikan, AniList, MusicBrainz,
+  metadata APIs — TMDB, Wikipedia, Wikidata, MyAnimeList (or Jikan), AniList, MusicBrainz,
   Last.fm, Deezer, Spotify — and most are searched by *name*, so those
   services learn which titles and artists your library holds. OMDb and
   OpenSubtitles are queried purely by id. What is never sent: what you

@@ -316,7 +316,7 @@ def test_upstream_fetchers_say_unavailable_not_missing():
         _FakeClient.status, _FakeClient.payload = 429, {}
         assert asyncio.run(me.search_anilist_by_title("Futurama")) is es.TRANSIENT
         assert asyncio.run(me.fetch_anilist_full(1)) is es.TRANSIENT
-        assert asyncio.run(me.fetch_jikan_data(mal_id=1)) is es.TRANSIENT
+        assert asyncio.run(me._fetch_jikan(mal_id=1)) is es.TRANSIENT
         _FakeCache.writes.clear()
         assert asyncio.run(mm.fetch_musicbrainz_artist("Solstice")) is es.TRANSIENT
         assert asyncio.run(mm.fetch_lastfm_artist("Solstice")) is es.TRANSIENT

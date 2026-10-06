@@ -214,6 +214,7 @@ class ReconfigureRequest(BaseModel):
     base_pitcher_model: Optional[str] = None
     tmdb_api_key: Optional[str] = None
     omdb_api_key: Optional[str] = None
+    mal_client_id: Optional[str] = None
     lastfm_api_key: Optional[str] = None
     spotify_client_id: Optional[str] = None
     spotify_client_secret: Optional[str] = None

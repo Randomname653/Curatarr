@@ -318,7 +318,7 @@ SECRET_KEYS = frozenset({
     "plex_token", "jwt_secret", "radarr_api_key", "sonarr_api_key",
     "lidarr_api_key", "tmdb_api_key", "omdb_api_key", "lastfm_api_key",
     "spotify_client_secret", "soulsync_api_key", "listenbrainz_token",
-    "opensubtitles_api_key", "opensubtitles_password",
+    "opensubtitles_api_key", "opensubtitles_password", "mal_client_id",
 })
 
 
@@ -352,6 +352,7 @@ def current_env_config() -> dict:
         "soulsync_api_key":      s.SOULSYNC_API_KEY or "",
         "tmdb_api_key":          s.TMDB_API_KEY or "",
         "omdb_api_key":          s.OMDB_API_KEY or "",
+        "mal_client_id":         s.MAL_CLIENT_ID or "",
         "lastfm_api_key":        s.LASTFM_API_KEY or "",
         "spotify_client_id":     s.SPOTIFY_CLIENT_ID or "",
         "spotify_client_secret": s.SPOTIFY_CLIENT_SECRET or "",
@@ -492,6 +493,7 @@ def write_env(config: dict) -> None:
         "# Metadata APIs",
         f"TMDB_API_KEY={config.get('tmdb_api_key', '')}",
         f"OMDB_API_KEY={config.get('omdb_api_key', '')}",
+        f"MAL_CLIENT_ID={_plain(config.get('mal_client_id', _live_settings().MAL_CLIENT_ID or ''))}",
         f"LASTFM_API_KEY={config.get('lastfm_api_key', '')}",
         f"SPOTIFY_CLIENT_ID={config.get('spotify_client_id', '')}",
         f"SPOTIFY_CLIENT_SECRET={config.get('spotify_client_secret', '')}",

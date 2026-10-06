@@ -42,6 +42,7 @@ a console:
 | Re-run Plex sync now | History → **Force sync** |
 | Start / resume enrichment | Knowledge Base → Maintenance tab → **Start Enrichment** |
 | Work through the backlog while you are away | Knowledge Base → Maintenance tab → hours → **Keep working** |
+| Anime scores and search beyond AniList | Settings → Integrations → **MyAnimeList client ID** (free at myanimelist.net/apiconfig, app type "other"; without it Curatarr asks Jikan) |
 | Recompute taste vectors | Knowledge Base → Maintenance tab → **Recompute taste vectors** |
 | Audit + self-heal metadata | Knowledge Base → Maintenance tab → **Audit metadata** |
 | Titles that need a human (wrong match, low confidence, repeatedly not found) | Knowledge Base → **Needs attention** tab: filter by reason, then **Search & pin**, **Retry now** or **Ignore** on the row |
