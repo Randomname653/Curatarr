@@ -2818,9 +2818,10 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             logger.info("Priority sort: %d fresh-import items moved to front of %d total",
                         fresh_count, len(items))
 
-        # Before the cut: the custodian's cycle reads it to tell a finished
-        # backlog from a budget that ran out.
-        set_state("enrichment_candidates", str(len(items)))
+        # What this run's budget leaves behind: the custodian's cycle stays
+        # due while it is above zero, and a sprint keeps enriching beside the
+        # model queue until it is zero.
+        set_state("enrichment_left", str(max(0, len(items) - limit) if limit else 0))
         if limit:
             items = items[:limit]
 

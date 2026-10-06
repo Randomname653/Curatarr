@@ -50,12 +50,15 @@ async def _fake_tick(**kw):
 
 
 dc.custodian_tick = _fake_tick
+launched: list = []
+dc._launch_sprint_enrichment = lambda: launched.append(dict(state))
 
 
 def _reset():
     state.clear()
     awake.clear()
     ticks.clear()
+    launched.clear()
     dc._awake_stop = None
     for q in dc._QUEUES:
         dc._queue_busy[q] = False
@@ -158,6 +161,81 @@ def test_the_sprint_ends_by_itself_once_nothing_is_left():
     assert dc.sprint_until() is None and awake[-1] is False and len(ticks) == 1
 
 
+def test_the_sprint_enriches_beside_the_model_queue():
+    """2026-10-06: the model queue sat on reception, the card at 3 %, while
+    16,000 items waited. A sprint runs the pipeline beside the queue."""
+    _reset()
+    sched._job_overdue = lambda job_id, cadence_h: False
+    dc.set_sprint(6)
+    dc._queue_busy[dc.QUEUE_MODEL] = True
+    state.update({"enrichment_left": "14384", "enrichment_running": "0"})
+    r = asyncio.run(dc.custodian_sprint_tick())
+    assert len(launched) == 1 and r["enrichment"] is True and ticks == []
+    state["enrichment_running"] = "1"                 # the chunk holds the lock
+    asyncio.run(dc.custodian_sprint_tick())
+    assert len(launched) == 1, "one chunk at a time"
+    state.update({"enrichment_running": "0", "enrichment_left": "0"})
+    asyncio.run(dc.custodian_sprint_tick())
+    assert len(launched) == 1, "nothing left behind, no chunk"
+
+
+def test_a_started_chunk_keeps_the_sprint_going():
+    """The chunk takes its lock on its first step, after the tick looked: the
+    tick must not read "no enrichment running" and end the sprint."""
+    _reset()
+    sched._job_overdue = lambda job_id, cadence_h: False
+    dc.set_sprint(6)
+    state.update({"enrichment_left": "120", "enrichment_running": "0"})
+    asyncio.run(dc.custodian_sprint_tick())
+    assert len(launched) == 1 and dc.sprint_until() is not None
+
+
+def test_in_a_sprint_the_queue_leaves_enrichment_to_the_chunks():
+    _reset()
+    import src.routers.enrichment as enr
+    calls = []
+
+    async def fake_run(uid, cats, source, limit):
+        calls.append(limit)
+
+    real = (enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id)
+    enr._run_enrichment = fake_run
+    app_state.acquire_state_lock = lambda key: True
+    dc._admin_id = lambda: 1
+    try:
+        dc.set_sprint(4)
+        state["enrichment_left"] = "9000"
+        assert asyncio.run(dc._run_enrichment_cycle(deep=True)) is False and calls == []
+        state["enrichment_left"] = "0"                # the chunks are through
+        assert asyncio.run(dc._run_enrichment_cycle(deep=True)) is True and calls == [2000]
+        dc.set_sprint(0)
+        state["enrichment_left"] = "9000"             # no sprint: the cycle works as before
+        assert asyncio.run(dc._run_enrichment_cycle(deep=False)) is False and calls == [2000, 400]
+    finally:
+        enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id = real
+
+
+def test_the_chunk_takes_the_lock_and_skips_music():
+    _reset()
+    import src.routers.enrichment as enr
+    calls = []
+
+    async def fake_run(uid, cats, source, limit):
+        calls.append((cats, source, limit))
+
+    locks = iter([True, False])
+    real = (enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id)
+    enr._run_enrichment = fake_run
+    app_state.acquire_state_lock = lambda key: next(locks)
+    dc._admin_id = lambda: 1
+    try:
+        asyncio.run(dc._sprint_enrichment())
+        asyncio.run(dc._sprint_enrichment())          # lock taken: nothing
+        assert calls == [(["movie", "show", "anime"], "both", dc._SPRINT_CHUNK)], calls
+    finally:
+        enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id = real
+
+
 def test_after_the_sprint_the_power_request_goes():
     _reset()
     dc._awake_stop = threading.Event()      # left from a sprint whose end has passed
@@ -179,12 +257,15 @@ def test_the_enrichment_cycle_stays_due_while_items_remain():
     app_state.acquire_state_lock = lambda key: True
     dc._admin_id = lambda: 1
     try:
-        for candidates, deep, done in ((2300, False, False), (400, False, True),
-                                       (2300, True, False), (1500, True, True)):
-            state["enrichment_candidates"] = str(candidates)
+        for left, deep, done in (("1900", False, False), ("0", False, True),
+                                 ("14384", True, False), (None, True, True),
+                                 ("not a number", False, True)):
+            state.pop("enrichment_left", None)
+            if left is not None:
+                state["enrichment_left"] = left
             got = asyncio.run(dc._run_enrichment_cycle(deep=deep))
-            assert got is done, (candidates, deep, got)
-        assert calls == [400, 400, 2000, 2000]
+            assert got is done, (left, deep, got)
+        assert calls == [400, 400, 2000, 2000, 400]
     finally:
         enr._run_enrichment, app_state.acquire_state_lock, dc._admin_id = real
 
@@ -217,7 +298,7 @@ def test_the_wiring():
     assert "custodian_sprint_tick,\n        IntervalTrigger(minutes=SPRINT_TICK_MINUTES)" in src
     router = (_ROOT / "src" / "routers" / "enrichment.py").read_text(encoding="utf-8")
     assert '@router.post("/custodian/sprint")' in router
-    cut = router.index('set_state("enrichment_candidates", str(len(items)))')
+    cut = router.index('set_state("enrichment_left", str(max(0, len(items) - limit) if limit else 0))')
     assert cut < router.index("items = items[:limit]", cut)
     kb = (_ROOT / "frontend" / "js" / "kb.js").read_text(encoding="utf-8")
     assert "act('startSprint', EL)" in kb and "act('stopSprint', EL)" in kb

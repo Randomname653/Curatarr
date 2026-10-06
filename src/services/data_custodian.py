@@ -31,8 +31,11 @@ two minutes instead of every thirty, with the deep budgets, and a Windows
 power request keeps the machine from idle-sleeping under it (the Balanced
 plan sleeps after 15 minutes without input, and a sleeping PC works through
 nothing). The background queue keeps its rhythm: its walkers pace
-themselves against outside APIs. The sprint ends at that time, on Stop, or
-by itself once no model work is due and no enrichment runs.
+themselves against outside APIs. Beside the queue the enrichment pipeline
+keeps going in large chunks of movies, shows and anime while items are left,
+so a queue task that mostly fetches (reception) no longer leaves the card
+idle. The sprint ends at that time, on Stop, or by itself once no model work
+is due and no enrichment runs.
 """
 from __future__ import annotations
 
@@ -83,6 +86,10 @@ _STARTED = time.monotonic()
 _SPRINT_KEY = "custodian_sprint_until"
 SPRINT_TICK_MINUTES = 2
 SPRINT_MAX_HOURS = 24
+# Music stays with the custodian's own cycle: its MusicBrainz lane (one
+# request a second) would hold a chunk open long after the GPU lanes are done.
+_SPRINT_CHUNK = 2000
+_SPRINT_CATEGORIES = ("movie", "show", "anime")
 _ES_CONTINUOUS, _ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
 _awake_stop: threading.Event | None = None
 _sprint_seen: datetime | None = None      # the end this process last announced
@@ -131,6 +138,10 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
     skipping. Respects the same lock as the manual /start endpoint."""
     from src.services.app_state import acquire_state_lock
     from src.routers.enrichment import _run_enrichment, CATEGORIES
+    if sprint_until() is not None and _enrichment_left() > 0:
+        # The sprint runs the pipeline beside the queue; this slot would
+        # only wait on its lock or hold the queue for hours.
+        return False
     uid = _admin_id()
     if uid is None:
         return True
@@ -143,11 +154,7 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
     # its limit stays due and the next tick carries on, like every other
     # partial task; it used to stamp 24 hours of silence after 400 of 2,300
     # items (2026-10-06).
-    from src.services.app_state import get_state
-    try:
-        return int(get_state("enrichment_candidates") or 0) <= limit
-    except ValueError:
-        return True
+    return _enrichment_left() == 0
 
 
 async def _run_omdb(deep: bool = False, task=None) -> bool:
@@ -998,6 +1005,34 @@ def _enrichment_running() -> bool:
         return False
 
 
+def _enrichment_left() -> int:
+    """Items the last enrichment run's budget left behind; 0 when it got to
+    all of them (or none was recorded)."""
+    from src.services.app_state import get_state
+    try:
+        return max(0, int(get_state("enrichment_left") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _sprint_enrichment() -> None:
+    """One chunk of the enrichment pipeline beside the model queue. It has
+    its own lock and yields to curator calls (llm_priority); without it the
+    card waited whenever the queue was on a task that mostly fetches (3 % for
+    minutes on 2026-10-06 while reception ran)."""
+    from src.services.app_state import acquire_state_lock
+    from src.routers.enrichment import _run_enrichment
+    uid = _admin_id()
+    if uid is None or not acquire_state_lock("enrichment_running"):
+        return
+    await _run_enrichment(uid, list(_SPRINT_CATEGORIES), "both", _SPRINT_CHUNK)
+
+
+def _launch_sprint_enrichment() -> None:
+    from src.services.scheduler import _track_task
+    _track_task(asyncio.create_task(_sprint_enrichment()))
+
+
 def _model_work_due() -> bool:
     from src.services.scheduler import _job_overdue
     try:
@@ -1027,9 +1062,16 @@ async def custodian_sprint_tick() -> dict:
         logger.info("[sprint] keep working until %s%s", _local(until),
                     ", the PC stays awake" if sys.platform == "win32" else "")
     _keep_awake(True)
-    if time.monotonic() - _STARTED < _SETTLE_SECONDS or _queue_busy[QUEUE_MODEL]:
+    if time.monotonic() - _STARTED < _SETTLE_SECONDS:
         return {"sprint": until.isoformat()}
-    if not (_enrichment_running() or _model_work_due()):
+    chunk = not _enrichment_running() and _enrichment_left() > 0
+    if chunk:
+        logger.info("[sprint] enrichment beside the model queue: %d item(s) left",
+                    _enrichment_left())
+        _launch_sprint_enrichment()
+    if _queue_busy[QUEUE_MODEL]:
+        return {"sprint": until.isoformat(), "enrichment": chunk}
+    if not (chunk or _enrichment_running() or _model_work_due()):
         set_sprint(0, "no model work due, no enrichment running")
         return {"sprint": None, "done": True}
     return await custodian_tick(deep=True, wait=False, quiet=True, queues=(QUEUE_MODEL,))

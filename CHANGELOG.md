@@ -313,9 +313,11 @@ source answered at all counts toward ending a lane.
 **Keep working** button with an hour picker. Until then the custodian looks
 for due GPU work every two minutes instead of every thirty, with the large
 budgets, and asks Windows not to idle-sleep, which it otherwise does after
-15 minutes without input. It ends at that time, on **Stop**, or by itself
-once nothing is due. The enrichment cycle also stays due while its budget
-leaves items behind, instead of resting a day after 400 of 2,300.
+15 minutes without input. Beside the other GPU work the enrichment
+pipeline keeps going in large chunks, so a task that mostly waits on the
+network no longer leaves the card idle. It ends at that time, on **Stop**,
+or by itself once nothing is due. The enrichment cycle also stays due while
+its budget leaves items behind, instead of resting a day after 400 of 2,300.
 
 **Dependencies.** PyJWT 2.15.0 (GHSA-42vr-xj54-vc7v; Curatarr only verifies
 signed tokens, so the pre-verification path was never used). oauthlib's two
