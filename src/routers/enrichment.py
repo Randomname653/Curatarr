@@ -2376,6 +2376,22 @@ def _clear_emb_caches(conn, item_keys: set) -> tuple:
     return len(doomed_emb), len(doomed_ts)
 
 
+def _counts_toward_abort(te) -> bool:
+    """Whether a transient failure counts toward the lane's abort streak.
+
+    The streak is for an outage: an upstream answering 429/5xx or not at
+    all. A fallback that is down while another source answered with a miss
+    is not one (2026-10-06: Jikan unreachable, AniList answering) — the item
+    still stays due, but the lane goes on with the items the other source
+    can serve, instead of five such items ending it for the run."""
+    sources = getattr(te, "sources", None)
+    if not sources:
+        return True
+    statuses = [st.get("status") for k, st in sources.items()
+                if not str(k).startswith("_") and isinstance(st, dict)]
+    return all(s in ("transient", "skipped") for s in statuses)
+
+
 async def _run_enrichment(user_id: int, categories: list, source: str,
                           limit: Optional[int], force: bool = False,
                           fast_only: bool = False,
@@ -2964,6 +2980,12 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                                 main_task, f"⚠ {pcat}: {reason}", level="warn",
                             )
             except TMDBTransientError as te:
+                if not _counts_toward_abort(te):
+                    logger.info(
+                        "[enrichment][%s] '%s' skipped, stays due: %s, another "
+                        "source answered with a miss", pcat, canonical,
+                        te.body_snippet[:80])
+                    return
                 _transient_streak[pcat] += 1
                 logger.warning(
                     "[enrichment][%s] TMDB transient (HTTP %d) on '%s' — "

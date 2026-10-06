@@ -3603,11 +3603,7 @@ async def fetch_and_prepare_raw(
     if media_type != "movie" and tvdb_id and not _pin.get("tmdb_id"):
         tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id, cache=cache)
 
-    is_anime = (
-        media_type == "anime"
-        or sonarr_series_type == "anime"
-        or (sonarr_series_type is None and _looks_like_anime(title))
-    )
+    is_anime = _is_anime_item(media_type, sonarr_series_type)
 
     id_key = anilist_id or anidb_id or tmdb_id or tvdb_id or title[:40]
     cache_key = f"enriched:{media_type}:{id_key}"
@@ -4149,11 +4145,7 @@ async def enrich_media_item(
 
     # Cache key: prefer stable IDs, fall back to title
     # Determine if this is anime first — needed for cache key and routing
-    is_anime = (
-        media_type == "anime"
-        or sonarr_series_type == "anime"
-        or (sonarr_series_type is None and _looks_like_anime(title))
-    )
+    is_anime = _is_anime_item(media_type, sonarr_series_type)
 
     id_key = anilist_id or anidb_id or tmdb_id or tvdb_id or title[:40]
     cache_key = f"enriched:{media_type}:{id_key}"
@@ -4545,6 +4537,21 @@ def _looks_like_anime(title: str) -> bool:
     if re.search(r"\w:\w", title):
         return True
     return False
+
+
+def _is_anime_item(media_type: str, sonarr_series_type: Optional[str]) -> bool:
+    """Anime by the library's own filing (the Anime section, Sonarr's anime
+    series type), never by the title's words.
+
+    The title guess used to decide for every movie (a movie has no Sonarr
+    type) and every show outside Sonarr: "to", "no", "de" and "san" are
+    particles in ANIME_HINTS and ordinary words in English titles, so 195 of
+    7,100 movies and 30 shows went to AniList + Jikan and TMDB was never
+    asked: "Back to the Future", "How to Train Your Dragon". 120 of those
+    movies never got a profile, stayed first in line as fresh imports, and
+    with Jikan unreachable every run aborted the movie lane on them within a
+    minute while 2,000 movies waited behind (2026-10-02 .. 10-06)."""
+    return media_type == "anime" or sonarr_series_type == "anime"
 
 
 _MATCH_STOPS = {"the", "a", "an", "of", "and", "in", "on", "at", "to", "for", "is", "no"}

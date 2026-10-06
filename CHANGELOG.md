@@ -299,6 +299,16 @@ again after CodeQL found the first version quadratic on long runs of spaces.
 The test battery logs to `data/logs/tests.log`, so the app's own log shows
 only the app.
 
+**Movies are not anime because their title says "to".** A title guess
+decided for every movie whether it was anime, and "to", "no", "de" and
+"san" counted as Japanese particles: 195 movies, *Back to the Future*
+among them, went to the anime catalogues instead of TMDB and 120 never got
+a profile. With Jikan unreachable each of them failed as an outage, so
+five in a row ended the movie lane of every run within a minute while
+2,000 movies waited behind them. The library's own filing decides now
+(the Anime section, Sonarr's anime type), and only an outage where no
+source answered at all counts toward ending a lane.
+
 **No inline styles.** The Content-Security-Policy's `style-src` is
 `'self'`: the 278 inline style attributes in the markup and the module
 templates became classes (a utilities block named by property, a handful
