@@ -14,6 +14,7 @@ presenting unknown processes to the user for classification.
 """
 
 import logging
+import re
 from typing import Optional
 
 import psutil
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 # It is NOT present when Steam is merely open — only when a game is active.
 GAME_LAUNCHER_SIGNALS: frozenset[str] = frozenset({
     "gameoverlayui.exe",          # Steam in-game overlay (best signal)
+    "gameoverlayui64.exe",        # the same since Steam went 64-bit (2026-10-07:
+                                  # it sat in the "not a game" list, no signal)
     "gog galaxy notifications.exe",  # GOG Galaxy in-game
     "eaoverlayhost.exe",          # EA overlay (in-game)
 })
@@ -98,7 +101,7 @@ _cached_targets: Optional[frozenset[str]] = None
 _cached_time: float = 0
 _cached_game_pid: Optional[int] = None
 
-_cached_classified: Optional[frozenset[str]] = None
+_cached_classified: Optional[tuple] = None   # (classified names, ignored families)
 _cached_classified_time: float = 0
 
 
@@ -334,54 +337,85 @@ async def unload_llm_models() -> list[str]:
     return unloaded
 
 
-def get_unknown_processes() -> list[dict]:
-    """
-    Return running processes that are neither in SYSTEM_PROCESSES nor
-    previously classified by the user. These are candidates to show in
-    the "Is this a game?" UI prompt.
-    """
-    import time
-    from src.database.connection import get_db_session
-    from src.database.models import GameProcess
+# ── Asking "is this a game?" (2026-10-07) ───────────────────────────────────
+# Every running exe nobody had classified got a toast, whether it touched the
+# card or not: 530 "not a game" answers by October, 95 of them versions of
+# seven programs (68 InstallShield extractors _is####.exe alone) and 56 more
+# installers, updaters and crash handlers, plus awk.exe, cut.exe, ffmpeg.exe.
+# A game holds gigabytes; a program this small needs no card freed for it,
+# and a busy card is caught by the GPU-pressure gate whatever its name.
+PROMPT_MIN_RSS_MB = 500
+_NEVER_ASK = re.compile(r"setup|install|update|unins|redist|(?:^|[^a-z])patch"
+                        r"|crash(?:pad|handler|_handler|report)|^_is")
+_HEXRUN = re.compile(r"[0-9a-f]*\d[0-9a-f]*")
+_HEXSEQ = re.compile(r"#(?:[._\-]?#)+")
 
+
+def process_family(name: str) -> str:
+    """The name with version numbers and hashes folded: _is4993.exe and
+    _is3b83.exe are _is#.exe, vortex-setup-2.0.1.exe is vortex-setup-#.exe.
+    A "not a game" answer covers its whole family; games stay exact, since
+    fallout4.exe and fallout76.exe fold alike."""
+    s = (name or "").lower()
+    if s.endswith(".exe"):
+        s = s[:-4]
+    return _HEXSEQ.sub("#", _HEXRUN.sub("#", s)) + ".exe"
+
+
+def _classified() -> tuple:
+    """(every classified name, the families of the "not a game" ones),
+    cached 60 s; invalidate_process_cache() drops it after an answer."""
+    import time
     global _cached_classified, _cached_classified_time
     now = time.time()
-
     if _cached_classified is None or now - _cached_classified_time > 60:
         try:
+            from src.database.connection import get_db_session
+            from src.database.models import GameProcess
             with get_db_session() as db:
-                cls_set = {
-                    process_name.lower()
-                    for (process_name,) in db.query(GameProcess.process_name).all()
-                }
-                _cached_classified = frozenset(cls_set)
+                rows = db.query(GameProcess.process_name, GameProcess.is_game).all()
+            _cached_classified = (frozenset(n.lower() for n, _ in rows),
+                                  frozenset(process_family(n) for n, g in rows if not g))
         except Exception:
-            _cached_classified = frozenset()
+            _cached_classified = (frozenset(), frozenset())
         _cached_classified_time = now
+    return _cached_classified
 
-    classified = _cached_classified
+
+def get_unknown_processes() -> list[dict]:
+    """Running programs worth the question "is this a game?": not a Windows
+    or desktop process, not classified (a "not a game" answer covers the
+    whole family), not an installer, updater or crash handler, and holding
+    at least PROMPT_MIN_RSS_MB of memory."""
+    classified, ignored_families = _classified()
 
     extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
     extra_set = {p.strip().lower() for p in extra.split(",") if p.strip()} if extra else set()
 
     known = SYSTEM_PROCESSES | GAME_LAUNCHER_SIGNALS | classified | extra_set
+    min_rss = PROMPT_MIN_RSS_MB * 1024 * 1024
 
     seen: set[str] = set()
+    skipped: set[str] = set()
     unknown: list[dict] = []
     try:
         # No "exe" in the attrs: the loop filters on the NAME alone, and
         # resolving each process's executable path is an extra OS call per
         # process that nothing here reads.
-        for proc in psutil.process_iter(["name", "pid"]):
+        for proc in psutil.process_iter(["name", "pid", "memory_info"]):
             name = proc.info.get("name")
             if not name:
                 continue
             nl = name.lower()
-            if nl in known or nl in seen:
-                continue
             # Only surface .exe files (Windows executables, not background helpers)
-            if not nl.endswith(".exe"):
+            if nl in known or nl in seen or nl in skipped or not nl.endswith(".exe"):
                 continue
+            if _NEVER_ASK.search(nl) or process_family(nl) in ignored_families:
+                skipped.add(nl)
+                continue
+            mem = proc.info.get("memory_info")    # None when access is denied
+            if mem is None or mem.rss < min_rss:
+                continue                          # another instance may be bigger
             seen.add(nl)
             unknown.append({"name": name, "pid": proc.info.get("pid")})
     except Exception as e:

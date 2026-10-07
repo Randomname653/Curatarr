@@ -329,6 +329,15 @@ waits. An arr that is not configured no longer serves its old list, so
 switching Lidarr off moves music to the Plex index at once, and the
 SoulSync catalogue sync skips its nine-minute walk without Lidarr.
 
+**Fewer "is this a game?" questions, and Steam games recognised again.**
+Every running program nobody had classified got the question, so the "not a
+game" list had grown to 530 names, 95 of them versions of the same seven
+installers and updaters (68 InstallShield extractors alone). One answer now
+covers every version of a program, installers, updaters and crash handlers
+are never asked about, and neither is anything holding less than 500 MB. Steam's
+overlay, the best sign that a game runs, had moved to a 64-bit process the
+detection did not know.
+
 **Clean genres from SoulSync.** SoulSync hands out its artist genres as a
 JSON list cut at the commas and mixed with clean values (`'["Comedy'`,
 `'Comedy Rock"]'`), for 100 of 120 artists in a sample. Since SoulSync's
