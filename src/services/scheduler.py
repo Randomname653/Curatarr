@@ -609,6 +609,11 @@ async def job_arr_sync():
 
         with get_db_session() as db:
             added = 0
+            # Proposals of an arr switched off since (Lidarr, 2026-10-06) can
+            # never be carried out; the step below only supersedes pending
+            # rows of re-proposed categories, so limbo ones stayed for good.
+            from src.routers.recommendations import _retire_switched_off
+            _retire_switched_off(db, user_id)
             for cat, cat_proposals in by_cat.items():
                 svc = _CAT_TO_SVC.get(cat, "")
                 # Pass 90b: SUPERSEDE stale pending rows instead of

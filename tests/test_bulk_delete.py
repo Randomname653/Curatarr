@@ -75,6 +75,11 @@ async def fake_analyze(user_id, title, comment, media_category="show"):
 
 recs.get_db_session = fake_db_session
 recs._probe_arr = fake_probe
+# "Unreachable" means set up but not answering: an arr with no URL at all is
+# switched off and retires its proposals instead (2026-10-07), so the
+# scenario sets sonarr up, the same on every machine.
+from src.config import settings  # noqa: E402
+settings.SONARR_URL, settings.SONARR_API_KEY = "http://sonarr.test", "test-key"
 recs._execute_arr_delete = fake_execute
 recs._latest_curator_stance_for_proposal = fake_stance
 em.analyze_deletion_comment = fake_analyze   # runner imports it lazily

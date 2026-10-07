@@ -1068,6 +1068,7 @@ async def get_deletion_proposals(
                 {"status": "superseded", "resolved_at": datetime.utcnow()},
                 synchronize_session=False,
             )
+            _retire_switched_off(dbs, user.id)
 
             saved = []
             for p in enriched:
@@ -1277,6 +1278,43 @@ def _transition_if_open(db: Session, p, new_status: str, **extra) -> bool:
     return n == 1
 
 
+def _service_configured(service: str) -> bool:
+    """Whether the service a proposal was made for is set up at all. A
+    proposal from a service switched off since (Lidarr, 2026-10-06) can never
+    be carried out; _probe_arr called it "unreachable" and parked it in limbo
+    for good."""
+    if service == "plex":
+        return bool(settings.effective_plex_url and settings.effective_plex_token)
+    url, key = {"radarr": (settings.RADARR_URL, settings.RADARR_API_KEY),
+                "sonarr": (settings.SONARR_URL, settings.SONARR_API_KEY),
+                "lidarr": (settings.LIDARR_URL, settings.LIDARR_API_KEY)}.get(service, (None, None))
+    return bool(url and key)
+
+
+def _switched_off_message(service: str) -> str:
+    name = (service or "?").capitalize()
+    if service == "lidarr":
+        return ("Lidarr is switched off, so this Lidarr proposal cannot be carried out. "
+                "Nothing was deleted; the next deletion scan proposes music from the Plex index.")
+    return (f"{name} is switched off, so this proposal cannot be carried out. "
+            f"Nothing was deleted; it comes back once {name} is connected again.")
+
+
+def _retire_switched_off(db: Session, user_id: int) -> int:
+    """Retire the open proposals, limbo included, of arrs that are no longer
+    set up; returns how many. A scan only supersedes the pending rows of the
+    categories it proposes again, so limbo rows of a switched-off arr stayed."""
+    gone = [s for s in ("radarr", "sonarr", "lidarr") if not _service_configured(s)]
+    if not gone:
+        return 0
+    return (db.query(DeletionProposal)
+            .filter(DeletionProposal.user_id == user_id,
+                    DeletionProposal.status.in_(_OPEN_STATUSES),
+                    DeletionProposal.service.in_(gone))
+            .update({"status": "superseded", "resolved_at": datetime.utcnow()},
+                    synchronize_session=False))
+
+
 def _protection_for(db: Session, user_id: int, p):
     """The ProtectedMedia row that covers this proposal, or None.
 
@@ -1339,6 +1377,11 @@ async def approve_deletion(
 
     # Probe before committing to a destructive, irreversible action.
     reachable = await _probe_arr(p.service)
+    if not reachable and not _service_configured(p.service):
+        # Switched off, not unreachable: limbo would keep it for good.
+        msg = _switched_off_message(p.service)
+        _transition_if_open(db, p, "superseded", resolved_at=datetime.utcnow())
+        return {"ok": False, "limbo": False, "status": p.status, "error": msg}
     if not reachable:
         # Keep the proposal alive in "limbo" — the user can retry at any time.
         _transition_if_open(db, p, "limbo")
@@ -1593,6 +1636,14 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                     skipped += 1
                     task_monitor.update(task, processed=i,
                                         message=f"{title}: skipped — {blocked}",
+                                        level="warn")
+                    continue
+                if not reachable.get(p.service) and not _service_configured(p.service):
+                    _transition_if_open(db, p, "superseded", resolved_at=datetime.utcnow())
+                    skipped += 1
+                    task_monitor.update(task, processed=i,
+                                        message=f"{title}: {p.service} is switched off — "
+                                                f"retired, NOT deleted",
                                         level="warn")
                     continue
                 if not reachable.get(p.service):

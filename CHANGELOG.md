@@ -329,6 +329,13 @@ waits. An arr that is not configured no longer serves its old list, so
 switching Lidarr off moves music to the Plex index at once, and the
 SoulSync catalogue sync skips its nine-minute walk without Lidarr.
 
+**Proposals of a switched-off service are retired.** With Lidarr switched
+off, its open deletion proposals could never be carried out: a delete
+reported "Lidarr is currently unreachable" and parked the proposal in limbo
+for good, and the daily scan only replaces pending ones. A delete now says
+the service is switched off and retires the proposal (nothing is deleted),
+and the scan retires the rest; music comes back from the Plex index.
+
 **A restart no longer hangs on the custodian.** The enrichment run swallows
 a cancel and returns, so when a restart caught the custodian in an
 enrichment step, its queue went on with the next tasks after "shutting
