@@ -257,6 +257,7 @@ async def proxy_image(
     # 1. Parse + scheme + host check
     try:
         parsed = httpx.URL(src)
+        src = str(parsed)
     except Exception:
         raise HTTPException(400, "Invalid URL")
 
