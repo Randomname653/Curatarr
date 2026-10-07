@@ -329,6 +329,13 @@ waits. An arr that is not configured no longer serves its old list, so
 switching Lidarr off moves music to the Plex index at once, and the
 SoulSync catalogue sync skips its nine-minute walk without Lidarr.
 
+**A restart no longer hangs on the custodian.** The enrichment run swallows
+a cancel and returns, so when a restart caught the custodian in an
+enrichment step, its queue went on with the next tasks after "shutting
+down" and the old process never ended; on Windows the reloader waits for it
+without a limit. The queue now stops before its next task once it has been
+cancelled.
+
 **Fewer "is this a game?" questions, and Steam games recognised again.**
 Every running program nobody had classified got the question, so the "not a
 game" list had grown to 530 names, 95 of them versions of the same seven

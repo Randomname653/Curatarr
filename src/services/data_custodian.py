@@ -775,6 +775,16 @@ def _store_report(queue: str, report: dict) -> None:
         pass
 
 
+def _cancel_requested() -> bool:
+    """A cancel this queue's task received that a runner swallowed.
+    _run_enrichment catches CancelledError and returns, so on 2026-10-07 a
+    reload cancelled the ARR prefetch and the queue went on with three more
+    tasks after "shutting down"; uvicorn's reloader waits for the old worker
+    without a limit on Windows, and the app stayed down until it was killed."""
+    task = asyncio.current_task()
+    return bool(task is not None and task.cancelling())
+
+
 async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
     """One queue's run: its overdue tasks in priority order, one at a time."""
     from src.services.scheduler import _job_overdue, _record_job_run
@@ -784,6 +794,8 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
     started = time.time()
     try:
         for t in tasks:
+            if _cancel_requested():
+                raise asyncio.CancelledError
             _queue_pending[queue].discard(t.job_id)
             mon = None
             try:
