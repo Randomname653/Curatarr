@@ -260,6 +260,11 @@ async def proxy_image(
     except Exception:
         raise HTTPException(400, "Invalid URL")
 
+    # Prevent parser differential SSRF and cache poisoning: reassign the raw user input
+    # to the normalized URL string explicitly parsed and validated here. This guarantees
+    # the exact same URL is used for cache keys, single-flight locks, and HTTP fetches.
+    src = str(parsed)
+
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(400, "Only http(s) schemes accepted")
     if not _host_allowed(parsed.host or ""):
