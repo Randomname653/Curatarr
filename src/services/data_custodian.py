@@ -398,6 +398,15 @@ async def _run_music_catalog_sync(deep: bool = False, task=None) -> bool:
     return bool(res.get("ok"))
 
 
+async def _run_deletion_returns(task=None) -> bool:
+    """Deleted items back in the library (src/services/deletion_returns.py):
+    reads the arr libraries and the Plex music index, records matches on
+    Curatarr's own proposal rows. No model, no writes anywhere else."""
+    from src.services.deletion_returns import run_daily
+    res = await run_daily(task=task)
+    return bool(res.get("ok"))
+
+
 async def _run_raw_refresh(deep: bool = False, task=None) -> bool:
     """LLM-free raw-cache warmer (owner ask): the cache is read-through, so
     rows nobody queries silently age out. This re-pulls pure API data for
@@ -645,6 +654,10 @@ def _registry() -> list[Task]:
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
              _run_music_catalog_sync, takes_task=True),
+        # Deleted items that came back (an arr list, a request, SoulSync's
+        # playlist sync): library reads only, shown in the Deletions view.
+        Task("deletion_returns", "Deleted items back in the library", 24.0,
+             _run_deletion_returns, takes_task=True),
         # Household collections: the 27B designs rotating themed shelves from
         # the OWNED library (section-global — one set via the owner token).
         Task("plex_collections", "Curatarr collections", 168.0,

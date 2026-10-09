@@ -257,6 +257,16 @@ class DeletionProposal(Base):
     # surfaced as a proposal but flagged in the UI as a soft "your call" review,
     # not a hard cut. Legacy taste-mismatch proposals are never stagnant.
     stagnant = Column(Boolean, default=False)
+    # A deleted artist's ban in SoulSync (music only): JSON {ok, id, at,
+    # error, mbid}. Set by the delete; the daily returns check retries it
+    # until it holds, and never touches it again once it did.
+    soulsync_ban = Column(Text, nullable=True)
+    # Deleted, then in the library again (src/services/deletion_returns.py):
+    # when the library added it back, and JSON {kind, service, media_id,
+    # title, size_mb, match, state}; state "open" until the owner keeps it
+    # or deletes it again.
+    returned_at = Column(DateTime, nullable=True)
+    returned_info = Column(Text, nullable=True)
 
     __table_args__ = (
         Index("idx_dp_user_status", "user_id", "status"),

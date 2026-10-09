@@ -156,6 +156,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     b.classList.toggle('active', btn ? b === btn : match);
   });
   const el = document.getElementById('del-content');
+  _loadReturned(category);
 
   const recentParams = _delRecentParams();
   const recentActive = recentParams.length > 0;
@@ -279,6 +280,90 @@ export async function startArrPreEnrich(btn) {
     toast(_errMsg(e) || 'Failed to start enrichment', 'danger');
     btnDone(btn);
   }
+}
+
+// ── Back after deletion ───────────────────────────────────────────────────────
+// Titles Curatarr deleted that are in the library again (an arr list, a
+// request, SoulSync's playlist sync). The daily custodian check finds them
+// (src/services/deletion_returns.py); Delete again or Keep closes each one.
+export async function _loadReturned(category) {
+  let items = [];
+  try {
+    const q = category ? `?category=${encodeURIComponent(category)}` : '';
+    items = (await api(`/api/recommendations/deletions/returned${q}`)).items || [];
+  } catch { items = []; }
+  _renderReturned(items);
+}
+
+const _day = iso => (iso ? iso.slice(0, 10) : '?');
+
+export function _renderReturned(items) {
+  document.getElementById('del-returned')?.remove();
+  if (!items.length) return;
+  const box = document.createElement('section');
+  box.id = 'del-returned';
+  box.className = 'section';
+  const rows = items.map(it => `
+    <div class="panel-item" data-title="${escAttr(it.title)}">
+      <div class="panel-item-head">
+        <div class="panel-item-title">${esc(it.title)} <span class="badge muted badge-sm">${esc(it.category || '')}</span>${it.match === 'title' ? '<span class="badge muted badge-sm" title="Matched by its unique title: the old proposal carried no TMDb/TVDb id">by title</span>' : ''}</div>
+        <div class="panel-actions">
+          <button type="button" class="btn btn-danger btn-sm" ${act('deleteReturned', it.id, EL)}>Delete again</button>
+          <button type="button" class="btn btn-secondary btn-sm" ${act('keepReturned', it.id, EL)}>Keep</button>
+        </div>
+      </div>
+      <div class="panel-item-meta">${esc(it.service || '')} · deleted ${_day(it.deleted_at)} · ${it.kind === 'returned' ? `back since ${_day(it.back_since)}` : 'still in the library'}${it.size_gb ? ` · ${it.size_gb} GB` : ''}</div>
+    </div>`).join('');
+  box.innerHTML = `
+    <div class="section-head"><h3>Back after deletion <span class="badge amber badge-sm">${items.length}</span></h3>
+      <span class="section-hint">Curatarr deleted these and they are in your library again: an arr list, a request or SoulSync's playlist sync brought them back.</span></div>
+    <div class="section-body">${rows}</div>`;
+  const delContent = document.getElementById('del-content');
+  delContent.parentNode.insertBefore(box, delContent);
+}
+
+function _returnedRowGone(row) {
+  row?.remove();
+  const box = document.getElementById('del-returned');
+  if (!box) return;
+  const n = box.querySelectorAll('.panel-item').length;
+  if (!n) { box.remove(); return; }
+  const badge = box.querySelector('.section-head .badge');
+  if (badge) badge.textContent = String(n);
+}
+
+export async function deleteReturned(id, btn) {
+  const row = btn.closest('.panel-item');
+  const title = row?.dataset.title || 'this item';
+  const res = await confirmDialog({
+    title: 'Delete again', danger: true, countdown: 3, confirmLabel: 'Delete',
+    body: _deleteBody(title, 'It came back after Curatarr deleted it. This removes it from your library again and deletes the files. This cannot be undone.'),
+  });
+  if (!res.ok) return;
+  btnBusy(btn, 'Deleting…');
+  try {
+    const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/returned/delete`, 'POST');
+    _returnedRowGone(row);
+    if (!r.ok) {
+      // The new proposal stays in the list (parked, protected, or failed).
+      toast(r.error || `"${title}" was not deleted; its proposal waits in the list`, 'amber', {ms: 8000});
+      state._delProposalsAll = null;
+      loadDeletions(state.currentDelCategory);
+      return;
+    }
+    toast(`Deleted "${title}" again`, 'success');
+    if (r.warning) toast(r.warning, 'amber', {ms: 10000});
+  } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
+}
+
+export async function keepReturned(id, btn) {
+  const row = btn.closest('.panel-item');
+  btnBusy(btn, 'Keeping…');
+  try {
+    await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/returned/keep`, 'POST');
+    _returnedRowGone(row);
+    toast(`Kept "${row?.dataset.title || 'it'}"; it is not reported again`, 'success');
+  } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 
 // The body every delete confirmation shares: what goes, and what that means.
@@ -407,6 +492,8 @@ export async function approveDelete(id, btn) {
     card?.classList.add('done');
     btnDone(btn, 'Deleted', {keepDisabled: true});
     toast(`Deleted "${title}"`, 'success');
+    // Music: SoulSync did not take the ban, so its playlist sync may fetch it again.
+    if (r.warning) toast(r.warning, 'amber', {ms: 10000});
     // Pass 22: no post-delete "tell Curatarr more?" nag — the reason was
     // asked once. Discuss stays clickable on the faded card for anyone who
     // genuinely wants to elaborate.

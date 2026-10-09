@@ -336,6 +336,25 @@ for good, and the daily scan only replaces pending ones. A delete now says
 the service is switched off and retires the proposal (nothing is deleted),
 and the scan retires the rest; music comes back from the Plex index.
 
+**Deleted titles that come back are shown.** An arr list, a request or
+SoulSync's playlist sync can put a deleted title back. A daily check looks
+every deleted proposal up in its library, by TMDb, TVDb or MusicBrainz id,
+or by a unique title added after the delete (same-named films are common),
+and the Deletions view lists the returns under "Back after deletion" with
+Delete again and Keep.
+
+**A deleted artist is blocked in SoulSync.** SoulSync's playlist sync
+compares against Plex, so a liked song of a deleted artist went back on its
+wishlist at the next sync. Deleting music now puts the artist on SoulSync's
+blocklist, reads the entry back and warns when it did not hold. This is
+Curatarr's only write to SoulSync; it blocks downloads and never starts one.
+
+**SoulSync follows and likes shape music taste.** An artist followed in
+SoulSync counts like a 5-star rating in the music taste vector, even before
+the first play, and is never proposed for deletion; a Spotify like still on
+SoulSync's wishlist counts like 4 stars. SoulSync's retry batches and
+discovery mixes stay out.
+
 **A restart no longer hangs on the custodian.** The enrichment run swallows
 a cancel and returns, so when a restart caught the custodian in an
 enrichment step, its queue went on with the next tasks after "shutting

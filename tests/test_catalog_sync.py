@@ -192,8 +192,12 @@ dc = (root / "src/services/data_custodian.py").read_text(encoding="utf-8")
 check("nightly catalog-sync task registered (24h, no LLM)",
       '"music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0' in dc)
 ss = (root / "src/services/soulsync_client.py").read_text(encoding="utf-8")
-check("soulsync stays read-only (GETs only, no POST anywhere)",
-      "c.post(" not in ss and ".post(" not in ss)
+# Read-only but for one write the owner agreed to on 2026-10-09: a deleted
+# artist goes on SoulSync's blocklist. Never the download trigger.
+check("soulsync: the one POST is the blocklist ban, never the download trigger",
+      ss.count(".post(") == 1 and 'c.post(_root() + "/api/blocklist"' in ss
+      and '"/request"' not in ss and "'/request'" not in ss
+      and ".put(" not in ss and ".patch(" not in ss and ".delete(" not in ss)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

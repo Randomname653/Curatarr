@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from typing import Optional
 
 import httpx
@@ -32,14 +33,21 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
+# A ban makes SoulSync look the artist up at Spotify, iTunes, Deezer and
+# MusicBrainz before it answers, so the ban holds on every source at once.
+_BAN_TIMEOUT = 60.0
 
 
 def _configured() -> bool:
     return bool(settings.SOULSYNC_URL and settings.SOULSYNC_API_KEY)
 
 
+def _root() -> str:
+    return (settings.SOULSYNC_URL or "").rstrip("/")
+
+
 def _base() -> str:
-    return (settings.SOULSYNC_URL or "").rstrip("/") + "/api/v1"
+    return _root() + "/api/v1"
 
 
 def _headers() -> dict:
@@ -50,7 +58,12 @@ _DASHES = str.maketrans({c: "-" for c in "‐‑‒–—−"})
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower().translate(_DASHES)).strip()
+    s = unicodedata.normalize("NFKD", (s or "").lower().translate(_DASHES))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+norm_name = _norm
 
 
 def _unfragment(piece: str, names: bool) -> str:
@@ -208,3 +221,113 @@ async def album_info(artist_name: str, album_title: str) -> Optional[dict]:
         "track_count": hit.get("track_count"),
         "musicbrainz_release_id": hit.get("musicbrainz_release_id") or None,
     }
+
+
+async def watchlist_artists() -> Optional[list[str]]:
+    """Names of the artists the owner follows in SoulSync (its watchlist
+    picks up their new releases), or None when SoulSync is not set up or did
+    not answer; an empty list is a real answer."""
+    if not _configured():
+        return None
+    data = await _get("/watchlist")
+    if not isinstance(data, dict):
+        return None
+    return [a.get("artist_name") for a in data.get("artists") or [] if a.get("artist_name")]
+
+
+LIKED_SONGS = "Liked Songs"
+
+
+async def liked_song_artists(max_pages: int = 25) -> Optional[list[str]]:
+    """Artists of the owner's Spotify likes that SoulSync still has on its
+    wishlist (liked, not in the library yet), one name per track, or None
+    when SoulSync did not answer. Only "Liked Songs" counts: the rest of the
+    wishlist is SoulSync's own retry batches ("Wishlist (Auto - ...)", the
+    first source is lost) and its discovery mixes, which are its picks."""
+    if not _configured():
+        return None
+    names: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            for page in range(1, max_pages + 1):
+                r = await c.get(_base() + "/wishlist", headers=_headers(),
+                                params={"page": page, "limit": 200})
+                if r.status_code != 200:
+                    return None
+                body = r.json() or {}
+                for t in (body.get("data") or {}).get("tracks") or []:
+                    if (t.get("source_type") == "playlist"
+                            and (t.get("source_info") or {}).get("playlist_name") == LIKED_SONGS
+                            and t.get("artist_name")):
+                        names.append(t["artist_name"])
+                if not (body.get("pagination") or {}).get("has_next"):
+                    break
+    except Exception as e:
+        logger.debug("[soulsync] wishlist read failed: %s", e)
+        return None
+    return names
+
+
+def writes_allowed() -> bool:
+    """SoulSync is set up and this is the app, not a test: a battery run on
+    a machine whose .env points at the real SoulSync must never ban anything
+    there (a test injects its own client instead)."""
+    from src.log_setup import is_test_process
+    return _configured() and not is_test_process()
+
+
+async def _banned_artist_id(c: httpx.AsyncClient, name: str) -> Optional[int]:
+    """The blocklist row id of this artist, None when it is not banned.
+    Raises when SoulSync does not answer."""
+    r = await c.get(_root() + "/api/blocklist", headers=_headers(),
+                    params={"entity_type": "artist"})
+    r.raise_for_status()
+    want = _norm(name)
+    for e in (r.json() or {}).get("entries") or []:
+        if _norm(e.get("name")) == want:
+            return e.get("id")
+    return None
+
+
+async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
+                       client: Optional[httpx.AsyncClient] = None) -> dict:
+    """Put an artist on SoulSync's blocklist and read it back.
+
+    The blocklist sits where every automatic wishlist add passes (watchlist,
+    discography backfill, repair jobs, playlist sync), and an artist entry
+    matches by any source id OR the name, so a name alone holds at once.
+    The route belongs to SoulSync's web UI, not its documented v1 API; the
+    API key is accepted there (profile 1, the only one), and the read-back
+    is what tells us it still works after a SoulSync update.
+
+    Returns {"ok", "id", "error"}; "skipped": True when no write may happen
+    (writes_allowed) and no client was injected."""
+    if not name:
+        return {"ok": False, "id": None, "error": "no artist name"}
+    if client is None and not writes_allowed():
+        return {"ok": False, "id": None, "error": "SoulSync writes are off here", "skipped": True}
+    own = client is None
+    c = client or httpx.AsyncClient(timeout=_BAN_TIMEOUT)
+    try:
+        banned = await _banned_artist_id(c, name)
+        if banned:
+            return {"ok": True, "id": banned, "error": None}
+        body = {"entity_type": "artist", "name": name}
+        if musicbrainz_id:
+            body.update(source="musicbrainz", source_id=musicbrainz_id)
+        r = await c.post(_root() + "/api/blocklist", headers=_headers(), json=body)
+        if r.status_code != 200 or not (r.json() or {}).get("success"):
+            return {"ok": False, "id": None,
+                    "error": f"SoulSync refused the ban (HTTP {r.status_code})"}
+        banned = await _banned_artist_id(c, name)
+        if not banned:
+            return {"ok": False, "id": None,
+                    "error": "the ban did not show up on SoulSync's blocklist"}
+        logger.info("[soulsync] %r is on the blocklist (entry %s)", name, banned)
+        return {"ok": True, "id": banned, "error": None}
+    except Exception as e:
+        return {"ok": False, "id": None,
+                "error": f"SoulSync could not be reached ({type(e).__name__})"}
+    finally:
+        if own:
+            await c.aclose()

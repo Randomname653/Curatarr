@@ -123,6 +123,10 @@ def _migrate_columns() -> None:
         ("deletion_proposals",    "tmdb_id", "INTEGER"),
         # RESONANCE 4-pillar judge: STAGNANT proposals flagged as soft "your call".
         ("deletion_proposals",    "stagnant", "BOOLEAN DEFAULT 0"),
+        # SoulSync ban of a deleted artist, and deleted items back in the library.
+        ("deletion_proposals",    "soulsync_ban", "TEXT"),
+        ("deletion_proposals",    "returned_at", "DATETIME"),
+        ("deletion_proposals",    "returned_info", "TEXT"),
         # Redundant-version (duplicate) tracking on the tech profile.
         ("media_tech_profiles",   "versions", "INTEGER DEFAULT 1"),
         ("media_tech_profiles",   "redundant_mb", "FLOAT DEFAULT 0"),

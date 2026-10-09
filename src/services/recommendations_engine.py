@@ -1249,6 +1249,21 @@ async def generate_deletion_proposals(
         except Exception as e:
             logger.warning("[deletions] artist-rating preload failed: %s", e)
 
+    # SoulSync follows (owner decision 2026-10-09): an artist the owner
+    # follows there is wanted, and its watchlist would fetch every new release
+    # again anyway. No answer from SoulSync = no follow veto this run.
+    followed: set[str] = set()
+    from src.services.soulsync_client import norm_name as _ss_norm
+    if category == "music":
+        from src.services.soulsync_client import watchlist_artists
+        _names = await watchlist_artists()
+        followed = {_ss_norm(n) for n in _names or []}
+        _hit = sorted(t for t in candidate_titles if _ss_norm(t) in followed)
+        if _hit:
+            logger.info("[deletions] %d/%d candidates skipped — followed in SoulSync: %s",
+                        len(_hit), len(candidate_titles), ", ".join(_hit[:5])
+                        + (", ..." if len(_hit) > 5 else ""))
+
     _msg(f"{category}: scoring {len(arr_items):,} candidates (ChromaDB + taste vector)…")
     scored_candidates = []
     prelim: list[dict] = []                # all candidates, pre-calibration
@@ -1295,6 +1310,9 @@ async def generate_deletion_proposals(
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
 
         if title in protected or tmdb_id in protected:
+            continue
+
+        if followed and _ss_norm(title) in followed:
             continue
 
         # Zero-byte guard (deletion run 2026-07-08): six of eleven music

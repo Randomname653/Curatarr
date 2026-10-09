@@ -1396,11 +1396,82 @@ async def approve_deletion(
     success = await _delete_one_and_log(db, user.id, p)
     db.commit()
     out = {"ok": success, "limbo": p.status == "limbo", "status": p.status}
+    from src.services.deletion_returns import ban_warning
+    if success and ban_warning(p):
+        out["warning"] = ban_warning(p)
     if not success and p.status == "rejected":
         out["error"] = f'"{p.title}" was kept / is protected — it was NOT deleted.'
     elif not success and p.status not in ("limbo", "error"):
         out["error"] = f'"{p.title}" is {p.status} — it was NOT deleted again.'
     return out
+
+
+# ── Back after deletion (src/services/deletion_returns.py) ───────────────────
+
+def _open_return(db: Session, user_id: int, proposal_id: int):
+    from src.services.deletion_returns import _json
+    p = db.query(DeletionProposal).filter(
+        DeletionProposal.id == proposal_id,
+        DeletionProposal.user_id == user_id,
+        DeletionProposal.status == "deleted",
+    ).first()
+    if not p or _json(p.returned_info).get("state") != "open":
+        raise HTTPException(404, "No open return for this proposal")
+    return p
+
+
+@router.get("/deletions/returned")
+async def returned_deletions(
+    category: Optional[str] = None,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Titles Curatarr deleted that are in the library again."""
+    from src.services.deletion_returns import open_returns
+    return {"items": open_returns(db, user.id, category)}
+
+
+@router.post("/deletions/{proposal_id}/returned/keep")
+async def keep_returned(
+    proposal_id: int,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """The owner wants it back: this return is not reported again."""
+    from src.services.deletion_returns import close_return
+    p = _open_return(db, user.id, proposal_id)
+    close_return(p, "kept")
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/deletions/{proposal_id}/returned/delete")
+async def delete_returned(
+    proposal_id: int,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Delete a returned title again: a new proposal for the item the library
+    holds now, carried out exactly like Delete. If it cannot run (the arr is
+    down, the title is protected), that proposal waits in the normal list."""
+    from src.services.deletion_returns import _json, close_return
+    p = _open_return(db, user.id, proposal_id)
+    info = _json(p.returned_info)
+    deleted_on = p.resolved_at.strftime("%Y-%m-%d") if p.resolved_at else "earlier"
+    new = DeletionProposal(
+        user_id=user.id, media_id=str(info.get("media_id") or ""),
+        title=info.get("title") or p.title, service=info.get("service") or p.service,
+        category=p.category,
+        reason=f"Back in the library after it was deleted on {deleted_on}.",
+        confidence=p.confidence, storage_mb=float(info.get("size_mb") or 0),
+        status="pending", poster_url=p.poster_url, synopsis=p.synopsis,
+        genres=p.genres, tvdb_id=p.tvdb_id, tmdb_id=p.tmdb_id,
+    )
+    db.add(new)
+    db.flush()
+    close_return(p, "deleted_again", new.id)
+    db.commit()
+    return await approve_deletion(new.id, user=user, db=db)
 
 
 async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
@@ -1500,6 +1571,10 @@ async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
             )
         except Exception as e:
             logger.debug("[deletion] resolution-log write failed: %s", e)
+        # Music: SoulSync's playlist sync compares against Plex and would
+        # fetch a liked song of the artist again within the hour.
+        from src.services.deletion_returns import ban_deleted_artist
+        await ban_deleted_artist(p)
     return success
 
 

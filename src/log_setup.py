@@ -23,25 +23,27 @@ from pathlib import Path
 from src.paths import LOG_DIR, ROOT
 
 
-def log_file(script: str | None = None) -> Path:
-    """curatarr.log, or tests.log when the process was started from a script
-    under tests/ (the battery, CI, one suite run by hand).
-
-    Every suite that imports src.main runs init_logging, and until 2026-09-28
-    that meant the live log: two "[slow] GET /api/history/recent" lines from a
-    battery run sat in it while the app was down, reading like traffic.
-    ``script`` defaults to the __main__ module's file (absolute since Python
-    3.9, so a chdir cannot move it); uvicorn, the tray's .pyw,
-    ``-m src.deps_lock`` and ``-c`` are the app."""
+def is_test_process(script: str | None = None) -> bool:
+    """True when the process was started from a script under tests/ (the
+    battery, CI, one suite run by hand). ``script`` defaults to the __main__
+    module's file (absolute since Python 3.9, so a chdir cannot move it);
+    uvicorn, the tray's .pyw, ``-m src.deps_lock`` and ``-c`` are the app."""
     if script is None:
         script = getattr(sys.modules.get("__main__"), "__file__", None) or ""
     try:
         path = Path(script).resolve()
-    except Exception:  # noqa: BLE001 — no verdict, the app's log
-        return LOG_DIR / "curatarr.log"
-    if path.suffix == ".py" and (ROOT / "tests") in path.parents:
-        return LOG_DIR / "tests.log"
-    return LOG_DIR / "curatarr.log"
+    except Exception:  # noqa: BLE001 — no verdict, the app
+        return False
+    return path.suffix == ".py" and (ROOT / "tests") in path.parents
+
+
+def log_file(script: str | None = None) -> Path:
+    """curatarr.log, or tests.log for a test process (is_test_process).
+
+    Every suite that imports src.main runs init_logging, and until 2026-09-28
+    that meant the live log: two "[slow] GET /api/history/recent" lines from a
+    battery run sat in it while the app was down, reading like traffic."""
+    return LOG_DIR / ("tests.log" if is_test_process(script) else "curatarr.log")
 
 
 def init_logging(level: str = "INFO") -> None:

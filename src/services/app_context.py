@@ -78,7 +78,12 @@ APP_MAP_BLOCK = (
     "'Delete selected' button bulk-delete several at once. If a card or "
     "pitch describes the WRONG same-named title, 'Fix match' (behind the card's More menu) "
     "pins the correct entity — the pin survives rescans and the item "
-    "re-enriches on it.\n"
+    "re-enriches on it. 'Back after deletion' (shown only when there are "
+    "any) lists titles you deleted that are in the library again — an arr "
+    "list, a request or SoulSync's playlist sync brought them back; a daily "
+    "check finds them, and 'Delete again' or Keep closes each. Deleting an "
+    "artist also blocks it in SoulSync so it is not downloaded again, and "
+    "artists you follow in SoulSync are never proposed.\n"
     "- 'Curation' (admin) panels: 'Judge-protected titles' (what the judge "
     "KEPT, with reasoning), 'Downscale candidates' (KEPT but flagged for a "
     "lower-bitrate transcode — NOT deletion candidates), "
@@ -164,6 +169,8 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "+ Add",
     "Delete selected",
     "Fix match",
+    "Back after deletion",
+    "Delete again",
     "Curation",
     "Report",
     "Deletions",

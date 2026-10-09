@@ -52,6 +52,55 @@ def recency_weight(viewed_at: datetime, now: datetime, half_life_days: int = 60)
     return math.exp(-age_days * math.log(2) / half_life_days)
 
 
+# ── SOULSYNC SIGNALS (music) ──────────────────────────────────────────────────
+# Following an artist in SoulSync is an explicit, current "more of this": it
+# counts like a 5-star rating. A Spotify like still waiting on SoulSync's
+# wishlist counts like 4 stars. Same scale as the Plex rating factor
+# (rating / 6, 3 stars = 1.0); the higher of the two wins, they never stack.
+FOLLOW_FACTOR = 10 / 6.0
+LIKED_FACTOR = 8 / 6.0
+_SIGNALS_KEY = "soulsync_taste_signals"
+_SIGNALS_TTL = timedelta(hours=24)
+
+
+async def soulsync_signals() -> dict:
+    """{normalised artist name: factor} from the SoulSync watchlist and the
+    Liked Songs on its wishlist; {} without SoulSync. Kept a day in app_state,
+    so a rebuild does not page through the wishlist again, and a failed read
+    keeps the last good copy."""
+    from src.services import soulsync_client as ss
+    from src.services.app_state import get_state, set_state
+    if not ss._configured():
+        return {}
+    try:
+        cached = json.loads(get_state(_SIGNALS_KEY) or "{}")
+        fresh = datetime.utcnow() - datetime.fromisoformat(cached["at"]) < _SIGNALS_TTL
+    except Exception:
+        cached, fresh = {}, False
+    if not fresh:
+        followed, liked = await ss.watchlist_artists(), await ss.liked_song_artists()
+        if followed is not None or liked is not None:
+            cached = {"at": datetime.utcnow().isoformat(),
+                      "followed": followed if followed is not None else cached.get("followed") or [],
+                      "liked": liked if liked is not None else cached.get("liked") or []}
+            set_state(_SIGNALS_KEY, json.dumps(cached))
+    out = {ss.norm_name(n): LIKED_FACTOR for n in cached.get("liked") or []}
+    out.update({ss.norm_name(n): FOLLOW_FACTOR for n in cached.get("followed") or []})
+    out.pop("", None)
+    return out
+
+
+def artist_weight(last, plays: int, rating, now: datetime, signal: float = 0.0) -> float:
+    """One artist's weight in the music vector: recency × log-plays × the
+    higher of its best Plex rating (rating / 6) and its SoulSync signal. An
+    artist the owner follows but has not played yet is current: recency 1."""
+    recency = recency_weight(last, now) if plays else 1.0
+    factor = (rating / 6.0) if rating is not None else 1.0
+    if signal > factor:
+        factor = signal
+    return recency * (1.0 + math.log10(max(plays, 1))) * factor
+
+
 # How hard a dropped item pushes the taste vector AWAY from its profile.
 # The old code gave drops a small POSITIVE weight (0.05-0.39), so abandoned
 # content still pulled the vector toward itself — the docstring's promised
@@ -749,7 +798,11 @@ async def compute_taste_vector_for_user(
     # genres, similar-to — a better taste representant than track titles),
     # weighted by recency × log-plays × best user rating, keeps every listened
     # artist in the average and makes the vector stable against binges.
+    # SoulSync signals (followed / liked) raise the rating factor; an artist
+    # the owner follows joins the average before the first play.
     if category == "music":
+        from src.services.soulsync_client import norm_name
+        signals = await soulsync_signals()
         by_artist: dict = {}
         for e in entries:
             a = e.get("series_title") or e.get("title")
@@ -764,22 +817,33 @@ async def compute_taste_vector_for_user(
                 ur = user_rating_by_item.get(str(e.get("plex_item_id") or ""))
                 if ur is not None and (d["ur"] is None or ur > d["ur"]):
                     d["ur"] = ur
+        followed_new = 0
+        if signals:
+            heard = {norm_name(a) for a in by_artist}
+            for title in music_key_by_artist:
+                n = norm_name(title)
+                if signals.get(n) == FOLLOW_FACTOR and n not in heard:
+                    by_artist[title] = {"plays": 0, "last": None, "ur": None}
+                    heard.add(n)
+                    followed_new += 1
         artist_entries = []
+        signalled = 0
         for a, d in by_artist.items():
             key = music_key_by_artist.get(a)
             if not key:
                 continue   # not enriched — genre counters already cover it
-            w = (recency_weight(d["last"], now)
-                 * (1.0 + math.log10(max(d["plays"], 1)))
-                 * ((d["ur"] / 6.0) if d["ur"] is not None else 1.0))
+            sig = signals.get(norm_name(a), 0.0) if signals else 0.0
+            signalled += sig > 0
+            w = artist_weight(d["last"], d["plays"], d["ur"], now, sig)
             artist_entries.append((w, {
                 "plex_item_id": key, "media_type": "music",
                 "title": a, "series_title": None,
             }))
         artist_entries.sort(key=lambda x: abs(x[0]), reverse=True)
         logger.info("Music: %d listened artists → %d with enrichment docs "
-                    "(was %d play rows)", len(by_artist), len(artist_entries),
-                    len(entries))
+                    "(was %d play rows); %d carry a SoulSync follow/like, %d "
+                    "followed without a play yet", len(by_artist) - followed_new,
+                    len(artist_entries), len(entries), signalled, followed_new)
         top_entries = artist_entries[:EMBED_CAP]
 
     # Count how many need fresh embeddings
