@@ -126,17 +126,25 @@ async def pipeline_status(user: User = Depends(get_current_user)):
     progress  = _json.loads(raw_prog) if raw_prog else {}
 
     with get_db_session() as db:
-        base = db.query(WatchHistoryEntry).filter(
-            WatchHistoryEntry.user_id    == user.id,
-            WatchHistoryEntry.media_type == "music",
-        )
-        total          = base.count()
-        src_spotify    = base.filter(WatchHistoryEntry.source == "spotify").count()
-        unmatched      = base.filter(
-            WatchHistoryEntry.source == "spotify",
-            WatchHistoryEntry.plex_item_id.like("spotify%"),
-        ).count()
-        missing_genres = base.filter(WatchHistoryEntry.genres.is_(None)).count()
+        from sqlalchemy import func, case
+        q = db.query(
+            func.count(WatchHistoryEntry.id),
+            func.sum(case((WatchHistoryEntry.source == "spotify", 1), else_=0)),
+            func.sum(case((
+                (WatchHistoryEntry.source == "spotify") & (WatchHistoryEntry.plex_item_id.like("spotify%")),
+                1
+            ), else_=0)),
+            func.sum(case((WatchHistoryEntry.genres.is_(None), 1), else_=0))
+        ).filter(
+            WatchHistoryEntry.user_id == user.id,
+            WatchHistoryEntry.media_type == "music"
+        ).first()
+
+        # Unpack, converting None to 0
+        total = q[0] or 0
+        src_spotify = q[1] or 0
+        unmatched = q[2] or 0
+        missing_genres = q[3] or 0
 
     # Lyrics from Plex (src/services/lyrics.py): what is on file and profiled.
     try:
