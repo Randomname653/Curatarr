@@ -125,18 +125,24 @@ async def pipeline_status(user: User = Depends(get_current_user)):
     raw_prog  = get_state("music_pipeline_progress")
     progress  = _json.loads(raw_prog) if raw_prog else {}
 
+    from sqlalchemy import func, case
     with get_db_session() as db:
-        base = db.query(WatchHistoryEntry).filter(
+        # ⚡ Bolt: Fast path - evaluate multiple distinct counts in a single query
+        # to avoid N+1 .count() subqueries and their associated overhead.
+        row = db.query(
+            func.count(WatchHistoryEntry.id),
+            func.sum(case((WatchHistoryEntry.source == "spotify", 1), else_=0)),
+            func.sum(case(((WatchHistoryEntry.source == "spotify") & WatchHistoryEntry.plex_item_id.like("spotify%"), 1), else_=0)),
+            func.sum(case((WatchHistoryEntry.genres.is_(None), 1), else_=0)),
+        ).filter(
             WatchHistoryEntry.user_id    == user.id,
             WatchHistoryEntry.media_type == "music",
-        )
-        total          = base.count()
-        src_spotify    = base.filter(WatchHistoryEntry.source == "spotify").count()
-        unmatched      = base.filter(
-            WatchHistoryEntry.source == "spotify",
-            WatchHistoryEntry.plex_item_id.like("spotify%"),
-        ).count()
-        missing_genres = base.filter(WatchHistoryEntry.genres.is_(None)).count()
+        ).first()
+
+        total          = row[0] if row and row[0] is not None else 0
+        src_spotify    = row[1] if row and row[1] is not None else 0
+        unmatched      = row[2] if row and row[2] is not None else 0
+        missing_genres = row[3] if row and row[3] is not None else 0
 
     # Lyrics from Plex (src/services/lyrics.py): what is on file and profiled.
     try:
