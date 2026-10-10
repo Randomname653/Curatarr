@@ -291,8 +291,8 @@
     <!-- DELETIONS -->
     <div class="view" id="deletions-view">
       <div class="view-header">
-        <h1>Deletion Proposals</h1>
-        <p>Items Curatarr thinks you can free up. Each needs your approval. Add comments to teach Curatarr your reasoning.</p>
+        <h1>Deletions</h1>
+        <p>Titles Curatarr suggests removing. Nothing is deleted until you approve it.</p>
       </div>
       <div class="view-body">
         <div class="cat-tabs">
@@ -305,7 +305,7 @@
         <div class="toolbar">
           <button class="btn btn-primary" data-action="reloadDeletions" data-args='[true]'>Run analysis</button>
           <button class="btn btn-secondary" data-action="reloadDeletions">Show last results</button>
-          <span class="fs-12 t3">Nothing is deleted without your explicit approval.</span>
+          <span class="fs-12 t3">A note on a card teaches Curatarr your reasoning; it saves when you click away.</span>
           <div class="toolbar-right">
             <!-- Pass 17: incoming-audit filter — flips proposal sort to "newest activity" -->
             <label class="chip" for="del-recent-only" title="Show only items whose latest file/episode/track was imported recently. Useful for catching auto-grabbed seasons or spurious downloads.">
@@ -451,11 +451,17 @@
                   title="Fetches OMDb data (writer, awards, longer plot) for titles that have an IMDb id but no OMDb data yet. Progress shows in Activity.">Backfill OMDb</button>
                 <div class="toolbar-right">
                   <button class="btn btn-secondary" data-action="loadEnrichStatus">Refresh</button>
-                  <button class="btn btn-danger" data-action="startEnrichForce" data-args='["$el"]'
-                    title="Clears cached metadata and rebuilds it for the selected libraries — use after changing models">Re-enrich all</button>
                 </div>
               </div>
               <div id="enrich-progress-area" class="mt-8"></div>
+            </div>
+          </section>
+          <!-- Kept apart from the everyday controls: one click here clears the
+               metadata cache for whole libraries, so it never sits next to Refresh. -->
+          <section class="section">
+            <div class="section-head"><h3>Re-enrich everything <span class="badge danger badge-sm">Destructive</span></h3>
+              <span class="section-hint">Clears cached metadata for the libraries selected above and rebuilds it. Use after changing models.</span>
+              <div class="section-actions"><button class="btn btn-danger btn-sm" data-action="startEnrichForce" data-args='["$el"]'>Re-enrich all</button></div>
             </div>
           </section>
           <section class="section">

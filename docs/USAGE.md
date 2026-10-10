@@ -47,7 +47,7 @@ a console:
 | Audit + self-heal metadata | Knowledge Base → Maintenance tab → **Audit metadata** |
 | Titles that need a human (wrong match, low confidence, repeatedly not found) | Knowledge Base → **Needs attention** tab: filter by reason, then **Search & pin**, **Retry now** or **Ignore** on the row |
 | Cache inventory (rows, staleness, size) | Knowledge Base → Overview tab → Storage → **Cache inventory** |
-| Review deletion proposals (admin) | Sidebar → **Deletions**: Delete / Keep / Discuss on the card, the rest under **More** |
+| Review deletion proposals (admin) | Sidebar → **Deletions**: Keep / Discuss / Delete on the card, the rest under **More**. Keep pauses suggestions for 90 days; tick **Protect permanently** in its dialog to stop them for good (lift it under Curation) |
 | Delete several proposals at once (admin) | Deletions → tick the cards → selection bar at the bottom → **Delete selected** |
 | See deleted titles that came back (admin) | Deletions → **Back after deletion** (shown only when there are any): **Delete again** or **Keep** |
 | Fix a wrongly-matched title | Proposal card → **More** → **Fix match**, or Knowledge Base → Needs attention → **Search & pin** |

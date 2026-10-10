@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { _updateKbBadge } from './kb.js';
 import { showView } from './nav.js';
-import { _deleteBody } from './deletions.js';
+import { _deleteBody, deleteFateLines } from './deletions.js';
 import { applyOrphanRepair } from './libraries.js';
 export function handleKey(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
 
@@ -625,7 +625,7 @@ export async function deleteFromDiscussion() {
   // reason field here: the discussion thread itself IS the reasoning.
   const res = await confirmDialog({
     title: 'Delete from library', danger: true, countdown: 3, confirmLabel: 'Delete',
-    body: _deleteBody(title, 'This removes it from your *arr library and deletes the files. This cannot be undone.'),
+    body: _deleteBody(title, await deleteFateLines([(state._delProposalsAll || []).find(p => String(p.id) === String(id))?.service])),
   });
   if (!res.ok) return;
 

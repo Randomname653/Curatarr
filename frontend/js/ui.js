@@ -81,7 +81,10 @@ export function _mount(id) {
 // right, newest last, click dismisses. kind: info | success | danger | amber
 // ('error' is accepted as danger). The same text is not repeated within 5 s.
 // A toast with actions stays until one of them resolves (onClick may return
-// false to keep it open).
+// false to keep it open). Errors (danger) and opts.sticky stay until
+// dismissed — an error that leaves before it is read was never reported.
+// Toasts are for outcomes of something the user just did; a background
+// job's failure belongs in a banner on its view and its Activity card.
 const _toastRecent = new Map();
 export function toast(text, kind = 'info', opts = {}) {
   const stack = _mount('toast-stack');
@@ -93,7 +96,8 @@ export function toast(text, kind = 'info', opts = {}) {
   el.className = `toast ${kind}`;
   el.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
   el.setAttribute('aria-live', kind === 'danger' ? 'assertive' : 'polite');
-  el.innerHTML = (opts.title ? `<div class="toast-title">${esc(opts.title)}</div>` : '') + `<div>${esc(text)}</div>` +
+  el.innerHTML = (opts.actions?.length ? '' : '<button type="button" class="toast-close" aria-label="Dismiss">×</button>') +
+    (opts.title ? `<div class="toast-title">${esc(opts.title)}</div>` : '') + `<div>${esc(text)}</div>` +
     (opts.actions?.length ? `<div class="toast-actions">${opts.actions.map((a, i) =>
       `<button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : 'btn-secondary'}" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>` : '');
   const close = () => { if (el.parentNode) el.remove(); };
@@ -106,7 +110,7 @@ export function toast(text, kind = 'info', opts = {}) {
     });
   } else {
     el.onclick = close;
-    setTimeout(close, opts.ms || (kind === 'danger' ? 6000 : 3500));
+    if (!(opts.sticky ?? kind === 'danger')) setTimeout(close, opts.ms || 3500);
   }
   const plain = () => [...stack.children].filter(t => !t.classList.contains('has-actions'));
   while (plain().length >= 4) plain()[0].remove();
@@ -144,11 +148,14 @@ export function closeModal() {
 }
 
 // confirmDialog({title, body, confirmLabel, cancelLabel, danger, countdown,
-//                reason: {label, placeholder, value}}) → Promise<{ok, reason}>
+//                reason: {label, placeholder, value},
+//                check: {label, hint}}) → Promise<{ok, reason, checked}>
 // Every destructive action goes through here. countdown: N keeps the confirm
 // button disabled for N seconds ("Delete (3)") — the deliberate pause the
 // delete flow always had. reason renders a free-text field whose value comes
-// back trimmed (Curatarr learns from it).
+// back trimmed (Curatarr learns from it). check renders one opt-in checkbox
+// (unticked by default) for a stronger variant of the same decision — Keep's
+// "Protect permanently" — so the choice stays one dialog, not two.
 export function confirmDialog(o = {}) {
   return new Promise(resolve => {
     let timer = null, done = false;
@@ -158,16 +165,20 @@ export function confirmDialog(o = {}) {
       done = true;
       if (timer) clearInterval(timer);
       const reason = (document.getElementById('confirm-reason')?.value || '').trim();
+      const checked = !!document.getElementById('confirm-check')?.checked;
       closeModal();
-      resolve({ok, reason});
+      resolve({ok, reason, checked});
     };
     const reasonHtml = o.reason
       ? `<label class="stack mt-12 fs-12 t2" for="confirm-reason">${esc(o.reason.label || 'Reason (optional — Curatarr learns from it)')}
            <input id="confirm-reason" class="w-full input" placeholder="${escAttr(o.reason.placeholder || '')}" value="${escAttr(o.reason.value || '')}"></label>`
       : '';
+    const checkHtml = o.check
+      ? `<label class="row mt-12 fs-13" for="confirm-check"><input type="checkbox" id="confirm-check"> ${esc(o.check.label)}</label>${o.check.hint ? `<div class="fs-12 t3 mt-4">${esc(o.check.hint)}</div>` : ''}`
+      : '';
     openModal({
       title: o.title || 'Are you sure?', size: 'narrow', danger: !!o.danger,
-      body: `${o.body || ''}${reasonHtml}${o.countdown ? `<div class="confirm-count" id="confirm-count">${o.countdown}</div>` : ''}`,
+      body: `${o.body || ''}${reasonHtml}${checkHtml}${o.countdown ? `<div class="confirm-count" id="confirm-count">${o.countdown}</div>` : ''}`,
       foot: `<button type="button" class="btn btn-secondary row-end" id="confirm-cancel">${esc(o.cancelLabel || 'Cancel')}</button>
              <button type="button" class="btn ${o.danger ? 'btn-danger' : 'btn-primary'}" id="confirm-ok"${o.countdown ? ' disabled' : ''}>${esc(label)}${o.countdown ? ` (${o.countdown})` : ''}</button>`,
       onClose: () => finish(false),

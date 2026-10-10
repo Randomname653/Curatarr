@@ -829,7 +829,7 @@ async def get_deletion_proposals(
     user: User = Depends(require_admin),   # deletions = admin curation only
     db: Session = Depends(get_db),
 ):
-    from src.services.recommendations_engine import generate_deletion_proposals
+    from src.services.recommendations_engine import generate_deletion_proposals, deletion_run_summary
     from src.database.models import ProtectedMedia
 
     if not refresh:
@@ -880,14 +880,15 @@ async def get_deletion_proposals(
             "total_gb": round(sum(p.storage_mb for p in cached) / 1024, 1),
             "enrichment_coverage": _arr_enrichment_coverage(category),
             "stale": cache_stale,
-            **({"message": "No proposals yet. Click 'Analyse library' to generate."}
+            "last_run": deletion_run_summary(category),
+            **({"message": "No proposals yet. Select 'Run analysis' to generate them."}
                if not cached else {}),
         }
 
     arr_items = await _fetch_arr_candidates(category)
     if not arr_items:
         return {"proposals": [], "total_gb": 0,
-                "message": "No ARR services configured or no candidates found."}
+                "message": "No Arr apps are set up, or none returned candidates."}
 
     # Pass 25b: visibility into the candidate pool. "Only 1 proposal returned"
     # could mean (a) tiny library after filtering, (b) very tight taste fit,
@@ -959,7 +960,7 @@ async def get_deletion_proposals(
                 "proposals": [], "total_gb": 0,
                 "message": (
                     f"No items imported in the last {recent_days} days. "
-                    f"Untoggle '🆕 Just-arrived only' to evaluate the full library, "
+                    f"Turn off 'Just-arrived only' to evaluate the full library, "
                     f"or widen the window."
                 ),
             }
@@ -978,7 +979,7 @@ async def get_deletion_proposals(
         return {"proposals": [], "total_gb": 0,
                 "message": ("A deletion analysis is already running (scheduled "
                             "scan or another session). Its results will appear "
-                            "here when it finishes — run Analyze again after "
+                            "here when it finishes — run the analysis again after "
                             "that if you still want a fresh pass.")}
 
     # Activity card for the manual Analyze run. The scheduler's ARR-sync path
@@ -1025,6 +1026,7 @@ async def get_deletion_proposals(
             # wiping it, so the user still sees the last known proposals.
             task_monitor.done(mtask, "No candidates — previous proposals retained")
             return {"proposals": [], "total_gb": 0,
+                    "last_run": deletion_run_summary(category),
                     "message": "Analysis returned no candidates. Previous proposals retained."}
 
         with get_db_session() as dbs:
@@ -1154,6 +1156,7 @@ async def get_deletion_proposals(
         "proposals":           proposals_with_ids,
         "total_gb":            round(sum(p.get("size_mb", 0) for p in proposals_with_ids) / 1024, 1),
         "enrichment_coverage": _arr_enrichment_coverage(category),
+        "last_run":            deletion_run_summary(category),
     }
 
 
@@ -1429,6 +1432,58 @@ async def returned_deletions(
     """Titles Curatarr deleted that are in the library again."""
     from src.services.deletion_returns import open_returns
     return {"items": open_returns(db, user.id, category)}
+
+
+@router.get("/deletions/delete-target")
+async def deletion_delete_target(
+    services: str = Query("radarr,sonarr,lidarr"),
+    user: User = Depends(require_admin),
+):
+    """Where deleted files go, per service — read before the delete dialog
+    so it can say "moved to the Recycle Bin" or "deleted permanently"
+    instead of claiming "cannot be undone" unconditionally. Read-only."""
+    wanted = [s.strip() for s in services.split(",") if s.strip()]
+    results = await asyncio.gather(*[_arr_recycle_bin(s) for s in wanted])
+    return {"targets": dict(zip(wanted, results))}
+
+
+async def _arr_recycle_bin(service: str, client=None) -> dict:
+    """{"recycle_bin": True|False|None, "cleanup_days": int|None}.
+
+    The arr's own Recycle Bin (Settings → Media Management) applies to every
+    deleteFiles=true delete Curatarr sends: a non-empty ``recycleBin`` path
+    means the files are moved there, kept ``recycleBinCleanupDays`` days
+    (0 = until emptied by hand). None means unknown — not configured or not
+    answering — and the dialog says so rather than guessing. A Plex delete
+    has no recycle bin: Plex removes the files directly."""
+    if service == "plex":
+        return {"recycle_bin": False, "cleanup_days": None}
+    conf = {
+        "radarr": (settings.RADARR_URL, settings.RADARR_API_KEY, settings.effective_radarr_url, "v3"),
+        "sonarr": (settings.SONARR_URL, settings.SONARR_API_KEY, settings.effective_sonarr_url, "v3"),
+        "lidarr": (settings.LIDARR_URL, settings.LIDARR_API_KEY, settings.effective_lidarr_url, "v1"),
+    }.get(service)
+    unknown = {"recycle_bin": None, "cleanup_days": None}
+    if not conf or not (conf[0] and conf[1]):
+        return unknown
+    _, api_key, base, ver = conf
+    owns = client is None
+    client = client or httpx.AsyncClient(timeout=5)
+    try:
+        r = await client.get(f"{str(base).rstrip('/')}/api/{ver}/config/mediamanagement",
+                             headers={"X-Api-Key": api_key})
+        if r.status_code != 200:
+            return unknown
+        data = r.json() or {}
+        days = data.get("recycleBinCleanupDays")
+        return {"recycle_bin": bool((data.get("recycleBin") or "").strip()),
+                "cleanup_days": days if isinstance(days, int) else None}
+    except Exception as e:
+        logger.debug("[deletions] recycle-bin probe failed for %s: %s", service, e)
+        return unknown
+    finally:
+        if owns:
+            await client.aclose()
 
 
 @router.post("/deletions/{proposal_id}/returned/keep")
@@ -1803,10 +1858,17 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
 @router.post("/deletions/{proposal_id}/reject")
 async def reject_deletion(
     proposal_id: int,
+    protect: bool = False,
     user: User = Depends(require_admin),   # deletions = admin curation only
     db: Session = Depends(get_db),
 ):
     """User clicks Keep on the deletion-proposal card.
+
+    A bare Keep is a cooldown (the engine's KEEP_COOLDOWN_DAYS, 90 days),
+    not a protection: the title comes back to the judge afterwards.
+    ``protect=true`` (the dialog's "Protect permanently" box) additionally
+    writes a manual ProtectedMedia row, which keeps it out of every scan
+    until it is lifted in Curation — the same row a chat protection writes.
 
     Pass 85: writes a ``CuratorResolutionLog`` entry, symmetric to the
     ``/approve`` handler from Pass 81e. Without this, card-button Keeps
@@ -1835,7 +1897,10 @@ async def reject_deletion(
     if p.status == "rejected":
         # Already settled — most likely by the chat protection-intent path
         # which has its own log-writing. Don't write a duplicate.
-        return {"ok": True, "already_rejected": True}
+        if protect:
+            _protect_from_proposal(db, user.id, p)
+            db.commit()
+        return {"ok": True, "already_rejected": True, "protected": protect}
 
     # Only an OPEN proposal can be kept. Keep on a stale card used to flip
     # "deleted" → "rejected": a false "kept" resolution in the log and the
@@ -1843,8 +1908,14 @@ async def reject_deletion(
     # Conditional, so it also loses cleanly to an in-flight delete's claim.
     if not _transition_if_open(db, p, "rejected", resolved_at=datetime.utcnow()):
         if p.status == "rejected":
-            return {"ok": True, "already_rejected": True}
+            if protect:
+                _protect_from_proposal(db, user.id, p)
+                db.commit()
+            return {"ok": True, "already_rejected": True, "protected": protect}
         raise HTTPException(409, f"Proposal is already {p.status}")
+
+    if protect:
+        _protect_from_proposal(db, user.id, p)
 
     try:
         stance, polarity = _latest_curator_stance_for_proposal(
@@ -1877,7 +1948,32 @@ async def reject_deletion(
         logger.debug("[deletion] resolution-log write failed: %s", e)
 
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "protected": protect}
+
+
+def _protect_from_proposal(db: Session, user_id: int, p) -> None:
+    """Upsert a manual protection for a kept proposal (no commit).
+
+    Keyed on the title like every other protection — the engine's protected
+    set matches title OR tmdb id, and the chat path writes title too, so one
+    title never ends up with two rows. An existing judge/chat row keeps its
+    source and reasoning; only a missing one is created."""
+    from src.database.models import ProtectedMedia
+    exists = db.query(ProtectedMedia).filter(
+        ProtectedMedia.user_id == user_id,
+        ProtectedMedia.identifier == p.title,
+    ).first()
+    if exists:
+        return
+    db.add(ProtectedMedia(
+        user_id=user_id,
+        identifier=p.title,
+        title=p.title,
+        category=p.category,
+        reason=(p.user_comment or "").strip() or "Kept and protected from the Deletions view",
+        source="manual",
+        arr_url=p.arr_url,
+    ))
 
 
 # ── ARR HELPERS ───────────────────────────────────────────────────────────────

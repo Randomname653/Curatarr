@@ -220,6 +220,30 @@ def _taste_section(summary_text: str, category: str) -> str:
 # an artist, so counting it as devotion had the sign backwards.
 REAL_LISTEN_MS = 120_000
 
+# How long a Keep on a deletion card holds a title out of the proposal pool.
+# The Deletions view states this number in its Keep copy;
+# tests/test_keep_semantics.py pins the two together.
+KEEP_COOLDOWN_DAYS = 90
+
+# The last pillar-judging run per category, for the Deletions view's run
+# banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
+# into the EVALUATE fallback and vanish exactly like a title the model
+# genuinely could not decide — the owner saw fewer proposals and no reason.
+# In-memory on purpose: it describes this server's last run, nothing to keep.
+DELETION_RUN_SUMMARY: dict[str, dict] = {}
+
+
+def deletion_run_summary(category: str | None = None) -> dict | None:
+    """The last run for one category, or all categories summed ("All" tab)."""
+    if category:
+        return DELETION_RUN_SUMMARY.get(category)
+    runs = list(DELETION_RUN_SUMMARY.values())
+    if not runs:
+        return None
+    out = {k: sum(r.get(k, 0) for r in runs) for k in ("judged", "flagged", "deferred", "failed")}
+    out["at"] = max(r.get("at") or "" for r in runs)
+    return out
+
 
 def _play_protection(plays: int) -> float:
     """Score-side Resonance: sustained REPEATED listening protects an artist
@@ -1092,7 +1116,7 @@ async def generate_deletion_proposals(
         # This is deliberately a COOLDOWN, not a protection: after it lapses the
         # judge looks again — taste and principles evolve. Category-scoped so a
         # kept movie can't shield a same-named show/album (NULL = legacy rows).
-        _REJECT_COOLDOWN_DAYS = 90
+        _REJECT_COOLDOWN_DAYS = KEEP_COOLDOWN_DAYS
         rejected_recent: set[str] = set()
         try:
             from src.database.models import DeletionProposal as _DP
@@ -1703,6 +1727,7 @@ async def generate_deletion_proposals(
         thin_skipped = 0
         misfiled_skipped = 0
         unchecked_skipped = 0
+        judge_failed = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
         # PRE-JUDGE SIGNIFICANCE WARM-UP: the judge's own JIT is summarizer-
@@ -1863,15 +1888,20 @@ async def generate_deletion_proposals(
                 except Exception as e:
                     logger.warning("[deletions] pillar judge failed for %r: %s",
                                    item.get("title"), e)
+                    judge_failed += 1
                     continue
+                # adjudicate() turns its own failures into an EVALUATE that
+                # carries _error: count those apart from a real EVALUATE.
+                if (verdict or {}).get("_error"):
+                    judge_failed += 1
                 v = (verdict or {}).get("verdict")
                 if v in ("CUT", "STAGNANT"):
                     pitch = await write_monologue(
                         ev["facts"], verdict, model=pitch_model,
                         lang_directive=lang_directive_str, skip_priority=True)
                     if not pitch or not pitch.strip():
-                        pitch = ("Flagged by the pillar judge — the model returned no "
-                                 "monologue; review manually.")
+                        pitch = ("Curatarr flagged this title but couldn't write its "
+                                 "reasoning. Use Discuss to ask why.")
                     _smb = item.get("size_mb") or 0
                     final_proposals.append({
                         "title": item.get("title"),
@@ -1923,7 +1953,16 @@ async def generate_deletion_proposals(
                 if misfiled_skipped else "")
              + (f" ({unchecked_skipped} deferred: significance unchecked)"
                 if unchecked_skipped else "")
+             + (f" ({judge_failed} failed: the model did not answer)"
+                if judge_failed else "")
              + ".")
+        DELETION_RUN_SUMMARY[category] = {
+            "at": datetime.utcnow().isoformat(),
+            "judged": judged,
+            "flagged": len(final_proposals),
+            "deferred": thin_skipped + misfiled_skipped + unchecked_skipped,
+            "failed": judge_failed,
+        }
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────

@@ -694,3 +694,10 @@ select option { background: var(--bg2); }
   .btn-plain, .modal-close, #msg-bell, #sb-hamburger { min-width: 44px; }
   input, select, textarea, .input, #topbar-search, #chat-input { font-size: 16px; }
 }
+/* Bulk-delete dialog: every selected title, scrolling past a handful */
+.del-list { max-height: 160px; overflow-y: auto; list-style: none; text-align: left; font-size: 12px; color: var(--text); background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; }
+.del-list li { padding: 2px 0; border-bottom: 1px solid var(--border); }
+.del-list li:last-child { border-bottom: none; }
+.toast { position: relative; padding-right: 30px; }
+.toast-close { position: absolute; top: 6px; right: 6px; background: none; border: none; color: var(--text2); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: var(--radius); }
+.toast-close:hover { color: var(--text); }
