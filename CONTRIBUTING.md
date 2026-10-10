@@ -25,6 +25,10 @@ To configure by hand instead, copy `.env.example` to `.env` and fill in
 the Plex and Ollama sections before the first start. On Windows,
 `start.bat` does all of the above in one step.
 
+This command listens on `127.0.0.1` only. Developing on a headless machine,
+a VM or WSL2? Add `--host 0.0.0.0` to reach it from another browser, and
+enter the setup code from its console when the wizard asks.
+
 Backend changes reload the server; the frontend is served as static
 files, so a browser refresh picks up changes in `frontend/`.
 

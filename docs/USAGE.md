@@ -102,6 +102,11 @@ The setup wizard's Ollama step picks the models. To change them later:
 
 3. Restart Curatarr.
 
+On a card with less than 24 GB, choose a curator whose download size
+(shown on its Ollama library page) leaves a few GB of VRAM free for the
+conversation. Smaller models work, with softer verdicts; the
+"Curator running on CPU" banner tells you when a model is too big.
+
 On Windows, `start.bat` and `start_tray.bat` check the models at every
 start and run step 2 for you when a model is missing.
 
@@ -166,11 +171,13 @@ Check, in order:
    must enter the one-time setup code that Curatarr prints in its console
    and log at every start.
 
-**After approving the Plex sign-in, the tab tries to open `localhost`**
+**After approving the Plex sign-in, the plex.tv tab tries to open `localhost`**
 
-Plex sends the browser back to `PLEX_REDIRECT_URI`, which defaults to
-`http://localhost:8000` and only works on the Curatarr machine itself.
-Set it in `.env` to the address the household uses, for example
+The sign-in itself worked: close that tab, and the Curatarr tab you
+started from signs you in within a few seconds. The plex.tv tab is sent
+to `PLEX_REDIRECT_URI`, which defaults to `http://localhost:8000` and
+only resolves on the Curatarr machine itself. To send it to Curatarr
+instead, set it in `.env` to the address the household uses, for example
 `PLEX_REDIRECT_URI=http://192.168.1.50:8000`, then restart Curatarr.
 
 **"Ollama is not answering" when Curatarr starts**

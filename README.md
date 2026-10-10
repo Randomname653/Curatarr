@@ -156,13 +156,18 @@ decisions and the invariants learned the hard way — lives in
 
 ### Requirements
 
+Curatarr runs directly on the host; there is no Docker image. Windows is
+the main platform (the launchers and the tray app are Windows-only);
+Linux and macOS run the server by hand. Ollama may run on another
+machine (`OLLAMA_ENDPOINT`).
+
 | | |
 |---|---|
 | **Python** | 3.12 or newer |
 | **[Git](https://git-scm.com)** | to clone the repository and to update it |
 | **Plex Media Server** | you sign in as the server owner during setup |
 | **[Ollama][link-ollama]** | installed and running before the first start |
-| **GPU** | 24 GB VRAM for the default curator model; a smaller card works with a smaller model (see below) |
+| **GPU** | 24 GB VRAM for the default curator model. Smaller card? Pick a smaller curator model ([how](docs/USAGE.md#changing-the-models)); verdicts get softer |
 | **Disk** | room for the models: the default curator alone is about 19 GB |
 | **Radarr / Sonarr / Lidarr** | optional — each one unlocks deletion proposals and adds for its category |
 | **Plex music index** | nothing to set up — without Lidarr, music runs on your Plex library |
@@ -246,8 +251,9 @@ restart.
 
 1. Open `http://localhost:8000` on the machine running Curatarr. The
    setup wizard opens.
-2. Work through the wizard: Plex sign-in (a PIN you approve on plex.tv,
-   no password), the Ollama models, the \*arr connections, API keys,
+2. Work through the wizard: Plex sign-in (Curatarr opens plex.tv in a
+   new tab for you to approve, or you enter the code it shows at
+   plex.tv/link; no password), the Ollama models, the \*arr connections, API keys,
    which Plex library holds which category, and the admin account. Sign
    in with the Plex account that **owns** the server, because the first
    account becomes the admin.
