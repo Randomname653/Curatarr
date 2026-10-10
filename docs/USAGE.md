@@ -107,6 +107,17 @@ On a card with less than 24 GB, choose a curator whose download size
 conversation. Smaller models work, with softer verdicts. To see whether a
 model fits, run `ollama ps` while it is loaded: its PROCESSOR column reads
 `100% GPU` when it fits and shows a CPU share when it doesn't.
+`python build_models.py --check` estimates it before you load anything and
+warns when the curator and its context will not fit the card.
+
+For an 8B–14B curator on an 8–12 GB card, also set `LLM_PROFILE=small` in
+`.env`. It halves the context window to 8k tokens and gives the deletion
+judge a shorter, step-by-step version of its rules, which small models follow
+more reliably. Two finer settings sit next to it: `CURATOR_NUM_CTX` sets the
+window directly (0 keeps the profile's default), and `CURATOR_NUM_GPU=-1`
+lets Ollama split a curator that does not fit between GPU and CPU instead of
+failing to load it, which is slower. Run step 2 again after changing either
+window setting.
 
 On Windows, `start.bat` and `start_tray.bat` check the models at every
 start and run step 2 for you when a model is missing.
