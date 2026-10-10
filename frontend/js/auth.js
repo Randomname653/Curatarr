@@ -86,11 +86,9 @@ export function setUser(u) {
   document.getElementById('user-name').textContent = u.username || 'User';
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
   if (u.is_admin) {
-    // Show admin nav item in sidebar (needs flex), but NOT the admin view panel
-    document.querySelectorAll('.sb-item.admin-only').forEach(el => el.hidden = false);
-    // Inline admin action rows (e.g. history maintenance) — let CSS decide layout
+    // Admin-only chrome: the sidebar's Curate section, the admin Settings
+    // tabs, inline admin actions (e.g. Force sync) — let CSS decide layout
     document.querySelectorAll('.admin-action-row').forEach(el => el.hidden = false);
-    // Admin view panel stays hidden until user navigates to it
   }
   document.getElementById('auth-overlay').classList.add('hidden');
   loadUnreadMessages();

@@ -74,7 +74,7 @@ export async function loadArrPage(svc) {
     : ARR_TABS[svc].filter(t => t.id !== 'wanted');
   if (!info.configured && !viaPlex) {
     // Setup banner — admins get a CTA, non-admins get a "ask your admin"
-    // message. The Settings → Library pane is admin-only, so showing the
+    // message. The Settings → Arr apps pane is admin-only, so showing the
     // Configure button to a non-admin would lead them to a hidden tab
     // (Pass 16l).
     const isAdmin = !!(state.currentUser && state.currentUser.is_admin);
