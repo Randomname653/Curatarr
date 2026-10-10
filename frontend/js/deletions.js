@@ -35,7 +35,7 @@ export function _recentActivityBadge(p) {
 export function _renderDeletionProposals(proposals) {
   const el = document.getElementById('del-content');
   if (!proposals?.length) {
-    el.innerHTML = emptyHtml('No proposals yet — <b>Analyse library</b> asks the curator for deletion candidates.', 'Analyse library', act('loadDeletions', state.currentDelCategory || null, null, true));
+    el.innerHTML = emptyHtml('No proposals yet — <b>Run analysis</b> asks the curator for deletion candidates.', 'Run analysis', act('loadDeletions', state.currentDelCategory || null, null, true));
     updateDelBulkCount();
     return;
   }
@@ -68,14 +68,14 @@ export function _renderDeletionProposals(proposals) {
               <div class="fs-16 panel-item-title">${esc(p.title)}
                 <span class="badge ${p.confidence>.7?'danger':'muted'}" title="How sure the judge is that this can go">${Math.round((p.confidence||0)*100)}%</span>
                 ${p.stagnant?`<span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}
-                ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">parked</span>' : ''}
+                ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">Parked</span>' : ''}
               </div>
               <div class="panel-actions">
-                <button type="button" class="btn btn-danger btn-sm" ${act('approveDelete', p.id, EL)}>${limbo?'Retry Delete':'Delete'}</button>
+                <button type="button" class="btn btn-danger btn-sm" ${act('approveDelete', p.id, EL)}>${limbo?'Retry delete':'Delete'}</button>
                 <button type="button" class="btn btn-secondary btn-sm" ${act('rejectDelete', p.id, EL)}>Keep</button>
                 <button type="button" class="btn btn-secondary btn-sm" ${act('onDiscussDeletion', EL)} ${ctx}>Discuss</button>
                 ${menuHtml([
-                  {label: 'Reevaluate', action: act('onReevaluateDeletion', EL), attrs: ctx, title: 'Open a discussion thread and challenge the verdict with a Level 2 thematic scan (creator pedigree, subversion, psychological function)'},
+                  {label: 'Challenge verdict', action: act('onReevaluateDeletion', EL), attrs: ctx, title: 'Open a discussion and ask the curator to look deeper: the creators, what the work subverts, why it might matter'},
                   p.media_id && p.service && p.service !== 'plex' ? {label: 'Fix match', action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
                   p.arr_url ? {label: `Open in ${p.service}`, href: p.arr_url} : null,
                 ])}
@@ -85,7 +85,7 @@ export function _renderDeletionProposals(proposals) {
             ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(p.synopsis)}</div>` : ''}
             <div class="quote-text italic t2 mt-8">"${esc(p.pitch||p.reason||'')}"</div>
-            ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Parked: the arr was unreachable, its index drifted, or the last attempt's outcome is unconfirmed. Retry Delete checks again before it deletes anything.</div>` : ''}
+            ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Parked: the arr was unreachable, its index drifted, or the last attempt's outcome is unconfirmed. Retry delete checks again before it deletes anything.</div>` : ''}
             <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" ${actOn('blur', 'saveComment', p.id)} ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}>${esc(p.user_comment||'')}</textarea>
             <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? 'Note saved.' : 'A note teaches Curatarr your reasoning — it saves when you click away (or Ctrl+Enter).'}</div>
           </div>
@@ -483,7 +483,7 @@ export async function approveDelete(id, btn) {
     if (r.limbo) {
       // ARR unreachable — the proposal stays in limbo, the button becomes a retry
       toast(r.error || 'The proposal is parked — retry once the arr is back or its index is refreshed', 'amber', {ms: 8000});
-      btnDone(btn, 'Retry Delete');
+      btnDone(btn, 'Retry delete');
       return;
     }
     if (!r.ok) { toast(r.error || 'Delete failed', 'danger'); btnDone(btn); return; }

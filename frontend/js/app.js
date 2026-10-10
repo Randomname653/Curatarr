@@ -19,7 +19,7 @@ import { loadReport, writeYearlyReview } from './report.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { showView, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
-import { setUser, showApp, startPlexLogin } from './auth.js';
+import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { api } from './api.js';
 import { state } from './state.js';
 
@@ -92,6 +92,7 @@ const actions = {
   clearIntegrationSecret,
   closeKbDrilldown,
   closeModal,
+  copyPlexCode,
   computeTaste,
   condensePrinciples,
   correctChatAnchor,

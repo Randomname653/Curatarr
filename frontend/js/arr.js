@@ -15,23 +15,23 @@ import { showView } from './nav.js';
 import { openSettingsPane } from './settings.js';
 const ARR_TABS = {
   sonarr: [
-    { id: 'all',    label: 'All Series' },
+    { id: 'all',    label: 'All series' },
     { id: 'tv',     label: 'TV' },
     { id: 'anime',  label: 'Anime' },
-    { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'add',    label: '+ Add New' },
+    { id: 'curatarr', label: 'Added by Curatarr' },
+    { id: 'add',    label: '+ Add new' },
   ],
   radarr: [
-    { id: 'all',    label: 'All Movies' },
-    { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'add',    label: '+ Add New' },
+    { id: 'all',    label: 'All movies' },
+    { id: 'curatarr', label: 'Added by Curatarr' },
+    { id: 'add',    label: '+ Add new' },
   ],
   lidarr: [
-    { id: 'all',    label: 'All Artists' },
-    { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'backlog', label: 'Spotify Backlog' },
+    { id: 'all',    label: 'All artists' },
+    { id: 'curatarr', label: 'Added by Curatarr' },
+    { id: 'backlog', label: 'Spotify backlog' },
     { id: 'wanted', label: 'Wanted' },
-    { id: 'add',    label: '+ Add New' },
+    { id: 'add',    label: '+ Add new' },
   ],
 };
 

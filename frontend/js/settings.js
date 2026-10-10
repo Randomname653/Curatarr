@@ -44,18 +44,18 @@ export async function reattributeHistory(btn) {
 
 export async function cleanupOrphans(btn) {
   const res = await confirmDialog({
-    title: 'Cleanup orphans', danger: true, confirmLabel: 'Delete orphans',
-    body: '<p>Deletes watch_history rows pointing to Plex media that no longer exists in any library.</p><p class="t3 fs-12 mt-8">Spotify entries are preserved. The action aborts safely if any library section cannot be read.</p>',
+    title: 'Delete history for removed media', danger: true, confirmLabel: 'Delete history',
+    body: '<p>Deletes watch history for titles that are no longer in any Plex library.</p><p class="t3 fs-12 mt-8">Spotify history is kept. Nothing is deleted if a library can\'t be read.</p>',
   });
   if (!res.ok) return;
   const status = document.getElementById('maint-cleanup-status');
-  btnBusy(btn, 'Cleaning…');
-  setStatus(status, 'Cleaning orphans…', 'busy');
+  btnBusy(btn, 'Deleting…');
+  setStatus(status, 'Deleting history for removed media…', 'busy');
   try {
     const r = await api('/api/history/admin/cleanup-orphans', 'POST');
     if (r.error) { setStatus(status, r.error + ' (deleted: 0)', 'err'); return; }
-    setStatus(status, `Done — ${r.deleted} deleted, ${r.examined} examined, ${r.live_keys_seen} live ratingKeys in Plex`, 'ok');
-    toast(`Cleanup done — ${r.deleted} orphaned rows deleted`, 'success');
+    setStatus(status, `Done — deleted ${r.deleted} of ${r.examined} entries checked`, 'ok');
+    toast(`Deleted ${r.deleted} history entries for removed media`, 'success');
     if (r.deleted > 0) setTimeout(loadHistoryStatus, 800);
   } catch (e) {
     setStatus(status, _errMsg(e), 'err');
@@ -398,7 +398,7 @@ export async function loadPinStatus() {
     formSet.hidden = !!r.has_pin;
     formChange.hidden = !r.has_pin;
   } catch (e) {
-    stateEl.textContent = _errMsg(e) || 'failed to load PIN status';
+    stateEl.textContent = _errMsg(e) || "Couldn't load the passphrase status";
     stateEl.classList.add('t-danger');
   }
 }
@@ -407,19 +407,19 @@ export async function submitPinSet(btn) {
   const newPin = document.getElementById('pin-new').value;
   const confirmPin = document.getElementById('pin-new-confirm').value;
   const status = document.getElementById('pin-set-status');
-  if (newPin.length < 6) { setStatus(status, 'PIN must be at least 6 characters.', 'err'); return; }
-  if (newPin !== confirmPin) { setStatus(status, "PINs don't match.", 'err'); return; }
+  if (newPin.length < 6) { setStatus(status, 'The passphrase needs at least 6 characters.', 'err'); return; }
+  if (newPin !== confirmPin) { setStatus(status, "The passphrases don't match.", 'err'); return; }
   btnBusy(btn, 'Saving…');
   setStatus(status, 'Saving…', 'busy');
   try {
     await api('/api/users/me/pin', 'POST', { pin: newPin });
-    setStatus(status, 'PIN set.', 'ok');
-    toast('PIN set', 'success');
+    setStatus(status, 'Passphrase set.', 'ok');
+    toast('Passphrase set', 'success');
     document.getElementById('pin-new').value = '';
     document.getElementById('pin-new-confirm').value = '';
     loadPinStatus();
   } catch (e) {
-    setStatus(status, _errMsg(e) || 'Failed', 'err');
+    setStatus(status, _errMsg(e) || "Couldn't save the passphrase. Try again.", 'err');
   }
   btnDone(btn);
 }
@@ -429,22 +429,22 @@ export async function submitPinChange(btn) {
   const newPin = document.getElementById('pin-change-new').value;
   const confirmPin = document.getElementById('pin-change-confirm').value;
   const status = document.getElementById('pin-change-status');
-  if (!cur) { setStatus(status, 'Current PIN required.', 'err'); return; }
-  if (newPin.length < 6) { setStatus(status, 'New PIN must be at least 6 characters.', 'err'); return; }
-  if (newPin !== confirmPin) { setStatus(status, "New PINs don't match.", 'err'); return; }
-  if (newPin === cur) { setStatus(status, 'New PIN must differ from current.', 'err'); return; }
+  if (!cur) { setStatus(status, 'Enter your current passphrase.', 'err'); return; }
+  if (newPin.length < 6) { setStatus(status, 'The new passphrase needs at least 6 characters.', 'err'); return; }
+  if (newPin !== confirmPin) { setStatus(status, "The new passphrases don't match.", 'err'); return; }
+  if (newPin === cur) { setStatus(status, 'The new passphrase must differ from the current one.', 'err'); return; }
   btnBusy(btn, 'Saving…');
   setStatus(status, 'Saving…', 'busy');
   try {
     await api('/api/users/me/pin', 'POST', { pin: newPin, current_pin: cur });
-    setStatus(status, 'PIN changed.', 'ok');
-    toast('PIN changed', 'success');
+    setStatus(status, 'Passphrase changed.', 'ok');
+    toast('Passphrase changed', 'success');
     document.getElementById('pin-current').value = '';
     document.getElementById('pin-change-new').value = '';
     document.getElementById('pin-change-confirm').value = '';
     loadPinStatus();
   } catch (e) {
-    setStatus(status, _errMsg(e) || 'Failed', 'err');
+    setStatus(status, _errMsg(e) || "Couldn't save the passphrase. Try again.", 'err');
   }
   btnDone(btn);
 }

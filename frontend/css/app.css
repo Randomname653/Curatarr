@@ -37,6 +37,20 @@
    value goes into data-style and ui.hydrateStyles applies it.
    tests/test_frontend_hygiene pins the counts.
    New prompt-visible UI labels additionally go through app_context.py.
+
+   WORDS (2026-10, the UI audit) — one word per concept, sentence case for
+   every heading, tab, button and badge (proper nouns keep their caps):
+     Curatarr       the product and actor in UI chrome; "the curator" in prose.
+                    Never "judge", "pillar judge" or "LLM" in user copy.
+     Arr apps       Sonarr / Radarr / Lidarr together. Never ARR, *arr, "the arr".
+     Delete         removes files from disk — danger style, always confirmed.
+     Remove         takes something off a list (a wish, a pin); files untouched.
+     Keep           a 90-day pause on suggesting it again.  Protect  permanent.
+     Refresh        reloads what is on screen.   Rescan   re-runs an analysis.
+     Re-enrich      re-fetches metadata.         Retry    after a failure.
+   No env-var names, column names or internal ids in user-facing text.
+   COLOUR CONTRAST — the text ladder and --danger-fg clear 4.5:1 on every
+   surface; a solid danger fill is --danger-fill with white text only.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #1a1d23;
@@ -49,10 +63,23 @@
   --amber-dim: rgba(229,160,13,.12);
   --bg-veil: rgba(26,29,35,.93);
   --text: #c8cdd8;
-  --text2: #8b91a0;
-  --text3: #555e6e;
-  --danger: #e55353;
-  --danger-dim: rgba(229,83,83,.12);
+  /* text ladder: every step clears WCAG AA (4.5:1) for 12px text on all three
+     surfaces — text3 was #555e6e (2.1-2.6:1), text2 #8b91a0 (4.37:1 on bg3) */
+  --text2: #b0b6c2;
+  --text3: #9aa0ae;
+  /* Danger has two jobs. -fg is text, icons, tinted buttons and borders
+     (5.18:1 on bg3); -fill is a SOLID background and only ever carries
+     white text (5.06:1). White on the lighter -fg would be 2.66:1. */
+  --danger-fg: #f27b7b;
+  --danger-fill: #c93a3a;
+  --danger-dim: rgba(242,123,123,.12);
+  --danger-dim-hover: rgba(242,123,123,.2);
+  --danger-line: rgba(242,123,123,.3);
+  --danger-line-strong: rgba(242,123,123,.5);
+  --amber-line: var(--amber-line);
+  --success-line: var(--success-line);
+  --info-dim: var(--info-dim);
+  --info-line: var(--info-line);
   --success: #3ddc97;
   --success-dim: rgba(61,220,151,.1);
   --info: #5b8dee;
@@ -110,7 +137,10 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 @keyframes sb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(.75); } }
 .sb-footer { flex-shrink: 0; padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
 .sb-footer button { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: 1px solid var(--border); color: var(--text2); padding: 7px; border-radius: var(--radius); cursor: pointer; font-size: 12px; white-space: nowrap; }
-.sb-footer button:hover { border-color: var(--danger); color: var(--danger); }
+/* Sign out is not destructive: neutral hover. Red stays reserved for
+   actions that destroy something (the design language's one rule for it). */
+.sb-footer button:hover { border-color: var(--border2); color: var(--text); }
+.sb-footer button.t-danger:hover { border-color: var(--danger-fg); color: var(--danger-fg); }
 #sb-collapse-toggle:hover { border-color: var(--amber); color: var(--amber); }
 /* Icon-rail mode — labels, section headers and live-status extras collapse
    away; the SVG + a native title="" tooltip carry the meaning instead. */
@@ -282,11 +312,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 
 /* ── BADGES ── */
 .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-.badge.amber { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(229,160,13,.25); }
-.badge.danger { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(229,83,83,.25); }
-.badge.success { background: var(--success-dim); color: var(--success); border: 1px solid rgba(61,220,151,.2); }
+.badge.amber { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber-line); }
+.badge.danger { background: var(--danger-dim); color: var(--danger-fg); border: 1px solid var(--danger-line); }
+.badge.success { background: var(--success-dim); color: var(--success); border: 1px solid var(--success-line); }
 .badge.muted { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
-.badge.info { background: rgba(91,141,238,.12); color: var(--info); border: 1px solid rgba(91,141,238,.25); }
+.badge.info { background: var(--info-dim); color: var(--info); border: 1px solid var(--info-line); }
 .badge-sm { font-size: 10px; padding: 1px 6px; }
 
 /* ── CARDS ── */
@@ -337,7 +367,7 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
 .panel-item-meta { color: var(--text3); font-size: 12px; }
 .panel-item-title { font-weight: 600; font-size: 13px; display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .panel-item-foot { margin-top: 8px; }
-.panel-item.live { border-color: rgba(229,160,13,.35); }
+.panel-item.live { border-color: var(--amber-line); }
 .panel-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-left: auto; }
 .stat-row { display: flex; gap: 12px; margin-bottom: 20px; }
 .stat-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
@@ -358,13 +388,13 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
    (nothing ever adds .selected or a .del-poster-check child on the
    other two, so the rules are inert there, not dead code). */
 .glow-interactive { position: relative; flex-shrink: 0; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.45); transition: box-shadow .15s, transform .15s; }
-.glow-interactive:hover { box-shadow: 0 6px 22px rgba(229,160,13,.3); transform: translateY(-1px); }
+.glow-interactive:hover { box-shadow: 0 6px 22px var(--amber-line); transform: translateY(-1px); }
 .glow-interactive.selectable { cursor: pointer; }
-.glow-interactive.selectable:active { transform: scale(.97); box-shadow: 0 4px 16px rgba(229,160,13,.4); }
+.glow-interactive.selectable:active { transform: scale(.97); box-shadow: 0 4px 16px var(--amber-line); }
 .glow-interactive.selectable:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .glow-interactive > *:first-child { transition: filter .15s, opacity .15s; }
 .glow-interactive.selected > *:first-child { filter: blur(1.5px); opacity: .5; }
-.del-poster-check { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: rgba(229,160,13,.3); }
+.del-poster-check { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: var(--amber-line); }
 .glow-interactive.selected .del-poster-check { display: flex; }
 /* Shared row layout for the three poster-card surfaces (Recs/Deletions/
    Add-New) -- was three copy-pasted inline "display:flex;gap:18px"
@@ -389,8 +419,8 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
 .btn-primary:hover { background: var(--amber2); }
 .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
 .btn-secondary:hover { border-color: var(--amber); }
-.btn-danger { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(229,83,83,.25); }
-.btn-danger:hover { background: rgba(229,83,83,.2); }
+.btn-danger { background: var(--danger-dim); color: var(--danger-fg); border: 1px solid var(--danger-line); }
+.btn-danger:hover { background: var(--danger-dim-hover); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 
 /* ── FORMS ── */
@@ -407,7 +437,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .form-group .used-for { font-size: 11px; color: var(--amber); margin-top: 3px; }
 .test-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; }
 .test-status.ok { color: var(--success); }
-.test-status.err { color: var(--danger); }
+.test-status.err { color: var(--danger-fg); }
 
 /* ── UI GRAMMAR (see the DESIGN LANGUAGE header): page → .toolbar → content →
    .select-bar; sub-panels are .section; rows are .panel-item with ≤3 visible
@@ -422,8 +452,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .menu.open .menu-list { display: block; }
 .menu-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text); font-size: 12px; padding: 7px 10px; border-radius: 6px; cursor: pointer; text-decoration: none; white-space: nowrap; }
 .menu-item:hover { background: var(--bg3); color: var(--amber); }
-.menu-item.danger { color: var(--danger); }
-.menu-item.danger:hover { background: var(--danger-dim); color: var(--danger); }
+.menu-item.danger { color: var(--danger-fg); }
+.menu-item.danger:hover { background: var(--danger-dim); color: var(--danger-fg); }
 .menu-sep { border-top: 1px solid var(--border); margin: 4px 0; }
 /* Modal: one layer, one root; openModal() / closeModal() own it */
 #modal-root { position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.72); padding: 16px; }
@@ -431,19 +461,19 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .modal { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-lg); width: 100%; max-width: 560px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.55); animation: cardIn .18s ease both; }
 .modal.narrow { max-width: 420px; }
 .modal.wide { max-width: 780px; }
-.modal.danger { border-color: rgba(229,83,83,.4); }
+.modal.danger { border-color: var(--danger-line-strong); }
 .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .modal-head h3 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; min-width: 0; }
 .modal-close { background: none; border: none; color: var(--text2); font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: var(--radius); }
 .modal-close:hover { color: var(--amber); }
 .modal-body { padding: 16px 18px; overflow-y: auto; font-size: 13px; line-height: 1.55; }
 .modal-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--border); }
-.confirm-count { font-size: 32px; font-weight: 700; color: var(--danger); text-align: center; min-height: 40px; margin-top: 8px; }
+.confirm-count { font-size: 32px; font-weight: 700; color: var(--danger-fg); text-align: center; min-height: 40px; margin-top: 8px; }
 /* Toasts: bottom right, newest last, click to dismiss */
 #toast-stack { position: fixed; bottom: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
 .toast { background: var(--bg2); border: 1px solid var(--border2); border-left: 3px solid var(--info); border-radius: var(--radius); padding: 10px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); font-size: 13px; color: var(--text); animation: slideIn .2s ease; cursor: pointer; }
 .toast.success { border-left-color: var(--success); }
-.toast.danger { border-left-color: var(--danger); }
+.toast.danger { border-left-color: var(--danger-fg); }
 .toast.amber { border-left-color: var(--amber); }
 .toast-title { font-size: 12px; font-weight: 600; color: var(--amber); margin-bottom: 4px; }
 .toast-actions { display: flex; gap: 8px; margin-top: 10px; }
@@ -460,10 +490,10 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--text3); }
 /* Banner: an in-flow notice above a list (coverage, limbo, setup) */
 .banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); font-size: 12px; color: var(--text2); margin-bottom: 14px; }
-.banner.warn { border-color: rgba(229,160,13,.4); }
-.banner.danger { border-color: rgba(229,83,83,.4); }
-.banner.ok { border-color: rgba(61,220,151,.3); }
-.banner.warn .banner-icon { color: var(--amber); } .banner.danger .banner-icon { color: var(--danger); } .banner.ok .banner-icon { color: var(--success); }
+.banner.warn { border-color: var(--amber-line); }
+.banner.danger { border-color: var(--danger-line-strong); }
+.banner.ok { border-color: var(--success-line); }
+.banner.warn .banner-icon { color: var(--amber); } .banner.danger .banner-icon { color: var(--danger-fg); } .banner.ok .banner-icon { color: var(--success); }
 .banner-text { flex: 1; min-width: 0; }
 /* Controls outside a .form-group */
 .input { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: var(--radius); font-size: 12px; font-family: inherit; }
@@ -480,15 +510,15 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .chip.active { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
 .chip input { margin: 0; }
 /* Card states: judge confidence and the stagnant flag colour the frame; done = acted on */
-.card.is-hot { border-color: rgba(229,83,83,.3); }
-.card.is-stagnant { border-color: rgba(229,160,13,.35); }
+.card.is-hot { border-color: var(--danger-line); }
+.card.is-stagnant { border-color: var(--amber-line); }
 .card.done { opacity: .45; }
 /* A heading between groups inside one list (recommendation lanes, report blocks) */
 .list-head { display: flex; align-items: baseline; gap: 8px; margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 700; }
 /* Inline status next to a Save/Test button: setStatus(el, text, kind) */
 .status { font-size: 12px; color: var(--text3); }
 .status.ok { color: var(--success); }
-.status.err { color: var(--danger); }
+.status.err { color: var(--danger-fg); }
 .status.busy { color: var(--amber); }
 /* Reclassify cards: a compact poster row inside a grid */
 .rc-card { display: flex; gap: 9px; align-items: flex-start; padding: 9px; margin-bottom: 0; }
@@ -500,7 +530,7 @@ details.panel-item > summary::-webkit-details-marker { display: none; }
 [hidden] { display: none !important; }
 /* ── UTILITIES — named versions of the inline styles that kept recurring ── */
 .t2 { color: var(--text2); } .t3 { color: var(--text3); }
-.t-amber { color: var(--amber); } .t-danger { color: var(--danger); } .t-success { color: var(--success); }
+.t-amber { color: var(--amber); } .t-danger { color: var(--danger-fg); } .t-success { color: var(--success); }
 .t-right { text-align: right; } .t-center { text-align: center; } .b { font-weight: 600; } .mono { font-family: monospace; }
 .fs-10 { font-size: 10px; } .fs-11 { font-size: 11px; } .fs-12 { font-size: 12px; } .fs-13 { font-size: 13px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -558,7 +588,7 @@ details.panel-item > summary::-webkit-details-marker { display: none; }
 
 /* ── MISC ── */
 .loading { color: var(--text3); font-style: italic; font-size: 13px; }
-.load-err { color: var(--danger); font-style: normal; font-size: 13px; }
+.load-err { color: var(--danger-fg); font-style: normal; font-size: 13px; }
 .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .inline-flex { display: flex; align-items: center; gap: 8px; }
 .ml-auto, .row-end { margin-left: auto; }
@@ -612,14 +642,14 @@ select option { background: var(--bg2); }
 .rule-top { border-top: 1px solid var(--border); padding-top: 10px; }
 .footnote { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text2); line-height: 1.7; }
 .empty-note { padding: 24px; text-align: center; color: var(--text3); font-size: 13px; }
-.error-box { font-size: 12px; color: var(--danger); margin-bottom: 12px; padding: 8px 12px; background: var(--danger-dim); border-radius: var(--radius); }
+.error-box { font-size: 12px; color: var(--danger-fg); margin-bottom: 12px; padding: 8px 12px; background: var(--danger-dim); border-radius: var(--radius); }
 .boxed { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
 .dropzone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 26px; text-align: center; cursor: pointer; }
 .field-sm { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: var(--radius); font-size: 12px; }
 .btn-plain { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 16px; }
-.btn-ghost-amber { background: transparent; border: 1px solid rgba(229,160,13,.4); color: var(--amber); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
-.btn-ghost-danger { background: rgba(229,83,83,.15); border: 1px solid rgba(229,83,83,.5); color: var(--danger); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
-.discuss-banner { display: flex; background: var(--amber-dim); border-bottom: 1px solid rgba(229,160,13,.3); padding: 8px 16px; font-size: 12px; color: var(--text2); align-items: center; gap: 10px; }
+.btn-ghost-amber { background: transparent; border: 1px solid var(--amber-line); color: var(--amber); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
+.btn-ghost-danger { background: var(--danger-dim); border: 1px solid var(--danger-line-strong); color: var(--danger-fg); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
+.discuss-banner { display: flex; background: var(--amber-dim); border-bottom: 1px solid var(--amber-line); padding: 8px 16px; font-size: 12px; color: var(--text2); align-items: center; gap: 10px; }
 .sb-badge { margin-left: auto; background: var(--amber); color: #000; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; }
 .bar-track { background: var(--bg3); border-radius: 3px; height: 8px; overflow: hidden; } .bar-fill { height: 100%; width: 0; }
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
@@ -636,3 +666,31 @@ select option { background: var(--bg2); }
 .setup-lead { font-size: 13px; color: var(--text2); line-height: 1.6; max-width: 380px; margin: 0 auto 20px; }
 .poster-ph { background: var(--bg3); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--text3); }
 .poster-img { object-fit: cover; flex-shrink: 0; background: var(--bg3); }
+
+/* ── REDUCED MOTION ── near-zero durations, not `animation: none`: several
+   elements reach their visible state only THROUGH an animation (the chat's
+   .thinking-status starts at opacity 0 and fades in `forwards`; cards enter
+   with fill-mode `both`). Removing the animation would leave them invisible;
+   a 0.01ms run still lands on the final keyframe. Infinite pulses stop after
+   one pass and rest on their 100% frame — a static amber dot still reads as
+   "working". The shutdown farewell runs on the Web Animations API, which CSS
+   cannot reach; curation.js checks the same media query itself. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── TOUCH ── on coarse pointers every control reaches the 44px target and
+   inputs use 16px text (iOS zooms the page on focus below that). Desktop
+   density is untouched. */
+@media (pointer: coarse) {
+  .btn, .btn-sm, .chip, .cat-tab, .arr-tab, .settings-tab, .sb-item, .menu-item,
+  .btn-plain, .btn-ghost-amber, .btn-ghost-danger, .modal-close, .sp-chip,
+  #msg-bell, #sb-hamburger, #new-chat-btn, #recheck-btn, #send-btn { min-height: 44px; }
+  .btn-plain, .modal-close, #msg-bell, #sb-hamburger { min-width: 44px; }
+  input, select, textarea, .input, #topbar-search, #chat-input { font-size: 16px; }
+}

@@ -40,10 +40,10 @@ a console:
 | Task | Where |
 |---|---|
 | Re-run Plex sync now | History → **Force sync** |
-| Start / resume enrichment | Knowledge Base → Maintenance tab → **Start Enrichment** |
+| Start / resume enrichment | Knowledge Base → Maintenance tab → **Start enrichment** |
 | Work through the backlog while you are away | Knowledge Base → Maintenance tab → hours → **Keep working** |
 | Anime scores and search beyond AniList | Settings → Integrations → **MyAnimeList client ID** (free at myanimelist.net/apiconfig, app type "other"; without it Curatarr asks Jikan) |
-| Recompute taste vectors | Knowledge Base → Maintenance tab → **Recompute taste vectors** |
+| Recompute taste vectors | Knowledge Base → Maintenance tab → **Recompute taste** |
 | Audit + self-heal metadata | Knowledge Base → Maintenance tab → **Audit metadata** |
 | Titles that need a human (wrong match, low confidence, repeatedly not found) | Knowledge Base → **Needs attention** tab: filter by reason, then **Search & pin**, **Retry now** or **Ignore** on the row |
 | Cache inventory (rows, staleness, size) | Knowledge Base → Overview tab → Storage → **Cache inventory** |
@@ -56,9 +56,9 @@ a console:
 | Reclassify anime ↔ TV (admin) | Manage → **Reclassify**: tick the rows, then **Apply selected** in the bottom bar |
 | Watch running background jobs | Sidebar → **Activity** |
 | Per-library coverage breakdown | Sidebar → **Libraries** (Library Configuration) |
-| Spotify artists not in Lidarr | Manage → **Music** → **Spotify Backlog** tab |
+| Spotify artists not in Lidarr | Manage → **Music** → **Spotify backlog** tab |
 | Music without Lidarr | nothing to configure — the daily walk indexes your Plex music; Manage → **Music** runs on it (badge "Plex index") |
-| Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify Backlog → **Wish**; Manage → **Music** → **Wanted** tab lists them, green once Plex has them |
+| Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify backlog → **Wish**; Manage → **Music** → **Wanted** tab lists them, green once Plex has them |
 | Uncensored cut: owned? exists? | Curation → **Upgrades** ("TV cut — uncensored disc release exists": broadcast or web files on disk while AniDB says the Blu-ray/DVD release is uncensored; **Search releases** asks Sonarr's indexers for releases named uncensored or from Blu-ray); the curator's verified block carries an Edition line with the file sources and AniDB's verdict |
 | Lyrics on file, artists profiled | Knowledge Base → **Music pipeline** (the line under the stats bar; both walkers run with **Run maintenance now**) |
 

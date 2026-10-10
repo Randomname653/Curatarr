@@ -1,5 +1,6 @@
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 import { api } from './api.js';
+import { btnDone, toast } from './ui.js';
 import { state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
@@ -34,7 +35,7 @@ export async function startPlexLogin() {
       clearInterval(state.pollInterval);
       state.pollInterval = null;
       const codeEl = document.getElementById('pin-code');
-      if (codeEl) codeEl.textContent = 'PIN expired — click Sign in again';
+      if (codeEl) codeEl.textContent = 'Code expired — select Sign in with Plex again';
       return;
     }
     try {
@@ -58,7 +59,7 @@ export async function startPlexLogin() {
       else if (e.status === 403) {
         clearInterval(state.pollInterval);
         state.pollInterval = null;
-        let why = 'Sign-in expired — click Sign in again';
+        let why = 'Sign-in expired — select Sign in with Plex again';
         try { why = JSON.parse(e.message).detail || why; } catch { /* plain-text body */ }
         const codeEl = document.getElementById('pin-code');
         if (codeEl) codeEl.textContent = why;
@@ -66,6 +67,17 @@ export async function startPlexLogin() {
     }
   }
   schedulePoll(POLL_MS);
+}
+
+// The code is shown split for reading ("ABCD EFGH"); plex.tv/link wants it whole.
+export async function copyPlexCode(btn) {
+  const code = (document.getElementById('pin-code')?.textContent || '').replace(/\s+/g, '');
+  try {
+    await navigator.clipboard.writeText(code);
+    btnDone(btn, 'Copied', {revertMs: 2000});
+  } catch {
+    toast("Couldn't copy — select the code and copy it by hand.", 'amber');
+  }
 }
 
 export function setUser(u) {

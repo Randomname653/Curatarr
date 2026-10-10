@@ -461,7 +461,7 @@ export async function _kbAction(btn, path, method, doneText) {
   try {
     const r = await api(path, method);
     if (r.success) { toast(doneText, 'success'); _kbRefresh(); }
-    else { toast(r.error || 'Failed', 'danger'); btnDone(btn); }
+    else { toast(r.error || "Couldn't update the item. Try again.", 'danger'); btnDone(btn); }
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 export function kbRetry(btn)    { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/retry`, 'POST', 'Attempts reset — the next run tries again'); }

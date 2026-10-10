@@ -88,11 +88,11 @@ export async function saveLibraries(btn) {
 export async function checkOrphans(btn) {
   const el = document.getElementById('orphan-content');
   btnBusy(btn, 'Scanning…');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning Plex history for orphaned entries…</p>';
+  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Looking for history from removed libraries…</p>';
   try {
     const r = await api('/api/libraries/orphaned');
     if (!r.has_orphans) {
-      el.innerHTML = emptyHtml('No orphaned entries found.', null, null, {good: true});
+      el.innerHTML = emptyHtml('No history from removed libraries.', null, null, {good: true});
       return;
     }
     const sections = r.orphaned;
@@ -106,7 +106,7 @@ export async function checkOrphans(btn) {
             <td class="mono t3">${esc(s.section_id)}</td>
             <td>${s.count}</td>
             <td class="fs-12 t2">${s.sample_titles.slice(0,4).map(esc).join(' · ')}</td>
-            <td><select id="orphan-cat-${s.section_id}" class="input" aria-label="Assign orphaned entries to category">
+            <td><select id="orphan-cat-${s.section_id}" class="input" aria-label="Category for this history">
               ${['anime','music','movie','show','ignore'].map(o=>`<option value="${o}" ${o===s.suggested_category?'selected':''}>${o}</option>`).join('')}
             </select></td>
           </tr>`).join('')}
@@ -132,7 +132,7 @@ export async function applyOrphanRepair(sections) {
   el.innerHTML = '<p class="loading" role="status" aria-live="polite">Importing entries… this may take a moment.</p>';
   try {
     const r = await api('/api/libraries/repair-orphans', 'POST', {mappings});
-    el.innerHTML = `<div class="banner ok"><span class="banner-icon">${SVG_CHECK}</span><div class="banner-text">Saved ${r.saved} library mappings · imported ${r.synced} new history entries. Run Force sync to recompute your taste profile with the new data.</div></div>`;
+    el.innerHTML = `<div class="banner ok"><span class="banner-icon">${SVG_CHECK}</span><div class="banner-text">Saved ${r.saved} library mappings · imported ${r.synced} new history entries. Run Sync now to update your taste profile with it.</div></div>`;
     toast(`Imported ${r.synced} history entries`, 'success');
     _swrInvalidate('libraries');
     _swrInvalidate('history-stats');
