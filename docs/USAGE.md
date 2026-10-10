@@ -104,8 +104,9 @@ The setup wizard's Ollama step picks the models. To change them later:
 
 On a card with less than 24 GB, choose a curator whose download size
 (shown on its Ollama library page) leaves a few GB of VRAM free for the
-conversation. Smaller models work, with softer verdicts; the
-"Curator running on CPU" banner tells you when a model is too big.
+conversation. Smaller models work, with softer verdicts. To see whether a
+model fits, run `ollama ps` while it is loaded: its PROCESSOR column reads
+`100% GPU` when it fits and shows a CPU share when it doesn't.
 
 On Windows, `start.bat` and `start_tray.bat` check the models at every
 start and run step 2 for you when a model is missing.
@@ -140,8 +141,9 @@ locks as the in-app pipeline, so they cannot collide with it.
 - **Enrichment too slow?** A faster summarizer model helps far more than
   anything else. `ARR_PRE_ENRICH_BATCH` controls how much is enriched in
   the nightly pre-pass.
-- **Curator responses too slow?** Check the "running on CPU" banner — a
-  model that doesn't fit in VRAM is an order of magnitude slower.
+- **Curator responses too slow?** Check `ollama ps` while the curator is
+  loaded — a model that doesn't fit in VRAM (a CPU share in the PROCESSOR
+  column) is an order of magnitude slower.
   `MAX_CONCURRENT_CURATOR` stays at 1 for a single GPU by design.
 - **Deletion proposals feel wrong?** Argue with them in the proposal's
   discussion thread. Keep decisions and stated preferences are learned
@@ -196,12 +198,14 @@ the other program and start again. On Windows,
 
 ### The models and the GPU
 
-**"Curator running on CPU" banner**
+**The curator answers very slowly**
 
-The curator model doesn't fit in your GPU's memory. Free GPU memory
-(close games or other AI tools), or switch to a smaller curator model as
-described in [Changing the models](#changing-the-models). Curatarr keeps
-working in the meantime, only slowly.
+The curator model probably doesn't fit in your GPU's memory, so part of
+it runs on the processor: `ollama ps` shows the split in its PROCESSOR
+column (`100% GPU` is how it should look). Free GPU memory (close games
+or other AI tools), or switch to a smaller curator model as described in
+[Changing the models](#changing-the-models). Curatarr keeps working in
+the meantime, only slowly.
 
 **"The GPU is busy with another program right now" in the chat**
 
@@ -284,8 +288,8 @@ time):
 py -3.12 -m venv venv
 ```
 
-**Settings → Maintenance says the installed packages differ from the
-tested versions**
+**Settings → Maintenance says "… pinned packages differ" or "… differ
+from the tested install"**
 
 An update changed Curatarr's dependencies and this Python still has the
 old ones. `start.bat` and `start_tray.bat` fix this by themselves at the
