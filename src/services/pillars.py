@@ -30,6 +30,10 @@ Pillars (priority high -> low), enforced in the prompt:
 from __future__ import annotations
 
 import logging
+from typing import Annotated, Literal
+
+from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
+                      ValidationError, field_validator, model_validator)
 
 from src.services.llm_utils import CURATOR_NUM_CTX
 
@@ -93,22 +97,75 @@ So: a household-claimed title or an objective masterwork STAYS even against the 
 # acclaim (the Tokyo Story "the void" bug). protecting_pillar names the highest
 # pillar that keeps it — the persist-logic protects only III/II/I keeps, never a
 # bare Ego(0) taste-match (the over-protection fix).
+#
+# Property order IS generation order. Ollama's grammar emits required
+# properties first and optional ones after — an optional bitrate_note was
+# written AFTER the verdict it is the reason for (KEEP_WITH_FLAG), or not at
+# all. It is required now and sits before the decision fields. maxLength keeps
+# a verbose small model from spending num_predict on one field and ending in
+# truncated JSON.
+_FINDING_MAX = 400
 VERDICT_SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
-        "pillar_3_household": {"type": "string"},
-        "pillar_2_custodian": {"type": "string"},
-        "pillar_1_resonance": {"type": "string"},
-        "pillar_0_ego":       {"type": "string"},
-        "bitrate_note":       {"type": "string"},
+        "pillar_3_household": {"type": "string", "maxLength": _FINDING_MAX},
+        "pillar_2_custodian": {"type": "string", "maxLength": _FINDING_MAX},
+        "pillar_1_resonance": {"type": "string", "maxLength": _FINDING_MAX},
+        "pillar_0_ego":       {"type": "string", "maxLength": _FINDING_MAX},
+        "bitrate_note":       {"type": "string", "maxLength": 300},
         "protecting_pillar":  {"type": "string",
                                "enum": ["HOUSEHOLD", "CUSTODIAN", "RESONANCE", "EGO", "NONE"]},
         "verdict": {"type": "string",
                     "enum": ["HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"]},
     },
     "required": ["pillar_3_household", "pillar_2_custodian", "pillar_1_resonance",
-                 "pillar_0_ego", "protecting_pillar", "verdict"],
+                 "pillar_0_ego", "bitrate_note", "protecting_pillar", "verdict"],
 }
+
+
+def _clip(v):
+    """Over-long findings are trimmed, not rejected: verbosity is not a wrong
+    verdict, and not every Ollama build enforces maxLength in the grammar."""
+    return v[:_FINDING_MAX * 2] if isinstance(v, str) else v
+
+
+_Finding = Annotated[str, BeforeValidator(_clip), Field(min_length=1)]
+
+
+class Verdict(BaseModel):
+    """What adjudicate() accepts from the model. The enum check alone let
+    through answers with pillars missing (they were deleted by the old parser,
+    see llm_utils.parse_llm_json) and verdicts that contradict their own
+    reasoning — a CUT naming HOUSEHOLD as its protecting pillar became a
+    deletion proposal for the title its own judge said the household holds."""
+    model_config = ConfigDict(extra="ignore")
+
+    pillar_3_household: _Finding
+    pillar_2_custodian: _Finding
+    pillar_1_resonance: _Finding
+    pillar_0_ego: _Finding
+    bitrate_note: Annotated[str, BeforeValidator(_clip)] = ""
+    protecting_pillar: Literal["HOUSEHOLD", "CUSTODIAN", "RESONANCE", "EGO", "NONE"]
+    verdict: Literal["HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"]
+
+    @field_validator("pillar_3_household", "pillar_2_custodian",
+                     "pillar_1_resonance", "pillar_0_ego")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("a pillar finding is blank")
+        return v
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        keep = self.verdict in ("HARD_KEEP", "KEEP_WITH_FLAG")
+        if keep and self.protecting_pillar == "NONE":
+            raise ValueError(f"{self.verdict} names no protecting pillar")
+        if not keep and self.protecting_pillar != "NONE":
+            raise ValueError(f"{self.verdict} contradicts protecting_pillar="
+                             f"{self.protecting_pillar} (a protected title is a keep)")
+        return self
 
 
 # ── CLERK HELPERS ─────────────────────────────────────────────────────────────
@@ -784,7 +841,47 @@ def _is_factual(genres: str) -> bool:
 # now we default to settings.CURATOR_MODEL, swappable via the `model` arg.
 
 _JUDGE_TIMEOUT = 300.0   # s; a cold 31B load is slow — generous on purpose
+_JUDGE_PREDICT = 800
+# A repair after a truncated answer gets more room: the first answer already
+# showed that 800 tokens were not enough for this model on these facts.
+_JUDGE_PREDICT_REPAIR = 1200
 _VALID_VERDICTS = {"HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"}
+
+_EVALUATE_FALLBACK = {"pillar_3_household": "", "pillar_2_custodian": "",
+                      "pillar_1_resonance": "", "pillar_0_ego": "", "bitrate_note": "",
+                      "protecting_pillar": "NONE", "verdict": "EVALUATE"}
+
+
+def _parse_verdict(raw: str) -> Verdict:
+    """Raw model answer -> Verdict, or LLMCallError(PARSE / SCHEMA)."""
+    from src.services.llm_errors import LLMCallError, LLMFailure
+    from src.services.llm_utils import parse_llm_json
+    try:
+        data = parse_llm_json(raw)
+    except Exception as e:
+        raise LLMCallError(LLMFailure.PARSE, str(e)[:200], raw) from e
+    if not isinstance(data, dict):
+        raise LLMCallError(LLMFailure.SCHEMA, "the answer is not a JSON object", raw)
+    try:
+        return Verdict.model_validate(data)
+    except ValidationError as e:
+        first = e.errors()[0]
+        where = ".".join(str(x) for x in first.get("loc") or ()) or "verdict"
+        raise LLMCallError(LLMFailure.SCHEMA, f"{where}: {first.get('msg')}", raw) from e
+
+
+def _repair_message(err) -> str:
+    """The one corrective turn: name what was wrong, restate the shape."""
+    from src.services.llm_errors import LLMFailure
+    what = {
+        LLMFailure.OUTPUT_TRUNCATED: "it was cut off before the JSON was complete",
+        LLMFailure.PARSE: "it was not valid JSON",
+    }.get(err.kind, err.detail or "it did not match the required shape")
+    return (f"Your answer was rejected: {what}. Send the complete JSON object "
+            "again, every field filled: each pillar finding ONE sentence. A "
+            "HARD_KEEP or KEEP_WITH_FLAG names the pillar that protects it; a "
+            "CUT, STAGNANT or EVALUATE has protecting_pillar NONE — if a pillar "
+            "protects this title, the verdict is a keep.")
 
 
 async def adjudicate(evidence_facts: str, *, model: str = None,
@@ -792,56 +889,92 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
     """STAGE 1 — the structured verdict. Constitution + evidence + forced schema.
 
     temperature 0 (determinism by construction, not luck); the JSON shape is
-    forced via Ollama `format`. Returns the parsed 5-field dict. On ANY error
-    (network, malformed JSON, bad enum) returns a safe EVALUATE fallback — a
-    flaky model response must never crash a library scan.
+    forced via Ollama `format` and then VALIDATED (Verdict): every pillar
+    finding present, enums exact, the verdict consistent with its protecting
+    pillar. An answer that fails that — or does not parse, or was cut off —
+    gets ONE repair turn naming the fault. Infrastructure failures get none:
+    an Ollama that is down for this title is down for the next.
+
+    Never raises — a flaky model response must never crash a library scan.
+    Failures return the EVALUATE fallback (fail closed: neither proposed nor
+    protected) carrying ``_error`` and ``_error_kind`` (an llm_errors
+    LLMFailure value), so the run can tell an outage from a real EVALUATE.
+    A verdict that needed the repair turn carries ``_repaired``.
     """
-    import httpx
     from src.config import settings
+    from src.services.llm_errors import LLMCallError, REPAIRABLE, post_chat
     from src.services.llm_priority import curator_priority
-    from src.services.llm_utils import parse_llm_json
+    from src.services.llm_utils import UNTRUSTED_RULE
 
     model = model or settings.CURATOR_MODEL
+    messages = [
+        {"role": "system",
+         "content": PILLAR_CONSTITUTION + "\n\n" + UNTRUSTED_RULE
+                    + (f"\n\n{law_extra}" if law_extra else "")},
+        {"role": "user", "content": "FACTS:\n" + evidence_facts},
+    ]
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system",
-             "content": PILLAR_CONSTITUTION + (f"\n\n{law_extra}" if law_extra else "")},
-            {"role": "user", "content": "FACTS:\n" + evidence_facts},
-        ],
+        "messages": messages,
         "format": VERDICT_SCHEMA,
         "stream": False,
         "think": False,
         "keep_alive": "10m",
-        "options": {"temperature": 0.0, "num_predict": 800,
+        # repeat_penalty 1.0: a constrained JSON answer repeats its quotes,
+        # colons and key prefixes by construction; the default penalty pushes
+        # a small model off them. seed: temperature 0 is greedy already, the
+        # seed pins the rest.
+        "options": {"temperature": 0.0, "seed": 7, "repeat_penalty": 1.0,
+                    "num_predict": _JUDGE_PREDICT,
                     "num_ctx": CURATOR_NUM_CTX, "num_gpu": 99},
     }
-    async def _post():
-        async with httpx.AsyncClient(timeout=_JUDGE_TIMEOUT) as client:
-            resp = await client.post(
-                f"{settings.effective_ollama}/api/chat", json=payload)
-        resp.raise_for_status()
-        return resp
+
+    async def _ask() -> Verdict:
+        data = await post_chat(settings.effective_ollama, payload,
+                               read_timeout=_JUDGE_TIMEOUT)
+        return _parse_verdict((data.get("message") or {}).get("content", "") or "")
+
+    async def _run() -> tuple:
+        try:
+            return await _ask(), False
+        except LLMCallError as e:
+            if e.kind not in REPAIRABLE:
+                raise
+            logger.info("[pillars] verdict rejected (%s: %s) — one repair turn",
+                        e.kind.value, e.detail)
+            payload["messages"] = messages + [
+                {"role": "assistant", "content": (e.raw or "")[:2000]},
+                {"role": "user", "content": _repair_message(e)},
+            ]
+            payload["options"] = {**payload["options"],
+                                  "num_predict": _JUDGE_PREDICT_REPAIR}
+            return await _ask(), True
+
     try:
         # skip_priority=True when an OUTER curator_start already holds the GPU
         # gate (the batch deletion loop) — re-acquiring it would deadlock.
         # exclusive_model routes the eviction: a pitcher-bake verdict must
         # clear the resident curator before loading (two-bake split).
         if skip_priority:
-            r = await _post()
+            verdict, repaired = await _run()
         else:
             async with curator_priority("pillar verdict", exclusive_model=model):
-                r = await _post()
-        content = (r.json().get("message") or {}).get("content", "") or ""
-        data = parse_llm_json(content)
-        if not isinstance(data, dict) or data.get("verdict") not in _VALID_VERDICTS:
-            raise ValueError(f"bad verdict payload: {content[:200]!r}")
-        return data
+                verdict, repaired = await _run()
+        out = verdict.model_dump()
+        if repaired:
+            out["_repaired"] = True
+            logger.info("[pillars] repair turn produced a valid verdict (%s)",
+                        out["verdict"])
+        return out
+    except LLMCallError as e:
+        logger.warning("[pillars] adjudicate failed [%s] %s — defaulting to EVALUATE",
+                       e.kind.value, e.detail)
+        return {**_EVALUATE_FALLBACK, "_error": str(e), "_error_kind": e.kind.value}
     except Exception as e:
-        logger.warning("[pillars] adjudicate failed (%s) — defaulting to EVALUATE", e)
-        return {"pillar_3_household": "", "pillar_2_custodian": "", "pillar_1_resonance": "",
-                "pillar_0_ego": "", "bitrate_note": "", "protecting_pillar": "NONE",
-                "verdict": "EVALUATE", "_error": str(e)}
+        logger.warning("[pillars] adjudicate crashed (%s: %s) — defaulting to EVALUATE",
+                       type(e).__name__, e)
+        return {**_EVALUATE_FALLBACK, "_error": f"{type(e).__name__}: {e}",
+                "_error_kind": "unknown"}
 
 
 def _lean_facts(facts: str) -> str:

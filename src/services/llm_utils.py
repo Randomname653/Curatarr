@@ -185,8 +185,32 @@ def fence_untrusted(label: str, text, max_chars: "int | None" = None) -> str:
     return f"<<<UNTRUSTED_SOURCE:{label}>>>\n{s}\n<<<END_UNTRUSTED_SOURCE>>>"
 
 
+def _strip_tags_deep(value: Any) -> Any:
+    """Tag-like markup removed from every string inside parsed JSON."""
+    if isinstance(value, str):
+        return _TAG_RE.sub("", value)
+    if isinstance(value, list):
+        return [_strip_tags_deep(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _strip_tags_deep(v) for k, v in value.items()}
+    return value
+
+
 def parse_llm_json(content: str) -> Any:
-    """Strip think tags + markdown fences, then parse JSON. Raises JSONDecodeError on failure."""
+    """Parse a model's JSON answer. Raises JSONDecodeError on failure.
+
+    Valid JSON is parsed AS IS first, and markup is then stripped from the
+    parsed strings. Cleaning the raw text first — the old order — ran the tag
+    stripper across string boundaries: a pillar finding with "<" in one field
+    and ">" in the next lost everything between them, keys included, and the
+    verdict still parsed. A ``` inside a string split the answer in two.
+    Format-constrained calls always answer in plain JSON, so for them the
+    cleaner is never needed; it stays as the fallback for answers wrapped in
+    think tags or code fences."""
+    try:
+        return _strip_tags_deep(json.loads(content.strip()))
+    except (json.JSONDecodeError, AttributeError):
+        pass
     return json.loads(clean_llm_text(content))
 
 
