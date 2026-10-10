@@ -85,7 +85,6 @@ export function openSettingsPane(name, btn) {
   // Per-pane lazy loaders
   if (name === 'account') {
     populateSettingsAccount();
-    loadPinStatus();
   } else if (name === 'notifications') {
     loadNotificationPreferences();
   } else if (name === 'plex-libraries') {
@@ -385,76 +384,6 @@ export function populateSettingsAccount() {
   if (nameEl) nameEl.textContent = u.username || u.plex_username || '—';
   if (roleEl) roleEl.textContent = u.is_admin ? '· admin' : '· user';
   if (idEl)   idEl.textContent   = u.plex_user_id || u.id || '—';
-}
-
-export async function loadPinStatus() {
-  const stateEl = document.getElementById('settings-pin-state');
-  const formSet = document.getElementById('settings-pin-form-set');
-  const formChange = document.getElementById('settings-pin-form-change');
-  if (!stateEl || !formSet || !formChange) return;
-  stateEl.textContent = 'checking…';
-  stateEl.classList.remove('t-amber', 't-danger');
-  try {
-    const r = await api('/api/users/me/pin-status');
-    if (r.has_pin) {
-      const when = r.set_at ? new Date(r.set_at).toLocaleString() : '';
-      stateEl.textContent = when ? `set · last updated ${when}` : 'set';
-      stateEl.classList.add('t-amber');
-    } else {
-      stateEl.textContent = 'not set';
-    }
-    formSet.hidden = !!r.has_pin;
-    formChange.hidden = !r.has_pin;
-  } catch (e) {
-    stateEl.textContent = _errMsg(e) || "Couldn't load the passphrase status";
-    stateEl.classList.add('t-danger');
-  }
-}
-
-export async function submitPinSet(btn) {
-  const newPin = document.getElementById('pin-new').value;
-  const confirmPin = document.getElementById('pin-new-confirm').value;
-  const status = document.getElementById('pin-set-status');
-  if (newPin.length < 6) { setStatus(status, 'The passphrase needs at least 6 characters.', 'err'); return; }
-  if (newPin !== confirmPin) { setStatus(status, "The passphrases don't match.", 'err'); return; }
-  btnBusy(btn, 'Saving…');
-  setStatus(status, 'Saving…', 'busy');
-  try {
-    await api('/api/users/me/pin', 'POST', { pin: newPin });
-    setStatus(status, 'Passphrase set.', 'ok');
-    toast('Passphrase set', 'success');
-    document.getElementById('pin-new').value = '';
-    document.getElementById('pin-new-confirm').value = '';
-    loadPinStatus();
-  } catch (e) {
-    setStatus(status, _errMsg(e) || "Couldn't save the passphrase. Try again.", 'err');
-  }
-  btnDone(btn);
-}
-
-export async function submitPinChange(btn) {
-  const cur = document.getElementById('pin-current').value;
-  const newPin = document.getElementById('pin-change-new').value;
-  const confirmPin = document.getElementById('pin-change-confirm').value;
-  const status = document.getElementById('pin-change-status');
-  if (!cur) { setStatus(status, 'Enter your current passphrase.', 'err'); return; }
-  if (newPin.length < 6) { setStatus(status, 'The new passphrase needs at least 6 characters.', 'err'); return; }
-  if (newPin !== confirmPin) { setStatus(status, "The new passphrases don't match.", 'err'); return; }
-  if (newPin === cur) { setStatus(status, 'The new passphrase must differ from the current one.', 'err'); return; }
-  btnBusy(btn, 'Saving…');
-  setStatus(status, 'Saving…', 'busy');
-  try {
-    await api('/api/users/me/pin', 'POST', { pin: newPin, current_pin: cur });
-    setStatus(status, 'Passphrase changed.', 'ok');
-    toast('Passphrase changed', 'success');
-    document.getElementById('pin-current').value = '';
-    document.getElementById('pin-change-new').value = '';
-    document.getElementById('pin-change-confirm').value = '';
-    loadPinStatus();
-  } catch (e) {
-    setStatus(status, _errMsg(e) || "Couldn't save the passphrase. Try again.", 'err');
-  }
-  btnDone(btn);
 }
 
 // The user pill: the Settings view with its Account pane open. showView runs
