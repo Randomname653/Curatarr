@@ -206,6 +206,25 @@ def test_a_failed_ban_is_recorded_and_worded_for_the_owner():
     assert "HTTP 401" in w and "Mwk" in w and "SoulSync" in w, w
 
 
+def test_an_exception_in_the_ban_never_reaches_the_browser():
+    """CodeQL py/stack-trace-exposure (2026-10-10): the recorded error goes
+    out through ban_warning, so it is a fixed sentence."""
+    db = _db()
+    p = _p(db, 1, "Mwk", "music", "lidarr")
+    calls, real = _patch_ss()
+
+    async def broken(name):
+        raise RuntimeError(r"C:\secret\path\soulsync.json is unreadable")
+    dr_ss.artist_info = broken
+    try:
+        asyncio.run(dr.ban_deleted_artist(p))
+    finally:
+        _unpatch(real)
+    ban = json.loads(p.soulsync_ban)
+    assert not ban["ok"] and ban["error"] == "the ban failed inside Curatarr (see the log)", ban
+    assert "secret" not in dr.ban_warning(p)
+
+
 def test_no_ban_for_films_or_without_soulsync_writes():
     db = _db()
     film = _p(db, 1, "Dune", "movie", "radarr")

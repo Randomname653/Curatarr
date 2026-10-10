@@ -75,8 +75,11 @@ async def ban_deleted_artist(p) -> None:
         info = await ss.artist_info(p.title)
         mbid = (info or {}).get("musicbrainz_id") or _json(p.soulsync_ban).get("mbid")
         res = await ss.block_artist(p.title, mbid)
-    except Exception as e:
-        res = {"ok": False, "id": None, "error": f"{type(e).__name__}: {e}"}
+    except Exception as e:  # noqa: BLE001
+        # The recorded error reaches the browser (ban_warning): a fixed
+        # sentence, the exception only in the log (CodeQL, 2026-10-10).
+        logger.warning("[deletion] SoulSync ban of %r raised: %s", p.title, e)
+        res = {"ok": False, "id": None, "error": "the ban failed inside Curatarr (see the log)"}
     if res.get("skipped"):
         return
     p.soulsync_ban = json.dumps({

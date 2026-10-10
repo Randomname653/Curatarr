@@ -268,6 +268,13 @@ async def proxy_image(
         logger.debug("[image_proxy] reject non-whitelisted host: %s", parsed.host)
         raise HTTPException(403, f"Host not on image-proxy whitelist: {parsed.host}")
 
+    # The cache and in-flight keys come from the parsed URL too, so two
+    # spellings of one URL share one cache file. Not a security fix: the
+    # fetch below always used str(parsed), the object the host check read
+    # (Jules "Sentinel" PRs #141-#145 took the raw-string key for an SSRF
+    # parser differential, 2026-10-06..09).
+    src = str(parsed)
+
     # 2. Disk cache hit?
     cached = _find_existing(src)
     if cached:

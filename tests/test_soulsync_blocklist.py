@@ -118,17 +118,38 @@ def test_a_refused_or_missing_ban_is_reported():
         _restore()
 
 
-def test_an_unreachable_soulsync_is_reported():
+def test_an_unreachable_soulsync_is_reported_without_the_exception_text():
+    """The error reaches the browser (ban_warning), so it is a fixed
+    sentence; an exception's text stays in the log (CodeQL
+    py/stack-trace-exposure, 2026-10-10)."""
     _fake_soulsync()
 
     def down(request):
-        raise httpx.ConnectError("refused")
+        raise httpx.ConnectError("refused by secret-host.lan:9999")
+
+    def garbage(request):
+        return httpx.Response(200, content=b"<html>not json</html>")
+    try:
+        async def run(handler):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+                return await ss.block_artist("Nate Ruess", client=c)
+        out = asyncio.run(run(down))
+        assert out == {"ok": False, "id": None, "error": "SoulSync could not be reached"}, out
+        out = asyncio.run(run(garbage))
+        assert out["error"] == "SoulSync's answer could not be read", out
+    finally:
+        _restore()
+
+
+def test_a_refused_read_names_the_status():
+    _fake_soulsync()
     try:
         async def run():
-            async with httpx.AsyncClient(transport=httpx.MockTransport(down)) as c:
+            locked = httpx.MockTransport(lambda request: httpx.Response(401))
+            async with httpx.AsyncClient(transport=locked) as c:
                 return await ss.block_artist("Nate Ruess", client=c)
         out = asyncio.run(run())
-        assert not out["ok"] and "could not be reached" in out["error"], out
+        assert out == {"ok": False, "id": None, "error": "SoulSync answered HTTP 401"}, out
     finally:
         _restore()
 

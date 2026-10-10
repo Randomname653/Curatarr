@@ -280,17 +280,18 @@ def writes_allowed() -> bool:
     return _configured() and not is_test_process()
 
 
-async def _banned_artist_id(c: httpx.AsyncClient, name: str) -> Optional[int]:
-    """The blocklist row id of this artist, None when it is not banned.
-    Raises when SoulSync does not answer."""
+async def _banned_artist_id(c: httpx.AsyncClient, name: str) -> tuple[Optional[int], int]:
+    """(the blocklist row id of this artist or None, SoulSync's HTTP status).
+    Raises when SoulSync does not answer at all."""
     r = await c.get(_root() + "/api/blocklist", headers=_headers(),
                     params={"entity_type": "artist"})
-    r.raise_for_status()
+    if r.status_code != 200:
+        return None, r.status_code
     want = _norm(name)
     for e in (r.json() or {}).get("entries") or []:
         if _norm(e.get("name")) == want:
-            return e.get("id")
-    return None
+            return e.get("id"), 200
+    return None, 200
 
 
 async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
@@ -305,7 +306,9 @@ async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
     is what tells us it still works after a SoulSync update.
 
     Returns {"ok", "id", "error"}; "skipped": True when no write may happen
-    (writes_allowed) and no client was injected."""
+    (writes_allowed) and no client was injected. The error is a fixed
+    sentence: it reaches the browser, an exception's text only the log
+    (CodeQL py/stack-trace-exposure, 2026-10-10)."""
     if not name:
         return {"ok": False, "id": None, "error": "no artist name"}
     if client is None and not writes_allowed():
@@ -313,7 +316,9 @@ async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
     own = client is None
     c = client or httpx.AsyncClient(timeout=_BAN_TIMEOUT)
     try:
-        banned = await _banned_artist_id(c, name)
+        banned, status = await _banned_artist_id(c, name)
+        if status != 200:
+            return {"ok": False, "id": None, "error": f"SoulSync answered HTTP {status}"}
         if banned:
             return {"ok": True, "id": banned, "error": None}
         body = {"entity_type": "artist", "name": name}
@@ -323,15 +328,18 @@ async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
         if r.status_code != 200 or not (r.json() or {}).get("success"):
             return {"ok": False, "id": None,
                     "error": f"SoulSync refused the ban (HTTP {r.status_code})"}
-        banned = await _banned_artist_id(c, name)
+        banned, _status = await _banned_artist_id(c, name)
         if not banned:
             return {"ok": False, "id": None,
                     "error": "the ban did not show up on SoulSync's blocklist"}
         logger.info("[soulsync] %r is on the blocklist (entry %s)", name, banned)
         return {"ok": True, "id": banned, "error": None}
-    except Exception as e:
-        return {"ok": False, "id": None,
-                "error": f"SoulSync could not be reached ({type(e).__name__})"}
+    except httpx.HTTPError as e:
+        logger.info("[soulsync] ban of %r: no answer (%s)", name, e)
+        return {"ok": False, "id": None, "error": "SoulSync could not be reached"}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[soulsync] ban of %r: unreadable answer (%s)", name, e)
+        return {"ok": False, "id": None, "error": "SoulSync's answer could not be read"}
     finally:
         if own:
             await c.aclose()
