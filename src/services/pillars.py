@@ -218,6 +218,80 @@ def _other_users_watch(db, owner_id: int, item: dict, category: str) -> list[dic
     return out
 
 
+# Pillar III, decided in Python. The judge weighs household engagement too,
+# but the sacred pillar must not depend on a model reading a line correctly —
+# an 8B model drops priority-ordered rules first. ``completed`` is stored PER
+# ROW (an episode, a track), so a single finished episode is not a claim: a
+# series needs real coverage. The bar is the constitution's own example read
+# strictly — 2 of 12 episodes is a sampled bounce, a quarter of the run is not.
+_HOUSEHOLD_MIN_EPISODES = 3
+_HOUSEHOLD_MIN_SHARE = 0.25
+_HOUSEHOLD_MIN_PLAYS_MUSIC = 5
+
+
+def _household_claim(others: list[dict], category: str,
+                     episodes_total: "int | None" = None) -> str:
+    """The name of the first other household user whose engagement alone
+    protects this title from a CUT, or "" when nobody's does."""
+    for o in others or []:
+        if category in ("show", "anime"):
+            eps = o.get("distinct_episodes") or 0
+            if eps < _HOUSEHOLD_MIN_EPISODES:
+                continue
+            if episodes_total and eps / episodes_total < _HOUSEHOLD_MIN_SHARE:
+                continue
+            return o.get("name") or "another user"
+        if category == "music":
+            if (o.get("views") or 0) >= _HOUSEHOLD_MIN_PLAYS_MUSIC:
+                return o.get("name") or "another user"
+            continue
+        if o.get("completed"):
+            return o.get("name") or "another user"
+    return ""
+
+
+def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> dict:
+    """Every read build_evidence makes against OUR database, done in one go.
+
+    build_evidence awaits slow network calls (arr, Lidarr, TMDB, Wikipedia,
+    the embedding model). A session left open across them pins a SQLite read
+    snapshot for the whole stretch and stops WAL checkpoints, once per judged
+    title. Reading everything first lets the caller's session end before the
+    first await.
+
+    A failed watch lookup is reported as UNKNOWN (None), never as an empty
+    result: "nobody watched it" built from an exception is a fabricated fact,
+    and on Pillar III it is the one that deletes a household member's show."""
+    out = {"ow": None, "ow_unknown": False, "others": None,
+           "taste_summary": "", "fb_blob": None}
+    try:
+        out["ow"] = _owner_watch(db, user_id, item, category)
+    except Exception as e:
+        logger.warning("[pillars] owner-watch failed for %r: %s", title, e)
+        out["ow_unknown"] = True
+    try:
+        out["others"] = _other_users_watch(db, user_id, item, category)
+    except Exception as e:
+        logger.warning("[pillars] household lookup failed for %r: %s", title, e)
+    try:
+        from src.database.models import TasteVectorEntry
+        tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
+        out["taste_summary"] = (tv.summary_text or "") if tv else ""
+    except Exception as e:
+        logger.debug("[pillars] taste failed for %r: %s", title, e)
+    try:
+        import json as _json
+        from src.database.models import EncryptedTasteVector
+        etv = db.query(EncryptedTasteVector).filter(
+            EncryptedTasteVector.user_id == user_id,
+            EncryptedTasteVector.media_category == category).first()
+        if etv and etv.encrypted_blob:
+            out["fb_blob"] = _json.loads(etv.encrypted_blob)
+    except Exception as e:
+        logger.debug("[pillars] owner-feedback read failed for %r: %s", title, e)
+    return out
+
+
 def _tech_facts(item: dict, media_type: str) -> tuple[str, bool]:
     """Raw tech line + bitrate-outlier flag. ('', False) when no profile on file."""
     try:
@@ -274,15 +348,23 @@ def _profile_is_another_work(item: dict, vd: dict) -> bool:
     return bool(ay and py and abs(ay - py) > 1)
 
 
-async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
+async def build_evidence(item: dict, user_id: int, category: str, db=None) -> dict:
     """Assemble the full FACTS block + cheap flags for ONE title. Makes NO verdict.
 
     Returns ``{"title": str, "facts": str, "flags": dict}`` where ``facts`` is the
     prompt-ready evidence the judge consumes (same shape the constitution was
     tuned on) and ``flags`` are the few deterministic signals a thin guardrail or
     a sort could use without re-deriving them:
-        owner_watched, other_user_engaged, bitrate_outlier, acclaim_present.
+        owner_watched, other_user_engaged, bitrate_outlier, acclaim_present,
+        household_claim (who, by Python's reading of Pillar III), and
+        owner_watch_unknown / household_unknown when the watch data could not
+        be read — the deletion loop defers those instead of judging blind.
+
+    Without ``db`` the database is read in a short session of its own that
+    closes before the first network call. A caller passing ``db`` owns that
+    session, including how long its transaction stays open.
     """
+    from src.services.llm_utils import fence_untrusted, scrub_untrusted
     title = item.get("title") or "Unknown"
     year = item.get("year") or "—"
     genres = item.get("genres")
@@ -293,15 +375,23 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
              "bitrate_outlier": False, "acclaim_present": False,
              "owner_signal": False, "evidence_thin": False,
              "significance_unchecked": False, "dialogue_signal": False,
-             "evidence_mismatched": False}
+             "evidence_mismatched": False, "owner_watch_unknown": False,
+             "household_unknown": False, "household_claim": ""}
+
+    if db is None:
+        from src.database.connection import get_db_session
+        with get_db_session() as _db:
+            dbf = _read_db_facts(_db, item, user_id, category, title)
+    else:
+        dbf = _read_db_facts(db, item, user_id, category, title)
 
     # ── OWNER watch ──
-    try:
-        ow = _owner_watch(db, user_id, item, category)
-    except Exception as e:
-        logger.debug("[pillars] owner-watch failed for %r: %s", title, e)
-        ow = None
-    if ow:
+    ow = dbf["ow"]
+    if dbf["ow_unknown"]:
+        flags["owner_watch_unknown"] = True
+        owner_line = ("UNKNOWN — the owner's watch history could not be read; "
+                      "do not assume it is unwatched")
+    elif ow:
         flags["owner_watched"] = True
         when = f", last {ow['last'].strftime('%b %Y')}" if ow.get("last") else ""
         if (ow.get("episodes") or 0) >= 2:
@@ -345,6 +435,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                 or item.get("artist_mbid") or item.get("mbid"))
             owner_line = format_listening_line(ls)
             flags["owner_watched"] = bool(ls)
+            # Its own read of the same history: if it answered, the owner's
+            # side is known after all.
+            flags["owner_watch_unknown"] = False
         except Exception as e:
             logger.debug("[pillars] listening stats failed for %r: %s", title, e)
         try:
@@ -359,26 +452,31 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             logger.debug("[pillars] discography failed for %r: %s", title, e)
 
     # ── OTHER household users (PILLAR III) ──
-    try:
-        others = _other_users_watch(db, user_id, item, category)
-    except Exception as e:
-        logger.debug("[pillars] other-users failed for %r: %s", title, e)
-        others = []
-    if others:
+    others = dbf["others"]
+    if others is None:
+        flags["household_unknown"] = True
+        other_block = ("  UNKNOWN — the household's watch history could not be "
+                       "read; do not assume nobody watched it.")
+    elif others:
         lines = []
         for o in others:
             flags["other_user_engaged"] = True
             when = f", last {o['last'].strftime('%b %Y')}" if o.get("last") else ""
             detail = (f"{o['distinct_episodes']} episode(s)"
                       if o["distinct_episodes"] else f"{o['views']} view(s)")
-            lines.append(f"  - {o['name']}: {detail}{when}, "
+            lines.append(f"  - {scrub_untrusted(o['name'])}: {detail}{when}, "
                          + ("completed" if o["completed"] else "not completed"))
         other_block = "\n".join(lines)
     else:
-        other_block = "  none have watched or requested it."
+        # Requests are not looked up anywhere, so the line claims views only.
+        other_block = "  none have watched it."
 
     # ── ACCLAIM / METADATA (verified data — cache-first, no LLM) ──
     verified_text = ""
+    # Bound before the try: everything after it reads vd, and an exception
+    # inside (cache backend, an import) used to surface as UnboundLocalError,
+    # counted as "the model did not answer".
+    vd = None
     try:
         from src.services.media_enricher import ensure_verified_data, format_verified_block
         # allow_summarizer=False: build_evidence runs inside the judge funnel,
@@ -461,7 +559,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         except Exception as e:
             logger.debug("[pillars] wiki fallback failed for %r: %s", title, e)
         if wiki:
-            meta_block = f"WIKIPEDIA (no structured enrichment on file):\n{wiki}"
+            meta_block = ("WIKIPEDIA (no structured enrichment on file):\n"
+                          + fence_untrusted("wikipedia", wiki, 2000))
         else:
             # Nothing but the arr synopsis stub. A judge given this WILL fill
             # the gap with invented execution verdicts ("painfully safe",
@@ -472,16 +571,21 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
             # (arr_pre_enrich runs within 24h) instead of judging blind.
             flags["evidence_thin"] = True
             ov = (item.get("overview") or "").strip()
-            meta_block = f"no verified enrichment — thin synopsis only: {ov[:300] or 'n/a'}"
+            meta_block = ("no verified enrichment — thin synopsis only:\n"
+                          + fence_untrusted("arr_overview", ov or "n/a", 300))
+
+    # Pillar III in Python, now that the series length is known.
+    if others:
+        flags["household_claim"] = _household_claim(
+            others, category,
+            vd.get("episodes_total") if isinstance(vd, dict) else None)
 
     # ── OWNER taste (category-scoped) ──
     taste = ""
     try:
-        from src.database.models import TasteVectorEntry
         from src.services.recommendations_engine import _taste_section
-        tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
-        if tv and tv.summary_text:
-            taste = _taste_section(tv.summary_text, category)
+        if dbf["taste_summary"]:
+            taste = _taste_section(dbf["taste_summary"], category)
     except Exception as e:
         logger.debug("[pillars] taste failed for %r: %s", title, e)
 
@@ -491,13 +595,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
     # judge must weigh; standing aversions ride along on the taste line. ──
     feedback_line = ""
     try:
-        import json as _json
-        from src.database.models import EncryptedTasteVector
-        etv = db.query(EncryptedTasteVector).filter(
-            EncryptedTasteVector.user_id == user_id,
-            EncryptedTasteVector.media_category == category).first()
-        if etv and etv.encrypted_blob:
-            blob = _json.loads(etv.encrypted_blob)
+        blob = dbf["fb_blob"]
+        if isinstance(blob, dict):
             if blob.get("version") == 1:
                 logger.warning("[pillars] taste blob for %s is encrypted (v1) "
                                "— judging without owner-feedback signals",
@@ -512,7 +611,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                 feedback_line = (
                     f"OWNER FEEDBACK on this title ({when or 'undated'}): "
                     f"{last.get('sentiment') or 'neutral'}"
-                    f" — {last.get('reason') or 'no reason recorded'}")
+                    f" — {scrub_untrusted(last.get('reason')) or 'no reason recorded'}")
                 if float(last.get("weight") or 1.0) > 1.0:
                     feedback_line += (" (said in a Curatarr-recommendation "
                                       "follow-up — weigh this owner verdict "
@@ -560,7 +659,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
                 if c.get("overlap") or c.get("media_category") == category]
         if cons:
             flags["owner_signal"] = True
-            owner_signals = "".join(f"OWNER SIGNAL: {c['content']}\n" for c in cons)
+            owner_signals = "".join(f"OWNER SIGNAL: {scrub_untrusted(c['content'])}\n"
+                                    for c in cons)
     except Exception as e:
         logger.debug("[pillars] owner-signals failed for %r: %s", title, e)
 
@@ -648,7 +748,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db) -> dict:
         logger.debug("[pillars] dialogue signal failed for %r: %s", title, e)
 
     facts = (
-        f"TITLE: {title} ({year}) — {category}, {genres_str}\n"
+        f"TITLE: {scrub_untrusted(title)} ({year}) — {category}, "
+        f"{scrub_untrusted(genres_str)}\n"
         + form_line
         + f"OWNER: {owner_line}.\n"
         f"OTHER HOUSEHOLD USERS:\n{other_block}\n"
@@ -922,7 +1023,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         return ""
 
 
-async def judge(item: dict, user_id: int, category: str, db, *,
+async def judge(item: dict, user_id: int, category: str, db=None, *,
                 with_monologue: bool = False, lang_directive: str = "",
                 skip_priority: bool = False) -> dict:
     """Full pipeline for ONE title: clerk -> verdict (-> optional monologue).

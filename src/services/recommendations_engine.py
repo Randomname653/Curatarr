@@ -1819,6 +1819,7 @@ async def generate_deletion_proposals(
         thin_skipped = 0
         misfiled_skipped = 0
         unchecked_skipped = 0
+        watch_unknown_skipped = 0
         judge_failed = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
@@ -1925,8 +1926,9 @@ async def generate_deletion_proposals(
                      f"({len(final_proposals)}/{TARGET_CUTS} flagged) — "
                      f"{(item.get('title') or '?')[:50]}")
                 try:
-                    with get_db_session() as _jdb:
-                        ev = await build_evidence(item, user_id, category, _jdb)
+                    # No session passed: build_evidence reads the DB in a short
+                    # session of its own and closes it before its network calls.
+                    ev = await build_evidence(item, user_id, category)
                     # THIN-EVIDENCE GATE: no enrichment, no Wikipedia — only
                     # the arr synopsis stub. Judging that produces confident
                     # confabulation (the They Will Kill You / Buffaloed
@@ -1973,6 +1975,19 @@ async def generate_deletion_proposals(
                                     "significance never checked; not judging "
                                     "a title on data we don't have yet",
                                     category, item.get("title"))
+                        continue
+                    # UNREADABLE-WATCH-DATA GATE: a failed lookup of who watched
+                    # it is not "nobody watched it". Pillar III is the sacred
+                    # pillar, and the owner's own plays are the strongest CUT
+                    # signal there is — neither is guessed at. Deferred; the
+                    # title re-enters the funnel next scan.
+                    _fl = ev.get("flags") or {}
+                    if _fl.get("household_unknown") or _fl.get("owner_watch_unknown"):
+                        watch_unknown_skipped += 1
+                        judged -= 1
+                        logger.warning("[deletions] %s: deferring %r — watch "
+                                       "history could not be read",
+                                       category, item.get("title"))
                         continue
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
@@ -2046,6 +2061,8 @@ async def generate_deletion_proposals(
                 if misfiled_skipped else "")
              + (f" ({unchecked_skipped} deferred: significance unchecked)"
                 if unchecked_skipped else "")
+             + (f" ({watch_unknown_skipped} deferred: watch history unreadable)"
+                if watch_unknown_skipped else "")
              + (f" ({judge_failed} failed: the model did not answer)"
                 if judge_failed else "")
              + ".")
@@ -2053,7 +2070,8 @@ async def generate_deletion_proposals(
             "at": datetime.utcnow().isoformat(),
             "judged": judged,
             "flagged": len(final_proposals),
-            "deferred": thin_skipped + misfiled_skipped + unchecked_skipped,
+            "deferred": (thin_skipped + misfiled_skipped + unchecked_skipped
+                         + watch_unknown_skipped),
             "failed": judge_failed,
         }
         return final_proposals
