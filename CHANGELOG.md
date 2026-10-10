@@ -4,7 +4,15 @@ Condensed release history, newest first.
 
 ---
 
-## Unreleased — enrichment healing, a second security angle, one UI grammar down to the deepest view
+## 2026-10-10 — v1.1.0-beta: enrichment that heals itself, deletions that explain themselves
+
+Five weeks after 1.0.1: the enrichment pipeline heals itself and says what
+it is waiting for; deletions explain themselves (Cut or Your call with a
+Why?, Keep and Delete dialogs that say what they do, deleted titles that
+come back are shown); views can be linked, bookmarked and read at accessible
+contrast; MyAnimeList's official API replaces Jikan; SoulSync's follows and
+likes shape music taste and its blocklist keeps deleted artists gone; and
+the custodian keeps the GPU busy while you are away. In detail:
 
 The Knowledge Base said "93 % enriched" while the libraries reported 46 to
 92; the "Not findable" column was always zero because it read a column
