@@ -1540,28 +1540,19 @@ async def spotify_backlog(
             })
 
         # Stats for the toolbar header
-        total_unique = (
-            db.query(func.count(func.distinct(WatchHistoryEntry.series_title)))
-            .filter(
-                WatchHistoryEntry.user_id      == user.id,
-                WatchHistoryEntry.media_type   == "music",
-                WatchHistoryEntry.source       == "spotify",
-                WatchHistoryEntry.plex_item_id.like("spotify%"),
-                WatchHistoryEntry.series_title.isnot(None),
-            )
-            .scalar() or 0
-        )
-        total_resolved = (
-            db.query(func.count(func.distinct(WatchHistoryEntry.series_title)))
-            .filter(
-                WatchHistoryEntry.user_id      == user.id,
-                WatchHistoryEntry.media_type   == "music",
-                WatchHistoryEntry.source       == "spotify",
-                WatchHistoryEntry.plex_item_id.like("spotify%"),
-                WatchHistoryEntry.artist_mbid.isnot(None),
-            )
-            .scalar() or 0
-        )
+        from sqlalchemy import case as _case
+        stats = db.query(
+            func.count(func.distinct(WatchHistoryEntry.series_title)).label("total_unique"),
+            func.count(func.distinct(_case((WatchHistoryEntry.artist_mbid.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("total_resolved")
+        ).filter(
+            WatchHistoryEntry.user_id      == user.id,
+            WatchHistoryEntry.media_type   == "music",
+            WatchHistoryEntry.source       == "spotify",
+            WatchHistoryEntry.plex_item_id.like("spotify%"),
+            WatchHistoryEntry.series_title.isnot(None)
+        ).first()
+        total_unique = stats.total_unique or 0 if stats else 0
+        total_resolved = stats.total_resolved or 0 if stats else 0
 
     in_lidarr_count = sum(1 for a in artists if a.get("in_lidarr"))
 
