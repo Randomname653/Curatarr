@@ -162,7 +162,7 @@ export async function computeTaste(btn) {
   try {
     const qs = cats.map(c => `categories=${encodeURIComponent(c)}`).join('&');
     await api(qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste', 'POST');
-    toast(`Taste vector computation started for ${label}`, 'success');
+    toast(`Updating the taste profile for ${label}`, 'success');
     setTimeout(() => showView('history'), 3000);
   } catch (e) { el.innerHTML = _errHtml(e); }
   btnDone(btn);
@@ -206,7 +206,7 @@ export async function auditRequeueEnrichments(btn) {
     // Step 2 — real requeue.
     el.innerHTML = '<p class="loading" role="status" aria-live="polite">Requeuing incomplete profiles…</p>';
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
-    el.innerHTML = `<p class="fs-13 t-success">Requeued ${r.requeued} of ${r.incomplete} flagged profiles (${esc(_fmtBreakdown(r.by_reason))}). Run "Start Enrichment" to re-fetch them.</p>`;
+    el.innerHTML = `<p class="fs-13 t-success">Requeued ${r.requeued} of ${r.incomplete} flagged profiles (${esc(_fmtBreakdown(r.by_reason))}). Run "Start enrichment" to fetch them again.</p>`;
     setTimeout(loadEnrichStatus, 2000);
   } catch (e) {
     el.innerHTML = _errHtml(e);

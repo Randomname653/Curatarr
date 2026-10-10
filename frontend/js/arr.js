@@ -12,26 +12,25 @@ import { api } from './api.js';
 import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView } from './nav.js';
-import { openSettingsPane } from './settings.js';
 const ARR_TABS = {
   sonarr: [
-    { id: 'all',    label: 'All Series' },
+    { id: 'all',    label: 'All series' },
     { id: 'tv',     label: 'TV' },
     { id: 'anime',  label: 'Anime' },
-    { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'add',    label: '+ Add New' },
+    { id: 'curatarr', label: 'Added by Curatarr' },
+    { id: 'add',    label: '+ Add new' },
   ],
   radarr: [
-    { id: 'all',    label: 'All Movies' },
-    { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'add',    label: '+ Add New' },
+    { id: 'all',    label: 'All movies' },
+    { id: 'curatarr', label: 'Added by Curatarr' },
+    { id: 'add',    label: '+ Add new' },
   ],
   lidarr: [
-    { id: 'all',    label: 'All Artists' },
-    { id: 'curatarr', label: 'Curatarr-Added' },
-    { id: 'backlog', label: 'Spotify Backlog' },
+    { id: 'all',    label: 'All artists' },
+    { id: 'curatarr', label: 'Added by Curatarr' },
+    { id: 'backlog', label: 'Spotify backlog' },
     { id: 'wanted', label: 'Wanted' },
-    { id: 'add',    label: '+ Add New' },
+    { id: 'add',    label: '+ Add new' },
   ],
 };
 
@@ -75,7 +74,7 @@ export async function loadArrPage(svc) {
     : ARR_TABS[svc].filter(t => t.id !== 'wanted');
   if (!info.configured && !viaPlex) {
     // Setup banner — admins get a CTA, non-admins get a "ask your admin"
-    // message. The Settings → Library pane is admin-only, so showing the
+    // message. The Settings → Arr apps pane is admin-only, so showing the
     // Configure button to a non-admin would lead them to a hidden tab
     // (Pass 16l).
     const isAdmin = !!(state.currentUser && state.currentUser.is_admin);
@@ -425,11 +424,8 @@ export async function addArrItem(svc, idx, btn) {
 }
 
 export function goToLibrarySettings(svc) {
-  // Open Settings view + Library pane + scroll to the right card.
-  showView('settings');
-  setTimeout(() => {
-    openSettingsPane('library', document.querySelector('.settings-tab[data-pane="library"]'));
-  }, 50);
+  // Settings, Arr apps pane (data-pane "library").
+  showView('settings', null, {pane: 'library', focus: true});
 }
 
 // ── Pass 16g: Spotify Backlog (top spotify-only artists → Lidarr) ────────

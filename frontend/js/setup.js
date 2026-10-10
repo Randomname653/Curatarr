@@ -160,11 +160,11 @@ const SETUP_CONTENT = {
       (privacy.spotify.com → Download your data → extended streaming history),
       drop it here — years of listening give the music curator a head start.
       The files wait until after the first sync; you then attach them to a user
-      under <strong>Admin → Spotify history import</strong>.
+      under <strong>Settings → Users → Spotify history import</strong>.
     </p>
     ${spotifyDropZone('su-sp')}
     <p class="fs-11 t3 mt-12">
-      Nothing yet? Skip this — you can always do it later from the Admin view.
+      No export yet? Skip this — you can import it later in Settings → Users.
     </p>`,
 
   done: () => `
@@ -175,7 +175,7 @@ const SETUP_CONTENT = {
         then start the initial sync. This will take a few minutes the first time.
       </p>
       <button class="pad-12-32 fs-14 btn btn-primary" ${act('finishSetup')}>
-        Save & Start Curatarr
+        Save and start
       </button>
       <div class="mt-16 t2 fs-13" id="setup-saving"></div>
     </div>`,
@@ -185,7 +185,8 @@ export function renderSetupStep(step) {
   state.setupStep = step;
   const key = SETUP_STEPS[step];
   document.getElementById('setup-body').innerHTML = SETUP_CONTENT[key]();
-  document.getElementById('setup-step-label').textContent = `Step ${step+1} of ${SETUP_STEPS.length}`;
+  const steps = SETUP_STEPS.length - 1;   // the closing summary is not a step
+  document.getElementById('setup-step-label').textContent = step < steps ? `Step ${step+1} of ${steps}` : 'Ready';
   document.getElementById('setup-back').style.visibility = step > 0 ? 'visible' : 'hidden';
   document.getElementById('setup-next').style.display = step === SETUP_STEPS.length-1 ? 'none' : 'inline-block';
   SETUP_STEPS.forEach((s,i) => {

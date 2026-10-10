@@ -3,8 +3,7 @@ import { loadRecs, searchLibrary } from './recs.js';
 import { state } from './state.js';
 import { loadHistoryStatus } from './history.js';
 import { loadTaskHistory } from './activity.js';
-import { loadLibraryConfig } from './libraries.js';
-import { loadUsers } from './admin.js';
+import { openSettingsPane } from './settings.js';
 import { showKbTab } from './kb.js';
 import { loadDeletions } from './deletions.js';
 import { loadArrPage } from './arr.js';
@@ -52,20 +51,45 @@ export function topbarSearch(ev) {
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
-export function showView(name, btn) {
-  // Admin-only views — defense-in-depth on top of the hidden nav items + the
-  // require_admin endpoints: never render the shell for a non-admin, even via a
-  // stray programmatic call. (Library config + orphaned + deletions = curation.)
-  if (!state.currentUser?.is_admin && ['deletions','curation','libraries','admin','reclassify','report'].includes(name)) return;
+// The URL hash names the view (#recs, #settings/users): views can be
+// bookmarked and reloaded, and Back/Forward walk the views the owner opened.
+// Sidebar entries are plain links; a link click changes the hash and
+// routeFromHash() renders it. showView() called from code (a glance tile, a
+// discussion jumping to chat) pushes the hash itself — pushState fires no
+// hashchange, so nothing renders twice.
+const ADMIN_VIEWS = ['deletions', 'curation', 'reclassify', 'report'];
+
+export function routeFromHash(o = {}) {
+  if (!state.currentUser) return;            // the login screen owns the page
+  const [view, pane] = decodeURIComponent(location.hash.replace(/^#\/?/, '')).split('/');
+  const name = view && document.getElementById(view + '-view') ? view : 'chat';
+  const current = document.querySelector('.view.active')?.id;
+  // Same view, same pane: nothing to do (a pushState echo, or a re-click).
+  if (current === name + '-view' && (name !== 'settings' || !pane || _activePane() === pane)) return;
+  showView(name, null, {push: false, focus: o.focus !== false, pane});
+}
+
+function _activePane() {
+  return document.querySelector('.settings-pane:not([hidden])')?.dataset.pane;
+}
+
+export function showView(name, btn, o = {}) {
+  // Admin-only views — defense-in-depth on top of the hidden nav section + the
+  // require_admin endpoints: never render the shell for a non-admin. A link
+  // or bookmark to one lands on Chat instead of a blank page.
+  if (!state.currentUser?.is_admin && ADMIN_VIEWS.includes(name)) {
+    history.replaceState(null, '', '#chat');
+    name = 'chat';
+  }
+  if (o.push !== false && location.hash.replace(/^#\/?/, '').split('/')[0] !== name) {
+    history.pushState(null, '', '#' + name);
+  }
   toggleMobileSidebar(false); // picking a view closes the mobile drawer
-  document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
-  // The view's own sidebar entry lights up, whoever opened it. A caller
-  // outside the sidebar (the user pill, a glance tile, a bell action)
-  // passes its own element or nothing; every sidebar entry names its view
-  // in data-view (2026-09-27, PR #129).
-  const item = btn && btn.classList && btn.classList.contains('sb-item')
-    ? btn : document.querySelector(`.sb-item[data-view="${CSS.escape(name)}"]`);
-  if (item) item.classList.add('active');
+  // The view's own sidebar entry lights up, whoever opened it (every entry
+  // names its view in data-view), and tells assistive tech it is current.
+  document.querySelectorAll('.sb-item').forEach(b => { b.classList.remove('active'); b.removeAttribute('aria-current'); });
+  const item = document.querySelector(`.sb-item[data-view="${CSS.escape(name)}"]`);
+  if (item) { item.classList.add('active'); item.setAttribute('aria-current', 'page'); }
   // Clear all views — remove active class AND reset any inline display styles
   document.querySelectorAll('.view').forEach(v => {
     v.classList.remove('active');
@@ -75,8 +99,6 @@ export function showView(name, btn) {
   if (el) el.classList.add('active');
   if (name==='history') loadHistoryStatus();
   if (name==='tasks') loadTaskHistory();
-  if (name==='libraries') loadLibraryConfig();
-  if (name==='admin') loadUsers();
   if (name==='enrich') showKbTab(state._kbTab);
   if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(state.currentRecsCategory); } }
   if (name==='deletions') loadDeletions(state.currentDelCategory);
@@ -86,13 +108,18 @@ export function showView(name, btn) {
   if (name==='arr-lidarr') loadArrPage('lidarr');
   if (name==='reclassify') loadReclassify();
   if (name==='report') loadReport();
+  if (name==='settings') openSettingsPane(o.pane || _activePane() || 'account');
   // tasks view uses live SSE, no manual load needed
+  // Keyboard and screen-reader users land on the new view's heading, not
+  // back at the top of the sidebar. Only for navigation the owner asked for;
+  // the first render after sign-in leaves focus where it is.
+  if (o.focus) el?.querySelector('h1')?.focus({preventScroll: true});
 }
 
-export function showLibrariesForce() { showView('libraries', document.querySelector('.sb-item[data-action*=showView][data-args*="libraries"]')); }
+// History's "Plex libraries" button: the mapping lives in Settings now.
+export function showLibrariesForce() { showView('settings', null, {pane: 'plex-libraries'}); }
 
-// Glance tiles in the chat switch the view and mark its sidebar item, found by
-// the view name inside the item's data-args.
+// Glance tiles in the chat switch the view (showView marks the sidebar entry).
 export function goToView(view) {
-  showView(view, document.querySelector(`.sb-item[data-args*='"${view}"']`));
+  showView(view, null, {focus: true});
 }

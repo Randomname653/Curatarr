@@ -58,7 +58,7 @@ export async function _pickerPost(btn, payload, doneText, keepOpen = false) {
   btnBusy(btn);
   try {
     const r = await api('/api/enrichment/match-override', 'POST', payload);
-    if (!r.success) { toast(r.error || 'Failed', 'danger'); btnDone(btn); return; }
+    if (!r.success) { toast(r.error || "Couldn't save the match. Try again.", 'danger'); btnDone(btn); return; }
     toast(r.message || doneText, 'success');
     const done = _pickerCtx?.onDone;
     if (keepOpen) btn.closest('.panel-item')?.remove();   // the excluded candidate leaves the list

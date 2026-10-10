@@ -1,6 +1,6 @@
-import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openLibrarySettings, openSettingsPane, openUsersSettings, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, submitPinChange, submitPinSet, testIntegration } from './settings.js';
+import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, submitPinChange, submitPinSet, testIntegration } from './settings.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
-import { _syncDelPosterVisual, approveDelete, bulkDelete, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
+import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
 import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
@@ -18,8 +18,8 @@ import { loadRecs, onAddRecToArr, regenerateRecs, reloadRecs, searchLibrary, set
 import { loadReport, writeYearlyReview } from './report.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
-import { showView, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
-import { setUser, showApp, startPlexLogin } from './auth.js';
+import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
+import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { api } from './api.js';
 import { state } from './state.js';
 
@@ -61,6 +61,8 @@ window.onload = async () => {
   }
   document.getElementById('auth-overlay').classList.remove('hidden');
 };
+// Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
+window.addEventListener('hashchange', () => routeFromHash());
 document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
   const menu = document.querySelector('.menu.open');
@@ -92,6 +94,7 @@ const actions = {
   clearIntegrationSecret,
   closeKbDrilldown,
   closeModal,
+  copyPlexCode,
   computeTaste,
   condensePrinciples,
   correctChatAnchor,
@@ -166,10 +169,8 @@ const actions = {
   onRecentOnlyChange,
   onReevaluateDeletion,
   onSpotifyFile,
-  openLibrarySettings,
   openSettingsPane,
   openSpotifyPicker,
-  openUsersSettings,
   pickerFreePin,
   pickerPin,
   pickerReject,
@@ -211,7 +212,6 @@ const actions = {
   showLibrariesForce,
   showSettingsAccount,
   showTasteTab,
-  showView,
   shutdownServer,
   skipMessage,
   startArrPreEnrich,
@@ -238,6 +238,7 @@ const actions = {
   togglePitcherWrap,
   toggleSidebar,
   toggleUser,
+  toggleWhy,
   topbarSearch,
   updateReclassifyCount,
   useStarter,

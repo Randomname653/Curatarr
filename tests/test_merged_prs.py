@@ -104,14 +104,17 @@ def test_every_memo_call_site_says_which_kind_it_is():
 def test_the_sidebar_is_reachable_by_keyboard():
     """The point of PR #103, in this codebase's own idiom: the shared
     keyActivate handler, not a global document listener that would fire a
-    second time on every element already carrying one."""
+    second time on every element already carrying one.
+
+    2026-10 (UI audit): sidebar entries became <a href="#view"> links, which
+    the browser makes focusable and Enter-activatable natively — no role,
+    tabindex or keyActivate needed (tests/test_navigation.py pins the rest).
+    keyActivate stays for the poster cards that are still role=button."""
     html = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
-    items = [line for line in html.splitlines() if '<div class="sb-item' in line]
-    assert len(items) >= 15, len(items)
+    items = [line for line in html.splitlines() if 'class="sb-item' in line]
+    assert len(items) >= 10, len(items)
     for line in items:
-        assert 'role="button"' in line and 'tabindex="0"' in line, line[:120]
-        assert 'data-on-keydown="keyActivate"' in line, line[:120]
-        assert 'data-args-keydown=' in line, line[:120]
+        assert line.strip().startswith('<a class="sb-item') and 'href="#' in line, line[:120]
     app = (_ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
     assert "keyActivate" in app, "the handler stays registered"
     # Ctrl+K and Escape are legitimate global listeners. What PR #103 wanted
@@ -129,10 +132,11 @@ def test_the_user_pill_opens_the_account_settings():
     (the PR passed the pill itself, so nothing in the sidebar was marked)."""
     html = (_ROOT / "frontend/index.html").read_text(encoding="utf-8")
     pill = next(line for line in html.splitlines() if 'id="user-pill"' in line)
-    for attr in ('role="button"', 'tabindex="0"', 'data-action="showSettingsAccount"',
-                 'data-on-keydown="keyActivate"', 'aria-label="Account settings"'):
+    # 2026-10: a native <button> (keyboard-reachable without role/tabindex).
+    for attr in ('<button type="button"', 'data-action="showSettingsAccount"',
+                 'aria-label="Account settings"'):
         assert attr in pill, attr
-    items = [line for line in html.splitlines() if '<div class="sb-item' in line]
+    items = [line for line in html.splitlines() if 'class="sb-item' in line]
     assert all('data-view="' in line for line in items), "every sidebar entry names its view"
     assert any('data-view="settings"' in line for line in items)
     nav = (_ROOT / "frontend/js/nav.js").read_text(encoding="utf-8")

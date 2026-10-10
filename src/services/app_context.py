@@ -13,7 +13,7 @@ Rules:
 - Routers COMPOSE these blocks; prompt prose about the app never lives inline
   in a router again. (That's how the curator ended up sending the user to
   Sonarr to delete a title while the 'Delete & exit' button sat top right,
-  and improvising when asked what the 'Stagnant' badge means.)
+  and improvising when asked what the 'Your call' badge means.)
 - SCOPED injection: each surface gets its own block, not the whole app manual.
 - Every UI label referenced here must exist VERBATIM in the frontend files (index.html + js/app.js) —
   enforced by tests/test_app_context_drift.py, so renaming a button without
@@ -42,7 +42,9 @@ DISCUSSION_UI_BLOCK = (
 STAGNANT_VERDICT_BLOCK = (
     "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
     "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
-    "'Stagnant' badge for the OWNER to decide. Weigh keep vs delete "
+    "'Your call' badge (every other proposal carries 'Cut') for the OWNER "
+    "to decide. Each card's 'Why?' lists the strongest signals in its "
+    "deletion score. Weigh keep vs delete "
     "honestly on their terms instead of pushing for deletion.\n"
 )
 
@@ -72,9 +74,14 @@ APP_MAP_BLOCK = (
     "plain similarity when the ranker is unavailable — and on Discovery "
     "cards an '+ Add' button (admin) that adds the title to the right "
     "arr).\n"
-    "- 'Deletions' (admin): your deletion proposals, each with a 'Delete' "
+    "- 'Deletions' (admin): your deletion proposals, each marked 'Cut' or "
+    "'Your call' with a 'Why?' that lists the strongest signals in its "
+    "deletion score, and each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
-    "Sonarr/Radarr/Lidarr, plus Keep/Discuss; card checkboxes + a "
+    "Sonarr/Radarr/Lidarr, plus Keep/Discuss. 'Keep' pauses proposals for "
+    "that title for 90 days, after which it is judged again; ticking "
+    "'Protect permanently' in the Keep dialog stops them for good. Card "
+    "checkboxes + a "
     "'Delete selected' button bulk-delete several at once. If a card or "
     "pitch describes the WRONG same-named title, 'Fix match' (behind the card's More menu) "
     "pins the correct entity — the pin survives rescans and the item "
@@ -84,8 +91,10 @@ APP_MAP_BLOCK = (
     "check finds them, and 'Delete again' or Keep closes each. Deleting an "
     "artist also blocks it in SoulSync so it is not downloaded again, and "
     "artists you follow in SoulSync are never proposed.\n"
-    "- 'Curation' (admin) panels: 'Judge-protected titles' (what the judge "
-    "KEPT, with reasoning), 'Downscale candidates' (KEPT but flagged for a "
+    "- 'Curation' (admin) panels: 'Protected titles' (every title that is "
+    "never proposed — judge keeps, chat protections and 'Protect "
+    "permanently' — with its reasoning, each liftable), 'Downscale "
+    "candidates' (KEPT but flagged for a "
     "lower-bitrate transcode — NOT deletion candidates), "
     "'Upgrade candidates' (loved titles on weak files worth a better "
     "version), 'Redundant storage' (duplicate versions/copies and the GB "
@@ -106,8 +115,10 @@ APP_MAP_BLOCK = (
     "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
     "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (live card for "
     "EVERY background job — syncs, maintenance, memory extraction, LLM "
-    "runs — with progress and history) · "
-    "'Libraries' / 'Users' (admin) · 'Settings'.\n"
+    "runs — with progress and history) · 'Settings' (admin panes: 'Plex "
+    "libraries' maps each Plex library to a category, 'Arr apps' holds the "
+    "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify history "
+    "import, 'Maintenance' has sync and repair actions).\n"
 )
 
 # ── Knowledge Base health: why the library is not at 100 % ───────────────────
@@ -157,8 +168,11 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Delete & exit",
     "Delete",
     "Exit discussion",
-    "Stagnant",
-    "Judge-protected titles",
+    "Your call",
+    "Cut",
+    "Why?",
+    "Protected titles",
+    "Protect permanently",
     "Downscale candidates",
     "Upgrade candidates",
     "Redundant storage",
@@ -180,8 +194,10 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Reclassify",
     "Knowledge Base",
     "Activity",
-    "Libraries",
+    "Plex libraries",
+    "Arr apps",
     "Users",
+    "Maintenance",
     "Settings",
     # Knowledge Base health (KB_HEALING_BLOCK)
     "Needs attention",

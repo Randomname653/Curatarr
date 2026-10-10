@@ -42,7 +42,7 @@ export async function loadUnreadMessages(seen) {
     }
     if (r.message) {
       const m = r.message;
-      html += `<div class="mp-section">Curator messages</div>
+      html += `<div class="mp-section">From the curator</div>
       <div class="cursor-default msg-item">
         <div class="mi-text">${esc(m.message)}</div>
         <div class="inline-flex gap-6 mt-8">

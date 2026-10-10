@@ -257,6 +257,10 @@ class DeletionProposal(Base):
     # surfaced as a proposal but flagged in the UI as a soft "your call" review,
     # not a hard cut. Legacy taste-mismatch proposals are never stagnant.
     stagnant = Column(Boolean, default=False)
+    # The deletion score taken apart (engine.deletion_score_factors), as JSON
+    # {"total": n, "factors": [{key, points, label}]} — what the card's "Why?"
+    # shows. NULL on rows written before it existed; the card then has no Why.
+    score_factors = Column(Text, nullable=True)
     # A deleted artist's ban in SoulSync (music only): JSON {ok, id, at,
     # error, mbid}. Set by the delete; the daily returns check retries it
     # until it holds, and never touches it again once it did.

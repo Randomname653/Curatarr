@@ -29,7 +29,7 @@ export function _recCard(rec) {
       <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
-          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round((rec.confidence||0.7)*100)}%</span></div>
+          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}</div>
           <div class="panel-actions">
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
@@ -73,7 +73,7 @@ export async function onAddRecToArr(btn) {
     const m = (year && matches.find(x => (x.title||'').toLowerCase() === tl && x.year === year))
            || matches.find(x => (x.title||'').toLowerCase() === tl)
            || matches[0];
-    if (!m) { toast(`No match for "${title}" in ${svc} — try Add New in the ${svc} view`, 'amber'); btnDone(btn); return; }
+    if (!m) { toast(`No match for "${title}" in ${svc} — try “+ Add new” in the ${svc} view`, 'amber'); btnDone(btn); return; }
     if (m.already_added) { btnDone(btn, 'In library', {keepDisabled: true}); return; }
     const res = await confirmDialog({title: `Add to ${svc}`, confirmLabel: 'Add',
       body: `<p>Add <b>${esc(m.title)}</b>${m.year ? ` (${m.year})` : ''} to ${esc(svc)}?</p>`});
@@ -165,7 +165,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
     if (state.currentRecsCategory !== requestedCategory) return;
     if (!r.recommendations?.length) {
       // No cache yet — kick off a background build of BOTH lanes and poll.
-      el.innerHTML = emptyHtml('Generating personalised recommendations — your library picks and fresh discoveries, ~2-4 min the first time. The tab updates on its own.');
+      el.innerHTML = emptyHtml('Generating recommendations from your library and beyond — about 2–4 minutes the first time. This view updates on its own.');
       api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
       _pollRecsUntilFresh(category, btn, null);
       return;

@@ -56,7 +56,7 @@ export async function loadPrinciples() {
     const r = await api('/api/recommendations/principles');
     const rows = r.principles || [];
     if (!rows.length) {
-      el.innerHTML = emptyHtml('Nothing learned yet — principles are captured from your deletion debates once PRINCIPLES_ENABLED is on.');
+      el.innerHTML = emptyHtml('No learned principles yet. They appear as you debate deletions (if learning is turned on for this server).');
       return;
     }
     const nActive = rows.filter(p => p.status === 'active').length;
@@ -152,6 +152,12 @@ export async function shutdownServer() {
   // standstill over ~20s (the server is long gone — endless pulsing would
   // suggest activity). playbackRate is eased down phase-continuously.
   const logo = ov.querySelector('.sd-logo');
+  // Web Animations ignore the stylesheet's reduced-motion block: honour the
+  // preference here and show the powered-off end state straight away.
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    logo.style.opacity = '.55';
+    return;
+  }
   const anims = [logo.animate(
     [{ transform: 'scale(1)', opacity: 1 },
      { transform: 'scale(1.12)', opacity: .72 },
@@ -211,7 +217,7 @@ export async function loadDownscale() {
     const r = await api('/api/recommendations/downscale');
     const rows = r.candidates || [];
     if (!rows.length) {
-      el.innerHTML = emptyHtml('No downscale candidates — KEEP_WITH_FLAG verdicts from the next scan land here.');
+      el.innerHTML = emptyHtml('No downscale candidates. Titles that are kept but flagged for an oversized file appear here after the next scan.');
       return;
     }
     const head = `<div class="fs-12 t2 mb-8">${rows.length} title(s)${r.total_gb ? ` · ${r.total_gb} GB bound (actual file size)` : ''}</div>`;

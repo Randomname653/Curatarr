@@ -13,8 +13,8 @@ export async function recomputeTaste(statusId = null) {
   else if (el) el.innerHTML += '<p class="fs-12 t-amber mt-8">Recomputing taste vectors…</p>';
   try {
     await api('/api/history/recompute-taste','POST');
-    if (status) setStatus(status, 'Taste vectors are being recomputed — the numbers refresh in a few seconds.', 'ok');
-    toast('Taste vector recomputation started', 'success');
+    if (status) setStatus(status, 'Updating your taste profile — the numbers refresh in a few seconds.', 'ok');
+    toast('Updating your taste profile', 'success');
     _swrInvalidate('history-stats'); // so the delayed reload below fetches fresh instead of flashing the pre-recompute numbers
     setTimeout(() => {
       loadHistoryStatus();
@@ -30,7 +30,7 @@ export async function recomputeTaste(statusId = null) {
 export async function syncHistory(force = false, statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
-  const label = force ? 'Force syncing…' : 'Syncing Plex history…';
+  const label = 'Syncing Plex history…';
   if (status) setStatus(status, label, 'busy');
   else if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${label}</p>`;
   try {

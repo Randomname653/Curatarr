@@ -220,6 +220,104 @@ def _taste_section(summary_text: str, category: str) -> str:
 # an artist, so counting it as devotion had the sign backwards.
 REAL_LISTEN_MS = 120_000
 
+# How long a Keep on a deletion card holds a title out of the proposal pool.
+# The Deletions view states this number in its Keep copy;
+# tests/test_keep_semantics.py pins the two together.
+KEEP_COOLDOWN_DAYS = 90
+
+# The last pillar-judging run per category, for the Deletions view's run
+# banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
+# into the EVALUATE fallback and vanish exactly like a title the model
+# genuinely could not decide — the owner saw fewer proposals and no reason.
+# In-memory on purpose: it describes this server's last run, nothing to keep.
+DELETION_RUN_SUMMARY: dict[str, dict] = {}
+
+
+def deletion_score_factors(*, mismatch: float, taste_src: str, size_pts: float,
+                           size_gb: float, size_ratio: float | None,
+                           rating: float | None, rating_swing: float,
+                           user_rating: float | None, user_rating_swing: float,
+                           feedback_swing: float, drop_penalty: float,
+                           play_prot: float, plays: int = 0,
+                           keep_value_pts: float = 0.0,
+                           considerations: list | None = None) -> list[dict]:
+    """The deletion score taken apart into the terms that built it, each with
+    a plain-language label — what the Deletions card's "Why?" shows.
+
+    ``points`` carry the sign they have in the score: positive pushes toward
+    deletion, negative toward keeping. Terms under half a point are dropped
+    (a 5.0/10 rating, an unrated title). The sum of every term is the score
+    the shortlist cut (> 30) was made on; the curator's verdict comes after.
+    Labels describe the evidence, never a verdict."""
+    out: list[dict] = []
+
+    def add(key: str, pts: float, label: str) -> None:
+        if abs(pts) >= 0.5:
+            out.append({"key": key, "points": round(pts, 1), "label": label})
+
+    taste_pts = mismatch * 80
+    if taste_src == "none":
+        add("taste", taste_pts, "No taste data for it yet, so it scores as neutral")
+    else:
+        basis = "your watch history" if taste_src == "embedding" else "the genres you watch"
+        if mismatch >= 0.6:
+            add("taste", taste_pts, f"Far from {basis}")
+        elif mismatch >= 0.35:
+            add("taste", taste_pts, f"Somewhat off {basis}")
+        else:
+            add("taste", taste_pts, f"Close to {basis}")
+    if size_ratio:
+        add("size", size_pts, f"{size_gb:g} GB, {size_ratio:.1f}× typical for its format")
+    else:
+        add("size", size_pts, f"{size_gb:g} GB on disk")
+    if rating is not None:
+        add("rating", -rating_swing, f"Community rating {rating:.1f}/10")
+    if user_rating is not None:
+        add("your_rating", -user_rating_swing, f"You rated it {user_rating:g}/10")
+    add("feedback", feedback_swing,
+        "You said you didn't like it" if feedback_swing > 0 else "You said you liked it")
+    add("dropped", drop_penalty, "Similar to titles you stopped watching")
+    add("plays", -play_prot, f"You've played it {plays} times")
+    if keep_value_pts:
+        what = ""
+        for c in considerations or []:
+            text = (c.get("text") or c.get("content") or "").strip() if isinstance(c, dict) else ""
+            if text:
+                what = f": “{text[:80]}{'…' if len(text) > 80 else ''}”"
+                break
+        add("keep_rules", -keep_value_pts, f"Matches something you said you value{what}")
+    return out
+
+
+def _score_factors(cand: dict) -> dict | None:
+    """{"total": score, "factors": [...]} for one shortlisted candidate, or
+    None when the terms were not recorded (never raises: an explanation
+    must not cost a proposal)."""
+    terms = cand.get("score_terms")
+    if not terms:
+        return None
+    try:
+        return {"total": round(cand["score"], 1),
+                "factors": deletion_score_factors(
+                    **terms, keep_value_pts=cand.get("keep_value_pts") or 0.0,
+                    considerations=cand.get("considerations"))}
+    except Exception as e:
+        logger.debug("[deletions] score factors failed for %r: %s",
+                     (cand.get("item") or {}).get("title"), e)
+        return None
+
+
+def deletion_run_summary(category: str | None = None) -> dict | None:
+    """The last run for one category, or all categories summed ("All" tab)."""
+    if category:
+        return DELETION_RUN_SUMMARY.get(category)
+    runs = list(DELETION_RUN_SUMMARY.values())
+    if not runs:
+        return None
+    out = {k: sum(r.get(k, 0) for r in runs) for k in ("judged", "flagged", "deferred", "failed")}
+    out["at"] = max(r.get("at") or "" for r in runs)
+    return out
+
 
 def _play_protection(plays: int) -> float:
     """Score-side Resonance: sustained REPEATED listening protects an artist
@@ -1092,7 +1190,7 @@ async def generate_deletion_proposals(
         # This is deliberately a COOLDOWN, not a protection: after it lapses the
         # judge looks again — taste and principles evolve. Category-scoped so a
         # kept movie can't shield a same-named show/album (NULL = legacy rows).
-        _REJECT_COOLDOWN_DAYS = 90
+        _REJECT_COOLDOWN_DAYS = KEEP_COOLDOWN_DAYS
         rejected_recent: set[str] = set()
         try:
             from src.database.models import DeletionProposal as _DP
@@ -1596,6 +1694,18 @@ async def generate_deletion_proposals(
             scored_candidates.append({
                 "item": p["item"],
                 "score": del_score,
+                # The same terms, kept apart for the card's "Why?" (the
+                # keep-rules term is added below, once it is known).
+                "score_terms": dict(
+                    mismatch=mismatch, taste_src=taste_src, size_pts=size_pts,
+                    size_gb=round(p["size_gb"], 1),
+                    size_ratio=(_so["ratio"] if _so and _so["verdict"] == "bloated" else None),
+                    rating=p["rating"], rating_swing=rating_swing,
+                    user_rating=p["user_rating"], user_rating_swing=user_rating_swing,
+                    feedback_swing=feedback_swing, drop_penalty=drop_penalty,
+                    play_prot=play_prot,
+                    plays=(_pl if category == "music" else 0),
+                ),
                 "mismatch": mismatch,
                 "taste_source": taste_src,   # embedding / genre / none
                 "rating_breakdown": p["rating_breakdown"],
@@ -1703,6 +1813,7 @@ async def generate_deletion_proposals(
         thin_skipped = 0
         misfiled_skipped = 0
         unchecked_skipped = 0
+        judge_failed = 0
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
         # PRE-JUDGE SIGNIFICANCE WARM-UP: the judge's own JIT is summarizer-
@@ -1863,20 +1974,26 @@ async def generate_deletion_proposals(
                 except Exception as e:
                     logger.warning("[deletions] pillar judge failed for %r: %s",
                                    item.get("title"), e)
+                    judge_failed += 1
                     continue
+                # adjudicate() turns its own failures into an EVALUATE that
+                # carries _error: count those apart from a real EVALUATE.
+                if (verdict or {}).get("_error"):
+                    judge_failed += 1
                 v = (verdict or {}).get("verdict")
                 if v in ("CUT", "STAGNANT"):
                     pitch = await write_monologue(
                         ev["facts"], verdict, model=pitch_model,
                         lang_directive=lang_directive_str, skip_priority=True)
                     if not pitch or not pitch.strip():
-                        pitch = ("Flagged by the pillar judge — the model returned no "
-                                 "monologue; review manually.")
+                        pitch = ("Curatarr flagged this title but couldn't write its "
+                                 "reasoning. Use Discuss to ask why.")
                     _smb = item.get("size_mb") or 0
                     final_proposals.append({
                         "title": item.get("title"),
                         "pitch": pitch,
                         "confidence": min(0.99, max(0.10, cand["score"] / 100)),
+                        "score_factors": _score_factors(cand),
                         "size_mb": _smb,
                         "size_gb": round(_smb / 1024, 1),
                         "arr_id": item.get("arr_id"),
@@ -1923,7 +2040,16 @@ async def generate_deletion_proposals(
                 if misfiled_skipped else "")
              + (f" ({unchecked_skipped} deferred: significance unchecked)"
                 if unchecked_skipped else "")
+             + (f" ({judge_failed} failed: the model did not answer)"
+                if judge_failed else "")
              + ".")
+        DELETION_RUN_SUMMARY[category] = {
+            "at": datetime.utcnow().isoformat(),
+            "judged": judged,
+            "flagged": len(final_proposals),
+            "deferred": thin_skipped + misfiled_skipped + unchecked_skipped,
+            "failed": judge_failed,
+        }
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────
@@ -2229,8 +2355,8 @@ CRITICAL RULES AND GUARDRAILS:
                     item.get("title"),
                 )
                 pitch = (
-                    "Flagged as a taste-profile mismatch, but the curator model "
-                    "returned an empty pitch — review this one manually."
+                    "Curatarr flagged this as a poor fit for your taste but couldn't "
+                    "write its reasoning. Use Discuss to ask why."
                 )
             size_mb = item.get("size_mb") or 0
             # del_score → confidence:
@@ -2243,6 +2369,7 @@ CRITICAL RULES AND GUARDRAILS:
                 "title": item.get("title"),
                 "pitch": pitch,
                 "confidence": min(0.99, max(0.10, cand["score"] / 100)),
+                "score_factors": _score_factors(cand),
                 "size_mb": size_mb,
                 "size_gb": round(size_mb / 1024, 1),
                 "arr_id": item.get("arr_id"),

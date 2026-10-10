@@ -66,7 +66,7 @@ check("narrative cached per user+year", "curation_narrative:" in st)
 
 html = _frontend_everything()
 check("'report' is in the admin view gate",
-      "'reclassify','report'" in html)
+      "'report'" in html.split("const ADMIN_VIEWS = [")[1].split("]")[0])
 for frag in ["report-view", "loadReport", "writeYearlyReview",
              "Stubbornness Index", "_repBar"]:
     check(f"frontend has {frag}", frag in html)
