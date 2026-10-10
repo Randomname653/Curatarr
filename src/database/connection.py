@@ -438,9 +438,34 @@ def _secure_db_files() -> None:
                 _mig_log.debug("Could not chmod %s (likely Windows): %s", p, e)
 
 
+def _drop_retired_tables() -> None:
+    """Tables whose feature is gone. ``user_pin_hashes`` held PBKDF2 hashes of
+    the "encryption passphrase" that never encrypted anything; a short PIN
+    and its salt side by side are recoverable offline, so the rows go rather
+    than linger (2026-10-10). secure_delete zeroes the freed pages instead of
+    leaving the bytes in the file until the next VACUUM."""
+    import logging as _logging
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            if not conn.execute(text(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='user_pin_hashes'")).first():
+                return
+            conn.execute(text("PRAGMA secure_delete=ON"))
+            try:
+                conn.execute(text("DROP TABLE user_pin_hashes"))
+            finally:
+                conn.execute(text("PRAGMA secure_delete=OFF"))
+        _logging.getLogger(__name__).info("[migrate] retired table user_pin_hashes dropped")
+    except Exception as e:  # noqa: BLE001 - a leftover table is harmless, a dead boot is not
+        _logging.getLogger(__name__).warning("[migrate] could not drop user_pin_hashes: %s", e)
+
+
 def init_db():
     """Create all tables and migrate any new columns."""
     Base.metadata.create_all(bind=engine)
+    _drop_retired_tables()
     _migrate_columns()
     _migrate_deletion_proposals_autoincrement()
     _ensure_deletion_proposal_indexes()

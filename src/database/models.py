@@ -69,18 +69,6 @@ class Session(Base):
 # accumulate new rows.
 
 
-class UserPinHash(Base):
-    """User PIN hash for AES-256 encryption key derivation."""
-    __tablename__ = "user_pin_hashes"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-    pin_hash = Column(String(256), nullable=False)  # PBKDF2 hash
-    salt = Column(String(64), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
 class WatchHistoryEntry(Base):
     """Single playback event from Plex, per user."""
     __tablename__ = "watch_history"

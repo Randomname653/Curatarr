@@ -143,7 +143,10 @@ check("setup code: past the budget even the RIGHT code is refused from that IP",
 check("setup code: the right code still works from another device",
       status_of(auth._require_setup_code,
                 _Req(owner_phone, {"X-Setup-Code": auth.SETUP_CODE})) == 200)
-check("setup code: localhost is never locked", status_of(auth._require_setup_code, _Req("127.0.0.1")) == 200)
+# "localhost" = a browser on this machine addressing us as localhost (a
+# rebound page or a same-host proxy connects from 127.0.0.1 too, 2026-10-10).
+check("setup code: localhost is never locked",
+      status_of(auth._require_setup_code, _Req("127.0.0.1", {"host": "localhost:8000"})) == 200)
 
 rate_limit.reset("setup-code-fail")
 n = 0

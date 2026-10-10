@@ -24,8 +24,8 @@ Security
   Rejects IP literals, file://, anything outside the list. THIS is the
   security boundary — not auth.
 - Only ``http://`` and ``https://`` schemes accepted.
-- Upstream Content-Type must start with ``image/`` — no HTML / JS / etc
-  smuggled through.
+- Upstream Content-Type must be a raster image (jpeg/png/webp/gif/avif) —
+  no HTML / JS / SVG smuggled through; responses carry ``CSP: sandbox``.
 - 5 MB upper bound — posters are tens of KB; cap protects disk + memory.
 - Redirects are NOT auto-followed (audit follow-up): a whitelisted host
   cannot 30x us into a non-whitelisted host. Manual loop with re-check.
@@ -205,16 +205,27 @@ def _cache_path(url: str, content_type: Optional[str] = None) -> Path:
     return _CACHE_DIR / f"{h}{ext}"
 
 
+# Raster types only. "image/*" also admitted image/svg+xml - a document, not
+# a picture, rendered in THIS origin when opened directly; coverartarchive.org
+# serves user uploads (2026-10-10 audit).
+_RASTER_EXT = {
+    "image/jpeg": ".jpg",
+    "image/jpg":  ".jpg",
+    "image/png":  ".png",
+    "image/webp": ".webp",
+    "image/gif":  ".gif",
+    "image/avif": ".avif",
+}
+
+# On every proxied body, on top of the app-wide CSP: should anything still be
+# opened as a document, it runs in an opaque origin with no scripts.
+_IMG_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable",
+                "Content-Security-Policy": "sandbox"}
+
+
 def _ext_for_ct(ct: str) -> str:
     ct = (ct or "").split(";", 1)[0].strip().lower()
-    return {
-        "image/jpeg": ".jpg",
-        "image/jpg":  ".jpg",
-        "image/png":  ".png",
-        "image/webp": ".webp",
-        "image/gif":  ".gif",
-        "image/avif": ".avif",
-    }.get(ct, "")
+    return _RASTER_EXT.get(ct, "")
 
 
 def _find_existing(url: str) -> Optional[Path]:
@@ -279,7 +290,7 @@ async def proxy_image(
     cached = _find_existing(src)
     if cached:
         ct = _CT_FOR_EXT.get(cached.suffix, "application/octet-stream")
-        return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+        return FileResponse(cached, media_type=ct, headers=_IMG_HEADERS)
 
     # 3. Single-flight: if another coroutine is already fetching this URL,
     #    wait on its lock and then serve from cache.
@@ -290,7 +301,7 @@ async def proxy_image(
         cached = _find_existing(src)
         if cached:
             ct = _CT_FOR_EXT.get(cached.suffix, "application/octet-stream")
-            return FileResponse(cached, media_type=ct, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+            return FileResponse(cached, media_type=ct, headers=_IMG_HEADERS)
 
         # 4. Fetch upstream — disable auto-redirect so the whitelist is
         #    enforced on every hop. With ``follow_redirects=True`` a
@@ -347,9 +358,9 @@ async def proxy_image(
                         raise HTTPException(502, f"Upstream returned HTTP {r.status_code}")
 
                     ct = (r.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-                    if not ct.startswith("image/"):
+                    if ct not in _RASTER_EXT:
                         _inflight.pop(src, None)
-                        raise HTTPException(415, f"Upstream content-type not image/*: {ct!r}")
+                        raise HTTPException(415, f"Upstream content-type is not a raster image: {ct!r}")
 
                     if int(r.headers.get("content-length") or 0) > _MAX_BYTES:
                         _inflight.pop(src, None)
@@ -379,7 +390,8 @@ async def proxy_image(
             logger.warning("[image_proxy] cache write failed for %s: %s", path.name, e)
             _inflight.pop(src, None)
             return Response(content=body, media_type=ct,
-                            headers={"Cache-Control": "no-store"})
+                            headers={"Cache-Control": "no-store",
+                                     "Content-Security-Policy": "sandbox"})
 
     _inflight.pop(src, None)
-    return FileResponse(path, media_type=ct, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    return FileResponse(path, media_type=ct, headers=_IMG_HEADERS)

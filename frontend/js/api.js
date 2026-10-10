@@ -7,7 +7,7 @@ export async function api(path, method='GET', body=null, _retried=false, headers
   if (headers) Object.assign(opts.headers, headers);   // per-call extras (the PIN nonce)
   // First-run wizard from ANOTHER device: the server prints a one-time
   // setup code to its console and requires it on every setup call until
-  // the first admin exists (a browser on the server itself is exempt).
+  // the first admin exists (a browser on the server itself, at localhost, is exempt).
   const setupCode = sessionStorage.getItem('curatarr_setup_code');
   if (setupCode && path.startsWith('/api/setup/')) opts.headers['X-Setup-Code'] = setupCode;
   if (body) opts.body = JSON.stringify(body);
@@ -17,7 +17,7 @@ export async function api(path, method='GET', body=null, _retried=false, headers
     if (/setup code/i.test(msg)) {
       const ask = await confirmDialog({
         title: 'Setup code required', confirmLabel: 'Continue',
-        body: '<p>This Curatarr is being set up from another device. Enter the one-time setup code printed in the Curatarr console window (start.bat) or log file.</p>',
+        body: '<p>This Curatarr is being set up from another device (or through a proxy). Enter the one-time setup code printed in the Curatarr console window (start.bat) or log file. A browser on the Curatarr machine itself, at http://localhost:8000, does not need it.</p>',
         reason: {label: 'Setup code'},
       });
       const entered = ask.ok ? ask.reason : '';

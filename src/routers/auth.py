@@ -15,6 +15,7 @@ import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
@@ -141,6 +142,36 @@ def _no_admin_exists(db: Session) -> bool:
 # anyone else must present the code main.py prints to the console at startup.
 SETUP_CODE = f"{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+# A loopback PEER is not yet a browser on this machine: a page whose name was
+# rebound to 127.0.0.1 connects from loopback too (with its own name in Host),
+# and so does a reverse proxy running on this machine (with forwarding
+# headers, or none at all). The exemption also wants the browser to address us
+# as localhost, with no proxy in between and no foreign Origin (2026-10-10).
+_LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
+_PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+def _hostname(value: str) -> str:
+    """Host part of a Host header or an origin, lowercased; handles [::1]:8000."""
+    try:
+        return (urlsplit(value if "//" in value else "//" + value).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _is_local_browser(request: Request) -> bool:
+    client = (request.client.host if request.client else "") or ""
+    if client not in _LOCAL_HOSTS:
+        return False
+    headers = request.headers
+    if _hostname(headers.get("host") or "") not in _LOOPBACK_NAMES:
+        return False
+    if any(h in headers for h in _PROXY_HEADERS):
+        return False
+    origin = headers.get("origin")
+    if origin and _hostname(origin) not in _LOOPBACK_NAMES:
+        return False
+    return True
 
 
 # The code is 32 bits: plenty against a person, not against a script left
@@ -158,9 +189,9 @@ _SETUP_LOCKED_DETAIL = ("Too many wrong setup codes - wait 15 minutes, or finish
 
 def _require_setup_code(request: Request) -> None:
     from src.services import rate_limit
-    client = (request.client.host if request.client else "") or ""
-    if client in _LOCAL_HOSTS:
+    if _is_local_browser(request):
         return
+    client = (request.client.host if request.client else "") or ""
     given = (request.headers.get("X-Setup-Code") or "").strip().upper()
     # Checked before the compare: once locked, a guess must not be able to
     # find out that it was the right one.

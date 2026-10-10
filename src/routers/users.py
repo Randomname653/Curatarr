@@ -1,12 +1,13 @@
 """
 ARR Suite LLM - User Management Router
 Admin-only: activate/deactivate users and view list (no sensitive data).
-Self-service: PIN management.
+Self-service: the account itself and notification preferences.
+
+The "encryption passphrase" (PIN) endpoints are gone (2026-10-10): nothing
+was ever encrypted with it, so it only suggested a protection that did not
+exist while storing a hash a short PIN cannot survive offline.
 """
 
-import hashlib
-import hmac
-import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,9 +15,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.database import get_db
-from src.database.models import User, UserPinHash
+from src.database.models import User
 from src.routers.auth import get_current_user, require_admin
-from src.schemas.user import UserCreate, UserUpdate, UserResponse, UserPinSet, UserPinStatus
+from src.schemas.user import UserCreate, UserUpdate, UserResponse
 
 router = APIRouter()
 
@@ -121,10 +122,6 @@ async def get_me(user: User = Depends(get_current_user)):
     return UserResponse.from_orm(user)
 
 
-def _hash_pin(pin: str, salt: str) -> str:
-    return hashlib.pbkdf2_hmac("sha256", pin.encode(), salt.encode(), 100_000).hex()
-
-
 @router.get("/me/notification-preferences")
 async def get_notification_preferences(user: User = Depends(get_current_user)):
     """Return the catalogue of proactive triggers + this user's enabled state.
@@ -177,71 +174,3 @@ async def set_notification_preference(
             for t in TRIGGER_TYPES
         ],
     }
-
-
-@router.get("/me/pin-status", response_model=UserPinStatus)
-async def get_pin_status(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Return whether the current user has a PIN set, and when it was last updated.
-
-    Used by the Settings UI to render either a "Set PIN" or "Change PIN"
-    form. Never returns the hash itself.
-    """
-    existing = db.query(UserPinHash).filter(UserPinHash.user_id == user.id).first()
-    if not existing:
-        return UserPinStatus(has_pin=False, set_at=None)
-    return UserPinStatus(has_pin=True, set_at=existing.last_updated or existing.created_at)
-
-
-@router.post("/me/pin")
-async def set_pin(
-    body: UserPinSet,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Set or change the current user's PIN.
-
-    First-time set: client sends only ``pin``. Change: client must send
-    ``current_pin`` (verified against the stored PBKDF2 hash) plus the new
-    ``pin``. We store only a PBKDF2 hash on the server — the PIN itself is
-    used client-side to derive AES-256 keys for taste-vector encryption
-    (post-hoc encryption activation lands in a follow-up pass).
-    """
-    existing = db.query(UserPinHash).filter(UserPinHash.user_id == user.id).first()
-
-    if existing:
-        # PIN already set → require current_pin and verify it
-        if not body.current_pin:
-            raise HTTPException(
-                status_code=400,
-                detail="A PIN is already set for this account. Provide `current_pin` to change it.",
-            )
-        if not hmac.compare_digest(_hash_pin(body.current_pin, existing.salt), existing.pin_hash):
-            raise HTTPException(status_code=403, detail="Current PIN is incorrect.")
-        if body.current_pin == body.pin:
-            raise HTTPException(
-                status_code=400,
-                detail="New PIN must differ from the current PIN.",
-            )
-        new_salt = os.urandom(32).hex()
-        existing.pin_hash = _hash_pin(body.pin, new_salt)
-        existing.salt = new_salt
-        existing.last_updated = datetime.utcnow()
-        db.commit()
-        return {"status": "pin_changed"}
-
-    # First-time set
-    if body.current_pin:
-        # Mild UX-helper: client sent current_pin but no PIN exists yet.
-        # Don't bail, just ignore the field — set the PIN normally.
-        pass
-    new_salt = os.urandom(32).hex()
-    db.add(UserPinHash(
-        user_id=user.id,
-        pin_hash=_hash_pin(body.pin, new_salt),
-        salt=new_salt,
-    ))
-    db.commit()
-    return {"status": "pin_set"}

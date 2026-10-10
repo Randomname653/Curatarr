@@ -269,8 +269,10 @@ expect.
 > **Setting up from another device?** Until an admin account exists, a
 > browser on any other device must enter a one-time **setup code**.
 > Curatarr prints it in its console and log at every start:
-> `No admin account yet. Setting up from ANOTHER device on the LAN needs this one-time code: …`
-> A browser on the Curatarr machine itself never needs the code.
+> `No admin account yet. Setting up from ANOTHER device on the LAN (or through a reverse proxy) needs this one-time code: …`
+> A browser on the Curatarr machine itself, opened at `http://localhost:8000`,
+> never needs the code. Any other address — the machine's LAN IP or name, a
+> reverse proxy, a web page that rebinds its name to 127.0.0.1 — must present it.
 
 > [!NOTE]
 > Curatarr binds to `0.0.0.0` so other people in the household can reach

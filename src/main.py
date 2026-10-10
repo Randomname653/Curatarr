@@ -144,8 +144,9 @@ async def lifespan(app: FastAPI):
             if _no_admin_exists(_db):
                 logger.warning(
                     "No admin account yet. Setting up from ANOTHER device on the "
-                    "LAN needs this one-time code: %s  (a browser on this machine "
-                    "does not).", SETUP_CODE)
+                    "LAN (or through a reverse proxy) needs this one-time code: %s  "
+                    "(a browser on this machine at http://localhost:%d does not).",
+                    SETUP_CODE, settings.PORT)
     except Exception as _e:  # noqa: BLE001
         logger.debug("setup-code notice skipped: %s", _e)
     else:

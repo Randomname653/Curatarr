@@ -14,11 +14,12 @@ Auth model:
 
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 
 from src.config import settings
 from src.routers.auth import require_admin_or_first_run, require_admin
+from src.services.endpoint_policy import secret_for_target, validate_service_url
 from src.services.setup_wizard import (
     test_plex, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
@@ -70,6 +71,11 @@ class TestRequest(BaseModel):
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
 
+    # Every service address a request carries passes the endpoint policy
+    # (http(s), no query/fragment/credentials, no link-local or metadata
+    # address) before anything connects to it or writes it to .env.
+    _url = field_validator("url")(validate_service_url)
+
 
 @router.post("/test")
 async def test_connection(
@@ -85,17 +91,28 @@ async def test_connection(
     Ollama at a cloud GPU box — but we never go silent about it either.
     """
     # Post-setup panel: blank secrets mean "use what is saved" - the
-    # browser never receives them, so it cannot echo them back.
+    # browser never receives them, so it cannot echo them back. A saved
+    # secret only ever travels to its saved address (endpoint_policy): a
+    # new URL with a blank key field used to send it to any host.
     def _stored(name: str) -> str:
         return getattr(settings, name, None) or ""
+
+    def _secret(supplied, stored_url, stored_secret):
+        try:
+            return secret_for_target(req.url, supplied, stored_url, stored_secret)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if req.service == "plex":
         result = await test_plex(req.url or settings.effective_plex_url,
-                                 req.token or settings.effective_plex_token)
+                                 _secret(req.token, settings.effective_plex_url,
+                                         settings.effective_plex_token))
     elif req.service == "ollama":
         result = await test_ollama(req.url or settings.effective_ollama)
     elif req.service in ("radarr", "sonarr", "lidarr"):
-        result = await test_arr(req.url or _stored(f"{req.service.upper()}_URL"),
-                                req.api_key or _stored(f"{req.service.upper()}_API_KEY"),
+        up = req.service.upper()
+        result = await test_arr(req.url or _stored(f"{up}_URL"),
+                                _secret(req.api_key, _stored(f"{up}_URL"),
+                                        _stored(f"{up}_API_KEY")),
                                 req.service)
     elif req.service == "tmdb":
         result = await test_tmdb(req.api_key or _stored("TMDB_API_KEY"))
@@ -129,6 +146,8 @@ class RecommendRequest(BaseModel):
     ollama_endpoint: Optional[str] = None
     vram_gb: Optional[float] = None
 
+    _url = field_validator("ollama_endpoint")(validate_service_url)
+
 
 @router.post("/recommend")
 async def recommend(req: RecommendRequest,
@@ -153,6 +172,8 @@ async def recommend(req: RecommendRequest,
 class WarmupRequest(BaseModel):
     ollama_endpoint: Optional[str] = None
     model: str
+
+    _url = field_validator("ollama_endpoint")(validate_service_url)
 
 
 @router.post("/warmup")
@@ -200,6 +221,9 @@ class SetupCompleteRequest(BaseModel):
     llm_cpu_threads: int = 6
     llm_cpu_min_free_mb: int = 12000
 
+    _urls = field_validator("plex_url", "ollama_endpoint", "radarr_url", "sonarr_url", "lidarr_url",
+                           "soulsync_url")(validate_service_url)
+
 
 class ReconfigureRequest(BaseModel):
     """Partial post-setup change: every field optional, None = unchanged,
@@ -235,6 +259,9 @@ class ReconfigureRequest(BaseModel):
     llm_cpu_lane: Optional[bool] = None
     llm_cpu_threads: Optional[int] = None
     llm_cpu_min_free_mb: Optional[int] = None
+
+    _urls = field_validator("plex_url", "ollama_endpoint", "radarr_url", "sonarr_url", "lidarr_url",
+                           "soulsync_url")(validate_service_url)
 
 
 @router.post("/complete")

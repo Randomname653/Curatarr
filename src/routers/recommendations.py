@@ -6,6 +6,7 @@ All endpoints are category-aware and use the LLM for pitches.
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Optional
@@ -2606,6 +2607,19 @@ async def _probe_arr(service: str) -> bool:
         return False
 
 
+# Arr ids and Plex rating keys are positive integers. Anything else - "" from
+# a proposal built without an arr_id, "None", a path fragment - must never
+# reach a DELETE URL: "" turns /movie/{id} into the collection path, and httpx
+# collapses "../" segments into a different endpoint (2026-10-10 audit).
+_MEDIA_ID = re.compile(r"[1-9][0-9]{0,9}")
+
+
+def _require_media_id(value) -> Optional[str]:
+    """The id as a canonical string, or None when it is not one."""
+    s = str(value if value is not None else "").strip()
+    return s if _MEDIA_ID.fullmatch(s) else None
+
+
 async def _plex_delete_artist(key: str, client=None) -> bool:
     """Delete a Plex artist WITH its files (Plex 'Allow media deletion' must
     be on — the owner's server has it), then re-read the item: a 200 means
@@ -2618,6 +2632,11 @@ async def _plex_delete_artist(key: str, client=None) -> bool:
     if not base or not token:
         logger.error("[plex] delete: Plex not configured")
         return False
+    checked = _require_media_id(key)
+    if checked is None:
+        logger.error("[plex] delete refused: malformed rating key %r", key)
+        return False
+    key = checked
     headers = {"Accept": "application/json", "X-Plex-Token": token}
     owns = client is None
     client = client or httpx.AsyncClient(timeout=30)
@@ -2707,7 +2726,13 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
             conf_url, api_key, base, path, params = _ARRS[p.service]
             if not (conf_url and api_key):
                 return False
-            url = f"{base}/{path}/{p.media_id}"
+            media_id = _require_media_id(p.media_id)
+            if media_id is None:
+                # Nothing is sent: "error", never a guess at what to delete.
+                logger.error("[%s] delete refused for %r: malformed media id %r",
+                             p.service, p.title, p.media_id)
+                return False
+            url = f"{base}/{path}/{media_id}"
             headers = {"X-Api-Key": api_key}
             async with httpx.AsyncClient(timeout=_DELETE_TIMEOUT) as client:
                 try:

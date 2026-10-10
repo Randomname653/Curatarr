@@ -13,7 +13,7 @@ Pins:
   - the chat anchor cache is scoped per user
   - the poster cache honours a total budget
   - the small gates: force-resync admin-only, pipeline stop by owner/admin,
-    PIN compare constant-time
+    and the retired PIN endpoints stay gone
 
     python tests/test_setup_hardening.py
 """
@@ -176,9 +176,14 @@ def test_plex_client_id_is_per_install_for_fresh_installs_only():
 
 
 class _Req:
-    def __init__(self, host, code=None):
+    # Starlette's Headers are case-insensitive; the gate reads lowercase
+    # names and X-Setup-Code as written, so the stub keeps both spellings.
+    def __init__(self, host, code=None, extra=None):
         self.client = type("C", (), {"host": host})()
-        self.headers = {"X-Setup-Code": code} if code else {}
+        self.headers = {"host": "localhost:8000"}
+        if code:
+            self.headers["X-Setup-Code"] = code
+        self.headers.update(extra or {})
 
 
 def test_setup_code_gate_exempts_localhost_and_demands_it_elsewhere():
@@ -262,7 +267,9 @@ def test_the_small_gates_are_in_place():
     lib = (_ROOT / "src/routers/library.py").read_text(encoding="utf-8")
     assert "if force and not user.is_admin:" in hist
     assert 'get_state("music_pipeline_owner") != str(user.id)' in music
-    assert "hmac.compare_digest(_hash_pin(" in users
+    # The PIN ("encryption passphrase") is gone, not hardened: it protected
+    # nothing and stored a hash a short PIN cannot survive offline.
+    assert "/me/pin" not in users and "_hash_pin" not in users
     # library_configure now overlays on setup_wizard.current_env_config(),
     # which unwraps every secret - the raw SecretStr must never come back.
     assert "current_env_config()" in lib and "settings.JWT_SECRET," not in lib

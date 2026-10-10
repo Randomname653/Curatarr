@@ -24,12 +24,13 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.config import settings
 from src.database.models import User
 from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
+from src.services.endpoint_policy import secret_for_target, validate_service_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,11 +45,33 @@ class ArrTestRequest(BaseModel):
     url: Optional[str] = None
     api_key: Optional[str] = None
 
+    # http(s), no query/fragment/credentials, no link-local or metadata
+    # address - see src/services/endpoint_policy.py.
+    _url = field_validator("url")(validate_service_url)
+
 
 class ArrConfigureRequest(BaseModel):
     service: str = Field(..., pattern="^(sonarr|radarr|lidarr)$")
     url: str
     api_key: str
+
+    _url = field_validator("url")(validate_service_url)
+
+
+def _public_test_error(exc: Exception) -> str:
+    """What a failed arr test may tell the browser. arr_client raises
+    "API error <status>: <body>" and connection errors say refused vs timed
+    out; returned verbatim, that made Test connection read any internal page's
+    error body and scan LAN ports. The detail goes to the log instead."""
+    text = str(exc)
+    if text.startswith(("API error 401", "API error 403")):
+        return "The service rejected the API key (HTTP 401/403)"
+    if text.startswith("API error "):
+        return (f"Unexpected answer (HTTP {text[10:13]}) - is this the right "
+                f"service and address?")
+    if "ContentType" in type(exc).__name__ or isinstance(exc, ValueError):
+        return "Something answered, but not this service's API - check the address"
+    return "Could not connect - check the address and that the service is running"
 
 
 class ArrDefaultsRequest(BaseModel):
@@ -163,7 +186,12 @@ async def library_test(
     """
     saved_url, saved_key = _get_arr_url_key(req.service)
     effective_url = req.url or saved_url or ""
-    effective_key = req.api_key or saved_key or ""
+    # The saved key goes to the saved address only: a new URL with a blank
+    # key field used to send it wherever the URL pointed.
+    try:
+        effective_key = secret_for_target(req.url, req.api_key, saved_url, saved_key)
+    except ValueError as e:
+        return {"ok": False, "service": req.service, "error": str(e)}
     if not effective_url or not effective_key:
         return {
             "ok": False,
@@ -193,19 +221,22 @@ async def library_test(
                     "privacy_warning": privacy_warning,
                 }
             except Exception as exc:
+                logger.info("[library] %s test failed: %s", req.service, exc)
+                error = _public_test_error(exc)
                 set_state(f"lib_test:{req.service}:last",
-                          f"fail|{exc}|{__import__('datetime').datetime.utcnow().isoformat()}")
+                          f"fail|{error}|{__import__('datetime').datetime.utcnow().isoformat()}")
                 return {
                     "ok": False,
                     "service": req.service,
-                    "error": str(exc),
+                    "error": error,
                     "privacy_warning": privacy_warning,
                 }
     except Exception as exc:
+        logger.info("[library] %s test failed: %s", req.service, exc)
         return {
             "ok": False,
             "service": req.service,
-            "error": str(exc),
+            "error": _public_test_error(exc),
             "privacy_warning": privacy_warning,
         }
 
@@ -253,7 +284,9 @@ async def library_configure(
 @router.get("/profiles/{service}")
 async def library_profiles(
     service: str,
-    _user: User = Depends(get_current_user),
+    # Admin only (2026-10-10): root folders are server paths and the error
+    # texts carry LAN addresses - SECURITY.md promises members neither.
+    _user: User = Depends(require_admin),
 ):
     """
     Return root folders + quality profiles + (Lidarr) metadata profiles +

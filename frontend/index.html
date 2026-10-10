@@ -631,26 +631,6 @@
                 </div>
               </section>
               <section class="section">
-                <div class="section-head"><h3>Encryption passphrase</h3><span class="section-hint" id="settings-pin-state">checking…</span></div>
-                <div class="section-body">
-                  <p class="lh-15 fs-12 t3 mb-12">
-                    Optional. Encryption isn't active yet: encrypting your taste profile at rest arrives in a
-                    future release. Setting a passphrase now prepares your account for it.
-                  </p>
-                  <div id="settings-pin-form-set" hidden>
-                    <div class="maxw-280 form-group"><label for="pin-new">New passphrase (at least 6 characters)</label><input type="password" id="pin-new" minlength="6" autocomplete="new-password"></div>
-                    <div class="maxw-280 form-group"><label for="pin-new-confirm">Confirm passphrase</label><input type="password" id="pin-new-confirm" minlength="6" autocomplete="new-password"></div>
-                    <div class="row"><button class="btn btn-primary" data-action="submitPinSet" data-args='["$el"]'>Set passphrase</button><span id="pin-set-status" class="status"></span></div>
-                  </div>
-                  <div id="settings-pin-form-change" hidden>
-                    <div class="maxw-280 form-group"><label for="pin-current">Current passphrase</label><input type="password" id="pin-current" autocomplete="current-password"></div>
-                    <div class="maxw-280 form-group"><label for="pin-change-new">New passphrase (at least 6 characters)</label><input type="password" id="pin-change-new" minlength="6" autocomplete="new-password"></div>
-                    <div class="maxw-280 form-group"><label for="pin-change-confirm">Confirm new passphrase</label><input type="password" id="pin-change-confirm" minlength="6" autocomplete="new-password"></div>
-                    <div class="row"><button class="btn btn-primary" data-action="submitPinChange" data-args='["$el"]'>Change passphrase</button><span id="pin-change-status" class="status"></span></div>
-                  </div>
-                </div>
-              </section>
-              <section class="section">
                 <div class="section-head"><h3>Session</h3><span class="section-hint">Ends your session on every device.</span>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="logout">Sign out everywhere</button></div></div>
               </section>
