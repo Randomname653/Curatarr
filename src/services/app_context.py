@@ -74,7 +74,10 @@ APP_MAP_BLOCK = (
     "arr).\n"
     "- 'Deletions' (admin): your deletion proposals, each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
-    "Sonarr/Radarr/Lidarr, plus Keep/Discuss; card checkboxes + a "
+    "Sonarr/Radarr/Lidarr, plus Keep/Discuss. 'Keep' pauses proposals for "
+    "that title for 90 days, after which it is judged again; ticking "
+    "'Protect permanently' in the Keep dialog stops them for good. Card "
+    "checkboxes + a "
     "'Delete selected' button bulk-delete several at once. If a card or "
     "pitch describes the WRONG same-named title, 'Fix match' (behind the card's More menu) "
     "pins the correct entity — the pin survives rescans and the item "
@@ -84,8 +87,10 @@ APP_MAP_BLOCK = (
     "check finds them, and 'Delete again' or Keep closes each. Deleting an "
     "artist also blocks it in SoulSync so it is not downloaded again, and "
     "artists you follow in SoulSync are never proposed.\n"
-    "- 'Curation' (admin) panels: 'Judge-protected titles' (what the judge "
-    "KEPT, with reasoning), 'Downscale candidates' (KEPT but flagged for a "
+    "- 'Curation' (admin) panels: 'Protected titles' (every title that is "
+    "never proposed — judge keeps, chat protections and 'Protect "
+    "permanently' — with its reasoning, each liftable), 'Downscale "
+    "candidates' (KEPT but flagged for a "
     "lower-bitrate transcode — NOT deletion candidates), "
     "'Upgrade candidates' (loved titles on weak files worth a better "
     "version), 'Redundant storage' (duplicate versions/copies and the GB "
@@ -106,8 +111,10 @@ APP_MAP_BLOCK = (
     "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
     "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (live card for "
     "EVERY background job — syncs, maintenance, memory extraction, LLM "
-    "runs — with progress and history) · "
-    "'Libraries' / 'Users' (admin) · 'Settings'.\n"
+    "runs — with progress and history) · 'Settings' (admin panes: 'Plex "
+    "libraries' maps each Plex library to a category, 'Arr apps' holds the "
+    "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify history "
+    "import, 'Maintenance' has sync and repair actions).\n"
 )
 
 # ── Knowledge Base health: why the library is not at 100 % ───────────────────
@@ -158,7 +165,8 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Delete",
     "Exit discussion",
     "Stagnant",
-    "Judge-protected titles",
+    "Protected titles",
+    "Protect permanently",
     "Downscale candidates",
     "Upgrade candidates",
     "Redundant storage",
@@ -180,8 +188,10 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Reclassify",
     "Knowledge Base",
     "Activity",
-    "Libraries",
+    "Plex libraries",
+    "Arr apps",
     "Users",
+    "Maintenance",
     "Settings",
     # Knowledge Base health (KB_HEALING_BLOCK)
     "Needs attention",

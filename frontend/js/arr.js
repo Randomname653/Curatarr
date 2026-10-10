@@ -12,7 +12,6 @@ import { api } from './api.js';
 import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView } from './nav.js';
-import { openSettingsPane } from './settings.js';
 const ARR_TABS = {
   sonarr: [
     { id: 'all',    label: 'All series' },
@@ -425,11 +424,8 @@ export async function addArrItem(svc, idx, btn) {
 }
 
 export function goToLibrarySettings(svc) {
-  // Open Settings view + Library pane + scroll to the right card.
-  showView('settings');
-  setTimeout(() => {
-    openSettingsPane('library', document.querySelector('.settings-tab[data-pane="library"]'));
-  }, 50);
+  // Settings, Arr apps pane (data-pane "library").
+  showView('settings', null, {pane: 'library', focus: true});
 }
 
 // ── Pass 16g: Spotify Backlog (top spotify-only artists → Lidarr) ────────

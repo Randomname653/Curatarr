@@ -9,6 +9,7 @@ import { loadHistoryStatus } from './history.js';
 import { loadGlancePanel, loadLastPlayed, loadStarters } from './chat.js';
 import { startTaskStream } from './activity.js';
 import { startProcessMonitor } from './game.js';
+import { routeFromHash } from './nav.js';
 
 
 export async function startPlexLogin() {
@@ -126,6 +127,8 @@ export async function showApp() {
     }
   }
 
+  // A bookmarked or reloaded #view opens where the owner left off.
+  routeFromHash({focus: false});
   loadLibraryConfig();
   loadHistoryStatus();
   loadGlancePanel();

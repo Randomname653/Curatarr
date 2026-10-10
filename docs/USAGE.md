@@ -51,14 +51,14 @@ a console:
 | Delete several proposals at once (admin) | Deletions → tick the cards → selection bar at the bottom → **Delete selected** |
 | See deleted titles that came back (admin) | Deletions → **Back after deletion** (shown only when there are any): **Delete again** or **Keep** |
 | Fix a wrongly-matched title | Proposal card → **More** → **Fix match**, or Knowledge Base → Needs attention → **Search & pin** |
-| Browse / add media via \*arr | Manage → **TV Shows** / **Movies** / **Music** |
+| Browse / add media via Sonarr, Radarr, Lidarr | Library → **TV Shows** / **Movies** / **Music** |
 | Re-enrich one library title | Any library row → **Re-enrich** menu (metadata, summary, or both) |
-| Reclassify anime ↔ TV (admin) | Manage → **Reclassify**: tick the rows, then **Apply selected** in the bottom bar |
+| Reclassify anime ↔ TV (admin) | Curate → **Reclassify**: tick the rows, then **Apply selected** in the bottom bar |
 | Watch running background jobs | Sidebar → **Activity** |
-| Per-library coverage breakdown | Sidebar → **Libraries** (Library Configuration) |
-| Spotify artists not in Lidarr | Manage → **Music** → **Spotify backlog** tab |
-| Music without Lidarr | nothing to configure — the daily walk indexes your Plex music; Manage → **Music** runs on it (badge "Plex index") |
-| Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify backlog → **Wish**; Manage → **Music** → **Wanted** tab lists them, green once Plex has them |
+| Per-library coverage breakdown | Settings → **Plex libraries** |
+| Spotify artists not in Lidarr | Library → **Music** → **Spotify backlog** tab |
+| Music without Lidarr | nothing to configure — the daily walk indexes your Plex music; Library → **Music** runs on it (badge "Plex index") |
+| Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify backlog → **Wish**; Library → **Music** → **Wanted** tab lists them, green once Plex has them |
 | Uncensored cut: owned? exists? | Curation → **Upgrades** ("TV cut — uncensored disc release exists": broadcast or web files on disk while AniDB says the Blu-ray/DVD release is uncensored; **Search releases** asks Sonarr's indexers for releases named uncensored or from Blu-ray); the curator's verified block carries an Edition line with the file sources and AniDB's verdict |
 | Lyrics on file, artists profiled | Knowledge Base → **Music pipeline** (the line under the stats bar; both walkers run with **Run maintenance now**) |
 
@@ -69,7 +69,7 @@ a console:
 | `python tests/run_all.py` | Full test battery (what CI runs) |
 | `python update_db.py` | Idempotent schema migration — run after pulling |
 | `python build_models.py` | (Re-)bake the Ollama model tags from `.env` |
-| `python import_spotify.py <dir> [--user N]` | Headless Spotify import — the GUI path (Setup → Import, or Admin → Spotify history import) is the same engine |
+| `python import_spotify.py <dir> [--user N]` | Headless Spotify import — the GUI path (Setup → Import, or Settings → Users → Spotify history import) is the same engine |
 | `python run_pipeline_spotify.py` | Trigger the music pipeline manually |
 | `python scripts/music_enricher.py` | Clear a large music backlog in a separate process |
 | `python scripts/mbid_speedrunner.py` | Bulk-resolve MusicBrainz ids |

@@ -4,6 +4,7 @@ import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
 import { loadUsers } from './admin.js';
+import { loadLibraryConfig } from './libraries.js';
 import { showView } from './nav.js';
 import { state } from './state.js';
 export async function reattributeHistory(btn) {
@@ -76,12 +77,19 @@ export function openSettingsPane(name, btn) {
   }
   // Show only the matching pane
   document.querySelectorAll('.settings-pane').forEach(p => { p.hidden = p.dataset.pane !== name; });
+  // The pane is part of the address (#settings/users): replaced, not pushed,
+  // so Back leaves Settings instead of stepping through its tabs.
+  if (document.getElementById('settings-view')?.classList.contains('active')) {
+    history.replaceState(null, '', '#settings/' + name);
+  }
   // Per-pane lazy loaders
   if (name === 'account') {
     populateSettingsAccount();
     loadPinStatus();
   } else if (name === 'notifications') {
     loadNotificationPreferences();
+  } else if (name === 'plex-libraries') {
+    loadLibraryConfig();
   } else if (name === 'library') {
     loadLibrarySettings();
   } else if (name === 'integrations') {
@@ -449,12 +457,8 @@ export async function submitPinChange(btn) {
   btnDone(btn);
 }
 
-export function openLibrarySettings(el) { openSettingsPane('library', el); loadLibrarySettings(); }
-export function openUsersSettings(el) { openSettingsPane('users', el); loadUsers(); }
-
-// Sidebar shortcut: the Settings view with its Account pane open (one inline
-// handler carried both calls before PR 3a).
-export function showSettingsAccount(el) {
-  showView('settings', el);
-  openSettingsPane('account');
+// The user pill: the Settings view with its Account pane open. showView runs
+// the pane's loaders once (it opens the pane itself).
+export function showSettingsAccount() {
+  showView('settings', null, {pane: 'account', focus: true});
 }

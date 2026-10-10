@@ -1199,13 +1199,13 @@ without understanding why they exist.
   (`/recommendations/deletions*`), library config + orphaned recovery
   (`/libraries/orphaned`, `repair-orphans`, `cleanup-orphans`), and reclassify
   (`/library/reclassify/*`) all `require_admin`. Defence in depth: hidden nav
-  items + a `showView()` guard for `deletions`/`libraries`/`admin`/`reclassify`
+  items + a `showView()` guard for `deletions`/`curation`/`reclassify`/`report`
   + the endpoint checks — the **endpoint check is the real boundary**, the UI
   gates are convenience. Non-admins keep their own taste / recs / chat.
 
 ---
 
-## 18. Library reclassification (`src/services/library_sorting.py`, Manage → Reclassify)
+## 18. Library reclassification (`src/services/library_sorting.py`, Curate → Reclassify)
 
 Admin tool that audits Sonarr for series filed in the wrong library and moves
 them. Two phases; read-only scan, explicit write.
@@ -1557,8 +1557,8 @@ Escape closes an open menu first). The match picker is such a dialog
 the deletion cards.
 
 **Forms.** `trackDirty(form, saveBtn)` keeps a card's Save disabled until a
-field changes; the caller's reload re-arms it (Settings → Library /
-Integrations / defaults, the Libraries mapping). Notifications save on the
+field changes; the caller's reload re-arms it (Settings → Arr apps /
+Integrations / defaults, Settings → Plex libraries). Notifications save on the
 toggle itself.
 
 **Utilities.** `.t2 .t3 .t-amber .t-danger .t-success .t-right .t-center .b
@@ -1577,3 +1577,24 @@ shared helper exists and that no second overlay or toast system appears.
 `test_app_context_drift` keeps prompt-visible labels in sync with
 `app_context.py`; `test_frontend_syntax` runs every inline script through
 `node --check`.
+
+**Navigation (2026-10, the UI audit).** The URL hash names the view —
+`#recs`, `#deletions`, `#settings/users` — so a view can be bookmarked,
+reloaded and reached with Back/Forward. Sidebar entries are plain `<a
+href="#view">` links grouped by intent (Discover · Library · Curate (admin)
+· System); a `hashchange` listener calls `nav.routeFromHash()`, which
+renders through `showView()`. `showView()` called from code (a glance tile,
+a discussion jumping to chat) pushes the hash itself with `pushState`,
+which fires no `hashchange`, so nothing renders twice; `routeFromHash()`
+also returns early when the hash names the view already on screen. Settings
+panes ride along as `#settings/<pane>` via `replaceState`, so Back leaves
+Settings instead of stepping through its tabs. A non-admin landing on an
+admin view's hash is sent to `#chat`. After navigation the owner asked for,
+focus moves to the view's `<h1 tabindex="-1">` (Chat carries a visually
+hidden one), and the active entry carries `aria-current="page"`; the first
+render after sign-in leaves focus alone. The standalone Libraries and Users
+views became Settings panes (`plex-libraries`, `users` — the latter now
+with the Spotify import that only the old view had), and Stop server moved
+from the nav footer to Settings → Maintenance. Wording rules (one word per
+concept, sentence case for controls, nav destinations as proper names)
+live in the WORDS block of the stylesheet header.
