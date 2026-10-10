@@ -29,9 +29,9 @@ def _seed(db):
         return {"ratingKey": key, "grandparentRatingKey": akey, "parentRatingKey": "al-" + album,
                 "grandparentTitle": aname, "parentTitle": album, "title": title, "duration": 1,
                 "Media": [{"Part": [{"size": size, "Stream": []}]}]}
-    tracks = [track("1", "a1", "The Band", "First", "One", 4_000_000), track("2", "a1", "The Band", "Second", "Two", 6_000_000),
-              track("3", "a2", "Other", "Solo", "Three", 1_000_000)]
-    artists = [{"ratingKey": "a1", "title": "The Band", "Guid": [{"id": "mbid://aaaa-1"}]}, {"ratingKey": "a2", "title": "Other"}]
+    tracks = [track("1", "101", "The Band", "First", "One", 4_000_000), track("2", "101", "The Band", "Second", "Two", 6_000_000),
+              track("3", "102", "Other", "Solo", "Three", 1_000_000)]
+    artists = [{"ratingKey": "101", "title": "The Band", "Guid": [{"id": "mbid://aaaa-1"}]}, {"ratingKey": "102", "title": "Other"}]
 
     async def list_tracks(sec):
         return tracks
@@ -68,7 +68,7 @@ def test_plex_candidates_look_like_lidarr_candidates():
         assert [i["title"] for i in items] == ["Other", "The Band"]
         band = next(i for i in items if i["title"] == "The Band")
         assert band["service"] == "plex" and band["category"] == "music"
-        assert band["media_id" if "media_id" in band else "arr_id"] == "a1" and band["plex_rating_key"] == "a1"
+        assert band["media_id" if "media_id" in band else "arr_id"] == "101" and band["plex_rating_key"] == "101"
         assert band["musicbrainz_id"] == "aaaa-1" and band["album_count"] == 2 and band["track_count"] == 2
         assert abs(band["size_mb"] - 10_000_000 / (1024 * 1024)) < 0.01
         assert band["arr_url"].startswith(str(settings.effective_plex_url).rstrip("/") + "/web/")
@@ -113,17 +113,17 @@ def test_plex_delete_confirms_the_item_is_gone_and_drops_it_from_the_index():
     try:
         assert settings.effective_plex_url and settings.effective_plex_token
         assert ms.plex_music_indexed()
-        ok = asyncio.run(rec._plex_delete_artist("a1", client=_Client(200, 404)))
+        ok = asyncio.run(rec._plex_delete_artist("101", client=_Client(200, 404)))
         assert ok is True
-        assert ly.plex_artist("a1") is None and ly.plex_artist("a2") is not None, "deleted artist leaves the index at once"
+        assert ly.plex_artist("101") is None and ly.plex_artist("102") is not None, "deleted artist leaves the index at once"
         assert ly.lyrics_coverage()["tracks"] == 1
         # deletion refused (403: 'Allow media deletion' off) → False, nothing touched
-        assert asyncio.run(rec._plex_delete_artist("a2", client=_Client(403, 200))) is False
-        assert ly.plex_artist("a2") is not None
+        assert asyncio.run(rec._plex_delete_artist("102", client=_Client(403, 200))) is False
+        assert ly.plex_artist("102") is not None
         # Plex said 200 but the item is still there → failure, never a success
         c = _Client(200, 200)
-        assert asyncio.run(rec._plex_delete_artist("a2", client=c)) is False
-        assert [m for m, _ in c.calls] == ["DELETE", "GET"] and ly.plex_artist("a2") is not None
+        assert asyncio.run(rec._plex_delete_artist("102", client=c)) is False
+        assert [m for m, _ in c.calls] == ["DELETE", "GET"] and ly.plex_artist("102") is not None
     finally:
         settings.PLEX_URL, settings.PLEX_TOKEN = _plex
         ly.LYRICS_DB_PATH = ly.PLEX_MUSIC_DB_PATH = _ORIG_DB
