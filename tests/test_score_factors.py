@@ -142,5 +142,16 @@ check("Why? is a disclosure: aria-expanded + aria-controls", 'aria-expanded="fal
 check("toggleWhy is a registered action", re.search(r"\n  toggleWhy,\n", ui) is not None)
 check("Recommendations never invents a 70% fit", "rec.confidence||0.7" not in ui)
 
+# ── the shortlist cut: one number for the engine and the card ────────────────
+eng_src = Path(eng.__file__).read_text(encoding="utf-8")
+check("the engine cuts the shortlist on SHORTLIST_SCORE, never a bare 30",
+      "if del_score > SHORTLIST_SCORE:" in eng_src
+      and 'if c["score"] > SHORTLIST_SCORE]' in eng_src
+      and '["score"] > 30' not in eng_src and "del_score > 30" not in eng_src)
+m = re.search(r"const _SHORTLIST_SCORE = (\d+);", ui)
+check(f"the card's Why? names the engine's cut ({eng.SHORTLIST_SCORE})",
+      m is not None and int(m.group(1)) == eng.SHORTLIST_SCORE
+      and "above ${_SHORTLIST_SCORE}" in ui)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

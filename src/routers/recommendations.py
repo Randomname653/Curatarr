@@ -1460,10 +1460,24 @@ async def deletion_delete_target(
 ):
     """Where deleted files go, per service — read before the delete dialog
     so it can say "moved to the Recycle Bin" or "deleted permanently"
-    instead of claiming "cannot be undone" unconditionally. Read-only."""
-    wanted = [s.strip() for s in services.split(",") if s.strip()]
+    instead of claiming "cannot be undone" unconditionally. Read-only.
+
+    Only the four services a proposal can carry, each once: the list comes
+    from the query string, and every name costs an arr round trip. A music
+    service also says whether the delete bans the artist in SoulSync
+    (deletion_returns.ban_deleted_artist), which the dialog then mentions."""
+    from src.services import soulsync_client
+    wanted = [s for s in dict.fromkeys(x.strip().lower() for x in services.split(","))
+              if s in _DELETE_SERVICES]
     results = await asyncio.gather(*[_arr_recycle_bin(s) for s in wanted])
-    return {"targets": dict(zip(wanted, results))}
+    targets = dict(zip(wanted, results))
+    for s in ("plex", "lidarr"):
+        if s in targets:
+            targets[s]["soulsync_ban"] = soulsync_client._configured()
+    return {"targets": targets}
+
+
+_DELETE_SERVICES = ("radarr", "sonarr", "lidarr", "plex")
 
 
 async def _arr_recycle_bin(service: str, client=None) -> dict:

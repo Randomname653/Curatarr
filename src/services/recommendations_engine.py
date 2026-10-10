@@ -222,8 +222,13 @@ REAL_LISTEN_MS = 120_000
 
 # How long a Keep on a deletion card holds a title out of the proposal pool.
 # The Deletions view states this number in its Keep copy;
-# tests/test_keep_semantics.py pins the two together.
+# tests/test_keep_and_delete_feedback.py pins the two together.
 KEEP_COOLDOWN_DAYS = 90
+
+# A candidate whose deletion score lands above this goes on to the curator's
+# judgement; the card's "Why?" names the number, and
+# tests/test_score_factors.py pins the copy to it.
+SHORTLIST_SCORE = 30
 
 # The last pillar-judging run per category, for the Deletions view's run
 # banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
@@ -247,7 +252,8 @@ def deletion_score_factors(*, mismatch: float, taste_src: str, size_pts: float,
     ``points`` carry the sign they have in the score: positive pushes toward
     deletion, negative toward keeping. Terms under half a point are dropped
     (a 5.0/10 rating, an unrated title). The sum of every term is the score
-    the shortlist cut (> 30) was made on; the curator's verdict comes after.
+    the shortlist cut (> SHORTLIST_SCORE) was made on; the curator's verdict
+    comes after.
     Labels describe the evidence, never a verdict."""
     out: list[dict] = []
 
@@ -1690,7 +1696,7 @@ async def generate_deletion_proposals(
             if play_prot >= 10.0:
                 _play_protected.append((_it.get("title"), _pl, round(play_prot, 1)))
         del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing + drop_penalty - play_prot
-        if del_score > 30:
+        if del_score > SHORTLIST_SCORE:
             scored_candidates.append({
                 "item": p["item"],
                 "score": del_score,
@@ -1767,7 +1773,7 @@ async def generate_deletion_proposals(
     if any(c.get("keep_value_pts") for c in _consider_slice):
         scored_candidates.sort(key=lambda x: x["score"], reverse=True)
         _before = len(scored_candidates)
-        scored_candidates = [c for c in scored_candidates if c["score"] > 30]
+        scored_candidates = [c for c in scored_candidates if c["score"] > SHORTLIST_SCORE]
         _dropped = _before - len(scored_candidates)
         _protected = [(c["item"].get("title"), c["keep_value_pts"])
                       for c in _consider_slice if c.get("keep_value_pts")]

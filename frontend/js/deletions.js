@@ -38,6 +38,8 @@ export function _recentActivityBadge(p) {
 // aria-expanded + an in-flow panel) rather than a hover popover, so it works
 // by touch and keyboard. Rows written before the breakdown existed show none.
 const _WHY_TOP = 3;
+// recommendations_engine.SHORTLIST_SCORE; tests/test_score_factors.py pins the two.
+const _SHORTLIST_SCORE = 30;
 export function _whyButton(p) {
   if (!p.score_factors?.factors?.length) return '';
   return `<button type="button" class="btn-why" aria-expanded="false" aria-controls="why-${p.id}" ${act('toggleWhy', EL)}>Why?</button>`;
@@ -50,7 +52,7 @@ export function _whyPanel(p) {
   return `<div class="why-panel mt-8" id="why-${p.id}" hidden>
     <div class="fs-12 t2 mb-6">The strongest signals in its score</div>
     <ul class="why-list">${top.map(x => `<li><span class="why-pts ${x.points > 0 ? 'to-delete' : 'to-keep'}" title="${x.points > 0 ? 'Pushes toward deleting' : 'Pushes toward keeping'}">${x.points > 0 ? '+' : '−'}${Math.round(Math.abs(x.points))}</span> ${esc(x.label)}</li>`).join('')}</ul>
-    <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above 30 are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>
+    <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>
   </div>`;
 }
 export function toggleWhy(btn) {
@@ -472,6 +474,11 @@ export async function deleteFateLines(services, plural = false) {
   if (svcs.some(s => s !== 'plex')) lines.push(plural
     ? "They are also excluded from the Arr apps' import lists, so a list won't add them back."
     : "It is also excluded from the Arr app's import lists, so a list won't add it back.");
+  // Music: the delete also bans the artist in SoulSync, whose playlist sync
+  // would otherwise fetch a liked song again (deletion_returns.py).
+  if (svcs.some(s => _fate[s]?.soulsync_ban)) lines.push(plural
+    ? "Deleted artists are also blocked in SoulSync, so its playlist sync won't download them again."
+    : "The artist is also blocked in SoulSync, so its playlist sync won't download it again.");
   return lines;
 }
 

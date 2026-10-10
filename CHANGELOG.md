@@ -347,9 +347,10 @@ Delete again and Keep.
 compares against Plex, so a liked song of a deleted artist went back on its
 wishlist at the next sync. Deleting music now puts the artist on SoulSync's
 blocklist, reads the entry back and warns when it did not hold; a ban that
-did not hold is retried once a day. The warning is a fixed sentence, an
-exception's text stays in the log (CodeQL). This is Curatarr's only write to
-SoulSync; it blocks downloads and never starts one.
+did not hold is retried once a day, and the delete dialog says the artist
+will be blocked. The warning is a fixed sentence, an exception's text stays
+in the log (CodeQL). This is Curatarr's only write to SoulSync; it blocks
+downloads and never starts one.
 
 **The image proxy keys its cache by the parsed URL**, the one it fetches,
 so two spellings of one URL share one cache file. Four automated PRs had

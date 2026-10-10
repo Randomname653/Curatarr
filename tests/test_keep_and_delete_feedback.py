@@ -179,6 +179,38 @@ check("the All tab sums every category and takes the latest time",
       allr == {"judged": 30, "flagged": 5, "deferred": 2, "failed": 3, "at": "2026-10-10T09:00:00"})
 check("the Deletions view renders the run banner from last_run",
       "_renderRunBanner(r.last_run)" in ui and "couldn't be judged" in ui)
+check("the engine's Keep comment names this suite",
+      "tests/test_keep_and_delete_feedback.py pins the two together" in src)
+
+# ── delete-target: the four services a proposal can carry, each once ───────
+# Every name costs an arr round trip and the list comes from the query
+# string; a music service also says whether the delete bans the artist in
+# SoulSync (deletion_returns.ban_deleted_artist), which the dialog names.
+from src.services import soulsync_client as _ss  # noqa: E402
+probed = []
+
+
+async def _fake_bin(service, client=None):
+    probed.append(service)
+    return {"recycle_bin": False, "cleanup_days": None}
+
+
+_real = (recs._arr_recycle_bin, _ss._configured)
+recs._arr_recycle_bin, _ss._configured = _fake_bin, (lambda: True)
+try:
+    out = asyncio.run(recs.deletion_delete_target(
+        services="radarr,Radarr, radarr,../etc,plex,lidarr,x", user=None))
+finally:
+    recs._arr_recycle_bin, _ss._configured = _real
+check("delete-target probes each known service once and nothing else",
+      probed == ["radarr", "plex", "lidarr"] and set(out["targets"]) == {"radarr", "plex", "lidarr"})
+check("a music delete says it bans the artist in SoulSync, a film delete does not",
+      out["targets"]["plex"].get("soulsync_ban") is True
+      and out["targets"]["lidarr"].get("soulsync_ban") is True
+      and "soulsync_ban" not in out["targets"]["radarr"])
+fate_all = ui.split("export async function deleteFateLines")[1].split("\n}\n")[0]
+check("the music delete dialog mentions the SoulSync ban",
+      "blocked in SoulSync" in fate_all and "soulsync_ban" in fate_all)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
