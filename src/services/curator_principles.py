@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import logging
 
-from src.services.llm_utils import CURATOR_NUM_CTX
+from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
 from datetime import datetime
 
 import httpx
@@ -132,8 +132,11 @@ async def _curator_json(system: str, user: str, schema: dict,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "format": schema, "stream": False, "think": False, "keep_alive": "10m",
+        # repeat_penalty 1.0: constrained JSON repeats its own punctuation and
+        # key prefixes by construction (see pillars.adjudicate).
         "options": {"temperature": 0.1, "num_predict": num_predict,
-                    "num_ctx": CURATOR_NUM_CTX, "num_gpu": 99},
+                    "repeat_penalty": 1.0,
+                    "num_ctx": CURATOR_NUM_CTX, **curator_gpu()},
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
@@ -261,6 +264,12 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     convo, n = _thread_text(user_id, thread_id)
     if n < _MIN_THREAD_MESSAGES:
         return []
+
+    # A long debate overflowed the window, and Ollama truncated from the front
+    # — the extraction rules went first. Keep the newest turns instead: what
+    # a debate ends on is what the owner endorsed.
+    from src.services.prompt_budget import budget_for, keep_tail
+    convo = keep_tail(convo, budget_for(CURATOR_NUM_CTX, 700, _EXTRACT_SYS) - 8)
 
     # 1 — extract (both sides, user-endorsed only)
     try:

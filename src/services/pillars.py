@@ -35,7 +35,7 @@ from typing import Annotated, Literal
 from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
                       ValidationError, field_validator, model_validator)
 
-from src.services.llm_utils import CURATOR_NUM_CTX
+from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,39 @@ Set protecting_pillar to the HIGHEST pillar that actually protects this title (H
 Any OWNER SIGNAL lines are things the owner told me before that may bear on this title — weigh them honestly. They never force a KEEP on their own, but a GENUINELY applicable owner signal pulling toward a title you would otherwise CUT should downgrade that verdict to STAGNANT (surface it for the owner's call) rather than silently discard something they value. A signal that does not actually fit this title is ignored.
 
 Keep each pillar analysis to ONE or TWO sentences. Fill every field."""
+
+# The SAME law as a numbered checklist, for LLM_PROFILE=small (8B-14B
+# curators). The full prose above packs five verdicts, four priority-ordered
+# pillars, a three-part litmus and two override rules into ~1.5k tokens of
+# nuance — what a large model weighs and a small one drops. Steps in order
+# make the priority structural instead of rhetorical. Pillar III is ALSO
+# enforced in Python by the deletion loop (_household_claim), so the sacred
+# pillar never rests on a small model reading step 2 correctly.
+PILLAR_CONSTITUTION_COMPACT = """You are the curation court for Curatarr. Decide whether ONE title stays on a shared home server. Use ONLY the FACTS; never invent. A title EARNS its place — "not bad" is not enough.
+
+Work through these steps IN ORDER. A protection found in an earlier step can never be overruled by a later one.
+
+1. RECORDS. Do the facts describe a different work than the title (a plot that contradicts the genre, an impossible year)? Then our record is wrong: answer EVALUATE. Never argue for deletion because the metadata is wrong.
+2. HOUSEHOLD (Pillar III, highest). Did ANOTHER household user (not the owner) genuinely engage — finish it, or watch a real share of a series? Then it is protected. Sampling 2 of 12 episodes does not count.
+3. CUSTODIAN (Pillar II). Is it a landmark or masterwork of its form, or a rare work at risk of being lost — shown by strong critical acclaim, major awards or documented impact? Then it is protected. Popularity or competence is not stature. If the facts list significance, your finding must address it.
+4. RESONANCE (Pillar I). For a slow, quiet or observational title answer three questions. INTENT: does it observe its subject with weight rather than tour it? AWE: does it evoke awe rather than mere comfort? RIGOR: is its slowness masterful rather than generic? Three yes answers protect it; otherwise it is filler. Sparse dialogue is never a defect.
+5. EGO (Pillar 0, lowest). Does the title ACTIVELY deliver what the OWNER TASTE line rewards — in its execution, not only its premise? Then it is protected. Without an OWNER TASTE line this step cannot condemn anything.
+6. Nothing above protects it: CUT. Not bad enough to cut but merely fine: STAGNANT.
+
+VERDICT: a protected title is HARD_KEEP, or KEEP_WITH_FLAG when it is also a clear bitrate outlier. Bitrate alone never deletes. OWNER SIGNAL lines are things the owner told us: if one genuinely fits and pulls toward keeping a title you would CUT, answer STAGNANT instead. EVALUATE only when the facts are genuinely too thin to decide.
+
+protecting_pillar: the step that protected it (HOUSEHOLD, CUSTODIAN, RESONANCE or EGO) for HARD_KEEP and KEEP_WITH_FLAG; NONE for CUT, STAGNANT and EVALUATE. Each pillar field: ONE short sentence about THIS title. Fill every field."""
+
+
+def judge_system_prompt(law_extra: str = "") -> str:
+    """The judge's system message: the constitution for this LLM_PROFILE,
+    the untrusted-data rule (which names the fence markers the evidence
+    uses), and any learned principles. build_evidence budgets the facts
+    against exactly this text."""
+    from src.services.llm_utils import UNTRUSTED_RULE, llm_profile
+    law = PILLAR_CONSTITUTION_COMPACT if llm_profile() == "small" else PILLAR_CONSTITUTION
+    return law + "\n\n" + UNTRUSTED_RULE + (f"\n\n{law_extra}" if law_extra else "")
+
 
 # Discussion-framed version of the SAME pillars — injected into the chat /
 # Level-2 deletion talk (routers/chat.py) so it reasons from pillars, with
@@ -804,21 +837,32 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     except Exception as e:
         logger.debug("[pillars] dialogue signal failed for %r: %s", title, e)
 
-    facts = (
-        f"TITLE: {scrub_untrusted(title)} ({year}) — {category}, "
-        f"{scrub_untrusted(genres_str)}\n"
-        + form_line
-        + f"OWNER: {owner_line}.\n"
-        f"OTHER HOUSEHOLD USERS:\n{other_block}\n"
-        f"ACCLAIM & METADATA:\n{meta_block}\n"
-        + (f"OWNER TASTE: {taste}\n" if taste else "")
-        + feedback_line
-        + owner_signals
-        + (f"TECH: {tech_line}\n" if tech_line else "TECH: no technical profile on record.\n")
-        + dialogue_line
-    )
+    # Priority 0 is never cut: what the title is, who watched it, what the
+    # owner said about it. The rest goes least-valuable first when the window
+    # is short (LLM_PROFILE=small, or a long principle list) — the dialogue
+    # metrics and the file profile before the owner's signals, the acclaim
+    # block trimmed before the taste line, which is the Ego pillar's only
+    # evidence. On the large profile nothing here comes near the budget.
+    from src.services.prompt_budget import Section, budget_for, fit
+    facts, trimmed = fit([
+        Section("title", f"TITLE: {scrub_untrusted(title)} ({year}) — {category}, "
+                         f"{scrub_untrusted(genres_str)}\n" + form_line, 0),
+        Section("owner", f"OWNER: {owner_line}.\n", 0),
+        Section("household", f"OTHER HOUSEHOLD USERS:\n{other_block}\n", 0),
+        Section("acclaim", f"ACCLAIM & METADATA:\n{meta_block}\n", 2, min_chars=600),
+        Section("taste", f"OWNER TASTE: {taste}\n" if taste else "", 1, min_chars=300),
+        Section("feedback", feedback_line, 0),
+        Section("signals", owner_signals, 3),
+        Section("tech", f"TECH: {tech_line}\n" if tech_line
+                        else "TECH: no technical profile on record.\n", 4),
+        Section("dialogue", dialogue_line, 5),
+    ], budget_for(CURATOR_NUM_CTX, _JUDGE_PREDICT_REPAIR + _REPAIR_TURN_TOKENS,
+                  judge_system_prompt(law_extra)))
+    if trimmed:
+        logger.info("[pillars] %r: facts trimmed to fit the %d-token window: %s",
+                    title, CURATOR_NUM_CTX, ", ".join(trimmed))
     return {"title": title, "facts": facts.strip(), "flags": flags,
-            "law_extra": law_extra}
+            "law_extra": law_extra, "trimmed": trimmed}
 
 
 # Genres that make a work non-fiction. Deliberately narrow: reality and talk
@@ -846,6 +890,11 @@ _JUDGE_PREDICT = 800
 # showed that 800 tokens were not enough for this model on these facts.
 _JUDGE_PREDICT_REPAIR = 1200
 _VALID_VERDICTS = {"HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "STAGNANT", "EVALUATE"}
+
+# What a repair turn adds to the conversation: the model's own answer (capped
+# at 2000 chars) plus the correction. build_evidence reserves room for it so a
+# repair never overflows a prompt the first attempt fit into.
+_REPAIR_TURN_TOKENS = 750
 
 _EVALUATE_FALLBACK = {"pillar_3_household": "", "pillar_2_custodian": "",
                       "pillar_1_resonance": "", "pillar_0_ego": "", "bitrate_note": "",
@@ -902,15 +951,13 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
     A verdict that needed the repair turn carries ``_repaired``.
     """
     from src.config import settings
-    from src.services.llm_errors import LLMCallError, REPAIRABLE, post_chat
+    from src.services.llm_errors import LLMCallError, LLMFailure, REPAIRABLE, post_chat
     from src.services.llm_priority import curator_priority
-    from src.services.llm_utils import UNTRUSTED_RULE
+    from src.services.prompt_budget import est_tokens
 
     model = model or settings.CURATOR_MODEL
     messages = [
-        {"role": "system",
-         "content": PILLAR_CONSTITUTION + "\n\n" + UNTRUSTED_RULE
-                    + (f"\n\n{law_extra}" if law_extra else "")},
+        {"role": "system", "content": judge_system_prompt(law_extra)},
         {"role": "user", "content": "FACTS:\n" + evidence_facts},
     ]
     payload = {
@@ -926,7 +973,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         # seed pins the rest.
         "options": {"temperature": 0.0, "seed": 7, "repeat_penalty": 1.0,
                     "num_predict": _JUDGE_PREDICT,
-                    "num_ctx": CURATOR_NUM_CTX, "num_gpu": 99},
+                    "num_ctx": CURATOR_NUM_CTX, **curator_gpu()},
     }
 
     async def _ask() -> Verdict:
@@ -935,6 +982,14 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         return _parse_verdict((data.get("message") or {}).get("content", "") or "")
 
     async def _run() -> tuple:
+        # Pre-flight: Ollama would truncate silently (from the front — the
+        # constitution) and answer anyway. build_evidence budgets the facts,
+        # so this fires only for a caller that did not.
+        need = sum(est_tokens(m["content"]) for m in messages) + 64
+        room = CURATOR_NUM_CTX - _JUDGE_PREDICT
+        if need > room:
+            raise LLMCallError(LLMFailure.CONTEXT_OVERFLOW,
+                               f"~{need} prompt tokens for {room} of room")
         try:
             return await _ask(), False
         except LLMCallError as e:
@@ -1123,7 +1178,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         # deletion run alternated judge(16k)/monologue(8k) and FULLY
         # RELOADED the 20 GB model twice per candidate — the VRAM sawtooth
         # the owner caught in Task Manager.
-        "options": {"temperature": 0.7, "num_predict": 500, "num_gpu": 99,
+        "options": {"temperature": 0.7, "num_predict": 500, **curator_gpu(),
                     "num_ctx": CURATOR_NUM_CTX},
     }
 

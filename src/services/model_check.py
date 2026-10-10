@@ -52,3 +52,60 @@ def missing_models(run: Callable = subprocess.run, models: Optional[List[str]] =
         except Exception:  # noqa: BLE001
             missing.append(model)
     return missing
+
+
+# ── Will the curator fit the card? ──────────────────────────────────────────
+# Calibrated on the one measurement on record (llm_utils, 2026-07-08): 19.9 GB
+# of curator weights at a 16384-token context came to ~23.4 GB of VRAM. The
+# context's share is scaled from that — a KV cache grows with the model's
+# layers and heads, which track its size well enough for a warning. An
+# estimate: it exists to say "this cannot work" before the first OOM, not to
+# promise that a borderline setup will.
+_CTX_SHARE_AT_16K = 0.15
+_RUNTIME_OVERHEAD_GB = 0.5
+
+
+def vram_needed_gb(weights_gb: float, num_ctx: int) -> float:
+    return weights_gb * (1 + _CTX_SHARE_AT_16K * num_ctx / 16384) + _RUNTIME_OVERHEAD_GB
+
+
+def vram_fit_warning(model: str, weights_bytes: Optional[int], gpu_total_mb: Optional[float],
+                     num_ctx: int) -> str:
+    """A sentence when ``model`` at ``num_ctx`` will not fit the card, else ""."""
+    if not weights_bytes or not gpu_total_mb:
+        return ""
+    weights_gb = weights_bytes / 1024 ** 3
+    need = vram_needed_gb(weights_gb, num_ctx)
+    have = gpu_total_mb / 1024
+    # No margin: the calibration point itself (a 4090, 23.96 of 24 GB) works.
+    if need <= have:
+        return ""
+    return (f"{model} needs about {need:.1f} GB of VRAM ({weights_gb:.1f} GB of weights "
+            f"plus a {num_ctx}-token context); this GPU has {have:.1f} GB. Use a smaller "
+            f"BASE_CURATOR_MODEL, set LLM_PROFILE=small (8k context), or set "
+            f"CURATOR_NUM_GPU=-1 to let Ollama offload part of it to the CPU (slower).")
+
+
+def curator_fit_warning() -> str:
+    """vram_fit_warning for the configured curator, read from Ollama and
+    nvidia-smi. "" when either cannot be read — no GPU reading, no warning."""
+    from src.config import settings
+    from src.services.llm_utils import CURATOR_NUM_CTX
+    try:
+        from src.services.process_monitor import _nvidia_smi
+        smi = _nvidia_smi()
+    except Exception:  # noqa: BLE001
+        smi = None
+    if not smi:
+        return ""
+    try:
+        import httpx
+        r = httpx.get(f"{settings.effective_ollama}/api/tags", timeout=5)
+        r.raise_for_status()
+        sizes = {(m.get("name") or m.get("model") or ""): m.get("size")
+                 for m in r.json().get("models") or []}
+    except Exception:  # noqa: BLE001
+        return ""
+    model = settings.CURATOR_MODEL
+    size = sizes.get(model) or sizes.get(f"{model}:latest")
+    return vram_fit_warning(model, size, smi[1], CURATOR_NUM_CTX)

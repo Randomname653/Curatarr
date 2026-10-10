@@ -214,7 +214,9 @@ def test_the_setting_is_asked_at_setup_and_changeable_later():
 def test_the_wiring():
     utils = (_ROOT / "src/services/llm_utils.py").read_text(encoding="utf-8")
     assert "**placement(SUMMARIZER), **extra" in utils
-    assert '"num_ctx": CURATOR_NUM_CTX, "num_gpu": 99' in utils
+    # The curator's placement is settings.CURATOR_NUM_GPU (default 99, all
+    # layers), applied over the summariser placement ollama_options set.
+    assert '"num_ctx": CURATOR_NUM_CTX, **curator_gpu(), **extra' in utils
 
     pm = (_ROOT / "src/services/process_monitor.py").read_text(encoding="utf-8")
     assert "def game_process_running() -> bool:" in pm and "def gpu_pressure_reason() -> str:" in pm

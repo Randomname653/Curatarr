@@ -236,7 +236,10 @@ _SIGNALS = (_SRC / "services" / "subtitle_signals.py").read_text(encoding="utf-8
 
 def test_evidence_block_asks_for_the_dialogue_line():
     assert "from src.services.subtitle_signals import subtitle_facts" in _PILLARS
-    assert "dialogue_line" in _PILLARS and '+ dialogue_line' in _PILLARS
+    # The facts are assembled as budget sections (prompt_budget.fit); the
+    # dialogue line is one of them — the first to go on a short window, as
+    # the weakest evidence the judge gets.
+    assert "dialogue_line" in _PILLARS and 'Section("dialogue", dialogue_line' in _PILLARS
     assert '"dialogue_signal": False' in _PILLARS
 
 

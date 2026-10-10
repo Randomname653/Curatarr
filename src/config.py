@@ -137,6 +137,25 @@ class Settings(BaseSettings):
     # Backup models — defined in .env for easy switching, not yet used in code.
     BACKUP_CURATOR_MODEL: str = "laguna-xs.2:q4_K_M"
     BACKUP_SUMMARIZER_MODEL: str = "granite4.1:3b"   # speed fallback / VRAM-constrained mode
+    # ── Hardware profile ───────────────────────────────────────────────────
+    # "large" is the tuned default: a 27-31B curator on a 24 GB card, 16k
+    # context. "small" is for 8B-14B quantised curators on 8-12 GB cards: an
+    # 8k context by default, and the judge gets a compact checklist version
+    # of the pillar constitution (pillars.PILLAR_CONSTITUTION_COMPACT) that
+    # small models follow more reliably than the full prose. Pillar III does
+    # not depend on either — the deletion loop enforces it in Python.
+    LLM_PROFILE: str = "large"
+    # Curator context window in tokens. 0 = the profile's default (16384 for
+    # "large", benchmarked on a 4090 with nomic resident; 8192 for "small").
+    # Every curator call sends the SAME value: a mismatch between two calls
+    # reloads the model. Run `python build_models.py` after changing it so the
+    # baked default matches too.
+    CURATOR_NUM_CTX: int = 0
+    # Curator layers placed on the GPU. 99 = all of them (the default: a
+    # partly offloaded 20 GB curator is too slow to chat with). -1 = let Ollama
+    # decide — on a card that cannot hold the model plus its context, Ollama
+    # then splits it across GPU and CPU instead of failing to load it at all.
+    CURATOR_NUM_GPU: int = 99
     # When True, <think>...</think> blocks are stripped from LLM responses.
     # Set False — current models (granite4.1:8b, gemma4:31b) do not emit think blocks.
     # Keep this flag so switching to a reasoning model only requires an .env change.

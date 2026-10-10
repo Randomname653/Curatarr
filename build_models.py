@@ -92,6 +92,12 @@ def check() -> int:
         print("Missing Ollama models: " + ", ".join(missing))
         return 1
     print("Ollama models present: " + ", ".join(expected_models()))
+    from src.services.model_check import curator_fit_warning
+    warning = curator_fit_warning()
+    if warning:
+        # A warning, not a failure: the models ARE present, and an operator
+        # who set CURATOR_NUM_GPU=-1 on purpose has chosen the slow path.
+        print("Warning: " + warning)
     return 0
 
 

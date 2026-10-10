@@ -126,11 +126,11 @@ VOCABULARY & STYLE GUARDRAILS (STRICT)
 
 YOUR TASKS IN THIS APPLICATION
 1. CHAT — Discuss media and explain taste patterns with sharp, insightful analysis.
-2. RECOMMENDATIONS — Pitch items in 1-2 sentences. Synthesize the user's taste conceptually; do not just echo their preferences back to them.
-3. DELETION PITCHES — Argue for removal based on inherent structural flaws (pacing, tone, execution) that clash with the user's demand for quality. Never invent metadata (No Gaslighting).
+2. RECOMMENDATIONS — Pitch items at the length the request asks for. Synthesize the user's taste conceptually; do not just echo their preferences back to them.
+3. DELETION PITCHES — Argue from the title's own structural merits and flaws (pacing, tone, execution). Never attribute standards, demands or preferences to the user, and never invent metadata (No Gaslighting).
 4. PATTERN ANALYSIS — Identify binge cycles, mood-based viewing, and genre aversions. Negative signals (drops, rejections) are just as critical as positive ones.
 
-Remember everything provided in context. If enrichment data is missing, acknowledge the blind spot and provide a best-effort, rule-based answer."""
+Remember everything provided in context. If enrichment data is missing, name the blind spot and say what cannot be judged without it — never fill the gap with invented detail."""
 
 SUMMARIZER_SYSTEM_PROMPT = """You are the background processing model for Curatarr. You handle all structured data extraction, abstract synthesis, and preprocessing tasks — fast, accurately, and without fluff.
 
@@ -811,19 +811,30 @@ async def build_ollama_models(ollama_endpoint: str,
                 return results
 
     # ── Step 2: bake system prompts into curatarr-* models ───────────────────
-    async def create_model(name: str, base_model: str, system_prompt: str) -> bool:
+    # The curator bakes (curator, pitcher) carry the window every curator
+    # request sends. They used to bake 8192 under 16384 requests, so any call
+    # that forgot num_ctx (the monologue did, once) silently reloaded the
+    # whole model at the other size. The summariser's calls never pass
+    # num_ctx and run on its baked 8192, as before.
+    from src.services.llm_utils import CURATOR_NUM_CTX
+
+    async def create_model(name: str, base_model: str, system_prompt: str,
+                           num_ctx: int = 8192) -> bool:
         try:
             async with httpx.AsyncClient(timeout=300) as client:
                 async with client.stream(
                     "POST",
                     f"{ollama_endpoint.rstrip('/')}/api/create",
                     json={
+                        # "model" is the current field; "name" is what older
+                        # Ollama builds read.
+                        "model": name,
                         "name": name,
                         "from": base_model,
                         "system": system_prompt,
                         "parameters": {
                             "temperature": 0.7,
-                            "num_ctx": 8192,
+                            "num_ctx": num_ctx,
                         },
                     },
                 ) as resp:
@@ -844,7 +855,11 @@ async def build_ollama_models(ollama_endpoint: str,
                                 return True
                         except Exception:
                             continue
-            return True
+            # The stream ended without Ollama ever saying "success" — a dropped
+            # connection, not a finished build. build_models.py used to print
+            # "ready" for it.
+            logger.error("ollama create %s: stream ended without success", name)
+            return False
         except (httpx.ConnectError, httpx.ConnectTimeout):
             _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
             return False
@@ -854,7 +869,7 @@ async def build_ollama_models(ollama_endpoint: str,
 
     logger.info("Building curatarr-curator from %s...", base_curator)
     results["curator"] = await create_model(
-        "curatarr-curator", base_curator, CURATOR_SYSTEM_PROMPT
+        "curatarr-curator", base_curator, CURATOR_SYSTEM_PROMPT, CURATOR_NUM_CTX
     )
 
     logger.info("Building curatarr-summarizer from %s...", base_summarizer)
@@ -878,7 +893,7 @@ async def build_ollama_models(ollama_endpoint: str,
         if pulled:
             logger.info("Building curatarr-pitcher from %s...", base_pitcher)
             results["pitcher"] = await create_model(
-                "curatarr-pitcher", base_pitcher, CURATOR_SYSTEM_PROMPT
+                "curatarr-pitcher", base_pitcher, CURATOR_SYSTEM_PROMPT, CURATOR_NUM_CTX
             )
         else:
             results["pitcher"] = False

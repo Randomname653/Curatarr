@@ -265,7 +265,46 @@ CURATOR_IDLE_EVICT_BUSY    = 10
 # governs the PITCHER bake's calls (two-bake split): the deletion run's
 # judge + monologue both pin it, so one pitcher instance stays resident
 # for the whole batch — do NOT introduce a separate PITCHER_NUM_CTX.
-CURATOR_NUM_CTX = 16384
+#
+# Resolved ONCE at import from settings (CURATOR_NUM_CTX, else the
+# LLM_PROFILE default) so it cannot drift between calls within a process.
+_PROFILE_NUM_CTX = {"large": 16384, "small": 8192}
+
+
+def _resolve_num_ctx() -> int:
+    from src.config import settings
+    try:
+        explicit = int(getattr(settings, "CURATOR_NUM_CTX", 0) or 0)
+    except (TypeError, ValueError):
+        explicit = 0
+    if explicit:
+        # Below 4k nothing fits: the judge's constitution alone is ~1.5k
+        # tokens and its answer needs 800 more.
+        return max(4096, explicit)
+    return _PROFILE_NUM_CTX.get(llm_profile(), 16384)
+
+
+def llm_profile() -> str:
+    """'large' (default) or 'small' — see settings.LLM_PROFILE."""
+    from src.config import settings
+    p = str(getattr(settings, "LLM_PROFILE", "large") or "large").strip().lower()
+    return p if p in _PROFILE_NUM_CTX else "large"
+
+
+CURATOR_NUM_CTX = _resolve_num_ctx()
+
+
+def curator_gpu() -> dict:
+    """The curator's GPU placement as Ollama options. ``num_gpu: 99`` (all
+    layers) unless CURATOR_NUM_GPU says otherwise; -1 leaves the split to
+    Ollama, which on a card too small for model + context offloads part of
+    it instead of failing to load."""
+    from src.config import settings
+    try:
+        n = int(getattr(settings, "CURATOR_NUM_GPU", 99))
+    except (TypeError, ValueError):
+        n = 99
+    return {} if n < 0 else {"num_gpu": n}
 
 
 def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
@@ -274,9 +313,15 @@ def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) 
     # num_gpu is pinned here: the curator never takes the CPU lane. 19.9 GB
     # of weights at the summariser's measured 5.9 tok/s is tens of minutes
     # for one reply — the callers check llm_lane.curator_available() and wait
-    # instead (src/services/llm_lane.py).
-    return ollama_options(temperature, num_predict,
-                          **{"num_ctx": CURATOR_NUM_CTX, "num_gpu": 99, **extra})
+    # instead (src/services/llm_lane.py). ollama_options sets the SUMMARISER
+    # placement, so the curator's is laid over it (or, with CURATOR_NUM_GPU
+    # = -1, that placement is removed and Ollama decides).
+    opts = ollama_options(temperature, num_predict,
+                          **{"num_ctx": CURATOR_NUM_CTX, **curator_gpu(), **extra})
+    if "num_gpu" not in curator_gpu() and "num_gpu" not in extra:
+        opts["options"].pop("num_gpu", None)
+        opts["options"].pop("num_thread", None)
+    return opts
 
 
 def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:

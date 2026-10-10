@@ -41,6 +41,10 @@ CONVERSATION_WINDOW = 20            # last N messages to include as context
 CONVERSATION_WINDOW_TOPIC_SWITCH = 4 # smaller window when the user pivots to a new title
 _HISTORY_CHAR_BUDGET = 8000         # hard char budget for history (context diet)
 _ASSISTANT_CLIP = 700               # clip OLD assistant monologues to this many chars
+# Room for the answer: 4096 on the 16k window (a 2048 cap cut long monologues
+# off mid-sentence), a quarter of a smaller window (LLM_PROFILE=small, 8k) so
+# the prompt keeps the rest.
+_CHAT_PREDICT = min(4096, CURATOR_NUM_CTX // 4)
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -3170,6 +3174,14 @@ FORMATTING RULES:
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(conversation)
     messages.append({"role": "user", "content": message.message})
+    # Fit the window HERE rather than let Ollama do it: Ollama truncates from
+    # the front, which is the system prompt. The oldest turns go first; the
+    # system prompt and this message always stay.
+    from src.services.prompt_budget import budget_for, fit_messages
+    messages, _dropped = fit_messages(messages, budget_for(CURATOR_NUM_CTX, _CHAT_PREDICT))
+    if _dropped:
+        logger.info("[chat] dropped the %d oldest history message(s) to fit the "
+                    "%d-token window", _dropped, CURATOR_NUM_CTX)
 
     # 4. Save user message to history (scoped to the active thread)
     _save_message(user.id, "user", message.message, db, thread_id=thread_id)
@@ -3255,18 +3267,21 @@ FORMATTING RULES:
             # squeezed and dies mid-word (the Kill la Kill reply broke off
             # after two sentences back on the 8192 window). Keep the size
             # VISIBLE so any truncation names its cause.
+            # History was already fitted when the messages were built; what
+            # is left over budget here is the system prompt itself.
+            from src.services.prompt_budget import est_tokens
             _prompt_chars = sum(len(m.get("content") or "") for m in messages)
             _sys_chars = sum(len(m.get("content") or "") for m in messages
                              if m.get("role") == "system")
             _hist_chars = _prompt_chars - _sys_chars
-            _input_budget_chars = (CURATOR_NUM_CTX - 4096) * 4   # ~4 chars/token
-            if _prompt_chars > _input_budget_chars * 0.9:
+            _prompt_tokens = sum(est_tokens(m.get("content") or "") for m in messages)
+            if _prompt_tokens > (CURATOR_NUM_CTX - _CHAT_PREDICT) * 0.9:
                 logger.warning(
                     "[chat] prompt size %d chars (~%d tokens; system=%d, "
-                    "history+user=%d) — near the %d-token window minus 4096 "
+                    "history+user=%d) — near the %d-token window minus %d "
                     "predict; expect squeezed generation",
-                    _prompt_chars, _prompt_chars // 4, _sys_chars, _hist_chars,
-                    CURATOR_NUM_CTX)
+                    _prompt_chars, _prompt_tokens, _sys_chars, _hist_chars,
+                    CURATOR_NUM_CTX, _CHAT_PREDICT)
             else:
                 logger.info("[chat] prompt size: %d chars (system=%d, history+user=%d)",
                             _prompt_chars, _sys_chars, _hist_chars)
@@ -3288,7 +3303,8 @@ FORMATTING RULES:
                         # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
                         # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
                         # input tokens — the 33.5k-char Kill la Kill turn fits.
-                        **curator_options(temperature=0.7, num_predict=4096),
+                        # _CHAT_PREDICT shrinks with a smaller window.
+                        **curator_options(temperature=0.7, num_predict=_CHAT_PREDICT),
                     },
                 ) as resp:
                     async for line in resp.aiter_lines():
