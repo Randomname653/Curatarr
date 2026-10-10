@@ -92,6 +92,7 @@ export function toast(text, kind = 'info', opts = {}) {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
+  el.setAttribute('aria-live', kind === 'danger' ? 'assertive' : 'polite');
   el.innerHTML = (opts.title ? `<div class="toast-title">${esc(opts.title)}</div>` : '') + `<div>${esc(text)}</div>` +
     (opts.actions?.length ? `<div class="toast-actions">${opts.actions.map((a, i) =>
       `<button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : 'btn-secondary'}" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>` : '');
@@ -227,12 +228,14 @@ export function btnBusy(btn, label = '…') {
   if (!btn) return;
   if (btn.dataset.label === undefined) btn.dataset.label = btn.textContent;
   btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
   btn.textContent = label;
 }
 export function btnDone(btn, label, o = {}) {
   if (!btn) return;
   btn.textContent = label ?? btn.dataset.label ?? btn.textContent;
   btn.disabled = !!o.keepDisabled;
+  btn.removeAttribute('aria-busy');
   if (o.revertMs) setTimeout(() => { btn.textContent = btn.dataset.label ?? btn.textContent; btn.disabled = false; }, o.revertMs);
 }
 
