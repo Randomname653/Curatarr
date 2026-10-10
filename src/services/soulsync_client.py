@@ -1,5 +1,5 @@
 """
-Curatarr — SoulSync client (read-only LAN neighbour).
+Curatarr — SoulSync client (LAN neighbour; read-only but for the blocklist).
 
 SoulSync (github.com/Nezreka/SoulSync) runs on the owner's server and
 aggregates music metadata through 10 background enrichment workers
@@ -7,10 +7,14 @@ aggregates music metadata through 10 background enrichment workers
 Its /api/v1/library endpoints expose that per-artist and per-album: genres,
 last.fm tags/bio/similar, mood/style/label and every external id.
 
-Curatarr CONSUMES this as an extra metadata source — deliberately read-only:
-we never call /api/v1/request (download trigger); acquisition stays the
-owner's / SoulSync's domain. Every helper degrades to None when SoulSync is
+Curatarr CONSUMES this as an extra metadata source: we never call
+/api/v1/request (download trigger); acquisition stays the owner's /
+SoulSync's domain. Every reader degrades to None when SoulSync is
 unconfigured or unreachable, so callers can treat it as a best-effort bonus.
+The one write is block_artist (owner decision 2026-10-09): an artist
+Curatarr deleted goes on SoulSync's blocklist, so its playlist sync,
+watchlist and backfill cannot fetch it again. It blocks downloads, never
+starts one, and never runs from a test process (writes_allowed).
 
 Field notes (probed live 2026-07-11): ``genres`` arrives as a list of
 JSON-ENCODED strings (['["Electronic"]']); per-album ``lastfm_tags`` arrives

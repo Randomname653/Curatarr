@@ -8,16 +8,16 @@ blocklist (owner decision 2026-10-09). SoulSync's playlist sync compares
 against Plex, not its own database, so a liked song of a deleted artist
 lands on its wishlist at the next sync and downloads again within the hour.
 
-Two jobs here:
+Two jobs here, both in the custodian's daily deletion_returns task:
 
 * ban_deleted_artist: the delete puts a deleted artist on SoulSync's
   blocklist and records the outcome on the proposal. retry_bans sets the
-  bans that never held (the music deleted before 2026-10-09, a delete while
-  SoulSync was down); it runs when the owner asks for it, not on a
-  schedule. A ban that held is never set again, so an artist the owner
-  unblocks in SoulSync stays unblocked.
-* check_returns (the custodian, once a day; reads only): every deleted
-  proposal is looked up in the library it came
+  bans that never held (a delete while SoulSync was down, a rotated API
+  key, the music deleted before 2026-10-09): every day before the returns
+  check (owner OK 2026-10-10), and by hand. A ban that held is never set
+  again, so an artist the owner unblocks in SoulSync stays unblocked.
+* check_returns (reads the libraries only): every deleted proposal is
+  looked up in the library it came
   from. A match by TMDb / TVDb / MusicBrainz id counts whenever it is there
   ("still_there" when the library added it before the delete); a title
   match counts only when the title is unique and was added after the
@@ -94,7 +94,8 @@ def ban_warning(p) -> Optional[str]:
     if not ban or ban.get("ok"):
         return None
     return (f'SoulSync did not block "{p.title}" ({ban.get("error") or "no answer"}), so its '
-            f"playlist sync may download it again. Block the artist in SoulSync to settle it.")
+            f"playlist sync may download it again. Curatarr retries once a day; blocking "
+            f"the artist in SoulSync settles it now.")
 
 
 async def retry_bans(db) -> dict:
@@ -248,13 +249,21 @@ async def check_returns(db) -> dict:
 
 
 async def run_daily(task=None) -> dict:
-    """The custodian's deletion_returns task: the returns check only. It
-    reads the libraries and writes Curatarr's own rows, nothing else."""
+    """The custodian's deletion_returns task: SoulSync bans that never held
+    first (a fresh ban can stop a download the check would only report
+    later), then the returns check."""
     from src.database.connection import get_db_session
     from src.services.task_monitor import task_monitor
     with get_db_session() as db:
+        bans = await retry_bans(db)
         res = await check_returns(db)
-    parts = [f"{res['open']} deleted title(s) back in the library"]
+    parts = []
+    if bans["tried"]:
+        parts.append(f"SoulSync bans: {bans['held']}/{bans['tried']} set")
+        if bans["failed"]:
+            parts.append("not blocked: " + ", ".join(bans["failed"][:5])
+                         + (" ..." if len(bans["failed"]) > 5 else ""))
+    parts.append(f"{res['open']} deleted title(s) back in the library")
     if res["new"]:
         parts.append("new: " + ", ".join(res["new"][:5]) + (" ..." if len(res["new"]) > 5 else ""))
     if res["unreadable"]:
@@ -262,8 +271,9 @@ async def run_daily(task=None) -> dict:
     msg = "; ".join(parts)
     logger.info("[returns] %s", msg)
     if task is not None:
-        task_monitor.update(task, message=msg, level="warn" if res["new"] else "info")
-    return {"ok": True, **res}
+        task_monitor.update(task, message=msg,
+                            level="warn" if (res["new"] or bans["failed"]) else "info")
+    return {"ok": True, "bans": bans, **res}
 
 
 # ── The Deletions view ────────────────────────────────────────────────────────

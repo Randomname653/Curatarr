@@ -399,9 +399,10 @@ async def _run_music_catalog_sync(deep: bool = False, task=None) -> bool:
 
 
 async def _run_deletion_returns(task=None) -> bool:
-    """Deleted items back in the library (src/services/deletion_returns.py):
-    reads the arr libraries and the Plex music index, records matches on
-    Curatarr's own proposal rows. No model, no writes anywhere else."""
+    """Deleted items back in the library, and SoulSync bans of deleted music
+    that never held (src/services/deletion_returns.py; the retry is the
+    owner's OK of 2026-10-10). Reads the arr libraries and the Plex music
+    index, one SoulSync ban per missing one; no model."""
     from src.services.deletion_returns import run_daily
     res = await run_daily(task=task)
     return bool(res.get("ok"))
@@ -655,7 +656,8 @@ def _registry() -> list[Task]:
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
              _run_music_catalog_sync, takes_task=True),
         # Deleted items that came back (an arr list, a request, SoulSync's
-        # playlist sync): library reads only, shown in the Deletions view.
+        # playlist sync), shown in the Deletions view; first the SoulSync
+        # bans a music delete could not set.
         Task("deletion_returns", "Deleted items back in the library", 24.0,
              _run_deletion_returns, takes_task=True),
         # Household collections: the 27B designs rotating themed shelves from

@@ -238,10 +238,37 @@ def test_retry_bans_sets_only_the_bans_that_never_held():
     assert [c[1] for c in calls if c[0] == "ban"] == ["Mwk", "Third Day"], calls
 
 
-def test_the_daily_run_only_reads():
-    src = (_ROOT / "src" / "services" / "deletion_returns.py").read_text(encoding="utf-8")
-    daily = src[src.index("async def run_daily"):src.index("# ── The Deletions view")]
-    assert "retry_bans" not in daily and "ban_deleted_artist" not in daily
+def test_the_daily_run_retries_the_bans_first_then_checks():
+    """Owner OK 2026-10-10: a ban that did not hold (SoulSync down, a rotated
+    key) is retried every day, before the returns check, and a failure is a
+    warning on the Activity card."""
+    from contextlib import contextmanager
+    import src.database.connection as conn
+    from src.services.task_monitor import task_monitor
+    order, cards = [], []
+
+    @contextmanager
+    def fake_session():
+        yield "db"
+
+    async def bans(db):
+        order.append("bans")
+        return {"tried": 2, "held": 1, "failed": ["Mwk"]}
+
+    async def check(db):
+        order.append("check")
+        return {"checked": 9, "open": 1, "new": [], "unreadable": []}
+    real = (conn.get_db_session, dr.retry_bans, dr.check_returns, task_monitor.update)
+    conn.get_db_session, dr.retry_bans, dr.check_returns = fake_session, bans, check
+    task_monitor.update = lambda task, **kw: cards.append(kw)
+    try:
+        out = asyncio.run(dr.run_daily(task="card"))
+    finally:
+        conn.get_db_session, dr.retry_bans, dr.check_returns, task_monitor.update = real
+    assert order == ["bans", "check"], order
+    assert out["ok"] and out["bans"]["failed"] == ["Mwk"] and out["open"] == 1
+    assert cards and cards[-1]["level"] == "warn", cards
+    assert "SoulSync bans: 1/2 set" in cards[-1]["message"] and "not blocked: Mwk" in cards[-1]["message"]
     import src.services.data_custodian as dc
     t = next(t for t in dc._registry() if t.job_id == "deletion_returns")
     assert t.cadence_h == 24.0 and not t.needs_llm and t.takes_task

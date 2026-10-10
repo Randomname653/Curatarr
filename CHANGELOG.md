@@ -346,8 +346,9 @@ Delete again and Keep.
 **A deleted artist is blocked in SoulSync.** SoulSync's playlist sync
 compares against Plex, so a liked song of a deleted artist went back on its
 wishlist at the next sync. Deleting music now puts the artist on SoulSync's
-blocklist, reads the entry back and warns when it did not hold. This is
-Curatarr's only write to SoulSync; it blocks downloads and never starts one.
+blocklist, reads the entry back and warns when it did not hold; a ban that
+did not hold is retried once a day. This is Curatarr's only write to
+SoulSync; it blocks downloads and never starts one.
 
 **SoulSync follows and likes shape music taste.** An artist followed in
 SoulSync counts like a 5-star rating in the music taste vector, even before
