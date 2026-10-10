@@ -605,6 +605,40 @@ releases named uncensored or from Blu-ray. The prose the enrichment
 collects was measured first and dropped as a detector: it mentions
 censorship for half a percent of the anime, half of those as plot.
 
+**A UI audit, end to end.** Every hint, table header and empty state used
+a grey of 2.1–2.6:1 contrast; it now clears 4.5:1 on every surface, and so
+does the danger red. Reduced motion is honoured (near-zero durations, so
+nothing that fades in stays invisible), touch screens get 44 px targets.
+Copy says one thing one way: no env-var names or column names in empty
+states, Arr apps instead of ARR/\*arr, the encryption "PIN" is a passphrase
+and no longer implies encryption that is not active yet, a setup hint no
+longer points at a view that does not exist.
+
+**Keep and Delete tell the truth.** Keep pauses a title for 90 days, and
+its dialog can protect it for good. Delete dialogs no longer say "cannot be
+undone" regardless: they read each arr's Recycle Bin setting and say where
+the files go, name the import-list exclusion, and bulk delete lists every
+title. Card actions run Keep, Discuss, then Delete set apart.
+
+**A failed analysis is no longer a clean library.** A judge call that timed
+out or answered nonsense used to vanish like a title the model could not
+decide. Failures are counted per run and the Deletions view says so in a
+banner that stays; error toasts stay until dismissed.
+
+**Views have addresses.** The sidebar is links grouped Discover · Library ·
+Curate · System; `#recs` or `#settings/users` can be bookmarked, Back and
+Forward work, focus lands on the new view's heading, and the active entry
+is announced as current. Libraries and Users were second copies of
+Settings panes and are now only Settings → Plex libraries and Settings →
+Users (with the Spotify import); Stop server moved to Settings →
+Maintenance.
+
+**Cut, Your call, and Why.** The "87 %" on a deletion card was the
+shortlist score divided by 100, not a confidence. The card now says Cut or
+Your call, and **Why?** lists the strongest signals in that score ("+66 Far
+from your watch history", "−12 Community rating 8.0/10"). Stored per
+proposal; `update_db.py` now runs the column migrations too.
+
 
 ## 2026-09-05 — v1.0.1-beta: the security pass the release deserved
 
