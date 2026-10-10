@@ -4,6 +4,23 @@ Scope: `src/` at `9cf2d18`, covering API endpoints, authentication and sessions,
 deletion path, outbound HTTP clients, secret storage, and injection sinks. The
 frontend was checked only where it bears on token theft.
 
+## Status (applied on this branch)
+
+| Item | Outcome | Where |
+| :--- | :--- | :--- |
+| Fix A: loopback exemption | Applied. Needs a loopback peer, a `localhost`/`127.0.0.1`/`[::1]` Host, no proxy headers, and a loopback or absent Origin | `src/routers/auth.py › _is_local_browser` |
+| Fix B: saved-secret origin rule | Applied to `/api/setup/test` (Plex, *arr) and `/api/library/test` (and so `/configure`) | `src/services/endpoint_policy.py › secret_for_target` |
+| Fix C: URL policy | Applied as pydantic validators on every service-URL field of the setup and library request models. Failed tests return a classified message, and the detail goes to the log | `endpoint_policy.validate_service_url`, `setup_wizard._test_failed`, `library._public_test_error` |
+| Fix D: numeric id guard | Applied to the arr DELETE and the Plex artist DELETE | `recommendations._require_media_id` |
+| PIN (Fix E) | **Removed, not hardened** (owner decision): endpoints, schemas, model and Settings form deleted, and `user_pin_hashes` dropped at boot with `secure_delete` | `users.py`, `connection._drop_retired_tables` |
+| `/library/profiles` | `require_admin` | `library.py` |
+| Image proxy | Raster types only, plus `Content-Security-Policy: sandbox` on every proxied body | `image_proxy.py` |
+| Spotify upload bounds, error-text items | Not done in this pass | — |
+
+Regression suite: `tests/test_appsec_2026_10.py`. Fix C does not resolve DNS
+names, so a hostname that resolves to a link-local address still passes. Only
+literal addresses are refused.
+
 ## 1. Threat model & security posture summary
 
 Curatarr binds `0.0.0.0` and trusts the home LAN. Its trust boundaries are

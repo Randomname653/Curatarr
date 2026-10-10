@@ -16,7 +16,10 @@ because the vector's consumers are background jobs that run when nobody is
 present to type a PIN — the server would have to cache the key, which
 unmakes the scheme — and because the source data (watch history) sits in
 the same database regardless. Use OS disk encryption if the disk itself is
-in your threat model.
+in your threat model. The leftover "encryption passphrase" (PIN) setting went
+too (2026-10-10): it encrypted nothing, and a short PIN's hash and salt side
+by side in the database are recoverable offline. Its endpoints and Settings
+form are gone, and the next start drops the stored hashes.
 
 Defaults that matter:
 
@@ -38,7 +41,10 @@ Defaults that matter:
   or inline scripts since 2026-09-13), so injected markup cannot run code
   either. `style-src` still allows inline styles.
 - Deletion actions require an authenticated session; proposals are never
-  executed without an explicit user approval in the UI. Without Lidarr,
+  executed without an explicit user approval in the UI. The arr id or Plex
+  rating key must be a positive integer before a DELETE is built; anything
+  else (a missing id, a path fragment) marks the proposal as an error and
+  sends nothing. Without Lidarr,
   music deletions go through Plex's own API (the server's 'Allow media
   deletion' setting) on the same approval path, and the item is re-read
   afterwards: a file Plex kept is reported as a failure, never as deleted.
@@ -76,11 +82,28 @@ Until the first admin exists the wizard endpoints have to be open —
 nobody can authenticate yet. Because the server binds the whole LAN, a
 browser on the machine itself may drive setup freely, while any other
 device must present the one-time **setup code** the server prints to its
-console (and log) at startup. That closes the window in which a LAN
+console (and log) at startup. "The machine itself" means a loopback
+connection that addresses the server as `localhost` / `127.0.0.1` / `[::1]`,
+carries no proxy forwarding headers and no foreign `Origin` (2026-10-10):
+a web page that rebinds its own name to 127.0.0.1 and a reverse proxy on
+the same host both connect from loopback too, and both now need the code. That closes the window in which a LAN
 neighbour could have pointed a fresh install at their own Plex. Wrong codes
 are budgeted — ten per address and a hundred in all per fifteen minutes,
 then the gate answers 429 for the rest of the window — and a browser on the
 machine itself is never locked out (2026-09-25).
+
+## Connection tests and service addresses
+
+Plex, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:
+no credentials, query string or fragment (a `#` would cut off the API path
+the client appends), and no link-local or cloud-metadata address. LAN and
+loopback addresses are of course fine. "Test connection" with a blank key
+field re-uses the saved key only against the saved address — a new address
+needs its key typed in, so a saved token never travels to a host it was not
+saved for. A failed test says what kind of failure it was (key rejected,
+unexpected answer, could not connect) without echoing the remote body or
+telling a refused port from a filtered one; the detail goes to the log
+(2026-10-10).
 
 ## What a member can make the server do
 
@@ -100,7 +123,8 @@ What a member *sees* is scoped the same way (2026-09-25): the Activity
 view lists only the tasks that carry their user id (their own analyses,
 recommendation refreshes, memory extractions), never the server's, and the
 library status tells a member which arr services exist, not their LAN
-addresses, root folders or test results. The OMDb key has a daily budget
+addresses, root folders or test results (the arr profile lists, which carry
+root folders, are admin-only since 2026-10-10). The OMDb key has a daily budget
 (`OMDB_DAILY_LIMIT`, the free tier's 1,000): once spent, lookups wait for
 tomorrow instead of hammering a refusing API.
 
@@ -130,10 +154,11 @@ read through bounds enforced *while* streaming (4 MB, 5 MB, 50 MB per zip
 member / 400 MB per archive), never buffered first and measured after; the
 CPU-bound subtitle metrics run off the event loop so one oversized file
 cannot stall every other user's request. The image proxy accepts a name
-only from its whitelist and, since 2026-09-25, only when that name
-resolves to a public address — checked before the first connection and
-before every redirect hop, so a rebinding CDN name cannot turn the proxy
-into a LAN fetcher.
+only from its whitelist, serves raster images only (no SVG; every response
+carries `Content-Security-Policy: sandbox`, 2026-10-10) and, since
+2026-09-25, fetches only when that name resolves to a public address —
+checked before the first connection and before every redirect hop, so a
+rebinding CDN name cannot turn the proxy into a LAN fetcher.
 
 ## Known dependency advisories
 
