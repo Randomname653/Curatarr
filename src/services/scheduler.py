@@ -17,6 +17,7 @@ Schedule:
 
 import asyncio
 import functools
+import json
 import logging
 from datetime import datetime, timedelta
 
@@ -662,6 +663,8 @@ async def job_arr_sync():
                         tvdb_id=p.get("tvdb_id"),
                         tmdb_id=p.get("tmdb_id"),
                         stagnant=p.get("stagnant", False),
+                        score_factors=(json.dumps(p["score_factors"])
+                                       if p.get("score_factors") else None),
                     ))
                     added += 1
             db.commit()

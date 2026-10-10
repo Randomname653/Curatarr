@@ -29,7 +29,7 @@ export function _recCard(rec) {
       <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
-          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round((rec.confidence||0.7)*100)}%</span></div>
+          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}</div>
           <div class="panel-actions">
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin

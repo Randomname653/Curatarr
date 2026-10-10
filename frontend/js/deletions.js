@@ -32,6 +32,35 @@ export function _recentActivityBadge(p) {
   return `<span class="badge amber badge-sm" title="Latest episode/movie/track file imported ${ageDays}d ago — fresh activity may indicate this proposal is more relevant to review.">new · ${label}</span>`;
 }
 
+// "Why?" — the deletion score taken apart (engine.deletion_score_factors).
+// The percentage it replaces was that score /100, clamped: a ranking, not a
+// confidence, and it said nothing about WHY. A disclosure (button +
+// aria-expanded + an in-flow panel) rather than a hover popover, so it works
+// by touch and keyboard. Rows written before the breakdown existed show none.
+const _WHY_TOP = 3;
+export function _whyButton(p) {
+  if (!p.score_factors?.factors?.length) return '';
+  return `<button type="button" class="btn-why" aria-expanded="false" aria-controls="why-${p.id}" ${act('toggleWhy', EL)}>Why?</button>`;
+}
+export function _whyPanel(p) {
+  const f = p.score_factors?.factors;
+  if (!f?.length) return '';
+  const top = [...f].sort((a, b) => Math.abs(b.points) - Math.abs(a.points)).slice(0, _WHY_TOP);
+  const rest = f.length - top.length;
+  return `<div class="why-panel mt-8" id="why-${p.id}" hidden>
+    <div class="fs-12 t2 mb-6">The strongest signals in its score</div>
+    <ul class="why-list">${top.map(x => `<li><span class="why-pts ${x.points > 0 ? 'to-delete' : 'to-keep'}" title="${x.points > 0 ? 'Pushes toward deleting' : 'Pushes toward keeping'}">${x.points > 0 ? '+' : '−'}${Math.round(Math.abs(x.points))}</span> ${esc(x.label)}</li>`).join('')}</ul>
+    <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above 30 are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>
+  </div>`;
+}
+export function toggleWhy(btn) {
+  const panel = document.getElementById(btn.getAttribute('aria-controls'));
+  if (!panel) return;
+  const open = btn.getAttribute('aria-expanded') !== 'true';
+  btn.setAttribute('aria-expanded', String(open));
+  panel.hidden = !open;
+}
+
 export function _renderDeletionProposals(proposals) {
   const el = document.getElementById('del-content');
   if (!proposals?.length) {
@@ -69,8 +98,10 @@ export function _renderDeletionProposals(proposals) {
           <div class="grow">
             <div class="panel-item-head">
               <div class="fs-16 panel-item-title">${esc(p.title)}
-                <span class="badge ${p.confidence>.7?'danger':'muted'}" title="How sure the judge is that this can go">${Math.round((p.confidence||0)*100)}%</span>
-                ${p.stagnant?`<span class="badge amber" title="Judge verdict: merely fine — not a clear cut, your call">Stagnant</span>`:''}${_recentActivityBadge(p)}
+                ${p.stagnant
+                  ? `<span class="badge amber" title="Curatarr finds it merely fine, not a clear cut — the decision is yours">Your call</span>`
+                  : `<span class="badge danger" title="Curatarr suggests deleting it">Cut</span>`}${_recentActivityBadge(p)}
+                ${_whyButton(p)}
                 ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">Parked</span>' : ''}
               </div>
               <div class="panel-actions">
@@ -84,6 +115,7 @@ export function _renderDeletionProposals(proposals) {
                 ])}
               </div>
             </div>
+            ${_whyPanel(p)}
             <div class="fs-12 t3 mt-4">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
             ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(p.synopsis)}</div>` : ''}

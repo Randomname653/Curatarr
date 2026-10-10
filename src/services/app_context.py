@@ -13,7 +13,7 @@ Rules:
 - Routers COMPOSE these blocks; prompt prose about the app never lives inline
   in a router again. (That's how the curator ended up sending the user to
   Sonarr to delete a title while the 'Delete & exit' button sat top right,
-  and improvising when asked what the 'Stagnant' badge means.)
+  and improvising when asked what the 'Your call' badge means.)
 - SCOPED injection: each surface gets its own block, not the whole app manual.
 - Every UI label referenced here must exist VERBATIM in the frontend files (index.html + js/app.js) —
   enforced by tests/test_app_context_drift.py, so renaming a button without
@@ -42,7 +42,9 @@ DISCUSSION_UI_BLOCK = (
 STAGNANT_VERDICT_BLOCK = (
     "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
     "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
-    "'Stagnant' badge for the OWNER to decide. Weigh keep vs delete "
+    "'Your call' badge (every other proposal carries 'Cut') for the OWNER "
+    "to decide. Each card's 'Why?' lists the strongest signals in its "
+    "deletion score. Weigh keep vs delete "
     "honestly on their terms instead of pushing for deletion.\n"
 )
 
@@ -72,7 +74,9 @@ APP_MAP_BLOCK = (
     "plain similarity when the ranker is unavailable — and on Discovery "
     "cards an '+ Add' button (admin) that adds the title to the right "
     "arr).\n"
-    "- 'Deletions' (admin): your deletion proposals, each with a 'Delete' "
+    "- 'Deletions' (admin): your deletion proposals, each marked 'Cut' or "
+    "'Your call' with a 'Why?' that lists the strongest signals in its "
+    "deletion score, and each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
     "Sonarr/Radarr/Lidarr, plus Keep/Discuss. 'Keep' pauses proposals for "
     "that title for 90 days, after which it is judged again; ticking "
@@ -164,7 +168,9 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Delete & exit",
     "Delete",
     "Exit discussion",
-    "Stagnant",
+    "Your call",
+    "Cut",
+    "Why?",
     "Protected titles",
     "Protect permanently",
     "Downscale candidates",

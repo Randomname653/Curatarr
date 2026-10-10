@@ -434,7 +434,25 @@ def _proposal_dict(p: DeletionProposal) -> dict:
         # filter in the UI. ISO string (or None) so the frontend can show
         # an "added Xd ago" badge per row.
         "latest_activity_at": p.latest_activity_at.isoformat() if p.latest_activity_at else None,
+        "score_factors": _load_score_factors(p.score_factors),
     }
+
+
+def _load_score_factors(raw):
+    """The stored "Why?" breakdown, or None for a legacy / unreadable row."""
+    if not raw:
+        return None
+    try:
+        import json
+        data = json.loads(raw)
+        return data if isinstance(data, dict) and isinstance(data.get("factors"), list) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _dump_score_factors(sf):
+    import json
+    return json.dumps(sf) if sf else None
 
 
 @router.get("/protections")
@@ -1099,6 +1117,7 @@ async def get_deletion_proposals(
                     tmdb_id=p.get("tmdb_id"),
                     latest_activity_at=la_dt,
                     stagnant=p.get("stagnant", False),
+                    score_factors=_dump_score_factors(p.get("score_factors")),
                 )
                 dbs.add(row)
                 saved.append((p, row))
