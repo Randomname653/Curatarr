@@ -287,7 +287,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
 // is gone before anyone reads it.
 export function _renderRunBanner(run) {
   document.getElementById('del-run-banner')?.remove();
-  if (!run || !(run.failed || run.deferred)) return;
+  if (!run || !(run.failed || run.deferred || run.stopped)) return;
   const banner = document.createElement('div');
   banner.id = 'del-run-banner';
   banner.setAttribute('role', 'status');
@@ -295,12 +295,20 @@ export function _renderRunBanner(run) {
   const again = `<button type="button" class="btn btn-secondary btn-sm" ${act('loadDeletions', state.currentDelCategory || null, null, true)}>Run analysis</button>`;
   const warn = SVG_WARN.replace('width="13" height="13"', 'width="18" height="18"');
   const deferred = run.deferred ? ` ${run.deferred} waited for missing metadata and are checked once it arrives.` : '';
+  // The cause comes from the server (llm_errors.DESCRIPTIONS): "Ollama is not
+  // answering" and "another program took the graphics card" need different
+  // fixes, and the old fixed sentence blamed the model for both.
+  const cause = esc(run.failed_reason || "the model didn't answer");
+  const stopped = run.stopped ? ` Stopped early: ${esc(run.stopped)}.` : '';
   if (run.failed && run.failed >= run.judged) {
     banner.className = 'banner danger';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — the model didn't answer. Check that Ollama is running, then try again.${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${deferred}</div>${again}`;
   } else if (run.failed) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged because the model didn't answer; they are checked again on the next run.${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${deferred}</div>${again}`;
+  } else if (run.stopped) {
+    banner.className = 'banner warn';
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${deferred}</div>${again}`;
   } else {
     banner.className = 'banner';
     banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${deferred}</div>`;

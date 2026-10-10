@@ -313,6 +313,42 @@ def _score_factors(cand: dict) -> dict | None:
         return None
 
 
+def _failure_sentence(kinds: dict) -> str:
+    """'Ollama is not answering (2); the answer was cut off (1)' — the causes
+    behind a run's failures, most frequent first, for the Deletions banner."""
+    from src.services.llm_errors import DESCRIPTIONS, LLMFailure
+    parts = []
+    for kind, n in sorted(kinds.items(), key=lambda kv: -kv[1]):
+        try:
+            text = DESCRIPTIONS[LLMFailure(kind)]
+        except ValueError:
+            text = "an unexpected error"
+        parts.append(f"{text} ({n})")
+    return "; ".join(parts)
+
+
+def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
+                         deferred: int = 0, fail_kinds: dict | None = None,
+                         stopped: str = "") -> dict:
+    """Store one category's run for the Deletions banner. ``failed`` keeps
+    its old meaning (titles that got no verdict because something broke);
+    ``failed_by_kind`` / ``failed_reason`` say what broke, and ``stopped``
+    why the run ended before its cap — a game, or an Ollama outage."""
+    kinds = {k: n for k, n in (fail_kinds or {}).items() if n}
+    run = {
+        "at": datetime.utcnow().isoformat(),
+        "judged": judged,
+        "flagged": flagged,
+        "deferred": deferred,
+        "failed": sum(kinds.values()),
+        "failed_by_kind": kinds,
+        "failed_reason": _failure_sentence(kinds),
+        "stopped": stopped,
+    }
+    DELETION_RUN_SUMMARY[category] = run
+    return run
+
+
 def deletion_run_summary(category: str | None = None) -> dict | None:
     """The last run for one category, or all categories summed ("All" tab)."""
     if category:
@@ -322,7 +358,43 @@ def deletion_run_summary(category: str | None = None) -> dict | None:
         return None
     out = {k: sum(r.get(k, 0) for r in runs) for k in ("judged", "flagged", "deferred", "failed")}
     out["at"] = max(r.get("at") or "" for r in runs)
+    kinds: dict = {}
+    for r in runs:
+        for k, n in (r.get("failed_by_kind") or {}).items():
+            kinds[k] = kinds.get(k, 0) + n
+    out["failed_by_kind"] = kinds
+    out["failed_reason"] = _failure_sentence(kinds)
+    out["stopped"] = "; ".join(dict.fromkeys(r["stopped"] for r in runs if r.get("stopped")))
     return out
+
+
+def _judge_lane() -> tuple:
+    """(may the next verdict load the model, why not).
+
+    The same signal the game watcher evicts on (process_monitor.is_game_running:
+    a game process, or another program holding the card). The deletion run
+    checked it only when it started; a game launched mid-run had the watcher
+    unload the pitcher every 30 s while the loop loaded it straight back with
+    num_gpu=99 into the game's memory — an OOM or a 300 s timeout per title.
+    A failed reading counts as free, like the lane itself does: detection
+    trouble must not silently stop every deletion run."""
+    try:
+        from src.services.process_monitor import is_game_running
+        if not is_game_running():
+            return True, ""
+        from src.services.llm_errors import DESCRIPTIONS, LLMFailure
+        from src.services.llm_lane import gpu_reason
+        why = gpu_reason()
+        return False, DESCRIPTIONS[LLMFailure.LANE_CLOSED] + (f" ({why})" if why else "")
+    except Exception as e:
+        logger.debug("[deletions] lane check failed: %s", e)
+        return True, ""
+
+
+# Two outages in a row end the run: Ollama down, or a model that cannot load,
+# is down for the next title too. Each attempt can hold the GPU gate for the
+# full judge timeout, and a 60-title cap of them is five hours.
+_OUTAGE_STOP_AFTER = 2
 
 
 def _play_protection(plays: int) -> float:
@@ -1811,16 +1883,33 @@ async def generate_deletion_proposals(
     logger.info("[deletions] %s: run model = %s", category, pitch_model)
 
     if getattr(settings, "PILLARS_ENABLED", False):
+        from collections import Counter
         from src.services.pillars import build_evidence, adjudicate, write_monologue
+        from src.services.llm_errors import DESCRIPTIONS, INFRA, LLMFailure
         from src.services.llm_priority import (curator_start, curator_done,
                                                evict_if_resident, gate_contested)
+        # A game already running: no warm-up (it can load the summariser) and
+        # no gate. The scheduler's own check runs once per job; a manual
+        # Analyze and every category after the first land here.
+        _lane_ok, _lane_why = _judge_lane()
+        if not _lane_ok:
+            _msg(f"{category}: not judging — {_lane_why}")
+            logger.info("[deletions] %s: lane closed before the run (%s)",
+                        category, _lane_why)
+            _record_deletion_run(category, stopped=_lane_why)
+            return []
         TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
         thin_skipped = 0
         misfiled_skipped = 0
         unchecked_skipped = 0
         watch_unknown_skipped = 0
-        judge_failed = 0
+        # Why titles got no verdict, by llm_errors.LLMFailure value. A real
+        # EVALUATE is not in here: the model looked and could not decide.
+        fail_kinds: Counter = Counter()
+        consecutive_outages = 0
+        household_floored = 0
+        stopped = ""
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
         # PRE-JUDGE SIGNIFICANCE WARM-UP: the judge's own JIT is summarizer-
@@ -1920,6 +2009,24 @@ async def generate_deletion_proposals(
                     curator_done()
                     await curator_start(_gate_label, exclusive_model=pitch_model)
                     _holds_gate = True
+                # Checked AFTER a yield too: the chat we waited for can take
+                # minutes, and a game started meanwhile is still a game.
+                _lane_ok, _lane_why = _judge_lane()
+                if not _lane_ok:
+                    stopped = _lane_why
+                    _msg(f"{category}: stopping — {_lane_why}; the rest is "
+                         f"judged on the next run")
+                    logger.info("[deletions] %s: lane closed mid-run (%s) — "
+                                "stopping cleanly", category, _lane_why)
+                    break
+                if consecutive_outages >= _OUTAGE_STOP_AFTER:
+                    _top = fail_kinds.most_common(1)[0][0]
+                    stopped = DESCRIPTIONS[LLMFailure(_top)]
+                    _msg(f"{category}: stopping — {stopped}")
+                    logger.warning("[deletions] %s: %d outages in a row (%s) — "
+                                   "stopping the run", category,
+                                   consecutive_outages, _top)
+                    break
                 item = cand["item"]
                 judged += 1
                 _msg(f"{category}: pillar-judging {judged} "
@@ -1929,6 +2036,15 @@ async def generate_deletion_proposals(
                     # No session passed: build_evidence reads the DB in a short
                     # session of its own and closes it before its network calls.
                     ev = await build_evidence(item, user_id, category)
+                except Exception as e:
+                    # Our code, not the model: no LLM call was made, so it
+                    # neither counts as judged nor resets the outage streak.
+                    logger.warning("[deletions] evidence failed for %r: %s",
+                                   item.get("title"), e)
+                    fail_kinds[LLMFailure.EVIDENCE.value] += 1
+                    judged -= 1
+                    continue
+                try:
                     # THIN-EVIDENCE GATE: no enrichment, no Wikipedia — only
                     # the arr synopsis stub. Judging that produces confident
                     # confabulation (the They Will Kill You / Buffaloed
@@ -1993,15 +2109,45 @@ async def generate_deletion_proposals(
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
                 except Exception as e:
+                    # adjudicate never raises by contract; this is a bug guard.
                     logger.warning("[deletions] pillar judge failed for %r: %s",
                                    item.get("title"), e)
-                    judge_failed += 1
+                    fail_kinds["unknown"] += 1
                     continue
                 # adjudicate() turns its own failures into an EVALUATE that
-                # carries _error: count those apart from a real EVALUATE.
+                # carries _error and _error_kind: count those apart from a
+                # real EVALUATE, by cause.
                 if (verdict or {}).get("_error"):
-                    judge_failed += 1
+                    kind = verdict.get("_error_kind") or "unknown"
+                    fail_kinds[kind] += 1
+                    try:
+                        outage = LLMFailure(kind) in INFRA
+                    except ValueError:
+                        outage = False
+                    if outage:
+                        # An outage judged nothing: it does not spend the cap.
+                        consecutive_outages += 1
+                        judged -= 1
+                    else:
+                        consecutive_outages = 0
+                    continue
+                consecutive_outages = 0
                 v = (verdict or {}).get("verdict")
+                # HOUSEHOLD FLOOR: Pillar III decided in Python
+                # (pillars._household_claim). A model — above all a small
+                # one — can miss the sacred pillar under a strong taste
+                # mismatch; another household member's genuine engagement
+                # never ends in a CUT. Not a keep either: the owner decides.
+                _claim = (ev.get("flags") or {}).get("household_claim")
+                if v == "CUT" and _claim:
+                    household_floored += 1
+                    logger.warning("[deletions] %s: CUT on %r overruled — %s "
+                                   "engaged with it (household floor)",
+                                   category, item.get("title"), _claim)
+                    verdict = {**verdict, "verdict": "STAGNANT",
+                               "_guard": "household_floor",
+                               "_guard_detail": _claim}
+                    v = "STAGNANT"
                 if v in ("CUT", "STAGNANT"):
                     pitch = await write_monologue(
                         ev["facts"], verdict, model=pitch_model,
@@ -2063,17 +2209,17 @@ async def generate_deletion_proposals(
                 if unchecked_skipped else "")
              + (f" ({watch_unknown_skipped} deferred: watch history unreadable)"
                 if watch_unknown_skipped else "")
-             + (f" ({judge_failed} failed: the model did not answer)"
-                if judge_failed else "")
+             + (f" ({household_floored} turned into 'Your call': another "
+                f"household member engaged)" if household_floored else "")
+             + (f" ({sum(fail_kinds.values())} failed: "
+                f"{_failure_sentence(dict(fail_kinds))})" if fail_kinds else "")
+             + (f" — stopped early: {stopped}" if stopped else "")
              + ".")
-        DELETION_RUN_SUMMARY[category] = {
-            "at": datetime.utcnow().isoformat(),
-            "judged": judged,
-            "flagged": len(final_proposals),
-            "deferred": (thin_skipped + misfiled_skipped + unchecked_skipped
-                         + watch_unknown_skipped),
-            "failed": judge_failed,
-        }
+        _record_deletion_run(
+            category, judged=judged, flagged=len(final_proposals),
+            deferred=(thin_skipped + misfiled_skipped + unchecked_skipped
+                      + watch_unknown_skipped),
+            fail_kinds=dict(fail_kinds), stopped=stopped)
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────

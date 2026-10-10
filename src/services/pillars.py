@@ -1024,6 +1024,15 @@ _MONOLOGUE_STANCE = {
     "EVALUATE": "Assess this title from what little is known",
 }
 
+# A verdict the deletion loop changed after the judge spoke. The judge's own
+# stance would argue the CUT it no longer is.
+_GUARD_STANCE = {
+    "household_floor": "Another member of the household has genuinely watched "
+                       "this title, so it is the owner's call, not a cut — make "
+                       "the honest case on what the title itself is, and say "
+                       "plainly that someone in the house engaged with it",
+}
+
 
 # The monologue prompt forbids reciting the user's tastes and (on a CUT)
 # mentioning storage — and the model obeys the letter while breaking the
@@ -1095,7 +1104,8 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         lang_prefix
         + "You are the curator. In your uncompromising, opinionated voice, write the "
         "2-3 sentence note the user reads on this title's card. "
-        f"{_MONOLOGUE_STANCE.get(v, 'Assess this title')}. Characterize what this title "
+        f"{_GUARD_STANCE.get(verdict.get('_guard')) or _MONOLOGUE_STANCE.get(v, 'Assess this title')}. "
+        "Characterize what this title "
         "concretely IS — its premise, style, what it actually does — and let the "
         "verdict land on ITS own specifics, sharp and fresh. Do NOT recite the user's "
         "tastes back at them (they already know what they like); do NOT open with a "

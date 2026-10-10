@@ -161,13 +161,16 @@ check("bulk delete lists every selected title", "boxes.map(b => b.closest('.card
 # ── A failed judge call is counted, not silent ───────────────────────────────
 
 src = Path(eng.__file__).read_text(encoding="utf-8")
-loop = src.split("judge_failed = 0")[1].split("return final_proposals")[0]
+loop = src.split("fail_kinds: Counter = Counter()")[1].split("return final_proposals")[0]
 check("an exception in the judge loop counts as a failure",
-      re.search(r"pillar judge failed for %r: %s\",\s*item\.get\(\"title\"\), e\)\s*judge_failed \+= 1", loop) is not None)
-check("adjudicate's own EVALUATE-with-_error fallback counts as a failure",
-      'get("_error")' in loop and loop.index('get("_error")') < loop.index('if v in ("CUT", "STAGNANT")'))
+      re.search(r"pillar judge failed for %r: %s\",\s*item\.get\(\"title\"\), e\)\s*fail_kinds\[\"unknown\"\] \+= 1", loop) is not None)
+check("...and so does an exception assembling the evidence, under its own cause",
+      "fail_kinds[LLMFailure.EVIDENCE.value] += 1" in loop)
+check("adjudicate's own EVALUATE-with-_error fallback counts as a failure, by kind",
+      'get("_error")' in loop and 'verdict.get("_error_kind")' in loop
+      and loop.index('get("_error")') < loop.index('if v in ("CUT", "STAGNANT")'))
 check("the run summary records failures per category",
-      '"failed": judge_failed' in loop and "DELETION_RUN_SUMMARY[category]" in loop)
+      "_record_deletion_run(" in loop and "fail_kinds=dict(fail_kinds)" in loop)
 
 eng.DELETION_RUN_SUMMARY.clear()
 check("no run yet → no summary", eng.deletion_run_summary() is None)
@@ -176,7 +179,8 @@ eng.DELETION_RUN_SUMMARY["show"] = {"at": "2026-10-10T09:00:00", "judged": 10, "
 check("one category reads its own run", eng.deletion_run_summary("show")["flagged"] == 1)
 allr = eng.deletion_run_summary()
 check("the All tab sums every category and takes the latest time",
-      allr == {"judged": 30, "flagged": 5, "deferred": 2, "failed": 3, "at": "2026-10-10T09:00:00"})
+      {k: allr[k] for k in ("judged", "flagged", "deferred", "failed", "at")}
+      == {"judged": 30, "flagged": 5, "deferred": 2, "failed": 3, "at": "2026-10-10T09:00:00"})
 check("the Deletions view renders the run banner from last_run",
       "_renderRunBanner(r.last_run)" in ui and "couldn't be judged" in ui)
 check("the engine's Keep comment names this suite",
