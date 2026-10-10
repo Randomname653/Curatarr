@@ -161,17 +161,15 @@ actually runs. The lock is hash-pinned (`uv pip compile --universal
 sha256 written in this repository is never installed on a runner, and the
 launchers use the same check when they raise a package to the lock.
 
-`oauthlib` 3.3.1 carries two advisories (GHSA-xpv3-w29h-x7cv, a timing
-attack on the PKCE verifier comparison; GHSA-hj66-6f7g-4r5v, a JSONP
-injection in the RevocationEndpoint), both on the OAuth **provider** side.
-It reaches the lock only through `kubernetes` → `requests-oauthlib`, and
-chromadb imports `kubernetes` solely in its distributed-segment mode: the
-embedded client never loads either, and Curatarr serves no OAuth endpoints.
-The fix is oauthlib 4.0.0, a new major line under requests-oauthlib; both
-IDs are excepted in `osv-scanner.toml` until that chain moves. PyJWT went to
-2.15.0 for GHSA-42vr-xj54-vc7v (a RecursionError on a deeply nested token in
-the pre-verification paths); Curatarr only ever calls `jwt.decode` with its
-key and HS256, so it was not reachable either.
+`oauthlib` went to 4.0.0 on 2026-10-10 for two advisories on the OAuth
+**provider** side (a timing attack on the PKCE verifier comparison, a JSONP
+injection in the RevocationEndpoint). It reaches the lock only through
+`kubernetes` → `requests-oauthlib`, which chromadb imports for its
+distributed-segment mode alone, so it was never loaded; a fresh uv
+resolution confirmed the bump (requests-oauthlib asks for oauthlib >= 3.0.0).
+PyJWT went to 2.15.0 for GHSA-42vr-xj54-vc7v (a RecursionError on a deeply
+nested token in the pre-verification paths); Curatarr only ever calls
+`jwt.decode` with its key and HS256, so it was not reachable either.
 
 ## Reporting a vulnerability
 
