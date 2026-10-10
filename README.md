@@ -156,90 +156,149 @@ decisions and the invariants learned the hard way — lives in
 
 ### Requirements
 
+Curatarr runs directly on the host; there is no Docker image. Windows is
+the main platform (the launchers and the tray app are Windows-only);
+Linux and macOS run the server by hand. Ollama may run on another
+machine (`OLLAMA_ENDPOINT`).
+
 | | |
 |---|---|
 | **Python** | 3.12 or newer |
-| **Plex Media Server** | with an admin token |
-| **[Ollama][link-ollama]** | running locally, GPU strongly recommended |
-| **Radarr / Sonarr / Lidarr** | optional — unlocks deletion proposals per category |
-| **Plex music index** | automatic — without Lidarr, music runs on Plex: proposals, deletions (Plex 'Allow media deletion'), a Wanted list instead of adds |
+| **[Git](https://git-scm.com)** | to clone the repository and to update it |
+| **Plex Media Server** | you sign in as the server owner during setup |
+| **[Ollama][link-ollama]** | installed and running before the first start |
+| **GPU** | 24 GB VRAM for the default curator model. Smaller card? Pick a smaller curator model ([how](docs/USAGE.md#changing-the-models)); verdicts get softer |
+| **Disk** | room for the models: the default curator alone is about 19 GB |
+| **Radarr / Sonarr / Lidarr** | optional — each one unlocks deletion proposals and adds for its category |
+| **Plex music index** | nothing to set up — without Lidarr, music runs on your Plex library |
 | **TMDB API key** | recommended — the primary movie/show metadata source |
 | **OMDb / Last.fm / Spotify keys** | optional — extra ratings, awards and music genres |
 
-Recommended models: `gemma4:31b` as the *curator* — it won a five-model
-benchmark on chat character and metadata faithfulness
-([docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the full data) —
-`granite4.1:8b` as the fast *summariser*, and `nomic-embed-text-v2-moe`
-for embeddings, which runs on CPU by design so the GPU stays free for the
-curator. Any Ollama model can be substituted; the benchmark scripts ship
-with the repo. AniList and MusicBrainz need no keys.
+AniList and MusicBrainz need no keys. Every key can be added later in
+Settings.
 
-Sonarr and Radarr have stable API´s Lidarr is a bit of a hit or miss. Sometimes it works sometimes it even responds to our calls.
-So please be patient with the backend when it tries to fetch anything from Lidarr. I am still trying to get the API to a more stable state but as the other two run fine it might just not be fixable on my end.
+**Models.** The defaults are `gemma4:31b` as the *curator* (it won a
+five-model benchmark on chat character and metadata faithfulness — see
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md)), `granite4.1:8b` as the fast
+*summarizer*, and `nomic-embed-text-v2-moe` for embeddings, which runs on
+the CPU so the GPU stays free for the curator. The first start downloads
+whatever is missing. Any Ollama model can be substituted: on a card with
+less than 24 GB, pick a smaller curator in the setup wizard's Ollama step,
+or see [Changing the models](docs/USAGE.md#changing-the-models).
+
+> [!NOTE]
+> **Lidarr is optional, and the least reliable of the three.** Radarr and
+> Sonarr answer consistently; Lidarr's API often answers slowly or not at
+> all, so screens that wait on it can stall. Without Lidarr, Curatarr
+> indexes your Plex music library itself: deletion proposals, deletions
+> (through Plex's *Allow media deletion* setting) and a Wanted list in
+> place of adds.
 
 ### Installation
 
 **Windows**
 
-```bat
-git clone https://github.com/Randomname653/Curatarr.git curatarr
-cd curatarr
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-start.bat
+1. Make sure Ollama is running (its icon sits in the system tray).
+2. Clone the repository and create a virtual environment for Curatarr:
+
+   ```bat
+   git clone https://github.com/Randomname653/Curatarr.git curatarr
+   cd curatarr
+   py -3.12 -m venv venv
+   ```
+
+3. Start it:
+
+   ```bat
+   start.bat
+   ```
+
+The first start takes a while. `start.bat` installs the tested
+dependencies into `venv`, then downloads and builds the Ollama models
+(the default curator alone is about 19 GB). You don't need to activate
+the venv or run `pip` yourself. When the console shows this line,
+Curatarr is up and your browser opens on it:
+
+```text
+ Running at http://localhost:8000  |  Press Ctrl+C to stop
 ```
 
-`start.bat` is the development entry point: live console, hot reload, and
-it self-heals Ollama model bakes. For everyday background use,
-`start_tray.bat` runs Curatarr as a tray icon with an autostart toggle,
-log access and graceful shutdown. Both launchers compare the pinned
-`requirements.txt` with their interpreter before the first import and
-install what is missing or outdated, so a `git pull` is a full update.
-The server itself never installs anything; it reports the same comparison
-in Settings → Maintenance. `lock/requirements.txt` is the tested install
-written down and hash-pinned: every package the pins pull in, with a
-platform marker where one is platform-specific and the sha256 of every
-distribution file (`uv pip compile --universal --generate-hashes`, run
-through `python -m src.deps_lock --compile`). CI installs it with
-`--require-hashes`; the launchers raise a package that fell below it
-through the same hash check and let the lock follow anything newer, so
-it never lowers a version; the security scanners and Dependabot read it.
-Reproduce the exact set with
-`pip install --require-hashes -r lock/requirements.txt` — a fresh
-environment gets exactly that on its first launcher start.
+> [!TIP]
+> `start.bat` keeps a console window open and reloads itself when the
+> code changes. For everyday use, start Curatarr with `start_tray.bat`
+> instead: it runs in the background as a tray icon, with an autostart
+> toggle, log access and a clean shutdown. Both use the same `venv`.
 
 **Linux / macOS**
 
 ```bash
 git clone https://github.com/Randomname653/Curatarr.git curatarr
 cd curatarr
-python -m venv venv
+python3 -m venv venv     # Python 3.12 or newer
 source venv/bin/activate
 pip install -r requirements.txt
-
-python build_models.py     # first run: bake the curator + summariser tags
-uvicorn src.main:app --host 0.0.0.0 --port 8000
+python build_models.py
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
 ```
+
+`build_models.py` downloads the base models and builds Curatarr's own
+model tags from them. It takes a while the first time. Curatarr is up when
+uvicorn prints `Application startup complete.` There is no launcher on
+these platforms, so after every update repeat the `pip install` line and
+restart.
 
 ### First run
 
-Open `http://localhost:8000`. The setup wizard covers Plex sign-in
-(PIN-based OAuth, no password), your Ollama models, \*arr connections,
-external API keys, which Plex library maps to which category, and the
-admin account. The first sync starts immediately and enrichment queues
-itself from there.
+1. Open `http://localhost:8000` on the machine running Curatarr. The
+   setup wizard opens.
+2. Work through the wizard: Plex sign-in (Curatarr opens plex.tv in a
+   new tab for you to approve, or you enter the code it shows at
+   plex.tv/link; no password), the Ollama models, the \*arr connections, API keys,
+   which Plex library holds which category, and the admin account. Sign
+   in with the Plex account that **owns** the server, because the first
+   account becomes the admin.
+3. When the wizard finishes, the first Plex sync starts. Enrichment
+   queues itself after it; follow it in **Activity** in the sidebar.
+
+Curatarr is useful right away and gets better as enrichment catches up
+with your library, which takes hours to days.
+[The first few days](docs/USAGE.md#the-first-few-days) explains what to
+expect.
+
+> [!NOTE]
+> **Setting up from another device?** Until an admin account exists, a
+> browser on any other device must enter a one-time **setup code**.
+> Curatarr prints it in its console and log at every start:
+> `No admin account yet. Setting up from ANOTHER device on the LAN needs this one-time code: …`
+> A browser on the Curatarr machine itself never needs the code.
 
 > [!NOTE]
 > Curatarr binds to `0.0.0.0` so other people in the household can reach
-> it. It is built for a trusted home network — see [SECURITY.md](SECURITY.md)
-> before exposing it anywhere else.
+> it at `http://<this-machine's-IP>:8000`. It is built for a trusted home
+> network. Read [SECURITY.md](SECURITY.md) before you expose it anywhere
+> else.
+
+### Updating
+
+Stop Curatarr (Ctrl+C in its console, or **Shutdown** in the tray menu),
+then pull and start it again (on Linux / macOS, see the note under
+their install steps):
+
+```bat
+git pull
+start.bat
+```
+
+The launchers install changed dependencies and missing models on their
+own, and the server migrates its database at startup. Your data in
+`data/` and your `.env` are kept.
 
 ## Configuration
 
-Settings live in `.env`, written by the setup wizard and editable by hand.
-[`.env.example`](.env.example) documents every option with its default;
-the ones most people touch:
+Settings live in `.env`. The setup wizard writes it, and most options can
+also be changed in **Settings**. [`.env.example`](.env.example) documents
+every option with its default. If you edit `.env` by hand, restart
+Curatarr afterwards. These are the options most people change:
 
 | Env var | What it does |
 |---|---|
