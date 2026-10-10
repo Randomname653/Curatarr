@@ -190,6 +190,17 @@ Rules:
 
 # ── CONNECTION TESTS ──────────────────────────────────────────────────────────
 
+def _test_failed(what: str, exc: Exception) -> dict:
+    """A failed test of an operator-supplied address, without the raw error.
+    Its text told "refused" from "timed out" from "no route" - a port scanner
+    for anyone who can reach the wizard - and the detail belongs in the log.
+    """
+    logger.info("[setup] %s connection test failed: %s", what, exc)
+    if isinstance(exc, ValueError):   # it answered 200, but not with the API's JSON
+        return {"ok": False, "error": f"Something answered, but not a {what} API - check the address"}
+    return {"ok": False, "error": f"Could not connect to {what} - check the address and that it is running"}
+
+
 async def test_plex(url: str, token: str) -> dict:
     headers = {"Accept": "application/json", "X-Plex-Token": token,
                "X-Plex-Client-Identifier": "Curatarr-Setup"}
@@ -202,7 +213,7 @@ async def test_plex(url: str, token: str) -> dict:
                     "version": data.get("version", "")}
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed("Plex", e)
 
 
 async def test_ollama(endpoint: str) -> dict:
@@ -214,7 +225,7 @@ async def test_ollama(endpoint: str) -> dict:
             return {"ok": True, "models": models}
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed("Ollama", e)
 
 
 async def test_arr(url: str, api_key: str, service: str) -> dict:
@@ -230,7 +241,7 @@ async def test_arr(url: str, api_key: str, service: str) -> dict:
                     "service": service}
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(service.capitalize(), e)
 
 
 async def test_tmdb(api_key: str) -> dict:
