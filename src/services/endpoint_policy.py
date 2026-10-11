@@ -76,6 +76,12 @@ def same_origin(a: str, b: str) -> bool:
         return False
 
 
+# The refusal. The routers answer with this constant, never str(exc): any
+# exception text in a response is what CodeQL's py/stack-trace-exposure flags.
+NEW_ADDRESS_NEEDS_KEY = ("Enter the key for this new address - the saved key is "
+                         "only ever sent to the saved address")
+
+
 def secret_for_target(supplied_url: Optional[str], supplied_secret: Optional[str],
                       stored_url: Optional[str], stored_secret: Optional[str]) -> str:
     """The secret to send with a connection test. A typed secret goes wherever
@@ -85,5 +91,4 @@ def secret_for_target(supplied_url: Optional[str], supplied_secret: Optional[str
         return supplied_secret
     if not supplied_url or same_origin(supplied_url, stored_url or ""):
         return stored_secret or ""
-    raise ValueError("Enter the key for this new address - the saved key is "
-                     "only ever sent to the saved address")
+    raise ValueError(NEW_ADDRESS_NEEDS_KEY)

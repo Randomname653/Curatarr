@@ -19,7 +19,8 @@ from typing import Optional
 
 from src.config import settings
 from src.routers.auth import require_admin_or_first_run, require_admin
-from src.services.endpoint_policy import secret_for_target, validate_service_url
+from src.services.endpoint_policy import (
+    NEW_ADDRESS_NEEDS_KEY, secret_for_target, validate_service_url)
 from src.services.setup_wizard import (
     test_plex, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
@@ -100,8 +101,8 @@ async def test_connection(
     def _secret(supplied, stored_url, stored_secret):
         try:
             return secret_for_target(req.url, supplied, stored_url, stored_secret)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=NEW_ADDRESS_NEEDS_KEY)
     if req.service == "plex":
         result = await test_plex(req.url or settings.effective_plex_url,
                                  _secret(req.token, settings.effective_plex_url,

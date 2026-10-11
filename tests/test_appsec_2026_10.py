@@ -35,7 +35,7 @@ import src.routers.recommendations as recs  # noqa: E402
 import src.routers.image_proxy as ip  # noqa: E402
 import src.services.setup_wizard as sw  # noqa: E402
 from src.services.endpoint_policy import (  # noqa: E402
-    same_origin, secret_for_target, validate_service_url)
+    NEW_ADDRESS_NEEDS_KEY, same_origin, secret_for_target, validate_service_url)
 
 PASS = FAIL = 0
 
@@ -178,6 +178,12 @@ check("C: an arr error body is never reflected",
       "internal-page-body" not in err and "500" in err)
 check("C: 401 reads as a rejected key",
       "rejected" in lib._public_test_error(Exception("API error 401: nope")))
+check("C: the status is matched against a constant range, never copied from the text",
+      "HTTP 404" in lib._public_test_error(Exception("API error 404: <html>x</html>"))
+      and "abc" not in lib._public_test_error(Exception("API error abc: <html>x</html>")))
+check("C: no exception text in the library/test answers (CodeQL py/stack-trace-exposure)",
+      "str(e" not in inspect.getsource(lib.library_test)
+      and "text[" not in inspect.getsource(lib._public_test_error))
 
 
 # ── B: saved secrets only go to the saved address ────────────────────────────
@@ -219,11 +225,11 @@ try:
         try:
             asyncio.run(st.test_connection(st.TestRequest(service=service, url="http://attacker.example:1"),
                                            _gate=None))
-            status = None
+            status = detail = None
         except HTTPException as e:
-            status = e.status_code
+            status, detail = e.status_code, e.detail
         check(f"B: setup/test {service}: saved secret never sent to a new URL",
-              status == 400 and sent == [])
+              status == 400 and sent == [] and detail == NEW_ADDRESS_NEEDS_KEY)
     sent.clear()
     asyncio.run(st.test_connection(st.TestRequest(service="radarr"), _gate=None))
     asyncio.run(st.test_connection(st.TestRequest(service="plex", url="http://plex.lan:32400/"), _gate=None))
@@ -257,10 +263,20 @@ try:
     out = asyncio.run(lib.library_test(lib.ArrTestRequest(service="radarr", url="http://attacker.example:1"),
                                        _user=None))
     check("B: library/test: saved key never sent to a new URL",
-          out["ok"] is False and made == [] and "key" in out["error"])
+          out["ok"] is False and made == [] and out["error"] == NEW_ADDRESS_NEEDS_KEY)
     out = asyncio.run(lib.library_test(lib.ArrTestRequest(service="radarr"), _user=None))
     check("B: library/test: blank fields test the saved config",
           out["ok"] is True and made == [("http://radarr.lan:7878", "SAVED-RADARR-KEY")])
+
+    class _FailingClient(_FakeClient):
+        async def test_connection(self):
+            raise Exception('API error 500: {"secret":"internal-page-body"}')
+
+    lib._make_client = lambda svc, url, key: _FailingClient(key)
+    out = asyncio.run(lib.library_test(lib.ArrTestRequest(service="radarr"), _user=None))
+    check("C: library/test answers a failed test with a fixed sentence",
+          out["ok"] is False and "HTTP 500" in out["error"]
+          and "internal-page-body" not in out["error"])
 finally:
     lib._make_client, lib.set_state = _real_lib
     settings.RADARR_URL, settings.RADARR_API_KEY, settings.PLEX_URL, settings.PLEX_TOKEN = _saved

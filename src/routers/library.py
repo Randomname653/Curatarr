@@ -30,7 +30,8 @@ from src.config import settings
 from src.database.models import User
 from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
-from src.services.endpoint_policy import secret_for_target, validate_service_url
+from src.services.endpoint_policy import (
+    NEW_ADDRESS_NEEDS_KEY, secret_for_target, validate_service_url)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,13 +63,20 @@ def _public_test_error(exc: Exception) -> str:
     """What a failed arr test may tell the browser. arr_client raises
     "API error <status>: <body>" and connection errors say refused vs timed
     out; returned verbatim, that made Test connection read any internal page's
-    error body and scan LAN ports. The detail goes to the log instead."""
+    error body and scan LAN ports. The detail goes to the log instead.
+
+    Every answer is a fixed sentence. The status is looked up in a constant
+    range rather than sliced out of the text, so nothing of the exception
+    reaches the browser (CodeQL py/stack-trace-exposure)."""
     text = str(exc)
     if text.startswith(("API error 401", "API error 403")):
         return "The service rejected the API key (HTTP 401/403)"
     if text.startswith("API error "):
-        return (f"Unexpected answer (HTTP {text[10:13]}) - is this the right "
-                f"service and address?")
+        for status in range(400, 600):
+            if text.startswith(f"API error {status}:"):
+                return (f"Unexpected answer (HTTP {status}) - is this the right "
+                        "service and address?")
+        return "Unexpected answer - is this the right service and address?"
     if "ContentType" in type(exc).__name__ or isinstance(exc, ValueError):
         return "Something answered, but not this service's API - check the address"
     return "Could not connect - check the address and that the service is running"
@@ -190,8 +198,8 @@ async def library_test(
     # key field used to send it wherever the URL pointed.
     try:
         effective_key = secret_for_target(req.url, req.api_key, saved_url, saved_key)
-    except ValueError as e:
-        return {"ok": False, "service": req.service, "error": str(e)}
+    except ValueError:
+        return {"ok": False, "service": req.service, "error": NEW_ADDRESS_NEEDS_KEY}
     if not effective_url or not effective_key:
         return {
             "ok": False,
