@@ -48,7 +48,7 @@ def check(name, cond):
 
 
 check("test DB is the temp file, not the real one",
-      str(DB_FILE) in os.environ["DATABASE_URL"])
+      DB_FILE.as_posix() in os.environ["DATABASE_URL"])
 
 init_db()
 N_PLAYS = 60
