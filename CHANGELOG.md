@@ -4,6 +4,67 @@ Condensed release history, newest first.
 
 ---
 
+## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
+
+**The deletion judge fails closed.** When the judge could not read the
+watch history, its facts said "not watched", a made-up negative for the
+household pillar; such a title is now deferred. Verdicts are checked
+against a schema (all four pillar findings, a verdict that agrees with the
+pillar it names) and a malformed answer gets one repair turn; a second
+failure leaves the title undecided instead of proposing it. Markup is
+stripped from the parsed answer, no longer from the raw text, where a `<`
+in one finding and a `>` in the next deleted everything between them. A
+CUT on a title another household member has watched or played becomes
+Your call, whatever the model said. The run stops when a game starts or
+after two outages in a row, and the Deletions banner names why titles
+could not be judged instead of "the model didn't answer".
+
+**Prompts fit the window on purpose.** The judge's evidence is assembled in
+priority order and trimmed to the room its system prompt leaves (the title,
+owner and household lines are never cut); an oversized prompt is refused
+before the call instead of Ollama cutting the constitution off, and chat
+drops its oldest turns to fit. `LLM_PROFILE=small` uses an 8k window and
+gives the judge a compact checklist version of the constitution;
+`CURATOR_NUM_CTX` and `CURATOR_NUM_GPU` set the window and the GPU layers
+directly. The defaults are unchanged (16k, every layer on the GPU). The
+baked models carry the window the calls ask for, so a call that leaves it
+out no longer reloads the model; run `build_models.py` once to pick that up.
+
+**The AppSec review of 2026-10-10** (`docs/security/appsec-audit-2026-10-10.md`).
+The first-run exemption for a local browser now wants a browser that
+addresses Curatarr as localhost: a DNS-rebound page or a reverse proxy on
+the same machine needs the setup code. "Test connection" sends a saved Plex
+token or arr key only to the saved address, so a new address needs its own
+key, and service URLs must be plain http(s) base URLs (no credentials, query
+or fragment, no link-local or cloud-metadata address). A failed test answers
+with a classified sentence and the HTTP status at most: never the page it
+got back, never refused-versus-timeout (a port scanner's question), never
+exception text (CodeQL). A delete with a malformed arr id or Plex rating key
+is refused before any request; the image proxy serves raster images only,
+under a sandbox CSP; the arr profiles endpoint is admin-only. The encryption
+passphrase (PIN) is gone: it encrypted nothing, and its stored hashes are
+dropped at startup with secure_delete.
+
+**One writer for SQLite** (`docs/SQLITE_ASYNC_CONCURRENCY_AUDIT.md`). A fresh
+install lost four columns of the deletion proposals table on its first
+start, and every Deletions query failed until the next restart; the table
+rebuild now creates the table from the model and keeps every column both
+versions share. The music matcher held SQLite's write lock across an await,
+so a writer on the same loop (the game watcher) could freeze the app for
+the 60-second busy timeout; it now matches in memory and commits each chunk
+in a short write session (BEGIN IMMEDIATE) on a dedicated writer thread.
+Shutdown cancels background tasks with a time limit, drains the writer and
+checkpoints the WAL before Syncthing gets `data/` back. Crash cleanup on
+Linux and macOS wrote to the wrong database file (the path lost its leading
+slash).
+
+**Docs.** README and USAGE walk through a reproducible first start (the
+prerequisites, the Windows install in three steps and the line that proves
+Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex
+redirect, Ollama down, port 8000), USAGE lists the small-GPU settings, and
+CONTRIBUTING holds the lock workflow and a dev setup that starts.
+
+
 ## 2026-10-10 — v1.1.0-beta: enrichment that heals itself, deletions that explain themselves
 
 Five weeks after 1.0.1: the enrichment pipeline heals itself and says what
@@ -404,9 +465,9 @@ Without one it still asks Jikan, but no longer than three failures in a
 row before an hour's pause; reception then goes on with the AniList reviews.
 
 **Dependencies.** PyJWT 2.15.0 (GHSA-42vr-xj54-vc7v; Curatarr only verifies
-signed tokens, so the pre-verification path was never used). oauthlib's two
-provider-side advisories are excepted with their reasons: it arrives only
-through kubernetes, which the embedded ChromaDB never loads.
+signed tokens, so the pre-verification path was never used), oauthlib 4.0.0
+for two provider-side advisories (it arrives only through kubernetes, which
+the embedded ChromaDB never loads) and multidict 6.9.1.
 
 **No inline styles.** The Content-Security-Policy's `style-src` is
 `'self'`: the 278 inline style attributes in the markup and the module
