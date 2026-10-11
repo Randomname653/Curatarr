@@ -29,8 +29,11 @@ import unicodedata
 import httpx
 
 from src.config import settings
-from src.database.connection import get_db_session
+from sqlalchemy import update
+
+from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
+from src.database.runner import run_read, run_write
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +67,33 @@ def _stop_requested() -> bool:
         return get_state("music_pipeline_stop_requested") == "1"
     except Exception:
         return False
+
+
+def _load_unmatched_plays(user_id: int, since_id: int) -> list[tuple]:
+    """(id, artist, title, genres) of every Spotify play still to match, as
+    plain tuples — nothing the caller holds keeps a session open."""
+    W = WatchHistoryEntry
+    with get_db_session() as db:
+        return [tuple(r) for r in db.query(W.id, W.series_title, W.title, W.genres)
+                .filter(
+                    W.user_id    == user_id,
+                    W.source     == "spotify",
+                    W.media_type == "music",
+                    # Unmatched plays still have the truncated spotify URI here
+                    W.plex_item_id.like("spotify%"),
+                    # Incremental: one match attempt per play, ever (see docstring)
+                    W.id > since_id,
+                )
+                .order_by(W.id.asc())
+                .all()]
+
+
+def _apply_matches(rows: list[dict]) -> None:
+    """One chunk of matches in one short write transaction (ORM bulk UPDATE
+    by primary key). Runs on the DB writer thread."""
+    if rows:
+        with write_session() as db:
+            db.execute(update(WatchHistoryEntry), rows)
 
 
 # ── Phase 1: Plex match ───────────────────────────────────────────────────────
@@ -183,66 +213,56 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     logger.info("[music_matcher] Plex index: %d unique (artist, title) pairs", len(plex_index))
 
     # ── 3. Match Spotify plays ────────────────────────────────────────────────
+    # Read the work list in one short session, match in memory, and commit
+    # each chunk in its own short transaction on the DB writer thread. The old
+    # loop flushed every chunk into ONE long session and then yielded with
+    # ``await asyncio.sleep(0)``: the flush had opened a transaction, so the
+    # SQLite write lock was held across the await. Any coroutine that wrote
+    # synchronously meanwhile (the 30 s game watcher's set_state) busy-waited
+    # on the event-loop thread this coroutine needed to resume and commit — a
+    # whole-app freeze for the 60 s busy_timeout, then "database is locked".
+    # Committed chunks also make the progress real: a crash keeps them, and
+    # matched plays no longer pass the filter, so a re-run skips them.
     matched   = 0
     unmatched = 0
     skipped   = 0
-    buffer    = []   # (play_id, rating_key, genres_str | None)
+
+    plays = await run_read(_load_unmatched_plays, user_id, since_id)
+    total_plays = len(plays)
+    logger.info("[music_matcher] %d Spotify plays to match (cursor %d)",
+                total_plays, since_id)
 
     completed = False
-    with get_db_session() as db:
-        spotify_plays = (
-            db.query(WatchHistoryEntry)
-            .filter(
-                WatchHistoryEntry.user_id    == user_id,
-                WatchHistoryEntry.source     == "spotify",
-                WatchHistoryEntry.media_type == "music",
-                # Unmatched plays still have the truncated spotify URI here
-                WatchHistoryEntry.plex_item_id.like("spotify%"),
-                # Incremental: one match attempt per play, ever (see docstring)
-                WatchHistoryEntry.id > since_id,
-            )
-            .order_by(WatchHistoryEntry.id.asc())
-            .all()
-        )
-        total_plays = len(spotify_plays)
-        logger.info("[music_matcher] %d Spotify plays to match (cursor %d)",
-                    total_plays, since_id)
-
-        for i, play in enumerate(spotify_plays):
-            if _stop_requested():
-                logger.info("[music_matcher] Stop requested — flushing %d buffered matches", len(buffer))
-                break
-
-            key = (_normalize(play.series_title or ""), _normalize(play.title or ""))
-            hit = plex_index.get(key)
-
-            if hit:
-                play.plex_item_id = hit["rating_key"]
-                if hit["genres"] and not play.genres:
-                    play.genres = ",".join(hit["genres"])
-                matched += 1
-            else:
+    for start in range(0, total_plays, _MATCH_FLUSH):
+        # One flag read per chunk (it used to be one DB session per play).
+        if await run_read(_stop_requested):
+            logger.info("[music_matcher] Stop requested — %d/%d plays processed",
+                        start, total_plays)
+            break
+        rows = []
+        for play_id, artist, title, genres in plays[start:start + _MATCH_FLUSH]:
+            hit = plex_index.get((_normalize(artist or ""), _normalize(title or "")))
+            if not hit:
                 unmatched += 1
+                continue
+            matched += 1
+            rows.append({
+                "id": play_id,
+                "plex_item_id": hit["rating_key"],
+                # existing genres win; else Plex's; else leave as it was
+                "genres": genres or ",".join(hit["genres"]) or genres,
+            })
+        await run_write(_apply_matches, rows)
+        logger.info("[music_matcher] … %d/%d plays processed (matched=%d)",
+                    min(start + _MATCH_FLUSH, total_plays), total_plays, matched)
+    else:
+        completed = True
 
-            # Flush every MATCH_FLUSH items so progress is persistent
-            if (i + 1) % _MATCH_FLUSH == 0:
-                db.flush()
-                # This loop has no natural await — without yielding here it
-                # starves the event loop for the whole run and the entire app
-                # (every HTTP request) freezes until it finishes.
-                await asyncio.sleep(0)
-                logger.info("[music_matcher] … %d/%d plays processed (matched=%d)",
-                            i + 1, total_plays, matched)
-        else:
-            completed = True
-
-        db.commit()
-
-        # Advance the cursor only after a COMPLETE, un-interrupted pass — a
-        # stop-requested break re-tries the same window next run.
-        if completed and spotify_plays:
-            set_state(cursor_key, str(spotify_plays[-1].id))
-            logger.info("[music_matcher] cursor advanced to %d", spotify_plays[-1].id)
+    # Advance the cursor only after a COMPLETE, un-interrupted pass — a
+    # stop-requested break re-tries the same window next run.
+    if completed and plays:
+        await run_write(set_state, cursor_key, str(plays[-1][0]))
+        logger.info("[music_matcher] cursor advanced to %d", plays[-1][0])
 
     logger.info("[music_matcher] Match complete — matched=%d unmatched=%d skipped=%d",
                 matched, unmatched, skipped)

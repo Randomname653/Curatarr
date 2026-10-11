@@ -597,6 +597,23 @@ to start.
 
 ---
 
+## Implementation status
+
+Fixed on this branch, each with a regression test that fails on the old code:
+
+| Finding | Fix | Test |
+| :--- | :--- | :--- |
+| Fresh-install column loss (§3.7) | `sqlite_autoincrement` on the model; `_rebuild_from_model()` builds the new table from the model and copies only shared columns; no manual `sqlite_sequence` seed | `tests/test_dp_rebuild_columns.py` |
+| `music_matcher` lock across `await` (§3.3) | Load once, match in memory, commit each chunk in its own `write_session()` on the writer thread (`src/database/runner.py`); stop flag read per chunk | `tests/test_music_matcher_write_lock.py` |
+| `force_set_state` POSIX path | `engine.url.database` | `tests/test_force_set_state_path.py` |
+| Shutdown order (§3.5) | `bg_tasks.drain()` → flags → `shutdown_writer()` → `checkpoint_and_dispose()` (`wal_checkpoint(TRUNCATE)`) → Syncthing | `tests/test_shutdown_release.py` |
+
+`write_session()` differs from the §3.1 sketch. It runs on a dedicated small engine with
+pysqlite in driver-level autocommit (`isolation_level=None`), and a SQLAlchemy `begin`
+listener emits `BEGIN IMMEDIATE`, so the driver never opens an implicit transaction that a
+`BEGIN` could collide with. The hook is deliberately not on the main engine. There, every
+read session, including a chat stream's held for minutes, would take the write lock.
+
 ## Suggested fix order
 
 1. §3.7: the fresh-install `deletion_proposals` column loss. A one-line model fix plus the

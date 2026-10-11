@@ -124,9 +124,14 @@ def force_set_state(key: str, value: str, timeout_s: int = 120) -> bool:
     and the engine's PRAGMAs.
     """
     import sqlite3
-    from src.config import settings
+    from src.database.connection import engine
 
-    db_path = settings.DATABASE_URL.replace("sqlite:///", "").lstrip("/")
+    # The engine's parsed URL, not string surgery: ``.lstrip("/")`` on the
+    # URL turned the POSIX path /home/…/curatarr.db into a RELATIVE one, so
+    # on Linux this opened (or created) the wrong file, found no app_state
+    # table and returned False — the stale flag stayed. Windows paths
+    # ("C:/…") only worked by accident.
+    db_path = engine.url.database
     try:
         conn = sqlite3.connect(db_path, timeout=timeout_s, isolation_level=None)
         try:

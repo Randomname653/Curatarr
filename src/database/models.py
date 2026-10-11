@@ -263,6 +263,11 @@ class DeletionProposal(Base):
     __table_args__ = (
         Index("idx_dp_user_status", "user_id", "status"),
         Index("idx_dp_latest_activity", "latest_activity_at"),
+        # ``autoincrement=True`` alone emits a plain INTEGER PRIMARY KEY on
+        # SQLite (a ROWID alias that reuses freed ids). Without this flag a
+        # fresh install's create_all built that table, and the Pass-90c
+        # rebuild in connection.py then ran on every first boot.
+        {"sqlite_autoincrement": True},
     )
 
 

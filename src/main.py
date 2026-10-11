@@ -174,6 +174,17 @@ async def lifespan(app: FastAPI):
 
     from src.services.scheduler import stop_scheduler
     stop_scheduler()
+
+    # Running work (custodian queues, enrichment, music pipeline) is cancelled
+    # and awaited NOW, while the loop is alive: its finally-blocks roll back
+    # and release locks before the flags below are cleared and the DB is
+    # closed. It used to keep writing through the rest of the teardown.
+    try:
+        from src.services.bg_tasks import drain
+        await drain(timeout=15)
+    except Exception as e:
+        logger.warning("[shutdown] draining background tasks failed: %s", e)
+
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
@@ -194,9 +205,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("[shutdown] evict pass failed: %s", e)
 
+    # Release the database: finish queued writes, close every connection and
+    # checkpoint the WAL into the main file (TRUNCATE), so data/ holds one
+    # self-consistent .db before Syncthing may touch it again.
+    try:
+        from src.database.runner import shutdown_writer
+        shutdown_writer()
+    except Exception as e:
+        logger.warning("[shutdown] DB writer did not stop cleanly: %s", e)
+    try:
+        from src.database.connection import checkpoint_and_dispose
+        checkpoint_and_dispose()
+    except Exception as e:
+        logger.warning("[shutdown] DB release failed: %s", e)
+
     # Pass 100: re-enable Syncthing for data/ now that the DB is released, so
     # the database can sync between machines while Curatarr is stopped. Done
-    # last, after all shutdown DB writes above have completed.
+    # last: background tasks drained, connections closed, WAL checkpointed.
     try:
         from src.services.sync_guard import disable as _sync_guard_disable
         _sync_guard_disable()

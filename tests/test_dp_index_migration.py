@@ -83,7 +83,7 @@ check("migration converts the table to AUTOINCREMENT", "AUTOINCREMENT" in ddl(en
 with eng.connect() as c:
     kept = c.execute(text("SELECT id, title FROM deletion_proposals")).all()
     old_left = c.execute(text("SELECT 1 FROM sqlite_master WHERE name="
-                              "'deletion_proposals_old_pre90c'")).first()
+                              "'deletion_proposals_old_rebuild'")).first()
 check("rows survive with their ids", kept == [(41, "Kept Title")])
 check("renamed-aside table is gone", old_left is None)
 check("both indexes exist on the rebuilt table (the old rebuild lost both)",

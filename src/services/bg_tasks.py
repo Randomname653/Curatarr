@@ -81,3 +81,29 @@ def track_task(coro: Coroutine[Any, Any, Any], *, name: str | None = None) -> as
 def active_count() -> int:
     """Diagnostic helper — how many bg tasks are currently being tracked."""
     return len(_BG_TASKS)
+
+
+async def drain(timeout: float = 15.0) -> None:
+    """Shutdown: cancel every tracked background task — this module's and the
+    scheduler's — and wait, bounded, for them to finish.
+
+    Cancelling here, while the event loop is still fully alive, lets each
+    task's ``finally`` blocks (session rollbacks, lock releases) run BEFORE
+    the lifespan disposes the engine and hands data/ back to Syncthing.
+    Without it the work kept writing through the rest of the teardown and was
+    only cancelled when the loop itself closed, at an arbitrary await.
+    Bounded: a task that swallows the cancel must not hold up the exit.
+    """
+    from src.services.scheduler import _background_tasks
+    current = asyncio.current_task()
+    tasks = [t for t in (*_BG_TASKS, *_background_tasks)
+             if not t.done() and t is not current]
+    if not tasks:
+        return
+    logger.info("[shutdown] cancelling %d background task(s)", len(tasks))
+    for t in tasks:
+        t.cancel()
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    for t in pending:
+        logger.warning("[shutdown] background task %r still running after %.0f s",
+                       t.get_name(), timeout)

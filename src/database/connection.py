@@ -33,16 +33,21 @@ else:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
+def _apply_sqlite_pragmas(dbapi_connection) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=60000")
+    cursor.execute("PRAGMA wal_autocheckpoint=1000")
+    cursor.execute("PRAGMA cache_size=-64000")
+    cursor.close()
+
+
 if "sqlite" in settings.DATABASE_URL:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=60000")
-        cursor.execute("PRAGMA wal_autocheckpoint=1000")
-        cursor.execute("PRAGMA cache_size=-64000")
-        cursor.close()
+        _apply_sqlite_pragmas(dbapi_connection)
 
     @event.listens_for(engine, "checkout")
     def on_checkout(dbapi_connection, connection_record, connection_proxy):
@@ -72,6 +77,101 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# ── Short write transactions ────────────────────────────────────────────────
+#
+# A separate small engine whose every transaction starts with BEGIN IMMEDIATE,
+# so the write lock is taken up front and held only for the block's duration.
+# The pysqlite driver runs in autocommit mode here (isolation_level=None): it
+# never opens an implicit transaction of its own that a BEGIN could collide
+# with ("cannot start a transaction within a transaction"); SQLAlchemy's
+# "begin" event emits the only BEGIN. Scoped to this engine on purpose — on
+# the main engine every read session, including a chat stream's for minutes,
+# would hold the write lock.
+_write_engine = None
+
+
+def _build_write_engine(url):
+    eng = create_engine(
+        url,
+        connect_args={"check_same_thread": False, "timeout": 60},
+        pool_size=2,
+        max_overflow=2,
+        pool_timeout=60,
+    )
+
+    @event.listens_for(eng, "connect")
+    def _connect(dbapi_connection, connection_record):
+        dbapi_connection.isolation_level = None
+        _apply_sqlite_pragmas(dbapi_connection)
+
+    @event.listens_for(eng, "begin")
+    def _begin(conn):
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+    return eng
+
+
+def get_write_engine():
+    """The write engine for the CURRENT main engine's database (rebuilt if
+    the main engine was swapped, as the tests do). An in-memory database
+    cannot be shared with a second engine, so it writes through the main
+    one."""
+    global _write_engine
+    if engine.url.get_backend_name() != "sqlite" or engine.url.database in (None, "", ":memory:"):
+        return engine
+    if _write_engine is None or _write_engine.url != engine.url:
+        if _write_engine is not None:
+            _write_engine.dispose()
+        _write_engine = _build_write_engine(engine.url)
+    return _write_engine
+
+
+@contextmanager
+def write_session():
+    """A session for one short write transaction: BEGIN IMMEDIATE on entry,
+    COMMIT on a clean exit, ROLLBACK on any exception (cancellation too).
+    Never ``await`` inside the block — that would hold the write lock across
+    the event loop. Run it on a worker thread (``src.database.runner``)."""
+    db = SessionLocal(bind=get_write_engine())
+    try:
+        yield db
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def checkpoint_and_dispose() -> None:
+    """Close every pooled connection and fold the WAL into the main file, so
+    data/ holds one self-consistent database (an empty -wal) when the app lets
+    go of it — called last on shutdown, right before Syncthing is re-enabled
+    for data/. A reader in another process can keep the checkpoint from
+    finishing; that is logged, not raised."""
+    import logging as _logging
+    log = _logging.getLogger(__name__)
+    global _write_engine
+    if _write_engine is not None:
+        _write_engine.dispose()
+        _write_engine = None
+    engine.dispose()
+    if engine.url.get_backend_name() == "sqlite" and engine.url.database not in (None, "", ":memory:"):
+        try:
+            with engine.connect() as conn:
+                busy, log_frames, done = conn.exec_driver_sql(
+                    "PRAGMA wal_checkpoint(TRUNCATE)").one()
+            if busy:
+                log.warning("[shutdown] WAL checkpoint incomplete (%s/%s frames) — "
+                            "another connection still holds the database", done, log_frames)
+            else:
+                log.info("[shutdown] WAL checkpointed and truncated")
+        except Exception as e:  # noqa: BLE001 - shutdown must go on
+            log.warning("[shutdown] WAL checkpoint failed: %s", e)
+        finally:
+            engine.dispose()
 
 
 def _migrate_columns() -> None:
@@ -307,110 +407,84 @@ def _migrate_deletion_proposals_autoincrement() -> None:
 
     Idempotent: the CREATE TABLE statement in ``sqlite_master`` is
     inspected and migration is skipped when ``AUTOINCREMENT`` is already
-    present. SQLite's standard rebuild-via-rename pattern: rename the
-    existing table aside, create the new one with AUTOINCREMENT, copy
-    the rows, drop the old, then seed ``sqlite_sequence`` so the next
-    ID continues from the current max (without this seed, the first
-    INSERT after migration would get a small number and conflict with
-    existing higher ROWIDs).
+    present (fresh installs get it from create_all via the model's
+    ``sqlite_autoincrement`` flag). SQLite's standard rebuild-via-rename
+    pattern: rename the existing table aside, create the new one, copy the
+    rows, drop the old. The copy keeps every row's explicit id, and SQLite
+    advances ``sqlite_sequence`` past the largest one by itself, so the next
+    ID continues from the current max.
+
+    The new table's DDL comes from the MODEL, and the copy moves every column
+    the old and new tables share. The first version used a hard-coded column
+    list that predated score_factors / soulsync_ban / returned_at /
+    returned_info, so the rebuild silently dropped them — on every fresh
+    install, whose first boot ran it — and every DeletionProposal query
+    failed with "no such column" until the next restart re-added them.
 
     No FK references to ``deletion_proposals.id`` exist anywhere else
     in the schema (CuratorResolutionLog + ProtectedMedia store the
     title text directly, not the FK), so the rename-and-drop is safe.
     """
-    from sqlalchemy import text
     import logging as _logging
+    from src.database.models import DeletionProposal
     _mig_log = _logging.getLogger(__name__)
 
-    with engine.connect() as conn:
-        row = conn.execute(text(
+    # Driver-level autocommit: pysqlite opens no implicit transaction of its
+    # own, so the explicit BEGIN IMMEDIATE below can never collide with one.
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        ddl = conn.exec_driver_sql(
             "SELECT sql FROM sqlite_master "
             "WHERE type='table' AND name='deletion_proposals'"
-        )).first()
-        if not row:
-            return  # fresh install — table will be created by create_all with the model's flag
-        ddl = (row[0] or "").upper()
-        if "AUTOINCREMENT" in ddl:
+        ).scalar()
+        if not ddl:
+            return  # create_all builds it with the model's AUTOINCREMENT flag
+        if "AUTOINCREMENT" in ddl.upper():
             return  # already migrated
 
         _mig_log.info("[migrate] Pass 90c: converting deletion_proposals.id → AUTOINCREMENT")
         try:
-            # Wrap in IMMEDIATE so we hold the write lock for the duration —
-            # otherwise a concurrent writer between RENAME and DROP could
-            # see the half-migrated state.
-            conn.execute(text("BEGIN IMMEDIATE"))
-            # Index names are global in SQLite and RENAME keeps them on the
-            # renamed-aside table — drop them first, or the CREATE INDEX IF
-            # NOT EXISTS below is a no-op and DROP TABLE takes them along.
-            for (idx_name,) in conn.execute(text(
-                "SELECT name FROM sqlite_master WHERE type='index' "
-                "AND tbl_name='deletion_proposals' AND sql IS NOT NULL"
-            )).fetchall():
-                conn.execute(text(f'DROP INDEX IF EXISTS "{idx_name}"'))
-            conn.execute(text("ALTER TABLE deletion_proposals RENAME TO deletion_proposals_old_pre90c"))
-            conn.execute(text("""
-                CREATE TABLE deletion_proposals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    media_id VARCHAR(64) NOT NULL,
-                    title VARCHAR(512) NOT NULL,
-                    service VARCHAR(32) NOT NULL,
-                    arr_url VARCHAR(512),
-                    reason TEXT,
-                    confidence FLOAT,
-                    storage_mb FLOAT,
-                    status VARCHAR(32),
-                    user_comment TEXT,
-                    created_at DATETIME,
-                    resolved_at DATETIME,
-                    category TEXT,
-                    poster_url TEXT,
-                    synopsis TEXT,
-                    genres TEXT,
-                    latest_activity_at DATETIME,
-                    tvdb_id INTEGER,
-                    tmdb_id INTEGER,
-                    stagnant BOOLEAN,
-                    FOREIGN KEY(user_id) REFERENCES users (id)
-                )
-            """))
-            conn.execute(text("""
-                INSERT INTO deletion_proposals
-                    (id, user_id, media_id, title, service, arr_url, reason,
-                     confidence, storage_mb, status, user_comment, created_at,
-                     resolved_at, category, poster_url, synopsis, genres,
-                     latest_activity_at, tvdb_id, tmdb_id, stagnant)
-                SELECT id, user_id, media_id, title, service, arr_url, reason,
-                       confidence, storage_mb, status, user_comment, created_at,
-                       resolved_at, category, poster_url, synopsis, genres,
-                       latest_activity_at, tvdb_id, tmdb_id, stagnant
-                FROM deletion_proposals_old_pre90c
-            """))
-            # Seed sqlite_sequence so AUTOINCREMENT continues from current max.
-            # Without this, the first INSERT after migration would get id=1
-            # and collide with existing rows.
-            conn.execute(text("""
-                INSERT INTO sqlite_sequence (name, seq)
-                VALUES ('deletion_proposals',
-                        COALESCE((SELECT MAX(id) FROM deletion_proposals), 0))
-            """))
-            # Recreate every model index on the new table (the old ones
-            # were dropped above, before the rename).
-            for ddl in _deletion_proposal_index_ddl():
-                conn.execute(text(ddl))
-            conn.execute(text("DROP TABLE deletion_proposals_old_pre90c"))
-            conn.execute(text("COMMIT"))
+            # IMMEDIATE holds the write lock for the duration, so a
+            # concurrent writer can never see the half-migrated state; SQLite
+            # DDL is transactional, so a failure rolls back to the old table.
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            _rebuild_from_model(conn, DeletionProposal.__table__)
+            conn.exec_driver_sql("COMMIT")
             _mig_log.info("[migrate] Pass 90c: AUTOINCREMENT migration complete")
         except Exception as e:
             try:
-                conn.execute(text("ROLLBACK"))
+                conn.exec_driver_sql("ROLLBACK")
             except Exception:
                 pass
             _mig_log.error(
-                "[migrate] Pass 90c FAILED: %s — table left in pre-migration state. "
-                "Manually rollback with: DROP TABLE deletion_proposals_old_pre90c "
-                "(if it exists)", e,
+                "[migrate] Pass 90c FAILED: %s — rolled back, table left in "
+                "its pre-migration state", e,
             )
+
+
+def _rebuild_from_model(conn, table) -> None:
+    """Rebuild ``table`` from the current model definition, inside the
+    caller's transaction. Copies only the columns both versions share, so a
+    column the model declares is never lost and one the old table lacks
+    takes its default."""
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    name, aside = table.name, f"{table.name}_old_rebuild"
+    # Index names are global in SQLite and RENAME keeps them on the
+    # renamed-aside table — drop them first, or the CREATE INDEX IF NOT
+    # EXISTS below is a no-op and DROP TABLE takes them along.
+    for (idx_name,) in conn.exec_driver_sql(
+        "SELECT name FROM sqlite_master WHERE type='index' "
+        "AND tbl_name=? AND sql IS NOT NULL", (name,)
+    ).fetchall():
+        conn.exec_driver_sql(f'DROP INDEX IF EXISTS "{idx_name}"')
+    conn.exec_driver_sql(f'ALTER TABLE "{name}" RENAME TO "{aside}"')
+    conn.exec_driver_sql(str(CreateTable(table).compile(dialect=engine.dialect)))
+    old_cols = {r[1] for r in conn.exec_driver_sql(f'PRAGMA table_info("{aside}")')}
+    shared = ", ".join(f'"{c.name}"' for c in table.columns if c.name in old_cols)
+    conn.exec_driver_sql(f'INSERT INTO "{name}" ({shared}) SELECT {shared} FROM "{aside}"')  # nosec B608 - identifiers come from the model and PRAGMA table_info, no input
+    for ix in sorted(table.indexes, key=lambda i: i.name):
+        conn.exec_driver_sql(str(CreateIndex(ix, if_not_exists=True).compile(dialect=engine.dialect)))
+    conn.exec_driver_sql(f'DROP TABLE "{aside}"')
 
 
 def _secure_db_files() -> None:
