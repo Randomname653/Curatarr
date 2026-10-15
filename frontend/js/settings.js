@@ -408,13 +408,15 @@ const _short = d => (d || '').replace('sha256:', '').slice(0, 12);
 // The current model's blind review (services/model_update_eval.py).
 const MU_REC = {update: ['ok', 'recommends the update'], stay: ['warn', 'recommends staying'],
                 either: ['', 'sees no clear winner']};
-function _muEval(role, ev, facts_rebuilt, run, err) {
+function _muEval(role, ev, facts_rebuilt, run, err, summary) {
   if (run?.role === role && run.kind === 'review')
     return `<div class="banner mt-8"><span class="banner-icon">…</span><div class="banner-text">The current model is reviewing — started ${esc(_muTime(run.since))}; this section updates by itself, progress in Activity.</div></div>`;
   if (!ev) return (err ? `<p class="t-danger fs-12 mt-8">The last review failed: ${esc(err)}</p>` : '')
     + `<div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${run ? 'disabled' : ''} ${act('evaluateModelUpdate', role, EL)}>${err ? 'Review again' : 'Let the current model review it'}</button></div>`;
   const [kind, label] = MU_REC[ev.recommendation] || ['', ev.recommendation];
   const t = ev.tally.titles, c = ev.tally.chat;
+  // Reviews from before f3ea0a1 carry no vram_source: their VRAM may be /api/ps's.
+  const stale = !summary?.vram_source;
   const rules = ev.guards.length
     ? `<p class="fs-12 mt-4">Hard rules: ${esc(ev.guards.join('; '))}${ev.overruled ? ' — these overrule the model’s “update”.' : '.'}</p>` : '';
   const per = ev.titles.map(r => `<li>${esc(r.key)}: <b>${esc(r.winner)}</b>${r.position_flip ? ' (flipped with the order → tie)' : ''} — ${esc(r.reasons[0] || '')}</li>`).join('');
@@ -422,7 +424,9 @@ function _muEval(role, ev, facts_rebuilt, run, err) {
       <b>${esc(ev.judge_model)}</b> ${esc(label)}: ${esc(ev.model_reason)}
       <p class="fs-12 mt-4">Titles: new better ${t.new}, old better ${t.old}, tie ${t.tie} · chat: new ${c.new}, old ${c.old}, tie ${c.tie}</p>${rules}
       <p class="fs-12 t3 mt-4">The current model judged blind, each pair in both orders; it is reviewing its own successor, so it may prefer its own style${facts_rebuilt ? '; facts were rebuilt after the test' : ''}.</p>
-      <details class="mt-4"><summary class="fs-12">Reason per title</summary><ul class="fs-12">${per}</ul></details></div></div>`;
+      <details class="mt-4"><summary class="fs-12">Reason per title</summary><ul class="fs-12">${per}</ul></details>
+      ${stale ? `<p class="fs-12 t-amber mt-4">This review was made before VRAM was measured with nvidia-smi — its VRAM figure may be Ollama's misreport. Review again for clean numbers.</p>` : ''}
+      <div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${run ? 'disabled' : ''} ${act('evaluateModelUpdate', role, EL)}>Review again (re-measures speed and VRAM)</button></div></div></div>`;
 }
 
 const _muTime = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
@@ -436,7 +440,7 @@ function _muCompare(role, c, run, err) {
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
   const chat = c.chat.map(p => `<div class="mt-8"><div class="fw-500 fs-12">${esc(p.prompt)}</div>
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
-  return _muEval(role, c.evaluation, c.facts_rebuilt, run, err) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
+  return _muEval(role, c.evaluation, c.facts_rebuilt, run, err, s) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
     ${s.timings_contaminated ? `<p class="fs-12 t-amber mt-8">The per-title times were taken while another model shared the card${s.remeasured_clean ? '; tok/s, VRAM and GPU share below were measured again with each side alone' : ''}.</p>` : ''}
     <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
       ${row('Judge, s per title', 'judge_s')}${row('Card note, s per title', 'monologue_s')}${row('Generation, tok/s', 'gen_tok_s')}

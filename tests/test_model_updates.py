@@ -469,6 +469,8 @@ from tests.frontend_files import everything  # noqa: E402
 html = everything()
 check("while a test or review runs, the view disables actions and re-reads itself",
       "const off = run ? 'disabled' : ''" in html and "_muPoll(!!run)" in html)
+check("an existing review can be run again, and an old one is flagged",
+      "Review again (re-measures speed and VRAM)" in html and "!summary?.vram_source" in html)
 check("the view says when per-title times were taken next to another model",
       "timings_contaminated" in html)
 check("the Maintenance view shows the review and offers it when missing",
