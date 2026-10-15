@@ -316,7 +316,7 @@ check("build_models --check prints the warning", "curator_fit_warning()" in bm)
 chat = (ROOT / "src/routers/chat.py").read_text(encoding="utf-8")
 check("the chat fits its messages before streaming",
       chat.index("fit_messages(messages, budget_for(CURATOR_NUM_CTX, _CHAT_PREDICT))")
-      < chat.index('"messages": messages,\n                        "stream": True'))
+      < re.search(r'"messages": messages,\n\s*"stream": True', chat).start())
 check("the answer's room shrinks with the window",
       "_CHAT_PREDICT = min(4096, CURATOR_NUM_CTX // 4)" in chat
       and "num_predict=_CHAT_PREDICT" in chat)

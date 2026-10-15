@@ -241,11 +241,7 @@ def test_an_unstarted_stream_releases_the_guard_on_collection():
 
     src = _src("src/routers/chat.py")
     assert "weakref.finalize(stream, _release_unstarted_chat" in src
-    g0 = src.index("    async def generate() -> AsyncGenerator[str, None]:")
-    pre = src[g0:src.index("# Slot acquired", g0)]
-    assert 'await curator_start("chat")' in pre and "except BaseException:" in pre \
-        and "CHAT_IN_FLIGHT.leave(_uid)" in pre, \
-        "a disconnect while queued must release the in-flight guard too"
+    # A disconnect while queued is exercised for real in section 9.
 
 
 # ── 4. Respond must not consume a verification question ─────────────────────
@@ -470,6 +466,278 @@ def test_an_empty_library_index_is_not_rebuilt_every_turn():
         mcmod.MetadataCache = orig
         chat._LIB_TITLE_INDEX.update(ts=0.0, items=[])
 
+
+# ── 9. the chat stream: heartbeat, one-commit turns, the guard to the end ───
+#
+# The real _send_message_guarded → generate() pipeline, with every outside
+# dependency stubbed: a MockTransport plays Ollama's NDJSON, the GPU gate
+# and the context sources (taste, RAG, memories) are no-ops, and the turn
+# lands in a shared in-memory SQLite.
+
+_UID = 515151
+
+
+@contextmanager
+def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=False,
+                heartbeat=None, think_tags=None, queue_forever=False):
+    import httpx
+    from sqlalchemy.pool import StaticPool
+    import src.database.connection as conn
+    import src.routers.chat as chat
+    import src.services.episodic_memory as em
+    from src.services import rate_limit as rl
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    events = []
+
+    @contextmanager
+    def db_session():
+        s = Session()
+        try:
+            yield s
+            s.commit()
+        finally:
+            s.close()
+
+    async def none(*a, **k):
+        return ""
+
+    async def empty(*a, **k):
+        return []
+
+    async def curator_start(owner="", **k):
+        events.append("curator_start")
+        if queue_forever:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("curator_start cancelled")
+                raise
+
+    async def health(model):
+        return {}
+
+    async def body():
+        for i, line in enumerate(lines):
+            await asyncio.sleep(first_delay if i == 0 else delay)
+            yield (json.dumps(line) + "\n").encode()
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            async for chunk in body():
+                yield chunk
+
+    def handler(request):
+        if connect_error:
+            raise httpx.ConnectError("refused", request=request)
+        if status != 200:
+            return httpx.Response(status, json={"error": "model not found"})
+        return httpx.Response(200, stream=Body())
+
+    real_persist = chat._persist_turn
+
+    def persist(*a, **k):
+        events.append(("persist", rl.CHAT_IN_FLIGHT.busy(_UID)))
+        return real_persist(*a, **k)
+
+    real_client = httpx.AsyncClient
+    patches = [
+        (conn, "get_db_session", db_session),
+        (chat, "get_user_taste_context", none),
+        (chat, "_get_rag_context", none),
+        (chat, "_match_library_title", lambda m: None),
+        (chat, "_persist_turn", persist),
+        (chat, "_schedule_post_turn", lambda *a: events.append("post_turn")),
+        (em, "retrieve_memories", empty),
+        (lp, "curator_start", curator_start),
+        (lp, "curator_done", lambda: events.append("curator_done")),
+        (lp, "curator_busy", lambda: False),
+        (lp, "check_curator_vram_health", health),
+        (httpx, "AsyncClient",
+         lambda **kw: real_client(transport=httpx.MockTransport(handler))),
+    ]
+    if heartbeat is not None:
+        patches.append((chat, "_HEARTBEAT_S", heartbeat))
+    if think_tags is not None:
+        patches.append((chat._cfg, "LLM_THINK_TAGS", think_tags))
+    saved = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
+    for obj, name, value in patches:
+        setattr(obj, name, value)
+
+    async def start(text="hi"):
+        from src.schemas.chat import ChatMessage
+        rl.CHAT_IN_FLIGHT.leave(_UID)
+        rl.CHAT_IN_FLIGHT.enter_or_409(_UID)
+        user = types.SimpleNamespace(id=_UID)
+        return await chat._send_message_guarded(
+            ChatMessage(message=text), user, Session(), rl, "general")
+
+    def rows():
+        s = Session()
+        try:
+            return [(m.role, m.content) for m in
+                    s.query(ConversationMessage).order_by(ConversationMessage.id)]
+        finally:
+            s.close()
+
+    try:
+        yield types.SimpleNamespace(start=start, rows=rows, events=events,
+                                    busy=lambda: rl.CHAT_IN_FLIGHT.busy(_UID))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        rl.CHAT_IN_FLIGHT.leave(_UID)
+
+
+def _frames(rig, text="hi"):
+    async def run():
+        resp = await rig.start(text)
+        return resp, [f async for f in resp.body_iterator]
+    return asyncio.run(run())
+
+
+def _tokens(frames):
+    return "".join(json.loads(f[6:]).get("token", "") for f in frames if f.startswith("data: "))
+
+
+_OK = [{"message": {"content": "Hello"}}, {"message": {"content": " there"}}, {"done": True}]
+
+
+def test_a_finished_turn_is_one_commit_and_the_guard_is_held_through_it():
+    with _stream_rig(_OK) as rig:
+        resp, frames = _frames(rig)
+        assert frames[0] == 'data: {"thread": "general"}\n\n', "the thread is named first"
+        assert frames[-1] == 'data: {"done": true}\n\n'
+        assert _tokens(frames) == "Hello there"
+        assert rig.rows() == [("user", "hi"), ("assistant", "Hello there")]
+        # The GPU slot goes back as soon as Ollama is done; the in-flight
+        # guard only after the writer thread has the turn.
+        assert rig.events.index("curator_done") < rig.events.index(("persist", True)), rig.events
+        assert rig.events[-1] == "post_turn"
+        assert not rig.busy(), "the guard outlived the stream"
+        assert resp.headers.get("x-accel-buffering") == "no"
+        assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_an_ollama_error_is_shown_but_never_persisted():
+    with _stream_rig(status=404) as rig:
+        _, frames = _frames(rig)
+        assert "could not start this reply" in _tokens(frames)
+        assert frames[-1] == 'data: {"done": true}\n\n'
+        assert rig.rows() == [], "an error line poisons the next turn's context"
+        assert "post_turn" not in rig.events, "memory extraction must not see an error"
+        assert "curator_done" in rig.events and not rig.busy()
+
+    with _stream_rig(connect_error=True) as rig:
+        _, frames = _frames(rig)
+        assert "Ollama not reachable" in _tokens(frames)
+        assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
+
+
+def test_a_failed_write_warns_and_still_finishes_the_turn():
+    import src.database.connection as conn
+    with _stream_rig(_OK) as rig:
+        @contextmanager
+        def locked():
+            raise RuntimeError("database is locked")
+            yield  # pragma: no cover
+
+        conn.get_db_session = locked          # restored by the rig
+        _, frames = _frames(rig)
+        assert _tokens(frames) == "Hello there", "the streamed reply stays intact"
+        assert any("could not be saved" in f for f in frames)
+        assert frames[-1] == 'data: {"done": true}\n\n', "no done frame read as a dropped connection"
+        assert "post_turn" not in rig.events and not rig.busy()
+
+
+def test_a_cold_load_keeps_the_stream_alive():
+    # Minutes of model load / prompt eval before the first line: comment
+    # frames must keep flowing or the client watchdog (45 s) and nginx (60 s)
+    # cut a healthy turn.
+    with _stream_rig(_OK, first_delay=0.35, heartbeat=0.05) as rig:
+        _, frames = _frames(rig)
+        first_token = next(i for i, f in enumerate(frames) if '"token"' in f)
+        assert ": keepalive\n\n" in frames[:first_token], frames
+        assert _tokens(frames) == "Hello there"
+
+
+def test_a_think_block_keeps_the_stream_alive():
+    # Lines keep arriving (so the read never times out) but the think filter
+    # swallows them all: the heartbeat has to count what the CLIENT got.
+    think = ([{"message": {"content": "<think>"}}]
+             + [{"message": {"content": "hmm "}} for _ in range(12)]
+             + [{"message": {"content": "</think>Answer"}}, {"done": True}])
+    with _stream_rig(think, delay=0.03, heartbeat=0.1, think_tags=True) as rig:
+        _, frames = _frames(rig)
+        first_token = next(i for i, f in enumerate(frames) if '"token"' in f)
+        assert ": keepalive\n\n" in frames[:first_token], frames
+        assert _tokens(frames).strip() == "Answer"
+
+
+def _cancel_after(rig, predicate):
+    """Consume the stream in a task, cancel it once ``predicate(frame)``
+    holds — what Starlette does when the client goes away."""
+    async def run():
+        resp = await rig.start()
+        seen = asyncio.Event()
+
+        async def consume():
+            async for f in resp.body_iterator:
+                if predicate(f):
+                    seen.set()
+
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(seen.wait(), 5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        for _ in range(3):
+            await asyncio.sleep(0)          # let the cancelled acquire unwind
+    asyncio.run(run())
+
+
+def test_a_disconnect_mid_reply_persists_nothing_and_releases_everything():
+    lines = [{"message": {"content": "Hel"}}] + [{"message": {"content": "lo"}}] * 50 + [{"done": True}]
+    with _stream_rig(lines, delay=0.02) as rig:
+        _cancel_after(rig, lambda f: '"token"' in f)
+        assert rig.rows() == [], "half a reply (or its lone user turn) was kept"
+        assert "curator_done" in rig.events and "post_turn" not in rig.events
+        assert not rig.busy()
+
+
+def test_a_disconnect_while_queued_releases_slot_and_guard():
+    with _stream_rig(_OK, heartbeat=0.05, queue_forever=True) as rig:
+        _cancel_after(rig, lambda f: f == ": keepalive\n\n")
+        assert "curator_start cancelled" in rig.events, "the queued acquire was left waiting"
+        assert "curator_done" not in rig.events, "released a slot it never held"
+        assert rig.rows() == [] and not rig.busy()
+
+
+def test_one_failing_post_turn_step_does_not_skip_the_others():
+    import src.routers.chat as chat
+    import src.services.bg_tasks as bg
+    import src.services.episodic_memory as em
+    names = []
+
+    def track(coro, name=None):
+        coro.close()
+        names.append(name)
+
+    def boom(*a, **k):
+        raise RuntimeError("extraction scheduler down")
+
+    orig = bg.track_task, em.schedule_thread_extraction
+    bg.track_task, em.schedule_thread_extraction = track, boom
+    try:
+        chat._schedule_post_turn(_UID, "general", "keep it", "ok", None)
+    finally:
+        bg.track_task, em.schedule_thread_extraction = orig
+    assert names == ["check_protection_intent_bg", "check_verification_response"], names
 
 if __name__ == "__main__":
     fails = 0

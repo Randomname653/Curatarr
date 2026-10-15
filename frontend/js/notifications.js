@@ -2,8 +2,7 @@
 import { api } from './api.js';
 import { state } from './state.js';
 import { EL, act, esc, escAttr, setBadge } from './ui.js';
-import { showView } from './nav.js';
-import { _setDiscussBanner, addMsg, sendMessage } from './chat.js';
+import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 // seen === true only when the panel is open and the message is on screen —
 // the 60 s badge poll must not count as an impression, or every message
 // retires unread after ~40 minutes of an open tab. Strict === because
@@ -89,17 +88,17 @@ const SYS_ACTIONS = {
 // both sides (the new rule + the active rule-set) via discuss_context; the
 // settled decision is applied automatically post-turn.
 export async function discussPrinciple(id, text) {
+  if (_busyStreaming()) return;
   toggleMsgPanel();
-  showView('chat');
-  addMsg(`I've learned a new rule from our debates and want to settle it with you: "${text}"`, 'assistant');
-  state.pendingDiscussContext = { kind: 'principle', principle_id: id };
-  _setDiscussBanner('Reviewing a learned principle');
+  if (!await enterThread({ kind: 'principle', principle_id: id }, 'Reviewing a learned principle',
+                         `I've learned a new rule from our debates and want to settle it with you: "${text}"`)) return;
   const input = document.getElementById('chat-input');
   if (input) { input.value = "Let's review this learned principle together."; }
   sendMessage();
 }
 
 export async function respondToMessage(id, msgText, triggerType) {
+  if (_busyStreaming()) return;
   // A verification question stays unread until it is ANSWERED: the backend
   // claims it (read → true) when the user's reply in this thread is
   // processed, and only matches unread questions. Marking it read here, before
@@ -109,20 +108,13 @@ export async function respondToMessage(id, msgText, triggerType) {
   }
   toggleMsgPanel();
 
-  // Switch to chat — same pattern as discussDeletion
-  showView('chat');
-
-  // Show the curator's proactive message as an assistant bubble (UI-only; the
-  // backend looks up the message by id and injects it as a RAG context block,
-  // it doesn't need us to forward msgText).
-  addMsg(msgText, 'assistant');
-
-  state.pendingDiscussContext = {
-    kind: 'proactive_message',
-    message_id: id,
-  };
-  // Pass 27: sticky discuss-context — show banner so user knows
-  _setDiscussBanner('Discussing a proactive message');
+  // Switch to chat — same pattern as discussDeletion: this message's thread
+  // history, opened by the curator's proactive message as an assistant
+  // bubble (UI-only; the backend looks up the message by id and injects it
+  // as a RAG context block, it doesn't need us to forward msgText). Pass 27:
+  // sticky discuss-context — the banner shows the user they're in a thread.
+  if (!await enterThread({ kind: 'proactive_message', message_id: id },
+                         'Discussing a proactive message', msgText)) return;
 
   // Leave input empty — user types their own response
   const input = document.getElementById('chat-input');

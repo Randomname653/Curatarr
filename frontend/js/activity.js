@@ -5,39 +5,63 @@ import { state } from './state.js';
 import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, pulseHeldBy, setBadge, setPulse, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 
-export async function startTaskStream() {
-  if (state.taskEventSource) return;
+// One task stream per tab. The guard used to sit BEFORE the ticket fetch, so
+// a retry timer and showApp() (or the Plex login poll) could both pass it
+// and open two EventSources — the one overwritten in state was never closed,
+// rendering every update twice and holding a server subscription. Now: one
+// opening promise, one retry timer, a re-check after the await, and an
+// onerror that only clears the state slot if it still holds its own stream.
+let _taskStreamOpening = null;
+let _taskStreamRetry = null;
+
+function _retryTaskStream(ms) {
+  clearTimeout(_taskStreamRetry);
+  _taskStreamRetry = setTimeout(startTaskStream, ms);
+}
+
+export function stopTaskStream() {
+  clearTimeout(_taskStreamRetry);
+  _taskStreamRetry = null;
+  try { state.taskEventSource?.close(); } catch {}
+  state.taskEventSource = null;
+}
+
+export function startTaskStream() {
+  if (state.taskEventSource || _taskStreamOpening) return _taskStreamOpening;
+  _taskStreamOpening = _openTaskStream().finally(() => { _taskStreamOpening = null; });
+  return _taskStreamOpening;
+}
+
+async function _openTaskStream() {
   const tok = state.token || localStorage.getItem('curatarr_token');
-  if (!tok) { setTimeout(startTaskStream, 2000); return; }
+  // Signed out: nothing to stream. showApp() starts it again after sign-in.
+  if (!tok) return;
 
   // Fetch a short-lived ticket so the JWT never appears in the URL
-  let ticket;
+  let r;
   try {
-    const r = await fetch('/api/tasks/ticket', { headers: { 'Authorization': `Bearer ${tok}` } });
-    if (!r.ok) { setTimeout(startTaskStream, 3000); return; }
-    ticket = (await r.json()).ticket;
-  } catch { setTimeout(startTaskStream, 3000); return; }
+    r = await fetch('/api/tasks/ticket', { headers: { 'Authorization': `Bearer ${tok}` } });
+  } catch { _retryTaskStream(3000); return; }
+  // An expired session can never get a ticket; retrying every 3 s forever
+  // only spammed the log. The next api() call surfaces the sign-out.
+  if (r.status === 401) return;
+  if (!r.ok) { _retryTaskStream(3000); return; }
+  let ticket;
+  try { ticket = (await r.json()).ticket; } catch { _retryTaskStream(3000); return; }
+  if (state.taskEventSource) return;        // another opener won while we awaited
 
-  state.taskEventSource = new EventSource(`/api/tasks/stream?ticket=${encodeURIComponent(ticket)}`);
+  const es = new EventSource(`/api/tasks/stream?ticket=${encodeURIComponent(ticket)}`);
+  state.taskEventSource = es;
 
-  state.taskEventSource.onopen = () => {
+  es.onopen = () => {
     state.taskStreamRetries = 0;
     const el = document.getElementById('tasks-list');
     if (el?.textContent.includes('Connecting')) el.innerHTML = '';
   };
 
-  state.taskEventSource.onmessage = (e) => {
+  es.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
-      // Handle auth failure — clear state.token and reload
-      if (data.error === 'auth_failed') {
-        state.taskEventSource?.close();
-        state.taskEventSource = null;
-        localStorage.removeItem('curatarr_token');
-        state.token = '';
-        location.reload();
-        return;
-      }
       const tasks = Array.isArray(data) ? data : [];
       renderTasks(tasks);
       updateTaskBadge(tasks);
@@ -45,12 +69,16 @@ export async function startTaskStream() {
     } catch {}
   };
 
-  state.taskEventSource.onerror = (evt) => {
-    state.taskEventSource?.close();
+  // A ticket is single-use: the browser's own reconnect would replay the
+  // spent one and get a 401, so every error closes this stream and opens a
+  // fresh one with a new ticket.
+  es.onerror = () => {
+    es.close();
+    if (state.taskEventSource !== es) return;   // already replaced or stopped
     state.taskEventSource = null;
     state.taskStreamRetries++;
 
-    // After 3 retries, likely an auth issue — show message and stop retrying
+    // After 3 retries, likely an auth issue — show message and back off
     if (state.taskStreamRetries >= 3) {
       const el = document.getElementById('tasks-list');
       if (el) el.innerHTML = `<p class="t-danger loading" role="status" aria-live="polite">
@@ -59,9 +87,9 @@ export async function startTaskStream() {
         to reconnect.
       </p>`;
       state.taskStreamRetries = 0; // reset so reload works
-      setTimeout(startTaskStream, 30000); // retry after 30s
+      _retryTaskStream(30000);     // retry after 30s
     } else {
-      setTimeout(startTaskStream, 3000 * state.taskStreamRetries);
+      _retryTaskStream(3000 * state.taskStreamRetries);
     }
   };
 }

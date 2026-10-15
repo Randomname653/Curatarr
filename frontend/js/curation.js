@@ -1,7 +1,7 @@
 // ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 import { api } from './api.js';
 import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
-import { state } from './state.js';
+import { stopTaskStream } from './activity.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
   if (!el) return;
@@ -130,7 +130,7 @@ export async function shutdownServer() {
   if (!res.ok) return;
   // Release this tab's SSE stream BEFORE asking — open streams are exactly
   // what used to pin "Waiting for connections to close".
-  if (state.taskEventSource) { try { state.taskEventSource.close(); } catch (e) {} state.taskEventSource = null; }
+  stopTaskStream();
   try { await api('/api/system/shutdown', 'POST'); } catch (e) { /* server may die before replying */ }
   const ov = document.createElement('div');
   ov.className = 'sd-overlay';
