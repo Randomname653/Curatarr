@@ -348,7 +348,7 @@ async def noop(*a, **k):
     return None
 
 
-async def fake_measure(endpoint, model):
+async def fake_measure(endpoint, model, probes=3):
     return {"speed": {"gen_tok_s": 30.0}, "residency": {"vram_gb": 19.9, "gpu_share_pct": 100,
                                                          "co_resident": []}, "clean": True}
 
@@ -404,7 +404,7 @@ async def run_measure(endpoint, smi_values, ps_gb, file_gb):
     vals = iter(smi_values)
     async def fake_smi():
         return next(vals, None)
-    async def fake_speed(e, m):
+    async def fake_speed(e, m, probes=3):
         return {"gen_tok_s": 32.1}
     async def fake_res(e, m):
         return {"vram_gb": ps_gb, "gpu_share_pct": 100, "co_resident": []}
@@ -489,6 +489,37 @@ ev._ask = capture_ask
 asyncio.run(real_evaluate(_cont, "e", "m"))
 check("review: contaminated per-title times are not handed over as numbers",
       "not comparable" in final_prompts[-1] and "43.1" not in final_prompts[-1])
+
+# ── interleaved pair measurement + unstable speed ─────────────────────────
+order_seen = []
+SPEEDS = {"old": iter([38.0, 11.2, 36.0]), "new": iter([34.0, 35.0, 33.0])}
+
+
+async def pair_measure(endpoint, model, probes=3):
+    side = "old" if model == "curatarr-curator" else "new"
+    order_seen.append(side)
+    return {"speed": {"gen_tok_s": next(SPEEDS[side])},
+            "residency": {"vram_gb": 21.0 if side == "old" else 21.7, "vram_source": "nvidia-smi",
+                          "gpu_share_pct": 100}, "clean": True}
+
+
+mu.measure = pair_measure
+pair = asyncio.run(mu.measure_pair("e", "curatarr-curator", "curatarr-update-test"))
+check("pair: old and new are measured interleaved (a disturbance hits both sides)",
+      order_seen == ["old", "new", "new", "old", "old", "new"])
+check("pair: the 11.2 outlier does not become the old side's speed (median 36.0)",
+      pair["old"]["gen_tok_s"] == 36.0 and pair["new"]["gen_tok_s"] == 34.0)
+check("pair: a side spreading > 35 % around its median is unstable, a steady one is not",
+      pair["old"]["unstable"] and not pair["new"]["unstable"])
+_us = {**base_summary, "speed_unstable": True, "gen_tok_s": {"old": 36.0, "new": 20.0}}
+check("guards: no speed rule fires on an unstable measurement", ev.guards(_us) == [])
+lines = ev._numbers({**_us, "gen_tok_s_reads": {"old": [38.0, 11.2, 36.0], "new": [20.0]},
+                     "verdicts_same": 10, "verdicts_compared": 10},
+                    {"new": 0, "old": 2, "tie": 8, "position_flips": 3},
+                    {"new": 1, "old": 0, "tie": 2, "position_flips": 0}, [], [])
+check("review: an unstable speed is described with its reads, and the reviewer told not to decide on it",
+      any("unstable" in l and "do not decide on speed" in l for l in lines)
+      and not any(l.startswith("Speed tok/s") for l in lines))
 
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]

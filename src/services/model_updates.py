@@ -262,12 +262,12 @@ SPEED_PROBES = (
 )
 
 
-async def _speed(endpoint: str, model: str) -> dict:
+async def _speed(endpoint: str, model: str, probes: int = 3) -> dict:
     """Generation speed as the median of three ~160-token probes — one
     probe swung between 27 and 38 tok/s for the same weights."""
     from src.services.llm_utils import curator_options
     gen, pre, load = [], [], []
-    for prompt in SPEED_PROBES:
+    for prompt in SPEED_PROBES[:max(1, probes)]:
         r = await _ollama(endpoint, "POST", "/api/generate", json={
             "model": model, "stream": False, "keep_alive": "5m", "prompt": prompt,
             **{k: v for k, v in curator_options(0.0, 160).items()}})
@@ -420,7 +420,7 @@ async def _file_gb(endpoint: str, model: str) -> float | None:
 PS_PLAUSIBLE = 0.8
 
 
-async def measure(endpoint: str, model: str) -> dict:
+async def measure(endpoint: str, model: str, probes: int = 3) -> dict:
     """Speed probe + residency on a quiet card, VRAM cross-checked."""
     from src.services.llm_priority import _evict_model
     # Per side: everything unloaded (this model too) -> settled baseline ->
@@ -431,7 +431,7 @@ async def measure(endpoint: str, model: str) -> dict:
     if _is_local(endpoint):
         await _evict_model(model)
         before = await _smi_settled()
-    speed = await _speed(endpoint, model)
+    speed = await _speed(endpoint, model, probes)
     res = await _residency(endpoint, model)
     after = await _smi_settled(1.0) if before is not None else None
     file_gb = await _file_gb(endpoint, model)
@@ -447,6 +447,42 @@ async def measure(endpoint: str, model: str) -> dict:
     else:
         res["vram_source"] = "ollama"
     return {"speed": speed, "residency": res, "clean": not res.get("co_resident")}
+
+
+# One measurement per side is luck on a shared desktop: the same old weights
+# measured 38, 34, 28 and 11 tok/s on 2026-10-15 depending on what else the
+# machine did that minute. The pair is therefore measured INTERLEAVED (old,
+# new, new, old, old, new — each freshly loaded, alone), so a disturbance
+# hits both sides, and the median is taken per side. A side whose readings
+# spread more than UNSTABLE_SPREAD around its median is "unstable": the
+# reviewer is told so instead of being given a number, and no speed rule
+# fires on it.
+PAIR_ROUNDS = 3
+UNSTABLE_SPREAD = 0.35
+
+
+async def measure_pair(endpoint: str, old_model: str, new_model: str,
+                       rounds: int = PAIR_ROUNDS) -> dict:
+    from src.services.llm_priority import extend_bulk_hold
+    reads = {"old": [], "new": []}
+    order = [("old", old_model), ("new", new_model)]
+    for i in range(rounds):
+        extend_bulk_hold(900)
+        for side, model in (order if i % 2 == 0 else order[::-1]):
+            reads[side].append(await measure(endpoint, model, probes=1))
+    out = {}
+    for side, rs in reads.items():
+        gen = [r["speed"].get("gen_tok_s") for r in rs if r["speed"].get("gen_tok_s")]
+        vram = [r["residency"].get("vram_gb") for r in rs if r["residency"].get("vram_gb") is not None]
+        med = round(statistics.median(gen), 1) if gen else None
+        spread = round((max(gen) - min(gen)) / med, 2) if gen and med else None
+        last = rs[-1]["residency"]
+        out[side] = {"gen_tok_s": med, "gen_tok_s_reads": [round(g, 1) for g in gen],
+                     "spread": spread, "unstable": spread is not None and spread > UNSTABLE_SPREAD,
+                     "vram_gb": round(statistics.median(vram), 1) if vram else None,
+                     "vram_source": last.get("vram_source"), "gpu_share_pct": last.get("gpu_share_pct"),
+                     "clean": all(r["clean"] for r in rs)}
+    return out
 
 
 def summarize(old: dict, new: dict) -> dict:
@@ -629,15 +665,16 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
             # Speed and VRAM again, each side alone on the card: the test's
             # own figures may have been taken next to another model.
             if task is not None:
-                task_monitor.update(task, message="re-measuring speed and VRAM, each side alone")
-            remeasured = {"old": await measure(endpoint, row["bake"]),
-                          "new": await measure(endpoint, TEST_BAKE)}
+                task_monitor.update(task, message="re-measuring speed and VRAM, old and new interleaved")
+            pair = await measure_pair(endpoint, row["bake"], TEST_BAKE)
             cmp_["summary"].update(
-                gen_tok_s={k: v["speed"].get("gen_tok_s") for k, v in remeasured.items()},
-                vram_gb={k: v["residency"].get("vram_gb") for k, v in remeasured.items()},
-                vram_source={k: v["residency"].get("vram_source") for k, v in remeasured.items()},
-                gpu_share_pct={k: v["residency"].get("gpu_share_pct") for k, v in remeasured.items()},
-                remeasured_clean=all(v["clean"] for v in remeasured.values()),
+                gen_tok_s={k: v["gen_tok_s"] for k, v in pair.items()},
+                gen_tok_s_reads={k: v["gen_tok_s_reads"] for k, v in pair.items()},
+                speed_unstable=any(v["unstable"] for v in pair.values()),
+                vram_gb={k: v["vram_gb"] for k, v in pair.items()},
+                vram_source={k: v["vram_source"] for k, v in pair.items()},
+                gpu_share_pct={k: v["gpu_share_pct"] for k, v in pair.items()},
+                remeasured_clean=all(v["clean"] for v in pair.values()),
                 timings_contaminated=not all(
                     (cmp_.get(side) or {}).get("clean", False) for side in ("old", "new")))
             await _alone(endpoint, judge)

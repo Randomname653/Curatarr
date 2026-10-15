@@ -70,7 +70,8 @@ def guards(summary: dict) -> list[str]:
     if share is not None and share < MIN_GPU_SHARE:
         out.append(f"the new weights run only {share} % on the GPU (CPU spill)")
     tok = summary.get("gen_tok_s") or {}
-    if tok.get("old") and tok.get("new") and tok["new"] < MAX_SLOWDOWN * tok["old"]:
+    if (not summary.get("speed_unstable") and tok.get("old") and tok.get("new")
+            and tok["new"] < MAX_SLOWDOWN * tok["old"]):
         out.append(f"generation dropped from {tok['old']} to {tok['new']} tok/s")
     return out
 
@@ -127,6 +128,37 @@ def _gb(v) -> str:
     return "not measurable" if v is None else str(v)
 
 
+def _numbers(s: dict, t: dict, c: dict, hard: list[str], titles: list[dict]) -> list[str]:
+    """What the reviewer gets for its recommendation, one line per fact.
+    A figure that cannot be trusted is described, never handed over as a
+    number: the reviews of 2026-10-15 argued from a misread VRAM, then from
+    per-title times taken next to another model, then from an 11 tok/s
+    outlier."""
+    reads = s.get("gen_tok_s_reads") or {}
+    tok = s.get("gen_tok_s") or {}
+    vram = s.get("vram_gb") or {}
+    judge = s.get("judge_s") or {}
+    fails = s.get("failures") or {}
+    return [
+        f"Titles: NEW better {t['new']}, OLD better {t['old']}, tie {t['tie']} "
+        f"({t['position_flips']} flipped with the order).",
+        f"Chat: NEW {c['new']}, OLD {c['old']}, tie {c['tie']}.",
+        f"Verdicts unchanged {s.get('verdicts_same')}/{s.get('verdicts_compared')}.",
+        ("Per-title times: not comparable (taken while another model shared the card)."
+         if s.get("timings_contaminated") else
+         f"Judge seconds per title old/new: {judge.get('old')}/{judge.get('new')}."),
+        (f"Speed: unstable on this machine (old reads {reads.get('old')}, new reads "
+         f"{reads.get('new')} tok/s) - do not decide on speed."
+         if s.get("speed_unstable") else
+         f"Speed tok/s old/new: {tok.get('old')}/{tok.get('new')} (median of interleaved reads)."),
+        f"VRAM GB old/new: {_gb(vram.get('old'))}/{_gb(vram.get('new'))}.",
+        f"Failures old/new: {fails.get('old')}/{fails.get('new')}.",
+        f"Hard rules violated: {'; '.join(hard) if hard else 'none'}.",
+        "Per-title reasons:",
+        *[f"- {r['key']}: {r['winner']} - {r['reasons'][0]}" for r in titles],
+    ]
+
+
 async def evaluate(comparison: dict, endpoint: str, judge_model: str) -> dict:
     facts = comparison.get("facts") or {}
     titles = []
@@ -150,22 +182,7 @@ async def evaluate(comparison: dict, endpoint: str, judge_model: str) -> dict:
     t, c = tally(titles), tally(chats)
     hard = guards(comparison["summary"])
     s = comparison["summary"]
-    numbers = (
-        f"Titles: NEW better {t['new']}, OLD better {t['old']}, tie {t['tie']} "
-        f"({t['position_flips']} flipped with the order). "
-        f"Chat: NEW {c['new']}, OLD {c['old']}, tie {c['tie']}. "
-        f"Verdicts unchanged {s.get('verdicts_same')}/{s.get('verdicts_compared')}. "
-        # Times taken next to another model are not handed over as numbers:
-        # the first clean review still argued from them.
-        + ("Per-title times: not comparable (taken while another model shared the card). "
-           if s.get("timings_contaminated") else
-           f"Judge s old/new {s['judge_s']['old']}/{s['judge_s']['new']}; ")
-        + f"tok/s {s['gen_tok_s']['old']}/{s['gen_tok_s']['new']}; "
-        f"VRAM GB {_gb(s['vram_gb'].get('old'))}/{_gb(s['vram_gb'].get('new'))}; "
-        f"failures {s['failures']['old']}/{s['failures']['new']}.\n"
-        f"Hard rules violated: {'; '.join(hard) if hard else 'none'}.\n"
-        "Per-title reasons:\n" + "\n".join(
-            f"- {r['key']}: {r['winner']} — {r['reasons'][0]}" for r in titles))
+    numbers = "\n".join(_numbers(s, t, c, hard, titles))
     try:
         final = await _ask(endpoint, judge_model, FINAL_SYSTEM, numbers, FINAL_SCHEMA)
     except Exception as e:
