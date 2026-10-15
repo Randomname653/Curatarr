@@ -13,6 +13,7 @@ Features:
 import asyncio
 import json
 import logging
+import math
 from datetime import datetime
 from typing import Optional
 
@@ -229,6 +230,23 @@ KEEP_COOLDOWN_DAYS = 90
 # judgement; the card's "Why?" names the number, and
 # tests/test_score_factors.py pins the copy to it.
 SHORTLIST_SCORE = 30
+
+# Taste mismatch for a title with NO usable taste evidence — no embedding,
+# no genre data, or a non-finite cosine. Just UNDER the shortlist bar: the
+# old neutral 0.5 was 40 points and crossed SHORTLIST_SCORE on its own, so a
+# new user's whole library — and every title enrichment never embedded — was
+# shortlisted on the absence of evidence. Other evidence (bloat, a low
+# rating, a recorded dislike, drop similarity) can still carry it over.
+NO_TASTE_MISMATCH = (SHORTLIST_SCORE - 5) / 80.0
+
+# Size never outweighs taste: the outlier path was capped at 25 points, the
+# blanket log1p fallback was not (a 2 TB series scored 38).
+SIZE_PTS_CAP = 25.0
+
+# The pillar judge stops after TARGET_CUTS proposals or JUDGE_CAP judged
+# titles. Learned keep-considerations are scored for the same JUDGE_CAP
+# slice — they used to stop at 30, so ranks 31-60 were judged without them.
+TARGET_CUTS, JUDGE_CAP = 10, 60
 
 # The last pillar-judging run per category, for the Deletions view's run
 # banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
@@ -794,7 +812,7 @@ async def generate_recommendations(
 
     # Shared memory layer for the watched/owned filters below.
     from src.services.library_memory import (
-        seen_index, owned_index, is_seen, partition,
+        seen_index, owned_index, removed_index, is_seen, partition,
     )
 
     # Taste context. No cache read here — this function always generates fresh;
@@ -825,17 +843,24 @@ async def generate_recommendations(
         # One soft context line: current season + (if pronounced) viewing rhythm.
         context_line = " ".join(x for x in (seasonal_context(), _rhythm_line(ts)) if x)
         # Multimodal pairs: show the LLM the distinct taste clusters so its
-        # picks serve each interest instead of an averaged blend.
+        # picks serve each interest instead of an averaged blend. The same
+        # blob carries the owner's disliked titles (discovery exclusions).
+        disliked_titles: list = []
         try:
+            # The blob COLUMN, read inside the session: get_db_session commits
+            # on exit (expire_on_commit), so reading an ORM row's attribute
+            # after the block raised DetachedInstanceError — swallowed below,
+            # which silently dropped the cluster hint from every prompt.
             with get_db_session() as _cdb:
-                _cetv = _cdb.query(EncryptedTasteVector).filter(
+                _blob_raw = _cdb.query(EncryptedTasteVector.encrypted_blob).filter(
                     EncryptedTasteVector.user_id == user_id,
-                    EncryptedTasteVector.media_category == cat).first()
+                    EncryptedTasteVector.media_category == cat).limit(1).scalar()
             _cl = []
-            if _cetv and _cetv.encrypted_blob:
-                _cb = json.loads(_cetv.encrypted_blob)
+            if _blob_raw:
+                _cb = json.loads(_blob_raw)
                 if _cb.get("version") != 1:
                     _cl = _cb.get("cluster_centroids") or []
+                    disliked_titles = list(_cb.get("disliked_titles") or [])
             if _cl:
                 context_line += ("\nTheir taste here splits into distinct "
                                  "clusters — serve them ALL, not a blend: "
@@ -974,6 +999,9 @@ Output format:
 
         else:
             owned = await owned_index(cat)
+            # Deleted through Curatarr (usually UNWATCHED — neither seen nor
+            # owned any more) or recorded as disliked: never re-pitched.
+            removed = await asyncio.to_thread(removed_index, user_id, cat, disliked_titles)
             noun = "tracks/artists" if cat == "music" else "titles"
             trend = _trending_line(await _get_trending(cat))
             trend_block = f"\n{trend}" if trend else ""
@@ -1034,11 +1062,11 @@ Output format:
             # on stable id + normalised title — is the real guarantee that a
             # watched/owned title (the "Ex Machina" bug) never surfaces here.
             if lane == "discovery":
-                kept = partition(recs, seen, owned)["new"]
+                kept = partition(recs, seen, owned, removed)["new"]
                 if len(kept) != len(recs):
                     logger.info(
-                        "[recs] discovery/%s: dropped %d owned/seen of %d LLM suggestions",
-                        cat, len(recs) - len(kept), len(recs),
+                        "[recs] discovery/%s: dropped %d owned/seen/removed of %d "
+                        "LLM suggestions", cat, len(recs) - len(kept), len(recs),
                     )
                 recs = kept
             for rec in recs:
@@ -1061,19 +1089,27 @@ def _normalize_vec(vec):
     dot product lands far outside [-1, 1] and the mismatch signal collapses."""
     if vec is None:
         return None
-    a = np.asarray(vec, dtype=float)
+    try:
+        a = np.asarray(vec, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if a.ndim != 1 or not np.isfinite(a).all():
+        return None
     n = np.linalg.norm(a)
-    return a / n if n else None
+    return a / n if n > 1e-12 else None
 
 
 def _cosine_anchors(cos_vals: list) -> tuple:
     """p10/p90 of a batch of cosines — the stretch anchors that map the model's
     anisotropic, narrow cosine band (movies cluster ~0.6-0.74) onto a full
     [0, 1] mismatch range. Falls back to sensible defaults when too few
-    embeddings are present, and guarantees hi > lo."""
-    if len(cos_vals) >= 20:
-        lo = float(np.percentile(cos_vals, 10))
-        hi = float(np.percentile(cos_vals, 90))
+    embeddings are present, and guarantees hi > lo. Non-finite cosines are
+    ignored: one NaN made both percentiles NaN, and with them every
+    candidate's mismatch."""
+    vals = [c for c in cos_vals if c is not None and math.isfinite(c)]
+    if len(vals) >= 20:
+        lo = float(np.percentile(vals, 10))
+        hi = float(np.percentile(vals, 90))
     else:
         lo, hi = 0.61, 0.72
     if hi - lo < 1e-3:
@@ -1083,10 +1119,14 @@ def _cosine_anchors(cos_vals: list) -> tuple:
 
 def _cosine_to_mismatch(cosine, lo: float, hi: float) -> float:
     """Map a cosine onto a 0-1 taste-mismatch: cos >= hi (best-fit) -> 0,
-    cos <= lo (worst-fit) -> 1, linear between. No embedding -> neutral 0.5
-    (the historical default for un-enriched items)."""
-    if cosine is None:
-        return 0.5
+    cos <= lo (worst-fit) -> 1, linear between. No usable cosine (missing,
+    non-finite, or broken anchors) -> NO_TASTE_MISMATCH, just under the
+    shortlist bar — never "maximally foreign": Python's min(1.0, nan) is 1.0,
+    so a NaN used to score the full 80 points."""
+    if (cosine is None
+            or not all(math.isfinite(x) for x in (cosine, lo, hi))
+            or hi - lo <= 0):
+        return NO_TASTE_MISMATCH
     return max(0.0, min(1.0, (hi - cosine) / (hi - lo)))
 
 
@@ -1534,16 +1574,31 @@ async def generate_deletion_proposals(
     # makes drop repulsion real. A blob carrying corpus_mean guarantees its
     # anchors were computed against the SAME centered space; legacy blobs
     # without it stay uncentered end-to-end — never mixed.
-    _mean_v = (np.asarray(corpus_mean, dtype=float)
-               if corpus_mean else None)
+    # A stored mean that is non-finite (one NaN corpus row used to make it so)
+    # or from another embedding space must not be used — and the blob's
+    # anchors were computed in ITS centered space, so they go with it: score
+    # uncentered against batch anchors instead (never mixed).
+    _mean_v = None
+    if corpus_mean:
+        _m = _normalize_vec(corpus_mean)   # finiteness + shape check only
+        if _m is not None and (not user_vector or len(user_vector) == len(corpus_mean)):
+            _mean_v = np.asarray(corpus_mean, dtype=float)
+        else:
+            logger.warning("[deletions] %s: stored corpus mean is unusable "
+                           "(non-finite or wrong dimension) — scoring uncentered "
+                           "against batch anchors until the next taste rebuild",
+                           category)
+            cal_anchors = drop_anchors = None
 
     def _cmp_vec(vec):
         vn = _normalize_vec(vec)
         if vn is None or _mean_v is None:
             return vn
+        if vn.shape != _mean_v.shape:
+            return None
         c = vn - _mean_v
         n = np.linalg.norm(c)
-        return c / n if n else None
+        return c / n if n > 1e-12 else None
 
     if taste_clusters:
         user_cmps = [v for v in (_cmp_vec(c.get("embedding"))
@@ -1552,6 +1607,16 @@ async def generate_deletion_proposals(
         _u = _cmp_vec(user_vector) if user_vector else None
         user_cmps = [_u] if _u is not None else []
     drop_cmp = _cmp_vec(drop_vector) if drop_vector else None
+
+    # Cold start: with neither a taste vector nor genre stats for this
+    # category, every candidate would be ranked by size and rating alone —
+    # the biggest files pitched first, on no evidence about the owner.
+    if not user_cmps and not ts_genres:
+        _why = "no taste profile for this category yet"
+        _msg(f"{category}: not proposing deletions — {_why}")
+        logger.info("[deletions] %s: skipped — %s", category, _why)
+        _record_deletion_run(category, stopped=_why)
+        return []
 
     # Bulk-prefetch item embeddings: one Chroma get per 1000 ids instead of
     # one round-trip per item (N+1 — thousands of sequential calls per run;
@@ -1694,6 +1759,12 @@ async def generate_deletion_proposals(
                         drop_cos = float(np.dot(drop_cmp, iv_c))
             except Exception:
                 cosine = None
+        # A non-finite cosine is no taste evidence: it falls to the genre /
+        # no-taste branch below instead of mapping to maximum mismatch.
+        if cosine is not None and not math.isfinite(cosine):
+            cosine = None
+        if drop_cos is not None and not math.isfinite(drop_cos):
+            drop_cos = None
 
         prelim.append({
             "item": item,
@@ -1800,12 +1871,14 @@ async def generate_deletion_proposals(
                        if g.strip()]
             _overlap = sum(ts_genres.get(g, 0) for g in _genres)
             if ts_genres and _genres:
-                # damped to [0.15, 0.85] — coarse metadata must not produce
-                # extreme verdicts either way
-                mismatch = 0.85 - 0.7 * min(1.0, _overlap)
+                # damped to [0.3, 0.6] — coarse metadata must not produce
+                # extreme verdicts either way (the old 0.85 ceiling scored a
+                # title outside the top-20 genres at 68 points)
+                mismatch = 0.6 - 0.3 * min(1.0, _overlap)
                 taste_src = "genre"
             else:
-                mismatch = 0.5
+                # no evidence: held under the shortlist bar (NO_TASTE_MISMATCH)
+                mismatch = NO_TASTE_MISMATCH
                 taste_src = "none"
         _taste_src_counts[taste_src] += 1
         # Vector mismatch is the dominant signal (0-80). Size is logarithmic so
@@ -1825,10 +1898,10 @@ async def generate_deletion_proposals(
                            _tp["mb_per_min"],
                            is_remux=_tp.get("is_remux", False)) if _tp else None
         if _so:
-            size_pts = (min(25.0, (_so["ratio"] - 1.0) * 12.0)
+            size_pts = (min(SIZE_PTS_CAP, (_so["ratio"] - 1.0) * 12.0)
                         if _so["verdict"] == "bloated" else 0.0)
         else:
-            size_pts = math.log1p(p["size_gb"]) * 5
+            size_pts = min(SIZE_PTS_CAP, math.log1p(p["size_gb"]) * 5)
         rating_swing = (p["rating"] - 5.0) * 4
         user_rating_swing = (
             (p["user_rating"] - 5.0) * 6 if p["user_rating"] is not None else 0.0
@@ -1920,11 +1993,13 @@ async def generate_deletion_proposals(
     # principle the user stated about ONE title generalises to new, never-
     # discussed ones (the whole point: the curator should learn from feedback,
     # not just remember it). SOFT and capped: a strong taste mismatch still
-    # surfaces; this never hard-protects. Only the top slice is scored (the only
-    # items anywhere near being pitched), to bound the per-item embedding calls.
+    # surfaces; this never hard-protects. Only the slice the judge can reach
+    # (JUDGE_CAP) is scored, to bound the per-item embedding calls — it was
+    # [:30] while the judge walked to 60, so ranks 31-60 were judged without
+    # their keep-value deductions.
     from src.services.episodic_memory import retrieve_considerations
     _CONSIDER_CAP = 45.0
-    _consider_slice = scored_candidates[:30]
+    _consider_slice = scored_candidates[:JUDGE_CAP]
     for cand in _consider_slice:
         it = cand["item"]
         g = it.get("genres") or it.get("genre") or ""
@@ -2002,7 +2077,6 @@ async def generate_deletion_proposals(
                         category, _lane_why)
             _record_deletion_run(category, stopped=_lane_why)
             return []
-        TARGET_CUTS, JUDGE_CAP = 10, 60
         judged = 0
         thin_skipped = 0
         misfiled_skipped = 0
@@ -2731,6 +2805,9 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
         type_data = json.loads(tv.genre_affinity or "{}") if (tv and tv.genre_affinity) else {}
         user_vector = None
+        # Assigned only inside the blob branch below — a category with genre
+        # stats but no blob yet (nothing embedded) raised UnboundLocalError.
+        user_clusters = None
         disliked_lc: set = set()
         encrypted = db.query(EncryptedTasteVector).filter(
             EncryptedTasteVector.user_id == user_id,

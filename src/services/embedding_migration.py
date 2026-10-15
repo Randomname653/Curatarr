@@ -30,20 +30,57 @@ _EVAL_SAMPLE = 30
 _EVAL_GATE = 0.8         # similar-beats-random rate required to flip
 _BATCH = 200             # docs per source page
 
+# The profile that was live before the flip — what rollback restores.
+# _default_profile() is V2 since the 2026-08-18 v1 drop, so "roll back to
+# the default" re-applied the profile the rollback was meant to leave.
+PREV_PROFILE_KEY = "embedding_profile_prev"
+
 
 def _cos(a, b) -> float:
     return sum(float(x) * float(y) for x, y in zip(a, b))
 
 
+def _collection_names(client) -> set:
+    """chromadb 0.6 lists names, 1.x lists Collection objects."""
+    return {getattr(c, "name", c) for c in client.list_collections()}
+
+
+def _preflight(live_collection: str, names: set) -> str | None:
+    """Why the migration must NOT start, or None. Checked before anything
+    is created or deleted: the run below drops the target collection to
+    start fresh, and the v1 source was itself dropped on 2026-08-18 — run
+    as it stood, the migration created an empty v1, deleted the LIVE v2
+    corpus, found 0 docs to copy and aborted at the eval gate with the
+    corpus already gone."""
+    if live_collection == V2_PROFILE["collection"]:
+        return "target_is_live_collection"
+    if LEGACY_COLLECTION not in names:
+        return "no_legacy_source"
+    return None
+
+
 async def run_embedding_migration(task) -> dict:
     """Full migration under a task_monitor task. Honors cancellation
     (checked between batches — no flip happens on a cancelled run)."""
-    from src.services.embed_service import embed_documents, set_profile
+    from src.services.app_state import set_state
+    from src.services.embed_service import embed_documents, get_profile, set_profile
     from src.services.task_monitor import task_monitor
-    from src.vector_store.chromadb_wrapper import ChromaDBWrapper
+    from src.vector_store.chromadb_wrapper import ChromaDBWrapper, get_chroma_db
+
+    live = get_chroma_db()
+    refusal = _preflight(live.collection_name, _collection_names(live.client))
+    if refusal:
+        task_monitor.update(task, message=f"NOT migrating: {refusal} — nothing "
+                                          "was created or deleted", level="error")
+        return {"ok": False, "reason": refusal}
 
     src = ChromaDBWrapper(LEGACY_COLLECTION)
     total = src.get_count()
+    if total == 0:
+        task_monitor.update(task, message=f"NOT migrating: {LEGACY_COLLECTION} "
+                                          "is empty — nothing was deleted",
+                            level="error")
+        return {"ok": False, "reason": "legacy_source_empty"}
     task_monitor.update(task, total=total,
                         message=f"Source: {total} docs in {LEGACY_COLLECTION}")
 
@@ -161,6 +198,7 @@ async def run_embedding_migration(task) -> dict:
                                               f"({len(rows)} rows)")
 
     # ── THE FLIP ─────────────────────────────────────────────────────────
+    set_state(PREV_PROFILE_KEY, json.dumps(get_profile()))
     set_profile(V2_PROFILE)
     task_monitor.update(task, message="Profile flipped — app now runs on "
                                       "v2-moe + prefixes + new collection")
@@ -183,14 +221,23 @@ async def run_embedding_migration(task) -> dict:
 
 
 def rollback_embedding_migration() -> dict:
-    """Point the profile back at the untouched legacy corpus.
+    """Point the profile back at the corpus that was live before the flip.
 
     Honest caveat: the DB-side memory/principle vectors were rewritten to
     v2 during migration and are NOT rolled back here — after a rollback,
     v1 queries run against v2-stored memory vectors, so memory retrieval
     degrades until the migration runs again. The Chroma path (the big
     one) is fully clean either way."""
-    from src.services.embed_service import _default_profile, set_profile
-    set_profile(_default_profile())
-    return {"ok": True, "profile": "legacy",
+    from src.services.app_state import get_state
+    from src.services.embed_service import get_profile, set_profile
+    try:
+        prev = json.loads(get_state(PREV_PROFILE_KEY) or "{}")
+    except (TypeError, ValueError):
+        prev = {}
+    if not prev.get("collection") or not prev.get("model"):
+        return {"ok": False, "reason": "no_previous_profile_recorded"}
+    if prev.get("collection") == get_profile().get("collection"):
+        return {"ok": False, "reason": "already_on_previous_profile"}
+    set_profile(prev)
+    return {"ok": True, "profile": prev["collection"],
             "caveat": "memory/principle vectors remain v2 until re-run"}

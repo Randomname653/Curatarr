@@ -148,6 +148,48 @@ async def owned_index(category: str | None = None) -> dict:
     return {"titles": titles, "tmdb_ids": tmdb_ids, "tvdb_ids": tvdb_ids}
 
 
+# Proposal statuses that mean the owner chose to remove the title: executed,
+# or sent with the outcome unknown (limbo). Either way discovery must not
+# pitch it straight back for re-acquisition.
+_REMOVED_STATUSES = ("deleted", "limbo")
+
+
+def removed_index(user_id: int, category: str | None = None,
+                  disliked_titles=()) -> dict:
+    """Titles the owner has turned away — deleted through Curatarr, plus the
+    taste blob's ``disliked_titles`` — in ``seen_index``'s shape. Deleted
+    titles are usually UNWATCHED (that is why they went), so neither the
+    seen nor the owned index caught them and discovery could re-pitch them.
+    A title re-acquired since is owned again and lands in that bucket first."""
+    titles: set[str] = {n for n in (normalize_title(t) for t in disliked_titles or ()) if n}
+    tmdb_ids: set[int] = set()
+    tvdb_ids: set[int] = set()
+    if not user_id:
+        return {"titles": titles, "tmdb_ids": tmdb_ids, "tvdb_ids": tvdb_ids}
+    from src.database.connection import get_db_session
+    from src.database.models import DeletionProposal
+    try:
+        with get_db_session() as db:
+            q = db.query(DeletionProposal.title, DeletionProposal.tmdb_id,
+                         DeletionProposal.tvdb_id).filter(
+                DeletionProposal.user_id == user_id,
+                DeletionProposal.status.in_(_REMOVED_STATUSES))
+            if category:
+                q = q.filter((DeletionProposal.category == category)
+                             | (DeletionProposal.category.is_(None)))
+            for title, tmdb_id, tvdb_id in q.all():
+                n = normalize_title(title)
+                if n:
+                    titles.add(n)
+                if _as_int(tmdb_id):
+                    tmdb_ids.add(_as_int(tmdb_id))
+                if _as_int(tvdb_id):
+                    tvdb_ids.add(_as_int(tvdb_id))
+    except Exception as e:
+        logger.debug("[memory] removed_index failed: %s", e)
+    return {"titles": titles, "tmdb_ids": tmdb_ids, "tvdb_ids": tvdb_ids}
+
+
 def _matches(item, index: dict) -> bool:
     """True if ``item`` (a rec/ARR dict) is present in ``index``.
 
@@ -175,19 +217,23 @@ def is_seen(item, seen: dict) -> bool:
     return _matches(item, seen)
 
 
-def classify(item, seen: dict, owned: dict) -> str:
-    """Label one candidate: ``"seen"`` › ``"owned"`` › ``"new"`` (in that
-    precedence — seen wins over owned because a watched title is the strongest
-    "don't surface this" signal even though the user also owns it)."""
+def classify(item, seen: dict, owned: dict, removed: dict | None = None) -> str:
+    """Label one candidate: ``"seen"`` › ``"owned"`` › ``"removed"`` ›
+    ``"new"`` (in that precedence — seen wins over owned because a watched
+    title is the strongest "don't surface this" signal even though the user
+    also owns it; ``removed`` is what the owner deleted or disliked)."""
     if _matches(item, seen):
         return "seen"
     if _matches(item, owned):
         return "owned"
+    if _matches(item, removed or {}):
+        return "removed"
     return "new"
 
 
-def partition(recs: list, seen: dict, owned: dict | None = None) -> dict:
-    """Split a list of recs into ``{"seen": [...], "owned": [...], "new": [...]}``.
+def partition(recs: list, seen: dict, owned: dict | None = None,
+              removed: dict | None = None) -> dict:
+    """Split a list of recs into ``{"seen", "owned", "removed", "new"}`` lists.
 
     Each rec is annotated in place with ``rec["provenance"]`` = its bucket, so
     the surviving recs carry their own label for the UI ("woher kommt das").
@@ -195,9 +241,9 @@ def partition(recs: list, seen: dict, owned: dict | None = None) -> dict:
     (the library lane only cares about the watched filter).
     """
     owned = owned or {}
-    out = {"seen": [], "owned": [], "new": []}
+    out = {"seen": [], "owned": [], "removed": [], "new": []}
     for r in recs or []:
-        bucket = classify(r, seen, owned)
+        bucket = classify(r, seen, owned, removed)
         r["provenance"] = bucket
         out[bucket].append(r)
     return out

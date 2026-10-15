@@ -23,7 +23,7 @@ import logging
 import math
 import re
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -40,12 +40,32 @@ from src.services.task_monitor import task_monitor
 
 # ── RECENCY WEIGHTING ─────────────────────────────────────────────────────────
 
+def _naive_utc(value) -> Optional[datetime]:
+    """``viewed_at`` as a naive-UTC datetime — the column's convention (every
+    writer uses utcfromtimestamp, and ``now`` here is utcnow). Tolerates an
+    ISO string or an aware value, so one stray format cannot crash a rebuild
+    with a naive/aware subtraction."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def recency_weight(viewed_at: datetime, now: datetime, half_life_days: int = 60) -> float:
     """
     Exponential decay: items watched today = weight 1.0
     Items watched half_life_days ago = weight 0.5
     This means recent taste matters more than old taste.
     """
+    viewed_at = _naive_utc(viewed_at)
     if not viewed_at:
         return 0.1
     age_days = max(0, (now - viewed_at).days)
@@ -107,10 +127,24 @@ def artist_weight(last, plays: int, rating, now: datetime, signal: float = 0.0) 
 # negative signal was never implemented.
 DROP_PUSH_WEIGHT = 0.35
 
+# plex_sync stores IN-PROGRESS items (viewOffset > 0) as completed=False rows
+# and moves their viewed_at forward as playback advances. A partial view this
+# recent may simply not be finished yet — it is not a drop.
+DROP_GRACE_DAYS = 14
 
-def _is_drop(entry: dict) -> bool:
+# Series-level drop: nothing finished, at most this many episodes started,
+# and idle this long — abandoned early, not paused mid-season.
+SERIES_DROP_MAX_EPISODES = 2
+SERIES_DROP_IDLE_DAYS = 30
+# Newest rows of a series tried as its embedding representative when the
+# canonical enrichment key has no profile (aliases cover ≤1000 rows each).
+_SERIES_REP_TRIES = 25
+
+
+def _is_drop(entry: dict, now: Optional[datetime] = None) -> bool:
     """True when the user demonstrably abandoned this item early (<40%
-    watched, not completed).
+    watched, not completed, and — when ``now`` is given — not touched in the
+    last DROP_GRACE_DAYS, so an item still being watched is not a drop).
 
     Never fires for imported music: those rows carry ms_played but no
     duration_ms, so there is nothing to take a percentage of. (The older
@@ -123,7 +157,85 @@ def _is_drop(entry: dict) -> bool:
     d, v = entry.get("duration_ms"), entry.get("view_offset_ms")
     if not d or v is None:
         return False
-    return (v / d) < 0.4
+    if (v / d) >= 0.4:
+        return False
+    if now is not None:
+        va = _naive_utc(entry.get("viewed_at"))
+        if va is not None and (now - va).days < DROP_GRACE_DAYS:
+            return False
+    return True
+
+
+def _series_dropped(stats: dict, now: datetime) -> bool:
+    """A series the user abandoned: nothing finished, at most
+    SERIES_DROP_MAX_EPISODES started, every partial view under 40%, and no
+    activity for SERIES_DROP_IDLE_DAYS. One dozed-off episode of a show with
+    finished episodes is NOT a drop — it used to push that show's own vector
+    into the drop centroid."""
+    last = stats["last"]
+    if stats["done"] or last is None or not stats["partial"]:
+        return False
+    return ((now - last).days > SERIES_DROP_IDLE_DAYS
+            and len(stats["eps"]) <= SERIES_DROP_MAX_EPISODES
+            and all(_is_drop(e, now) for e in stats["partial"]))
+
+
+def _series_entries(entries: list, now: datetime, canonical_keys: dict,
+                    has_profile) -> list:
+    """show/anime: ONE (weight, entry) per series, like the music path does
+    per artist. Episode rows all resolve to the SAME series vector (the
+    series profile is aliased onto every played episode key), so row-level
+    weighting gave a 300-episode sitcom ~600x the pull of a film watched
+    once and filled EMBED_CAP with the newest episodes.
+
+    weight = recency(last activity) × (1 + log10(finished episodes)).
+    Only ``completed`` rows count as finished (plex_sync sets it at ≥90%): an
+    episode at 40-90% is in progress — neither a finished view nor a drop.
+    A series with nothing finished is pushed away only when it meets
+    ``_series_dropped``; otherwise it is undecided and contributes nothing.
+
+    ``canonical_keys`` maps series title → its EnrichmentStatus key (tried
+    first); ``has_profile(entry)`` says whether an entry has an enrichment
+    profile. Series without any profile are left to the genre counters."""
+    by_series: dict = {}
+    for e in entries:   # newest first (see _load_watch_entries)
+        key = e.get("series_title") or e.get("title")
+        if not key:
+            continue
+        d = by_series.get(key)
+        if d is None:
+            d = by_series[key] = {"eps": set(), "done": 0, "partial": [],
+                                  "last": None, "rows": []}
+        d["eps"].add(e.get("plex_item_id"))
+        if e.get("completed"):
+            d["done"] += 1
+        else:
+            d["partial"].append(e)
+        va = _naive_utc(e.get("viewed_at"))
+        if va is not None and (d["last"] is None or va > d["last"]):
+            d["last"] = va
+        if len(d["rows"]) < _SERIES_REP_TRIES:
+            d["rows"].append(e)
+
+    out = []
+    for key, d in by_series.items():
+        r = recency_weight(d["last"], now)
+        if d["done"]:
+            w = r * (1.0 + math.log10(d["done"]))
+        elif _series_dropped(d, now):
+            w = -DROP_PUSH_WEIGHT * r
+        else:
+            continue
+        mt = d["rows"][0].get("media_type")
+        candidates = d["rows"]
+        if canonical_keys.get(key):
+            candidates = [{"plex_item_id": canonical_keys[key], "media_type": mt,
+                           "title": key, "series_title": None}] + candidates
+        rep = next((c for c in candidates if has_profile(c)), None)
+        if rep is not None:
+            out.append((w, rep))
+    out.sort(key=lambda x: abs(x[0]), reverse=True)
+    return out
 
 
 def completion_weight(entry: WatchHistoryEntry) -> float:
@@ -175,7 +287,11 @@ def _unit(vec) -> Optional[list]:
     if vec is None or len(vec) == 0:
         return None
     norm = math.sqrt(sum(float(x) * float(x) for x in vec))
-    return [float(x) / norm for x in vec] if norm > 0 else None
+    # isfinite: a NaN norm already failed `> 0`, but an Inf one divided every
+    # component to 0 or NaN and sailed into the centroid
+    if not math.isfinite(norm) or norm <= 0:
+        return None
+    return [float(x) / norm for x in vec]
 
 
 def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
@@ -274,6 +390,9 @@ def weighted_mean_embedding(embeddings_weights: list) -> tuple:
         return None, 0.0
 
     dim = len(valid[0][0])
+    # One space only: a vector of another dimension (a stale cache entry from
+    # another model) would index out of range or be silently truncated.
+    valid = [(emb, w) for emb, w in valid if len(emb) == dim]
     total_weight = sum(w for _, w in valid)
     if total_weight <= 0:
         return None, 0.0
@@ -290,6 +409,30 @@ def weighted_mean_embedding(embeddings_weights: list) -> tuple:
     return [x / pre_norm for x in avg], pre_norm
 
 
+_MIN_CORPUS = 50
+
+
+def _clean_unit_rows(embs, min_rows: int = _MIN_CORPUS):
+    """The corpus as finite, non-zero, unit-length rows of one dimension, or
+    None when fewer than ``min_rows`` survive. The old guard only replaced
+    ZERO norms: one NaN row turned the corpus mean into NaN, which json
+    stores as ``NaN`` and the deletion reader then turned into a NaN cosine
+    for every candidate — each scored as maximally foreign."""
+    import numpy as np
+    try:
+        m = np.asarray(embs, dtype=float)
+    except (TypeError, ValueError):   # ragged → mixed dimensions
+        return None
+    if m.ndim != 2 or len(m) < min_rows:
+        return None
+    m = m[np.isfinite(m).all(axis=1)]
+    norms = np.linalg.norm(m, axis=1)
+    keep = norms > 1e-9
+    if int(keep.sum()) < min_rows:
+        return None
+    return m[keep] / norms[keep, None]
+
+
 def _domain_corpus_mean(category: str):
     """Mean of the category's normalized item cloud — the anisotropy
     reference for the cluster-separation gate below. None on a tiny or
@@ -297,15 +440,9 @@ def _domain_corpus_mean(category: str):
     if not category:
         return None
     try:
-        import numpy as np
         from src.vector_store.chromadb_wrapper import get_chroma_db
-        embs = get_chroma_db().embeddings_for_domain(category)
-        if len(embs) < 50:
-            return None
-        m = np.asarray(embs, dtype=float)
-        norms = np.linalg.norm(m, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        return (m / norms).mean(axis=0)
+        m = _clean_unit_rows(get_chroma_db().embeddings_for_domain(category))
+        return None if m is None else m.mean(axis=0)
     except Exception as e:
         logger.debug("corpus mean for %s failed: %s", category, e)
         return None
@@ -525,23 +662,23 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
     try:
         import numpy as np
         from src.vector_store.chromadb_wrapper import get_chroma_db
-        embs = get_chroma_db().embeddings_for_domain(category)
-        if len(embs) < 50:
+        m = _clean_unit_rows(get_chroma_db().embeddings_for_domain(category))
+        if m is None:
             return None
-        m = np.asarray(embs, dtype=float)
-        norms = np.linalg.norm(m, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        m = m / norms
         mean = m.mean(axis=0)
 
         def _center(vec):
             v = np.asarray(vec, dtype=float)
+            # `if not n` let NaN through (NaN is truthy); a centroid from
+            # another space (wrong dimension) must not broadcast either
+            if v.shape != mean.shape or not np.isfinite(v).all():
+                return None
             n = np.linalg.norm(v)
-            if not n:
+            if n < 1e-9:
                 return None
             v = v / n - mean
             n = np.linalg.norm(v)
-            return v / n if n else None
+            return v / n if n > 1e-9 else None
 
         mc = m - mean
         mc_norms = np.linalg.norm(mc, axis=1, keepdims=True)
@@ -567,13 +704,18 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
             return (round(float(np.percentile(cos, 10)), 4),
                     round(float(np.percentile(cos, 90)), 4))
 
+        def _usable(anchors):
+            return (anchors is not None and all(math.isfinite(x) for x in anchors)
+                    and anchors[1] - anchors[0] > 1e-3)
+
         cal = _anchors(embedding)
-        if not cal:
+        if not _usable(cal):
             return None
+        drop_cal = _anchors(drop_embedding) if drop_embedding else None
         return {
             "corpus_mean": [round(float(x), 6) for x in mean],
             "cal": cal,
-            "drop_cal": _anchors(drop_embedding) if drop_embedding else None,
+            "drop_cal": drop_cal if _usable(drop_cal) else None,
         }
     except Exception as e:
         logger.warning("corpus calibration failed for %s: %s", category, e)
@@ -687,7 +829,7 @@ async def compute_taste_vector_for_user(
                     plex_genre_counter[g] += 1
 
         # Track dropped items (< 40% completion) as negative signals
-        if _is_drop(e):
+        if _is_drop(e, now):
             if e.get('genres'):
                 for g in e.get('genres').split(","):
                     g = g.strip()
@@ -773,7 +915,7 @@ async def compute_taste_vector_for_user(
             if ur is not None:
                 rating_factor = ur / 6.0
 
-        if _is_drop(e):
+        if _is_drop(e, now):
             # The design's promised negative signal, finally real: a drop
             # contributes a NEGATIVE weight, pushing the taste vector away
             # from the abandoned item's profile (see weighted_average_embedding).
@@ -810,6 +952,7 @@ async def compute_taste_vector_for_user(
     enrichment_ts = {}
     enrichment_ts_by_title = {}
     music_key_by_artist = {}   # artist title → enriched-doc cache key
+    series_key_by_title = {}   # show/anime series title → enriched-doc cache key
     for plex_rating_key, title, media_category, enriched_at in await asyncio.to_thread(
             _load_enrichment_rows):
         ts_val = enriched_at.isoformat() if enriched_at else "enriched"
@@ -817,6 +960,9 @@ async def compute_taste_vector_for_user(
         enrichment_ts_by_title[title] = ts_val
         if media_category == "music" and plex_rating_key:
             music_key_by_artist[title] = plex_rating_key
+        elif media_category == category and category in ("show", "anime") \
+                and plex_rating_key and title:
+            series_key_by_title[title] = plex_rating_key
 
     # ── MUSIC: aggregate to ARTIST level before embedding ────────────────────
     # Row-level selection made the music vector a "last few weeks" vector:
@@ -873,6 +1019,17 @@ async def compute_taste_vector_for_user(
                     "followed without a play yet", len(by_artist) - followed_new,
                     len(artist_entries), len(entries), signalled, followed_new)
         top_entries = artist_entries[:EMBED_CAP]
+
+    # ── SHOW / ANIME: aggregate to SERIES level (see _series_entries) ────────
+    if category in ("show", "anime"):
+        def _has_profile(e: dict) -> bool:
+            return cache.get_cache(
+                f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}") is not None
+        series_entries = _series_entries(entries, now, series_key_by_title, _has_profile)
+        logger.info("%s: %d episode rows → %d series entries (%d drops)",
+                    category, len(entries), len(series_entries),
+                    sum(1 for w, _ in series_entries if w < 0))
+        top_entries = series_entries[:EMBED_CAP]
 
     # Count how many need fresh embeddings
     # Only items WITH enrichment data get embedded — unenriched items use genre counters
@@ -1130,7 +1287,9 @@ async def compute_taste_vector_for_user(
         "theme_affinity": normalize(theme_counter, 15),
         "mood_affinity": normalize(mood_counter, 10),
         "genre_aversion": genre_aversion,   # drop-rate per genre
-        "dropped_titles": dropped_titles[:20],
+        # one entry per title: several dropped episodes of one series
+        # used to fill the list with the same name
+        "dropped_titles": list(dict.fromkeys(t for t in dropped_titles if t))[:20],
         "top_titles": [k for k, _ in title_counter.most_common(30)],
         "watch_count": len(entries),
         "avg_completion": avg_completion,
