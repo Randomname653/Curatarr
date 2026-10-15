@@ -262,6 +262,22 @@ def start_scheduler():
     # psutil scan + one Ollama /api/ps GET). NOT _tracked — catch-up makes no
     # sense for a 30 s heartbeat. This is what actually keeps VRAM clear for
     # the game; /api/processes/status is now just a UI read.
+    # Model updates (2026-10): does the registry carry new weights for a
+    # model in use? Network only, a few manifest reads; the old-vs-new test
+    # is the admin's click, never automatic.
+    scheduler.add_job(
+        _tracked("model_update_check")(job_model_update_check),
+        IntervalTrigger(hours=24),
+        id="model_update_check",
+        name="Model update check (registry vs running weights)",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        # An interval restarts with every app start, and this box restarts
+        # more often than daily: overdue -> first check five minutes in.
+        # (Only passed when due: next_run_time=None would PAUSE the job.)
+        **({"next_run_time": datetime.now() + timedelta(minutes=5)}
+           if _job_overdue("model_update_check", 24) else {}),
+    )
     scheduler.add_job(
         job_game_watcher,
         IntervalTrigger(seconds=30),
@@ -1474,6 +1490,21 @@ async def _cache_recommendations(user_id: int):
 
 
 # ── Pass 16o: keep Library Manager arr cache warm ────────────────────────────
+async def job_model_update_check():
+    """Daily: compare the running weights of every bake with the registry.
+    Returns False on failure so _tracked retries at the next start."""
+    try:
+        from src.services.model_updates import check_updates
+        rows = await check_updates()
+        pending = [r["base"] for r in rows if r["status"] == "update"]
+        if pending:
+            logger.info("[model updates] new weights on the registry for: %s", ", ".join(pending))
+        return True
+    except Exception as e:
+        logger.warning("[model updates] check failed: %s", e)
+        return False
+
+
 async def job_arr_cache_refresh():
     """
     Periodic background refresh for the Library Manager arr cache.

@@ -359,6 +359,7 @@ from src.routers import music
 from src.routers import library
 from src.routers import image_proxy   # Pass 97
 from src.routers import stats
+from src.routers import model_updates
 from src.routers.auth import require_admin
 
 # Admin-only routers: enrichment runs heavy LLM jobs that block the GPU
@@ -384,6 +385,8 @@ app.include_router(library.router,         prefix="/api/library",         tags=[
 app.include_router(image_proxy.router,     prefix="/api/image",           tags=["image"])
 app.include_router(stats.router,           prefix="/api/stats",           tags=["stats"])
 app.include_router(imports.router,         prefix="/api/import",          tags=["import"])
+app.include_router(model_updates.router,   prefix="/api/system/model-updates", tags=["models"],
+                   dependencies=_ADMIN_ONLY)
 
 # ── SYSTEM ────────────────────────────────────────────────────────────────────
 

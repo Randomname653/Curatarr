@@ -1,4 +1,4 @@
-import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, loadDepsStatus, loadIntegrations, loadNotificationPreferences, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, testIntegration } from './settings.js';
+import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdate, loadDepsStatus, loadIntegrations, loadModelUpdates, loadNotificationPreferences, openModelUpdates, openSettingsPane, reattributeHistory, rebuildModels, saveIntegrations, showSettingsAccount, startModelCompare, testIntegration } from './settings.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
@@ -134,6 +134,10 @@ const actions = {
   loadCacheInventory,
   loadDeletions,
   loadDepsStatus,
+  loadModelUpdates,
+  openModelUpdates,
+  startModelCompare,
+  decideModelUpdate,
   loadEnrichStatus,
   loadHistoryStatus,
   loadIntegrations,

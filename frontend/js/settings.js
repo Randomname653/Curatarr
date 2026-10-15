@@ -97,6 +97,7 @@ export function openSettingsPane(name, btn) {
     loadUsers();
   } else if (name === 'maintenance') {
     loadDepsStatus();
+    loadModelUpdates();
   }
 }
 
@@ -390,4 +391,104 @@ export function populateSettingsAccount() {
 // the pane's loaders once (it opens the pane itself).
 export function showSettingsAccount() {
   showView('settings', null, {pane: 'account', focus: true});
+}
+
+// ── Settings → Maintenance → Model updates (admin only) ───────────────────
+// Every curatarr-* bake runs the weights it was built from, so a pulled
+// model is a pin. The server checks the registry daily; this section shows
+// which models have new weights, runs the old-vs-new test on ten library
+// titles, and lets the owner take the update or stay on the pin.
+const MU_STATUS = {
+  current: ['good', 'up to date'], update: ['warn', 'new weights available'],
+  pinned: ['', 'staying on the pinned version'], unknown: ['', 'not on the Ollama registry'],
+};
+const _short = d => (d || '').replace('sha256:', '').slice(0, 12);
+
+function _muCompare(c) {
+  const s = c.summary;
+  const row = (label, k, unit = '') => `<tr><td>${esc(label)}</td><td>${esc(String(s[k]?.old ?? '–'))}${unit}</td><td>${esc(String(s[k]?.new ?? '–'))}${unit}</td></tr>`;
+  const changes = s.verdict_changes.length
+    ? `<ul class="fs-12 mt-8">${s.verdict_changes.map(v => `<li>${esc(v.title)}: ${esc(v.old)} → ${esc(v.new)}</li>`).join('')}</ul>` : '';
+  const pairs = c.pairs.map(p => `<div class="mt-8"><div class="fw-500 fs-12">${esc(p.title)} — ${esc(p.old_verdict || '?')} / ${esc(p.new_verdict || '?')}</div>
+      <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
+  const chat = c.chat.map(p => `<div class="mt-8"><div class="fw-500 fs-12">${esc(p.prompt)}</div>
+      <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
+  return `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
+    <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
+      ${row('Judge, s per title', 'judge_s')}${row('Card note, s per title', 'monologue_s')}${row('Generation, tok/s', 'gen_tok_s')}
+      ${row('VRAM, GB', 'vram_gb')}${row('On the GPU, %', 'gpu_share_pct')}${row('Card note, words', 'monologue_words')}
+    </tbody></table></div>
+    <details class="mt-8"><summary class="fs-12">Side by side: ${c.pairs.length} titles, ${c.chat.length} chat answers</summary>${pairs}${chat}</details>`;
+}
+
+export async function loadModelUpdates(btn, refresh = false) {
+  const box = document.getElementById('maint-models');
+  if (!box) return;
+  if (btn) btnBusy(btn, 'Checking…');
+  try {
+    const d = await api('/api/system/model-updates' + (refresh ? '/check' : ''), refresh ? 'POST' : 'GET');
+    if (!d.models.length) {
+      box.innerHTML = emptyHtml('Not checked yet — the first check runs a few minutes after the start.');
+      return;
+    }
+    box.innerHTML = d.models.map(m => {
+      const [kind, label] = MU_STATUS[m.status] || ['', m.status];
+      const running = d.running === m.role;
+      let body = '';
+      if (m.comparison) {
+        body = _muCompare(m.comparison) + `<div class="section-actions mt-8">
+          <button class="btn btn-primary btn-sm" ${act('decideModelUpdate', m.role, 'update', EL)}>Take the update</button>
+          <button class="btn btn-secondary btn-sm" ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay on the pinned version</button></div>`;
+      } else if (m.status === 'update' && m.comparable) {
+        body = `<p class="fs-12 t3 mt-8">The test downloads the new weights next to the pinned ones, then judges ten of your titles and answers three chat questions with both — about ten minutes on the GPU, chat waits meanwhile.</p>
+          <div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${running || d.running ? 'disabled' : ''} ${act('startModelCompare', m.role, EL)}>${running ? 'Test running — see Activity' : 'Test old vs new'}</button>
+          <button class="btn btn-secondary btn-sm" ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay without testing</button></div>`;
+      } else if (m.status === 'update') {
+        body = `<p class="fs-12 t3 mt-8">No old-vs-new test for the ${esc(m.role)} yet. To update: <code class="mono">ollama pull ${esc(m.base)}</code>, then Rebuild models.</p>`;
+      }
+      const err = m.compare_error ? `<p class="t-danger fs-12 mt-8">Last test failed: ${esc(m.compare_error)}</p>` : '';
+      return `<div class="banner ${kind}"><span class="banner-icon">${m.status === 'update' ? '!' : '·'}</span><div class="banner-text">
+          <b>${esc(m.role)}</b> · ${esc(m.base)} — ${esc(label)}<span class="t3"> (running ${esc(_short(m.running))}${m.remote && m.remote !== m.running ? `, registry ${esc(_short(m.remote))}` : ''})</span>
+          ${body}${err}</div></div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<p class="t-danger fs-12">Could not read the model updates: ${esc(_errMsg(e))}</p>`;
+  } finally {
+    if (btn) btnDone(btn, 'Check now');
+  }
+}
+
+export async function startModelCompare(role, btn) {
+  btnBusy(btn, 'Starting…');
+  try {
+    await api(`/api/system/model-updates/${role}/compare`, 'POST');
+    toast('Old-vs-new test started — progress in Activity.', 'info');
+  } catch (e) {
+    toast(_errMsg(e), 'danger');
+  }
+  loadModelUpdates();
+}
+
+export async function decideModelUpdate(role, action, btn) {
+  const update = action === 'update';
+  const res = await confirmDialog({
+    title: update ? 'Take the new weights?' : 'Stay on the pinned version?',
+    body: update ? '<p>The curatarr models are rebuilt from the new weights; the pinned copy is removed.</p>'
+                 : '<p>The pinned weights go back under the tag. You hear about this model again only when the registry changes once more.</p>',
+    confirmLabel: update ? 'Update' : 'Stay',
+  });
+  if (!res.ok) return;
+  btnBusy(btn, update ? 'Rebuilding…' : 'Restoring…');
+  try {
+    await api(`/api/system/model-updates/${role}/decide`, 'POST', {action});
+    toast(update ? 'Updated — the models were rebuilt.' : 'Staying on the pinned version.', 'success');
+  } catch (e) {
+    toast(_errMsg(e), 'danger');
+  }
+  loadModelUpdates();
+}
+
+export function openModelUpdates() {
+  showView('settings', null, {pane: 'maintenance', focus: true});
+  setTimeout(() => document.getElementById('maint-models')?.scrollIntoView({block: 'start'}), 50);
 }
