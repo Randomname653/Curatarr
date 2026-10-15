@@ -6,8 +6,8 @@ import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
-import { loadGlancePanel, loadLastPlayed, loadStarters } from './chat.js';
-import { startTaskStream } from './activity.js';
+import { loadGlancePanel, loadLastPlayed, loadStarters, restoreChatHistory } from './chat.js';
+import { startTaskStream, stopTaskStream } from './activity.js';
 import { startProcessMonitor } from './game.js';
 import { routeFromHash } from './nav.js';
 
@@ -49,7 +49,8 @@ export async function startPlexLogin() {
         state.pollInterval = null;
         state.token=r.token; localStorage.setItem('curatarr_token',state.token);
         // Restart stream with new state.token
-        if (state.taskEventSource) { state.taskEventSource.close(); state.taskEventSource = null; state.taskStreamRetries = 0; }
+        stopTaskStream();
+        state.taskStreamRetries = 0;
         setUser(r.user); showApp();
       }
     } catch (e) {
@@ -129,6 +130,7 @@ export async function showApp() {
   routeFromHash({focus: false});
   loadLibraryConfig();
   loadHistoryStatus();
+  restoreChatHistory();
   loadGlancePanel();
   loadLastPlayed();
   loadStarters();

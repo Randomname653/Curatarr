@@ -9,8 +9,7 @@ import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _fmtAbs, 
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
-import { _setDiscussBanner, addMsg, sendMessage } from './chat.js';
-import { showView } from './nav.js';
+import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 
 // Pass 17: small badge showing "added Xd ago" when the proposal has a
 // recent file-import timestamp. Threshold of 30 days keeps the badge
@@ -200,7 +199,13 @@ export function _setAnalysePulse(on) {
   setPulse('sb-deletions-pulse', 'local', on);
 }
 
+// The last REQUEST wins, not the last response: a tab click or view switch
+// racing an earlier load let the older answer repaint the list — and
+// re-fill the "All" cache with a proposal an approve/keep had just evicted.
+let _delLoadSeq = 0;
+
 export async function loadDeletions(category=null, btn=null, refresh=false) {
+  const seq = ++_delLoadSeq;
   state.currentDelCategory = category;
   // Restore the correct active tab whether called from a tab click, the Analyse
   // button, the Show Cached button, or a programmatic call like showView().
@@ -223,12 +228,13 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     el.innerHTML = `<p class="loading" role="status" aria-live="polite">Analysis still running (${elapsed}s)… auto-refreshing when it's done.</p>`;
     try {
       const r = await _delAnalysePromise;
+      if (seq !== _delLoadSeq) return;
       _renderEnrichmentCoverageBanner(r.enrichment_coverage);
       _renderRunBanner(r.last_run);
       if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
       _renderDeletionProposals(r.proposals || []);
     } catch(e) {
-      el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Analyse failed')}</p>`;
+      if (seq === _delLoadSeq) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Analyse failed')}</p>`;
     }
     return;
   }
@@ -279,6 +285,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
         _setAnalysePulse(false);
       }
     }
+    if (seq !== _delLoadSeq) return;
 
     _renderRunBanner(r.last_run);
     if (r.message && !r.proposals?.length) { el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(r.message)}</p>`; return; }
@@ -292,7 +299,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
 
     _renderDeletionProposals(r.proposals || []);
-  } catch(e) { el.innerHTML = _errHtml(e); }
+  } catch(e) { if (seq === _delLoadSeq) el.innerHTML = _errHtml(e); }
 }
 
 // The last analysis, when it has something to say. Judge calls that failed
@@ -691,8 +698,8 @@ export async function rejectDelete(id, btn) {
 // next to ``_LEVEL_2_REEVAL_FRAMING``. Short version: don't open with a
 // meta-disclaimer, training corpus IS the knowledge base, per-axis
 // hedging only, no named-work anchors.
-export function onReevaluateDeletion(btn) {
-  if (!btn) return;
+export async function onReevaluateDeletion(btn) {
+  if (!btn || _busyStreaming()) return;
   const pid = parseInt(btn.dataset.pid || '0', 10);
   if (!pid) return;
   const title    = btn.dataset.title    || '';
@@ -705,7 +712,11 @@ export function onReevaluateDeletion(btn) {
   //    this turn's payload then clears the flag, so follow-up turns in
   //    the same thread don't re-inject the Level-2 framing on every
   //    "but also check…" message.
-  state.pendingDiscussContext = {
+  // 2. Switch to chat view (this proposal's thread history) and show the
+  //    original verdict as an assistant bubble — same UX as Discuss, so the
+  //    user always sees what they're challenging before the new answer
+  //    streams in.
+  const ctx = {
     kind: 'deletion_proposal',
     proposal_id: pid,
     category: category || null,
@@ -713,13 +724,8 @@ export function onReevaluateDeletion(btn) {
     poster_url: poster || null,
     reevaluate: true,
   };
-  _setDiscussBanner(`Reevaluating deletion of "${title}"`);
-
-  // 2. Switch to chat view and show the original verdict as an assistant
-  //    bubble — same UX as Discuss, so the user always sees what they're
-  //    challenging before the new answer streams in.
-  showView('chat');
-  addMsg(`I have suggested "${title}" for deletion. Reason: "${pitch}"`, 'assistant');
+  if (!await enterThread(ctx, `Reevaluating deletion of "${title}"`,
+                         `I have suggested "${title}" for deletion. Reason: "${pitch}"`)) return;
 
   // 3. Pre-fill a short, readable user message and auto-send. The actual
   //    Level-2 framing arrives via the system prompt on the backend —
