@@ -83,15 +83,23 @@ async def _compare_bg(role: str, user_id: int) -> None:
 
 
 @router.post("/{role}/compare")
-async def compare(role: Literal["curator", "pitcher"], user: User = Depends(require_admin)):
+async def compare(role: Literal["curator", "pitcher"], fresh: bool = False,
+                  user: User = Depends(require_admin)):
+    """Start the old-vs-new test. ``fresh``: a result exists and the owner
+    wants the whole thing again — the result moves to the history and the
+    new run draws titles the earlier ones did not use."""
     from src.services import model_updates as mu
     if _running["role"]:
         raise HTTPException(409, f"already running: the {_running['kind']} for the {_running['role']}")
     row = mu.load_state().get(role) or {}
     if row.get("status") != "update":
         raise HTTPException(409, "no update pending for this model")
+    if row.get("comparison") and not fresh:
+        raise HTTPException(409, "a result exists — decide, review it again, or run a fresh test")
     _start(role, "test")
     state = mu.load_state()
+    if fresh:
+        mu.archive_comparison(state[role])
     state[role].pop("compare_error", None)
     state[role].pop("eval_error", None)
     mu.save_state(state)

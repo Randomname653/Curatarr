@@ -284,30 +284,37 @@ async def _speed(endpoint: str, model: str, probes: int = 3) -> dict:
             "prefill_tok_s": med(pre), "load_s": round(load[0], 1) if load else None}
 
 
-async def sample_evidence(user_id: int, n: int = SAMPLE_TITLES) -> list[dict]:
+async def sample_evidence(user_id: int, n: int = SAMPLE_TITLES, *,
+                          exclude: set[str] | None = None, seed: int | None = None) -> list[dict]:
     """Evidence for n real titles, built ONCE so both models judge the same
-    bytes: the latest deletion-proposal titles first, then the rest of the
-    library spread across categories."""
+    bytes. At most half come from the latest deletion proposals (the first
+    test drew all ten from them — ten films, no show, anime or music); the
+    rest is spread round-robin over the categories. ``exclude`` keeps a
+    re-run off the titles an earlier run used; ``seed`` None = a fresh draw."""
     import random
     from src.database.connection import get_db_session
     from src.database.models import DeletionProposal
     from src.routers.recommendations import _fetch_arr_candidates
     from src.services import pillars
+    exclude = {t.lower() for t in (exclude or set())}
     with get_db_session() as db:
         recent = [(p.category, p.title) for p in db.query(DeletionProposal)
                   .order_by(DeletionProposal.created_at.desc()).limit(40)]
-    items = await _fetch_arr_candidates()
+    items = [i for i in await _fetch_arr_candidates()
+             if (i.get("title") or "").lower() not in exclude]
     by_key = {((i.get("category") or ""), (i.get("title") or "").lower()): i for i in items}
     picked, seen = [], set()
     for cat, title in recent:
+        if len(picked) >= max(1, n // 2):
+            break
         it = by_key.get((cat or "", (title or "").lower()))
         if it and it["title"] not in seen:
             picked.append(it)
             seen.add(it["title"])
-    rng = random.Random(len(items))
+    rng = random.Random(seed)
     rest = [i for i in items if i.get("title") not in seen]
     rng.shuffle(rest)
-    cats = ["movie", "show", "anime", "music"]
+    cats = ["show", "anime", "music", "movie"]
     while len(picked) < n * 2 and rest:
         for c in cats:
             nxt = next((i for i in rest if i.get("category") == c), None)
@@ -558,6 +565,26 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
     return result
 
 
+HISTORY_KEEP = 5
+
+
+def archive_comparison(row: dict) -> None:
+    """Move the current result into ``history`` (kept short) so a fresh run
+    can start: titles, numbers and the review's verdict survive, the raw
+    texts do not."""
+    cmp_ = row.pop("comparison", None)
+    if not cmp_:
+        return
+    ev = cmp_.get("evaluation") or {}
+    row.setdefault("history", []).append({
+        "at": cmp_.get("at"), "remote": cmp_.get("remote"),
+        "titles": [t.get("title") for t in (cmp_.get("old") or {}).get("titles") or []],
+        "summary": cmp_.get("summary"),
+        "recommendation": ev.get("recommendation"), "tally": ev.get("tally")})
+    row["history"] = row["history"][-HISTORY_KEEP:]
+    row.pop("eval_error", None)
+
+
 def _clear_marker(role: str) -> None:
     from src.services.llm_priority import release_bulk_hold
     release_bulk_hold()
@@ -579,9 +606,11 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
         # The tag already moved (pulled by hand): the bake is the only copy
         # of the running weights left, so the pin is taken from it.
         await _ollama(endpoint, "POST", "/api/copy", json={"source": bake, "destination": pinned})
-    ok, why = await disk_room(endpoint, base)
-    if not ok:
-        raise RuntimeError(why)
+    # A re-run finds the new weights already pulled: no disk is needed then.
+    if await running_weights(endpoint, base) != row.get("remote"):
+        ok, why = await disk_room(endpoint, base)
+        if not ok:
+            raise RuntimeError(why)
     msg(f"downloading the new {base}")
     if not await pull_ollama_model(endpoint, base):
         raise RuntimeError(f"could not pull {base}")
@@ -591,7 +620,10 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
     await _bake(endpoint, TEST_BAKE, base)
 
     msg("collecting ten library titles")
-    sample = await sample_evidence(user_id)
+    used = set()
+    for past in row.get("history") or []:
+        used |= set(past.get("titles") or [])
+    sample = await sample_evidence(user_id, exclude=used)
     with get_db_session() as db:
         lang = language_directive(detect_user_language(user_id, db))
     async with curator_priority("model update test", exclusive_model=bake):
@@ -800,7 +832,7 @@ def public_view(state: dict) -> list[dict]:
         cmp_ = r.get("comparison")
         out.append({k: r.get(k) for k in ("role", "base", "bake", "status", "running", "remote",
                                           "checked_at", "comparable", "decided", "compare_error",
-                                          "eval_error")}
+                                          "eval_error", "history")}
                    | ({"comparison": {
                        "summary": cmp_.get("summary") or {}, "at": cmp_.get("at"),
                        "evaluation": cmp_.get("evaluation"),

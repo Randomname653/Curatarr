@@ -471,7 +471,9 @@ export async function loadModelUpdates(btn, refresh = false) {
       if (m.comparison) {
         body = _muCompare(m.role, m.comparison, run, m.eval_error) + `<div class="section-actions mt-8">
           <button class="btn btn-primary btn-sm" ${off} ${act('decideModelUpdate', m.role, 'update', EL)}>Take the update</button>
-          <button class="btn btn-secondary btn-sm" ${off} ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay on the pinned version</button></div>`;
+          <button class="btn btn-secondary btn-sm" ${off} ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay on the pinned version</button>
+          <button class="btn btn-secondary btn-sm" ${off} ${act('rerunModelCompare', m.role, EL)}>Run the whole test again (new titles)</button></div>`
+          + _muHistory(m.history);
       } else if (m.status === 'update' && m.comparable) {
         body = `<p class="fs-12 t3 mt-8">The test downloads the new weights next to the pinned ones, then judges ten of your titles and answers three chat questions with both, and the current model reviews the result — about half an hour on the GPU, chat waits meanwhile.</p>
           <div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${off} ${act('startModelCompare', m.role, EL)}>${testing ? `Test running since ${esc(_muTime(run.since))} — see Activity` : 'Test old vs new'}</button>
@@ -505,10 +507,33 @@ function _muPoll(on) {
   }, 15000);
 }
 
-export async function startModelCompare(role, btn) {
+// Earlier runs of this update test, newest first: when they ran, on which
+// titles, what the review recommended.
+function _muHistory(hist) {
+  if (!hist?.length) return '';
+  const rows = [...hist].reverse().map(h => {
+    const t = h.tally?.titles;
+    return `<li>${esc(h.at ? new Date(h.at).toLocaleString() : '?')} — ${esc(h.recommendation || 'no review')}`
+      + (t ? ` (titles new ${t.new}, old ${t.old}, tie ${t.tie})` : '')
+      + `<span class="t3"> · ${esc((h.titles || []).join(', '))}</span></li>`;
+  }).join('');
+  return `<details class="mt-8"><summary class="fs-12">Earlier runs (${hist.length})</summary><ul class="fs-12">${rows}</ul></details>`;
+}
+
+export async function rerunModelCompare(role, btn) {
+  const res = await confirmDialog({
+    title: 'Run the whole test again?',
+    body: '<p>Ten other titles from your library, both sides judged again, then the review — about half an hour on the GPU, chat waits meanwhile. The current result moves to “Earlier runs”.</p>',
+    confirmLabel: 'Run again',
+  });
+  if (!res.ok) return;
+  return startModelCompare(role, btn, true);
+}
+
+export async function startModelCompare(role, btn, fresh = false) {
   btnBusy(btn, 'Starting…');
   try {
-    await api(`/api/system/model-updates/${role}/compare`, 'POST');
+    await api(`/api/system/model-updates/${role}/compare${fresh ? '?fresh=true' : ''}`, 'POST');
     toast('Old-vs-new test started — progress in Activity.', 'info');
     loadUnreadMessages();
   } catch (e) {

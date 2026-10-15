@@ -521,6 +521,71 @@ check("review: an unstable speed is described with its reads, and the reviewer t
       any("unstable" in l and "do not decide on speed" in l for l in lines)
       and not any(l.startswith("Speed tok/s") for l in lines))
 
+# ── a fresh re-run: archive, new titles, mixed categories ─────────────────
+row_h = {"role": "curator", "comparison": {
+    "at": "t1", "remote": "sha256:new", "summary": {"x": 1},
+    "old": {"titles": [{"title": "Bad Boys"}, {"title": "Long Shot"}], "chat": []},
+    "evaluation": {"recommendation": "stay", "tally": {"titles": {"new": 0, "old": 2, "tie": 8}}}},
+    "eval_error": "old"}
+mu.archive_comparison(row_h)
+check("fresh run: the result moves to history with titles + review, the raw texts go",
+      "comparison" not in row_h and row_h["history"][-1]["titles"] == ["Bad Boys", "Long Shot"]
+      and row_h["history"][-1]["recommendation"] == "stay" and "eval_error" not in row_h)
+for i in range(8):
+    row_h["comparison"] = {"at": f"t{i}", "old": {"titles": []}}
+    mu.archive_comparison(row_h)
+check("history keeps the last five runs", len(row_h["history"]) == mu.HISTORY_KEEP)
+
+import contextlib  # noqa: E402
+import src.database.connection as dbc  # noqa: E402
+import src.routers.recommendations as recs  # noqa: E402
+from src.services import pillars as pl  # noqa: E402
+
+LIB = ([{"title": f"Film {i}", "category": "movie"} for i in range(12)]
+       + [{"title": f"Show {i}", "category": "show"} for i in range(4)]
+       + [{"title": f"Anime {i}", "category": "anime"} for i in range(4)]
+       + [{"title": f"Artist {i}", "category": "music"} for i in range(4)])
+PROPOSALS = [("movie", f"Film {i}") for i in range(12)]
+
+
+class _Q:
+    def order_by(self, *a): return self
+    def limit(self, n): return [type("P", (), {"category": c, "title": t})() for c, t in PROPOSALS[:n]]
+
+
+class _DB:
+    def query(self, *a): return _Q()
+
+
+@contextlib.contextmanager
+def fake_session():
+    yield _DB()
+
+
+async def fake_arr():
+    return list(LIB)
+
+
+async def fake_evidence(item, user_id, cat, db=None):
+    return {"facts": f"FACTS {item['title']}", "flags": {}, "law_extra": ""}
+
+
+saved_db, saved_arr, saved_ev = dbc.get_db_session, recs._fetch_arr_candidates, pl.build_evidence
+dbc.get_db_session, recs._fetch_arr_candidates, pl.build_evidence = fake_session, fake_arr, fake_evidence
+try:
+    first = asyncio.run(mu.sample_evidence(1, seed=1))
+    again = asyncio.run(mu.sample_evidence(1, exclude={x["title"] for x in first}, seed=2))
+finally:
+    dbc.get_db_session, recs._fetch_arr_candidates, pl.build_evidence = saved_db, saved_arr, saved_ev
+check("sample: at most half from the recent deletion proposals, the rest across categories",
+      len(first) == 10 and sum(x["category"] == "movie" for x in first) <= 7
+      and {"show", "anime", "music"} <= {x["category"] for x in first})
+check("sample: a re-run excludes every title the earlier run used",
+      not ({x["title"] for x in first} & {x["title"] for x in again}) and len(again) >= 8)
+_r = (Path(__file__).resolve().parents[1] / "src/routers/model_updates.py").read_text(encoding="utf-8")
+check("a second test without fresh=true is refused while a result exists",
+      "if row.get(\"comparison\") and not fresh:" in _r and "archive_comparison" in _r)
+
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]
 main = (root / "src/main.py").read_text(encoding="utf-8")
@@ -539,6 +604,8 @@ from tests.frontend_files import everything  # noqa: E402
 html = everything()
 check("while a test or review runs, the view disables actions and re-reads itself",
       "const off = run ? 'disabled' : ''" in html and "_muPoll(!!run)" in html)
+check("a result offers the whole test again, with a confirmation and the earlier runs",
+      "act('rerunModelCompare'" in html and "_muHistory(m.history)" in html and "?fresh=true" in html)
 check("an existing review can be run again, and an old one is flagged",
       "Review again (re-measures speed and VRAM)" in html and "!summary?.vram_source" in html)
 check("the view says when per-title times were taken next to another model",
