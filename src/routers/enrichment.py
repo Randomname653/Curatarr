@@ -1902,8 +1902,11 @@ async def _collect_arr_items(categories: list) -> list:
     # JSON) which radarr/lidarr can't serialise inside 10s when under load.
     # Sonarr (3,604 series) squeaked under the old limit, which is why it
     # sometimes worked and sometimes didn't. These are background bulk
-    # fetches, so a generous timeout is correct.
-    _ARR_TIMEOUT = 60
+    # fetches, so a generous timeout is correct — and 60 s was still short
+    # of Lidarr's measured ~124 s, so the audit lost its Lidarr ground truth
+    # every run. Now the shared read budget, with a 10 s connect.
+    from src.services.arr_client import listing_timeout as _listing_timeout
+    _ARR_TIMEOUT = _httpx.Timeout(_listing_timeout(), connect=10.0)
     if "movie" in categories and settings.RADARR_URL and settings.RADARR_API_KEY:
         try:
             async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
