@@ -315,10 +315,11 @@ def _restrict_env_acl(path) -> None:
         return
     try:
         import subprocess
+        from src.winproc import NO_WINDOW
         user = os.environ.get("USERNAME") or os.getlogin()
         subprocess.run(  # nosec B603 B607 - fixed argv, no shell, path is ours
             ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
-            check=False, capture_output=True, timeout=10)
+            check=False, capture_output=True, timeout=10, **NO_WINDOW)
     except Exception as e:  # noqa: BLE001
         logger.debug("Could not narrow .env ACL: %s", e)
 
@@ -603,11 +604,12 @@ async def detect_gpu() -> dict:
     model that will only fit once that program is gone.
     """
     import asyncio
+    from src.winproc import NO_WINDOW
     try:
         proc = await asyncio.create_subprocess_exec(
             "nvidia-smi", "--query-gpu=name,memory.total,memory.free",
             "--format=csv,noheader,nounits",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **NO_WINDOW)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=8)
         if proc.returncode != 0:
             msg = (err or out).decode(errors="replace").strip()

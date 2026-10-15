@@ -180,15 +180,21 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
         return True
     # Audit #7: same lock as the manual /music/start endpoint — the two
     # paths used to run the pipeline CONCURRENTLY into MusicBrainz/Last.fm.
-    from src.services.app_state import acquire_state_lock, release_state_lock
-    if not acquire_state_lock("music_pipeline_running"):
+    # The cross-process lease: scripts/music_enricher.py holds the same key
+    # from another OS process.
+    from src.services import state_lease
+    from src.services.app_state import set_state
+    if not await asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
         logger.info("[custodian] music pipeline already running — retry next tick")
         return False
+    set_state("music_pipeline_owner", "")          # no member's run: only an admin may stop it
     batch = 2000 if deep else 1000
     try:
         r = await run_music_pipeline(uid, batch=batch, task=task)
     finally:
-        release_state_lock("music_pipeline_running")
+        # Synchronous on purpose: an await here is skipped when the drain at
+        # shutdown cancels this task a second time, leaving the lease held.
+        state_lease.release("music_pipeline_running")
     # Top-track metadata warm phase (Pass 69) — its only caller used to be
     # the retired job_music_pipeline, so the track-obsession discuss cache
     # went cold when the custodian absorbed the pipeline (audit #10).

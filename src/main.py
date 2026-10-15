@@ -5,6 +5,7 @@ Curatarr - Main Application Entry Point
 import asyncio
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,11 +27,12 @@ logger = logging.getLogger("curatarr")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pass 100: stop Syncthing from touching the live SQLite DB while we run.
-    # Syncing an open WAL-mode database causes "database is locked" errors and
-    # risks corruption. The guard excludes data/ from the enclosing Syncthing
-    # folder's .stignore now and restores it on clean shutdown (no-op when
-    # Syncthing isn't present). Done first, before we open the DB.
+    # Pass 100: stop Syncthing from touching the live SQLite DB. Syncing an
+    # open WAL-mode database causes "database is locked" errors and risks
+    # corruption. The guard excludes data/ in the enclosing Syncthing
+    # folder's .stignore — PERMANENTLY: it is never removed on shutdown, a
+    # stopped DB is no safer to file-sync (no-op when Syncthing isn't
+    # present). Done first, before we open the DB.
     try:
         from src.services.sync_guard import enable as _sync_guard_enable
         _sync_guard_enable()
@@ -76,8 +78,19 @@ async def lifespan(app: FastAPI):
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # The music flag can be held by ANOTHER OS process (scripts/
+        # music_enricher.py survives server restarts by design): a blind "0"
+        # here handed its lock to the custodian and two passes ran side by
+        # side. The lease clears it only when its holder is gone.
+        try:
+            from src.services import state_lease
+            if state_lease.reclaim_if_stale("music_pipeline_running"):
+                set_state("music_pipeline_stop_requested", "0")
+            else:
+                logger.info("[startup] music pipeline held by a live process (pid %s) — left alone",
+                            state_lease.holder_pid("music_pipeline_running"))
+        except Exception as e:  # noqa: BLE001 - the other flags still reset
+            logger.warning("[startup] music lease check failed: %s", e)
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
         # Pass 75/76: seed the game flag with the ACTUAL current state, not
@@ -188,8 +201,13 @@ async def lifespan(app: FastAPI):
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # Only OUR music lease: an out-of-process enricher keeps its own.
+        try:
+            from src.services import state_lease
+            if state_lease.release("music_pipeline_running"):
+                set_state("music_pipeline_stop_requested", "0")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[shutdown] music lease release failed: %s", e)
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
     except Exception:
@@ -224,9 +242,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("[shutdown] DB release failed: %s", e)
 
-    # Pass 100: re-enable Syncthing for data/ now that the DB is released, so
-    # the database can sync between machines while Curatarr is stopped. Done
-    # last: background tasks drained, connections closed, WAL checkpointed.
+    # Pass 100: the sync-guard's shutdown hook. It deliberately leaves the
+    # data/ exclusion in place (sync_guard.disable is a no-op): a stopped
+    # SQLite/ChromaDB store is no safer to file-sync than a running one.
     try:
         from src.services.sync_guard import disable as _sync_guard_disable
         _sync_guard_disable()
@@ -421,8 +439,8 @@ async def shutdown_server():
     the exact Ctrl+C path: in-flight requests finish and the lifespan
     teardown executes (pending memory extractions flushed, scheduler
     stopped, app-state flags cleared, sync-guard released). No console
-    access needed."""
-    import signal
+    access needed. Under ``uvicorn --reload`` the reloader is stopped too
+    (request_dev_server_stop)."""
 
     async def _raise_sigint():
         await asyncio.sleep(0.6)   # let the HTTP response leave first
@@ -442,11 +460,45 @@ async def shutdown_server():
         if request_app_stop():
             logger.info("Shutdown requested from the web UI — host stop callback engaged.")
         else:
-            logger.info("Shutdown requested from the web UI — raising SIGINT.")
-            signal.raise_signal(signal.SIGINT)
+            path = request_dev_server_stop()
+            logger.info("Shutdown requested from the web UI — SIGINT via %s.", path)
 
     asyncio.create_task(_raise_sigint())
     return {"status": "shutting_down"}
+
+
+def request_dev_server_stop(*, parent=None, platform=None, kill=None,
+                            raise_signal=None, ppid=None) -> str:
+    """Stop the server the way Ctrl+C does, also under ``uvicorn --reload``
+    (start.bat). Returns which path it took. The keyword arguments are for
+    tests.
+
+    Without --reload this process IS the server: SIGINT to itself. Under
+    --reload it is a worker the reloader spawned, and the reloader never
+    notices a worker that exits (uvicorn's BaseReload only waits for file
+    changes): it kept the port and the console, the tray then saw the port
+    "in use" by a dead server, and the next save in src/ resurrected it. So
+    the reloader is asked instead, ONCE — a second SIGINT makes uvicorn
+    force-exit, which skips the lifespan teardown:
+      * POSIX: SIGINT to the reloader, which SIGTERMs this worker.
+      * Windows: one Ctrl+C to the console the two share (the reloader's own
+        restart path uses the same event); each gets it once. cmd.exe may
+        then ask "Terminate batch job (Y/N)?" as after a typed Ctrl+C.
+    """
+    import multiprocessing as _mp
+    import signal as _signal
+    parent = _mp.parent_process() if parent is None else parent
+    platform = sys.platform if platform is None else platform
+    kill = os.kill if kill is None else kill
+    raise_signal = _signal.raise_signal if raise_signal is None else raise_signal
+    if not parent:
+        raise_signal(_signal.SIGINT)
+        return "self"
+    if platform == "win32":
+        kill(0, getattr(_signal, "CTRL_C_EVENT", 0))
+        return "console"
+    kill(os.getppid() if ppid is None else ppid, _signal.SIGINT)
+    return "reloader"
 
 
 # ── FRONTEND ──────────────────────────────────────────────────────────────────

@@ -197,6 +197,48 @@ async def _sync_music_ratings(
 # PLEX SYNC
 # ─────────────────────────────────────────────────────────────────────────────
 
+# A section's 404 removes its LibraryConfig only after Plex's own section
+# list, answering normally, has left the key out this many syncs in a row.
+SECTION_MISS_LIMIT = 3
+
+
+def _section_miss_key(sec_key) -> str:
+    return f"plex_section_missing:{sec_key}"
+
+
+def section_listing_lacks(payload, sec_key) -> bool:
+    """True only when ``payload`` is a usable /library/sections answer that
+    does not list ``sec_key``. An empty or malformed listing says nothing —
+    a Plex that is still starting lists no libraries at all."""
+    try:
+        dirs = (payload or {}).get("MediaContainer", {}).get("Directory") or []
+    except AttributeError:
+        return False
+    if not dirs:
+        return False
+    return all(str(d.get("key")) != str(sec_key) for d in dirs)
+
+
+async def _section_confirmed_gone(client, plex_url: str, headers: dict, sec_key) -> bool:
+    """After a 404 on one section: ask Plex which sections exist. Counts a
+    miss only when that list answered and lacks the key; True once the
+    streak reaches SECTION_MISS_LIMIT. Any doubt (error, empty list, the key
+    listed after all) is False and leaves the config alone."""
+    try:
+        r = await client.get(f"{plex_url}/library/sections", headers=headers)
+        if r.status_code != 200 or not section_listing_lacks(r.json(), sec_key):
+            return False
+    except Exception as e:  # noqa: BLE001 - doubt keeps the library
+        logger.debug("Section list check failed: %s", e)
+        return False
+    try:
+        misses = int(get_state(_section_miss_key(sec_key)) or 0) + 1
+    except ValueError:
+        misses = 1
+    set_state(_section_miss_key(sec_key), str(misses))
+    return misses >= SECTION_MISS_LIMIT
+
+
 async def sync_plex_history(job_id: Optional[int] = None, force: bool = False,
                             recompute_taste: bool = True) -> dict:
     """Single-flight wrapper: one Plex sync at a time, server-wide.
@@ -327,22 +369,38 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 params=params,
             )
             if resp.status_code == 404:
-                # Library no longer exists in Plex — remove from config
-                logger.warning("Library %r (key=%s) returned 404 — removing from config", sec_title, sec_key)
-                try:
-                    from src.database.models import LibraryConfig as LC
-                    with get_db_session() as _db:
-                        dead = _db.query(LC).filter(LC.plex_section_key == sec_key).first()
-                        if dead:
-                            _db.delete(dead)
-                            _db.commit()
-                except Exception as _e:
-                    logger.debug("Could not remove dead library config: %s", _e)
+                # A 404 is not proof the library is gone: a misrouting proxy,
+                # a Plex still starting or a wrong PLEX_URL answer the same.
+                # Deleting the config on one 404 dropped the library for good
+                # (and the orphan cleanup then read its history as orphaned).
+                if await _section_confirmed_gone(client, plex_url, headers, sec_key):
+                    logger.warning("Library %r (key=%s) absent from Plex's section list for %d "
+                                   "syncs in a row — removing from config",
+                                   sec_title, sec_key, SECTION_MISS_LIMIT)
+                    try:
+                        from src.database.models import LibraryConfig as LC
+                        with get_db_session() as _db:
+                            dead = _db.query(LC).filter(LC.plex_section_key == sec_key).first()
+                            if dead:
+                                _db.delete(dead)
+                                _db.commit()
+                        set_state(_section_miss_key(sec_key), "0")
+                    except Exception as _e:
+                        logger.debug("Could not remove dead library config: %s", _e)
+                    continue
+                logger.warning("Library %r (key=%s) returned 404 — kept; treated as not fetched",
+                               sec_title, sec_key)
+                failed_sections.append(sec_title)
                 continue
             if resp.status_code != 200:
                 logger.warning("Library fetch failed for %r: HTTP %s", sec_title, resp.status_code)
                 failed_sections.append(sec_title)
                 continue
+            try:   # it answered: any 404 streak ends (best-effort, never fails the sync)
+                if get_state(_section_miss_key(sec_key)) not in (None, "", "0"):
+                    set_state(_section_miss_key(sec_key), "0")
+            except Exception as _e:  # noqa: BLE001
+                logger.debug("Section miss streak reset failed: %s", _e)
 
             items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
             logger.info("Library %r (cat=%s): %d %s items",
@@ -1424,14 +1482,63 @@ async def reattribute_watch_history() -> dict:
     }
 
 
-async def cleanup_orphan_watch_history() -> dict:
+# The item type watch history stores per library: episodes for shows, tracks
+# for music. A bare /all lists the TOP level (shows, artists), whose keys never
+# match a history row — read that way every TV/anime/music play is "orphaned".
+_HISTORY_TYPE_BY_SECTION = {"movie": "1", "show": "4", "artist": "10"}
+_HISTORY_TYPE_BY_CATEGORY = {"movie": "1", "show": "4", "anime": "4", "music": "10"}
+# Orphan cleanup refuses when it would delete more than this share of the
+# examined rows: mass "orphaning" is a reading failure far more often than a
+# library that really lost a fifth of what was ever watched. ``force`` skips it.
+ORPHAN_MAX_SHARE = 0.2
+_ORPHAN_PAGE = 2000
+
+
+def _history_type_for(section_type: Optional[str], category: Optional[str]) -> Optional[str]:
+    return (_HISTORY_TYPE_BY_SECTION.get((section_type or "").lower())
+            or _HISTORY_TYPE_BY_CATEGORY.get((category or "").lower()))
+
+
+async def _section_rating_keys(client, plex_url: str, headers: dict, sec_key: str,
+                               type_num: str) -> set:
+    """Every ratingKey of ``type_num`` in one section, page by page. Raises on
+    any answer but 200 — a partial key set must never reach the delete."""
+    keys: set = set()
+    start = 0
+    while True:
+        r = await client.get(
+            f"{plex_url}/library/sections/{sec_key}/all",
+            headers={**headers, "X-Plex-Container-Start": str(start),
+                     "X-Plex-Container-Size": str(_ORPHAN_PAGE)},
+            params={"type": type_num, "includeGuids": "0"},
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        mc = r.json().get("MediaContainer", {}) or {}
+        page = mc.get("Metadata") or []
+        keys.update(str(it["ratingKey"]) for it in page if it.get("ratingKey"))
+        start += len(page)
+        try:
+            total = int(mc.get("totalSize", start))
+        except (TypeError, ValueError):
+            total = start
+        if not page or len(page) < _ORPHAN_PAGE or start >= total:
+            return keys
+
+
+async def cleanup_orphan_watch_history(force: bool = False) -> dict:
     """Admin action: drop watch_history rows pointing at media no longer in Plex.
 
-    Walks every configured library, collects all ratingKeys currently in
-    Plex, then deletes WatchHistoryEntry rows whose ``plex_item_id`` is a
-    numeric Plex ratingKey not in that set. Spotify entries are kept
-    (matched by ``plex_item_id LIKE 'spotify:%'``) — they aren't part of
-    Plex's library universe.
+    Walks every configured library for the item type history stores there
+    (movies, episodes, tracks), collects their ratingKeys, then deletes
+    WatchHistoryEntry rows whose ``plex_item_id`` is a numeric Plex ratingKey
+    not in that set. Spotify entries are kept — they aren't part of Plex's
+    library universe.
+
+    Refuses — deleting nothing — when any section can't be read in full, when
+    a section answers with no items at all (an unmounted share looks exactly
+    like that), or when more than ORPHAN_MAX_SHARE of the examined rows would
+    go (``force=True`` lifts only that last guard).
     """
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
@@ -1444,42 +1551,35 @@ async def cleanup_orphan_watch_history() -> dict:
         "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
     }
 
-    # Collect all rating keys currently visible to Plex
     from src.database.models import LibraryConfig
     with get_db_session() as db:
-        sections = db.query(LibraryConfig).all()
-        section_keys = [s.plex_section_key for s in sections]
+        sections = [(s.plex_section_key, s.plex_section_type, s.media_category)
+                    for s in db.query(LibraryConfig).all()]
 
     live_keys: set[str] = set()
-    async with httpx.AsyncClient(timeout=60) as client:
-        for sec_key in section_keys:
+    empty_sections: list = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+        for sec_key, sec_type, category in sections:
+            type_num = _history_type_for(sec_type, category)
+            if not type_num:
+                return {"error": f"Library section {sec_key} has an unknown type "
+                                 f"({sec_type}/{category}) — refusing to delete history",
+                        "deleted": 0}
             try:
-                r = await client.get(
-                    f"{plex_url}/library/sections/{sec_key}/all",
-                    headers=headers,
-                    params={"includeGuids": "0"},
-                )
-                if r.status_code != 200:
-                    logger.warning(
-                        "Orphan-cleanup: section %s returned HTTP %s — skipping",
-                        sec_key, r.status_code,
-                    )
-                    continue
-                items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
-                for it in items:
-                    rk = str(it.get("ratingKey", ""))
-                    if rk:
-                        live_keys.add(rk)
-            except Exception as e:
-                logger.warning("Orphan-cleanup: section %s fetch failed: %s", sec_key, e)
-                # If we can't read a section we DON'T proceed — better to abort
-                # than to delete the user's history because of a transient
-                # network blip.
-                return {
-                    "error": f"Could not read library section {sec_key}: {e}",
-                    "deleted": 0,
-                }
+                keys = await _section_rating_keys(client, plex_url, headers, sec_key, type_num)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Orphan-cleanup: section %s unreadable: %s", sec_key, e)
+                # Any unread section aborts: its history would read as orphaned.
+                return {"error": f"Could not read library section {sec_key}: {e}",
+                        "deleted": 0}
+            if not keys:
+                empty_sections.append(sec_key)
+            live_keys |= keys
 
+    if empty_sections:
+        return {"error": f"Library section(s) {', '.join(empty_sections)} returned no items "
+                         "(unmounted share or Plex still scanning?) — refusing to delete history",
+                "deleted": 0}
     if not live_keys:
         return {"error": "No live ratingKeys collected — refusing to delete history",
                 "deleted": 0}
@@ -1513,6 +1613,15 @@ async def cleanup_orphan_watch_history() -> dict:
             if not rk.isdigit():
                 continue
             to_delete_ids.append(row.id)
+
+        if (not force and rows
+                and len(to_delete_ids) > ORPHAN_MAX_SHARE * len(rows)):
+            logger.warning("Orphan-cleanup: would delete %d of %d rows — refused",
+                           len(to_delete_ids), len(rows))
+            return {"error": f"Would delete {len(to_delete_ids)} of {len(rows)} history rows "
+                             f"(more than {ORPHAN_MAX_SHARE:.0%}) — refusing; re-run with "
+                             "force=true if Plex really lost that much",
+                    "deleted": 0, "would_delete": len(to_delete_ids), "examined": len(rows)}
 
         if to_delete_ids:
             db.query(WatchHistoryEntry).filter(

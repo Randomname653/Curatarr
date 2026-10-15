@@ -48,15 +48,13 @@ async def _lidarr_artist_albums(artist_name: str) -> tuple[Optional[dict], list]
     if not base or not key:
         return None, []
     try:
-        # 60 s, not 20: the full /artist payload is 15-30 MB (see the
-        # ARCHITECTURE "ARR collect needs >=60s" invariant) — a cold Lidarr
-        # takes >20 s and the dossier silently vanished.
-        async with httpx.AsyncClient(timeout=60) as c:
-            artists = (await c.get(f"{base}/api/v1/artist",
-                                   params={"apikey": key})).json()
-            want = _norm(artist_name)
-            artist = next((a for a in artists
-                           if _norm(a.get("artistName")) == want), None)
+        # The artist from the cached library, not a fresh full /artist list
+        # (15-30 MB, ~2 min on a big Lidarr) per dossier (find_lidarr_artist).
+        from src.services.lidarr_discography import find_lidarr_artist
+        async with httpx.AsyncClient(timeout=20) as c:
+            artist = await find_lidarr_artist(
+                c, base, key, name=artist_name,
+                same_name=lambda a, b: _norm(a) == _norm(b))
             if not artist:
                 return None, []
             albums = (await c.get(f"{base}/api/v1/album",
