@@ -526,12 +526,12 @@ check("review: an unstable speed is described with its reads, and the reviewer t
 # ── a fresh re-run: archive, new titles, mixed categories ─────────────────
 row_h = {"role": "curator", "comparison": {
     "at": "t1", "remote": "sha256:new", "summary": {"x": 1},
-    "old": {"titles": [{"title": "Bad Boys"}, {"title": "Long Shot"}], "chat": []},
+    "old": {"titles": [{"title": "Title One"}, {"title": "Title Two"}], "chat": []},
     "evaluation": {"recommendation": "stay", "tally": {"titles": {"new": 0, "old": 2, "tie": 8}}}},
     "eval_error": "old"}
 mu.archive_comparison(row_h)
 check("fresh run: the result moves to history with titles + review, the raw texts go",
-      "comparison" not in row_h and row_h["history"][-1]["titles"] == ["Bad Boys", "Long Shot"]
+      "comparison" not in row_h and row_h["history"][-1]["titles"] == ["Title One", "Title Two"]
       and row_h["history"][-1]["recommendation"] == "stay" and "eval_error" not in row_h)
 for i in range(8):
     row_h["comparison"] = {"at": f"t{i}", "old": {"titles": []}}
