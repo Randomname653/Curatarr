@@ -104,6 +104,52 @@ def _agg(rows: list[dict], key: str) -> dict:
             f"{key}_max": vals[-1]}
 
 
+SWEEP_CTX = (2048, 4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536,
+             98304, 131072, 196608, 262144)
+
+
+def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
+              ctxs=SWEEP_CTX) -> dict:
+    """What the model really occupies at each context window: load it with
+    num_ctx from 2k up to its maximum, all layers requested on the GPU, and
+    read the VRAM it took (nvidia-smi delta) plus Ollama's own residency.
+
+    Ollama allocates the KV cache for the whole window at load, so a load
+    is enough — no generation needed, a point costs one load. The sweep
+    stops at the first window that no longer fits fully on the card: every
+    larger one spills too. Download size is NOT VRAM: the projector, the
+    compute buffers and the KV cache come on top, and an MoE file is loaded
+    whole although few experts run per token."""
+    points = []
+    for ctx in ctxs:
+        if context_max and ctx > context_max:
+            break
+        server.unload_all(endpoint)
+        time.sleep(1.0)
+        idle = gpu.query()["used_mib"]
+        r = _stream_chat(endpoint, {"model": model, "think": False, "keep_alive": "2m",
+                                    "messages": [{"role": "user", "content": "ready"}],
+                                    "options": {"num_ctx": ctx, "num_gpu": 99, "num_predict": 1,
+                                                "temperature": 0}})
+        if r.get("error"):
+            points.append({"num_ctx": ctx, "error": r["error"][:200]})
+            break
+        res = _residency(endpoint, model)
+        points.append({"num_ctx": ctx, "vram_model_mib": gpu.query()["used_mib"] - idle,
+                       "load_s": r.get("load_s"), **res})
+        if (res.get("gpu_share_pct") or 0) < 100:
+            break
+    server.unload_all(endpoint)
+    fitted = [p for p in points if p.get("gpu_share_pct") == 100]
+    return {"points": points,
+            "max_resident_ctx": fitted[-1]["num_ctx"] if fitted else None,
+            # MiB per 1k tokens of context: the KV slope between the
+            # smallest and largest resident windows.
+            "kv_mib_per_1k_ctx": (round((fitted[-1]["vram_model_mib"] - fitted[0]["vram_model_mib"])
+                                        / ((fitted[-1]["num_ctx"] - fitted[0]["num_ctx"]) / 1024), 1)
+                                  if len(fitted) >= 2 else None)}
+
+
 def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
              profile: str, facts: list[str], reps: int = 3,
              long_probe: bool = True, sampler: gpu.Sampler | None = None) -> dict:

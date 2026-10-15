@@ -376,7 +376,9 @@ export function renderRecSelect(id, entries, installed) {
   const opts = entries.map(e => {
     const tags = [];
     if (e.installed) tags.push('installed — no download');
-    if (e.fits === false) tags.push(`needs ~${Math.round(e.vram_gb + 3)} GB`);
+    // need_gb is the bench's MEASURED footprint at the role's context when it
+    // has one; otherwise the weight file + headroom, said to be an estimate.
+    if (e.fits === false) tags.push(`needs ~${Math.round(e.need_gb)} GB${e.fit_basis === 'measured' ? ' (measured)' : ' (estimate)'}`);
     else if (e.tight) tags.push('tight fit');
     const suffix = tags.length ? ` · ${tags.join(' · ')}` : '';
     const unfit = e.fits === false ? 'data-unfit="1"' : '';

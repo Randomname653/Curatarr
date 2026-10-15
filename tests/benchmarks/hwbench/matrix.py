@@ -206,8 +206,21 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
                 uniq.append(o)
         tiers[str(t)] = {"recommended": uniq[0] if uniq else None,
                          "alternatives": uniq[1:4]}
+    # Measured footprints for the catalog: MiB per context window, per model
+    # and server setting — what the wizard checks a card against.
+    footprints: dict = {}
+    for sw in (r for r in runs if r["phase"] == "ctx_sweep"):
+        ref = ledger.model(sw["model_key"])["ref"]
+        pts = {str(p["num_ctx"]): p["vram_model_mib"] for p in sw["metrics"].get("points", [])
+               if p.get("gpu_share_pct") == 100 and p.get("vram_model_mib")}
+        if pts:
+            footprints.setdefault(ref, {})[sw["settings"]["server"]] = {
+                "mib_by_ctx": pts, "max_resident_ctx": sw["metrics"].get("max_resident_ctx"),
+                "measured_on": sw["env"].get("gpu"),
+                "kv_mib_per_1k_ctx": sw["metrics"].get("kv_mib_per_1k_ctx")}
     return {"generated": datetime.now().isoformat(timespec="seconds"),
             "bench_version": BENCH_VERSION, "reference": reference_ref,
+            "footprints": footprints,
             "thresholds": {"min_gate_valid": MIN_GATE_VALID, "min_judge_valid": MIN_JUDGE_VALID,
                            "min_gen_tok_s": MIN_GEN_TOK_S, "max_judge_p90_s": MAX_JUDGE_P90_S},
             "tiers": tiers}

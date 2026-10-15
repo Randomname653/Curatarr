@@ -165,6 +165,16 @@ check("a scored model is no longer provisional",
       not matrix.build(L)["tiers"]["8"]["recommended"]["quality"]["provisional"])
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
 
+# The context sweep's measured footprints reach the export, spilled points not.
+L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99}, env=env,
+          metrics={"points": [{"num_ctx": 2048, "vram_model_mib": 2500, "gpu_share_pct": 100},
+                              {"num_ctx": 8192, "vram_model_mib": 3000, "gpu_share_pct": 100},
+                              {"num_ctx": 131072, "vram_model_mib": 24000, "gpu_share_pct": 80}],
+                   "max_resident_ctx": 8192})
+fp = matrix.build(L)["footprints"]["tiny:4b"][matrix.DEFAULT_SERVER]
+check("sweep: resident windows exported, the spilled one left out",
+      fp["mib_by_ctx"] == {"2048": 2500, "8192": 3000} and fp["max_resident_ctx"] == 8192)
+
 # KV quantisation that MOVES verdicts disqualifies that server setting.
 L2 = Ledger(tmp / "mx2.json")
 m2 = L2.upsert_model("t:1b", "sha256:ccc")

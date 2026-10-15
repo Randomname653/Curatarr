@@ -8,7 +8,10 @@ bench run must be reflected here, deliberately). The wizard therefore only
 ever *recommends* models that earned it on the bench; anything the user
 types beyond the catalog is shown with an explicit "untested" banner.
 
-VRAM figures are the q4 weight files as installed on the bench host
+Fit is judged on the VRAM the hardware-matrix bench MEASURED at the role's
+context window (``need_gb`` / model_matrix.json footprints). Without a
+measurement the fallback is an ESTIMATE, labelled as such: the
+q4 weight file as installed on the bench host
 (``ollama list``, checked 2026-10-15 — the earlier 15 GB for gemma4:26b was
 3.6 GB short and let the wizard recommend it to 18 GB cards it spills on);
 the recommender adds context/KV headroom on top (the qwen3.6 lesson: 22 GB of
@@ -100,14 +103,45 @@ DISQUALIFIED = {
 }
 
 
-def _fits(entry: dict, vram_gb: float) -> bool:
-    return vram_gb >= entry["vram_gb"] + VRAM_HEADROOM_GB
+# What a real card loses before any model loads (desktop, compositor), and
+# the margin a measured footprint still gets — the bench's own numbers
+# (hwbench.matrix FIT_MARGIN_MIB, the desktop reserve it measured).
+DESKTOP_RESERVE_GB = 1.0
+MEASURED_MARGIN_GB = 0.5
+# The context each role runs at by default (LLM_PROFILE "large").
+ROLE_CTX = {"curator": 16384, "pitcher": 16384, "summarizer": 8192, "embedding": 2048}
 
 
-def _tight(entry: dict, vram_gb: float) -> bool:
-    """Fits, but with less than 2 GB beyond the demanded headroom."""
-    return _fits(entry, vram_gb) and (
-        vram_gb < entry["vram_gb"] + VRAM_HEADROOM_GB + 2.0)
+def measured_need_gb(model: str, num_ctx: int, matrix: dict | None) -> float | None:
+    """VRAM the bench MEASURED for ``model`` at ``num_ctx`` (the smallest
+    swept window that covers it, default server settings), plus desktop
+    reserve and margin. None when the model was never swept."""
+    fp = ((matrix or {}).get("footprints") or {}).get(model, {}).get("fa-auto_kv-f16")
+    if not fp:
+        return None
+    windows = sorted((int(c), mib) for c, mib in fp["mib_by_ctx"].items() if int(c) >= num_ctx)
+    if not windows:
+        return None    # never fit at that window on the bench card
+    return round(windows[0][1] / 1024 + DESKTOP_RESERVE_GB + MEASURED_MARGIN_GB, 1)
+
+
+def need_gb(entry: dict, role: str = "curator", matrix: dict | None = None) -> tuple[float, str]:
+    """(GB a card must have, "measured" | "estimated"). The estimate is the
+    weight file plus a flat context headroom — what the catalog did before
+    the bench measured anything, and still the fallback."""
+    m = measured_need_gb(entry["model"], ROLE_CTX.get(role, 16384), matrix)
+    if m is not None:
+        return m, "measured"
+    return round(entry["vram_gb"] + VRAM_HEADROOM_GB, 1), "estimated"
+
+
+def _fits(entry: dict, vram_gb: float, role: str = "curator", matrix: dict | None = None) -> bool:
+    return vram_gb >= need_gb(entry, role, matrix)[0]
+
+
+def _tight(entry: dict, vram_gb: float, role: str = "curator", matrix: dict | None = None) -> bool:
+    """Fits, but with less than 2 GB to spare."""
+    return _fits(entry, vram_gb, role, matrix) and vram_gb < need_gb(entry, role, matrix)[0] + 2.0
 
 
 def recommend_models(vram_gb: float | None,
@@ -132,13 +166,15 @@ def recommend_models(vram_gb: float | None,
         return n.split(":", 1)[0] if n.endswith(":latest") else n
 
     inst = {_norm(m) for m in installed}
+    matrix = load_matrix()
 
-    def _mark(entries: list[dict]) -> list[dict]:
+    def _mark(entries: list[dict], role: str) -> list[dict]:
         out = []
         for e in entries:
             row = dict(e)
-            row["fits"] = None if vram_gb is None else _fits(e, vram_gb)
-            row["tight"] = False if vram_gb is None else _tight(e, vram_gb)
+            row["need_gb"], row["fit_basis"] = need_gb(e, role, matrix)
+            row["fits"] = None if vram_gb is None else vram_gb >= row["need_gb"]
+            row["tight"] = bool(row["fits"]) and vram_gb < row["need_gb"] + 2.0
             row["installed"] = _norm(e["model"]) in inst
             out.append(row)
         if vram_gb is not None:
@@ -147,10 +183,10 @@ def recommend_models(vram_gb: float | None,
             out.sort(key=lambda r: (not r["fits"], not r["installed"]))
         return out
 
-    curator = _mark(CURATOR_MODELS)
+    curator = _mark(CURATOR_MODELS, "curator")
     floor_note = None
     if vram_gb is not None and not any(r["fits"] for r in curator):
-        smallest = min(e["vram_gb"] + VRAM_HEADROOM_GB for e in CURATOR_MODELS)
+        smallest = min(r["need_gb"] for r in curator)
         floor_note = (
             f"No bench-verified curator fits in {vram_gb:.0f} GB — the smallest "
             f"verified configuration needs ~{smallest:.0f} GB (weights + "
@@ -158,21 +194,21 @@ def recommend_models(vram_gb: float | None,
             f"runs untested: expect softer, flatter verdicts, and check the "
             f"warm-up result for CPU spill.")
 
-    pitcher = _mark(PITCHER_MODELS)
+    pitcher = _mark(PITCHER_MODELS, "pitcher")
     pitcher_note = None
     if vram_gb is not None and not any(r["fits"] for r in pitcher):
         pitcher_note = (
-            f"The two-bake split needs ~{PITCHER_MODELS[0]['vram_gb'] + VRAM_HEADROOM_GB:.0f} GB "
+            f"The two-bake split needs ~{pitcher[0]['need_gb']:.0f} GB "
             f"for the dedicated judge on its own; with {vram_gb:.0f} GB the "
             f"curator bake handles deletions too (graceful single-bake mode).")
     return {
         "curator": curator,
-        "summarizer": _mark(SUMMARIZER_MODELS),
-        "embedding": _mark(EMBEDDING_MODELS),
+        "summarizer": _mark(SUMMARIZER_MODELS, "summarizer"),
+        "embedding": _mark(EMBEDDING_MODELS, "embedding"),
         "pitcher": pitcher,
         "pitcher_note": pitcher_note,
         "floor_note": floor_note,
-        "package": hardware_package(vram_gb, gpu_name, installed),
+        "package": hardware_package(vram_gb, gpu_name, installed, matrix=matrix),
     }
 
 

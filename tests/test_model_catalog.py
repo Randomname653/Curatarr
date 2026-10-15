@@ -33,7 +33,7 @@ def check(name, cond):
 from src.services.model_catalog import (
     CURATOR_MODELS, SUMMARIZER_MODELS, EMBEDDING_MODELS, PITCHER_MODELS, DISQUALIFIED,
     VRAM_HEADROOM_GB, MATRIX_PATH, bandwidth, hardware_package, load_matrix,
-    recommend_models, tier_for)
+    measured_need_gb, need_gb, recommend_models, tier_for)
 
 # ── drift against the bench CSV ────────────────────────────────────────────
 
@@ -157,6 +157,21 @@ check("package: below every tier the note names the floor",
 check("package: no matrix -> None, the wizard keeps the fit verdicts",
       hardware_package(24.0, None, set(), matrix={}) is None)
 
+# Measured beats estimated: the sweep's footprint at the role's context.
+_fp = {"footprints": {"gemma4:26b": {"fa-auto_kv-f16": {
+    "mib_by_ctx": {"8192": 17000, "16384": 18400, "32768": 21200}}}}}
+_g26 = next(c for c in CURATOR_MODELS if c["model"] == "gemma4:26b")
+check("measured need = footprint at the covering window + reserve + margin",
+      measured_need_gb("gemma4:26b", 16384, _fp) == round(18400 / 1024 + 1.5, 1))
+check("a window larger than any that fit has no measured need",
+      measured_need_gb("gemma4:26b", 65536, _fp) is None)
+check("need_gb says which basis it used",
+      need_gb(_g26, "curator", _fp)[1] == "measured"
+      and need_gb(_g26, "curator", None) == (round(_g26["vram_gb"] + VRAM_HEADROOM_GB, 1), "estimated"))
+check("every recommendation row carries need_gb + fit_basis",
+      all("need_gb" in r and r["fit_basis"] in ("measured", "estimated")
+          for r in recommend_models(24.0)["curator"]))
+
 _shipped = load_matrix()
 if _shipped:
     _names = {c["model"] for c in CURATOR_MODELS}
@@ -192,6 +207,8 @@ check("the GPU probe reads FREE memory too (a game shrinks the card)",
 _html = _frontend_everything()
 check("the wizard offers detection AND a manual VRAM picker",
       "detectGpu()" in _html and 's-vram' in _html)
+check("the wizard labels a need as measured or estimate, not a flat +3",
+      "e.need_gb" in _html and "e.vram_gb + 3" not in _html)
 check("the wizard renders the bench package",
       "renderHardwarePackage(r.package)" in _html and "gpu_name" in _html)
 check("untested installed models are labeled, never silently recommended",

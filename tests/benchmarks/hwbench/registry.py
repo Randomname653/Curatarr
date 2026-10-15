@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import httpx
@@ -114,6 +115,26 @@ def local_manifest(ref: str, root: Path | None = None) -> dict | None:
                 except (OSError, ValueError):
                     continue
     return summarize_manifest(manifest)
+
+
+_FROM = re.compile(r"^FROM\s+.*?sha256[-:]([0-9a-f]{64})", re.M | re.I)
+
+
+def installed_weights(endpoint: str, ref: str) -> str | None:
+    """The weights digest Ollama actually LOADS for ``ref`` — the first FROM
+    blob of /api/show. Authoritative where the manifest file is not: a
+    manifest list holds several variants (the installed gemma4:31b lists a
+    text-only 280af6… and the vision 3bf4a7… it runs), and /api/show also
+    works for an Ollama on another machine. Same rule as the app's
+    src/services/model_updates.running_weights."""
+    try:
+        r = httpx.post(f"{endpoint}/api/show", json={"model": ref}, timeout=30)
+        if r.status_code != 200:
+            return None
+        m = _FROM.search(r.json().get("modelfile") or "")
+        return f"sha256:{m.group(1)}" if m else None
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 def show(endpoint: str, ref: str) -> dict:

@@ -13,6 +13,9 @@ taken then are worthless (gpu-shared-with-gaming). Run it detached:
 Bash-tool ``run_in_background`` with ``python -u`` (BENCHMARK_RUNBOOK.md).
 
 Per model, per Ollama server config (flash attention / KV cache type):
+  sweep    load at every context window from 2k to the model's maximum and
+           read the VRAM it really takes — the footprint the setup uses,
+           instead of the download size;
   perf     full card -> tightest tier it fits (ballast spot check, so
            Ollama's own estimator agrees) -> offload descent with
            num_gpu auto until too slow, plus one forced num_gpu=99 cell
@@ -118,8 +121,9 @@ def cmd_plan(args) -> None:
     total = 0.0
     for c in cands:
         remote = registry.remote_manifest(c["ref"])
-        local = registry.local_manifest(c["ref"])
-        wd = (local or remote or {}).get("weights_digest", "")
+        installed = registry.installed_weights(OWNER_OLLAMA, c["ref"])
+        local = {"weights_digest": installed} if installed else None
+        wd = installed or (remote or {}).get("weights_digest", "")
         key = f"{c['ref']}@{wd.removeprefix('sha256:')[:12]}"
         done = len(led.runs(key)) if wd else 0
         state = []
@@ -164,17 +168,19 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
     ref = c["ref"]
     log(f"\n=== {ref} ({c['role']}) — {c['why']}")
     if store.is_installed(ref):
-        local = registry.local_manifest(ref) or {}
+        local = {"weights_digest": registry.installed_weights(bench.endpoint, ref)}
         remote = registry.remote_manifest(ref) or {}
-        if remote and local and remote["weights_digest"] != local["weights_digest"]:
+        if remote and local["weights_digest"] and remote["weights_digest"] != local["weights_digest"]:
             log("  installed copy differs from the registry — benching the INSTALLED weights; "
                 "the bench never re-pulls an installed tag (it would replace them)")
     if not store.ready(ref):
         log(f"  SKIP: could not pull {ref}")
         return
-    info = registry.local_manifest(ref) or {}
+    info = registry.local_manifest(ref) or {}     # sizes + layer kinds
+    weights = registry.installed_weights(bench.endpoint, ref) or info.get("weights_digest", "")
+    info["weights_digest"] = weights
     remote = registry.remote_manifest(ref) or {}
-    key = led.upsert_model(ref, info.get("weights_digest", ""),
+    key = led.upsert_model(ref, weights,
                            source_url=registry.library_url(ref),
                            weights_bytes=info.get("weights_bytes"),
                            total_bytes=info.get("total_bytes"),
@@ -187,9 +193,23 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
     phases = set(args.phases.split(","))
     tier_by_server: dict[str, int | None] = {}
 
+    ctx_max = (led.model(key) or {}).get("context_max")
     for sname in args.servers.split(","):
         cfg = SERVERS[sname]
         bench.ensure(cfg)
+        if "sweep" in phases:
+            ss = {"server": cfg.label, "server_env": cfg.env(), "num_gpu": 99}
+            if led.has_run(fingerprint(key, "ctx_sweep", ss)) and not args.force:
+                log(f"  [ledger] ctx sweep {cfg.label}: known")
+            else:
+                started = datetime.now().astimezone().isoformat(timespec="seconds")
+                sw = perf.ctx_sweep(bench.endpoint, ref, context_max=ctx_max)
+                led.add_run(key, "ctx_sweep", ss, env=environment(bench, reserve_mib, prefetched),
+                            metrics=sw, started=started)
+                log(f"  ctx sweep {cfg.label}: " + ", ".join(
+                    f"{p['num_ctx'] // 1024}k={p.get('vram_model_mib', '?')}"
+                    + ("" if p.get("gpu_share_pct") == 100 else f"({p.get('gpu_share_pct', 'err')}%)")
+                    for p in sw["points"]) + f" MiB; KV {sw['kv_mib_per_1k_ctx']} MiB/1k")
         for profile in profiles:
             snap_path = _snapshot_path(profile)
             if not snap_path:
@@ -431,7 +451,7 @@ def main() -> None:
     p = sub.add_parser("plan"); p.add_argument("--only", default="")
     p = sub.add_parser("run")
     p.add_argument("--only", default="", help="comma list of refs (default: all candidates)")
-    p.add_argument("--phases", default="perf,quality")
+    p.add_argument("--phases", default="sweep,perf,quality")
     p.add_argument("--servers", default="default,q8,q4")
     p.add_argument("--items", default="sub40", choices=["sub40", "full"])
     p.add_argument("--reps", type=int, default=3)
