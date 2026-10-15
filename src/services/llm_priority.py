@@ -618,6 +618,32 @@ async def priority_enrichment():
         priority_enrichment_done()
 
 
+# A long, legitimate curator job (the model-update test runs 20+ minutes)
+# outlasts the 600 s safety timeout below, and bulk enrichment then loaded
+# the summariser next to it — measured 2026-10-15: the new weights were
+# timed with the summariser resident. Such a job extends this hold while it
+# makes progress; a hold that is not renewed lapses, so a stuck job still
+# cannot block enrichment for longer than its last extension.
+_bulk_hold_until = 0.0
+
+
+def extend_bulk_hold(seconds: float) -> None:
+    """Keep bulk enrichment waiting for ``seconds`` more (from now)."""
+    global _bulk_hold_until
+    import time as _t
+    _bulk_hold_until = max(_bulk_hold_until, _t.monotonic() + seconds)
+
+
+def release_bulk_hold() -> None:
+    global _bulk_hold_until
+    _bulk_hold_until = 0.0
+
+
+def _bulk_held() -> float:
+    import time as _t
+    return max(0.0, _bulk_hold_until - _t.monotonic())
+
+
 async def wait_for_enrichment_slot(timeout: float = 600.0) -> None:
     """Bulk enrichment workers call this before each LLM call (replaces the
     bare ``wait_for_curator`` checkpoint in the bulk consumer).
@@ -645,7 +671,7 @@ async def wait_for_enrichment_slot(timeout: float = 600.0) -> None:
         # Loop: wait on whichever gate is currently closed, then re-check
         # both — the other one could have closed while we waited.
         while not (curator_event.is_set() and pe_event.is_set()):
-            remaining = deadline - loop.time()
+            remaining = max(deadline - loop.time(), _bulk_held())
             if remaining <= 0:
                 logger.warning(
                     "Bulk enrichment slot wait timed out after %gs — resuming anyway",
@@ -656,6 +682,8 @@ async def wait_for_enrichment_slot(timeout: float = 600.0) -> None:
             try:
                 await asyncio.wait_for(closed.wait(), timeout=remaining)
             except asyncio.TimeoutError:
+                if _bulk_held() > 0:
+                    continue        # the holder renewed its hold meanwhile
                 logger.warning(
                     "Bulk enrichment slot wait timed out after %gs — resuming anyway",
                     timeout,

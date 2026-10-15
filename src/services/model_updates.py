@@ -214,18 +214,45 @@ async def _bake(endpoint: str, name: str, base: str) -> None:
         raise RuntimeError(f"bake {name}: HTTP {r.status_code}")
 
 
+def _same(a: str, b: str) -> bool:
+    norm = lambda n: n if ":" in n else f"{n}:latest"
+    return norm(a or "") == norm(b or "")
+
+
 async def _residency(endpoint: str, model: str) -> dict:
+    """VRAM and GPU share of exactly ``model`` (the bake name — a prefix
+    match once picked up the 2 GB summariser), plus every OTHER model that
+    was resident at the same moment: a number taken next to another model
+    is not that model's number."""
+    try:
+        r = await _ollama(endpoint, "GET", "/api/ps")
+        models = r.json().get("models") or []
+    except (httpx.HTTPError, ValueError):
+        return {}
+    out = {"co_resident": [m.get("name") for m in models
+                           if not _same(m.get("name") or m.get("model"), model)]}
+    for m in models:
+        if _same(m.get("name") or m.get("model"), model):
+            size, vram = m.get("size") or 0, m.get("size_vram") or 0
+            out.update(vram_gb=round(vram / 2**30, 1),
+                       gpu_share_pct=round(100 * vram / size) if size else None,
+                       context=m.get("context_length"))
+    return out
+
+
+async def _alone(endpoint: str, model: str) -> None:
+    """Unload every resident model except ``model`` and hold bulk
+    enrichment off, so what follows is measured on a quiet card."""
+    from src.services.llm_priority import _evict_model, extend_bulk_hold
+    extend_bulk_hold(900)
     try:
         r = await _ollama(endpoint, "GET", "/api/ps")
         for m in r.json().get("models") or []:
-            if (m.get("name") or m.get("model") or "").split(":")[0] == model.split(":")[0]:
-                size, vram = m.get("size") or 0, m.get("size_vram") or 0
-                return {"vram_gb": round(vram / 2**30, 1),
-                        "gpu_share_pct": round(100 * vram / size) if size else None,
-                        "context": m.get("context_length")}
+            name = m.get("name") or m.get("model")
+            if name and not _same(name, model):
+                await _evict_model(name)
     except (httpx.HTTPError, ValueError):
         pass
-    return {}
 
 
 async def _speed(endpoint: str, model: str) -> dict:
@@ -292,9 +319,12 @@ async def sample_evidence(user_id: int, n: int = SAMPLE_TITLES) -> list[dict]:
 
 async def _run_side(endpoint: str, model: str, sample: list[dict], lang: str) -> dict:
     from src.services import pillars
+    from src.services.llm_priority import extend_bulk_hold
     from src.services.llm_utils import curator_options
+    await _alone(endpoint, model)
     rows = []
     for s in sample:
+        extend_bulk_hold(900)
         t0 = time.perf_counter()
         v = await pillars.adjudicate(s["facts"], model=model, skip_priority=True,
                                      law_extra=s["law_extra"])
@@ -316,8 +346,15 @@ async def _run_side(endpoint: str, model: str, sample: list[dict], lang: str) ->
                          {"role": "user", "content": q}], **curator_options(0.7, 400)})
         text = ((r.json().get("message") or {}).get("content") or "") if r.status_code == 200 else ""
         chats.append({"prompt": q, "text": text.strip(), "s": round(time.perf_counter() - t0, 1)})
-    return {"titles": rows, "chat": chats, "speed": await _speed(endpoint, model),
-            "residency": await _residency(endpoint, model)}
+    return {"titles": rows, "chat": chats, **(await measure(endpoint, model))}
+
+
+async def measure(endpoint: str, model: str) -> dict:
+    """Speed probe + residency on a quiet card."""
+    await _alone(endpoint, model)
+    speed = await _speed(endpoint, model)
+    res = await _residency(endpoint, model)
+    return {"speed": speed, "residency": res, "clean": not res.get("co_resident")}
 
 
 def summarize(old: dict, new: dict) -> dict:
@@ -394,6 +431,8 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
 
 
 def _clear_marker(role: str) -> None:
+    from src.services.llm_priority import release_bulk_hold
+    release_bulk_hold()
     st = load_state()
     st.get(role, {}).pop("test_started", None)
     save_state(st)
@@ -487,13 +526,32 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
     if task is not None:
         task_monitor.update(task, message=f"{judge} reviews old vs new")
     await _refill_facts(cmp_, user_id)
-    async with curator_priority("model update review", exclusive_model=judge):
-        ev = await evaluate(cmp_, endpoint, judge)
-        await evict_if_resident(judge)
+    from src.services.llm_priority import release_bulk_hold
+    try:
+        async with curator_priority("model update review", exclusive_model=judge):
+            # Speed and VRAM again, each side alone on the card: the test's
+            # own figures may have been taken next to another model.
+            if task is not None:
+                task_monitor.update(task, message="re-measuring speed and VRAM, each side alone")
+            remeasured = {"old": await measure(endpoint, row["bake"]),
+                          "new": await measure(endpoint, TEST_BAKE)}
+            cmp_["summary"].update(
+                gen_tok_s={k: v["speed"].get("gen_tok_s") for k, v in remeasured.items()},
+                vram_gb={k: v["residency"].get("vram_gb") for k, v in remeasured.items()},
+                gpu_share_pct={k: v["residency"].get("gpu_share_pct") for k, v in remeasured.items()},
+                remeasured_clean=all(v["clean"] for v in remeasured.values()),
+                timings_contaminated=not all(
+                    (cmp_.get(side) or {}).get("clean", False) for side in ("old", "new")))
+            await _alone(endpoint, judge)
+            ev = await evaluate(cmp_, endpoint, judge)
+            await evict_if_resident(judge)
+    finally:
+        release_bulk_hold()
     ev["at"] = _now()
     state = load_state()
     if state.get(role, {}).get("comparison"):
         state[role]["comparison"]["evaluation"] = ev
+        state[role]["comparison"]["summary"] = cmp_["summary"]
         if cmp_.get("facts_rebuilt"):
             state[role]["comparison"]["facts"] = cmp_["facts"]
             state[role]["comparison"]["facts_rebuilt"] = True

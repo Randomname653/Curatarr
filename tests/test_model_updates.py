@@ -289,6 +289,52 @@ out = asyncio.run(ev.evaluate(spill, "e", "m"))
 check("review: a hard rule never turns a 'stay' into anything else",
       out["recommendation"] == "stay" and not out["overruled"])
 
+# ── a quiet card: exact residency, co-resident models, the bulk hold ──────
+class R:
+    def __init__(self, d): self._d = d; self.status_code = 200
+    def json(self): return self._d
+
+
+PS = {"models": [{"name": "curatarr-summarizer:latest", "size": 6 * 2**30, "size_vram": 2 * 2**30},
+                 {"name": "curatarr-update-test:latest", "size": 20 * 2**30, "size_vram": 20 * 2**30}]}
+
+
+async def ps_ollama(endpoint, method, path, **kw):
+    return R(PS)
+
+
+mu._ollama = ps_ollama
+res = asyncio.run(mu._residency("e", "curatarr-update-test"))
+check("residency: exactly the named model (a prefix match once read the 2 GB summariser)",
+      res["vram_gb"] == 20.0 and res["gpu_share_pct"] == 100)
+check("residency: every other resident model is recorded", res["co_resident"] == ["curatarr-summarizer:latest"])
+check("names with and without :latest are the same model", mu._same("x", "x:latest") and not mu._same("x", "xy"))
+
+import src.services.llm_priority as lp  # noqa: E402
+
+
+async def hold_case():
+    # The curator gate is closed; enrichment would give up after `timeout`.
+    lp.release_bulk_hold()      # the review tests above left a 900 s hold
+    lp._get_event().clear()
+    lp.extend_bulk_hold(0.6)
+    t0 = asyncio.get_event_loop().time()
+    await lp.wait_for_enrichment_slot(timeout=0.1)
+    waited = asyncio.get_event_loop().time() - t0
+    lp.release_bulk_hold()
+    t1 = asyncio.get_event_loop().time()
+    await lp.wait_for_enrichment_slot(timeout=0.1)
+    plain = asyncio.get_event_loop().time() - t1
+    lp._get_event().set()
+    return waited, plain
+
+
+waited, plain = asyncio.run(hold_case())
+check("bulk hold: enrichment keeps waiting past its timeout while a long job holds",
+      waited >= 0.55)
+check("bulk hold: without a hold the 600 s safety timeout still applies (here 0.1 s)",
+      plain < 0.4)
+
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]
 main = (root / "src/main.py").read_text(encoding="utf-8")
@@ -305,6 +351,8 @@ check("a daily check is scheduled, and never with next_run_time=None (that pause
       and not __import__("re").search(r"next_run_time\s*=\s*None\s*[,)]", sched))
 from tests.frontend_files import everything  # noqa: E402
 html = everything()
+check("the view says when per-title times were taken next to another model",
+      "timings_contaminated" in html)
 check("the Maintenance view shows the review and offers it when missing",
       "_muEval(" in html and "act('evaluateModelUpdate'" in html)
 check("Maintenance has the section, the bell reaches it",

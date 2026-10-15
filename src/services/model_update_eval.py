@@ -100,6 +100,8 @@ async def _ask(endpoint: str, model: str, system: str, user: str, schema: dict) 
 async def judge_pair(endpoint: str, model: str, key: str, system: str, context: str,
                      old: str, new: str) -> dict:
     """Both orders; the winner is NEW/OLD only when both reads agree."""
+    from src.services.llm_priority import extend_bulk_hold
+    extend_bulk_hold(900)     # a long review must not let enrichment in
     picks, reasons = [], []
     first_new_a = _new_is_a(key)
     for new_is_a in (first_new_a, not first_new_a):
