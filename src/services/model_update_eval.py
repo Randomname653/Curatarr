@@ -155,8 +155,12 @@ async def evaluate(comparison: dict, endpoint: str, judge_model: str) -> dict:
         f"({t['position_flips']} flipped with the order). "
         f"Chat: NEW {c['new']}, OLD {c['old']}, tie {c['tie']}. "
         f"Verdicts unchanged {s.get('verdicts_same')}/{s.get('verdicts_compared')}. "
-        f"Judge s old/new {s['judge_s']['old']}/{s['judge_s']['new']}; "
-        f"tok/s {s['gen_tok_s']['old']}/{s['gen_tok_s']['new']}; "
+        # Times taken next to another model are not handed over as numbers:
+        # the first clean review still argued from them.
+        + ("Per-title times: not comparable (taken while another model shared the card). "
+           if s.get("timings_contaminated") else
+           f"Judge s old/new {s['judge_s']['old']}/{s['judge_s']['new']}; ")
+        + f"tok/s {s['gen_tok_s']['old']}/{s['gen_tok_s']['new']}; "
         f"VRAM GB {_gb(s['vram_gb'].get('old'))}/{_gb(s['vram_gb'].get('new'))}; "
         f"failures {s['failures']['old']}/{s['failures']['new']}.\n"
         f"Hard rules violated: {'; '.join(hard) if hard else 'none'}.\n"

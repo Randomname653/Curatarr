@@ -364,6 +364,7 @@ async def fake_evaluate(cmp_, endpoint, judge):
 lp.curator_priority, lp.evict_if_resident = no_gate, noop
 real_measure = mu.measure
 mu._refill_facts, mu._alone, mu.measure = noop, noop, fake_measure
+real_evaluate = ev.evaluate
 ev.evaluate = fake_evaluate
 store.clear()
 store["curator"] = {**row0, "comparison": {
@@ -450,6 +451,44 @@ check("remote Ollama + plausible ps: Ollama's figure is used",
       m_ok["residency"]["vram_gb"] == 19.5 and m_ok["residency"]["vram_source"] == "ollama")
 check("the reviewer is told 'not measurable', never a None or a fake number",
       ev._gb(None) == "not measurable" and ev._gb(19.9) == "19.9")
+
+# ── Windows event loop + noisy speed probes ───────────────────────────────
+import src.services.setup_wizard as _sw  # noqa: E402
+for _mod in (mu, _sw):
+    check(f"{_mod.__name__} spawns nvidia-smi from a thread, never asyncio.create_subprocess_exec "
+          "(uvicorn --reload on Windows: SelectorEventLoop -> NotImplementedError)",
+          "create_subprocess_exec(" not in inspect.getsource(_mod).split('"""', 2)[-1]
+          or "create_subprocess_exec(" not in inspect.getsource(_mod))
+
+rates = iter([(160, 6.0e9), (160, 4.2e9), (160, 5.0e9)])   # 26.7 / 38.1 / 32.0 tok/s
+
+
+async def speed_ollama(endpoint, method, path, **kw):
+    ec, ed = next(rates)
+    return R({"eval_count": ec, "eval_duration": ed, "prompt_eval_count": 40,
+              "prompt_eval_duration": 4e7, "load_duration": 0})
+
+
+mu._ollama = speed_ollama
+sp = asyncio.run(mu._speed("e", "m"))
+check("speed: the median of three probes, with the spread shown",
+      sp["gen_tok_s"] == 32.0 and sp["gen_tok_s_range"] == [26.7, 38.1])
+_cont = {**cmp_fixture, "summary": {**cmp_fixture["summary"], "timings_contaminated": True,
+                                    "judge_s": {"old": 10.7, "new": 43.1}}}
+final_prompts = []
+
+
+async def capture_ask(endpoint, model, system, user, schema):
+    if schema is ev.FINAL_SCHEMA:
+        final_prompts.append(user)
+        return {"recommendation": "stay", "reason": "r"}
+    return {"better": "tie", "reason": "r"}
+
+
+ev._ask = capture_ask
+asyncio.run(real_evaluate(_cont, "e", "m"))
+check("review: contaminated per-title times are not handed over as numbers",
+      "not comparable" in final_prompts[-1] and "43.1" not in final_prompts[-1])
 
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]

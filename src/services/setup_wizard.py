@@ -603,12 +603,18 @@ async def detect_gpu() -> dict:
     model that will only fit once that program is gone.
     """
     import asyncio
+    import subprocess
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "nvidia-smi", "--query-gpu=name,memory.total,memory.free",
-            "--format=csv,noheader,nounits",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=8)
+        # A thread, not asyncio.create_subprocess_exec: on Windows the event
+        # loop uvicorn --reload runs is a SelectorEventLoop, which has no
+        # subprocess support — the call raised NotImplementedError, whose
+        # message is empty, and the probe answered with a blank error.
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, timeout=8)
+        out, err = proc.stdout, proc.stderr
         if proc.returncode != 0:
             msg = (err or out).decode(errors="replace").strip()
             return {"ok": False, "error": msg or "nvidia-smi failed"}
@@ -639,7 +645,7 @@ async def detect_gpu() -> dict:
                 "driver on this host (or a non-NVIDIA GPU). Pick the VRAM "
                 "manually."}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e) or type(e).__name__}
 
 
 async def warmup_check(ollama_endpoint: str, model: str) -> dict:

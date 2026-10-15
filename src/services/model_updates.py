@@ -255,18 +255,33 @@ async def _alone(endpoint: str, model: str) -> None:
         pass
 
 
+SPEED_PROBES = (
+    "Describe, in about 120 words, what a film archivist does all day.",
+    "Explain, in about 120 words, why some series lose their audience in season two.",
+    "Summarise, in about 120 words, how a record label decides which album to reissue.",
+)
+
+
 async def _speed(endpoint: str, model: str) -> dict:
+    """Generation speed as the median of three ~160-token probes — one
+    probe swung between 27 and 38 tok/s for the same weights."""
     from src.services.llm_utils import curator_options
-    r = await _ollama(endpoint, "POST", "/api/generate", json={
-        "model": model, "stream": False, "keep_alive": "5m",
-        "prompt": "Describe, in about 120 words, what a film archivist does all day.",
-        **{k: v for k, v in curator_options(0.0, 160).items()}})
-    d = r.json() if r.status_code == 200 else {}
-    ec, ed = d.get("eval_count"), d.get("eval_duration")
-    pc, pd = d.get("prompt_eval_count"), d.get("prompt_eval_duration")
-    return {"gen_tok_s": round(ec / (ed / 1e9), 1) if ec and ed else None,
-            "prefill_tok_s": round(pc / (pd / 1e9), 1) if pc and pd else None,
-            "load_s": round((d.get("load_duration") or 0) / 1e9, 1)}
+    gen, pre, load = [], [], []
+    for prompt in SPEED_PROBES:
+        r = await _ollama(endpoint, "POST", "/api/generate", json={
+            "model": model, "stream": False, "keep_alive": "5m", "prompt": prompt,
+            **{k: v for k, v in curator_options(0.0, 160).items()}})
+        d = r.json() if r.status_code == 200 else {}
+        ec, ed = d.get("eval_count"), d.get("eval_duration")
+        pc, pd = d.get("prompt_eval_count"), d.get("prompt_eval_duration")
+        if ec and ed:
+            gen.append(ec / (ed / 1e9))
+        if pc and pd:
+            pre.append(pc / (pd / 1e9))
+        load.append((d.get("load_duration") or 0) / 1e9)
+    med = lambda v: round(statistics.median(v), 1) if v else None
+    return {"gen_tok_s": med(gen), "gen_tok_s_range": [round(min(gen), 1), round(max(gen), 1)] if gen else None,
+            "prefill_tok_s": med(pre), "load_s": round(load[0], 1) if load else None}
 
 
 async def sample_evidence(user_id: int, n: int = SAMPLE_TITLES) -> list[dict]:
@@ -356,13 +371,18 @@ def _is_local(endpoint: str) -> bool:
 
 async def _smi_used_mib() -> int | None:
     """Card-wide VRAM in use (nvidia-smi), None without an NVIDIA driver."""
+    import subprocess
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        return max(int(x) for x in out.decode().split() if x.strip().isdigit())
-    except Exception:
+        # A thread: the Windows event loop under uvicorn --reload cannot spawn
+        # subprocesses (NotImplementedError) — the first review fell back to
+        # Ollama's figure for exactly that reason.
+        proc = await asyncio.to_thread(
+            subprocess.run, ["nvidia-smi", "--query-gpu=memory.used",
+                             "--format=csv,noheader,nounits"],
+            capture_output=True, timeout=10)
+        return max(int(x) for x in proc.stdout.decode().split() if x.strip().isdigit())
+    except Exception as e:
+        logger.info("[model update] nvidia-smi unavailable: %s", type(e).__name__)
         return None
 
 
