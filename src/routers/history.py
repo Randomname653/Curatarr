@@ -53,7 +53,8 @@ async def sync_status(
     db: Session = Depends(get_db),
 ):
     """Return history count + taste vector summary for the current user."""
-    count = db.query(WatchHistoryEntry).filter(WatchHistoryEntry.user_id == user.id).count()
+    # ⚡ Bolt: Avoids subquery generation SELECT count(*) FROM (SELECT id FROM watch_history) by querying func.count directly
+    count = db.query(func.count(WatchHistoryEntry.id)).filter(WatchHistoryEntry.user_id == user.id).scalar()
     tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user.id).first()
 
     # Aggregate completion stats per type via SQL instead of loading all rows
