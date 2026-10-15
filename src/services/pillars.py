@@ -353,7 +353,7 @@ def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> d
     result: "nobody watched it" built from an exception is a fabricated fact,
     and on Pillar III it is the one that deletes a household member's show."""
     out = {"ow": None, "ow_unknown": False, "others": None,
-           "taste_summary": "", "fb_blob": None}
+           "taste_summary": "", "fb_blob": None, "fb_unknown": False}
     try:
         out["ow"] = _owner_watch(db, user_id, item, category)
     except Exception as e:
@@ -378,7 +378,10 @@ def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> d
         if etv and etv.encrypted_blob:
             out["fb_blob"] = _json.loads(etv.encrypted_blob)
     except Exception as e:
-        logger.debug("[pillars] owner-feedback read failed for %r: %s", title, e)
+        # The blob carries the owner's verdicts and dislikes: unreadable is
+        # not "the owner never said anything" (build_evidence defers it).
+        logger.warning("[pillars] owner-feedback read failed for %r: %s", title, e)
+        out["fb_unknown"] = True
     return out
 
 
@@ -448,7 +451,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         owner_watched, other_user_engaged, bitrate_outlier, acclaim_present,
         household_claim (who, by Python's reading of Pillar III), and
         owner_watch_unknown / household_unknown when the watch data could not
-        be read — the deletion loop defers those instead of judging blind.
+        be read, owner_signal_unknown when what the owner said about it (feedback,
+        keep-considerations, taught principles) could not be — the deletion
+        loop defers those instead of judging blind.
 
     Without ``db`` the database is read in a short session of its own that
     closes before the first network call. A caller passing ``db`` owns that
@@ -466,7 +471,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
              "owner_signal": False, "evidence_thin": False,
              "significance_unchecked": False, "dialogue_signal": False,
              "evidence_mismatched": False, "owner_watch_unknown": False,
-             "household_unknown": False, "household_claim": ""}
+             "household_unknown": False, "owner_signal_unknown": False,
+             "household_claim": ""}
 
     if db is None:
         from src.database.connection import get_db_session
@@ -621,7 +627,13 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                 shape += f"; all of the owner's plays are in season {seen[0]}"
             owner_line += f" ({shape})"
     except Exception as e:
-        logger.debug("[pillars] verified-data failed for %r: %s", title, e)
+        # Unreadable is not "no documented stature": the unchecked-significance
+        # gate defers the title. It used to log at DEBUG and fall through to
+        # the Wikipedia stub, so a recurring failure here judged every title
+        # with no acclaim on record - the bias the gate exists to prevent.
+        logger.warning("[pillars] verified-data failed for %r: %s", title, e,
+                       exc_info=True)
+        flags["significance_unchecked"] = True
     # The cache's tri-state ("checked: definitively nothing" vs "never
     # successfully checked") must reach the judge, or silence gets read as
     # "no stature" and condemns a title whose article simply hasn't been
@@ -688,6 +700,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     # plot is terrible" or a standing dislike is direct owner testimony the
     # judge must weigh; standing aversions ride along on the taste line. ──
     feedback_line = ""
+    if dbf.get("fb_unknown"):
+        flags["owner_signal_unknown"] = True
     try:
         blob = dbf["fb_blob"]
         if isinstance(blob, dict):
@@ -725,7 +739,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                 taste = (taste + " " if taste else "") + \
                     f"Standing aversions the owner has voiced (0-1): {av_str}."
     except Exception as e:
-        logger.debug("[pillars] owner-feedback failed for %r: %s", title, e)
+        logger.warning("[pillars] owner-feedback failed for %r: %s", title, e)
+        flags["owner_signal_unknown"] = True
 
     # Item profile (title + genres + short synopsis) — the anchor for BOTH the
     # per-item owner signals (P2) and the learned-principles retrieval (P4).
@@ -756,7 +771,10 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
             owner_signals = "".join(f"OWNER SIGNAL: {scrub_untrusted(c['content'])}\n"
                                     for c in cons)
     except Exception as e:
-        logger.debug("[pillars] owner-signals failed for %r: %s", title, e)
+        # The keep-reasons the owner gave are what stops a valued title being
+        # trashed on taste alone: without them, defer rather than judge.
+        logger.warning("[pillars] owner-signals failed for %r: %s", title, e)
+        flags["owner_signal_unknown"] = True
 
     # ── LEARNED PRINCIPLES (P4: the judge applies rules the owner taught it) ──
     # The ACTIVE principles relevant to this title, appended to the constitution
@@ -772,7 +790,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                 await retrieve_principles(user_id, category=category,
                                           item_profile=item_profile, top_k=6))
     except Exception as e:
-        logger.debug("[pillars] principles retrieval failed for %r: %s", title, e)
+        logger.warning("[pillars] principles retrieval failed for %r: %s", title, e)
+        flags["owner_signal_unknown"] = True
 
     # ── TECH / bitrate axis ──
     try:

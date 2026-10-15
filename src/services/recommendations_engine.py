@@ -2129,6 +2129,7 @@ async def generate_deletion_proposals(
         misfiled_skipped = 0
         unchecked_skipped = 0
         watch_unknown_skipped = 0
+        signal_unknown_skipped = 0
         # Why titles got no verdict, by llm_errors.LLMFailure value. A real
         # EVALUATE is not in here: the model looked and could not decide.
         fail_kinds: Counter = Counter()
@@ -2330,6 +2331,18 @@ async def generate_deletion_proposals(
                                        "history could not be read",
                                        category, item.get("title"))
                         continue
+                    # UNREADABLE-OWNER-SIGNAL GATE: the owner's recorded
+                    # verdicts, keep-reasons and taught principles are what
+                    # keep a valued title from being cut on taste alone. Not
+                    # being able to read them is not "the owner never said".
+                    if _fl.get("owner_signal_unknown"):
+                        signal_unknown_skipped += 1
+                        judged -= 1
+                        logger.warning("[deletions] %s: deferring %r — the "
+                                       "owner's feedback, keep-reasons or "
+                                       "principles could not be read",
+                                       category, item.get("title"))
+                        continue
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
@@ -2434,6 +2447,8 @@ async def generate_deletion_proposals(
                 if unchecked_skipped else "")
              + (f" ({watch_unknown_skipped} deferred: watch history unreadable)"
                 if watch_unknown_skipped else "")
+             + (f" ({signal_unknown_skipped} deferred: owner feedback unreadable)"
+                if signal_unknown_skipped else "")
              + (f" ({household_floored} turned into 'Your call': another "
                 f"household member engaged)" if household_floored else "")
              + (f" ({sum(fail_kinds.values())} failed: "
@@ -2443,7 +2458,7 @@ async def generate_deletion_proposals(
         _record_deletion_run(
             category, judged=judged, flagged=len(final_proposals),
             deferred=(thin_skipped + misfiled_skipped + unchecked_skipped
-                      + watch_unknown_skipped),
+                      + signal_unknown_skipped + watch_unknown_skipped),
             fail_kinds=dict(fail_kinds), stopped=stopped)
         return final_proposals
 

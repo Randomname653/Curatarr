@@ -2947,6 +2947,19 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     # Reconcile the EnrichmentStatus row to reflect
                     # that — no re-fetch, no LLM polish needed.
                     cached_profile = raw["_cached_profile"]
+                    if cached_profile.get("vector_pending"):
+                        # Polished, but its vector never landed (embed or
+                        # Chroma down at the time). Re-embed from the cache:
+                        # one embedding call, no summariser call.
+                        from src.services.media_enricher import store_profile_vector
+                        if await store_profile_vector(
+                                cached_profile,
+                                media_type=cached_profile.get("media_type") or pcat,
+                                fallback_title=pitem.get("title") or ""):
+                            cached_profile.pop("vector_pending", None)
+                            from src.cache.metadata_cache import MetadataCache
+                            with MetadataCache() as _vc:
+                                _vc.set_cache(raw["_cache_key"], cached_profile, days=30)
                     await _write_enrichment_db(pitem, cached_profile, pcat, fresh_attempt=False)
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)

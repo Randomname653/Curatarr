@@ -25,6 +25,8 @@ _last_result: dict = {}
 # A whole extended history is a few dozen MB; a single member beyond this is
 # not a Spotify export, it is a mistake (or mischief on the LAN).
 _MAX_FILE_MB = 200
+# An extended-history export is a zip, or a handful of JSON files.
+_MAX_FILES = 20
 
 
 @router.get("/spotify/status")
@@ -39,10 +41,16 @@ async def spotify_status(_gate=Depends(require_admin_or_first_run)):
 @router.post("/spotify/files")
 async def spotify_upload(files: list[UploadFile] = File(...),
                          _gate=Depends(require_admin_or_first_run)):
+    if len(files) > _MAX_FILES:
+        raise HTTPException(status_code=413,
+                            detail=f"At most {_MAX_FILES} files per upload")
     saved, rejected = [], []
+    cap = _MAX_FILE_MB * 1024 * 1024
     for up in files:
-        content = await up.read()
-        if len(content) > _MAX_FILE_MB * 1024 * 1024:
+        # Bounded read: one byte past the cap is enough to refuse it. A
+        # plain read() held every upload whole in memory before the check.
+        content = await up.read(cap + 1)
+        if len(content) > cap:
             rejected.append((up.filename, f"larger than {_MAX_FILE_MB} MB"))
             continue
         result = spotify_import.save_upload(up.filename or "upload", content)

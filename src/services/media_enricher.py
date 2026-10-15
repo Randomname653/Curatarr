@@ -35,6 +35,7 @@ from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_opt
                                     fence_untrusted, scrub_untrusted)
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
 
 
 # Pass 99-fu2: prompt version tag for the two-tier cache split.
@@ -962,7 +963,7 @@ async def fetch_significance(
             # significance vocabulary, within the same total budget.
             extract = _significance_slice(extract)
     except Exception as e:
-        logger.debug("[significance] Wikipedia fetch failed for %r: %s", title, e)
+        log_topup_failure(logger, "[significance] Wikipedia", title, e)
         return None
 
     # Scrubbed, not fenced: the template above is hashed into the cache
@@ -1549,7 +1550,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             ):
                 added += 1
         except Exception as e:
-            logger.debug("[significance-backfill] %r failed: %s", title, e)
+            log_topup_failure(logger, "[significance-backfill]", title, e)
         checked += 1
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}
@@ -4037,17 +4038,37 @@ async def process_and_save(raw: dict) -> Optional[dict]:
     if match_conf is not None:
         profile["match_confidence"] = match_conf
 
+    # Vector first, cache second. The profile used to be cached as final
+    # BEFORE the embed, and an embed or Chroma failure was logged at DEBUG:
+    # the item was marked enriched, every later run took the "already
+    # enriched" exit, and it was never embedded. A failed write now rides in
+    # the cached profile as ``vector_pending``; the next run re-embeds it from
+    # the cache (an embedding call, no summariser call).
+    if not await store_profile_vector(profile, media_type=media_type,
+                                      fallback_title=raw.get("title", "")):
+        profile["vector_pending"] = True
     if cache_key:
         cache = MetadataCache()
         cache.set_cache(cache_key, profile, days=30)
         cache.close()
 
-    # Generate embedding and store in ChromaDB
+    return profile
+
+
+async def store_profile_vector(profile: dict, *, media_type: str,
+                               fallback_title: str = "") -> bool:
+    """Embed a polished profile and upsert it into ChromaDB. True when the
+    vector landed, or there was nothing to embed; False when it should be
+    retried. Ids come off the profile (plex key, TMDB, AniList, title)."""
+    plex_rating_key = profile.get("plex_rating_key")
+    tmdb_id = profile.get("tmdb_id")
+    anilist_id = profile.get("anilist_id")
+    gen = None
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
         from src.vector_store.chromadb_wrapper import chroma_db
 
-        title = profile.get("title", raw.get("title", ""))
+        title = profile.get("title", fallback_title)
         text_to_embed = profile.get("embedding_text")
         if not text_to_embed and media_type == "music":
             text_to_embed = (
@@ -4055,46 +4076,56 @@ async def process_and_save(raw: dict) -> Optional[dict]:
                 f"Tags: {', '.join(profile.get('keywords', [])[:8])}."
             )
 
-        if text_to_embed:
-            gen = EmbeddingGenerator()
-            vec = await gen.generate_embedding(text_to_embed)
-            if vec:
-                doc_id = str(plex_rating_key or tmdb_id or anilist_id or title)
-                _dom = _domain_for_write(media_type, profile.get("genres"))
-                chroma_meta = {
-                    "title": title,
-                    "media_type": _dom,
-                    "domain": _dom,   # hard quarantine key for gated retrieval
-                    "genres": ", ".join(profile.get("genres", [])[:6]
-                                       if isinstance(profile.get("genres"), list) else []),
-                    "themes": ", ".join(profile.get("themes", [])[:6]
-                                       if isinstance(profile.get("themes"), list) else []),
-                    "mood": ", ".join(profile.get("mood", [])
-                                     if isinstance(profile.get("mood"), list) else []),
-                    "year": profile.get("year") or 0,
-                }
-                # Upsert, not add: a re-enrich must replace the vector too
-                # (add keeps the old one for an existing id — see the wrapper).
-                chroma_db.upsert_documents(
-                    documents=[text_to_embed],
-                    embeddings=[vec],
-                    metadatas=[chroma_meta],
-                    ids=[doc_id],
-                )
-                # Facet points (multi-vector items, stage 1) — isolated so a
-                # facet failure can never break the main index write.
-                try:
-                    from src.services.facet_index import write_facets
-                    await write_facets(doc_id, title, media_type,
-                                       chroma_meta["genres"],
-                                       profile.get("themes"))
-                except Exception as _fe:
-                    logger.debug("facet write failed for %r: %s", title, _fe)
-            await gen.close()
-    except Exception as e:
-        logger.debug("ChromaDB store failed for '%s': %s", profile.get("title", "?"), e)
-
-    return profile
+        if not text_to_embed:
+            return True
+        gen = EmbeddingGenerator()
+        vec = await gen.generate_embedding(text_to_embed)
+        if not vec:
+            logger.warning("[enricher] no embedding for %r - vector retried next run",
+                           title)
+            return False
+        doc_id = str(plex_rating_key or tmdb_id or anilist_id or title)
+        _dom = _domain_for_write(media_type, profile.get("genres"))
+        chroma_meta = {
+            "title": title,
+            "media_type": _dom,
+            "domain": _dom,   # hard quarantine key for gated retrieval
+            "genres": ", ".join(profile.get("genres", [])[:6]
+                               if isinstance(profile.get("genres"), list) else []),
+            "themes": ", ".join(profile.get("themes", [])[:6]
+                               if isinstance(profile.get("themes"), list) else []),
+            "mood": ", ".join(profile.get("mood", [])
+                             if isinstance(profile.get("mood"), list) else []),
+            "year": profile.get("year") or 0,
+        }
+        # Upsert, not add: a re-enrich must replace the vector too
+        # (add keeps the old one for an existing id — see the wrapper).
+        chroma_db.upsert_documents(
+            documents=[text_to_embed],
+            embeddings=[vec],
+            metadatas=[chroma_meta],
+            ids=[doc_id],
+        )
+        # Facet points (multi-vector items, stage 1) — isolated so a
+        # facet failure can never break the main index write.
+        try:
+            from src.services.facet_index import write_facets
+            await write_facets(doc_id, title, media_type,
+                               chroma_meta["genres"],
+                               profile.get("themes"))
+        except Exception as _fe:
+            logger.debug("facet write failed for %r: %s", title, _fe)
+        return True
+    except Exception:
+        logger.exception("[enricher] ChromaDB store failed for %r - vector retried next run",
+                         profile.get("title") or fallback_title)
+        return False
+    finally:
+        if gen is not None:
+            try:
+                await gen.close()
+            except Exception:
+                pass
 
 
 # ── MAIN ENRICHMENT ENTRY POINT ───────────────────────────────────────────────

@@ -1138,6 +1138,26 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
         return 0
 
 
+# Below this share of free pages a full VACUUM rewrites the file for little:
+# skip it (the 2026-10-11 concurrency audit, gating).
+_VACUUM_MIN_FREE_RATIO = 0.2
+# Long writers a VACUUM would stall for its whole rewrite.
+_VACUUM_BUSY_FLAGS = ("enrichment_running", "music_pipeline_running",
+                      "plex_sync_running", "deletion_run")
+
+
+def _free_page_ratio(path: str) -> float:
+    """freelist_count / page_count of one SQLite file (read-only)."""
+    import sqlite3
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    try:
+        pages = conn.execute("PRAGMA page_count").fetchone()[0] or 0
+        free = conn.execute("PRAGMA freelist_count").fetchone()[0] or 0
+        return free / pages if pages else 0.0
+    finally:
+        conn.close()
+
+
 def _vacuum_sqlite_file(path: str) -> None:
     """Blocking VACUUM of one SQLite file — run it off the event loop.
 
@@ -1208,10 +1228,26 @@ async def job_db_vacuum():
         task_monitor.skip(task, "No SQLite files found to vacuum")
         return
 
+    # A VACUUM holds the write lock for the whole rewrite: every writer that
+    # comes along waits up to the busy timeout and then fails. Not while a
+    # long job is writing - the task stays due and the next tick tries again.
+    from src.services.app_state import get_state
+    busy = [k for k in _VACUUM_BUSY_FLAGS if get_state(k) == "1"]
+    if busy:
+        task_monitor.skip(task, "Postponed - running: " + ", ".join(busy))
+        logger.info("[scheduler] vacuum postponed: %s running", ", ".join(busy))
+        return False
+
     summary_lines = []
     failed = False
     for label, path in targets:
         try:
+            ratio = await asyncio.to_thread(_free_page_ratio, path)
+            if ratio < _VACUUM_MIN_FREE_RATIO:
+                line = f"{label}: {ratio:.0%} free pages - nothing worth a rewrite"
+                summary_lines.append(line)
+                logger.info("[scheduler] vacuum skipped %s", line)
+                continue
             size_before = os.path.getsize(path)
             await asyncio.to_thread(_vacuum_sqlite_file, path)
             size_after = os.path.getsize(path)

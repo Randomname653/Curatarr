@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # piece of history instead of being rewritten as today's viewing.
 RESUME_WINDOW_DAYS = 30
 
+# New history rows per commit in a sync.
+_WRITE_BATCH = 2000
+
 from src.services.task_monitor import task_monitor, TaskStatus
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.services.llm_utils import (
@@ -798,6 +801,13 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 })
                 existing.add(dedup_key)
                 synced += 1
+                # A first or backlog sync is 10^4-10^5 rows: one commit at the
+                # end held SQLite's write lock for the whole flush, stalling
+                # every other writer (2026-10-11 concurrency audit). Chunked
+                # commits are safe to re-run: dedup reads the table, and the
+                # watermark only moves after a complete sync.
+                if synced % _WRITE_BATCH == 0:
+                    db.commit()
 
             db.commit()
 
@@ -1276,6 +1286,11 @@ async def import_plex_history_for_user(user_id: int) -> dict:
     }
 
 
+# Rows per write transaction in re-attribution: short enough that a loop-side
+# writer never waits on it for long, large enough to stay a handful of commits.
+_REATTRIBUTE_CHUNK = 2000
+
+
 async def reattribute_watch_history() -> dict:
     """Admin action: re-pull Plex history and fix user attribution on existing rows.
 
@@ -1312,90 +1327,102 @@ async def reattribute_watch_history() -> dict:
     # whether watch_history was imported from outside Plex).
     unattributable_samples: list[dict] = []
 
-    with get_db_session() as db:
-        users = db.query(User).all()
-        if not users:
-            return {"error": "No users in DB"}
-        account_to_user = await _fetch_account_to_user_map(plex_url, headers, users)
+    # No session across the network call, and no ORM walk on the loop. The
+    # session used to stay open across the /accounts fetch, then load EVERY
+    # non-Spotify WatchHistoryEntry as an ORM object and mutate them all in
+    # one transaction on the event loop (2026-10-11 concurrency audit, Med).
+    # Now: a user snapshot, the account map, then a column-only scan and
+    # PK-bulk updates in short write transactions on worker threads.
+    from types import SimpleNamespace
+    from sqlalchemy import or_, update as _update
+    from src.database.connection import write_session
+    from src.database.runner import run_read, run_write
 
+    def _snapshot_users() -> list:
+        with get_db_session() as db:
+            return [SimpleNamespace(id=u.id, is_admin=u.is_admin,
+                                    plex_username=u.plex_username)
+                    for u in db.query(User).all()]
+
+    users = await run_read(_snapshot_users)
+    if not users:
+        return {"error": "No users in DB"}
+    account_to_user = await _fetch_account_to_user_map(plex_url, headers, users)
+
+    def _scan() -> list:
         # Filter out anything that originated from Spotify, even if
         # music_matcher later linked it to a Plex music ratingKey: those
         # plays happened on Spotify, not Plex, so they have no entry in
         # /status/sessions/history/all and their per-track viewed_at can't
         # be cross-referenced. Excluding spotify-prefixed pids alone misses
         # ~150k matched-into-Plex rows.
-        from sqlalchemy import or_
-        rows = db.query(WatchHistoryEntry).filter(
-            or_(
-                WatchHistoryEntry.source.is_(None),
-                WatchHistoryEntry.source != "spotify",
-            ),
-            ~WatchHistoryEntry.plex_item_id.like("spotify:%"),
-        ).all()
+        W = WatchHistoryEntry
+        with get_db_session() as db:
+            return db.query(W.id, W.plex_item_id, W.viewed_at, W.user_id,
+                            W.plex_user_id, W.title).filter(
+                or_(W.source.is_(None), W.source != "spotify"),
+                ~W.plex_item_id.like("spotify:%"),
+            ).all()
 
-        updated = 0
-        unchanged = 0
-        unattributable = 0
+    rows = await run_read(_scan)
 
-        # How many of our local watch_history ratingKeys does Plex even know about?
-        local_rks = {r.plex_item_id for r in rows if r.plex_item_id}
-        rks_in_plex_history = len(local_rks & by_rk.keys())
-        rks_missing_from_plex = len(local_rks - by_rk.keys())
+    updated = 0
+    unchanged = 0
+    unattributable = 0
+    changes: list[dict] = []
 
-        for row in rows:
-            rk = row.plex_item_id
-            if not rk:
-                continue
-            vts = calendar.timegm(row.viewed_at.utctimetuple()) if row.viewed_at else None
+    # How many of our local watch_history ratingKeys does Plex even know about?
+    local_rks = {r.plex_item_id for r in rows if r.plex_item_id}
+    rks_in_plex_history = len(local_rks & by_rk.keys())
+    rks_missing_from_plex = len(local_rks - by_rk.keys())
 
-            # Find accountID — exact match preferred, fuzzy ±90s as fallback
-            acc_id = None
-            if vts is not None:
-                acc_id = exact.get((rk, vts))
-                if acc_id is None:
-                    candidates = by_rk.get(rk) or []
-                    if candidates:
-                        best = min(candidates, key=lambda c: abs(c[0] - vts))
-                        if abs(best[0] - vts) <= 90:
-                            acc_id = best[1]
+    for row in rows:
+        rk = row.plex_item_id
+        if not rk:
+            continue
+        vts = calendar.timegm(row.viewed_at.utctimetuple()) if row.viewed_at else None
 
+        # Find accountID — exact match preferred, fuzzy ±90s as fallback
+        acc_id = None
+        if vts is not None:
+            acc_id = exact.get((rk, vts))
             if acc_id is None:
-                unattributable += 1
-                if len(unattributable_samples) < 5:
-                    unattributable_samples.append({
-                        "plex_item_id": rk,
-                        "viewed_at": row.viewed_at.isoformat() if row.viewed_at else None,
-                        "title": (row.title or "")[:80],
-                        "rk_in_plex_history": rk in by_rk,
-                    })
-                continue
+                candidates = by_rk.get(rk) or []
+                if candidates:
+                    best = min(candidates, key=lambda c: abs(c[0] - vts))
+                    if abs(best[0] - vts) <= 90:
+                        acc_id = best[1]
 
-            target_user = account_to_user.get(str(acc_id))
-            if target_user is None:
-                # Account exists on the Plex server but no Curatarr user has
-                # logged in for it yet. Update plex_user_id so we can find
-                # the row again later, but leave user_id parked on whoever
-                # owns it now.
-                if row.plex_user_id != str(acc_id):
-                    row.plex_user_id = str(acc_id)
-                    updated += 1
-                else:
-                    unchanged += 1
-                continue
+        if acc_id is None:
+            unattributable += 1
+            if len(unattributable_samples) < 5:
+                unattributable_samples.append({
+                    "plex_item_id": rk,
+                    "viewed_at": row.viewed_at.isoformat() if row.viewed_at else None,
+                    "title": (row.title or "")[:80],
+                    "rk_in_plex_history": rk in by_rk,
+                })
+            continue
 
-            changed = False
-            if row.user_id != target_user.id:
-                row.user_id = target_user.id
-                changed = True
-            if row.plex_user_id != str(acc_id):
-                row.plex_user_id = str(acc_id)
-                changed = True
-            if changed:
-                updated += 1
-            else:
-                unchanged += 1
+        target_user = account_to_user.get(str(acc_id))
+        # Account exists on the Plex server but no Curatarr user has logged
+        # in for it yet: update plex_user_id so we can find the row again
+        # later, but leave user_id parked on whoever owns it now.
+        new_uid = target_user.id if target_user is not None else row.user_id
+        if row.user_id != new_uid or row.plex_user_id != str(acc_id):
+            # Both columns in every dict: one statement shape for the batch.
+            changes.append({"id": row.id, "user_id": new_uid,
+                            "plex_user_id": str(acc_id)})
+            updated += 1
+        else:
+            unchanged += 1
 
-        db.commit()
+    def _apply(chunk: list) -> None:
+        with write_session() as db:              # lock held for one chunk
+            db.execute(_update(WatchHistoryEntry), chunk)
+
+    for i in range(0, len(changes), _REATTRIBUTE_CHUNK):
+        await run_write(_apply, changes[i:i + _REATTRIBUTE_CHUNK])
 
     # Re-attribution shifts which user owns which entries → invalidate cached
     # recommendations across the board so the next read regenerates against

@@ -3,7 +3,7 @@
 // Moved state.taskStreamRetries to state
 import { state } from './state.js';
 import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, pulseHeldBy, setBadge, setPulse, toast } from './ui.js';
-import { _swrInvalidate, _swrRun, api } from './api.js';
+import { _swrInvalidate, _swrRun, api, sessionEnded } from './api.js';
 
 // One task stream per tab. The guard used to sit BEFORE the ticket fetch, so
 // a retry timer and showApp() (or the Plex login poll) could both pass it
@@ -17,6 +17,23 @@ let _taskStreamRetry = null;
 function _retryTaskStream(ms) {
   clearTimeout(_taskStreamRetry);
   _taskStreamRetry = setTimeout(startTaskStream, ms);
+}
+
+// The ticket fetch retried at a fixed 3 s forever, silently, through a server
+// restart or an outage. It backs off now (3 s doubling to 30 s) and, from the
+// third miss, says the stream is down instead of "Connecting…".
+function _ticketFailed(why) {
+  const n = ++state.taskStreamRetries;
+  if (n >= 3) _showStreamDown(why);
+  _retryTaskStream(Math.min(30000, 3000 * 2 ** (n - 1)));
+}
+
+function _showStreamDown(why) {
+  const el = document.getElementById('tasks-list');
+  if (el) el.innerHTML = `<p class="t-danger loading" role="status" aria-live="polite">
+    ${SVG_WARN} Task stream disconnected (${esc(why)}) — retrying, or
+    <a class="t-amber" href="#" ${act('reloadPage', EVENT)} aria-label="Reload page to reconnect">reload page</a>.
+  </p>`;
 }
 
 export function stopTaskStream() {
@@ -41,13 +58,15 @@ async function _openTaskStream() {
   let r;
   try {
     r = await fetch('/api/tasks/ticket', { headers: { 'Authorization': `Bearer ${tok}` } });
-  } catch { _retryTaskStream(3000); return; }
-  // An expired session can never get a ticket; retrying every 3 s forever
-  // only spammed the log. The next api() call surfaces the sign-out.
-  if (r.status === 401) return;
-  if (!r.ok) { _retryTaskStream(3000); return; }
+  } catch { _ticketFailed('network'); return; }
+  // An ended session can never get a ticket. This used to return silently
+  // ("the next api() call surfaces the sign-out" - nothing did), leaving
+  // Activity on "Connecting…" or on frozen Running rows with live Cancel
+  // buttons. It ends the session the way api() does.
+  if (r.status === 401) { sessionEnded(await r.text().catch(() => '')); return; }
+  if (!r.ok) { _ticketFailed(`HTTP ${r.status}`); return; }
   let ticket;
-  try { ticket = (await r.json()).ticket; } catch { _retryTaskStream(3000); return; }
+  try { ticket = (await r.json()).ticket; } catch { _ticketFailed('bad ticket'); return; }
   if (state.taskEventSource) return;        // another opener won while we awaited
 
   const es = new EventSource(`/api/tasks/stream?ticket=${encodeURIComponent(ticket)}`);
@@ -56,7 +75,7 @@ async function _openTaskStream() {
   es.onopen = () => {
     state.taskStreamRetries = 0;
     const el = document.getElementById('tasks-list');
-    if (el?.textContent.includes('Connecting')) el.innerHTML = '';
+    if (el && /Connecting|disconnected/.test(el.textContent)) el.innerHTML = '';
   };
 
   es.onmessage = (e) => {
@@ -78,14 +97,9 @@ async function _openTaskStream() {
     state.taskEventSource = null;
     state.taskStreamRetries++;
 
-    // After 3 retries, likely an auth issue — show message and back off
+    // After 3 retries, show it and back off
     if (state.taskStreamRetries >= 3) {
-      const el = document.getElementById('tasks-list');
-      if (el) el.innerHTML = `<p class="t-danger loading" role="status" aria-live="polite">
-        ${SVG_WARN} Task stream disconnected —
-        <a class="t-amber" href="#" ${act('reloadPage', EVENT)} aria-label="Reload page to reconnect">reload page</a>
-        to reconnect.
-      </p>`;
+      _showStreamDown('connection lost');
       state.taskStreamRetries = 0; // reset so reload works
       _retryTaskStream(30000);     // retry after 30s
     } else {

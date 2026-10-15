@@ -190,6 +190,11 @@ Rules:
 
 # ── CONNECTION TESTS ──────────────────────────────────────────────────────────
 
+# The fixed-host tests (TMDB, Spotify, Last.fm) answered with str(e): never
+# exception text in a response (the policy _test_failed states).
+_HOSTED = "the service"
+
+
 def _test_failed(what: str, exc: Exception) -> dict:
     """A failed test of an operator-supplied address, without the raw error.
     Its text told "refused" from "timed out" from "no route" - a port scanner
@@ -201,9 +206,23 @@ def _test_failed(what: str, exc: Exception) -> dict:
     return {"ok": False, "error": f"Could not connect to {what} - check the address and that it is running"}
 
 
+async def _refused_target(what: str, url: str) -> Optional[dict]:
+    """A host NAME that resolves to a link-local / metadata address: the
+    URL validator only sees literal addresses (2026-10-10 audit, open item)."""
+    from src.services.endpoint_policy import resolved_refusal
+    why = await resolved_refusal(url)
+    if not why:
+        return None
+    logger.warning("[setup] %s test refused: %s", what, why)
+    return {"ok": False, "error": f"That {what} address resolves to a link-local / "
+                                  "metadata address - not a media service"}
+
+
 async def test_plex(url: str, token: str) -> dict:
     headers = {"Accept": "application/json", "X-Plex-Token": token,
                "X-Plex-Client-Identifier": "Curatarr-Setup"}
+    if (refused := await _refused_target("Plex", url)):
+        return refused
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{url.rstrip('/')}/identity", headers=headers)
@@ -217,6 +236,8 @@ async def test_plex(url: str, token: str) -> dict:
 
 
 async def test_ollama(endpoint: str) -> dict:
+    if (refused := await _refused_target("Ollama", endpoint)):
+        return refused
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{endpoint.rstrip('/')}/api/tags")
@@ -229,6 +250,8 @@ async def test_ollama(endpoint: str) -> dict:
 
 
 async def test_arr(url: str, api_key: str, service: str) -> dict:
+    if (refused := await _refused_target(service.capitalize(), url)):
+        return refused
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
@@ -255,7 +278,7 @@ async def test_tmdb(api_key: str) -> dict:
             return {"ok": True}
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(_HOSTED, e)
 
 
 async def test_spotify(client_id: str, client_secret: str) -> dict:
@@ -276,7 +299,7 @@ async def test_spotify(client_id: str, client_secret: str) -> dict:
             return {"ok": True}
         return {"ok": False, "error": data.get("error_description", f"HTTP {r.status_code}")}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(_HOSTED, e)
 
 
 async def test_lastfm(api_key: str) -> dict:
@@ -291,7 +314,7 @@ async def test_lastfm(api_key: str) -> dict:
             return {"ok": True}
         return {"ok": False, "error": r.json().get("message", "Invalid key")}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(_HOSTED, e)
 
 
 # ── ENV WRITER ────────────────────────────────────────────────────────────────
@@ -704,8 +727,13 @@ async def warmup_check(ollama_endpoint: str, model: str) -> dict:
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return {"ok": False, "error": f"Could not connect to Ollama at "
                 f"{ollama_endpoint}. Is it running?"}
+    except httpx.HTTPStatusError as e:
+        logger.info("[setup] warm-up failed: %s", e)
+        return {"ok": False, "error": f"Ollama answered HTTP {e.response.status_code} - "
+                                      "is the model pulled?"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        logger.info("[setup] warm-up failed: %s", e)
+        return {"ok": False, "error": "The warm-up did not complete - the log has the detail"}
 
 
 async def model_exists(ollama_endpoint: str, model_name: str) -> bool:

@@ -34,6 +34,7 @@ from src.services.llm_utils import (clean_llm_text, ollama_options,
                                     strip_think_tags, SUMMARIZER_KEEP_ALIVE)
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
 
 ANILIST_URL = "https://graphql.anilist.co"
 JIKAN_URL = "https://api.jikan.moe/v4"
@@ -520,7 +521,7 @@ async def topup_reception(
         logger.debug("[reception] transient for %r: %s", title, e)
         return False
     except Exception as e:
-        logger.debug("[reception] top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[reception]", title, e)
         return False
     finally:
         if owns:
@@ -602,7 +603,7 @@ async def topup_franchise(
         logger.debug("[reception] franchise transient for %r: %s", title, e)
         return False
     except Exception as e:
-        logger.debug("[reception] franchise top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[reception] franchise", title, e)
         return False
     finally:
         if owns:
@@ -712,7 +713,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
             ):
                 added += 1
         except Exception as e:
-            logger.debug("[reception-backfill] %r failed: %s", title, e)
+            log_topup_failure(logger, "[reception-backfill]", title, e)
         # piggyback: studio reputation notes (cache-hit after the first few
         # titles — ~400 distinct studios cover the whole anime library)
         try:

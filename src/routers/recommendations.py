@@ -1422,7 +1422,7 @@ async def approve_deletion(
         }
 
     success = await _delete_one_and_log(db, user.id, p)
-    db.commit()
+    await _commit_outcome(db, p)
     out = {"ok": success, "limbo": p.status == "limbo", "status": p.status}
     from src.services.deletion_returns import ban_warning
     if success and ban_warning(p):
@@ -1568,6 +1568,43 @@ async def delete_returned(
     return await approve_deletion(new.id, user=user, db=db)
 
 
+async def _commit_outcome(db: Session, p) -> None:
+    """Commit what ``_delete_one_and_log`` decided, AFTER the DELETE ran.
+
+    A plain ``db.commit()`` that failed here (database locked by a writer in
+    another process) left the row on the committed claim "deleting" -
+    hidden from every list until the next boot - and the session in
+    PendingRollbackError, so EVERY later item of a bulk run failed too.
+    Now: roll back, then write just the outcome, conditional on the claim
+    this run still holds, a few times. The resolution-log row is the one
+    thing a failed first commit loses, and that is logged."""
+    pid, title = p.id, p.title
+    status, resolved_at = p.status, p.resolved_at
+    try:
+        db.commit()
+        return
+    except Exception as e:
+        db.rollback()
+        logger.error("[deletion] could not record %r as %s (%s) — retrying the "
+                     "status alone", title, status, e)
+    for attempt in range(3):
+        try:
+            (db.query(DeletionProposal)
+             .filter(DeletionProposal.id == pid, DeletionProposal.status == "deleting")
+             .update({"status": status, "resolved_at": resolved_at},
+                     synchronize_session=False))
+            db.commit()
+            db.refresh(p)
+            return
+        except Exception as e:
+            db.rollback()
+            logger.error("[deletion] status write for %r failed (attempt %d): %s",
+                         title, attempt + 1, e)
+            await asyncio.sleep(2 * (attempt + 1))
+    logger.error("[deletion] %r stays 'deleting' — the next start parks it in limbo",
+                 title)
+
+
 async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
     """Execute the arr delete for ONE proposal: status/resolved_at plus the
     CuratorResolutionLog row. Shared by the single-approve endpoint and the
@@ -1664,7 +1701,7 @@ async def _delete_one_and_log(db: Session, user_id: int, p) -> bool:
                 f" — {override_reason}" if override_reason else "",
             )
         except Exception as e:
-            logger.debug("[deletion] resolution-log write failed: %s", e)
+            logger.warning("[deletion] resolution-log write failed: %s", e)
         # Music: SoulSync's playlist sync compares against Plex and would
         # fetch a liked song of the artist again within the hour.
         from src.services.deletion_returns import ban_deleted_artist
@@ -1849,7 +1886,7 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                             logger.debug("[bulk-delete] comment learn failed for %r: %s",
                                          title, e)
                     success = await _delete_one_and_log(db, user_id, p)
-                    db.commit()
+                    await _commit_outcome(db, p)
                     if success:
                         ok += 1
                         freed_mb += float(p.storage_mb or 0)
@@ -1984,7 +2021,7 @@ async def reject_deletion(
             f" — {override_reason}" if override_reason else "",
         )
     except Exception as e:
-        logger.debug("[deletion] resolution-log write failed: %s", e)
+        logger.warning("[deletion] resolution-log write failed: %s", e)
 
     db.commit()
     return {"ok": True, "protected": protect}
@@ -2625,7 +2662,7 @@ def _require_media_id(value) -> Optional[str]:
     return s if _MEDIA_ID.fullmatch(s) else None
 
 
-async def _plex_delete_artist(key: str, client=None) -> bool:
+async def _plex_delete_artist(key: str, client=None) -> Optional[bool]:
     """Delete a Plex artist WITH its files (Plex 'Allow media deletion' must
     be on — the owner's server has it), then re-read the item: a 200 means
     Plex kept it (deletion not allowed, or a scan raced) and that is a
@@ -2651,10 +2688,23 @@ async def _plex_delete_artist(key: str, client=None) -> bool:
             logger.error("[plex] delete HTTP %s for artist %s — is 'Allow media deletion' "
                          "enabled on the Plex server?", r.status_code, key)
             return False
-        chk = await client.get(f"{base}/library/metadata/{key}", headers=headers)
+        # The DELETE was accepted: from here on the files may be gone, so a
+        # check that cannot answer is "outcome unknown" (limbo, retryable),
+        # never "error". And only a 404 proves the artist gone - a 401/500
+        # on the re-read used to count as success.
+        try:
+            chk = await client.get(f"{base}/library/metadata/{key}", headers=headers)
+        except Exception as e:
+            logger.warning("[plex] artist %s: delete accepted, check failed (%s) "
+                           "— outcome unknown", key, e)
+            return None
         if chk.status_code == 200:
             logger.error("[plex] artist %s is still there after the delete — files kept", key)
             return False
+        if chk.status_code not in (404, 410):
+            logger.warning("[plex] artist %s: delete accepted, check answered HTTP %s "
+                           "— outcome unknown", key, chk.status_code)
+            return None
         try:
             from src.services.lyrics import mark_artist_gone
             mark_artist_gone(key)

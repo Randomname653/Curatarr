@@ -92,6 +92,24 @@ no longer parks artists as "no match". In the browser, badge, banner and hover c
 are back (four colour tokens referred to themselves); a bulk delete whose progress can't
 be read says so; a failed start-up check no longer opens the Setup wizard.
 
+**…and the follow-up.** Signing out on another device, or a deactivated account, now
+ends the session in every open tab at once, with the reason on the sign-in screen. Before,
+the views showed a Retry that could never work, and the bell and Activity kept failing in
+the background. Activity says when its live stream is down and retries with growing gaps.
+The deletion judge defers a title when the owner's feedback, keep-reasons, principles or
+verified facts could not be read. A Last.fm, OpenSubtitles or Plex outage, a spent
+subtitle quota or a rejected key is retried, not recorded as "no genres" or "no subtitles"
+for good. A profile whose vector never reached the vector store is embedded again on the
+next pass. A failed save after a delete no longer fails the rest of a bulk delete, and a
+Plex artist delete that can't be confirmed is listed as unconfirmed rather than failed or
+done. "Test connection" refuses a host name that resolves to a cloud-metadata address,
+Spotify uploads are bounded, and sign-in errors no longer echo library or plex.tv text.
+Re-attributing history to household accounts runs off the event loop in short writes;
+a large Plex sync commits as it goes; the weekly VACUUM waits for long jobs and skips files
+with little to reclaim; and a music enricher running outside the server keeps its claim
+across a server restart. A new test keeps the number of silent error handlers from
+growing.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

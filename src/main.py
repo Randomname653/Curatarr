@@ -76,10 +76,22 @@ async def lifespan(app: FastAPI):
     # for a lock a crash left at "1", so each key is cleared on its own (one
     # failure used to skip every reset after it) and a failure is an ERROR:
     # the jobs behind a stuck flag wait for it until the next restart.
-    from src.services.app_state import get_state, set_state
+    from src.services.app_state import (external_music_holder_alive,
+                                        get_state, set_state)
+    _external_music = False
+    try:
+        _external_music = external_music_holder_alive()
+    except Exception as e:
+        logger.warning("Boot: music runner lease unreadable: %s", e)
+    if _external_music:
+        logger.info("Boot: scripts/music_enricher.py is running - its "
+                    "music_pipeline_running lease is kept")
     for _flag in ("enrichment_running", "music_pipeline_running",
                   "music_pipeline_stop_requested", "deletion_run",
                   "plex_sync_running"):
+        if _external_music and _flag in ("music_pipeline_running",
+                                         "music_pipeline_stop_requested"):
+            continue
         try:
             set_state(_flag, "0")
             if get_state(_flag) not in (None, "0"):
@@ -202,10 +214,12 @@ async def lifespan(app: FastAPI):
         logger.warning("[shutdown] draining background tasks failed: %s", e)
 
     try:
-        from src.services.app_state import set_state
+        from src.services.app_state import external_music_holder_alive, set_state
         set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # The out-of-process music runner keeps its lease across our restart.
+        if not external_music_holder_alive():
+            set_state("music_pipeline_running", "0")
+            set_state("music_pipeline_stop_requested", "0")
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
     except Exception:

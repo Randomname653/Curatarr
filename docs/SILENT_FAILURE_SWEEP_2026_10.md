@@ -127,62 +127,38 @@ advances only on success.
 6. Recommendation-side swallows: cluster hint, `_vector_score`, discovery `partition`.
 7. CSS self-referential tokens; bulk-delete poll; setup-status first-run fallback.
 
-### Land next (unapplied, in order)
+### Follow-up (applied in the second commit)
 
-1. **Central 401 handling** (`api.js`) plus the task stream (`activity.js`):
+Regression suite: `tests/test_silent_failures_followup.py` (53 checks; on the code before this
+commit it fails each check it reaches, then stops on helpers that don't exist yet). Ratchet:
+`tests/test_silent_except_ratchet.py`.
 
-   ```js
-   // api.js, after the !r.ok check
-   if (r.status === 401 && !path.startsWith('/api/setup/') && !path.startsWith('/api/auth/plex/'))
-     window.dispatchEvent(new CustomEvent('curatarr:unauthorized', {detail: _errMsg(err)}));
-   // app.js, once
-   window.addEventListener('curatarr:unauthorized', () => {
-     stopTaskStream(); clearInterval(state._notifPollTimer);
-     state.token = ''; localStorage.removeItem('curatarr_token');
-     showLogin(); toast('Your session ended — sign in again', 'danger', {sticky: true});
-   }, {once: true});
-   ```
+| # | Item | What changed |
+| :--- | :--- | :--- |
+| 1 | **401 handling** | `api.js` hands every 401 outside the setup gate and `/api/auth/*`, while a token is held, to `sessionEnded()`. It clears the token, keeps the reason in `sessionStorage` and reloads once. The reload stops every poller at once, and the sign-in screen shows the reason. The task stream's ticket fetch does the same on 401, backs off 3 s → 30 s on other failures, and says "Task stream disconnected (…)" from the third miss. The bell shows "!" and the error after three failed polls, and a failed system read no longer zeroes the Settings badge. |
+| 2 | **Judge evidence** | New `owner_signal_unknown` flag, set when the feedback blob, owner feedback, keep-considerations or learned principles cannot be read. A `verified data` failure sets `significance_unchecked`. The deletion loop defers both before any judge call and counts them in the run banner ("deferred: owner feedback unreadable"). |
+| 3 | **Transient ≠ no data** | Last.fm: `_lastfm_json` raises `_LastfmTransient` for non-JSON, HTTP errors and every `error` code but 6. Transient tracks keep `genres` NULL (retried), and five in a row end the batch. OpenSubtitles: only 404/410 mean "nothing on file"; 401/403/406 pause the service for the day (`subs_os_blocked_<date>`); other statuses are transient; an unreadable quota count reads as spent. Plex subtitles: only 404/410 mean "gone"; `allLeaves` no longer reads a 401 as "no episodes". Vectors: `store_profile_vector()` reports success, and `process_and_save` caches a profile whose vector did not land with `vector_pending`, which the next cache hit re-embeds (no summariser call). Walkers: one `log_topup_failure()` keeps outages at DEBUG and logs crashes at WARNING (traceback for the first three per walker). |
+| 4 | **Deletion outcome** | `_commit_outcome()` replaces the bare `db.commit()` after a delete. It rolls back, then writes just the status, conditional on the `deleting` claim (3 tries). One failed commit no longer fails the rest of a bulk run. `_plex_delete_artist`: after an accepted DELETE, a check that raises or answers anything but 404/410/200 returns `None` (limbo); before, a 500 counted as gone. |
+| 5 | **AppSec leftovers** | `endpoint_policy.resolved_refusal()` resolves host names (3 s bound) and refuses any that resolve to link-local/metadata/unspecified/multicast. It runs before the Plex/Ollama/arr tests and the library test connect. Spotify upload: at most 20 files, each read with `read(cap + 1)`. `_decode_jwt` answers "Session expired or invalid"; the plex.tv PIN failure no longer returns plex.tv's body. The fixed-host tests (TMDB, Spotify, Last.fm) and the warm-up no longer return `str(e)`. |
+| 6 | **Concurrency** | Re-attribution: user snapshot → account map → column-only scan on a worker thread → PK-bulk updates in 2,000-row `write_session`s on the writer thread; no session across the `/accounts` call (first test of this path). `plex_sync._write_entries` commits every 2,000 new rows. VACUUM is postponed (task stays due) while `enrichment_running`, `music_pipeline_running`, `plex_sync_running` or `deletion_run` is set, and a file with < 20 % free pages is not rewritten. Lease: `scripts/music_enricher.py` records its PID (`music_pipeline_holder_pid`), and boot and shutdown keep `music_pipeline_running` while that PID is a live `music_enricher`. |
+| 7 | **Ratchet** | `tests/test_silent_except_ratchet.py` counts broad handlers whose body is only `pass`, or one `.debug(...)` (plus `pass`/`continue`/`return`), per file, against `tests/silent_except_baseline.json`. A file may only go down. `# noqa: BLE001 - <reason>` on the `except` line exempts a deliberate one. Baseline: **325** (342 before this commit; this AST definition is narrower than the grep count of 372 above). |
 
-2. **`pillars.build_evidence` UNKNOWN discipline** for verified data, feedback, considerations
-   and principles:
+Updated pins: `test_custodian_job_contract` (vacuum fixture now has free pages, plus checks for
+both gates). `test_judge_hardening` still pins `+ watch_unknown_skipped)` (kept true by ordering).
 
-   ```python
-   except Exception as e:
-       logger.warning("[pillars] verified data failed for %r: %s", title, e, exc_info=True)
-       flags["significance_unchecked"] = True           # the deletion loop defers
-   # feedback / considerations / principles:
-   except Exception as e:
-       logger.warning("[pillars] %s failed for %r: %s", what, title, e, exc_info=True)
-       flags["owner_signal_unknown"] = True
-   # recommendations_engine deferral gate:
-   if _fl.get("household_unknown") or _fl.get("owner_watch_unknown") or _fl.get("owner_signal_unknown"):
-   ```
+### Still open
 
-3. **Transient vs. definitive** in the enrichers (one pattern, five call sites: Last.fm
-   `music_matcher:786`, OpenSubtitles `subtitle_signals:780`, Plex subtitles `:887`, walker
-   top-ups, `process_and_save` vector write):
-
-   ```python
-   except (httpx.HTTPError, asyncio.TimeoutError, TransientSourceError):
-       return TRANSIENT                       # not stamped; retried
-   except Exception:
-       logger.exception("[%s] crashed on %r", source, title)   # a bug, not an outage
-       crashes += 1
-       if crashes >= 5:
-           raise
-       return TRANSIENT
-   ```
-
-4. **Bulk-delete commit failure** (`recommendations.py:1879`): `db.rollback()` and a conditional
-   status write, so one failed commit cannot fail the rest of the run.
-5. **AppSec leftovers**: bounded `spotify_upload` reads (`await up.read(cap + 1)`, at most 20
-   files); generic messages at `auth.py:92/363`; resolve names in `validate_service_url` with
-   the `image_proxy._host_resolves_public` predicate (private allowed, link-local refused).
-6. **Concurrency backlog** (unchanged since 2026-10-11): leases for `*_running`; commits every
-   1–2k rows in `plex_sync._write_entries`; fetch the account map before opening the
-   re-attribution session; gate VACUUM on idle queues and freelist > 20 %; then move route
-   handlers onto `run_read`/`run_write` and lower `busy_timeout`.
-7. **Lint rule** so this class of bug can't come back quietly: forbid `except Exception:` whose
-   body is only `pass`, or only a `logger.debug`, unless the line carries
-   `# noqa: BLE001 - <reason>`. A 40-line AST check in `tests/` fits the "no pytest" convention;
-   start it as a ratchet (fail only on new sites) since 372 exist today.
+- **Route handlers on the loop**: the 191 `async def` handlers still call synchronous SQLAlchemy.
+  This is the endpoint-by-endpoint `run_read`/`run_write` migration. `busy_timeout` and
+  `pool_timeout` (60 s) can only drop after it, and `foreign_keys=ON` needs a
+  `foreign_key_check` cleanup first.
+- **Leases beyond the music runner**: the other `*_running` flags are in-process, so the boot
+  reset is correct for them.
+- **Walker ordering**: crashes are visible now, but `run_reception_backfill` /
+  `run_significance_backfill` still take the first `limit` rows in a fixed order. A
+  cursor or `*_attempt_at` stamp would send failing rows to the back.
+- **Ollama background pulls at `/complete`** do not go through `resolved_refusal` (the
+  endpoint passes `validate_service_url`).
+- The Medium/Low rows of §2 not named in the table above (vector store, chat guards,
+  model-update results, process monitor, anime mapping, frontend non-401 catches). Each is
+  a WARNING-or-narrower change; the ratchet keeps the count from growing meanwhile.

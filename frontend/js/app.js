@@ -9,7 +9,7 @@ import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from '.
 import { _errMsg, closeModal, toggleMenu, keyActivate, hideOnError, toast } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
-import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
+import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzoneOver, dropzoneLeave, openSpotifyPicker, onSpotifyFile } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
@@ -20,7 +20,7 @@ import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
 import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
-import { api } from './api.js';
+import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 
 export function init() {
@@ -68,6 +68,10 @@ window.onload = async () => {
     }
   }
   document.getElementById('auth-overlay').classList.remove('hidden');
+  // api.sessionEnded() reloads into this screen; say why, once.
+  let ended = null;
+  try { ended = sessionStorage.getItem(SESSION_ENDED_KEY); sessionStorage.removeItem(SESSION_ENDED_KEY); } catch {}
+  if (ended) toast(`${ended} — sign in again.`, 'amber', {sticky: true});
 };
 // Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
 window.addEventListener('hashchange', () => routeFromHash());
@@ -247,6 +251,7 @@ const actions = {
   toggleMenu,
   toggleMobileSidebar,
   toggleMsgPanel,
+  loadUnreadMessages,
   togglePitcherWrap,
   toggleSidebar,
   toggleUser,

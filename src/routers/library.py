@@ -31,7 +31,7 @@ from src.database.models import User
 from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
 from src.services.endpoint_policy import (
-    NEW_ADDRESS_NEEDS_KEY, secret_for_target, validate_service_url)
+    NEW_ADDRESS_NEEDS_KEY, resolved_refusal, secret_for_target, validate_service_url)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,6 +212,12 @@ async def library_test(
     # doesn't silently leak the API key over the open internet.
     from src.services.setup_wizard import endpoint_privacy_note
     privacy_warning = endpoint_privacy_note(effective_url)
+    refused = await resolved_refusal(effective_url)
+    if refused:
+        logger.warning("[library] %s test refused: %s", req.service, refused)
+        return {"ok": False, "service": req.service,
+                "error": "That address resolves to a link-local / metadata "
+                         "address - not a media service"}
 
     client = _make_client(req.service, effective_url, effective_key)
     try:
