@@ -6,20 +6,29 @@ import { _updateKbBadge } from './kb.js';
 import { showView } from './nav.js';
 import { _deleteBody, deleteFateLines } from './deletions.js';
 import { applyOrphanRepair } from './libraries.js';
+import { loadUnreadMessages } from './notifications.js';
 export function handleKey(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
 
 export async function newChat() {
   // Clear conversation history for the active thread (free chat = "general")
   // and wipe the visible messages. Memories + library remain — only the
   // chat-message log gets reset, so the curator starts each new topic
-  // without prior-turn baggage.
+  // without prior-turn baggage. The thread is read BEFORE the dialog: it
+  // used to be hard-coded to "general", so + New inside a discussion wiped
+  // the free-chat log and left the discussion's own log in place.
+  const tid = activeThreadId();
   const res = await confirmDialog({
     title: 'Clear conversation history', danger: true, confirmLabel: 'Clear',
     body: '<p>This deletes the chat log for this thread. Memories and the library are kept.</p>',
   });
   if (!res.ok) return;
+  // A reply still streaming would be persisted AFTER the wipe and open the
+  // "fresh" thread. Aborting it disconnects the stream, and the server
+  // never persists a turn whose client went away.
+  abortActiveStream();
+  _threadSeq++;                              // a history load in flight must not repaint the pane
   try {
-    await api('/api/chat/history?thread_id=general', 'DELETE');
+    await api(`/api/chat/history?thread_id=${encodeURIComponent(tid)}`, 'DELETE');
     const msgs = document.getElementById('messages');
     if (msgs) {
       // Pass: + New is the explicit "start over" action, so it's also the
@@ -63,7 +72,7 @@ export async function correctChatAnchor() {
   btn.disabled = true;
   btn.textContent = 'clearing…';
   try {
-    const r = await api('/api/chat/correct-anchor', 'POST', { thread_id: 'general' });
+    const r = await api('/api/chat/correct-anchor', 'POST', { thread_id: activeThreadId() });
     // Inject a small system note into the chat so the user sees what happened
     // without a modal interrupting their flow.
     const msgs = document.getElementById('messages');
@@ -84,175 +93,191 @@ export async function correctChatAnchor() {
   }
 }
 
+// ── STREAM CONTROLLER ───────────────────────────────────────────────────────
+// One chat stream at a time, abortable (+ New aborts it), with an idle
+// watchdog. The server sends ': keepalive' at least every 15 s for the whole
+// turn — queued for the GPU, cold-loading the model, evaluating the prompt,
+// inside a <think> block — so 45 s of silence after the headers means the
+// connection is dead, not slow. Before the headers the server is still
+// building context (discuss lookups, metadata cascade, RAG) and sends
+// nothing, so that phase gets a wider limit of its own.
+const STREAM_IDLE_MS = 45_000;
+const STREAM_HEADERS_MS = 300_000;
+let _stream = null;                       // { ctrl, threadId }
+
+export const isStreaming = () => !!_stream;
+
+// The thread the next turn (or the running one) lives on. The server names
+// it in each stream's first frame; between streams it is derived from the
+// discuss context exactly as chat.py's _thread_id_for does.
+export function activeThreadId() {
+  return _stream?.threadId || _threadIdForContext(state.pendingDiscussContext);
+}
+
+export function abortActiveStream(reason = 'superseded') {
+  _stream?.ctrl.abort(reason);
+  _stream = null;
+}
+
+// Every discuss / respond / review entry point starts here: switching the
+// thread under a running reply would show the new banner over the old
+// answer and send the next turn into a 409.
+export function _busyStreaming() {
+  if (!_stream) return false;
+  toast('The curator is still answering — wait for this reply to finish first.', 'amber');
+  return true;
+}
+
+// Pre-stream status events arrive in a quick burst (the backend runs them
+// sequentially before streaming). Each stays visible for 700 ms, and the
+// previous ones fade into a small trail underneath, so the sequence reads
+// even when the first token lands before the queue has drained.
+function _statusTicker(bubble) {
+  const q = [];
+  let timer = null, node = null, log = null, stopped = false;
+  const next = () => {
+    if (stopped || !q.length) { timer = null; return; }
+    if (!node) {
+      node = bubble.appendChild(Object.assign(document.createElement('div'), {className: 'thinking-status'}));
+      log = bubble.appendChild(Object.assign(document.createElement('div'), {className: 'thinking-status-log'}));
+    }
+    if (node.textContent) log.appendChild(Object.assign(document.createElement('div'), {textContent: node.textContent}));
+    // Re-trigger the fade animation by removing + re-adding it
+    node.style.animation = 'none';
+    void node.offsetHeight;
+    node.style.animation = '';
+    node.textContent = q.shift();
+    timer = setTimeout(next, 700);
+  };
+  return {
+    push(s) { if (stopped) return; q.push(s); if (!timer) next(); },
+    stop() { stopped = true; q.length = 0; clearTimeout(timer); timer = null; },
+  };
+}
+
 export async function sendMessage() {
+  if (_busyStreaming()) return;
   const inp = document.getElementById('chat-input');
   const btn = document.getElementById('send-btn');
   const text = inp.value.trim(); if (!text) return;
   inp.value = ''; inp.style.height = 'auto';
-  inp.disabled = true;
-  btn.disabled = true;
-  document.getElementById('glance-panel')?.remove();
-  document.getElementById('last-played-panel')?.remove();
-  document.getElementById('suggested-prompts')?.remove();
+  inp.disabled = btn.disabled = true;
+  ['glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
   addMsg(text, 'user');
-  const thinking = addThinkingMsg();
+  const bubble = addThinkingMsg();
+
+  // Pass 27: state.pendingDiscussContext is STICKY — it stays until the user
+  // exits the discussion, starts a new chat, or opens another one. The
+  // payload gets a snapshot so clearing a one-shot flag below cannot reach
+  // back into this turn.
+  const ctx = state.pendingDiscussContext;
+  const payload = { message: text, ...(ctx && { discuss_context: { ...ctx } }) };
+  const ctrl = new AbortController();
+  const me = _stream = { ctrl, threadId: _threadIdForContext(ctx) };
+  const status = _statusTicker(bubble);
+
+  let idle = null, rafId = 0, full = '', painted = '', gotDone = false, httpError = false;
+  const arm = ms => { clearTimeout(idle); idle = setTimeout(() => ctrl.abort('idle'), ms); };
+  // marked passes raw HTML through and the model can quote metadata text
+  // from foreign sources: renderMarkdown sanitizes it and strips the
+  // data-action / data-on-* attributes the dispatcher would run. One parse
+  // per animation frame, not per token — the whole reply is re-parsed each
+  // time, so per-token rendering grew quadratically with its length.
+  const paint = () => {
+    rafId = 0;
+    if (full !== painted && bubble.isConnected) { bubble.innerHTML = renderMarkdown(full); painted = full; }
+  };
 
   try {
-    const tok = localStorage.getItem('curatarr_token') || sessionStorage.getItem('curatarr_token') || '';
-    // Build the payload and check whether we're coming from a "Discuss" button
-    const payload = { message: text };
-    if (state.pendingDiscussContext) {
-      // Pass 81d: snapshot the context so we can clear one-shot flags on
-      // the live object without retroactively mutating this turn's
-      // payload. The ``reevaluate`` flag is one-shot — it fires the
-      // Level-2 framing on the FIRST turn after the Reevaluate button,
-      // then we strip it so follow-up turns ("but also check Director X")
-      // don't re-inject the long framing every send.
-      payload.discuss_context = { ...state.pendingDiscussContext };
-      if (state.pendingDiscussContext.reevaluate) {
-        state.pendingDiscussContext.reevaluate = false;
-      }
-    }
-
+    arm(STREAM_HEADERS_MS);
+    const tok = state.token || localStorage.getItem('curatarr_token') || sessionStorage.getItem('curatarr_token') || '';
     const resp = await fetch('/api/chat/message', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${tok}`,
-      },
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok}` },
       body: JSON.stringify(payload),
     });
 
-    // Pass 27: state.pendingDiscussContext is now STICKY — keep it until the
-    // user explicitly exits (Exit-discussion button), starts a new chat
-    // (+ New), or clicks Discuss on a different proposal. Clearing after
-    // every send routed follow-up turns to thread_id="general" which
-    // (a) lost the proposal-pitch anchor (curator flipped its verdict)
-    // and (b) leaked stale state from previous discussions (Star Trek
-    // showing up in an American Dad! discussion).
-
     if (!resp.ok) {
+      httpError = true;
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       // Pydantic 422 detail is an array of validation error objects — flatten to readable string
-      const detail = Array.isArray(err.detail)
+      bubble.textContent = Array.isArray(err.detail)
         ? err.detail.map(e => e.msg || JSON.stringify(e)).join('; ')
         : (err.detail || resp.statusText);
-      thinking.textContent = detail;
       return;
     }
 
-    // Stream SSE tokens — keep the animated thinking dots visible UNTIL the
-    // first real state.token arrives, otherwise the bubble flashes empty between
-    // the spinner and the first character. Pass 14.4 fix: only clear the
-    // dots inside the state.token branch, on the first iteration.
+    // Pass 81d: ``reevaluate`` fires the Level-2 framing on the FIRST turn
+    // after the Reevaluate button only. It is spent once the server has
+    // accepted the turn — a 409 used to burn it before anything ran.
+    if (ctx?.reevaluate && state.pendingDiscussContext === ctx) ctx.reevaluate = false;
+
+    // The animated dots stay until the first real token, otherwise the
+    // bubble flashes empty between the spinner and the first character.
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-
-    let fullResponseText = '';
-    let firstTokenSeen = false;
-    let warningBanner = null;
-    let statusNode = null;
-    let statusLog = null;        // accumulated status history (small grey trail)
-    // Pre-stream events arrive in a quick burst (because the backend code
-    // runs sequentially before yielding). To make them readable, we hold
-    // each visible for 700ms AND keep a faded trail of the previous
-    // statuses underneath so the user sees the full sequence even if the
-    // first state.token arrives before the queue has fully drained.
-    const statusQueue = [];
-    let statusTimer = null;
-    function showNextStatus() {
-      if (statusQueue.length === 0) {
-        statusTimer = null;
-        return;
-      }
-      const next = statusQueue.shift();
-      if (!statusNode) {
-        statusNode = document.createElement('div');
-        statusNode.className = 'thinking-status';
-        thinking.appendChild(statusNode);
-        statusLog = document.createElement('div');
-        statusLog.className = 'thinking-status-log';
-        thinking.appendChild(statusLog);
-      }
-      // If a status was already showing, push it down into the trail
-      if (statusNode.textContent) {
-        const trailItem = document.createElement('div');
-        trailItem.textContent = statusNode.textContent;
-        statusLog.appendChild(trailItem);
-      }
-      // Re-trigger the fade animation by removing + re-adding the class
-      statusNode.style.animation = 'none';
-      // eslint-disable-next-line no-unused-expressions
-      statusNode.offsetHeight;
-      statusNode.style.animation = '';
-      statusNode.textContent = next;
-      // 700ms minimum dwell per status so a burst still reads as a sequence
-      statusTimer = setTimeout(showNextStatus, 700);
-    }
-
-    while (true) {
+    while (!gotDone) {
+      arm(STREAM_IDLE_MS);
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split('\n');
       buf = lines.pop(); // keep incomplete line
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          const data = JSON.parse(line.slice(6));
-          if (data.status) {
-            // Push to queue; if no timer is running, start the drain.
-            statusQueue.push(data.status);
-            if (!statusTimer) showNextStatus();
-            continue;
-          }
-          if (data.warning) {
-            // VRAM fallback / health warning from the backend — shown as a
-            // small banner above the streaming bubble so the user knows the
-            // response will be slower than usual.
-            if (!warningBanner) {
-              warningBanner = document.createElement('div');
-              warningBanner.className = 'banner ' + (data.severity === 'severe' ? 'danger' : 'warn');
-              warningBanner.style.alignSelf = 'stretch';
-              warningBanner.textContent = data.warning;
-              thinking.parentElement?.insertBefore(warningBanner, thinking);
-            }
-          }
-          if (data.token) {
-            // First state.token in: replace the dots + status subnote with the
-            // actual response text.
-            if (!firstTokenSeen) {
-              thinking.textContent = '';
-              statusNode = null;
-              statusQueue.length = 0;
-              if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
-              firstTokenSeen = true;
-            }
-            fullResponseText += data.token;
-            // marked passes raw HTML through and the model can quote metadata
-            // text from foreign sources: renderMarkdown sanitizes it and strips
-            // the data-action / data-on-* attributes the dispatcher would run.
-            thinking.innerHTML = renderMarkdown(fullResponseText);
-          }
-          if (data.done) {
-            // Stream ended without any tokens (unusual — empty response).
-            // Clear dots so the bubble doesn't sit empty-but-animating.
-            if (!firstTokenSeen) {
-              thinking.textContent = '(no response)';
-            }
-            break;
-          }
-        } catch {}
+        if (!line.startsWith('data: ')) continue;   // ': keepalive' only re-arms the watchdog
+        let data;
+        try { data = JSON.parse(line.slice(6)); } catch { continue; }
+        if (data.thread) me.threadId = data.thread;
+        if (data.status) status.push(data.status);
+        if (data.warning && !bubble.previousElementSibling?.classList.contains('banner')) {
+          // VRAM fallback / health warning from the backend — shown as a
+          // small banner above the streaming bubble so the user knows the
+          // response will be slower than usual.
+          const banner = document.createElement('div');
+          banner.className = 'banner ' + (data.severity === 'severe' ? 'danger' : 'warn');
+          banner.style.alignSelf = 'stretch';
+          banner.textContent = data.warning;
+          bubble.before(banner);
+        }
+        if (data.token) {
+          if (!full) { status.stop(); bubble.textContent = ''; }
+          full += data.token;
+          if (!rafId) rafId = requestAnimationFrame(paint);
+        }
+        if (data.done) { gotDone = true; break; }
       }
     }
-
-  } catch(e) {
-    thinking.textContent = e.message;
+  } catch (e) {
+    if (e.name !== 'AbortError') console.warn('[chat] stream failed:', e);
   } finally {
-    inp.disabled = false;
-    btn.disabled = false;
-    inp.focus();
+    clearTimeout(idle);
+    status.stop();
+    if (rafId) cancelAnimationFrame(rafId);
+    paint();                                      // the last frame is never lost
+    if (!gotDone && !httpError) {
+      // The partial reply stays on screen; the note says it was not kept
+      // (the server persists a turn only once its stream completes).
+      const why = ctrl.signal.reason;
+      const note = why === 'superseded' ? 'Stopped.'
+        : why === 'idle' ? 'The connection went quiet — this reply was interrupted and not saved.'
+        : 'Connection lost — this reply was interrupted and not saved.';
+      if (!full) bubble.textContent = note;
+      else bubble.after(Object.assign(document.createElement('div'), {className: 'msg system', textContent: note}));
+    } else if (gotDone && !full) {
+      bubble.textContent = '(no response)';
+    }
+    if (_stream === me) _stream = null;
+    inp.disabled = btn.disabled = false;
+    if (bubble.isConnected) inp.focus();
+    // A "keep it" in a deletion discussion protects the title in a
+    // background job after the turn: the Deletions tab cache must not serve
+    // the stale proposal, and the outcome note lands in the bell.
+    if (gotDone && me.threadId.startsWith('deletion_proposal:')) {
+      state._delProposalsAll = null;
+      setTimeout(() => loadUnreadMessages(), 5000);
+    }
   }
 }
 
@@ -411,19 +436,18 @@ export async function loadStarters() {
 // fallback chips (fillPrompt(), never routed through here) stay
 // unchanged: user-voiced text the user fills in and edits, not opened by
 // the curator.
-export function useStarter(id, btn) {
+export async function useStarter(id, btn) {
+  if (_busyStreaming()) return;
   const text = btn.textContent;
   api(`/api/chat/starters/${encodeURIComponent(id)}/used`, 'POST').catch(() => {});
-  addMsg(text, 'assistant');
-  state.pendingDiscussContext = { kind: 'starter', starter_id: id };
-  _setDiscussBanner('Curator opened this thread');
+  if (!await enterThread({ kind: 'starter', starter_id: id }, 'Curator opened this thread', text)) return;
   const inp = document.getElementById('chat-input');
   inp.value = '';
   inp.focus();
 }
-export function discussLastPlayed(i) {
+export async function discussLastPlayed(i) {
   const e = state._lastPlayedEntries[i];
-  if (!e) return;
+  if (!e || _busyStreaming()) return;
   const isMusic = e.media_type === 'music';
   let title = e.title;
   if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
@@ -434,23 +458,18 @@ export function discussLastPlayed(i) {
   // so the backend can inject real facts instead of trusting our text. Same
   // trust model + sticky state.pendingDiscussContext pipeline as discussDeletion/
   // respondToMessage: set it, then let sendMessage() pick it up below.
-  if (e.id) {
-    state.pendingDiscussContext = {
-      kind: 'watched_title',
-      history_id: e.id,
-      series_title: e.series_title || null,
-      title: e.title || null,
-      category: e.media_type || null,
-      season: e.season ?? null,
-      episode: e.episode ?? null,
-      viewed_at: e.viewed_at || null,
-      poster_url: e.poster_url || null,
-    };
-    _setDiscussBanner(`Discussing "${title}"`);
-  } else {
-    state.pendingDiscussContext = null;
-    _setDiscussBanner(null);
-  }
+  const ctx = e.id ? {
+    kind: 'watched_title',
+    history_id: e.id,
+    series_title: e.series_title || null,
+    title: e.title || null,
+    category: e.media_type || null,
+    season: e.season ?? null,
+    episode: e.episode ?? null,
+    viewed_at: e.viewed_at || null,
+    poster_url: e.poster_url || null,
+  } : null;
+  if (!await enterThread(ctx, ctx ? `Discussing "${title}"` : null)) return;
   discussInChat('custom', {message: `I recently ${isMusic ? 'listened to' : 'watched'} "${title}" — what do you think about it, or what should I know?`});
 }
 
@@ -475,8 +494,77 @@ export function addThinkingMsg() {
   return div;
 }
 
+// ── THREAD PANE ───────────────────────────────────────────────────────────────
+// #messages shows ONE thread. The curator reads a thread's saved history as
+// context on every turn, so switching into or out of a discussion — or a
+// reload — paints that thread's history: the pane used to keep whatever the
+// previous thread left in it, and showed nothing at all after F5.
+const HISTORY_LIMIT = 50;
+let _threadSeq = 0;           // a newer switch (or + New) overtakes an older load
+
+function _historyBubble(m) {
+  const div = document.createElement('div');
+  if (m.role === 'user') {
+    div.className = 'msg user';
+    div.textContent = m.content || '';
+  } else {
+    div.className = 'msg assistant';
+    div.innerHTML = renderMarkdown(m.content || '');
+  }
+  return div;
+}
+
+async function _loadThread(tid) {
+  try {
+    const r = await api(`/api/chat/history?thread_id=${encodeURIComponent(tid)}&limit=${HISTORY_LIMIT}`);
+    return r.messages || [];
+  } catch {
+    return [];                // the pane still switches; the server keeps the history
+  }
+}
+
+// Repaint #messages with thread `tid`: the curator's opener first (UI-only —
+// the backend injects the real record as context and never persists it),
+// then the saved exchange. False when a newer switch overtook this one.
+async function _showThread(tid, opener) {
+  const seq = ++_threadSeq;
+  const history = await _loadThread(tid);
+  const msgs = document.getElementById('messages');
+  if (seq !== _threadSeq || !msgs) return false;
+  msgs.replaceChildren();
+  if (opener) addMsg(opener, 'assistant');
+  for (const m of history) msgs.appendChild(_historyBubble(m));
+  msgs.scrollTop = msgs.scrollHeight;
+  return true;
+}
+
+// Every way into a discussion: the sticky context, its banner, the chat
+// view, and that thread's history. Callers check _busyStreaming() first.
+export async function enterThread(ctx, banner, opener) {
+  state.pendingDiscussContext = ctx;
+  _setDiscussBanner(banner);
+  showView('chat');
+  return _showThread(_threadIdForContext(ctx), opener);
+}
+
+// Boot: the free-chat history replaces the greeting, above the landing
+// panels (glance, last played, starters), which stay until the first send.
+// Skipped once anything else owns the pane — a send, a discussion, + New.
+export async function restoreChatHistory() {
+  const seq = ++_threadSeq;
+  const history = await _loadThread('general');
+  const msgs = document.getElementById('messages');
+  if (seq !== _threadSeq || !msgs || !history.length || state.pendingDiscussContext
+      || msgs.querySelector('.msg.user')) return;
+  msgs.querySelector('.msg.assistant')?.remove();
+  const anchor = document.getElementById('glance-panel');
+  for (const m of history) msgs.insertBefore(_historyBubble(m), anchor);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
 // ── DISCUSS IN CHAT ───────────────────────────────────────────────────────────
 export function discussInChat(type, data) {
+  if (_busyStreaming()) return;
   // Switch to chat view
   showView('chat');
 
@@ -572,20 +660,50 @@ export function _setChatWatermark(url) {
   // extra bytes are paid once (disk-cached by the proxy, immutable in the
   // browser) and the texture actually resolves.
   const big = sizeMatch ? url.replace(sizeMatch[1], 'w780') : url;
-  msgs.style.backgroundImage = `linear-gradient(var(--bg-veil), var(--bg-veil)), url("${proxyImg(big)}")`;
+  const css = _cssUrl(proxyImg(big));
+  msgs.style.backgroundImage = css ? `linear-gradient(var(--bg-veil), var(--bg-veil)), ${css}` : '';
 }
 
-// Pass 61: mirror of the backend _thread_id_for — derive the thread id from
-// a discuss context so the frontend can target the right thread for the
-// memory-flush endpoint.
+// A CSS url() from a URL string. proxyImg() hands same-origin URLs back
+// raw, and a quote in one (poster_url = '/a"), url("https://tracker/x')
+// closed the url() and opened a second one straight to a third-party host,
+// past the fail-closed image proxy. Serialising through URL() and
+// percent-encoding what can end a double-quoted url() (", \, a newline)
+// closes that.
+export function _cssUrl(raw) {
+  try {
+    const u = new URL(raw, location.origin);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return `url("${u.href.replace(/["\\\n\r]/g, c => encodeURIComponent(c))}")`;
+  } catch {
+    return null;
+  }
+}
+
+// Pass 61: mirror of the backend _thread_id_for (src/routers/chat.py) —
+// derive the thread id from a discuss context so the frontend targets the
+// right thread for the memory flush, + New, the anchor re-fetch and the
+// history pane. Keep the two in step: principle / starter / watched-title
+// threads used to fall through to "general" here, so their memories were
+// never flushed on exit. A running stream's server-named thread wins (see
+// activeThreadId()).
 export function _threadIdForContext(ctx) {
   if (!ctx) return 'general';
-  if (ctx.kind === 'deletion_proposal' && ctx.proposal_id) return `deletion_proposal:${ctx.proposal_id}`;
-  if (ctx.kind === 'proactive_message' && ctx.message_id) return `proactive_message:${ctx.message_id}`;
+  const kind = ctx.kind || ctx.type || ctx.action;
+  if ((kind === 'deletion_proposal' || kind === 'deletion') && ctx.proposal_id) return `deletion_proposal:${ctx.proposal_id}`;
+  if (kind === 'proactive_message' && ctx.message_id) return `proactive_message:${ctx.message_id}`;
+  if (kind === 'principle' && ctx.principle_id) return `principle:${ctx.principle_id}`;
+  if (kind === 'starter' && ctx.starter_id) return `starter:${ctx.starter_id}`;
+  if (kind === 'watched_title') {
+    if (ctx.tmdb_id) return `watched:tmdb:${ctx.tmdb_id}`;
+    const t = (ctx.series_title || ctx.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (t) return `watched:${t.slice(0, 80)}`;
+  }
   return 'general';
 }
 
-export function exitDiscussion() {
+export async function exitDiscussion() {
+  if (_busyStreaming()) return;
   // Pass 61: "Exit discussion" is an explicit end-of-conversation signal —
   // flush the thread's pending memory extraction NOW instead of letting it
   // wait out the 90s debounce (or get lost if the user never returns to
@@ -599,6 +717,7 @@ export function exitDiscussion() {
   // Doesn't wipe chat history — that's what the "+ New" button is for.
   state.pendingDiscussContext = null;
   _setDiscussBanner(null);
+  if (!await _showThread('general')) return;
   // Inject a small system note so the user sees their action took effect.
   const msgs = document.getElementById('messages');
   if (msgs) {
@@ -662,11 +781,13 @@ export async function deleteFromDiscussion() {
       if (tid && tid !== 'general') {
         api('/api/chat/flush-memories', 'POST', { thread_id: tid }).catch(() => {});
       }
-      addMsg(`Deleted "${title}". Discussion thread closed.`, 'assistant');
       // Close the discussion — same end-state as exitDiscussion(), minus
-      // its "exited thread" note (we just posted a more specific one).
+      // its "exited thread" note (a more specific one follows). A reply
+      // still streaming keeps its pane; the next send is free chat either way.
       state.pendingDiscussContext = null;
       _setDiscussBanner(null);
+      if (!_stream) await _showThread('general');
+      addMsg(`Deleted "${title}". Discussion thread closed.`, 'assistant');
     } else {
       addMsg(`Delete failed for "${title}". Try again from the Deletions view.`, 'assistant');
       if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
@@ -677,7 +798,8 @@ export async function deleteFromDiscussion() {
   }
 }
 
-export function discussDeletion(id, title, pitch, category, poster_url) {
+export async function discussDeletion(id, title, pitch, category, poster_url) {
+  if (_busyStreaming()) return;
   const userNote = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
 
   // 1. Save the context for the next API send event. Backend looks up the
@@ -687,7 +809,10 @@ export function discussDeletion(id, title, pitch, category, poster_url) {
   // Pass 27: ``state.pendingDiscussContext`` is now sticky across follow-up sends.
   // We update the banner so the user can SEE they're in a discussion thread
   // and have an exit hatch.
-  state.pendingDiscussContext = {
+  // 2. Switch to the chat view, with this proposal's thread history.
+  // 3. The pitch opens the pane as an Assistant message (UI-only; this is
+  //    what the user sees, NOT what the backend persists).
+  const ctx = {
     kind: 'deletion_proposal',
     proposal_id: id,
     category: category || null,
@@ -697,14 +822,8 @@ export function discussDeletion(id, title, pitch, category, poster_url) {
     title: title || null,
     poster_url: poster_url || null,
   };
-  _setDiscussBanner(`Discussing deletion of "${title}"`);
-
-  // 2. Switch to the chat view
-  showView('chat');
-
-  // 3. Show the pitch IMMEDIATELY as an Assistant message in the chat window
-  //    (UI-only; this is what the user sees, NOT what the backend persists).
-  addMsg(`I have suggested "${title}" for deletion. Reason: "${pitch}"`, 'assistant');
+  if (!await enterThread(ctx, `Discussing deletion of "${title}"`,
+                         `I have suggested "${title}" for deletion. Reason: "${pitch}"`)) return;
 
   // 4. Prepare the input field for the user
   const input = document.getElementById('chat-input');

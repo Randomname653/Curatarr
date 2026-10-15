@@ -9,6 +9,7 @@ import logging
 import re
 import weakref
 from collections import OrderedDict
+from contextlib import aclosing
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -2559,6 +2560,123 @@ def _save_message(
 
 # ── STREAMING CHAT ────────────────────────────────────────────────────────────
 
+# An SSE reply must reach the browser token by token: no proxy buffering
+# (nginx holds a proxied response until its buffer fills), no caching.
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+# A ': keepalive' comment at least this often while the stream is otherwise
+# quiet — queued for the GPU, cold-loading the model, evaluating the prompt,
+# inside a <think> block. Proxies drop an idle SSE after 60–100 s and the
+# client's idle watchdog gives up after 45 s.
+_HEARTBEAT_S = 15.0
+_HEARTBEAT = object()
+
+
+async def _lines_with_heartbeat(lines, every: float):
+    """Yield the lines of ``lines``, and ``_HEARTBEAT`` whenever none came
+    in ``every`` seconds. The pending read is never abandoned on a
+    heartbeat — only cancelled when the consumer goes away."""
+    it = lines.__aiter__()
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(it.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=every)
+            if not done:
+                yield _HEARTBEAT
+                continue
+            task, pending = pending, None
+            try:
+                line = task.result()
+            except StopAsyncIteration:
+                return
+            yield line
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            # Retrieve the outcome so a read failing on the closed stream is
+            # not logged as "Task exception was never retrieved".
+            pending.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+
+def _persist_turn(user_id: int, thread_id: str, user_text: str, reply: str,
+                  user_at: datetime) -> None:
+    """The user turn and its reply in ONE commit. Runs on the writer thread
+    (run_write): a synchronous SQLite write on the event loop stalls every
+    request while it waits on the write lock."""
+    from src.database.connection import get_db_session
+    with get_db_session() as db2:
+        db2.add_all([
+            ConversationMessage(user_id=user_id, role="user", content=user_text,
+                                created_at=user_at, tokens_approx=len(user_text) // 4,
+                                thread_id=thread_id),
+            ConversationMessage(user_id=user_id, role="assistant", content=reply,
+                                created_at=datetime.utcnow(), tokens_approx=len(reply) // 4,
+                                thread_id=thread_id),
+        ])
+        db2.commit()
+
+
+def _schedule_post_turn(user_id: int, thread_id: str, user_text: str, reply: str,
+                        domain: str | None) -> None:
+    """Fire the post-chat background work for a persisted turn. Each step
+    is isolated: one failing to schedule never skips the others, and none
+    of them can take the already-streamed reply down with it.
+
+    Pass 41: every task goes through ``track_task`` so the GC can't collect
+    it mid-run. Pass 61: memory extraction is DEBOUNCED per thread (a
+    follow-up turn reschedules it), so it fires once over the settled
+    conversation; the debounce task is held in
+    episodic_memory._pending_thread_extracts, so it's GC-safe on its own.
+    """
+    from src.services.bg_tasks import track_task
+    from src.services.episodic_memory import schedule_thread_extraction
+
+    def _extract():
+        schedule_thread_extraction(user_id, thread_id, media_category=domain)
+
+    def _verdict_or_protection():
+        if thread_id.startswith("principle:"):
+            # Principle-review thread: parse the settled decision (adopt /
+            # reject / refined wording) and apply it — a media-protection
+            # scan makes no sense here.
+            try:
+                pid = int(thread_id.split(":", 1)[1])
+            except (ValueError, IndexError):
+                return
+            from src.services.curator_principles import detect_and_apply_principle_verdict
+            track_task(detect_and_apply_principle_verdict(user_id, pid, user_text, reply),
+                       name="principle_verdict_bg")
+            return
+        # Protection intents ("behalten", "keep", "nicht löschen", …). Pass 23:
+        # the thread's anchor title (e.g. the deletion-proposal target) lets
+        # pronoun-only signals like "we are keeping this show" register
+        # against the right title.
+        anchor = _get_thread_active_title(user_id, thread_id)
+        track_task(
+            _check_protection_intent_bg(
+                user_id, user_text, reply,
+                anchor_title=anchor[0] if anchor else None,
+                anchor_category=anchor[2] if anchor and len(anchor) > 2 else None,
+                thread_id=thread_id,
+            ),
+            name="check_protection_intent_bg",
+        )
+
+    def _verification():
+        # Pass 71: thread_id gates it — only a turn inside the verification
+        # question's own proactive_message thread counts as an answer.
+        track_task(_check_verification_response(user_id, user_text, thread_id),
+                   name="check_verification_response")
+
+    for step in (_extract, _verdict_or_protection, _verification):
+        try:
+            step()
+        except Exception:
+            logger.exception("[chat] post-turn step %s failed (thread=%s)",
+                             step.__name__, thread_id)
+
+
 @router.post("/message")
 async def send_message(
     message: ChatMessage,
@@ -2601,7 +2719,8 @@ async def send_message(
             yield f"data: {json.dumps({'token': _busy_text})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
 
-        return StreamingResponse(_gpu_busy_reply(), media_type="text/event-stream")
+        return StreamingResponse(_gpu_busy_reply(), media_type="text/event-stream",
+                                 headers=_SSE_HEADERS)
 
     # One reply in flight per user, taken BEFORE anything is persisted or
     # built. It used to be taken right before the stream started — after
@@ -3183,14 +3302,16 @@ FORMATTING RULES:
         logger.info("[chat] dropped the %d oldest history message(s) to fit the "
                     "%d-token window", _dropped, CURATOR_NUM_CTX)
 
-    # 4. Save user message to history (scoped to the active thread)
-    # The stream below must not touch the ORM ``user``: _save_message
-    # commits, which expires it, and any later attribute read lazily re-opens
-    # a transaction on the request session — holding one pooled connection
-    # for the whole stream, minutes of generation (the weakref.finalize line
-    # at the end did exactly that). Plain id from here on.
+    # 4. The user turn is NOT saved here: _persist_turn writes it together
+    # with the reply once the stream has finished. A turn that never got its
+    # answer (client gone, Ollama error) used to leave a lone user row, and
+    # the next turn read two user messages in a row and often answered the
+    # old one. The stream below must not touch the ORM ``user`` — any
+    # attribute read lazily re-opens a transaction on the request session
+    # and holds a pooled connection for minutes of generation. Plain id
+    # from here on.
     _uid = user.id
-    _save_message(_uid, "user", message.message, db, thread_id=thread_id)
+    _user_at = datetime.utcnow()
 
     # 5. Stream from Ollama
     stream_state = {"started": False}
@@ -3201,17 +3322,23 @@ FORMATTING RULES:
             curator_start, curator_done, check_curator_vram_health, curator_busy,
             gate_owner,
         )
+        loop = asyncio.get_running_loop()
 
-        # Pass 14.9: emit collected pre-stream status events so the frontend
-        # can show the user what we did during the cascade / lookup phase
-        # ("Looking up X", "Found in tv", "Loaded 3 memories"). They arrive
-        # in a quick burst right before the curator stream — frontend animates
-        # each one for a beat so the sequence reads as progressive feedback.
-        # A disconnect before the slot is ours (on these yields, or while
-        # queued in curator_start) never reaches the main try's finally, so
-        # the in-flight guard is released here. curator_start undoes its own
-        # acquire when cancelled, so there is no slot to release.
+        # The outer finally owns the in-flight guard for the WHOLE turn —
+        # queueing, generation, the history write and the done frame. A
+        # second turn must not start (and load this thread's history) while
+        # this one is still waiting on the writer thread.
         try:
+            # The thread this turn landed on, first: the client keys "+ New",
+            # the anchor re-fetch and the history pane on it instead of
+            # re-deriving it from the discuss context.
+            yield f"data: {json.dumps({'thread': thread_id})}\n\n"
+
+            # Pass 14.9: emit collected pre-stream status events so the frontend
+            # can show the user what we did during the cascade / lookup phase
+            # ("Looking up X", "Found in tv", "Loaded 3 memories"). They arrive
+            # in a quick burst right before the curator stream — frontend animates
+            # each one for a beat so the sequence reads as progressive feedback.
             for status_msg in pre_stream_status:
                 yield f"data: {json.dumps({'status': status_msg})}\n\n"
 
@@ -3219,7 +3346,7 @@ FORMATTING RULES:
             # user chatting, or a recs / proactive / verification job), tell
             # the user they're queued: a single GPU serves ONE curator
             # generation at a time, so we wait for the slot instead of
-            # thrashing it. curator_start() below blocks until it frees.
+            # thrashing it.
             if curator_busy():
                 _holder = gate_owner()
                 _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
@@ -3227,248 +3354,207 @@ FORMATTING RULES:
                          "Curatarr is busy with another request — you are next in line…")
                 yield f"data: {json.dumps({'status': _busy})}\n\n"
 
-            await curator_start("chat")
-        except BaseException:
-            _rl.CHAT_IN_FLIGHT.leave(_uid)
-            raise
+            # Queue for the slot WITHOUT going silent: a deletion run can hold
+            # the GPU for minutes, and a proxy drops an idle SSE after 60–100 s
+            # (nginx, Cloudflare) — the client's idle watchdog likewise needs a
+            # pulse. curator_start undoes its own acquire when cancelled, so a
+            # disconnect while queued leaves no slot to release; the one case
+            # to cover is the acquire finishing in the same tick as the cancel.
+            acquire = asyncio.ensure_future(curator_start("chat"))
+            try:
+                while not acquire.done():
+                    await asyncio.wait({acquire}, timeout=_HEARTBEAT_S)
+                    if not acquire.done():
+                        yield ": keepalive\n\n"
+                acquire.result()
+            except BaseException:
+                if not acquire.done():
+                    acquire.cancel()
+                elif not acquire.cancelled() and acquire.exception() is None:
+                    curator_done()
+                raise
 
-        # Slot acquired — Curator is now actually working. From here on EVERY
-        # yield/await must live inside the try below: a client disconnect
-        # cancels this generator at the next yield, and a cancel landing in
-        # the gap between the acquire and the try (exactly the "💭 thinking"
-        # yield) skipped the finally — curator_done() never ran, the gate
-        # stayed held forever by a dead "chat" stream, and every later request
-        # queued behind it with an idle GPU (the Little Singles hang: the user
-        # aborted while queued, the retry then waited on the leaked slot).
-        full_response = ""
-        think_filter = ThinkTagStreamFilter(enabled=_cfg.LLM_THINK_TAGS)
+            # Slot acquired — Curator is now actually working. From here on
+            # every yield/await lives inside the try below, whose finally
+            # releases the slot: a cancel landing between the acquire and
+            # the try skipped curator_done() once, and the gate stayed held
+            # forever by a dead "chat" stream (the Little Singles hang).
+            full_response = ""
+            # Shown to the user, never persisted: an error line saved as an
+            # assistant turn poisoned the next turn's context and was fed to
+            # memory extraction and the protection detector.
+            error_text: str | None = None
+            think_filter = ThinkTagStreamFilter(enabled=_cfg.LLM_THINK_TAGS)
 
-        # VRAM health probe runs in parallel: ~2 s after the curator request
-        # starts the model is loaded, so we sample /api/ps then. If the
-        # curator spilled to CPU (race lost on eviction, or summarizer's
-        # eviction polling timed out), we surface a warning frame to the
-        # frontend so the user knows the response will be slow.
-        curator_model = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
+            # VRAM health probe runs in parallel: ~2 s after the curator request
+            # starts the model is loaded, so we sample /api/ps then. If the
+            # curator spilled to CPU (race lost on eviction, or summarizer's
+            # eviction polling timed out), we surface a warning frame to the
+            # frontend so the user knows the response will be slow.
+            curator_model = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
 
-        async def _delayed_vram_probe():
-            await asyncio.sleep(2.0)
-            return await check_curator_vram_health(curator_model)
+            async def _delayed_vram_probe():
+                await asyncio.sleep(2.0)
+                return await check_curator_vram_health(curator_model)
 
-        health_task = None
-        health_warned = False
+            health_task = None
+            health_warned = False
 
-        # Pass 46 (Bug 2): track whether the client cut us off mid-stream.
-        # If they did, we skip persisting the partial response and skip
-        # all post-chat background tasks (memory extraction on half a
-        # sentence is noise; protection-intent on a fragment misfires).
-        # asyncio.CancelledError + GeneratorExit are BaseException-derived
-        # so ``except Exception`` below does NOT catch them — they fall
-        # through to the finally where we honour the flag.
-        client_disconnected = False
-
-        try:
-            yield f"data: {json.dumps({'status': 'Curatarr is thinking…'})}\n\n"
-            # Context-budget watchdog: input + num_predict share the
-            # CURATOR_NUM_CTX window — past the budget the generation gets
-            # squeezed and dies mid-word (the Kill la Kill reply broke off
-            # after two sentences back on the 8192 window). Keep the size
-            # VISIBLE so any truncation names its cause.
-            # History was already fitted when the messages were built; what
-            # is left over budget here is the system prompt itself.
-            from src.services.prompt_budget import est_tokens
-            _prompt_chars = sum(len(m.get("content") or "") for m in messages)
-            _sys_chars = sum(len(m.get("content") or "") for m in messages
-                             if m.get("role") == "system")
-            _hist_chars = _prompt_chars - _sys_chars
-            _prompt_tokens = sum(est_tokens(m.get("content") or "") for m in messages)
-            if _prompt_tokens > (CURATOR_NUM_CTX - _CHAT_PREDICT) * 0.9:
-                logger.warning(
-                    "[chat] prompt size %d chars (~%d tokens; system=%d, "
-                    "history+user=%d) — near the %d-token window minus %d "
-                    "predict; expect squeezed generation",
-                    _prompt_chars, _prompt_tokens, _sys_chars, _hist_chars,
-                    CURATOR_NUM_CTX, _CHAT_PREDICT)
-            else:
-                logger.info("[chat] prompt size: %d chars (system=%d, history+user=%d)",
-                            _prompt_chars, _sys_chars, _hist_chars)
-            health_task = asyncio.create_task(_delayed_vram_probe())
-            # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
-            # the response can take 5-10 minutes. We'd rather wait it out
-            # than 504 the user mid-stream when their model has spilled.
-            async with httpx.AsyncClient(timeout=600) as client:
-                async with client.stream(
-                    "POST",
-                    f"{ollama_url}/api/chat",
-                    json={
-                        "model": curator_model,
-                        "messages": messages,
-                        "stream": True,
-                        "keep_alive": CURATOR_KEEP_ALIVE,
-                        # 2048 cut long, in-flight monologues off mid-sentence
-                        # (the "hoarding" critique stopped at "...The Godfather").
-                        # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
-                        # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
-                        # input tokens — the 33.5k-char Kill la Kill turn fits.
-                        # _CHAT_PREDICT shrinks with a smaller window.
-                        **curator_options(temperature=0.7, num_predict=_CHAT_PREDICT),
-                    },
-                ) as resp:
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                            raw_token = chunk.get("message", {}).get("content", "")
-                            if raw_token:
-                                # Emit any pending VRAM-fallback warning ONCE,
-                                # right before the first user-visible token.
-                                if not health_warned and health_task.done():
-                                    try:
-                                        h = health_task.result()
-                                        if h.get("message"):
-                                            logger.warning(
-                                                "[chat] VRAM fallback detected: %s%% on CPU",
-                                                h.get("cpu_pct"),
-                                            )
-                                            yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
-                                    except Exception:
-                                        pass
-                                    health_warned = True
-
-                                full_response += raw_token
-                                token = think_filter.feed(raw_token)
-                                if token:
-                                    yield f"data: {json.dumps({'token': token})}\n\n"
-                            if chunk.get("done"):
-                                remainder = think_filter.flush()
-                                if remainder:
-                                    yield f"data: {json.dumps({'token': remainder})}\n\n"
-                                break
-                        except json.JSONDecodeError:
-                            continue
-
-        except httpx.ConnectError:
-            msg = f"Ollama not reachable at {ollama_url}. Make sure Ollama is running and '{settings.CURATOR_MODEL}' is pulled."
-            full_response = msg
-            yield f"data: {json.dumps({'token': msg})}\n\n"
-
-        except (asyncio.CancelledError, GeneratorExit):
-            # Pass 46 (Bug 2): client closed the SSE connection mid-stream.
-            # Mark disconnect, then re-raise so the runtime actually
-            # cancels the coroutine (swallowing CancelledError is a known
-            # asyncio footgun — it traps the task instead of unwinding).
-            client_disconnected = True
-            logger.info(
-                "[chat] client disconnected mid-stream (had %d chars buffered)",
-                len(full_response),
-            )
-            raise
-
-        except Exception as e:
-            # The log gets the exception, the client a fixed line: str(e)
-            # can carry an endpoint, a path or a model's raw reply (CodeQL
-            # py/stack-trace-exposure, 2026-09-25).
-            logger.error("[chat] stream failed: %s: %s", type(e).__name__, e, exc_info=True)
-            msg = "Error: the curator could not finish this reply. The server log has the details."
-            full_response = msg
-            yield f"data: {json.dumps({'token': msg})}\n\n"
-
-        finally:
-            curator_done()
-            _rl.CHAT_IN_FLIGHT.leave(_uid)
-            # Cancel the VRAM probe if it's still pending (e.g. very fast
-            # response that finished before the 2 s probe even fired, or a
-            # cancel before the probe task was even created).
-            if health_task and not health_task.done():
-                health_task.cancel()
-            # Strip think blocks from the full collected response before persisting
-            full_response = strip_think_tags(full_response).strip()
-            # Save assistant response to history (same thread as the user turn).
-            # Pass 48: the redundant ChatInteraction write was removed —
-            # ConversationMessage already holds the user+assistant exchange,
-            # and nothing read the ChatInteraction copy.
-            #
-            # Pass 46 (Bug 2): on client disconnect, skip persistence AND the
-            # three post-chat background tasks. A half-sentence in the
-            # conversation history would poison the next turn's context
-            # ("you just said …" referencing a fragment), and memory-extraction
-            # / protection-intent / verification-match running on a torn-off
-            # response is noise at best, false-positive at worst.
-            if full_response and not client_disconnected:
-                from src.database.connection import get_db_session
-                with get_db_session() as db2:
-                    _save_message(_uid, "assistant", full_response, db2, thread_id=thread_id)
-
-                # Pass 41: route the three post-chat background tasks through
-                # ``track_task`` so the GC can't collect them mid-run. Before
-                # this, the create_task return value was discarded — under
-                # memory pressure the asyncio event loop's weak reference
-                # would let the task vanish, silently losing memory-extraction,
-                # protection-intent detection, or verification-response
-                # matching from a turn.
-                from src.services.bg_tasks import track_task
-
-                # Pass 61: schedule a DEBOUNCED thread-level memory extraction
-                # instead of extracting from this single exchange. A follow-up
-                # turn within the debounce window cancels + reschedules it, so
-                # extraction fires ONCE over the whole conversation — capturing
-                # the user's final settled position, not the intermediate
-                # stances they moved through. The debounce task is held in
-                # episodic_memory._pending_thread_extracts, so it's GC-safe
-                # without track_task.
-                from src.services.episodic_memory import schedule_thread_extraction
-                schedule_thread_extraction(_uid, thread_id, media_category=domain)
-
-                # Detect protection intents ("behalten", "keep", "nicht löschen", …)
-                # Pass 23: resolve the current thread's anchor title (e.g. the
-                # deletion-proposal target) so pronoun-only signals like
-                # "we are keeping this show" still register as protection
-                # against the right title.
-                anchor = _get_thread_active_title(_uid, thread_id)
-                anchor_title = anchor[0] if anchor else None
-                anchor_category = anchor[2] if anchor and len(anchor) > 2 else None
-                if thread_id.startswith("principle:"):
-                    # Principle-review thread: parse the settled decision
-                    # (adopt / reject / refined wording) and apply it — a
-                    # media-protection scan makes no sense here.
-                    try:
-                        _pid = int(thread_id.split(":", 1)[1])
-                    except (ValueError, IndexError):
-                        _pid = 0
-                    if _pid:
-                        from src.services.curator_principles import (
-                            detect_and_apply_principle_verdict)
-                        track_task(
-                            detect_and_apply_principle_verdict(
-                                _uid, _pid, message.message, full_response),
-                            name="principle_verdict_bg",
-                        )
+            try:
+                yield f"data: {json.dumps({'status': 'Curatarr is thinking…'})}\n\n"
+                last_emit = loop.time()
+                # Context-budget watchdog: input + num_predict share the
+                # CURATOR_NUM_CTX window — past the budget the generation gets
+                # squeezed and dies mid-word (the Kill la Kill reply broke off
+                # after two sentences back on the 8192 window). Keep the size
+                # VISIBLE so any truncation names its cause.
+                # History was already fitted when the messages were built; what
+                # is left over budget here is the system prompt itself.
+                from src.services.prompt_budget import est_tokens
+                _prompt_chars = sum(len(m.get("content") or "") for m in messages)
+                _sys_chars = sum(len(m.get("content") or "") for m in messages
+                                 if m.get("role") == "system")
+                _hist_chars = _prompt_chars - _sys_chars
+                _prompt_tokens = sum(est_tokens(m.get("content") or "") for m in messages)
+                if _prompt_tokens > (CURATOR_NUM_CTX - _CHAT_PREDICT) * 0.9:
+                    logger.warning(
+                        "[chat] prompt size %d chars (~%d tokens; system=%d, "
+                        "history+user=%d) — near the %d-token window minus %d "
+                        "predict; expect squeezed generation",
+                        _prompt_chars, _prompt_tokens, _sys_chars, _hist_chars,
+                        CURATOR_NUM_CTX, _CHAT_PREDICT)
                 else:
-                    track_task(
-                        _check_protection_intent_bg(
-                            _uid, message.message, full_response,
-                            anchor_title=anchor_title,
-                            anchor_category=anchor_category,
-                            thread_id=thread_id,
-                        ),
-                        name="check_protection_intent_bg",
-                    )
+                    logger.info("[chat] prompt size: %d chars (system=%d, history+user=%d)",
+                                _prompt_chars, _sys_chars, _hist_chars)
+                health_task = asyncio.create_task(_delayed_vram_probe())
+                # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
+                # the response can take 5-10 minutes. We'd rather wait it out
+                # than 504 the user mid-stream when their model has spilled.
+                async with httpx.AsyncClient(timeout=600) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{ollama_url}/api/chat",
+                        json={
+                            "model": curator_model,
+                            "messages": messages,
+                            "stream": True,
+                            "keep_alive": CURATOR_KEEP_ALIVE,
+                            # 2048 cut long, in-flight monologues off mid-sentence
+                            # (the "hoarding" critique stopped at "...The Godfather").
+                            # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
+                            # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
+                            # input tokens — the 33.5k-char Kill la Kill turn fits.
+                            # _CHAT_PREDICT shrinks with a smaller window.
+                            **curator_options(temperature=0.7, num_predict=_CHAT_PREDICT),
+                        },
+                    ) as resp:
+                        if resp.status_code != 200:
+                            # A missing model or a crashed runner answers with
+                            # one {"error": …} line and no "done" — it used to
+                            # read as an empty reply, "(no response)".
+                            _body = (await resp.aread())[:500]
+                            logger.error("[chat] Ollama answered %s: %r",
+                                         resp.status_code, _body)
+                            error_text = ("Error: the curator could not start this reply. "
+                                          "The server log has the details.")
+                        else:
+                            # The heartbeat keeps running until the end, not
+                            # just until the slot is ours: a cold load of the
+                            # 20 GB model or a full 16k-token prompt eval can
+                            # take minutes before the first line, and a <think>
+                            # block streams lines the client never sees.
+                            paced = _lines_with_heartbeat(resp.aiter_lines(), _HEARTBEAT_S)
+                            async with aclosing(paced) as lines:
+                                async for line in lines:
+                                    if loop.time() - last_emit >= _HEARTBEAT_S:
+                                        yield ": keepalive\n\n"
+                                        last_emit = loop.time()
+                                    if line is _HEARTBEAT or not line:
+                                        continue
+                                    try:
+                                        chunk = json.loads(line)
+                                    except json.JSONDecodeError:
+                                        continue
+                                    raw_token = chunk.get("message", {}).get("content", "")
+                                    if raw_token:
+                                        # Emit any pending VRAM-fallback warning ONCE,
+                                        # right before the first user-visible token.
+                                        if not health_warned and health_task.done():
+                                            try:
+                                                h = health_task.result()
+                                                if h.get("message"):
+                                                    logger.warning(
+                                                        "[chat] VRAM fallback detected: %s%% on CPU",
+                                                        h.get("cpu_pct"),
+                                                    )
+                                                    yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
+                                            except Exception:
+                                                pass
+                                            health_warned = True
 
-                # Check if this might be answering a verification question.
-                # Pass 71: thread_id gates it — only a turn inside the
-                # verification question's own proactive_message thread counts
-                # as an answer.
-                track_task(
-                    _check_verification_response(_uid, message.message, thread_id),
-                    name="check_verification_response",
+                                        full_response += raw_token
+                                        token = think_filter.feed(raw_token)
+                                        if token:
+                                            yield f"data: {json.dumps({'token': token})}\n\n"
+                                            last_emit = loop.time()
+                                    if chunk.get("done"):
+                                        remainder = think_filter.flush()
+                                        if remainder:
+                                            yield f"data: {json.dumps({'token': remainder})}\n\n"
+                                        break
+
+            except httpx.ConnectError:
+                error_text = (f"Ollama not reachable at {ollama_url}. Make sure Ollama is "
+                              f"running and '{settings.CURATOR_MODEL}' is pulled.")
+
+            except (asyncio.CancelledError, GeneratorExit):
+                # Pass 46 (Bug 2): client closed the SSE connection mid-stream.
+                # Re-raise so the runtime actually cancels the coroutine
+                # (swallowing CancelledError is a known asyncio footgun — it
+                # traps the task instead of unwinding). Nothing below this try
+                # runs, so a torn-off reply is never persisted and no post-chat
+                # task sees half a sentence.
+                logger.info(
+                    "[chat] client disconnected mid-stream (had %d chars buffered)",
+                    len(full_response),
                 )
+                raise
 
-            # Pass 46 (Bug 2): a cancelled async generator can't yield —
-            # the runtime is already unwinding it. Skip the final frame
-            # if the client is gone. Other clients waiting on the same
-            # endpoint aren't affected: each request has its own generator.
-            if not client_disconnected:
-                yield f"data: {json.dumps({'done': True})}\n\n"
+            except Exception as e:
+                # The log gets the exception, the client a fixed line: str(e)
+                # can carry an endpoint, a path or a model's raw reply (CodeQL
+                # py/stack-trace-exposure, 2026-09-25).
+                logger.error("[chat] stream failed: %s: %s", type(e).__name__, e, exc_info=True)
+                error_text = ("Error: the curator could not finish this reply. "
+                              "The server log has the details.")
+
+            finally:
+                # The GPU slot goes back the moment Ollama is done; the
+                # in-flight guard stays held until the turn is written.
+                curator_done()
+                # Cancel the VRAM probe if it's still pending (e.g. very fast
+                # response that finished before the 2 s probe even fired).
+                if health_task and not health_task.done():
+                    health_task.cancel()
+
+            # Reached only while the client is still connected.
+            if error_text:
+                yield f"data: {json.dumps({'token': error_text})}\n\n"
+            # Strip think blocks from the full collected response before persisting
+            reply = strip_think_tags(full_response).strip()
+            if reply and not error_text:
+                try:
+                    from src.database.runner import run_write
+                    await run_write(_persist_turn, _uid, thread_id, message.message,
+                                    reply, _user_at)
+                except Exception:
+                    logger.exception("[chat] turn not persisted (thread=%s)", thread_id)
+                    yield f"data: {json.dumps({'warning': 'This reply could not be saved to the conversation history.', 'severity': 'moderate'})}\n\n"
+                else:
+                    _schedule_post_turn(_uid, thread_id, message.message, reply, domain)
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        finally:
+            _rl.CHAT_IN_FLIGHT.leave(_uid)
 
     # The generator's finally releases the in-flight guard — but only once
     # it has started. A client gone before the first chunk leaves the
@@ -3479,10 +3565,10 @@ FORMATTING RULES:
     weakref.finalize(stream, _release_unstarted_chat, _rl.CHAT_IN_FLIGHT,
                      _uid, stream_state)
     # Nothing past this point uses the request session (the stream writes
-    # through its own short get_db_session()), so hand its connection back
-    # to the pool now rather than when the response finishes.
+    # through the writer thread), so hand its connection back to the pool
+    # now rather than when the response finishes.
     db.close()
-    return StreamingResponse(stream, media_type="text/event-stream")
+    return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 def _release_unstarted_chat(guard, user_id, stream_state: dict) -> None:
