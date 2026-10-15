@@ -471,6 +471,8 @@ async def speed_ollama(endpoint, method, path, **kw):
 
 mu._ollama = speed_ollama
 sp = asyncio.run(mu._speed("e", "m"))
+check("speed probes go through /api/chat, the curator's own endpoint",
+      '"/api/chat", json={' in inspect.getsource(mu._speed) and '"/api/generate"' not in inspect.getsource(mu._speed))
 check("speed: the median of three probes, with the spread shown",
       sp["gen_tok_s"] == 32.0 and sp["gen_tok_s_range"] == [26.7, 38.1])
 _cont = {**cmp_fixture, "summary": {**cmp_fixture["summary"], "timings_contaminated": True,

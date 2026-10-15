@@ -263,13 +263,17 @@ SPEED_PROBES = (
 
 
 async def _speed(endpoint: str, model: str, probes: int = 3) -> dict:
-    """Generation speed as the median of three ~160-token probes — one
-    probe swung between 27 and 38 tok/s for the same weights."""
+    """Generation speed as the median of ~160-token probes, through
+    /api/chat — the endpoint every curator call uses. /api/generate is not
+    the same path: the 2026-10 gemma4:31b weights ran 10.5 tok/s there and
+    33.0 through /api/chat (the old weights 37.1 / 35.7), so a generate
+    probe called the new model three times slower than it is."""
     from src.services.llm_utils import curator_options
     gen, pre, load = [], [], []
     for prompt in SPEED_PROBES[:max(1, probes)]:
-        r = await _ollama(endpoint, "POST", "/api/generate", json={
-            "model": model, "stream": False, "keep_alive": "5m", "prompt": prompt,
+        r = await _ollama(endpoint, "POST", "/api/chat", json={
+            "model": model, "stream": False, "keep_alive": "5m",
+            "messages": [{"role": "user", "content": prompt}],
             **{k: v for k, v in curator_options(0.0, 160).items()}})
         d = r.json() if r.status_code == 200 else {}
         ec, ed = d.get("eval_count"), d.get("eval_duration")

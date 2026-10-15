@@ -664,11 +664,16 @@ async def warmup_check(ollama_endpoint: str, model: str) -> dict:
         timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             t0 = time.monotonic()
-            r = await client.post(f"{ollama_endpoint}/api/generate", json={
+            # /api/chat with think off: the path every curator call takes.
+            # /api/generate measured the 2026-10 gemma4:31b weights at 10.5
+            # tok/s against 33.0 through chat, and a thinking-capable model
+            # spends a generate call on its thinking channel.
+            r = await client.post(f"{ollama_endpoint}/api/chat", json={
                 "model": model,
-                "prompt": "Reply with the single word: ready",
+                "messages": [{"role": "user", "content": "Reply with one short sentence: ready."}],
                 "stream": False,
-                "options": {"num_predict": 8},
+                "think": False,
+                "options": {"num_predict": 32},
             })
             r.raise_for_status()
             wall_s = round(time.monotonic() - t0, 1)
