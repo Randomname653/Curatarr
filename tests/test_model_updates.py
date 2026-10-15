@@ -362,6 +362,7 @@ async def fake_evaluate(cmp_, endpoint, judge):
 
 
 lp.curator_priority, lp.evict_if_resident = no_gate, noop
+real_measure = mu.measure
 mu._refill_facts, mu._alone, mu.measure = noop, noop, fake_measure
 ev.evaluate = fake_evaluate
 store.clear()
@@ -396,6 +397,59 @@ store["curator"]["eval_error"] = "TypeError: boom"
 store["curator"]["comparison"].pop("evaluation", None)
 item = next(i for i in nt.system_notifications(_Admin())["items"] if "gemma4" in i["title"])
 check("bell: a failed review is shown, the test result kept", item["title"].startswith("Review failed"))
+
+# ── VRAM: nvidia-smi beats an implausible /api/ps (the 2.1 GB gemma4 case) ─
+async def run_measure(endpoint, smi_values, ps_gb, file_gb):
+    vals = iter(smi_values)
+    async def fake_smi():
+        return next(vals, None)
+    async def fake_speed(e, m):
+        return {"gen_tok_s": 32.1}
+    async def fake_res(e, m):
+        return {"vram_gb": ps_gb, "gpu_share_pct": 100, "co_resident": []}
+    async def fake_file(e, m):
+        return file_gb
+    async def fake_settled(*a, **k):
+        return await fake_smi()
+    saved = (mu._smi_settled, mu._speed, mu._residency, mu._file_gb, mu._alone)
+    mu._smi_settled, mu._speed, mu._residency, mu._file_gb, mu._alone = (
+        fake_settled, fake_speed, fake_res, fake_file, noop)
+    lp._evict_model = noop
+    try:
+        return await real_measure(endpoint, "curatarr-update-test")
+    finally:
+        mu._smi_settled, mu._speed, mu._residency, mu._file_gb, mu._alone = saved
+
+
+async def settled_case():
+    seq = iter([1500, 1620, 1490])
+    async def smi():
+        return next(seq)
+    saved = mu._smi_used_mib
+    mu._smi_used_mib = smi
+    try:
+        return await mu._smi_settled(0, 3)
+    finally:
+        mu._smi_used_mib = saved
+
+
+check("a settled reading is the median of three (one flicker does not move it)",
+      asyncio.run(settled_case()) == 1500)
+
+
+m_local = asyncio.run(run_measure("http://127.0.0.1:11434", [1500, 23900], 2.0, 19.9))
+check("local Ollama: VRAM is the nvidia-smi difference, ps flagged implausible",
+      m_local["residency"]["vram_gb"] == round((23900 - 1500) / 1024, 1)
+      and m_local["residency"]["vram_source"] == "nvidia-smi"
+      and m_local["residency"]["ps_implausible"] and m_local["residency"]["vram_gb_ps"] == 2.0)
+m_remote = asyncio.run(run_measure("http://192.0.2.10:11434", [], 2.0, 19.9))
+check("remote Ollama + implausible ps: VRAM is unknown, not 2 GB",
+      m_remote["residency"]["vram_gb"] is None and "implausible" in m_remote["residency"]["vram_source"])
+m_ok = asyncio.run(run_measure("http://192.0.2.10:11434", [], 19.5, 19.9))
+check("remote Ollama + plausible ps: Ollama's figure is used",
+      m_ok["residency"]["vram_gb"] == 19.5 and m_ok["residency"]["vram_source"] == "ollama")
+check("the reviewer is told 'not measurable', never a None or a fake number",
+      ev._gb(None) == "not measurable" and ev._gb(19.9) == "19.9")
 
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]

@@ -86,6 +86,10 @@ def quality_ok(m: dict) -> tuple[bool, str]:
 def perf_ok(m: dict) -> tuple[bool, str]:
     if m.get("status") != "ok":
         return False, m.get("status") or "no status"
+    if m.get("ps_implausible"):
+        # The GPU share comes from /api/ps; when ps under-reports the model
+        # that share is meaningless, so the cell cannot vouch for a fit.
+        return False, "Ollama's residency figure is implausible (ps << nvidia-smi)"
     if m.get("long_error"):
         return False, f"long-context probe: {m['long_error'][:80]}"
     if (m.get("judge_escalation_ratio") or 1) > MAX_ESCALATION:

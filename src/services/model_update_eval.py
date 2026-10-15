@@ -121,6 +121,12 @@ async def judge_pair(endpoint: str, model: str, key: str, system: str, context: 
             "position_flip": picks[0] != picks[1] and "tie" not in picks}
 
 
+def _gb(v) -> str:
+    # An unknown figure is said to be unknown — never handed over as a number
+    # the reviewer could build an argument on.
+    return "not measurable" if v is None else str(v)
+
+
 async def evaluate(comparison: dict, endpoint: str, judge_model: str) -> dict:
     facts = comparison.get("facts") or {}
     titles = []
@@ -151,7 +157,7 @@ async def evaluate(comparison: dict, endpoint: str, judge_model: str) -> dict:
         f"Verdicts unchanged {s.get('verdicts_same')}/{s.get('verdicts_compared')}. "
         f"Judge s old/new {s['judge_s']['old']}/{s['judge_s']['new']}; "
         f"tok/s {s['gen_tok_s']['old']}/{s['gen_tok_s']['new']}; "
-        f"VRAM GB {s['vram_gb']['old']}/{s['vram_gb']['new']}; "
+        f"VRAM GB {_gb(s['vram_gb'].get('old'))}/{_gb(s['vram_gb'].get('new'))}; "
         f"failures {s['failures']['old']}/{s['failures']['new']}.\n"
         f"Hard rules violated: {'; '.join(hard) if hard else 'none'}.\n"
         "Per-title reasons:\n" + "\n".join(

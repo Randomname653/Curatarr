@@ -94,6 +94,14 @@ def _residency(endpoint: str, model: str) -> dict:
     return {}
 
 
+def ps_implausible(res: dict, vram_model_mib: int | None) -> bool:
+    """Ollama's /api/ps size far below what nvidia-smi saw the model take:
+    its GPU-share figure cannot be trusted then (gemma4:31b 2026-10 weights
+    on Ollama 0.40.4: ps 2.1 GB, nvidia-smi ~22 GB)."""
+    size = res.get("size_mib")
+    return bool(size and vram_model_mib and size < 0.8 * vram_model_mib)
+
+
 def _agg(rows: list[dict], key: str) -> dict:
     vals = [r[key] for r in rows if r.get(key) is not None]
     if not vals:
@@ -135,8 +143,9 @@ def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
             points.append({"num_ctx": ctx, "error": r["error"][:200]})
             break
         res = _residency(endpoint, model)
-        points.append({"num_ctx": ctx, "vram_model_mib": gpu.query()["used_mib"] - idle,
-                       "load_s": r.get("load_s"), **res})
+        vram = gpu.query()["used_mib"] - idle
+        points.append({"num_ctx": ctx, "vram_model_mib": vram, "load_s": r.get("load_s"),
+                       "ps_implausible": ps_implausible(res, vram), **res})
         if (res.get("gpu_share_pct") or 0) < 100:
             break
     server.unload_all(endpoint)
@@ -174,6 +183,7 @@ def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
     out.update(_residency(endpoint, model))
     loaded = gpu.query()
     out["vram_model_mib"] = loaded["used_mib"] - idle["used_mib"]
+    out["ps_implausible"] = ps_implausible(out, out["vram_model_mib"])
 
     system, schema = _judge_system(profile)
     judge = []

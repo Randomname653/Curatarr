@@ -110,6 +110,11 @@ check("offloaded but too slow fails",
       not matrix.perf_ok({**ok, "gpu_share_pct": 55, "mono_gen_tok_s_median": 3})[0])
 check("offloaded and usable passes",
       matrix.perf_ok({**ok, "gpu_share_pct": 55, "mono_gen_tok_s_median": 9, "judge_wall_s_p90": 40})[0])
+check("a cell whose /api/ps figure is implausible cannot vouch for a fit",
+      not matrix.perf_ok({**ok, "ps_implausible": True})[0])
+from tests.benchmarks.hwbench.perf import ps_implausible  # noqa: E402
+check("ps 2.1 GB vs nvidia-smi 22 GB is implausible, a close pair is not",
+      ps_implausible({"size_mib": 2160}, 22400) and not ps_implausible({"size_mib": 21000}, 22400))
 check("JSON gate under 95 % is a K.O.", not matrix.quality_ok({"gate_valid_pct": 93.3})[0])
 check("empty monologues over 5 % are a K.O.",
       not matrix.quality_ok({"gate_valid_pct": 100, "mono_empty_pct": 10})[0])

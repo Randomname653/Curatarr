@@ -349,11 +349,83 @@ async def _run_side(endpoint: str, model: str, sample: list[dict], lang: str) ->
     return {"titles": rows, "chat": chats, **(await measure(endpoint, model))}
 
 
+def _is_local(endpoint: str) -> bool:
+    from urllib.parse import urlparse
+    return (urlparse(endpoint).hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+
+async def _smi_used_mib() -> int | None:
+    """Card-wide VRAM in use (nvidia-smi), None without an NVIDIA driver."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        return max(int(x) for x in out.decode().split() if x.strip().isdigit())
+    except Exception:
+        return None
+
+
+async def _smi_settled(settle_s: float = 2.0, reads: int = 3) -> int | None:
+    """nvidia-smi after the driver had time to release or map memory: the
+    median of a few reads, so one desktop flicker (~100 MB) does not move
+    the figure."""
+    await asyncio.sleep(settle_s)
+    vals = []
+    for _ in range(reads):
+        v = await _smi_used_mib()
+        if v is not None:
+            vals.append(v)
+        await asyncio.sleep(0.5)
+    return int(statistics.median(vals)) if vals else None
+
+
+async def _file_gb(endpoint: str, model: str) -> float | None:
+    try:
+        r = await _ollama(endpoint, "GET", "/api/tags")
+        for m in r.json().get("models") or []:
+            if _same(m.get("name") or "", model):
+                return round((m.get("size") or 0) / 2**30, 1)
+    except (httpx.HTTPError, ValueError):
+        pass
+    return None
+
+
+# /api/ps can be wrong: for the 2026-10 gemma4:31b weights (projector + MTP
+# draft layers) Ollama 0.40.4 reported size = size_vram = 2.1 GB while
+# nvidia-smi showed ~22 GB taken — and the first self-review recommended
+# the update for that "VRAM saving". VRAM is therefore the nvidia-smi
+# difference (empty card -> model loaded) when Ollama runs here; a /api/ps
+# figure far below the weight file is never shown or reviewed as a number.
+PS_PLAUSIBLE = 0.8
+
+
 async def measure(endpoint: str, model: str) -> dict:
-    """Speed probe + residency on a quiet card."""
+    """Speed probe + residency on a quiet card, VRAM cross-checked."""
+    from src.services.llm_priority import _evict_model
+    # Per side: everything unloaded (this model too) -> settled baseline ->
+    # this model alone -> settled reading. Each side gets its OWN empty-card
+    # baseline, so the other model never leaks into the difference.
     await _alone(endpoint, model)
+    before = None
+    if _is_local(endpoint):
+        await _evict_model(model)
+        before = await _smi_settled()
     speed = await _speed(endpoint, model)
     res = await _residency(endpoint, model)
+    after = await _smi_settled(1.0) if before is not None else None
+    file_gb = await _file_gb(endpoint, model)
+    ps_gb = res.get("vram_gb")
+    res["vram_gb_ps"] = ps_gb
+    res["weights_file_gb"] = file_gb
+    res["ps_implausible"] = bool(ps_gb is not None and file_gb and res.get("gpu_share_pct") == 100
+                                 and ps_gb < PS_PLAUSIBLE * file_gb)
+    if before is not None and after is not None:
+        res["vram_gb"], res["vram_source"] = round((after - before) / 1024, 1), "nvidia-smi"
+    elif res["ps_implausible"]:
+        res["vram_gb"], res["vram_source"] = None, "unknown (Ollama's figure is implausible)"
+    else:
+        res["vram_source"] = "ollama"
     return {"speed": speed, "residency": res, "clean": not res.get("co_resident")}
 
 
@@ -543,6 +615,7 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
             cmp_["summary"].update(
                 gen_tok_s={k: v["speed"].get("gen_tok_s") for k, v in remeasured.items()},
                 vram_gb={k: v["residency"].get("vram_gb") for k, v in remeasured.items()},
+                vram_source={k: v["residency"].get("vram_source") for k, v in remeasured.items()},
                 gpu_share_pct={k: v["residency"].get("gpu_share_pct") for k, v in remeasured.items()},
                 remeasured_clean=all(v["clean"] for v in remeasured.values()),
                 timings_contaminated=not all(
