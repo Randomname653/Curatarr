@@ -76,8 +76,19 @@ async def lifespan(app: FastAPI):
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # The music flag can be held by ANOTHER OS process (scripts/
+        # music_enricher.py survives server restarts by design): a blind "0"
+        # here handed its lock to the custodian and two passes ran side by
+        # side. The lease clears it only when its holder is gone.
+        try:
+            from src.services import state_lease
+            if state_lease.reclaim_if_stale("music_pipeline_running"):
+                set_state("music_pipeline_stop_requested", "0")
+            else:
+                logger.info("[startup] music pipeline held by a live process (pid %s) — left alone",
+                            state_lease.holder_pid("music_pipeline_running"))
+        except Exception as e:  # noqa: BLE001 - the other flags still reset
+            logger.warning("[startup] music lease check failed: %s", e)
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
         # Pass 75/76: seed the game flag with the ACTUAL current state, not
@@ -188,8 +199,13 @@ async def lifespan(app: FastAPI):
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # Only OUR music lease: an out-of-process enricher keeps its own.
+        try:
+            from src.services import state_lease
+            if state_lease.release("music_pipeline_running"):
+                set_state("music_pipeline_stop_requested", "0")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[shutdown] music lease release failed: %s", e)
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
     except Exception:
