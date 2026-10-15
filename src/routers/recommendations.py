@@ -583,6 +583,9 @@ async def update_principle(
         raise HTTPException(status_code=404, detail="Principle not found")
     if action == "activate":
         row.status, row.activated_at = "active", datetime.utcnow()
+        # adopting a CONTRADICTION retires the rule it contradicts
+        from src.services.curator_principles import supersede_contradicted
+        supersede_contradicted(db, row)
     elif action == "reject":
         row.status = "rejected"
     else:
