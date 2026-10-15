@@ -287,7 +287,11 @@ def _unit(vec) -> Optional[list]:
     if vec is None or len(vec) == 0:
         return None
     norm = math.sqrt(sum(float(x) * float(x) for x in vec))
-    return [float(x) / norm for x in vec] if norm > 0 else None
+    # isfinite: a NaN norm already failed `> 0`, but an Inf one divided every
+    # component to 0 or NaN and sailed into the centroid
+    if not math.isfinite(norm) or norm <= 0:
+        return None
+    return [float(x) / norm for x in vec]
 
 
 def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
@@ -386,6 +390,9 @@ def weighted_mean_embedding(embeddings_weights: list) -> tuple:
         return None, 0.0
 
     dim = len(valid[0][0])
+    # One space only: a vector of another dimension (a stale cache entry from
+    # another model) would index out of range or be silently truncated.
+    valid = [(emb, w) for emb, w in valid if len(emb) == dim]
     total_weight = sum(w for _, w in valid)
     if total_weight <= 0:
         return None, 0.0
@@ -402,6 +409,30 @@ def weighted_mean_embedding(embeddings_weights: list) -> tuple:
     return [x / pre_norm for x in avg], pre_norm
 
 
+_MIN_CORPUS = 50
+
+
+def _clean_unit_rows(embs, min_rows: int = _MIN_CORPUS):
+    """The corpus as finite, non-zero, unit-length rows of one dimension, or
+    None when fewer than ``min_rows`` survive. The old guard only replaced
+    ZERO norms: one NaN row turned the corpus mean into NaN, which json
+    stores as ``NaN`` and the deletion reader then turned into a NaN cosine
+    for every candidate — each scored as maximally foreign."""
+    import numpy as np
+    try:
+        m = np.asarray(embs, dtype=float)
+    except (TypeError, ValueError):   # ragged → mixed dimensions
+        return None
+    if m.ndim != 2 or len(m) < min_rows:
+        return None
+    m = m[np.isfinite(m).all(axis=1)]
+    norms = np.linalg.norm(m, axis=1)
+    keep = norms > 1e-9
+    if int(keep.sum()) < min_rows:
+        return None
+    return m[keep] / norms[keep, None]
+
+
 def _domain_corpus_mean(category: str):
     """Mean of the category's normalized item cloud — the anisotropy
     reference for the cluster-separation gate below. None on a tiny or
@@ -409,15 +440,9 @@ def _domain_corpus_mean(category: str):
     if not category:
         return None
     try:
-        import numpy as np
         from src.vector_store.chromadb_wrapper import get_chroma_db
-        embs = get_chroma_db().embeddings_for_domain(category)
-        if len(embs) < 50:
-            return None
-        m = np.asarray(embs, dtype=float)
-        norms = np.linalg.norm(m, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        return (m / norms).mean(axis=0)
+        m = _clean_unit_rows(get_chroma_db().embeddings_for_domain(category))
+        return None if m is None else m.mean(axis=0)
     except Exception as e:
         logger.debug("corpus mean for %s failed: %s", category, e)
         return None
@@ -637,23 +662,23 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
     try:
         import numpy as np
         from src.vector_store.chromadb_wrapper import get_chroma_db
-        embs = get_chroma_db().embeddings_for_domain(category)
-        if len(embs) < 50:
+        m = _clean_unit_rows(get_chroma_db().embeddings_for_domain(category))
+        if m is None:
             return None
-        m = np.asarray(embs, dtype=float)
-        norms = np.linalg.norm(m, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        m = m / norms
         mean = m.mean(axis=0)
 
         def _center(vec):
             v = np.asarray(vec, dtype=float)
+            # `if not n` let NaN through (NaN is truthy); a centroid from
+            # another space (wrong dimension) must not broadcast either
+            if v.shape != mean.shape or not np.isfinite(v).all():
+                return None
             n = np.linalg.norm(v)
-            if not n:
+            if n < 1e-9:
                 return None
             v = v / n - mean
             n = np.linalg.norm(v)
-            return v / n if n else None
+            return v / n if n > 1e-9 else None
 
         mc = m - mean
         mc_norms = np.linalg.norm(mc, axis=1, keepdims=True)
@@ -679,13 +704,18 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
             return (round(float(np.percentile(cos, 10)), 4),
                     round(float(np.percentile(cos, 90)), 4))
 
+        def _usable(anchors):
+            return (anchors is not None and all(math.isfinite(x) for x in anchors)
+                    and anchors[1] - anchors[0] > 1e-3)
+
         cal = _anchors(embedding)
-        if not cal:
+        if not _usable(cal):
             return None
+        drop_cal = _anchors(drop_embedding) if drop_embedding else None
         return {
             "corpus_mean": [round(float(x), 6) for x in mean],
             "cal": cal,
-            "drop_cal": _anchors(drop_embedding) if drop_embedding else None,
+            "drop_cal": drop_cal if _usable(drop_cal) else None,
         }
     except Exception as e:
         logger.warning("corpus calibration failed for %s: %s", category, e)

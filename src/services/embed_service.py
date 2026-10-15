@@ -101,7 +101,10 @@ def _l2(vec: list) -> Optional[list]:
     if not vec:
         return None
     norm = math.sqrt(sum(x * x for x in vec))
-    return [x / norm for x in vec] if norm > 0 else None
+    # NaN fails `> 0` on its own; Inf does not, and x/inf poisons the vector
+    if not math.isfinite(norm) or norm <= 0:
+        return None
+    return [x / norm for x in vec]
 
 
 async def _post_embed(model: str, inputs: list, num_ctx: int) -> list:

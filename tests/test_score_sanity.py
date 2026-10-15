@@ -32,7 +32,8 @@ def check(name, cond):
 
 check("cos at p90 -> mismatch 0", _cosine_to_mismatch(0.72, 0.61, 0.72) == 0.0)
 check("cos at p10 -> mismatch 1", _cosine_to_mismatch(0.61, 0.61, 0.72) == 1.0)
-check("missing cosine -> neutral 0.5", _cosine_to_mismatch(None, 0.61, 0.72) == 0.5)
+check("missing cosine -> held under the shortlist bar (audit 2026-10)",
+      _cosine_to_mismatch(None, 0.61, 0.72) * 80 < 30)
 check("small batch falls back to model constants",
       _cosine_anchors([0.65] * 5) == (0.61, 0.72))
 
@@ -74,8 +75,8 @@ check("rank tuple: dislike group -> cosine -> monitored tie-break",
       "(_dislike_rank(item), vs, _monitored_rank(item))" in re_src)
 check("global anchors preferred over batch anchors",
       "cal_anchors" in re_src and '_anchor_src = "global"' in re_src)
-check("genre fallback for missing embeddings, damped band",
-      'taste_src = "genre"' in re_src and "0.85 - 0.7 * min(1.0, _overlap)" in re_src)
+check("genre fallback for missing embeddings, damped band [0.3, 0.6]",
+      'taste_src = "genre"' in re_src and "0.6 - 0.3 * min(1.0, _overlap)" in re_src)
 check("taste_source recorded on scored candidates",
       '"taste_source": taste_src' in re_src)
 

@@ -58,8 +58,8 @@ check("anchors guarantee hi > lo when degenerate", _hi > _lo)
 
 # ── _cosine_to_mismatch ─────────────────────────────────────────────────────
 
-check("mismatch of None is neutral 0.5",
-      _cosine_to_mismatch(None, 0.61, 0.72) == 0.5)
+check("mismatch of None stays under the shortlist bar (no evidence, no push)",
+      _cosine_to_mismatch(None, 0.61, 0.72) * 80 < 30)
 check("best fit is zero mismatch (above hi clamps)",
       _cosine_to_mismatch(0.72, 0.61, 0.72) == 0.0
       and _cosine_to_mismatch(0.85, 0.61, 0.72) == 0.0)
