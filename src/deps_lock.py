@@ -52,6 +52,11 @@ from importlib.metadata import distribution as _distribution
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+try:                     # the tray runs pip/uv under pythonw: no console windows
+    from src.winproc import NO_WINDOW
+except ImportError:      # run as a bare script path
+    NO_WINDOW = {}
+
 ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS = ROOT / "requirements.txt"
 LOCK_DIR = ROOT / "lock"
@@ -450,7 +455,7 @@ def raise_below(rep: LockReport, run=subprocess.run, log=print) -> List[str]:
                    "--quiet", "--disable-pip-version-check"]
             if rep.hashed:
                 cmd.insert(4, "--require-hashes")
-            r = run(cmd, capture_output=True, text=True)
+            r = run(cmd, capture_output=True, text=True, **NO_WINDOW)
             if r.returncode != 0:
                 sys.stderr.write((r.stderr or r.stdout or "")[-800:])
                 return False
@@ -542,7 +547,8 @@ def apply(requirements: Path = REQUIREMENTS, lock: Path = LOCK,
 def uv_command() -> Optional[List[str]]:
     """How to run uv here: the module of this interpreter, else the binary."""
     try:
-        r = subprocess.run([sys.executable, "-m", "uv", "--version"], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([sys.executable, "-m", "uv", "--version"], capture_output=True, text=True,
+                           timeout=30, **NO_WINDOW)
         if r.returncode == 0:
             return [sys.executable, "-m", "uv"]
     except Exception:  # noqa: BLE001
@@ -595,7 +601,7 @@ def compile_locks(targets=COMPILE_TARGETS, run=subprocess.run, log=print, uv: Op
                     encoding="utf-8", newline="\n")
                 cmd += ["-c", constraints]
         try:
-            r = run(cmd, capture_output=True, text=True, cwd=str(root))
+            r = run(cmd, capture_output=True, text=True, cwd=str(root), **NO_WINDOW)
         finally:
             if constraints:
                 try:

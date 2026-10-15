@@ -134,11 +134,14 @@ _gpu_unavailable_until = 0.0
 def _nvidia_smi() -> "tuple | None":
     """(memory.used MB, memory.total MB, utilization %) or None."""
     import subprocess
+    from src.winproc import NO_WINDOW
     try:
+        # NO_WINDOW: under the tray (pythonw) every call opened a console
+        # window — every ~30 s, during the very games this gate protects.
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu",
              "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=4)
+            capture_output=True, text=True, timeout=4, **NO_WINDOW)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
     if out.returncode != 0:
