@@ -363,10 +363,6 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
     gate for the whole run, so chat and background work wait, as for a
     deletion run. Raises on a precondition; the caller reports it."""
     from src.config import settings
-    from src.database.connection import get_db_session
-    from src.services.llm_priority import curator_priority, evict_if_resident
-    from src.services.llm_utils import detect_user_language, language_directive
-    from src.services.setup_wizard import pull_ollama_model
     from src.services.task_monitor import task_monitor
 
     def msg(text):
@@ -380,9 +376,35 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
         raise ValueError(f"no comparison for the {role} role")
     if row.get("status") != "update":
         raise ValueError("no update pending for this model")
-    base, bake, running = row["base"], row["bake"], row["running"]
+    pinned = pin_name(row["base"], row["running"])
+    # Marked BEFORE anything changes in Ollama: a restart mid-test leaves this
+    # behind, and recover_interrupted rolls back from it.
+    state[role]["test_started"] = _now()
+    save_state(state)
+    try:
+        result = await _compare(role, row, endpoint, user_id, pinned, msg)
+    except BaseException:
+        # Cancelled by a shutdown, the rollback may not get to finish: then
+        # the marker stays and recover_interrupted completes it at the start.
+        await rollback(endpoint, row)
+        _clear_marker(role)
+        raise
+    _clear_marker(role)
+    return result
 
-    pinned = pin_name(base, running)
+
+def _clear_marker(role: str) -> None:
+    st = load_state()
+    st.get(role, {}).pop("test_started", None)
+    save_state(st)
+
+
+async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
+    from src.database.connection import get_db_session
+    from src.services.llm_priority import curator_priority, evict_if_resident
+    from src.services.llm_utils import detect_user_language, language_directive
+    from src.services.setup_wizard import pull_ollama_model
+    base, bake, running = row["base"], row["bake"], row["running"]
     if await running_weights(endpoint, base) == running:
         msg(f"pinning {base} as {pinned}")
         await _ollama(endpoint, "POST", "/api/copy", json={"source": base, "destination": pinned})
@@ -420,6 +442,64 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
     return result
 
 
+async def rollback(endpoint: str, row: dict) -> None:
+    """Put Ollama back to where it was before a test: the tag on the pinned
+    weights, no test bake, no pin. Deleting the test bake is what frees the
+    new weights: Ollama removes every blob no manifest references any more
+    (checked 2026-10-15 with a throwaway model). A pull cut off mid-way
+    leaves ``-partial`` files that no manifest knows; with Ollama on this
+    machine they are removed too."""
+    base, running = row["base"], row["running"]
+    pinned = pin_name(base, running)
+    pin_ok = await running_weights(endpoint, pinned) == running
+    if pin_ok and await running_weights(endpoint, base) != running:
+        await _ollama(endpoint, "POST", "/api/copy", json={"source": pinned, "destination": base})
+    await _ollama(endpoint, "DELETE", "/api/delete", json={"model": TEST_BAKE})
+    # The pin goes only once the tag holds its weights again — otherwise it
+    # is the last copy of the running weights and must stay.
+    if pin_ok and await running_weights(endpoint, base) == running:
+        await _ollama(endpoint, "DELETE", "/api/delete", json={"model": pinned})
+    remove_partials(endpoint, row.get("remote"))
+
+
+def remove_partials(endpoint: str, digest: str | None) -> int:
+    import os
+    from pathlib import Path
+    from urllib.parse import urlparse
+    if not digest or (urlparse(endpoint).hostname or "") not in ("localhost", "127.0.0.1", "::1"):
+        return 0
+    root = Path(os.environ.get("OLLAMA_MODELS") or Path.home() / ".ollama" / "models") / "blobs"
+    n = 0
+    for f in root.glob(digest.replace(":", "-") + "-partial*"):
+        try:
+            f.unlink()
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
+async def recover_interrupted() -> list[str]:
+    """At startup: a test that a restart cut off (``test_started`` still set,
+    no result) is rolled back, and the notice says what happened."""
+    from src.config import settings
+    state = load_state()
+    done = []
+    for role, row in state.items():
+        if isinstance(row, dict) and row.get("test_started") and not row.get("comparison"):
+            try:
+                await rollback(settings.effective_ollama, row)
+            except Exception as e:
+                logger.warning("[model update] rollback of %s failed: %s", role, e)
+                continue
+            row.pop("test_started", None)
+            row["compare_error"] = "the test was cut off by a restart; everything was put back"
+            done.append(role)
+    if done:
+        save_state(state)
+    return done
+
+
 async def decide(role: str, action: str) -> dict:
     """``update``: rebuild the bakes from the new weights. ``stay``: restore
     the pinned weights under the tag and mute this remote digest."""
@@ -442,15 +522,14 @@ async def decide(role: str, action: str) -> dict:
                                   settings.BASE_SUMMARIZER_MODEL,
                                   settings.BASE_PITCHER_MODEL if getattr(settings, "PITCHER_MODEL", "") else None)
         row.update(running=cmp_["new_weights"], status="current", declined_remote=None)
+        # The old weights go with the pin once no bake uses them any more.
+        for name in (pinned, TEST_BAKE):
+            await _ollama(endpoint, "DELETE", "/api/delete", json={"model": name})
     elif action == "stay":
-        if await running_weights(endpoint, pinned) == row["running"]:
-            await _ollama(endpoint, "POST", "/api/copy",
-                          json={"source": pinned, "destination": base})
+        await rollback(endpoint, row)
         row.update(status="pinned", declined_remote=row.get("remote"))
     else:
         raise ValueError("action is update or stay")
-    for name in (pinned, TEST_BAKE):
-        await _ollama(endpoint, "DELETE", "/api/delete", json={"model": name})
     row["decided"] = {"action": action, "at": _now(),
                       "summary": (cmp_ or {}).get("summary")}
     row.pop("comparison", None)

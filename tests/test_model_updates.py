@@ -160,6 +160,71 @@ check("update after a test rebuilds the bakes and records the new running weight
       built and row["running"] == "sha256:new" and row["status"] == "current"
       and row["decided"]["summary"] == {"x": 1})
 
+# ── cleanup: rollback, failed test, restart mid-test ──────────────────────
+row0 = {"role": "curator", "base": "gemma4:31b", "bake": "curatarr-curator",
+        "running": "sha256:old", "remote": "sha256:new", "status": "update", "comparable": True}
+PIN = mu.pin_name("gemma4:31b", "sha256:old")
+
+
+def reset(base_on):
+    calls.clear()
+    RUN.update({"gemma4:31b": base_on, PIN: "sha256:old"})
+    store.clear()
+    store["curator"] = dict(row0)
+
+
+async def tracking_ollama(endpoint, method, path, **kw):
+    calls.append((method, path, kw.get("json")))
+    if path == "/api/copy":     # the copy really moves the tag in the fake
+        RUN[kw["json"]["destination"]] = RUN.get(kw["json"]["source"])
+
+
+mu._ollama = tracking_ollama
+reset("sha256:new")      # the pull had already moved the tag
+asyncio.run(mu.rollback("http://localhost:11434", store["curator"]))
+check("rollback: the tag goes back to the pinned weights",
+      ("POST", "/api/copy", {"source": PIN, "destination": "gemma4:31b"}) in calls
+      and RUN["gemma4:31b"] == "sha256:old")
+check("rollback: the test bake is deleted (that frees the new weights) and then the pin",
+      [c[2]["model"] for c in calls if c[0] == "DELETE"] == [mu.TEST_BAKE, PIN])
+reset("sha256:new")
+RUN[PIN] = None          # the pin is missing: the tag must not be touched
+asyncio.run(mu.rollback("http://localhost:11434", store["curator"]))
+check("rollback without a valid pin: no copy, and no pin delete",
+      not any(c[1] == "/api/copy" for c in calls)
+      and [c[2]["model"] for c in calls if c[0] == "DELETE"] == [mu.TEST_BAKE])
+
+
+async def failing_compare(*a, **k):
+    raise RuntimeError("could not pull gemma4:31b")
+
+
+real_compare = mu._compare
+mu._compare = failing_compare
+reset("sha256:old")
+try:
+    asyncio.run(mu.run_comparison("curator", 1))
+except RuntimeError:
+    pass
+mu._compare = real_compare
+check("a failed test rolls back by itself and clears its marker",
+      any(c[0] == "DELETE" and c[2]["model"] == mu.TEST_BAKE for c in calls)
+      and "test_started" not in store["curator"])
+
+reset("sha256:new")
+store["curator"]["test_started"] = "2026-10-15T12:00:00+00:00"   # a restart cut it off
+done = asyncio.run(mu.recover_interrupted())
+check("startup recovery rolls back a cut-off test and says so",
+      done == ["curator"] and RUN["gemma4:31b"] == "sha256:old"
+      and "restart" in store["curator"]["compare_error"] and "test_started" not in store["curator"])
+reset("sha256:new")
+store["curator"]["test_started"] = "x"
+store["curator"]["comparison"] = {"summary": {}}
+check("...but leaves a FINISHED test alone (its result waits for the decision)",
+      asyncio.run(mu.recover_interrupted()) == [])
+check("partials are only touched for a local Ollama",
+      mu.remove_partials("http://192.168.0.5:11434", "sha256:new") == 0)
+
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]
 main = (root / "src/main.py").read_text(encoding="utf-8")
@@ -167,6 +232,7 @@ check("the routes are admin-only",
       'model_updates.router,   prefix="/api/system/model-updates"' in main
       and "dependencies=_ADMIN_ONLY)" in main.split("model_updates.router", 1)[1][:200])
 sched = (root / "src/services/scheduler.py").read_text(encoding="utf-8")
+check("a cut-off test is recovered once at startup", "recover_interrupted" in sched)
 check("a daily check is scheduled, and never with next_run_time=None (that pauses it)",
       "job_model_update_check" in sched
       and not __import__("re").search(r"next_run_time\s*=\s*None\s*[,)]", sched))

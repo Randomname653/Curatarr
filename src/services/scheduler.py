@@ -278,6 +278,18 @@ def start_scheduler():
         **({"next_run_time": datetime.now() + timedelta(minutes=5)}
            if _job_overdue("model_update_check", 24) else {}),
     )
+    # A model-update test cut off by a restart left a pin and maybe new
+    # weights behind: roll it back once, two minutes after the start.
+    from apscheduler.triggers.date import DateTrigger
+    from src.services.model_updates import recover_interrupted
+    scheduler.add_job(
+        recover_interrupted,
+        DateTrigger(run_date=datetime.now() + timedelta(minutes=2)),
+        id="model_update_recover",
+        name="Model update test: roll back an interrupted run",
+        replace_existing=True,
+        misfire_grace_time=600,
+    )
     scheduler.add_job(
         job_game_watcher,
         IntervalTrigger(seconds=30),
