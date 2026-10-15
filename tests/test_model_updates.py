@@ -12,6 +12,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services import model_updates as mu  # noqa: E402
+# Imported before src.config.settings is swapped for a fake further down.
+import src.routers.model_updates as rmu  # noqa: E402
+from src.services import notifications as nt  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -169,9 +172,58 @@ check("a daily check is scheduled, and never with next_run_time=None (that pause
       and not __import__("re").search(r"next_run_time\s*=\s*None\s*[,)]", sched))
 from tests.frontend_files import everything  # noqa: E402
 html = everything()
-check("the glance panel shows the notice and Maintenance has the section",
+check("Maintenance has the section, the bell reaches it",
       "/api/system/model-updates" in html and "maint-models" in html
-      and "openModelUpdates" in html)
+      and "act('openModelUpdates')" in html)
+check("the notice lives in the bell + the Settings bubble, not the chat glance panel",
+      "/api/system/notifications" in html and 'id="settings-badge"' in html
+      and "setBadge('settings-badge'" in html)
+_chat = (root / "frontend/js/chat.js").read_text(encoding="utf-8")
+check("...the glance panel no longer fetches model updates", "model-updates" not in _chat)
+
+# ── the bell's system section (services/notifications.py) ──────────────────
+
+
+class U:
+    def __init__(self, admin): self.is_admin = admin
+
+
+store.clear()
+store["curator"] = {"role": "curator", "base": "gemma4:31b", "bake": "curatarr-curator",
+                    "running": "sha256:old", "remote": "sha256:" + "n" * 64,
+                    "status": "update", "comparable": True}
+store["summarizer"] = {"role": "summarizer", "base": "granite4.1:8b", "bake": "curatarr-summarizer",
+                       "running": "sha256:s", "remote": "sha256:t" * 1, "status": "update",
+                       "comparable": False}
+n = nt.system_notifications(U(True))
+check("bell: an update waiting = an item with the test action, counted as needs-action",
+      any(i["title"].startswith("New weights for gemma4:31b") and i["action"]["key"] == "model_updates"
+          for i in n["items"]) and n["needs_action"] == 2)
+check("bell: the summarizer says there is no test for it",
+      any("no test for this role" in i["text"] for i in n["items"]))
+check("bell: a non-admin sees nothing of it", nt.system_notifications(U(False))["items"] == [])
+rmu._running["role"] = "curator"
+item = next(i for i in nt.system_notifications(U(True))["items"] if "gemma4" in i["title"])
+check("bell: a running test is info without an action (nothing to decide yet)",
+      item["title"].startswith("Testing") and item["action"] is None)
+rmu._running["role"] = None
+store["curator"]["comparison"] = {"summary": {"verdicts_same": 9, "verdicts_compared": 10,
+                                              "wording_similarity_pct": 41},
+                                  "at": "t", "old": {"titles": [], "chat": []},
+                                  "new": {"titles": [], "chat": []}}
+item = next(i for i in nt.system_notifications(U(True))["items"] if "gemma4" in i["title"])
+check("bell: a finished test asks for the decision with its numbers",
+      item["title"].startswith("Test result ready") and "9 of 10" in item["text"])
+
+
+def broken():
+    raise RuntimeError("boom")
+
+
+nt.PROVIDERS.insert(0, (broken, False))
+check("bell: one broken provider does not empty the list",
+      len(nt.system_notifications(U(True))["items"]) == 2)
+nt.PROVIDERS.pop(0)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

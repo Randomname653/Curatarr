@@ -390,6 +390,17 @@ app.include_router(model_updates.router,   prefix="/api/system/model-updates", t
 
 # ── SYSTEM ────────────────────────────────────────────────────────────────────
 
+from src.routers.auth import get_current_user  # noqa: E402
+
+
+@app.get("/api/system/notifications")
+async def system_notifications_route(user=Depends(get_current_user)):
+    """The bell's system section (services/notifications.py). Every signed-in
+    user may ask; admin-only kinds are filtered by the providers."""
+    from src.services.notifications import system_notifications
+    return system_notifications(user)
+
+
 @app.get("/api/system/dependencies", dependencies=_ADMIN_ONLY)
 async def system_dependencies():
     """Pinned requirements vs. the interpreter that serves this request —

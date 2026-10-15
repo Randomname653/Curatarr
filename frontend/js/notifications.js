@@ -1,7 +1,7 @@
 // ── NOTIFICATION CENTER (bell: proactive messages + system notifications) ────
 import { api } from './api.js';
 import { state } from './state.js';
-import { EL, act, esc, escAttr } from './ui.js';
+import { EL, act, esc, escAttr, setBadge } from './ui.js';
 import { showView } from './nav.js';
 import { _setDiscussBanner, addMsg, sendMessage } from './chat.js';
 // seen === true only when the panel is open and the message is on screen —
@@ -20,13 +20,32 @@ export async function loadUnreadMessages(seen) {
         principles = (pr.principles || []).filter(p => p.status === 'shadow');
       } catch {}
     }
+    // System notifications (services/notifications.py): model updates today,
+    // more kinds later — one list, rendered the same way. The server names an
+    // action KEY; only the handlers in SYS_ACTIONS can run from here.
+    let sys = {items: [], needs_action: 0};
+    try { sys = await api('/api/system/notifications'); } catch {}
+    // The Settings bubble in the sidebar: what waits for an admin decision.
+    setBadge('settings-badge', sys.needs_action || 0);
     const badge = document.getElementById('msg-badge');
-    const total = (r.total || 0) + principles.length;
+    const total = (r.total || 0) + principles.length + (sys.needs_action || 0);
     badge.textContent = total;
     badge.classList.toggle('show', total > 0);
     const list = document.getElementById('msg-list');
 
     let html = '';
+    if (sys.items.length) {
+      html += `<div class="mp-section">System</div>`;
+      html += sys.items.map(n => {
+        const run = n.action && SYS_ACTIONS[n.action.key];
+        const tone = n.severity === 'danger' ? 'danger' : n.severity === 'warn' ? 'amber' : 'muted';
+        return `<div class="cursor-default msg-item">
+          <div class="mi-text"><span class="fs-10 mr-4 badge ${tone}">${esc(n.kind.replace('_', ' '))}</span><b>${esc(n.title)}</b></div>
+          <div class="fs-12 t2 mt-4">${esc(n.text)}</div>
+          ${run ? `<div class="flex gap-8 mt-10"><button class="flex-1 btn btn-primary btn-sm" ${run()}>${esc(n.action.label)}</button></div>` : ''}
+        </div>`;
+      }).join('');
+    }
     if (principles.length) {
       html += `<div class="mp-section">Principles awaiting review</div>`;
       html += principles.slice(0, 3).map(p => `
@@ -59,6 +78,12 @@ export async function loadUnreadMessages(seen) {
     list.innerHTML = html || '<div id="msg-empty">No new notifications</div>';
   } catch {}
 }
+
+// The only handlers a system notification may trigger, by the key the
+// server sends. Literal act() calls, so the handler registry stays checkable.
+const SYS_ACTIONS = {
+  model_updates: () => act('openModelUpdates'),
+};
 
 // Bell → chat: review a learned principle WITH the curator. The backend gets
 // both sides (the new rule + the active rule-set) via discuss_context; the

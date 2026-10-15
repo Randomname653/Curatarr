@@ -7,6 +7,7 @@ import { loadUsers } from './admin.js';
 import { loadLibraryConfig } from './libraries.js';
 import { showView } from './nav.js';
 import { state } from './state.js';
+import { loadUnreadMessages } from './notifications.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, 'Re-attributing…');
@@ -463,6 +464,7 @@ export async function startModelCompare(role, btn) {
   try {
     await api(`/api/system/model-updates/${role}/compare`, 'POST');
     toast('Old-vs-new test started — progress in Activity.', 'info');
+    loadUnreadMessages();
   } catch (e) {
     toast(_errMsg(e), 'danger');
   }
@@ -482,6 +484,7 @@ export async function decideModelUpdate(role, action, btn) {
   try {
     await api(`/api/system/model-updates/${role}/decide`, 'POST', {action});
     toast(update ? 'Updated — the models were rebuilt.' : 'Staying on the pinned version.', 'success');
+    loadUnreadMessages();
   } catch (e) {
     toast(_errMsg(e), 'danger');
   }
@@ -489,6 +492,7 @@ export async function decideModelUpdate(role, action, btn) {
 }
 
 export function openModelUpdates() {
+  document.getElementById('msg-panel')?.classList.remove('open');   // reached from the bell
   showView('settings', null, {pane: 'maintenance', focus: true});
   setTimeout(() => document.getElementById('maint-models')?.scrollIntoView({block: 'start'}), 50);
 }

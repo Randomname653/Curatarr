@@ -268,13 +268,12 @@ export async function loadGlancePanel() {
   if (!el) return;
   const isAdmin = !!state.currentUser?.is_admin;
 
-  const [enrich, overview, recs, dels, tasks, updates] = await Promise.allSettled([
+  const [enrich, overview, recs, dels, tasks] = await Promise.allSettled([
     api('/api/enrichment/status?quick=true'),
     api('/api/enrichment/overview'),
     api('/api/recommendations/?source=cache&limit=1'),
     isAdmin ? api('/api/recommendations/deletions?refresh=false') : Promise.resolve(null),
     api('/api/tasks/history'),
-    isAdmin ? api('/api/system/model-updates') : Promise.resolve(null),
   ]);
 
   const tiles = [];
@@ -327,17 +326,9 @@ export async function loadGlancePanel() {
     }
   }
 
-  // New weights on the registry for a model in use: a notice, not a toast —
-  // nothing the owner just did, and it stays until they decide.
-  const pending = updates.status === 'fulfilled' && updates.value
-    ? (updates.value.models || []).filter(m => m.status === 'update') : [];
-  const notice = pending.length
-    ? `<div class="banner warn mt-16"><span class="banner-icon">!</span><div class="banner-text">New weights on the registry for ${esc(pending.map(m => m.base).join(', '))} — your models still run the pinned version.</div>
-       <button type="button" class="btn btn-secondary btn-sm" ${act('openModelUpdates')}>Test old vs new</button></div>` : '';
+  if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
-  if (!tiles.length && !notice) return; // every source failed -- say nothing rather than show an empty shell
-
-  el.innerHTML = notice + `<div class="mt-16 mb-4 stat-row">` + tiles.map(t => `
+  el.innerHTML = `<div class="mt-16 mb-4 stat-row">` + tiles.map(t => `
     <div class="pointer stat-box" role="button" tabindex="0" aria-label="Go to ${escAttr(t.lbl)}" ${act('goToView', t.view)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
       <div class="fs-16 num"${t.small ? '' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
