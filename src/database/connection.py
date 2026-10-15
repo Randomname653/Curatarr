@@ -63,7 +63,9 @@ def get_db_session():
     try:
         yield db
         db.commit()
-    except Exception:
+    except BaseException:
+        # BaseException: a cancelled task (CancelledError) rolls back here
+        # too, instead of leaving it to the pool's reset-on-return.
         db.rollback()
         raise
     finally:
@@ -71,12 +73,17 @@ def get_db_session():
 
 
 def get_db():
-    """FastAPI dependency — yields a session and closes it after the request."""
+    """FastAPI dependency — yields a session and closes it after the request.
+    Whatever the route left uncommitted is rolled back explicitly."""
     db = SessionLocal()
     try:
         yield db
     finally:
-        db.close()
+        try:
+            if db.in_transaction():
+                db.rollback()
+        finally:
+            db.close()
 
 
 # ── Short write transactions ────────────────────────────────────────────────
@@ -172,6 +179,12 @@ def checkpoint_and_dispose() -> None:
             log.warning("[shutdown] WAL checkpoint failed: %s", e)
         finally:
             engine.dispose()
+
+
+# Schema generation, stored in PRAGMA user_version by _migrate_columns.
+# 1 = every column listed in _migrate_columns (2026-10). Bump it together with
+# any new one-shot backfill and gate that backfill on the old value.
+SCHEMA_VERSION = 1
 
 
 def _migrate_columns() -> None:
@@ -311,36 +324,42 @@ def _migrate_columns() -> None:
     import logging as _logging
     _mig_log = _logging.getLogger(__name__)
     added: set = set()
-    with engine.connect() as conn:
-        for table, col, typ in new_cols:
-            try:
+    # ONE transaction for every step. pysqlite does not wrap DDL, so each
+    # ALTER used to autocommit on its own: a crash between an ALTER and the
+    # final commit kept the column but lost its one-shot backfill for good
+    # (the next boot saw the column, never put it in ``added``, never
+    # backfilled). SQLite DDL is transactional, so under BEGIN IMMEDIATE the
+    # columns and their backfills land together or not at all. Driver-level
+    # autocommit keeps pysqlite from opening a transaction of its own that
+    # the explicit BEGIN would collide with.
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            tables = {r[0] for r in conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            for table, col, typ in new_cols:
+                if table not in tables:
+                    # create_all builds every model table first, so this is a
+                    # table the model no longer declares — nothing to add to.
+                    _mig_log.debug("[migrate] %s.%s skipped: no table %s", table, col, table)
+                    continue
                 existing = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
                     added.add((table, col))
-            except Exception as e:
-                # Pass 43 (B3): the existing-column guard above means this
-                # branch only fires on genuinely-unexpected failures
-                # (locked DB, table missing). Log them so a stalled
-                # migration is debuggable instead of silently swallowed.
-                _mig_log.debug("[migrate] add column %s.%s failed: %s", table, col, e)
-        for idx_name, table, col in new_indexes:
-            try:
-                conn.execute(text(
-                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"
-                ))
-            except Exception as e:
-                _mig_log.debug("[migrate] create index %s on %s(%s) failed: %s",
-                               idx_name, table, col, e)
-        if ("enrichment_status", "attempt_count") in added:
-            # Deploy-day backfill (once, when the counter is born): every
-            # existing not-found row has in truth been retried every 3 days
-            # for months. Marking them "tried 2+" (the counter starts here;
-            # earlier attempts are uncounted) puts them into Needs attention
-            # at once, and dating the next try from THEIR last write spreads
-            # the retries by history instead of making ~800 rows fall due in
-            # the same minute — which would trip the run's outage guard.
-            try:
+            for idx_name, table, col in new_indexes:
+                if table in tables:
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"
+                    ))
+            if ("enrichment_status", "attempt_count") in added:
+                # Deploy-day backfill (once, when the counter is born): every
+                # existing not-found row has in truth been retried every 3 days
+                # for months. Marking them "tried 2+" (the counter starts here;
+                # earlier attempts are uncounted) puts them into Needs attention
+                # at once, and dating the next try from THEIR last write spreads
+                # the retries by history instead of making ~800 rows fall due in
+                # the same minute — which would trip the run's outage guard.
                 conn.execute(text(
                     "UPDATE enrichment_status "
                     "SET attempt_count = 2, "
@@ -348,9 +367,26 @@ def _migrate_columns() -> None:
                     "    next_retry_at = datetime(enriched_at, '+3 days') "
                     "WHERE error LIKE 'Not found%' AND enriched_at IS NOT NULL"
                 ))
-            except Exception as e:
-                _mig_log.debug("[migrate] not-found backfill failed: %s", e)
-        conn.commit()
+            # Record the schema generation this boot brought the file to. A
+            # future one-shot backfill keys on it (``if user_version < N``)
+            # rather than on whether its column happened to be added just now.
+            if (conn.exec_driver_sql("PRAGMA user_version").scalar() or 0) < SCHEMA_VERSION:
+                conn.exec_driver_sql(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
+            conn.exec_driver_sql("COMMIT")
+        except BaseException as e:
+            try:
+                conn.exec_driver_sql("ROLLBACK")
+            except Exception:
+                pass
+            # Was logged at DEBUG and swallowed: a column skipped because the
+            # DB was locked (the music enricher writing) surfaced hours later
+            # as "no such column" on some unrelated page. A boot that cannot
+            # bring the schema up to the models must say so and stop.
+            _mig_log.error("[migrate] column migration failed and was rolled back: %s", e)
+            raise
+    if added:
+        _mig_log.info("[migrate] added %d column(s): %s", len(added),
+                      ", ".join(f"{t}.{c}" for t, c in sorted(added)))
 
 
 def _deletion_proposal_index_ddl() -> list[str]:

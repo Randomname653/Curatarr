@@ -260,6 +260,12 @@ class TaskMonitor:
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=10)
         self._subscribers.append(q)
+        # The loop the SSE streams wait on — a broadcast from a worker thread
+        # (offloaded DB / Chroma work reporting progress) is handed to it.
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
         return q
 
     def unsubscribe(self, q: asyncio.Queue):
@@ -269,6 +275,24 @@ class TaskMonitor:
             pass
 
     def _broadcast(self):
+        # asyncio.Queue is not thread-safe: put_nowait from a worker thread
+        # can miss waking the SSE coroutine waiting on it. Off the loop, the
+        # put is scheduled onto the loop instead.
+        loop = getattr(self, "_loop", None)
+        if loop is not None and not loop.is_closed():
+            try:
+                on_loop = asyncio.get_running_loop() is loop
+            except RuntimeError:
+                on_loop = False
+            if not on_loop:
+                try:
+                    loop.call_soon_threadsafe(self._broadcast_now)
+                except RuntimeError:
+                    pass   # loop shutting down
+                return
+        self._broadcast_now()
+
+    def _broadcast_now(self):
         snapshot = self.get_all()
         for q in list(self._subscribers):
             try:

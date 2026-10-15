@@ -132,7 +132,7 @@ example `venv\Scripts\python update_db.py`.
 | Command | What it does |
 |---|---|
 | `python -m src.services.data_custodian --sprint 10` | **Keep working** for 10 hours from the console (`--sprint 0` stops it) |
-| `python update_db.py` | Apply database migrations without starting the server (the server does the same at every start) |
+| `python update_db.py` | Apply database migrations without starting the server (the server does the same at every start). Stop Curatarr first — it refuses to run while the server is up — and it writes a `curatarr.pre-migrate-<date>.db` backup next to the database before changing anything |
 | `python build_models.py` | (Re-)build the Ollama model tags from `.env` |
 | `python import_spotify.py <dir> [--user N]` | Headless Spotify import — the same engine as Setup → Import, or Settings → Users → Spotify history import |
 | `python run_pipeline_spotify.py` | Trigger the music pipeline manually |

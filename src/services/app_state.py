@@ -9,6 +9,7 @@ Replaces reading .env at runtime for things like:
   - last_proactive_check_at
 """
 
+import logging
 from datetime import datetime
 from typing import Optional
 from src.database.connection import get_db_session
@@ -21,27 +22,79 @@ def get_state(key: str) -> Optional[str]:
         return row.value if row else None
 
 
+_UPSERT_SQL = (
+    "INSERT INTO app_state (key, value, updated_at) VALUES (:k, :v, :ts) "
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+    "updated_at = excluded.updated_at"
+)
+
+
+def _on_event_loop() -> bool:
+    """True when called from a thread that is running an asyncio loop — a
+    blocking wait there freezes every request and SSE stream."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
 def set_state(key: str, value: str) -> None:
+    """Write one key in ONE statement (INSERT … ON CONFLICT DO UPDATE).
+
+    It used to read the row and then UPDATE or INSERT: two round trips, and
+    two first writers of a new key both took the INSERT branch, so one died
+    on the primary key. The upsert has no window. From a coroutine, prefer
+    ``await aset_state(...)``, which runs it on the DB writer thread.
+    """
+    from sqlalchemy import text
     from sqlalchemy.exc import OperationalError
     try:
         with get_db_session() as db:
-            row = db.query(AppState).filter(AppState.key == key).first()
-            if row:
-                row.value = value
-                row.updated_at = datetime.utcnow()
-            else:
-                db.add(AppState(key=key, value=value, updated_at=datetime.utcnow()))
-            db.commit()
+            db.execute(text(_UPSERT_SQL),
+                       {"k": key, "v": value, "ts": datetime.utcnow().isoformat()})
     except OperationalError as e:
-        # The pooled-engine write lost the 60s busy_timeout race during a
-        # transient write-lock storm. Every scheduler heartbeat, /api progress
-        # write and the music pipeline funnels through here, so a hard failure
-        # crashes background jobs and 500s endpoints. Fall back to a fresh
-        # direct-sqlite write with its own busy-wait instead of propagating.
-        if "database is locked" in str(e).lower():
-            force_set_state(key, value)
-        else:
+        # The write lost the busy_timeout race to ANOTHER process (the
+        # out-of-process music enricher, update_db.py). Every scheduler
+        # heartbeat and progress write funnels through here, so a hard failure
+        # would crash background jobs and 500 endpoints. One more attempt on
+        # a direct connection — short on the event loop, where every second
+        # of waiting freezes the server (it was a further 120 s on top of the
+        # 60 s already spent), longer off it.
+        if "database is locked" not in str(e).lower():
             raise
+        if not force_set_state(key, value, timeout_s=5 if _on_event_loop() else 30):
+            logging.getLogger(__name__).warning(
+                "[app_state] %s=%r not written — the database stayed locked", key, value)
+
+
+async def aset_state(key: str, value: str) -> None:
+    """``set_state`` from a coroutine: runs on the single DB writer thread, so
+    the event loop never waits on SQLite's write lock."""
+    from src.database.runner import run_write
+    await run_write(set_state, key, value)
+
+
+def set_states_if_changed(values: dict) -> dict:
+    """Write only the keys whose value differs from what is stored, in ONE
+    transaction. Returns {key: previous value (None when absent)} for the
+    keys that changed — empty when nothing did. For heartbeats that would
+    otherwise write the same value every tick (the game watcher wrote
+    ``game_active`` 2,880 times a day)."""
+    from sqlalchemy import bindparam, text
+    if not values:
+        return {}
+    with get_db_session() as db:
+        current = dict(db.execute(
+            text("SELECT key, value FROM app_state WHERE key IN :keys")
+            .bindparams(bindparam("keys", expanding=True)),
+            {"keys": list(values)}).all())
+        changed = {k: current.get(k) for k, v in values.items() if current.get(k) != v}
+        ts = datetime.utcnow().isoformat()
+        for k in changed:
+            db.execute(text(_UPSERT_SQL), {"k": k, "v": values[k], "ts": ts})
+    return changed
 
 
 def get_datetime(key: str) -> Optional[datetime]:

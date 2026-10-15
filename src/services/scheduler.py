@@ -141,30 +141,37 @@ async def job_game_watcher():
     is just one cheap GET.
     """
     try:
+        from src.database.runner import run_write
         from src.services.process_monitor import is_game_running, unload_llm_models
-        from src.services.app_state import get_state, set_state
+        from src.services.app_state import set_states_if_changed
         from src.services.llm_lane import status as lane_status
-        running = is_game_running()
-        set_state("game_active", "1" if running else "0")
+        # Both readings block: nvidia-smi (up to 4 s), a synchronous GET of
+        # Ollama's /api/ps (2 s), psutil's process walk. On the event loop
+        # they froze every request and SSE stream once per tick — the 30 s
+        # caches inside expire on the same 30 s cadence, so nearly every tick
+        # paid in full. A worker thread does the waiting now.
+        running = await asyncio.to_thread(is_game_running)
         # The lane is a switch, so it gets watched like the game flag: one
         # reading per tick, persisted for the UI and logged on every change,
         # so the log tells the story afterwards instead of only the moment.
-        st = lane_status()
+        st = await asyncio.to_thread(lane_status)
         if st["gpu_pressed"]:
             mode = "game" if st["game"] else ("cpu" if st["summarizer"] == "cpu" else "paused")
         else:
             mode = "game" if running else "free"
-        previous = get_state("llm_lane")
-        if mode != previous:
-            set_state("llm_lane", mode)
-            logger.info("[lane] %s -> %s%s", previous or "unknown", mode,
-                        f" ({st['reason']})" if st["reason"] else "")
         # The reason carries live numbers, so it moves while the card is
-        # held and settles to "" once it is free — written only when it
-        # actually changed, not 2,880 times a day into an idle row.
-        reason = st["reason"] or ""
-        if reason != (get_state("llm_lane_reason") or ""):
-            set_state("llm_lane_reason", reason)
+        # held and settles to "" once it is free. All three keys go in ONE
+        # transaction on the DB writer thread, and only the ones whose value
+        # changed are written: game_active used to be written every tick,
+        # 2,880 write transactions a day into an idle row.
+        changed = await run_write(set_states_if_changed, {
+            "game_active": "1" if running else "0",
+            "llm_lane": mode,
+            "llm_lane_reason": st["reason"] or "",
+        })
+        if "llm_lane" in changed:   # logged on transition, not every 30 s
+            logger.info("[lane] %s -> %s%s", changed["llm_lane"] or "unknown", mode,
+                        f" ({st['reason']})" if st["reason"] else "")
         if running:
             unloaded = await unload_llm_models()
             if unloaded:

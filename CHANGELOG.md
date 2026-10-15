@@ -58,6 +58,24 @@ checkpoints the WAL before Syncthing gets `data/` back. Crash cleanup on
 Linux and macOS wrote to the wrong database file (the path lost its leading
 slash).
 
+**Less waiting on the event loop** (`docs/POST_REFACTOR_INTEGRATION_AUDIT.md`).
+The metadata cache keeps one connection per thread instead of opening a new
+one, with its PRAGMAs and schema check, for every lookup; the deletion
+scorer reads all candidates' ratings in one query, and a cache handle
+dropped on an error no longer leaves its transaction open. Deletion
+scoring, the taste rebuild and memory-conflict checks do their database
+reads, ChromaDB reads and NumPy work on worker threads, so the UI and the
+Activity stream stay live while they run. The game watcher's `nvidia-smi`,
+process scan and Ollama check run off the loop, and it writes its state
+only when a value changes (it wrote `game_active` every 30 seconds).
+`set_state` is one upsert statement: two first writers of the same key no
+longer fail on the primary key. A chat reply no longer holds a database
+connection while it streams. Column migrations run in one transaction and
+stop the start with an error if a step fails, instead of logging it at
+DEBUG; `update_db.py` refuses to run while Curatarr is up and backs the
+database up first. A "Your call" card that the household rule produced
+says so in its tooltip.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

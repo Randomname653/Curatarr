@@ -14,9 +14,12 @@ the lazy factory, callers fail loudly when they actually try to use
 ChromaDB rather than at import time.
 """
 
+import asyncio
 import logging
-from functools import lru_cache
-from typing import Dict, List, Optional
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache, partial
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import chromadb
 import numpy as np
@@ -594,6 +597,43 @@ def refresh_singleton() -> None:
     first get_chroma_db() opens the right collection anyway."""
     if _cached_wrapper.cache_info().currsize:
         _cached_wrapper().use_collection(_wanted_collection())
+
+
+# ── Off-loop bulk reads ───────────────────────────────────────────────────────
+#
+# get_by_ids over a whole arr library and embeddings_for_domain (up to 30,000
+# vectors) read and decode embeddings from disk for seconds. Called from a
+# coroutine they froze the event loop — every request and SSE stream with it.
+# They run on ONE dedicated thread: the loop stays free, and two bulk reads
+# (a deletion scan and a taste rebuild) queue behind each other instead of
+# competing for the same disk and the same SQLite file under Chroma.
+_T = TypeVar("_T")
+_chroma_pool: Optional[ThreadPoolExecutor] = None
+_chroma_pool_lock = threading.Lock()
+
+
+def _get_chroma_pool() -> ThreadPoolExecutor:
+    global _chroma_pool
+    with _chroma_pool_lock:
+        if _chroma_pool is None:
+            _chroma_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chroma")
+        return _chroma_pool
+
+
+async def run_chroma(fn: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
+    """Run a blocking Chroma call (or a function built around one, NumPy
+    included) on the Chroma thread and await its result."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_get_chroma_pool(), partial(fn, *args, **kwargs))
+
+
+def shutdown_chroma_pool() -> None:
+    """Let a queued bulk read finish, then drop the thread (shutdown)."""
+    global _chroma_pool
+    with _chroma_pool_lock:
+        pool, _chroma_pool = _chroma_pool, None
+    if pool is not None:
+        pool.shutdown(wait=True)
 
 
 def __getattr__(name):

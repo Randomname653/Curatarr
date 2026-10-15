@@ -55,6 +55,15 @@ export function _whyPanel(p) {
     <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>
   </div>`;
 }
+// "Your call" has two causes: the curator found the title merely fine, or it
+// wanted a cut that the household floor overruled (score_factors.guard, set
+// by recommendations_engine._with_guard) — someone else in the household
+// engaged with it. Different reasons, different tooltips.
+export function _yourCallWhy(p) {
+  return p.score_factors?.guard === 'household_floor'
+    ? 'The curator leaned toward cutting it, but someone else in your household has watched or played it — so the decision is yours'
+    : 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
+}
 export function toggleWhy(btn) {
   const panel = document.getElementById(btn.getAttribute('aria-controls'));
   if (!panel) return;
@@ -101,7 +110,7 @@ export function _renderDeletionProposals(proposals) {
             <div class="panel-item-head">
               <div class="fs-16 panel-item-title">${esc(p.title)}
                 ${p.stagnant
-                  ? `<span class="badge amber" title="Curatarr finds it merely fine, not a clear cut — the decision is yours">Your call</span>`
+                  ? `<span class="badge amber" title="${escAttr(_yourCallWhy(p))}">Your call</span>`
                   : `<span class="badge danger" title="Curatarr suggests deleting it">Cut</span>`}${_recentActivityBadge(p)}
                 ${_whyButton(p)}
                 ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">Parked</span>' : ''}

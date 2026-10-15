@@ -3184,7 +3184,13 @@ FORMATTING RULES:
                     "%d-token window", _dropped, CURATOR_NUM_CTX)
 
     # 4. Save user message to history (scoped to the active thread)
-    _save_message(user.id, "user", message.message, db, thread_id=thread_id)
+    # The stream below must not touch the ORM ``user``: _save_message
+    # commits, which expires it, and any later attribute read lazily re-opens
+    # a transaction on the request session — holding one pooled connection
+    # for the whole stream, minutes of generation (the weakref.finalize line
+    # at the end did exactly that). Plain id from here on.
+    _uid = user.id
+    _save_message(_uid, "user", message.message, db, thread_id=thread_id)
 
     # 5. Stream from Ollama
     stream_state = {"started": False}
@@ -3223,7 +3229,7 @@ FORMATTING RULES:
 
             await curator_start("chat")
         except BaseException:
-            _rl.CHAT_IN_FLIGHT.leave(user.id)
+            _rl.CHAT_IN_FLIGHT.leave(_uid)
             raise
 
         # Slot acquired — Curator is now actually working. From here on EVERY
@@ -3369,7 +3375,7 @@ FORMATTING RULES:
 
         finally:
             curator_done()
-            _rl.CHAT_IN_FLIGHT.leave(user.id)
+            _rl.CHAT_IN_FLIGHT.leave(_uid)
             # Cancel the VRAM probe if it's still pending (e.g. very fast
             # response that finished before the 2 s probe even fired, or a
             # cancel before the probe task was even created).
@@ -3391,7 +3397,7 @@ FORMATTING RULES:
             if full_response and not client_disconnected:
                 from src.database.connection import get_db_session
                 with get_db_session() as db2:
-                    _save_message(user.id, "assistant", full_response, db2, thread_id=thread_id)
+                    _save_message(_uid, "assistant", full_response, db2, thread_id=thread_id)
 
                 # Pass 41: route the three post-chat background tasks through
                 # ``track_task`` so the GC can't collect them mid-run. Before
@@ -3411,14 +3417,14 @@ FORMATTING RULES:
                 # episodic_memory._pending_thread_extracts, so it's GC-safe
                 # without track_task.
                 from src.services.episodic_memory import schedule_thread_extraction
-                schedule_thread_extraction(user.id, thread_id, media_category=domain)
+                schedule_thread_extraction(_uid, thread_id, media_category=domain)
 
                 # Detect protection intents ("behalten", "keep", "nicht löschen", …)
                 # Pass 23: resolve the current thread's anchor title (e.g. the
                 # deletion-proposal target) so pronoun-only signals like
                 # "we are keeping this show" still register as protection
                 # against the right title.
-                anchor = _get_thread_active_title(user.id, thread_id)
+                anchor = _get_thread_active_title(_uid, thread_id)
                 anchor_title = anchor[0] if anchor else None
                 anchor_category = anchor[2] if anchor and len(anchor) > 2 else None
                 if thread_id.startswith("principle:"):
@@ -3434,13 +3440,13 @@ FORMATTING RULES:
                             detect_and_apply_principle_verdict)
                         track_task(
                             detect_and_apply_principle_verdict(
-                                user.id, _pid, message.message, full_response),
+                                _uid, _pid, message.message, full_response),
                             name="principle_verdict_bg",
                         )
                 else:
                     track_task(
                         _check_protection_intent_bg(
-                            user.id, message.message, full_response,
+                            _uid, message.message, full_response,
                             anchor_title=anchor_title,
                             anchor_category=anchor_category,
                             thread_id=thread_id,
@@ -3453,7 +3459,7 @@ FORMATTING RULES:
                 # verification question's own proactive_message thread counts
                 # as an answer.
                 track_task(
-                    _check_verification_response(user.id, message.message, thread_id),
+                    _check_verification_response(_uid, message.message, thread_id),
                     name="check_verification_response",
                 )
 
@@ -3471,7 +3477,11 @@ FORMATTING RULES:
     # gated on "never started" so a late GC can't drop a NEWER turn's entry.
     stream = generate()
     weakref.finalize(stream, _release_unstarted_chat, _rl.CHAT_IN_FLIGHT,
-                     user.id, stream_state)
+                     _uid, stream_state)
+    # Nothing past this point uses the request session (the stream writes
+    # through its own short get_db_session()), so hand its connection back
+    # to the pool now rather than when the response finishes.
+    db.close()
     return StreamingResponse(stream, media_type="text/event-stream")
 
 
