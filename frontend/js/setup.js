@@ -301,8 +301,10 @@ export async function detectGpu() {
       return;
     }
     const names = r.gpus.map(g => `${g.name} (${g.vram_gb} GB)`).join(', ');
-    if (el) el.innerHTML = `<div class="test-status ok">${esc(names)}</div>`;
+    if (el) el.innerHTML = `<div class="test-status ok">${esc(names)}</div>`
+      + (r.busy_note ? `<div class="t-amber test-status">${SVG_WARN} ${esc(r.busy_note)}</div>` : '');
     state.setupData.vram_gb = r.vram_gb;
+    state.setupData.gpu_name = r.name || null;
     const sel = document.getElementById('s-vram');
     if (sel) {
       [...sel.options].filter(o => o.dataset.detected).forEach(o => o.remove());
@@ -324,19 +326,46 @@ export async function refreshModelRecs() {
   const panel = document.getElementById('model-recs');
   try {
     const r = await api('/api/setup/recommend', 'POST',
-                        {ollama_endpoint: endpoint, vram_gb: state.setupData.vram_gb ?? null});
+                        {ollama_endpoint: endpoint, vram_gb: state.setupData.vram_gb ?? null,
+                         gpu_name: state.setupData.gpu_name ?? null});
     renderRecSelect('s-curator-model', r.curator, r.installed);
     renderRecSelect('s-summarizer-model', r.summarizer, r.installed);
     renderRecSelect('s-embed-model', r.embedding, r.installed);
     renderRecSelect('s-pitcher-model', r.pitcher, r.installed);
     const pn = document.getElementById('pitcher-note');
     if (pn) pn.textContent = r.pitcher_note || '';
-    if (panel) panel.innerHTML = r.floor_note
+    if (panel) panel.innerHTML = (r.floor_note
       ? `<div class="t-amber test-status">${SVG_WARN} ${esc(r.floor_note)}</div>`
-      : '';
+      : '') + renderHardwarePackage(r.package);
   } catch(e) {
     if (panel) panel.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
+}
+
+// The hardware-matrix bench's measured package for this card: which curator,
+// with which profile / context / GPU layers, and how fast it ran. Settings it
+// names but the wizard does not write yet are shown as the .env lines to set.
+export function renderHardwarePackage(pkg) {
+  if (!pkg) return '';
+  const r = pkg.recommended;
+  if (!r) return pkg.note ? `<div class="t3 fs-12 test-status">${esc(pkg.note)}</div>` : '';
+  const ex = r.expected || {};
+  const speed = pkg.estimate
+    ? `~${pkg.estimate.gen_tok_s} tok/s on your card (estimate: ${esc(pkg.estimate.basis)})`
+    : `${ex.gen_tok_s ?? '?'} tok/s measured on ${esc((r.measured_on || {}).gpu || 'the bench card')}`;
+  const q = r.quality || {};
+  const quality = q.score25 != null ? `quality ${q.score25}/25`
+    : `verdicts agree ${q.agreement?.exact_pct ?? '?'} % with the production model (provisional)`;
+  const env = [`LLM_PROFILE=${r.profile}`, `CURATOR_NUM_CTX=${r.num_ctx}`,
+               `CURATOR_NUM_GPU=${r.num_gpu}`];
+  const srv = Object.entries(r.server || {})
+    .filter(([k]) => k === 'OLLAMA_KV_CACHE_TYPE' || k === 'OLLAMA_FLASH_ATTENTION')
+    .map(([k, v]) => `${k}=${v}`);
+  return `<div class="test-status">Bench result for ${pkg.tier_gb} GB: <b>${esc(r.model)}</b>`
+    + `${r.installed ? ' (installed)' : ''} — ${speed}; judge ~${ex.judge_s ?? '?'} s per title;`
+    + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${ex.gpu_share_pct} % on the GPU, rest in RAM` : ''}.</div>`
+    + `<div class="t3 fs-12">Curatarr .env: ${esc(env.join(' · '))}`
+    + (srv.length ? ` — Ollama server: ${esc(srv.join(' · '))}` : '') + `</div>`;
 }
 
 export function renderRecSelect(id, entries, installed) {

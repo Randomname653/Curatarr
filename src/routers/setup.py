@@ -14,7 +14,7 @@ Auth model:
 
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 from src.config import settings
@@ -146,6 +146,9 @@ async def gpu_probe(_gate=Depends(require_admin_or_first_run)):
 class RecommendRequest(BaseModel):
     ollama_endpoint: Optional[str] = None
     vram_gb: Optional[float] = None
+    # The detected card's name: scales the bench's measured speed by memory
+    # bandwidth for the hardware package (model_catalog.hardware_package).
+    gpu_name: Optional[str] = Field(default=None, max_length=120)
 
     _url = field_validator("ollama_endpoint")(validate_service_url)
 
@@ -164,7 +167,7 @@ async def recommend(req: RecommendRequest,
     tags = await test_ollama(endpoint)
     if tags.get("ok"):
         installed = set(tags.get("models") or [])
-    result = recommend_models(req.vram_gb, installed)
+    result = recommend_models(req.vram_gb, installed, req.gpu_name)
     result["installed"] = sorted(installed)
     result["ollama_ok"] = bool(tags.get("ok"))
     return result

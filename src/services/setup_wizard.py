@@ -595,13 +595,17 @@ async def detect_gpu() -> dict:
 
     Only meaningful when Ollama runs on this same machine — the wizard says
     so and offers a manual VRAM picker for remote Ollama boxes. Returns
-    ``{"ok": True, "gpus": [{"name", "vram_gb"}], "vram_gb": <largest>}`` or
-    ``{"ok": False, "error": str}`` — never raises.
+    ``{"ok": True, "gpus": [{"name", "vram_gb", "free_gb"}], "vram_gb":
+    <largest>, "name": <its name>, "busy_note": str|None}`` or ``{"ok": False,
+    "error": str}`` — never raises. ``free_gb`` is what the card has free
+    right now: a game or a second program holding VRAM shrinks the card the
+    models actually get, so the wizard names it instead of recommending a
+    model that will only fit once that program is gone.
     """
     import asyncio
     try:
         proc = await asyncio.create_subprocess_exec(
-            "nvidia-smi", "--query-gpu=name,memory.total",
+            "nvidia-smi", "--query-gpu=name,memory.total,memory.free",
             "--format=csv,noheader,nounits",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=8)
@@ -610,18 +614,26 @@ async def detect_gpu() -> dict:
             return {"ok": False, "error": msg or "nvidia-smi failed"}
         gpus = []
         for line in out.decode(errors="replace").splitlines():
-            if "," not in line:
+            parts = line.rsplit(",", 2)
+            if len(parts) != 3:
                 continue
-            name, mem = line.rsplit(",", 1)
             try:
-                gpus.append({"name": name.strip(),
-                             "vram_gb": round(float(mem.strip()) / 1024, 1)})
+                gpus.append({"name": parts[0].strip(),
+                             "vram_gb": round(float(parts[1].strip()) / 1024, 1),
+                             "free_gb": round(float(parts[2].strip()) / 1024, 1)})
             except ValueError:
                 continue
         if not gpus:
             return {"ok": False, "error": "nvidia-smi reported no GPU"}
-        return {"ok": True, "gpus": gpus,
-                "vram_gb": max(g["vram_gb"] for g in gpus)}
+        top = max(gpus, key=lambda g: g["vram_gb"])
+        held = round(top["vram_gb"] - top["free_gb"], 1)
+        # A desktop takes ~0.5-1.5 GB; more than 3 GB held means another
+        # program (a game, a loaded model) is using the card right now.
+        busy = (f"{held:.0f} GB of the {top['vram_gb']:.0f} GB are in use right "
+                f"now — if a game or another model holds them, the curator only "
+                f"gets the rest while that runs.") if held > 3 else None
+        return {"ok": True, "gpus": gpus, "vram_gb": top["vram_gb"],
+                "name": top["name"], "busy_note": busy}
     except FileNotFoundError:
         return {"ok": False, "error": "nvidia-smi not found — no NVIDIA "
                 "driver on this host (or a non-NVIDIA GPU). Pick the VRAM "
