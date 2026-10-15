@@ -329,7 +329,7 @@ export async function loadGlancePanel() {
   if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
   el.innerHTML = `<div class="mt-16 mb-4 stat-row">` + tiles.map(t => `
-    <div class="pointer stat-box" ${act('goToView', t.view)}>
+    <div class="pointer stat-box" role="button" tabindex="0" aria-label="Go to ${escAttr(t.lbl)}" ${act('goToView', t.view)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
       <div class="fs-16 num"${t.small ? '' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
     </div>`).join('') + `</div>`;
