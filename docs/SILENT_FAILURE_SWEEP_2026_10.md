@@ -146,19 +146,36 @@ commit it fails each check it reaches, then stops on helpers that don't exist ye
 Updated pins: `test_custodian_job_contract` (vacuum fixture now has free pages, plus checks for
 both gates). `test_judge_hardening` still pins `+ watch_unknown_skipped)` (kept true by ordering).
 
+### Round 3 (applied in the third commit): the rest of the open list
+
+Suites: `tests/test_silent_failures_r3_core.py`, `…_r3_memory.py`, `…_r3_os.py`,
+`…_r3_enrich.py` and `…_r3_frontend.py`. Each behavioural check was run against the code
+before this commit and failed there. Ratchet baseline: **277** silent broad excepts (325 before).
+
+| Area | What changed |
+| :--- | :--- |
+| **Route handlers off the loop** | 80 `async def` handlers that await nothing are now plain `def`, so FastAPI runs their synchronous SQLAlchemy work in its threadpool instead of on the event loop. `ttl_response` runs a sync body on a worker thread and keeps the memo and single-flight on the loop. Four handlers stay async because they hand a coroutine to the running loop (`create_task`/`track_task`). `test_no_await_free_async_route_handlers` pins this. |
+| **Walkers** | The reception and significance walkers stamp each attempt (`load/save_walker_attempts`). They take never-tried rows first, then the least recently tried, so a row that keeps failing can no longer fill every pass. |
+| **Setup** | `/complete`, `/reconfigure` and `/warmup` refuse (422) a host name that resolves to a link-local/metadata address before saving it or connecting to it. That covers the background model pulls and builds that follow. |
+| **Vector store / memory** | Changes by file:<br>• `embed_service`: no longer caches the default profile after a failed read.<br>• `chromadb_wrapper`: bad-argument / dimension errors are WARNING (rate-limited), and a failed collection switch says which collection is still served.<br>• `semantic_search`: the hit-building try is narrowed; the memo is cleared on a model change; `_dot` refuses vectors of different lengths instead of truncating.<br>• `corpus_repair`: one upsert instead of delete-then-add.<br>• `episodic_memory`: a dimension mismatch scores like "no embedding"; the conflict-writer failure is separated from the LLM failure.<br>• `facet_index`: the backfill cursor stops at a failed write. |
+| **Chat / principles / LLM priority / app_state** | Changes by area:<br>• Chat: a flip-flop probe failure counts as "unsettled", so detection is skipped; protection, stance and principle failures are WARNING; "+ New" answers 409 when the memory flush failed (the UI offers "Clear anyway").<br>• Principles: capture stores nothing when the novelty check fails.<br>• LLM priority: `loaded_models()` returns None for "unknown" and nothing claims "Confirmed evicted" blind.<br>• `app_state`: `set_state` and `release_state_lock` report whether the write landed. |
+| **Model updates / OS** | Changes by area:<br>• Model updates: an update whose rebake failed keeps the pin and answers 502; the pin copy is verified before a test pulls; rollback reports what it could not restore; the disk-room check fails closed; corrupt state is kept aside; the comparison tasks are tracked for shutdown.<br>• GPU pressure: an nvidia-smi timeout counts as pressure, and `[N/A]` utilization no longer switches the gate off.<br>• Process monitor: classified-process and game-list failures no longer flood prompts or drop games.<br>• Windows / Syncthing: `icacls` and tray autostart check their exit codes; an unreadable Syncthing config falls back to the `.stfolder` marker.<br>• `llm_lane`: probe failures are logged once per error. |
+| **Enrichment / curation** | Changes by area:<br>• Anime mapping and offline DB: built and swapped in one transaction, so an empty parse never replaces a good DB, and learned ids survive.<br>• Enrichment: a pin-lookup failure is transient; Jikan parsing errors are no longer an "outage"; adult genres are filtered when a merge fails.<br>• Library and watch memory: failures in the seen/owned/removed and watch lookups are WARNING.<br>• SoulSync: if the follow list can't be read, the music deletion run stops.<br>• Plex: playlist and collection pushes raise on Plex errors (the task stays due) and never delete before they can recreate.<br>• Library sorting, editions, IDs and metadata: sorting caches only a 200 and reports partial moves; AniDB failures keep the stored flags; the external-id harvest stops on a partial arr index; artist profiles are not negatively cached on TRANSIENT (and the mbid read/write key mismatch is fixed).<br>• Spotify import: bad timestamps are skipped and counted.<br>• Music: the music pipeline sets its flag inside the try that releases it. |
+| **Frontend** | Changes by area:<br>• Boot: a failed boot check no longer drops an admin into onboarding.<br>• Polling views: Recommendations, Libraries (Plex down), onboarding sync, history tabs, KB status/backfill and the game badge all say when a request failed instead of showing stale or empty state.<br>• Deletions: a lost delete/keep reason is admitted in the toast; the returned-titles check shows its failure; analysis errors get a Retry; "Why?" closes on Escape and shows the household-floor reason on its own.<br>• Spotify: the pending-files check reads `r.ok`.<br>• Plex sign-in: says when polling keeps failing.<br>• Modals and menus: modals return focus, and menus reset `aria-expanded`. |
+
+Updated pins, each pinning a contract this round changed:
+- `test_corpus_repair`: upsert, not delete-then-add.
+- `test_editions`: a failed AniDB lookup is None.
+- `test_gui_import`: a bad timestamp is None.
+- `test_music_playlist`: the push checks the machine id before deleting.
+- `test_status_polling_cache` and `test_enrichment_vector_correctness`: handlers that are now plain `def`.
+- The direct handler calls in `test_member_visibility`, `test_music_wishes`, `test_deletion_safety`, `test_deletion_returns`, `test_keep_and_delete_feedback`, `test_principle_supersede` and `test_auth_hardening` no longer wrap a sync handler in `asyncio.run`.
+
 ### Still open
 
-- **Route handlers on the loop**: the 191 `async def` handlers still call synchronous SQLAlchemy.
-  This is the endpoint-by-endpoint `run_read`/`run_write` migration. `busy_timeout` and
-  `pool_timeout` (60 s) can only drop after it, and `foreign_keys=ON` needs a
+- The 58 route handlers that do await keep their synchronous DB sections on the loop.
+  Moving those sections onto `run_read`/`run_write` is the remaining step before
+  `busy_timeout`/`pool_timeout` (60 s) can come down. `foreign_keys=ON` still needs a
   `foreign_key_check` cleanup first.
-- **Leases beyond the music runner**: the other `*_running` flags are in-process, so the boot
-  reset is correct for them.
-- **Walker ordering**: crashes are visible now, but `run_reception_backfill` /
-  `run_significance_backfill` still take the first `limit` rows in a fixed order. A
-  cursor or `*_attempt_at` stamp would send failing rows to the back.
-- **Ollama background pulls at `/complete`** do not go through `resolved_refusal` (the
-  endpoint passes `validate_service_url`).
-- The Medium/Low rows of §2 not named in the table above (vector store, chat guards,
-  model-update results, process monitor, anime mapping, frontend non-401 catches). Each is
-  a WARNING-or-narrower change; the ratchet keeps the count from growing meanwhile.
+- The 277 silent broad excepts in the ratchet baseline. Each is a candidate for WARNING or a
+  narrower except; the ratchet only lets the count fall.

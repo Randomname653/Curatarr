@@ -30,7 +30,7 @@ _MAX_FILES = 20
 
 
 @router.get("/spotify/status")
-async def spotify_status(_gate=Depends(require_admin_or_first_run)):
+def spotify_status(_gate=Depends(require_admin_or_first_run)):
     return {
         "pending": spotify_import.pending_files(),
         "running": bool(_running),
@@ -62,7 +62,7 @@ async def spotify_upload(files: list[UploadFile] = File(...),
 
 
 @router.delete("/spotify/files")
-async def spotify_clear(_admin=Depends(require_admin)):
+def spotify_clear(_admin=Depends(require_admin)):
     return {"removed": spotify_import.clear_pending()}
 
 

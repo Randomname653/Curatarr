@@ -1,6 +1,6 @@
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
 // Two questions, two result areas — the second answer no longer overwrites the first.
-import { CAT_LABELS, EL, SVG_STAR, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
+import { CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
@@ -136,7 +136,8 @@ const KB_STATE_DEFS = {
   never_processed:      'Never entered the pipeline.',
 };
 
-export function _renderKbOverview(o, running, lastRun) {
+// running: true / false, or null when the status read failed (statusErr says why).
+export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   _updateKbBadge(o);
   const cats = o.categories || {};
   const served = Object.entries(o.state_definitions || {}).map(([k, v]) => [k, `${v.explainer} ${v.next_step || ''}`.trim()]);
@@ -190,6 +191,7 @@ export function _renderKbOverview(o, running, lastRun) {
         <span class="section-hint">One denominator per row: downloaded arr items. Hover a header for its definition, click a number for the list behind it.</span>
         <div class="section-actions">
           ${running ? '<span class="badge amber badge-sm">Enrichment running <span id="enrich-pct-live"></span></span>' : ''}
+          ${running === null ? `<span class="badge muted badge-sm" title="${escAttr(`Couldn't read the enrichment status — ${statusErr || 'no answer'}. Checking again every 30 s.`)}">Status unknown</span>` : ''}
           ${lastRun ? `<span class="fs-11 t3" title="${escAttr(_fmtAbs(lastRun))}">last run ${_fmtRel(lastRun)}</span>` : ''}
         </div>
       </div>
@@ -283,18 +285,41 @@ export async function loadEnrichStatus() {
   const el = document.getElementById('enrich-overview');
   if (el && !el.innerHTML) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
   try {
+    // A failed status or custodian read used to fall back to {} / null:
+    // "not running" in the middle of a run, and the 8 s refresh stopped. It
+    // is "status unknown" now, re-checked every 30 s.
     const [ov, st, cust] = await Promise.all([
       api('/api/enrichment/overview'),
-      api('/api/enrichment/status?quick=true').catch(() => ({})),
-      api('/api/enrichment/custodian').catch(() => null),
+      api('/api/enrichment/status?quick=true').catch(e => ({_err: e})),
+      api('/api/enrichment/custodian').catch(e => ({_err: e})),
     ]);
-    _renderKbOverview(ov, !!st.running, st.last_run);
-    if (cust) _renderCustodianBar(cust);
+    _renderKbOverview(ov, st._err ? null : !!st.running, st.last_run, st._err ? _errMsg(st._err) : null);
+    if (cust._err) _renderCustodianUnknown(_errMsg(cust._err));
+    else _renderCustodianBar(cust);
     loadBackfillPanel();
-    if (st.running || (cust && cust.ticking)) _kbPollTimer = setTimeout(loadEnrichStatus, 8000);
+    const delay = _kbStatusDelay(st, cust);
+    if (delay) _kbPollTimer = setTimeout(loadEnrichStatus, delay);
   } catch (e) {
     if (el) el.innerHTML = _errHtml(e, act('loadEnrichStatus'));
   }
+}
+
+// When to look again: 30 s while either answer is unknown, 8 s while work
+// runs, otherwise not at all.
+export function _kbStatusDelay(st, cust) {
+  if (st?._err || cust?._err) return 30000;
+  if (st?.running || cust?.ticking) return 8000;
+  return 0;
+}
+
+function _renderCustodianUnknown(msg) {
+  const el = document.getElementById('custodian-bar');
+  if (!el) return;
+  el.innerHTML = `<section class="section">
+    <div class="section-head">
+      <h3>Data custodian <span class="badge muted badge-sm" title="${escAttr(msg)}">status unknown</span></h3>
+      <span class="section-hint load-err">${SVG_WARN} Couldn't read the custodian's status — ${esc(msg)}. Checking again every 30 s.</span>
+    </div></section>`;
 }
 
 // ── KB drilldown, Needs attention, match picker (healing 2026-09) ───────────
@@ -410,7 +435,7 @@ export async function loadKbItems(cat, states, offset = 0) {
         ${pagerHtml({offset, limit: KB_PAGE, total: r.total, page: o => act('loadKbItems', cat, states, o)})}
       </div>
     </section>`;
-    if (fresh) el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    if (fresh) el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest'});
   } catch (e) { el.innerHTML = _errHtml(e); }
 }
 export function closeKbDrilldown() {
@@ -525,7 +550,15 @@ export async function loadBackfillPanel() {
   if (!el) return;
   let d;
   try { d = await api('/api/enrichment/backfill-status'); }
-  catch (e) { el.innerHTML = ''; return; }
+  catch (e) {
+    // Keep the panel (and its Stop button): removing it on a failed read
+    // looked exactly like "the backfill is finished". One line says why.
+    const msg = `${SVG_WARN} Couldn't refresh the backfill status — ${esc(_errMsg(e))}`;
+    const line = el.querySelector('.backfill-err');
+    if (line) line.innerHTML = msg;
+    else el.insertAdjacentHTML('beforeend', `<p class="load-err fs-11 mt-4 backfill-err" role="status">${msg}</p>`);
+    return;
+  }
   if (!d || !d.any_offer) { el.innerHTML = ''; return; }   // nothing worth offering
   const rows = d.sources.filter(s => s.offer).map(s => `
     <div class="panel-item${s.running ? ' live' : ''}">

@@ -113,7 +113,9 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
                              else WatchHistoryEntry.media_type != "music")
             rows = q.all()
     except Exception as e:
-        logger.debug("[watch] lookup failed: %s", e)
+        # {} reads as "none of these were watched" to every caller, so a DB
+        # error made watched titles look unwatched (deletion/discovery bias).
+        logger.warning("[watch] lookup failed: %r", e)
         return {}
     for r in rows:
         key = r.title if r.title in tset else (

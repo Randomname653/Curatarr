@@ -1580,12 +1580,19 @@ async def generate_deletion_proposals(
 
     # SoulSync follows (owner decision 2026-10-09): an artist the owner
     # follows there is wanted, and its watchlist would fetch every new release
-    # again anyway. No answer from SoulSync = no follow veto this run.
+    # again anyway. SoulSync configured but not answering used to mean "no
+    # follow veto this run" — followed artists became deletable. Stop instead.
     followed: set[str] = set()
     from src.services.soulsync_client import norm_name as _ss_norm
     if category == "music":
-        from src.services.soulsync_client import watchlist_artists
+        from src.services.soulsync_client import watchlist_artists, _configured as _ss_on
         _names = await watchlist_artists()
+        if _names is None and _ss_on():
+            _why = "could not read the SoulSync watchlist — nothing proposed"
+            _msg(f"{category}: not proposing deletions — {_why}")
+            logger.warning("[deletions] %s: skipped — %s", category, _why)
+            _record_deletion_run(category, stopped=_why)
+            return []
         followed = {_ss_norm(n) for n in _names or []}
         _hit = sorted(t for t in candidate_titles if _ss_norm(t) in followed)
         if _hit:

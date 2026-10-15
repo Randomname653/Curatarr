@@ -129,28 +129,73 @@ _GPU_CACHE_S = 30
 _GPU_HOLD_S = 45             # pressure must persist this long before it counts
 _gpu_cache = {"at": 0.0, "busy": False, "since": 0.0, "reason": ""}
 _gpu_unavailable_until = 0.0
+_smi_state = "ok"            # last nvidia-smi outcome, so each change is logged once
+
+# What _nvidia_smi_read returns besides a stats tuple. A timeout used to read
+# as "no nvidia-smi": exactly when another process saturates the card the
+# query is slowest, and the gate then switched itself off for ten minutes.
+SMI_MISSING = None           # no nvidia-smi on this host
+SMI_TIMEOUT = "timeout"
+SMI_ERROR = "error"          # non-zero exit or nothing parseable
 
 
-def _nvidia_smi() -> "tuple | None":
-    """(memory.used MB, memory.total MB, utilization %) or None."""
+def _num(x: str) -> "float | None":
+    try:
+        return float(x.strip())
+    except ValueError:       # "[N/A]", "[Not Supported]"
+        return None
+
+
+def _nvidia_smi_read():
+    """(used MB, total MB, utilization %) — any of them None when nvidia-smi
+    prints [N/A] for it — or SMI_MISSING / SMI_TIMEOUT / SMI_ERROR."""
     import subprocess
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=4)
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
+    except subprocess.TimeoutExpired:
+        return SMI_TIMEOUT
+    except (FileNotFoundError, OSError):
+        return SMI_MISSING
     if out.returncode != 0:
-        return None
+        logger.debug("nvidia-smi exit %s: %s", out.returncode, (out.stderr or out.stdout or "")[:200])
+        return SMI_ERROR
     lines = (out.stdout or "").strip().splitlines()
-    if not lines:
+    vals = [_num(x) for x in lines[0].split(",")[:3]] if lines else []
+    if len(vals) != 3 or all(v is None for v in vals):
+        return SMI_ERROR
+    return tuple(vals)
+
+
+def _nvidia_smi() -> "tuple | None":
+    """(memory.used MB, memory.total MB, utilization %) or None — the plain
+    reading for callers that need the memory figures (model_check)."""
+    s = _nvidia_smi_read()
+    if not isinstance(s, tuple) or s[0] is None or s[1] is None:
         return None
-    try:
-        used, total, util = [float(x.strip()) for x in lines[0].split(",")[:3]]
-    except ValueError:
-        return None
-    return used, total, util
+    return s
+
+
+def _note_smi(state: str, detail: str = "") -> None:
+    """Log an nvidia-smi outcome once per change, not every 30 s tick."""
+    global _smi_state
+    if state == _smi_state:
+        return
+    prev, _smi_state = _smi_state, state
+    if state == "timeout":
+        logger.warning("[gpu] nvidia-smi timed out — counted as GPU pressure until it answers")
+    elif state == "error":
+        logger.warning("[gpu] nvidia-smi failed or printed nothing readable — "
+                       "GPU-pressure gate off, asked again in ten minutes")
+    elif state == "util_unknown":
+        logger.warning("[gpu] nvidia-smi reports no GPU utilization (%s) — the gate "
+                       "judges by free memory alone", detail)
+    elif state == "missing":
+        logger.debug("[gpu] no nvidia-smi on this host — GPU-pressure gate off")
+    elif prev in ("timeout", "error", "util_unknown"):
+        logger.info("[gpu] nvidia-smi readable again")
 
 
 def _ollama_loaded_models() -> "list | None":
@@ -179,18 +224,37 @@ def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
         return _gpu_cache["busy"]
     if not injected and now < _gpu_unavailable_until:
         return False
-    stats = (smi or _nvidia_smi)()
-    if stats is None:
+    stats = (smi or _nvidia_smi_read)()
+    if stats is SMI_MISSING or stats == SMI_ERROR:
+        _note_smi("missing" if stats is SMI_MISSING else "error")
         _gpu_unavailable_until = now + 600
         _gpu_cache.update(at=now, busy=False, since=0.0, reason="")
         return False
-    used, total, util = stats
-    pressed = util >= _GPU_UTIL_BUSY or (total - used) < _GPU_FREE_MB_MIN
+    if stats == SMI_TIMEOUT:
+        # Fails closed for this tick, through the same hold as a reading:
+        # a saturated card is when the query is slowest.
+        _note_smi("timeout")
+        used = total = util = None
+        pressed = True
+    else:
+        used, total, util = stats
+        # [N/A] utilization (some cards never report it) used to disable the
+        # gate for good; free memory still decides then.
+        _note_smi("ok" if util is not None else "util_unknown",
+                  f"{used}/{total} MB" if util is None else "")
+        pressed = ((util is not None and util >= _GPU_UTIL_BUSY)
+                   or (used is not None and total is not None and (total - used) < _GPU_FREE_MB_MIN))
     if pressed and (ps or _ollama_loaded_models)():
         pressed = False                       # Ollama's own work: that is us
     since = _gpu_cache["since"] or now if pressed else 0.0
     busy = pressed and now - since >= _GPU_HOLD_S
-    reason = f"{used:.0f}/{total:.0f} MB, {util:.0f} %" if busy else ""
+    if not busy:
+        reason = ""
+    elif stats == SMI_TIMEOUT:
+        reason = "nvidia-smi not answering"
+    else:
+        mem = f"{used:.0f}/{total:.0f} MB" if used is not None and total is not None else "memory n/a"
+        reason = f"{mem}, {util:.0f} %" if util is not None else mem
     if busy != _gpu_cache["busy"]:
         logger.info("[gpu] %s", f"held by another process ({reason}) — LLM work yields" if busy else "free again")
     _gpu_cache.update(at=now, busy=busy, since=since, reason=reason)
@@ -229,7 +293,13 @@ def game_process_running() -> bool:
                 }
                 targets.update(games)
         except Exception as e:
-            logger.debug("process_monitor DB read failed: %s", e)
+            # Was DEBUG, and only the launcher signals were cached for 60 s:
+            # every confirmed game read as "no game" and the LLM loaded
+            # mid-match. The last list read is kept instead.
+            logger.warning("process_monitor: reading the classified games failed (%s) — "
+                           "using the last list read", e)
+            if _cached_targets:
+                targets.update(_cached_targets)
 
         extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
         if extra:
@@ -332,8 +402,12 @@ async def unload_llm_models() -> list[str]:
                 if r.status_code < 400:
                     unloaded.append(model)
                     logger.info("Unloaded model from VRAM: %s", model)
+                else:
+                    # Unlogged before: the game watcher believed VRAM was freed.
+                    logger.warning("Model unload for %s: Ollama answered HTTP %s — it may still "
+                                   "hold VRAM", model, r.status_code)
             except Exception as e:
-                logger.debug("Model unload failed for %s: %s", model, e)
+                logger.warning("Model unload failed for %s: %s", model, e)
     return unloaded
 
 
@@ -362,9 +436,10 @@ def process_family(name: str) -> str:
     return _HEXSEQ.sub("#", _HEXRUN.sub("#", s)) + ".exe"
 
 
-def _classified() -> tuple:
+def _classified() -> "tuple | None":
     """(every classified name, the families of the "not a game" ones),
-    cached 60 s; invalidate_process_cache() drops it after an answer."""
+    cached 60 s; invalidate_process_cache() drops it after an answer.
+    None when the DB read failed (not cached, retried next call)."""
     import time
     global _cached_classified, _cached_classified_time
     now = time.time()
@@ -374,10 +449,14 @@ def _classified() -> tuple:
             from src.database.models import GameProcess
             with get_db_session() as db:
                 rows = db.query(GameProcess.process_name, GameProcess.is_game).all()
-            _cached_classified = (frozenset(n.lower() for n, _ in rows),
-                                  frozenset(process_family(n) for n, g in rows if not g))
-        except Exception:
-            _cached_classified = (frozenset(), frozenset())
+        except Exception as e:
+            # An empty set here made every running exe "unknown" and flooded
+            # the owner with "is this a game?" for programs already answered.
+            logger.warning("process_monitor: reading the classified processes failed (%s) — "
+                           "no game prompts this round", e)
+            return None
+        _cached_classified = (frozenset(n.lower() for n, _ in rows),
+                              frozenset(process_family(n) for n, g in rows if not g))
         _cached_classified_time = now
     return _cached_classified
 
@@ -387,7 +466,10 @@ def get_unknown_processes() -> list[dict]:
     or desktop process, not classified (a "not a game" answer covers the
     whole family), not an installer, updater or crash handler, and holding
     at least PROMPT_MIN_RSS_MB of memory."""
-    classified, ignored_families = _classified()
+    got = _classified()
+    if got is None:
+        return []
+    classified, ignored_families = got
 
     extra = getattr(settings, "EXTRA_GAME_PROCESSES", "")
     extra_set = {p.strip().lower() for p in extra.split(",") if p.strip()} if extra else set()
@@ -425,6 +507,7 @@ def get_unknown_processes() -> list[dict]:
             seen.add(nl)
             unknown.append({"name": name, "pid": proc.info.get("pid")})
     except Exception as e:
-        logger.debug("get_unknown_processes scan failed: %s", e)
+        # Was DEBUG: a broken scan looked exactly like "nothing to ask".
+        logger.warning("get_unknown_processes scan failed: %s", e)
 
     return unknown

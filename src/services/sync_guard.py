@@ -25,7 +25,9 @@ Design notes:
     it by parsing Syncthing's ``config.xml`` and matching the folder whose
     ``path`` is an ancestor of the data dir.
   * Fully best-effort: if Syncthing isn't installed, or the data dir isn't
-    inside any synced folder, every function is a silent no-op.
+    inside any synced folder, every function is a silent no-op. An
+    unreadable ``config.xml`` is NOT taken as "not synced": the ``.stfolder``
+    marker above the data dir decides then, else a WARNING says so.
   * Only the block between our BEGIN/END markers is ever touched, so any
     existing user patterns (e.g. ``/Rockstar Games``) are preserved.
   * Crash-safe direction: if the process dies without running the shutdown
@@ -83,16 +85,38 @@ def _data_dir() -> Path:
     return p.resolve().parent
 
 
+class SyncConfigUnreadable(Exception):
+    """A Syncthing config.xml exists but could not be read, and no folder
+    marker settles the question: the data dir MAY be synced."""
+
+
+def _marker_root(target: Path) -> Optional[Path]:
+    """The nearest ancestor holding Syncthing's ``.stfolder`` marker (it sits
+    at the root of every Syncthing folder) — the fallback when config.xml
+    cannot be read."""
+    for p in (target, *target.parents):
+        if (p / ".stfolder").exists():
+            return p
+    return None
+
+
 def _find_synced_folder_root(target: Path) -> Optional[Path]:
-    """Return the Syncthing folder root that contains ``target``, else None."""
+    """Return the Syncthing folder root that contains ``target``, else None.
+    Raises SyncConfigUnreadable when a config.xml could not be parsed and the
+    folder markers do not answer either."""
     target = target.resolve()
+    unreadable: list[str] = []
     for cfg in _candidate_config_paths():
         if not cfg.is_file():
             continue
         try:
             root = ET.parse(cfg).getroot()  # nosec B314 - our own Syncthing config file on local disk
         except Exception as e:
-            logger.debug("[sync-guard] could not parse %s: %s", cfg, e)
+            # Was DEBUG and then "not inside a Syncthing folder — nothing to
+            # do": the live DB stayed synced (fails open). WARNING, and the
+            # folder markers are asked instead.
+            logger.warning("[sync-guard] could not parse %s: %s", cfg, e)
+            unreadable.append(f"{cfg}: {e}")
             continue
         for folder in root.iter("folder"):
             raw_path = folder.get("path")
@@ -104,6 +128,11 @@ def _find_synced_folder_root(target: Path) -> Optional[Path]:
             except (ValueError, OSError):
                 continue
             return froot
+    if unreadable:
+        froot = _marker_root(target)
+        if froot is not None:
+            return froot
+        raise SyncConfigUnreadable("; ".join(unreadable))
     return None
 
 
@@ -158,7 +187,13 @@ def enable() -> None:
     """Exclude the data dir from Syncthing while the app is running."""
     global _active_stignore
     try:
-        located = _locate()
+        try:
+            located = _locate()
+        except SyncConfigUnreadable as e:
+            logger.warning("[sync-guard] Syncthing's config could not be read (%s) and no "
+                           ".stfolder marker was found above %s — the live DB MAY be synced; "
+                           "exclude that directory in Syncthing by hand", e, _data_dir())
+            return
         if located is None:
             logger.debug("[sync-guard] data dir is not inside a Syncthing folder — nothing to do")
             return

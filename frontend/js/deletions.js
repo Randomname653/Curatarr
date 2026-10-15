@@ -39,19 +39,23 @@ export function _recentActivityBadge(p) {
 const _WHY_TOP = 3;
 // recommendations_engine.SHORTLIST_SCORE; tests/test_score_factors.py pins the two.
 const _SHORTLIST_SCORE = 30;
+// A guard verdict (the household floor) is a "why" of its own: it shows the
+// button even on a row with no factor breakdown, and its sentence leads the panel.
 export function _whyButton(p) {
-  if (!p.score_factors?.factors?.length) return '';
+  if (!p.score_factors?.factors?.length && !p.score_factors?.guard) return '';
   return `<button type="button" class="btn-why" aria-expanded="false" aria-controls="why-${p.id}" ${act('toggleWhy', EL)}>Why?</button>`;
 }
 export function _whyPanel(p) {
-  const f = p.score_factors?.factors;
-  if (!f?.length) return '';
+  const f = p.score_factors?.factors || [];
+  const guard = p.score_factors?.guard;
+  if (!f.length && !guard) return '';
   const top = [...f].sort((a, b) => Math.abs(b.points) - Math.abs(a.points)).slice(0, _WHY_TOP);
   const rest = f.length - top.length;
-  return `<div class="why-panel mt-8" id="why-${p.id}" hidden>
-    <div class="fs-12 t2 mb-6">The strongest signals in its score</div>
+  return `<div class="why-panel mt-8" id="why-${p.id}" tabindex="-1" hidden>
+    ${guard ? `<div class="fs-12 t2 mb-6">${esc(_yourCallWhy(p))}.</div>` : ''}
+    ${f.length ? `<div class="fs-12 t2 mb-6">The strongest signals in its score</div>
     <ul class="why-list">${top.map(x => `<li><span class="why-pts ${x.points > 0 ? 'to-delete' : 'to-keep'}" title="${x.points > 0 ? 'Pushes toward deleting' : 'Pushes toward keeping'}">${x.points > 0 ? '+' : '−'}${Math.round(Math.abs(x.points))}</span> ${esc(x.label)}</li>`).join('')}</ul>
-    <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>
+    <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>` : ''}
   </div>`;
 }
 // "Your call" has two causes: the curator found the title merely fine, or it
@@ -70,6 +74,21 @@ export function toggleWhy(btn) {
   btn.setAttribute('aria-expanded', String(open));
   panel.hidden = !open;
 }
+// Escape closes an open Why? panel when focus is on its button or inside it,
+// and puts focus back on the button. One delegated listener for every card.
+export function _whyEscape(ev) {
+  if (ev.key !== 'Escape' || !ev.target?.closest) return;
+  let btn = ev.target.closest('.btn-why[aria-expanded="true"]');
+  if (!btn) {
+    const panel = ev.target.closest('.why-panel:not([hidden])');
+    if (panel) btn = document.querySelector(`.btn-why[aria-controls="${panel.id}"]`);
+  }
+  if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
+  ev.preventDefault();
+  toggleWhy(btn);
+  btn.focus();
+}
+if (typeof document !== 'undefined') document.addEventListener('keydown', _whyEscape);
 
 export function _renderDeletionProposals(proposals) {
   const el = document.getElementById('del-content');
@@ -234,7 +253,8 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
       if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
       _renderDeletionProposals(r.proposals || []);
     } catch(e) {
-      if (seq === _delLoadSeq) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(e.message || 'Analyse failed')}</p>`;
+      // Was the raw {"detail":…} body in grey "loading" type, with no way back in.
+      if (seq === _delLoadSeq) el.innerHTML = _errHtml(e, act('loadDeletions', category || null, null, true));
     }
     return;
   }
@@ -385,16 +405,35 @@ export async function startArrPreEnrich(btn) {
 // Titles Curatarr deleted that are in the library again (an arr list, a
 // request, SoulSync's playlist sync). The daily custodian check finds them
 // (src/services/deletion_returns.py); Delete again or Keep closes each one.
+// A failed check used to read as "nothing came back" (the section vanished);
+// it says it could not check instead.
 export async function _loadReturned(category) {
   let items = [];
   try {
     const q = category ? `?category=${encodeURIComponent(category)}` : '';
     items = (await api(`/api/recommendations/deletions/returned${q}`)).items || [];
-  } catch { items = []; }
+  } catch (e) {
+    _renderReturnedError(_errMsg(e));
+    return;
+  }
   _renderReturned(items);
 }
 
 const _day = iso => (iso ? iso.slice(0, 10) : '?');
+
+function _returnedBox() {
+  document.getElementById('del-returned')?.remove();
+  const box = document.createElement('section');
+  box.id = 'del-returned';
+  box.className = 'section';
+  const delContent = document.getElementById('del-content');
+  delContent.parentNode.insertBefore(box, delContent);
+  return box;
+}
+
+export function _renderReturnedError(msg) {
+  _returnedBox().innerHTML = `<p class="load-err fs-12" role="status">${SVG_WARN} Couldn't check for titles back after deletion — ${esc(msg)}</p>`;
+}
 
 export function _renderReturned(items) {
   document.getElementById('del-returned')?.remove();
@@ -624,6 +663,20 @@ export async function bulkDelete() {
   }, 2000);
 }
 
+// The reason typed into the Delete / Keep dialog is what Curatarr learns
+// from. Its save used to be .catch(()=>{}) under a success toast; now the
+// toast admits it. Returns the suffix for that toast ('' when saved or none).
+export const REASON_LOST = " — your reason couldn't be saved";
+export async function _saveReason(id, prefix, reason) {
+  if (!reason) return '';
+  try {
+    await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent(prefix + reason)}`, 'POST');
+    return '';
+  } catch {
+    return REASON_LOST;
+  }
+}
+
 export async function approveDelete(id, btn) {
   const card = btn.closest('.card');
   const title = card?.dataset.title || 'this item';
@@ -635,22 +688,20 @@ export async function approveDelete(id, btn) {
   if (!res.ok) return;
   btnBusy(btn, 'Deleting…');
   try {
-    if (res.reason) {
-      await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent('Deleted: ' + res.reason)}`, 'POST').catch(()=>{});
-    }
+    const lost = await _saveReason(id, 'Deleted: ', res.reason);
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
     if (r.limbo) {
       // ARR unreachable — the proposal stays in limbo, the button becomes a retry
-      toast(r.error || 'The proposal is parked — retry once the arr is back or its index is refreshed', 'amber', {ms: 8000});
+      toast((r.error || 'The proposal is parked — retry once the arr is back or its index is refreshed') + lost, 'amber', {ms: 8000});
       btnDone(btn, 'Retry delete');
       return;
     }
-    if (!r.ok) { toast(r.error || 'Delete failed', 'danger'); btnDone(btn); return; }
+    if (!r.ok) { toast((r.error || 'Delete failed') + lost, 'danger'); btnDone(btn); return; }
     // Evict from the client-side cache so switching tabs doesn't show the card
     if (state._delProposalsAll) state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
     card?.classList.add('done');
     btnDone(btn, 'Deleted', {keepDisabled: true});
-    toast(`Deleted "${title}"`, 'success');
+    toast(`Deleted "${title}"${lost}`, lost ? 'amber' : 'success');
     // Music: SoulSync did not take the ban, so its playlist sync may fetch it again.
     if (r.warning) toast(r.warning, 'amber', {ms: 10000});
     // Pass 22: no post-delete "tell Curatarr more?" nag — the reason was
@@ -676,14 +727,12 @@ export async function rejectDelete(id, btn) {
   const reason = res.reason;
   btnBusy(btn, 'Keeping…');
   try {
-    if (reason) {
-      await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent('Keeping: ' + reason)}`, 'POST').catch(()=>{});
-    }
+    const lost = await _saveReason(id, 'Keeping: ', reason);
     await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/reject${res.checked ? '?protect=true' : ''}`, 'POST');
     if (state._delProposalsAll) state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
     card?.classList.add('done');
     btnDone(btn, res.checked ? 'Protected' : 'Kept', {keepDisabled: true});
-    toast(res.checked ? `Protected "${title}"` : `Kept "${title}" — not suggested again for 90 days`, 'success');
+    toast((res.checked ? `Protected "${title}"` : `Kept "${title}" — not suggested again for 90 days`) + lost, lost ? 'amber' : 'success');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 

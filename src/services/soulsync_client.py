@@ -117,20 +117,39 @@ def _norm_genres(raw, names: bool = False) -> list[str]:
     return [g for g in out if not (g.lower() in seen or seen.add(g.lower()))]
 
 
+# Every failure used to log at DEBUG and read as "no data", so a configured
+# but broken SoulSync was invisible (and the follow veto quietly lapsed). Warn
+# on the first failure after a success, then stay at DEBUG until it recovers.
+_healthy = True
+
+
+def _note_failure(msg: str, *args) -> None:
+    global _healthy
+    logger.log(logging.WARNING if _healthy else logging.DEBUG, msg, *args)
+    _healthy = False
+
+
 async def _get(path: str, params: dict = None) -> Optional[dict]:
+    """GET one API path; the ``data`` payload, or None on any failure.
+    A 404 is an answer ("not there"); anything else is logged as a failure."""
+    global _healthy
     if not _configured():
         return None
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
             r = await c.get(_base() + path, headers=_headers(), params=params)
+        if r.status_code == 404:
+            logger.debug("[soulsync] %s -> HTTP 404", path)
+            return None
         if r.status_code != 200:
-            logger.debug("[soulsync] %s -> HTTP %d", path, r.status_code)
+            _note_failure("[soulsync] %s -> HTTP %d", path, r.status_code)
             return None
         body = r.json()
-        return body.get("data") if isinstance(body, dict) and "data" in body else body
     except Exception as e:
-        logger.debug("[soulsync] %s failed: %s", path, e)
+        _note_failure("[soulsync] %s failed: %r", path, e)
         return None
+    _healthy = True
+    return body.get("data") if isinstance(body, dict) and "data" in body else body
 
 
 async def list_artists_page(page: int = 1, limit: int = 100) -> Optional[dict]:

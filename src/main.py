@@ -35,7 +35,9 @@ async def lifespan(app: FastAPI):
         from src.services.sync_guard import enable as _sync_guard_enable
         _sync_guard_enable()
     except Exception as e:
-        logger.debug("[sync-guard] enable failed: %s", e)
+        # enable() handles its own errors; reaching here is a bug (an import
+        # failure) and leaves the live DB unguarded — not a DEBUG matter.
+        logger.warning("[sync-guard] enable failed — data/ may be synced while open: %s", e)
 
     # Which Python this is, on record for every start: start.bat once picked
     # a different interpreter depending on how its window was opened

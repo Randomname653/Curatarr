@@ -79,6 +79,10 @@ class FakeChroma:
         self.collection = FakeCollection()
         self.facet_writes = []
 
+    def upsert_documents(self, documents, embeddings, metadatas, ids):
+        self.collection.add(ids=ids, documents=documents, embeddings=embeddings,
+                            metadatas=metadatas)
+
 
 fake_chroma = FakeChroma()
 mcache.MetadataCache = FakeMC
@@ -109,8 +113,10 @@ check("rebuild writes the doc from prefetch data", ok and _id == "sonarr:629"
       and "Terry McGinnis" in doc)
 check("adult genre scrubbed, tv normalized to show",
       "Hentai" not in meta["genres"] and meta["domain"] == "show")
-check("delete-before-add (true upsert) + facets refreshed",
-      fake_chroma.collection.deleted == ["sonarr:629"]
+# One upsert (2026-10-15): delete-then-add lost the doc for good whenever
+# the add failed, and the failure was reported as "left untouched".
+check("one upsert, no delete-before-add + facets refreshed",
+      fake_chroma.collection.deleted == []
       and fake_chroma.facet_writes[-1][0] == "sonarr:629")
 
 # 2) No prefetch → untouched (knowledge preserved, no fabrication).

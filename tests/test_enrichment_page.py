@@ -246,7 +246,7 @@ def test_category_is_derived_never_defaulted_to_movie():
     finally:
         en.get_db_session = real
     src = (_ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
-    for fn in ("async def apply_match_override", "async def delete_match_override"):
+    for fn in ("def apply_match_override(", "def delete_match_override("):
         body = src[src.index(fn):]
         body = body[:body.index("\n@router")]
         assert 'or "movie"' not in body, f"{fn} still invents a category"

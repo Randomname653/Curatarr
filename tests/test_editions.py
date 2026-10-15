@@ -135,7 +135,9 @@ def test_anidb_flags_follow_anidbs_own_definitions():
     assert (f["uncensored"], f["censored"], f["disc_censored"]) == (False, True, False) and f["tags"] == "violence censoring"
     assert ed.anidb_flags("Plain", None, lookup=lk) == ed._NO_FLAGS
     assert ed.anidb_flags("Unknown", None, lookup=lk) == ed._NO_FLAGS
-    assert ed.anidb_flags("Boom", None, lookup=lambda **k: (_ for _ in ()).throw(RuntimeError("x"))) == ed._NO_FLAGS
+    # A failed lookup is "unknown" (None), not "no flags": the walker keeps the
+    # stored flags instead of overwriting them (silent-failure sweep R3).
+    assert ed.anidb_flags("Boom", None, lookup=lambda **k: (_ for _ in ()).throw(RuntimeError("x"))) is None
 
 
 def test_the_walker_checks_series_once_a_week_with_cursor_and_budget():

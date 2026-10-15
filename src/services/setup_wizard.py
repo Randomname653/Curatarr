@@ -329,21 +329,33 @@ def _restrict_env_acl(path) -> None:
     """Windows: chmod is a no-op and NTFS inherits the parent DACL, so on a
     shared family PC every local account could read .env (all tokens live in
     it). Strip inheritance and grant the current user alone. Best-effort."""
+    # Both failures used to be DEBUG (and icacls's exit code was never read),
+    # so .env with every token could stay readable by other local accounts
+    # without a trace. Still best-effort: the write itself has succeeded.
     if os.name != "nt":
         try:
             import stat
             os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
         except Exception as e:
-            logger.debug("Could not chmod .env: %s", e)
+            logger.warning("Could not chmod .env to owner-only — other local accounts "
+                           "may read its tokens: %s", e)
         return
     try:
         import subprocess
         user = os.environ.get("USERNAME") or os.getlogin()
-        subprocess.run(  # nosec B603 B607 - fixed argv, no shell, path is ours
+        proc = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, path is ours
             ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
             check=False, capture_output=True, timeout=10)
+        if proc.returncode != 0:
+            # icacls's own message (path / account, never the file content).
+            out = proc.stderr or proc.stdout or b""
+            if isinstance(out, bytes):
+                out = out.decode(errors="replace")
+            logger.warning("Could not narrow the .env ACL (icacls exit %s) — other local "
+                           "accounts may read its tokens: %s", proc.returncode, out.strip()[:300])
     except Exception as e:  # noqa: BLE001
-        logger.debug("Could not narrow .env ACL: %s", e)
+        logger.warning("Could not narrow the .env ACL — other local accounts may read "
+                       "its tokens: %s", e)
 
 
 # Keys whose values must never travel back to a browser. The integrations
@@ -752,7 +764,13 @@ async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
     except (httpx.ConnectError, httpx.ConnectTimeout):
         _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
         return False
-    except Exception:
+    except httpx.HTTPError as e:
+        logger.debug("model_exists(%s): Ollama unreachable: %s", model_name, e)
+        return False
+    except Exception as e:
+        # A bug here (an /api/tags entry without "name", say) read as "not
+        # present" and silently re-pulled gigabytes.
+        logger.warning("model_exists(%s) failed: %s: %s", model_name, type(e).__name__, e)
         return False
 
 
@@ -811,7 +829,10 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
                         _safe_print()
                         return True
 
-        return True
+        # The stream ended without Ollama ever saying "success" — a dropped
+        # connection, not a finished download (the same fix as create_model).
+        logger.error("pull %s: stream ended without success", model_name)
+        return False
     except (httpx.ConnectError, httpx.ConnectTimeout):
         _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
         return False

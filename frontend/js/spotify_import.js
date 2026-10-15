@@ -24,17 +24,34 @@ export function handleSpotifyDrop(ev, p) {
   uploadSpotify(ev.dataTransfer.files, p);
 }
 
+// r.ok was never checked: a 403 or a 500 body has no `pending`, so it read
+// as "no files waiting" (an empty line). A failed check now says so.
+export function _spotifyPendingText(ok, d, status) {
+  if (!ok) {
+    const why = (d && typeof d.detail === 'string' && d.detail) || `HTTP ${status}`;
+    return {text: `Couldn't check for uploaded files — ${why}`, err: true};
+  }
+  return {text: d?.pending?.length ? `${d.pending.length} file(s) waiting: ${d.pending.map(f => f.name).join(', ')}` : '', err: false};
+}
+
 export async function refreshSpotifyPending(p) {
+  const el = document.getElementById(p + '-pending');
+  const show = ({text, err}) => {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('t-danger', err);
+  };
   try {
     const headers = state.token ? {Authorization: 'Bearer ' + state.token} : {};
     const r = await fetch('/api/import/spotify/status', {headers});
-    const d = await r.json();
-    const el = document.getElementById(p + '-pending');
-    if (el) el.textContent = d.pending?.length
-      ? `${d.pending.length} file(s) waiting: ${d.pending.map(f => f.name).join(', ')}`
-      : '';
-    return d;
-  } catch { return null; }
+    let d = null;
+    try { d = await r.json(); } catch { /* a non-JSON error page */ }
+    show(_spotifyPendingText(r.ok, d, r.status));
+    return r.ok ? d : null;
+  } catch (e) {
+    show({text: `Couldn't check for uploaded files — ${_errMsg(e)}`, err: true});
+    return null;
+  }
 }
 
 export async function uploadSpotify(files, p) {

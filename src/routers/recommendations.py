@@ -148,7 +148,7 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
 
 
 @router.post("/refresh-cache")
-async def refresh_recommendation_cache(
+def refresh_recommendation_cache(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
 ):
@@ -394,7 +394,7 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
 
 
 @router.get("/by-category")
-async def get_recommendations_by_category(
+def get_recommendations_by_category(
     limit: int = Query(5, ge=1, le=50),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -457,7 +457,7 @@ def _dump_score_factors(sf):
 
 
 @router.get("/protections")
-async def list_judge_protections(
+def list_judge_protections(
     user: User = Depends(require_admin),   # curation = admin only
     db: Session = Depends(get_db),
 ):
@@ -490,7 +490,7 @@ async def list_judge_protections(
 
 
 @router.delete("/protections/{protection_id}")
-async def delete_judge_protection(
+def delete_judge_protection(
     protection_id: int,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -514,7 +514,7 @@ async def delete_judge_protection(
 # ── Learned curation principles (the self-learning layer) ────────────────────
 
 @router.get("/principles")
-async def list_principles(
+def list_principles(
     user: User = Depends(require_admin),   # curation = admin only
     db: Session = Depends(get_db),
 ):
@@ -562,7 +562,7 @@ async def condense_principles_endpoint(
 
 
 @router.post("/principles/{principle_id}/{action}")
-async def update_principle(
+def update_principle(
     principle_id: int,
     action: str,
     user: User = Depends(require_admin),
@@ -595,7 +595,7 @@ async def update_principle(
 
 
 @router.delete("/principles/{principle_id}")
-async def delete_principle(
+def delete_principle(
     principle_id: int,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -633,7 +633,7 @@ def _namespace_for(media_type: str) -> Optional[str]:
 
 
 @router.get("/downscale")
-async def list_downscale_candidates(
+def list_downscale_candidates(
     user: User = Depends(require_admin),   # curation = admin only
     db: Session = Depends(get_db),
 ):
@@ -722,7 +722,7 @@ async def list_downscale_candidates(
 
 
 @router.post("/downscale/{protection_id}/done")
-async def downscale_done(
+def downscale_done(
     protection_id: int,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -745,7 +745,7 @@ async def downscale_done(
 
 
 @router.get("/upgrade-candidates")
-async def get_upgrade_candidates(_user: User = Depends(require_admin)):
+def get_upgrade_candidates(_user: User = Depends(require_admin)):
     """Loved-but-lean titles: strong watch/feedback signal on a file below
     1080p or well under its class median. Read-only — acting on it stays a
     manual click in the arr (no auto-regrab)."""
@@ -1449,7 +1449,7 @@ def _open_return(db: Session, user_id: int, proposal_id: int):
 
 
 @router.get("/deletions/returned")
-async def returned_deletions(
+def returned_deletions(
     category: Optional[str] = None,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -1526,7 +1526,7 @@ async def _arr_recycle_bin(service: str, client=None) -> dict:
 
 
 @router.post("/deletions/{proposal_id}/returned/keep")
-async def keep_returned(
+def keep_returned(
     proposal_id: int,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -1932,7 +1932,7 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
 
 
 @router.post("/deletions/{proposal_id}/reject")
-async def reject_deletion(
+def reject_deletion(
     proposal_id: int,
     protect: bool = False,
     user: User = Depends(require_admin),   # deletions = admin curation only

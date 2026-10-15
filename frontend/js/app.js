@@ -2,11 +2,11 @@ import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdat
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
+import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { _errMsg, closeModal, toggleMenu, keyActivate, hideOnError, toast } from './ui.js';
+import { _errMsg, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, toast } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -78,13 +78,17 @@ window.addEventListener('hashchange', () => routeFromHash());
 document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
   const menu = document.querySelector('.menu.open');
-  if (menu) { menu.classList.remove('open'); return; }   // innermost layer first
+  if (menu) {   // innermost layer first; focus back on its button
+    closeMenus(menu);
+    menu.querySelector('[aria-haspopup]')?.focus();
+    return;
+  }
   if (state._modal) closeModal();
 });
 document.addEventListener('click', ev => {
   const inMenu = ev.target.closest('.menu');
-  if (ev.target.closest('.menu-item')) { inMenu?.classList.remove('open'); return; }
-  if (!inMenu) document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+  if (ev.target.closest('.menu-item')) { if (inMenu) closeMenus(inMenu); return; }
+  if (!inMenu) closeMenus();
 });
 }
 
@@ -211,6 +215,7 @@ const actions = {
   renderSynopsisBrowser,
   renderWanted,
   respondToMessage,
+  retryOnboardingStep,
   runMaintenance,
   runSpotifyImport,
   saveArrConfig,

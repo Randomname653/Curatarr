@@ -22,7 +22,7 @@ from src.services.llm_utils import (
 from src.config import settings as _cfg
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -714,10 +714,13 @@ def _is_in_flipflop_loop(user_id: int, anchor: str, thread_id: str | None = None
         flips = sum(1 for a, b in zip(stances, stances[1:]) if a != b)
         return flips >= 2
     except Exception as e:
-        # Heuristic must never block the happy path — bail out as "no
-        # flip-flop" so the regular detector runs unchanged.
-        logger.debug("[protection] flip-flop probe failed: %s", e)
-        return False
+        # Fail CLOSED: report "unsettled" so the caller skips the protection
+        # detector this turn. Answering "no flip-flop" ran the detector on
+        # exactly the mid-negotiation turn this guard exists to ignore. A
+        # skipped turn is cheap — the next calm turn is detected normally.
+        logger.warning("[protection] flip-flop probe failed — treating the "
+                       "negotiation as unsettled this turn: %s", e)
+        return True
 
 
 async def _check_protection_intent_bg(
@@ -784,9 +787,12 @@ async def _check_protection_intent_bg(
                                              message=result))
                     _db.commit()
             except Exception as _ne:  # noqa: BLE001
-                logger.debug("protection note not stored: %s", _ne)
+                # The protection itself landed; only the bell note is lost.
+                logger.warning("protection note not stored: %s", _ne)
     except Exception as e:
-        logger.debug("Protection intent check failed: %s", e)
+        # WARNING with traceback: at DEBUG a bug in prompt building/grounding
+        # silently switched "keep this" protection off for every turn.
+        logger.warning("Protection intent check failed: %s", e, exc_info=True)
 
 
 _DOMAIN_SIGNALS: dict[str, list[str]] = {
@@ -1260,7 +1266,7 @@ async def get_starters(user: User = Depends(get_current_user)):
 
 
 @router.post("/starters/{starter_id}/used")
-async def starter_used(starter_id: int, user: User = Depends(get_current_user)):
+def starter_used(starter_id: int, user: User = Depends(get_current_user)):
     from src.services.chat_starters import mark_used
     return {"ok": mark_used(user.id, starter_id)}
 
@@ -1539,7 +1545,9 @@ def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
                 f"acknowledge what changed before adjusting your verdict.\n"
             )
     except Exception as e:
-        logger.debug("[chat] stance check (deletion) failed: %s", e)
+        # WARNING: at DEBUG the curator silently lost its prior stance and
+        # flip-flopped between threads — the gap this function exists to close.
+        logger.warning("[chat] stance check (deletion) failed: %s", e)
 
     # Pass 66: prior RESOLVED stance — consensus or override. More specific
     # than the bare ProtectedMedia block below, so when it fires it REPLACES
@@ -1578,7 +1586,7 @@ def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
                     f"Stay consistent with that — this was a genuine meeting of minds.\n"
                 )
     except Exception as e:
-        logger.debug("[chat] stance check (resolution log) failed: %s", e)
+        logger.warning("[chat] stance check (resolution log) failed: %s", e)
 
     # ProtectedMedia is the fallback — only when no resolution-log row exists
     # (legacy protections, or the analyze_deletion_comment path which doesn't
@@ -1597,7 +1605,7 @@ def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
                     f"Do NOT suggest removing it again unless they ASK you to reconsider.\n"
                 )
         except Exception as e:
-            logger.debug("[chat] stance check (protected) failed: %s", e)
+            logger.warning("[chat] stance check (protected) failed: %s", e)
 
     return "".join(out)
 
@@ -3253,7 +3261,8 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                 if _prins:
                     pillar_framework += "\n\n" + format_principles_block(_prins)
         except Exception as _pe:
-            logger.debug("[chat] learned-principles injection failed: %s", _pe)
+            # The discussion then argues without the rules its verdict rests on.
+            logger.warning("[chat] learned-principles injection failed: %s", _pe)
 
     # App map from app_context.py (SSOT, drift-tested) — lets the curator
     # answer "where do I find …?" about its own UI instead of improvising.
@@ -3587,7 +3596,7 @@ class CorrectAnchorRequest(BaseModel):
 
 
 @router.post("/correct-anchor")
-async def correct_chat_anchor(
+def correct_chat_anchor(
     req: CorrectAnchorRequest,
     user: User = Depends(get_current_user),
 ):
@@ -3673,7 +3682,7 @@ async def correct_chat_anchor(
 
 
 @router.get("/history")
-async def get_chat_history(
+def get_chat_history(
     limit: int = 50,
     thread_id: str = "general",
     user: User = Depends(get_current_user),
@@ -3706,6 +3715,7 @@ async def get_chat_history(
 @router.delete("/history")
 async def clear_chat_history(
     thread_id: str = None,
+    force: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -3733,13 +3743,30 @@ async def clear_chat_history(
     extraction reads the messages while they still exist. The wipe-all
     branch (thread_id=None) skips this — flushing every thread serially
     would stall the request, and a full wipe is a deliberate hard reset.
+
+    A flush that did not save the thread's memories (summarizer down, an
+    extraction bug) refuses the delete with 409 unless ``force=1``: the
+    flush result used to be ignored, so the thread was deleted and its
+    memories were lost for good — the extraction reads the messages.
     """
     if thread_id is not None and thread_id != "":
         try:
             from src.services.episodic_memory import flush_thread_extraction
-            await flush_thread_extraction(user.id, thread_id)
+            flushed = await flush_thread_extraction(user.id, thread_id)
         except Exception as e:
-            logger.debug("[chat] pre-clear memory flush failed for %s: %s", thread_id, e)
+            logger.warning("[chat] pre-clear memory flush failed for %s: %s",
+                           thread_id, e, exc_info=True)
+            flushed = False
+        if flushed is False:
+            if not force:
+                logger.warning("[chat] clear of thread %s refused — its memories "
+                               "were not saved", thread_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=("Memories from this chat could not be saved yet — try "
+                            "again in a minute, or clear anyway with ?force=1."))
+            logger.warning("[chat] thread %s cleared with force=1 — its unsaved "
+                           "memories are lost", thread_id)
 
     q = db.query(ConversationMessage).filter(ConversationMessage.user_id == user.id)
     if thread_id is not None:
@@ -3781,8 +3808,9 @@ async def flush_memories(
     _rl.enforce("memory-flush", user.id, _rl.MEMORY_FLUSHES_PER_MIN, 60)
     try:
         from src.services.episodic_memory import flush_thread_extraction
-        await flush_thread_extraction(user.id, req.thread_id)
-        return {"ok": True, "thread_id": req.thread_id}
+        ok = await flush_thread_extraction(user.id, req.thread_id)
+        # The flush result was ignored, so a failed extraction answered ok.
+        return {"ok": ok is not False, "thread_id": req.thread_id}
     except Exception as e:
         logger.warning("[chat] flush-memories failed for %s: %s", req.thread_id, e)
         return {"ok": False, "thread_id": req.thread_id, "error": str(e)}

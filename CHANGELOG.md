@@ -110,6 +110,21 @@ with little to reclaim; and a music enricher running outside the server keeps it
 across a server restart. A new test keeps the number of silent error handlers from
 growing.
 
+**…and the rest of the list.** 80 endpoints that only read or write the database
+now run off the event loop, so a slow query no longer freezes the UI and its live streams.
+Failing titles go to the back of the enrichment walkers' queue. Setup refuses an address
+that resolves to a cloud-metadata host. A failed read no longer turns into a confident
+answer:
+- the vector store reports dimension mismatches;
+- an unreadable memory flush stops "+ New" from deleting the chat (you can still clear anyway);
+- a rebake that failed is not shown as an installed model update;
+- a GPU check that times out counts as busy;
+- an empty download never replaces the anime mapping;
+- a Plex outage keeps playlist and collection pushes due instead of deleting the shelves.
+
+The views say when a request failed instead of showing stale or empty state, deleting
+explains a lost reason, and "Why?" closes with Escape.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

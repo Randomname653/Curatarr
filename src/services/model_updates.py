@@ -118,11 +118,22 @@ def tracked_models(settings) -> list[dict]:
 
 # ── state ───────────────────────────────────────────────────────────────────
 def load_state() -> dict:
-    from src.services.app_state import get_state
+    from src.services.app_state import get_state, set_state
+    raw = get_state(STATE_KEY) or "{}"
     try:
-        return json.loads(get_state(STATE_KEY) or "{}")
+        state = json.loads(raw)
+        if isinstance(state, dict):
+            return state
     except ValueError:
-        return {}
+        pass
+    # A corrupt value used to read as {} and the next save_state wrote that
+    # over it — dropping a ``test_started`` marker, so a cut-off test was
+    # never rolled back. The raw value is kept aside before anything resets.
+    logger.error("[model update] stored state %r is not a JSON object (%d chars) — "
+                 "starting empty; the raw value is kept under %s_corrupt",
+                 STATE_KEY, len(raw), STATE_KEY)
+    set_state(f"{STATE_KEY}_corrupt", raw)
+    return {}
 
 
 def save_state(state: dict) -> None:
@@ -176,16 +187,26 @@ async def disk_room(endpoint: str, base: str) -> tuple[bool, str]:
     if (urlparse(endpoint).hostname or "") not in ("localhost", "127.0.0.1", "::1"):
         return True, ""
     coords = split_ref(base)
-    need = 0
+    need, why = 0.0, "not a registry model"
     if coords:
         ns, name, tag = coords
         try:
             async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
                 r = await c.get(f"{REGISTRY}/v2/{ns}/{name}/manifests/{tag}", headers={
                     "Accept": "application/vnd.docker.distribution.manifest.v2+json"})
-            need = sum(int(l.get("size") or 0) for l in r.json().get("layers") or []) / 1e9
-        except (httpx.HTTPError, ValueError):
-            pass
+            if r.status_code != 200:
+                why = f"registry answered HTTP {r.status_code}"
+            else:
+                need = sum(int(l.get("size") or 0) for l in r.json().get("layers") or []) / 1e9
+                why = "the manifest lists no layer sizes"
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as e:
+            why = f"{type(e).__name__}: {e}"
+    # Fails closed: an unknown size used to count as 0 GB, so a 20 GB pull
+    # passed with 11 GB free and filled the disk Ollama and the DB live on.
+    if need <= 0:
+        logger.warning("[model update] size of the new %s unknown (%s) — test refused", base, why)
+        return False, (f"could not read the size of the new {base} from the registry ({why}); "
+                       f"the test needs it to check disk room — try again later")
     root = Path(os.environ.get("OLLAMA_MODELS") or Path.home() / ".ollama" / "models")
     free = shutil.disk_usage(root if root.exists() else Path.home()).free / 1e9
     if free - need < MIN_FREE_GB:
@@ -562,8 +583,23 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
     except BaseException:
         # Cancelled by a shutdown, the rollback may not get to finish: then
         # the marker stays and recover_interrupted completes it at the start.
-        await rollback(endpoint, row)
-        _clear_marker(role)
+        # A rollback that raised used to replace the test's own error and
+        # skip the bulk-hold release; it is logged and the original re-raised.
+        from src.services.llm_priority import release_bulk_hold
+        complete = False
+        try:
+            problems = await rollback(endpoint, row)
+            complete = not problems
+            if problems:
+                logger.warning("[model update] rollback after the failed %s test is incomplete "
+                               "(retried at the next start): %s", role, "; ".join(problems))
+        except Exception as rb:
+            logger.error("[model update] rollback after the failed %s test failed "
+                         "(retried at the next start): %s", role, rb)
+        finally:
+            release_bulk_hold()
+            if complete:
+                _clear_marker(role)
         raise
     _clear_marker(role)
     return result
@@ -603,13 +639,20 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
     from src.services.llm_utils import detect_user_language, language_directive
     from src.services.setup_wizard import pull_ollama_model
     base, bake, running = row["base"], row["bake"], row["running"]
+    r = None
     if await running_weights(endpoint, base) == running:
         msg(f"pinning {base} as {pinned}")
-        await _ollama(endpoint, "POST", "/api/copy", json={"source": base, "destination": pinned})
+        r = await _ollama(endpoint, "POST", "/api/copy", json={"source": base, "destination": pinned})
     elif await running_weights(endpoint, pinned) != running:
         # The tag already moved (pulled by hand): the bake is the only copy
         # of the running weights left, so the pin is taken from it.
-        await _ollama(endpoint, "POST", "/api/copy", json={"source": bake, "destination": pinned})
+        r = await _ollama(endpoint, "POST", "/api/copy", json={"source": bake, "destination": pinned})
+    # The copy's answer was never read: a failed pin let the pull overwrite
+    # the tag with nothing left to roll back to. No pin, no pull.
+    if (r is not None and r.status_code != 200) or await running_weights(endpoint, pinned) != running:
+        raise RuntimeError(f"could not pin the running weights as {pinned}"
+                           + (f" (HTTP {r.status_code})" if r is not None else "")
+                           + " — test stopped before downloading anything")
     # A re-run finds the new weights already pulled: no disk is needed then.
     if await running_weights(endpoint, base) != row.get("remote"):
         ok, why = await disk_room(endpoint, base)
@@ -736,18 +779,34 @@ async def rollback(endpoint: str, row: dict) -> None:
     new weights: Ollama removes every blob no manifest references any more
     (checked 2026-10-15 with a throwaway model). A pull cut off mid-way
     leaves ``-partial`` files that no manifest knows; with Ollama on this
-    machine they are removed too."""
+    machine they are removed too.
+
+    Returns what could NOT be put back (empty = all of it). Each step is
+    checked against what Ollama then holds, not the call's answer alone:
+    recover_interrupted used to say "everything was put back" after a copy
+    or delete that had failed."""
     base, running = row["base"], row["running"]
     pinned = pin_name(base, running)
+    problems: list[str] = []
     pin_ok = await running_weights(endpoint, pinned) == running
     if pin_ok and await running_weights(endpoint, base) != running:
         await _ollama(endpoint, "POST", "/api/copy", json={"source": pinned, "destination": base})
     await _ollama(endpoint, "DELETE", "/api/delete", json={"model": TEST_BAKE})
+    if await running_weights(endpoint, TEST_BAKE) is not None:
+        problems.append(f"the test bake {TEST_BAKE} could not be deleted (the new weights still take disk)")
+    tag_ok = await running_weights(endpoint, base) == running
+    if not tag_ok:
+        problems.append(f"{base} could not be put back on the running weights"
+                        + (f" (the pin {pinned} is kept)" if pin_ok else " (no pin of them exists)"))
     # The pin goes only once the tag holds its weights again — otherwise it
     # is the last copy of the running weights and must stay.
-    if pin_ok and await running_weights(endpoint, base) == running:
+    if pin_ok and tag_ok:
         await _ollama(endpoint, "DELETE", "/api/delete", json={"model": pinned})
+        if await running_weights(endpoint, pinned) is not None:
+            # Only disk: the tag already holds the weights again.
+            logger.warning("[model update] the pin %s could not be deleted", pinned)
     remove_partials(endpoint, row.get("remote"))
+    return problems
 
 
 def remove_partials(endpoint: str, digest: str | None) -> int:
@@ -776,12 +835,18 @@ async def recover_interrupted() -> list[str]:
     for role, row in state.items():
         if isinstance(row, dict) and row.get("test_started") and not row.get("comparison"):
             try:
-                await rollback(settings.effective_ollama, row)
+                problems = await rollback(settings.effective_ollama, row)
             except Exception as e:
                 logger.warning("[model update] rollback of %s failed: %s", role, e)
                 continue
             row.pop("test_started", None)
-            row["compare_error"] = "the test was cut off by a restart; everything was put back"
+            if problems:
+                logger.warning("[model update] rollback of the cut-off %s test is incomplete: %s",
+                               role, "; ".join(problems))
+                row["compare_error"] = ("the test was cut off by a restart; NOT everything could be "
+                                        "put back: " + "; ".join(problems))
+            else:
+                row["compare_error"] = "the test was cut off by a restart; everything was put back"
             done.append(role)
     if done:
         save_state(state)
@@ -806,16 +871,39 @@ async def decide(role: str, action: str) -> dict:
     base = row["base"]
     pinned = cmp_["pinned_as"] if cmp_ else pin_name(base, row["running"])
     if action == "update":
-        await build_ollama_models(endpoint, settings.BASE_CURATOR_MODEL,
-                                  settings.BASE_SUMMARIZER_MODEL,
-                                  settings.BASE_PITCHER_MODEL if getattr(settings, "PITCHER_MODEL", "") else None)
+        results = await build_ollama_models(
+            endpoint, settings.BASE_CURATOR_MODEL, settings.BASE_SUMMARIZER_MODEL,
+            settings.BASE_PITCHER_MODEL if getattr(settings, "PITCHER_MODEL", "") else None)
+        # The result was ignored: a failed rebake was shown as "current" and
+        # the pin — then the only copy of the old weights — was deleted.
+        failed = [k for k in ("curator", "summarizer", "pitcher") if (results or {}).get(k) is False]
+        if failed:
+            err = (f"the update did not finish: rebuilding {', '.join(failed)} failed — "
+                   f"the pin {pinned} is kept; try again or stay")
+            logger.error("[model update] %s: %s", role, err)
+            row["compare_error"] = err
+            state[role] = row
+            save_state(state)
+            raise RuntimeError(err)
         row.update(running=cmp_["new_weights"], status="current", declined_remote=None)
+        row.pop("compare_error", None)
         # The old weights go with the pin once no bake uses them any more.
         for name in (pinned, TEST_BAKE):
             await _ollama(endpoint, "DELETE", "/api/delete", json={"model": name})
+            if await running_weights(endpoint, name) is not None:
+                # The update itself stands; only the disk is not freed.
+                logger.warning("[model update] %s could not be deleted after the update — "
+                               "remove it by hand (ollama rm %s)", name, name)
     elif action == "stay":
-        await rollback(endpoint, row)
+        problems = await rollback(endpoint, row)
         row.update(status="pinned", declined_remote=row.get("remote"))
+        if problems:
+            # What runs IS the pinned weights (the bakes carry them); the
+            # tag or the disk is what could not be put back — said, not hidden.
+            logger.warning("[model update] staying on the pinned %s, but: %s", role, "; ".join(problems))
+            row["compare_error"] = "staying on the pinned version, but " + "; ".join(problems)
+        else:
+            row.pop("compare_error", None)
     else:
         raise ValueError("action is update or stay")
     row["decided"] = {"action": action, "at": _now(),

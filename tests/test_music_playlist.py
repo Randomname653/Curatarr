@@ -137,6 +137,14 @@ pp.list_playlists = fake_list
 pp.delete_playlist = fake_delete
 pp.create_playlist = fake_create
 
+
+async def fake_mid(force=False):
+    return "MID"
+
+
+# The push now checks the server identity before deleting the old playlist.
+pp.get_machine_identifier = fake_mid
+
 no_token = type("U", (), {"id": 42, "plex_username": "x", "plex_token": None})()
 res = asyncio.run(pp.push_user_music_playlist(no_token))
 check("token-less user skipped with reason", res.get("skipped") == "no_token")

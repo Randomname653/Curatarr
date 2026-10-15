@@ -43,20 +43,20 @@ check("owner is read from the task id",
       [tasks._owner_of(t) for t in ("del-analysis-2", "memx-2-general", "recs-cache-2",
                                     "cust-plex_sync", "taste-all-1", "")] == [2, 2, 2, None, None, None])
 
-admin_ids = {t["id"] for t in asyncio.run(tasks.get_tasks(user=ADMIN))["tasks"]}
-member_ids = {t["id"] for t in asyncio.run(tasks.get_tasks(user=MEMBER))["tasks"]}
+admin_ids = {t["id"] for t in (tasks.get_tasks(user=ADMIN))["tasks"]}
+member_ids = {t["id"] for t in (tasks.get_tasks(user=MEMBER))["tasks"]}
 check("admin sees every task", {"cust-plex_sync", "del-analysis-1", "del-analysis-2", "taste-all-1"} <= admin_ids)
 check("member sees only tasks carrying their id",
       member_ids == {"del-analysis-2", "memx-2-general", "recs-cache-2"})
 check("member never sees another user's analysis or a server task",
       not ({"del-analysis-1", "cust-plex_sync", "taste-all-1"} & member_ids))
 check("running list is filtered the same way",
-      all(tasks._owner_of(t["id"]) == 2 for t in asyncio.run(tasks.get_running(user=MEMBER))["tasks"]))
+      all(tasks._owner_of(t["id"]) == 2 for t in (tasks.get_running(user=MEMBER))["tasks"]))
 
 task_monitor.last_runs["sync"] = {"name": "Plex sync", "status": "done", "at": "", "message": "", "elapsed_s": 1}
 check("task history is the admin's (one entry per category can be anyone's run)",
-      asyncio.run(tasks.get_task_history(user=MEMBER))["last_runs"] == {}
-      and "sync" in asyncio.run(tasks.get_task_history(user=ADMIN))["last_runs"])
+      (tasks.get_task_history(user=MEMBER))["last_runs"] == {}
+      and "sync" in (tasks.get_task_history(user=ADMIN))["last_runs"])
 
 snapshot = task_monitor.get_all()
 check("the stream applies the same filter to each snapshot",
@@ -71,8 +71,8 @@ check("wiring: the SSE generator filters both the first snapshot and every event
 lib.get_state = lambda k: "2026-09-25T10:00:00" if k.endswith(":last") else None
 lib._get_arr_url_key = lambda svc: ("http://192.168.1.100:8989", "key") if svc != "lidarr" else (None, None)
 lib._read_defaults = lambda svc: {"root_folder": "/storage/media/tv"}
-a = asyncio.run(lib.library_status(_user=ADMIN))
-m = asyncio.run(lib.library_status(_user=MEMBER))
+a = (lib.library_status(_user=ADMIN))
+m = (lib.library_status(_user=MEMBER))
 check("admin gets the address, defaults and the last test",
       a["sonarr"]["url"].startswith("http://") and a["sonarr"]["defaults"] and a["sonarr"]["last_test"])
 check("member gets configured + music source, nothing about the LAN",

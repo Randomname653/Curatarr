@@ -40,13 +40,17 @@ def _on_event_loop() -> bool:
         return False
 
 
-def set_state(key: str, value: str) -> None:
+def set_state(key: str, value: str) -> bool:
     """Write one key in ONE statement (INSERT … ON CONFLICT DO UPDATE).
 
     It used to read the row and then UPDATE or INSERT: two round trips, and
     two first writers of a new key both took the INSERT branch, so one died
     on the primary key. The upsert has no window. From a coroutine, prefer
     ``await aset_state(...)``, which runs it on the DB writer thread.
+
+    Returns True when the value was written, False when the database stayed
+    locked through the retry (logged at WARNING). Most callers ignore the
+    result; lock releases must not — see ``release_state_lock``.
     """
     from sqlalchemy import text
     from sqlalchemy.exc import OperationalError
@@ -67,13 +71,15 @@ def set_state(key: str, value: str) -> None:
         if not force_set_state(key, value, timeout_s=5 if _on_event_loop() else 30):
             logging.getLogger(__name__).warning(
                 "[app_state] %s=%r not written — the database stayed locked", key, value)
+            return False
+    return True
 
 
-async def aset_state(key: str, value: str) -> None:
+async def aset_state(key: str, value: str) -> bool:
     """``set_state`` from a coroutine: runs on the single DB writer thread, so
-    the event loop never waits on SQLite's write lock."""
+    the event loop never waits on SQLite's write lock. Same bool result."""
     from src.database.runner import run_write
-    await run_write(set_state, key, value)
+    return await run_write(set_state, key, value)
 
 
 def set_states_if_changed(values: dict) -> dict:
@@ -149,9 +155,20 @@ def acquire_state_lock(key: str, value: str = "1") -> bool:
         return result.rowcount > 0
 
 
-def release_state_lock(key: str) -> None:
-    """Symmetric counterpart to ``acquire_state_lock`` — sets the key to ``"0"``."""
-    set_state(key, "0")
+def release_state_lock(key: str) -> bool:
+    """Symmetric counterpart to ``acquire_state_lock`` — sets the key to ``"0"``.
+
+    Returns True when the release landed. set_state's "database stayed
+    locked" path used to return normally, so this reported success while the
+    key stayed "1" and every later acquire failed until the next boot reset.
+    A release that did not land is logged at ERROR with the manual fix.
+    """
+    ok = set_state(key, "0") is not False
+    if not ok:
+        logging.getLogger(__name__).error(
+            "[app_state] lock %r NOT released — the database stayed locked; it "
+            "stays held until the next restart (or set it to '0' by hand)", key)
+    return ok
 
 
 def force_set_state(key: str, value: str, timeout_s: int = 120) -> bool:

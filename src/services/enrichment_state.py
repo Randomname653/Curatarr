@@ -704,3 +704,34 @@ def log_topup_failure(logger, tag: str, title, exc: BaseException) -> None:
     _CRASH_TRACEBACKS[tag] = n + 1
     logger.warning("%s top-up crashed for %r: %r", tag, title, exc,
                    exc_info=exc if n < 3 else None)
+
+
+# ── walker attempt stamps: failing rows go to the back ───────────────────────
+# A walker that takes the first ``limit`` unsettled rows in a fixed order
+# offers the same failing rows first on every pass. Stamping each attempt
+# lets the walker order never-tried rows first, then the least recently
+# tried, so one stuck title cannot starve the rest of the queue.
+
+def load_walker_attempts(key: str) -> dict:
+    """{row id: ISO time of the last attempt} for one walker ({} when none)."""
+    import logging
+    try:
+        from src.services.app_state import get_state
+        data = json.loads(get_state(key) or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logging.getLogger(__name__).warning("[walker] %s unreadable - fixed order "
+                                            "this pass: %s", key, e)
+        return {}
+
+
+def save_walker_attempts(key: str, attempts: dict, keep=None) -> None:
+    """Store the stamps, dropping ids no longer waiting (``keep``)."""
+    import logging
+    if keep is not None:
+        attempts = {k: v for k, v in attempts.items() if k in keep}
+    try:
+        from src.services.app_state import set_state
+        set_state(key, json.dumps(attempts, separators=(",", ":")))
+    except Exception as e:
+        logging.getLogger(__name__).warning("[walker] could not store %s: %s", key, e)

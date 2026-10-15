@@ -534,7 +534,7 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
 
 
 @router.get("/status")
-async def auth_status(user: User = Depends(get_current_user)):
+def auth_status(user: User = Depends(get_current_user)):
     return {
         "authenticated": True,
         "user_id": user.id,
@@ -544,7 +544,7 @@ async def auth_status(user: User = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout(response: Response, user: User = Depends(get_current_user),
+def logout(response: Response, user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     """Server-side logout: bump the user's token version so THIS token - and
     every other copy of it on other devices - is rejected from now on. The

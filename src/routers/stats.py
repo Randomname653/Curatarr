@@ -24,7 +24,7 @@ def _narrative_key(user_id: int, year: int) -> str:
 
 
 @router.get("/curation")
-async def curation_stats(months: int = 12,
+def curation_stats(months: int = 12,
                          user: User = Depends(require_admin)):
     from src.services.app_state import get_state
     from src.services.curation_stats import build_curation_stats

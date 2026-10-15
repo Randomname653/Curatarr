@@ -120,6 +120,34 @@ def _acquire_process_lock() -> None:
         logger.warning("[chroma] process lock unavailable: %s", e)
 
 
+# Caller errors — a query vector of the wrong dimension (old-model vectors
+# after a profile flip), a malformed `where` — are bugs, not corruption. They
+# used to log at DEBUG and read as "no neighbours". Still answered empty (a
+# caller must not 500), but WARNED: on the first hit per call site, then every
+# _FALLBACK_WARN_EVERY-th, so a per-item loop cannot flood the log.
+try:
+    from chromadb.errors import InvalidArgumentError as _ChromaInvalidArg
+    from chromadb.errors import InvalidDimensionException as _ChromaInvalidDim
+    _CALLER_ERRORS: tuple = (ValueError, TypeError, _ChromaInvalidArg, _ChromaInvalidDim)
+except Exception:   # pragma: no cover — older chromadb without these names
+    _CALLER_ERRORS = (ValueError, TypeError)
+_caller_error_counts: Dict[str, int] = {}
+
+
+def _log_read_failure(site: str, e: Exception, detail: str = "") -> None:
+    """DEBUG for backend hiccups (counted by _count_fallback); WARNING
+    (rate-limited per site) for invalid-argument / dimension-mismatch."""
+    if isinstance(e, _CALLER_ERRORS):
+        n = _caller_error_counts[site] = _caller_error_counts.get(site, 0) + 1
+        if n == 1 or n % _FALLBACK_WARN_EVERY == 0:
+            logger.warning(
+                "[chroma] %s(%s) rejected its arguments (%d this process): %s: %s"
+                " — answered empty; check the embedding dimension / where filter",
+                site, detail, n, type(e).__name__, e)
+            return
+    logger.debug("[chroma] %s(%s) failed: %s", site, detail, e)
+
+
 def _count_fallback(kind: str) -> None:
     """Empty-result fallbacks are the corruption mask — count and surface."""
     _fallback_counts[kind] = _fallback_counts.get(kind, 0) + 1
@@ -261,7 +289,9 @@ class ChromaDBWrapper:
                 metadatas=metadatas, ids=ids)
             return True
         except Exception as e:
-            logger.debug("[chroma] facets_add failed: %s", e)
+            # WARNING: the title is left with NO facets (delete-by-parent ran
+            # first) — at DEBUG a dimension mismatch emptied the index unseen.
+            logger.warning("[chroma] facets_add failed: %s", e)
             return False
 
     def facets_query(self, query_embeddings, n_results: int = 20,
@@ -271,7 +301,7 @@ class ChromaDBWrapper:
                 query_embeddings=query_embeddings, n_results=n_results,
                 where=where)
         except Exception as e:
-            logger.debug("[chroma] facets_query failed: %s", e)
+            _log_read_failure("facets_query", e)
             _count_fallback("query")
             return {"ids": [[]], "distances": [[]], "documents": [[]],
                     "metadatas": [[]]}
@@ -391,7 +421,7 @@ class ChromaDBWrapper:
             # must not 500 callers (chat RAG, scoring). Return an empty result
             # in ChromaDB's nested shape so callers just see "no neighbours" —
             # but COUNT it: this fallback is exactly what masked corruption.
-            logger.debug("[chroma] query failed: %s", e)
+            _log_read_failure("query", e)
             _count_fallback("query")
             return {"ids": [[]], "distances": [[]], "documents": [[]],
                     "metadatas": [[]], "embeddings": [[]]}
@@ -422,7 +452,7 @@ class ChromaDBWrapper:
             # whole analysis. Treat it as a missing embedding — callers already
             # fall back to a neutral taste-mismatch score for that item.
             # Counted: a climbing fallback rate is the corruption tell.
-            logger.debug("[chroma] get_by_id(%s) failed: %s", doc_id, e)
+            _log_read_failure("get_by_id", e, detail=doc_id)
             _count_fallback("get")
             return None
         if result and result['ids']:
@@ -585,7 +615,10 @@ def get_chroma_db() -> ChromaDBWrapper:
     try:
         inst.use_collection(_wanted_collection())
     except Exception as e:
-        logger.debug("[chroma] collection switch skipped: %s", e)
+        # The wrapper stays on the OLD collection: after a profile flip every
+        # query and write goes to the wrong model's vectors. Not DEBUG.
+        logger.warning("[chroma] collection switch to the active profile failed "
+                       "(still serving %r): %s", inst.collection_name, e)
     return inst
 
 

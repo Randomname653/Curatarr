@@ -51,6 +51,14 @@ async def write_facets(doc_id: str, title: str, domain: str,
     in batched, deduped calls (themes repeat ~6.7x across the corpus; one
     embed call per title was the backfill's bottleneck). Phrases missing
     from the map are embedded here as stragglers."""
+    return await _write_facets(doc_id, title, domain, genres_str, themes,
+                               vec_map=vec_map) or 0
+
+
+async def _write_facets(doc_id: str, title: str, domain: str,
+                        genres_str: str, themes, vec_map: dict = None):
+    """write_facets, but None when the write FAILED (chroma error), so the
+    backfill can tell "nothing to write" (0) from "lost" and not advance."""
     if not doc_id:
         return 0
     phrases = _phrases_from_themes(themes)
@@ -87,10 +95,10 @@ async def write_facets(doc_id: str, title: str, domain: str,
                         "facet": FACET_KIND, "emb_model": emb_model}
                        for _ in pairs],
             ids=[f"{doc_id}::f{i}" for i in range(len(pairs))])
-        return len(pairs) if ok else 0
+        return len(pairs) if ok else None
     except Exception as e:
-        logger.debug("[facets] write for %r failed: %s", title, e)
-        return 0
+        logger.warning("[facets] write for %r failed: %s", title, e)
+        return None
 
 
 async def facet_probe(constraint_vecs: list, domain: str = None,
@@ -219,14 +227,28 @@ async def run_facet_backfill(task=None) -> bool:
                 vec_map.update({p: v for p, v in zip(chunk, vecs) if v})
             except Exception as e:
                 logger.debug("[facets] page embed chunk failed: %s", e)
+        # The cursor used to advance past titles whose write failed (embedder
+        # down, chroma error) and eventually stamp facet_backfill_done=1, so
+        # they were never retried. Now a failed page stops the tick with the
+        # cursor kept; the page re-runs next tick (writes are idempotent).
+        if uniq and not vec_map:
+            logger.warning("[facets] backfill: embedder returned nothing for "
+                           "the page at %d — retrying next tick", offset)
+            return False
         written = 0
         for i, (doc_id, meta) in enumerate(zip(ids, metas)):
             meta = meta or {}
-            written += await write_facets(
+            n = await _write_facets(
                 str(doc_id), meta.get("title", ""),
                 meta.get("domain", "") or meta.get("media_type", ""),
                 meta.get("genres", ""), meta.get("themes", ""),
                 vec_map=vec_map)
+            if n is None:
+                logger.warning("[facets] backfill: write failed for %s — cursor "
+                               "kept at %d, page retried next tick", doc_id, offset)
+                _report(written)
+                return False
+            written += n
             if (i + 1) % 25 == 0:
                 _report(written, within=i + 1)
         offset += len(ids) if ids else _PAGE
