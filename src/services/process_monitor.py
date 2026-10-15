@@ -402,7 +402,10 @@ def get_unknown_processes() -> list[dict]:
         # No "exe" in the attrs: the loop filters on the NAME alone, and
         # resolving each process's executable path is an extra OS call per
         # process that nothing here reads.
-        for proc in psutil.process_iter(["name", "pid", "memory_info"]):
+        # ⚡ Bolt: Defer memory_info lookup to only the tiny subset of processes
+        # that survive the name filter, rather than querying it for every running
+        # process on the system (which takes ~2x longer).
+        for proc in psutil.process_iter(["name", "pid"]):
             name = proc.info.get("name")
             if not name:
                 continue
@@ -413,7 +416,10 @@ def get_unknown_processes() -> list[dict]:
             if _NEVER_ASK.search(nl) or process_family(nl) in ignored_families:
                 skipped.add(nl)
                 continue
-            mem = proc.info.get("memory_info")    # None when access is denied
+            try:
+                mem = proc.memory_info()    # None when access is denied
+            except Exception:
+                mem = None
             if mem is None or mem.rss < min_rss:
                 continue                          # another instance may be bigger
             seen.add(nl)

@@ -24,6 +24,12 @@ class _Proc:
         mem = None if rss_mb is None else types.SimpleNamespace(rss=rss_mb * 1024 * 1024)
         self.info = {"name": name, "pid": pid, "memory_info": mem}
         self.pid = pid
+        self._mem = mem
+
+    def memory_info(self):
+        if self._mem is None:
+            raise Exception("Access denied")
+        return self._mem
 
 
 def _run(procs, games=(), ignored=()):
