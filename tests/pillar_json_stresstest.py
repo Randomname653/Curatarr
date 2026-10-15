@@ -7,8 +7,15 @@ verdict (the structured Chain-of-Thought) reliably enough to build the
 3-pillar deletion cascade on top of it. If the model can't hold the schema,
 the whole LLM-as-judge plan collapses and we fall back to deterministic rules.
 
-Pure stdlib (urllib) — no deps, no venv. Mirrors the real app call path:
-  POST /api/chat , format = JSON schema , think=False , num_gpu=99.
+Mirrors the real app call path: POST /api/chat, format = the production
+VERDICT_SCHEMA, the production constitution, think=False, num_gpu=99. Run it
+with the app's interpreter (venv) — it imports both from src.services.pillars.
+The hardware-matrix bench (tests/benchmarks/hwbench) runs these same five
+cases through pillars.adjudicate itself, repair turn included.
+
+NOTE 2026-10: the expected verdicts below were written for the three-pillar
+draft. Under four pillars (RESONANCE, STAGNANT) one incumbent run must
+confirm or re-label them before the hit rate counts as a gate.
 
 Run with the app STOPPED so the 31B model isn't fighting the live curator
 for VRAM:
@@ -29,6 +36,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from pathlib import Path
 
 # ── Config (matches .env + the baked curatarr-curator Modelfile) ─────────────
 OLLAMA           = "http://localhost:11434"          # .env OLLAMA_ENDPOINT
@@ -49,45 +57,24 @@ MODELS           = [
     "curatarr-pitcher",  # deletion-run bake (its block 404s RED until built)
 ]
 ITERATIONS       = 3
-NUM_CTX          = 8192        # matches the baked Modelfile
 NUM_PREDICT      = 800         # headroom so the JSON never truncates mid-object
 TEMPERATURE      = 0.0         # the verdict call must be deterministic by construction
 PER_CALL_TIMEOUT = 240         # s; a cold 31B load + generation can be slow
 
-# ── The constitution (system prompt) — FIRST DRAFT of the 3 pillars ──────────
-# Deliberately concise: one law per pillar, no stacked examples. This is the
-# artefact we iterate on, not Python thresholds.
-CONSTITUTION = """You are the curation court for Curatarr, deciding whether ONE title stays on a shared 105 TB home server. Judge it against THREE pillars in STRICT priority — a higher pillar's protection can NEVER be overruled by a lower one. Base every word ONLY on the FACTS given; never invent data.
+# ── The constitution + schema: PRODUCTION's, imported ─────────────────────────
+# Until 2026-10 this file carried its own copy: the THREE-pillar first draft
+# with a four-verdict schema, while production had moved on to four pillars,
+# STAGNANT, the compact small-profile constitution and the untrusted-data
+# rule. A gate run against that copy proved nothing about the deployed judge.
+# Now it imports what pillars.adjudicate sends, so the gate tests the real
+# law (LLM_PROFILE picks full or compact, exactly as in production).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.services.pillars import VERDICT_SCHEMA, judge_system_prompt  # noqa: E402
+from src.services.llm_utils import CURATOR_NUM_CTX  # noqa: E402
 
-PILLAR III — HOUSEHOLD (highest). The server serves every household user, not only the owner. If the facts show ANOTHER user (not the owner) genuinely engaged with this title — watched it, above all completed it — it is protected for them no matter the owner's taste, and its bitrate is never questioned (household media is sacred). A title another user merely sampled and abandoned (e.g. 2 of 12 episodes, no rating) does NOT trigger this pillar.
-
-PILLAR II — CUSTODIAN. The server is also an archive of film history. A title of genuine objective stature — a landmark or masterwork of its form, or a rare/obscure work at real risk of being lost — is preserved EVEN IF it clashes with the owner's taste. High critical acclaim (Rotten Tomatoes / Metacritic) and major awards are your evidence; use judgment, not a fixed number. Mere competence or popularity is not enough.
-
-PILLAR I — EGO (lowest). For everything else — titles that exist only for the owner's own taste — the OWNER TASTE line in the evidence is the sole taste authority; this constitution carries none of its own. A title that actively provides what that line rewards survives; generic, low-effort work that provides none of it is CUT.
-
-BITRATE is a SEPARATE axis from retention. A kept title may be FLAGGED if its file is a clear bitrate outlier for its visual complexity — but bitrate alone never deletes a title, and never touches a Pillar III title.
-
-VERDICTS:
-- HARD_KEEP — protected by Pillar III; or a Pillar II case at sane bitrate; or a strong Pillar I taste-match.
-- KEEP_WITH_FLAG — kept under Pillar II or I, but a clear bitrate outlier worth downscaling.
-- CUT — no pillar protects it.
-- EVALUATE — the facts are genuinely insufficient to decide.
-
-Keep each pillar analysis to ONE or TWO sentences. Fill every field."""
-
-# ── JSON schema handed to Ollama's `format` param (structured outputs) ────────
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "pillar_3_household": {"type": "string"},
-        "pillar_2_archive":   {"type": "string"},
-        "pillar_1_ego":       {"type": "string"},
-        "bitrate_note":       {"type": "string"},
-        "verdict": {"type": "string",
-                    "enum": ["HARD_KEEP", "KEEP_WITH_FLAG", "CUT", "EVALUATE"]},
-    },
-    "required": ["pillar_3_household", "pillar_2_archive", "pillar_1_ego", "verdict"],
-}
+CONSTITUTION = judge_system_prompt()
+SCHEMA = VERDICT_SCHEMA
+NUM_CTX = CURATOR_NUM_CTX      # the judge path's real context (16k large, 8k small)
 REQUIRED = SCHEMA["required"]
 ENUM     = set(SCHEMA["properties"]["verdict"]["enum"])
 

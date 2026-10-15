@@ -57,3 +57,20 @@ Worauf die Fallgruppen zielen — die Entscheider:
 ## Ablage-Konventionen
 
 Verzeichnis ist gitignored — Deliverables gezielt `git add -f`: REPORT, Score-CSVs, Spotcheck, dieses Runbook, `model_baselines.csv`. Roh-JSONL/MD-Riesen bleiben lokal. Owner-Stichprobe: 15 Items = Signatur-Fälle + größte Score-Spreads (Muster `build_spotcheck.py`).
+
+## Hardware-Matrix (ab 2026-10): welches Modell auf welcher Karte
+
+Anlass: Audits zeigten, dass der 24-GB-Default Nutzer kleinerer Karten aussperrt (kleinster verifizierter Curator = gemma4:26b, real 18,6 GB + Puffer). Paket `tests/benchmarks/hwbench/` (Doku im Modul-Docstring), Einstieg `venv/Scripts/python.exe -m tests.benchmarks.hwbench.run --help`.
+
+**Zwei Achsen, getrennt gemessen**: Performance (Modell × num_ctx × KV-Cache × VRAM-Stufe 4/6/8/10/12/16/20/24 GB, kleinere Karten per CUDA-Ballast auf der 4090 simuliert) und Qualität (Modell × LLM_PROFILE, einmal, nicht pro Karte). Ergebnisse ins **`bench_ledger.json`** (Modell = Gewichts-Digest, nicht Tag; jede Messung mit allen Settings + Umgebung; bekannter Fingerprint = übersprungen → kein Modell doppelt). `matrix --export` schreibt `src/services/model_matrix.json`, das der Setup-Wizard liest.
+
+Reihenfolge:
+1. **App AUS**, dann `snapshot_items` — friert 148 Items (2026-08-Pool) + 40er-Subset mit echter `pillars.build_evidence` ein, prüft jedes Item gegen heutige Standards (noch in der Bibliothek, Evidence nicht dünn/fehlzugeordnet, Watch-Daten lesbar) und schreibt einen Report mit allen Ablehnungen. **Snapshots enthalten Taste/Watch-Daten — nie committen.**
+2. `run plan` (ohne GPU): Registry-Status, Downloads, was das Ledger schon kennt.
+3. `run run` (detached, `python -u`, Bash `run_in_background`): eigener `ollama serve` auf :11435 je Server-Config (FA/KV), Pull-ahead des nächsten Modells, Aufräumen nur selbst gezogener Modelle, nie Re-Pull eines installierten Tags (würde die Produktionsgewichte ersetzen — die Registry-Version von gemma4:31b/26b ist NEUER als die installierte).
+4. `score-sheets` → Claude scort Monologe/Chat (5-Achsen-Rubrik wie 2026-08) → `record-scores`.
+5. `matrix --export`.
+
+**Qualität läuft durch Produktionscode** (adjudicate/write_monologue in einem Kindprozess mit LLM_PROFILE/OLLAMA_ENDPOINT), nicht durch Prompt-Kopien. Grund (Prüfung 2026-10-15): die Kopien hatten gedriftet — Persona (PR #150), Pitch-Regeln 8/10, data-poor/size-Blöcke, und der Stresstest lief noch auf der DREI-Pillar-Entwurfsverfassung. Mit `PILLARS_ENABLED` nutzt der Lösch-Lauf den Legacy-Pitch gar nicht mehr; `curator_pipeline_bench.py` misst nur noch den Pfad mit PILLARS aus. Der Stresstest importiert jetzt Verfassung + Schema aus `pillars.py`; seine erwarteten Verdikte stammen aus der 3-Pillar-Zeit und müssen einmal am Incumbent neu kalibriert werden, bevor die Trefferquote als Gate zählt.
+
+Grenze: Ballast simuliert Speicher, nicht Bandbreite. Die tok/s gelten für die 4090. Der Wizard skaliert sie für bekannte NVIDIA-Karten über die Bandbreite und kennzeichnet das als Schätzung.

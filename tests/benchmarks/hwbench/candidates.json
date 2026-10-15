@@ -1,0 +1,28 @@
+{
+ "_doc": "Bench queue for the hardware matrix, researched 2026-10-15 on ollama.com (sizes = registry download sizes). role curator = judge + monologue + chat; summarizer = perf only (fits/speeds for the setup; its quality bench is tournament_bench). granite4.2:8b/3b run as curators and their perf cells double as the summariser footprint, so they are listed once. profiles: which LLM_PROFILE the quality phase runs. Order = queue order: references first, then by size so pull-ahead overlaps small downloads with big measurements. 'installed' entries were on the box before the bench and are never removed.",
+ "reference": "gemma4:31b",
+ "candidates": [
+  {"ref": "gemma4:31b",              "role": "curator",    "profiles": ["large"],          "why": "production base (local copy = 2026-08 weights)"},
+  {"ref": "qwen3.8:27b",             "role": "curator",    "profiles": ["large"],          "why": "pitcher bake base, 2026-08 pipeline winner"},
+  {"ref": "gemma4:26b",              "role": "curator",    "profiles": ["large", "small"], "why": "MoE 25B/A4B, catalog low-VRAM fallback; MoE should tolerate CPU offload"},
+  {"ref": "gemma4:31b-it-qat",       "role": "curator",    "profiles": ["large"],          "why": "quantisation-aware q4 of the production model, 19 GB"},
+  {"ref": "gemma4:26b-a4b-it-qat",   "role": "curator",    "profiles": ["large", "small"], "why": "QAT of the MoE fallback, 16 GB"},
+  {"ref": "qwen3.6:27b-q4_K_M",      "role": "curator",    "profiles": ["large"],          "why": "dense 27B; the DISQUALIFIED qwen3.6 was :latest = the 35B MoE, this one is untested"},
+  {"ref": "granite4.2:30b",          "role": "curator",    "profiles": ["large"],          "why": "new IBM family (Apache-2.0, German, native structured JSON), 18 GB"},
+  {"ref": "nemotron-3.5-lightning:30b", "role": "curator", "profiles": ["large", "small"], "why": "NVIDIA MoE 30B/A3B, 25 GB: offload candidate for 12-16 GB cards"},
+  {"ref": "ornith-1.5:35b",          "role": "curator",    "profiles": ["large", "small"], "why": "35B-A3B MoE (per its eval heading), 23 GB: offload candidate"},
+  {"ref": "gemma4:12b",              "role": "curator",    "profiles": ["small", "large"], "why": "12 GB-class favourite in 2026 guides, 8 GB download"},
+  {"ref": "gemma4:12b-it-qat",       "role": "curator",    "profiles": ["small"],          "why": "QAT of 12b, 7.2 GB"},
+  {"ref": "qwen3:14b",               "role": "curator",    "profiles": ["small"],          "why": "12 GB-class reasoning pick, 9.3 GB"},
+  {"ref": "qwen3.5:9b",              "role": "curator",    "profiles": ["small"],          "why": "listed for 12 GB cards"},
+  {"ref": "ornith-1.5:9b",           "role": "curator",    "profiles": ["small"],          "why": "new self-improvement family, 6.6 GB"},
+  {"ref": "granite4.2:8b",           "role": "curator",    "profiles": ["small"],          "why": "8 GB-class, same family as the summariser"},
+  {"ref": "qwen3:8b",                "role": "curator",    "profiles": ["small"],          "why": "8 GB-class top pick in 2026 guides"},
+  {"ref": "gemma4:e4b-it-qat",       "role": "curator",    "profiles": ["small"],          "why": "gemma4 edge 4B, 6.1 GB: 6-8 GB cards"},
+  {"ref": "gemma4:e2b-it-qat",       "role": "curator",    "profiles": ["small"],          "why": "gemma4 edge 2B, 4.3 GB: the 4-6 GB floor"},
+  {"ref": "granite4.2:3b",           "role": "curator",    "profiles": ["small"],          "why": "2.2 GB: is a 4 GB card possible at all?"},
+  {"ref": "llama3.2:3b",             "role": "curator",    "profiles": ["small"],          "why": "already installed, 4 GB floor reference"},
+  {"ref": "granite4.1:8b",           "role": "summarizer", "profiles": [],                 "why": "production summariser: footprint per tier"},
+  {"ref": "granite4.1:3b",           "role": "summarizer", "profiles": [],                 "why": "shipped summariser fallback"}
+ ]
+}

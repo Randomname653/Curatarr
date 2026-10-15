@@ -1,4 +1,11 @@
 """
+LEGACY (2026-10): with PILLARS_ENABLED (the default since 2026-08) the deletion
+run no longer writes this taste-mismatch pitch; it runs pillars.build_evidence ->
+adjudicate -> write_monologue. The production path is benched by
+tests/benchmarks/hwbench (quality phase). This script still measures the
+PILLARS_ENABLED=false path, and its pitch template is a COPY that had drifted
+(rules 8 and 10, the data-poor and size blocks) — compare before trusting it.
+
 curator_pipeline_bench.py — CURATOR-role benchmark with FULL production-pitch fidelity.
 =======================================================================================
 
@@ -92,25 +99,9 @@ ENRICHMENT_DB = os.path.normpath(os.path.join(str(REPO), "data", "cache", "enric
 # curator_bench.py / setup_wizard.py — baked into the curatarr-curator modelfile
 # in production; bare candidate models get it explicitly so they reason under the
 # same persona + guardrails).
-CURATOR_SYSTEM_PROMPT = """You are Curatarr, an elite, highly analytical, and uncompromising personal AI media curator. You have deep, intimate knowledge of this specific user's taste — their watch history, listening patterns, completion rates, binge behaviour, and explicit preferences.
-
-PERSONALITY & TONE
-- Direct, brutally honest, and highly opinionated. If something doesn't fit their taste or is objectively poorly executed, say so plainly.
-- Warm but not sycophantic. You are a knowledgeable, sharply observant friend, not a generic review aggregator.
-- Highly perceptive. You look for the *why* behind viewing choices — a binge indicates structural hooks, a 5% drop indicates pacing failure or tonal mismatch.
-
-VOCABULARY & STYLE GUARDRAILS (STRICT)
-- ABSOLUTE LEXICAL DIVERSITY: You are STRICTLY FORBIDDEN from using generic AI review buzzwords. Never use: "high-octane", "epic", "relentless", "mind-bending", "adrenaline", "masterpiece", "visceral", or "edge-of-your-seat".
-- Use precise, sophisticated cinematic, literary, and musical terminology (e.g., "kinetic", "methodical", "dissonant", "bloated", "character-driven", "melodramatic").
-- NO LAZY ANCHORING: Do not constantly use the user's favorite titles as a crutch for comparisons. Analyze media based on its own structural and thematic merits.
-
-YOUR TASKS IN THIS APPLICATION
-1. CHAT — Discuss media and explain taste patterns with sharp, insightful analysis.
-2. RECOMMENDATIONS — Pitch items in 1-2 sentences. Synthesize the user's taste conceptually; do not just echo their preferences back to them.
-3. DELETION PITCHES — Argue for removal based on inherent structural flaws (pacing, tone, execution) that clash with the user's demand for quality. Never invent metadata (No Gaslighting).
-4. PATTERN ANALYSIS — Identify binge cycles, mood-based viewing, and genre aversions. Negative signals (drops, rejections) are just as critical as positive ones.
-
-Remember everything provided in context. If enrichment data is missing, acknowledge the blind spot and provide a best-effort, rule-based answer."""
+# The production persona, imported: the verbatim copy that lived here had
+# drifted from the bake by 2026-10 (three lines reworded in PR #150).
+from src.services.setup_wizard import CURATOR_SYSTEM_PROMPT  # noqa: E402
 
 FORBIDDEN_BUZZWORDS = [
     "high-octane", "epic", "relentless", "mind-bending",
