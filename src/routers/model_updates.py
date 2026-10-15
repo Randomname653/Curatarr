@@ -39,8 +39,15 @@ async def _compare_bg(role: str, user_id: int) -> None:
     try:
         res = await mu.run_comparison(role, user_id, task=task)
         s = res["summary"]
+        rec = ""
+        try:
+            ev = await mu.run_evaluation(role, user_id, task=task)
+            rec = f"; the current model recommends: {ev['recommendation']}"
+        except Exception as e:   # the comparison stands even if the review fails
+            logger.warning("[model update] %s review failed: %s", role, e)
+            rec = "; the review failed — run it again from Maintenance"
         task_monitor.done(task, f"Old vs new: {s['verdicts_same']}/{s['verdicts_compared']} "
-                                f"verdicts unchanged, wording {s['wording_similarity_pct']} % alike")
+                                f"verdicts unchanged, wording {s['wording_similarity_pct']} % alike{rec}")
     except Exception as e:
         logger.warning("[model update] %s comparison failed: %s", role, e)
         state = mu.load_state()
@@ -64,6 +71,35 @@ async def compare(role: Literal["curator", "pitcher"], user: User = Depends(requ
     state[role].pop("compare_error", None)
     mu.save_state(state)
     asyncio.create_task(_compare_bg(role, user.id))
+    return {"started": True}
+
+
+async def _evaluate_bg(role: str, user_id: int) -> None:
+    from src.services import model_updates as mu
+    from src.services.task_monitor import task_monitor
+    task = task_monitor.create(name=f"Model update review ({role})", category="models")
+    task_monitor.start(task)
+    try:
+        ev = await mu.run_evaluation(role, user_id, task=task)
+        task_monitor.done(task, f"Review done — recommendation: {ev['recommendation']}")
+    except Exception as e:
+        logger.warning("[model update] %s review failed: %s", role, e)
+        task_monitor.done(task, f"Review failed: {e}")
+    finally:
+        _running["role"] = None
+
+
+@router.post("/{role}/evaluate")
+async def evaluate(role: Literal["curator", "pitcher"], user: User = Depends(require_admin)):
+    """Review an existing comparison again (or for the first time, for a
+    result from before the review existed)."""
+    from src.services import model_updates as mu
+    if _running["role"]:
+        raise HTTPException(409, f"a test is already running ({_running['role']})")
+    if not (mu.load_state().get(role) or {}).get("comparison"):
+        raise HTTPException(409, "compare first")
+    _running["role"] = role
+    asyncio.create_task(_evaluate_bg(role, user.id))
     return {"started": True}
 
 

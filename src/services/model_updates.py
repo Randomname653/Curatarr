@@ -435,11 +435,70 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
         new = await _run_side(endpoint, TEST_BAKE, sample, lang)
         await evict_if_resident(TEST_BAKE)
     result = {"remote": row["remote"], "new_weights": new_digest, "pinned_as": pinned,
-              "at": _now(), "summary": summarize(old, new), "old": old, "new": new}
+              "at": _now(), "summary": summarize(old, new), "old": old, "new": new,
+              # The judge (model_update_eval) checks both sides against these.
+              "facts": {s["title"]: s["facts"] for s in sample}}
     state = load_state()
     state.setdefault(role, row)["comparison"] = result
     save_state(state)
     return result
+
+
+async def _refill_facts(comparison: dict, user_id: int) -> None:
+    """A result from before facts were kept: rebuild them by title (the
+    library may have moved since, so the review notes it)."""
+    from src.routers.recommendations import _fetch_arr_candidates
+    from src.services import pillars
+    missing = [t["title"] for t in comparison["old"]["titles"]
+               if t["title"] not in (comparison.get("facts") or {})]
+    if not missing:
+        return
+    by_title = {(i.get("title") or "").lower(): i for i in await _fetch_arr_candidates()}
+    facts = comparison.setdefault("facts", {})
+    for title in missing:
+        it = by_title.get(title.lower())
+        if it:
+            try:
+                facts[title] = (await pillars.build_evidence(
+                    it, user_id, it.get("category") or "movie"))["facts"]
+            except Exception as e:
+                logger.info("[model eval] facts for %r: %s", title, e)
+    comparison["facts_rebuilt"] = True
+
+
+async def run_evaluation(role: str, user_id: int, task=None) -> dict:
+    """The current base model (pinned weights, no persona) reviews the
+    comparison blind and recommends; model_update_eval has the method."""
+    from src.config import settings
+    from src.services.llm_priority import curator_priority, evict_if_resident
+    from src.services.model_update_eval import evaluate
+    from src.services.task_monitor import task_monitor
+    endpoint = settings.effective_ollama
+    state = load_state()
+    row = state.get(role) or {}
+    cmp_ = row.get("comparison")
+    if not cmp_:
+        raise ValueError("compare first")
+    # The judge must be the CURRENT weights: the pin when it still holds
+    # them, else the tag, else the persona bake (its system prompt is
+    # replaced by the reviewer's own, so the persona does not leak in).
+    judge = next((m for m in (cmp_.get("pinned_as"), row["base"])
+                  if m and await running_weights(endpoint, m) == row["running"]), row["bake"])
+    if task is not None:
+        task_monitor.update(task, message=f"{judge} reviews old vs new")
+    await _refill_facts(cmp_, user_id)
+    async with curator_priority("model update review", exclusive_model=judge):
+        ev = await evaluate(cmp_, endpoint, judge)
+        await evict_if_resident(judge)
+    ev["at"] = _now()
+    state = load_state()
+    if state.get(role, {}).get("comparison"):
+        state[role]["comparison"]["evaluation"] = ev
+        if cmp_.get("facts_rebuilt"):
+            state[role]["comparison"]["facts"] = cmp_["facts"]
+            state[role]["comparison"]["facts_rebuilt"] = True
+        save_state(state)
+    return ev
 
 
 async def rollback(endpoint: str, row: dict) -> None:
@@ -550,6 +609,8 @@ def public_view(state: dict) -> list[dict]:
                                           "checked_at", "comparable", "decided", "compare_error")}
                    | ({"comparison": {
                        "summary": cmp_["summary"], "at": cmp_["at"],
+                       "evaluation": cmp_.get("evaluation"),
+                       "facts_rebuilt": cmp_.get("facts_rebuilt", False),
                        "pairs": [{"title": a["title"], "old": a["monologue"], "new": b["monologue"],
                                   "old_verdict": a["verdict"], "new_verdict": b["verdict"]}
                                  for a, b in zip(cmp_["old"]["titles"], cmp_["new"]["titles"])],

@@ -35,11 +35,16 @@ def _model_update_items() -> list[dict]:
                           "action": None})
         elif m.get("comparison"):
             s = m["comparison"]["summary"]
+            ev = m["comparison"].get("evaluation") or {}
+            rec = ({"update": "The current model recommends the update.",
+                    "stay": "The current model recommends staying.",
+                    "either": "The current model sees no clear winner."}.get(ev.get("recommendation"), "")
+                   + (" (Hard rule: " + ev["guards"][0] + ".)" if ev.get("guards") else ""))
             items.append({"id": nid, "kind": "model_update", "severity": "warn",
                           "title": f"Test result ready: {base}",
                           "text": (f"{s['verdicts_same']} of {s['verdicts_compared']} verdicts unchanged, "
                                    f"wording {s.get('wording_similarity_pct')} % alike. "
-                                   f"Take the update or stay on the pinned version."),
+                                   f"{rec or 'Take the update or stay on the pinned version.'}"),
                           "action": {"key": "model_updates", "label": "See the result"}})
         elif m.get("compare_error") and m["status"] == "update":
             items.append({"id": nid, "kind": "model_update", "severity": "danger",

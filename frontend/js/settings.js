@@ -405,7 +405,24 @@ const MU_STATUS = {
 };
 const _short = d => (d || '').replace('sha256:', '').slice(0, 12);
 
-function _muCompare(c) {
+// The current model's blind review (services/model_update_eval.py).
+const MU_REC = {update: ['ok', 'recommends the update'], stay: ['warn', 'recommends staying'],
+                either: ['', 'sees no clear winner']};
+function _muEval(role, ev, facts_rebuilt) {
+  if (!ev) return `<div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${act('evaluateModelUpdate', role, EL)}>Let the current model review it</button></div>`;
+  const [kind, label] = MU_REC[ev.recommendation] || ['', ev.recommendation];
+  const t = ev.tally.titles, c = ev.tally.chat;
+  const rules = ev.guards.length
+    ? `<p class="fs-12 mt-4">Hard rules: ${esc(ev.guards.join('; '))}${ev.overruled ? ' — these overrule the model’s “update”.' : '.'}</p>` : '';
+  const per = ev.titles.map(r => `<li>${esc(r.key)}: <b>${esc(r.winner)}</b>${r.position_flip ? ' (flipped with the order → tie)' : ''} — ${esc(r.reasons[0] || '')}</li>`).join('');
+  return `<div class="banner ${kind} mt-8"><span class="banner-icon">✓</span><div class="banner-text">
+      <b>${esc(ev.judge_model)}</b> ${esc(label)}: ${esc(ev.model_reason)}
+      <p class="fs-12 mt-4">Titles: new better ${t.new}, old better ${t.old}, tie ${t.tie} · chat: new ${c.new}, old ${c.old}, tie ${c.tie}</p>${rules}
+      <p class="fs-12 t3 mt-4">The current model judged blind, each pair in both orders; it is reviewing its own successor, so it may prefer its own style${facts_rebuilt ? '; facts were rebuilt after the test' : ''}.</p>
+      <details class="mt-4"><summary class="fs-12">Reason per title</summary><ul class="fs-12">${per}</ul></details></div></div>`;
+}
+
+function _muCompare(role, c) {
   const s = c.summary;
   const row = (label, k, unit = '') => `<tr><td>${esc(label)}</td><td>${esc(String(s[k]?.old ?? '–'))}${unit}</td><td>${esc(String(s[k]?.new ?? '–'))}${unit}</td></tr>`;
   const changes = s.verdict_changes.length
@@ -414,7 +431,7 @@ function _muCompare(c) {
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
   const chat = c.chat.map(p => `<div class="mt-8"><div class="fw-500 fs-12">${esc(p.prompt)}</div>
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
-  return `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
+  return _muEval(role, c.evaluation, c.facts_rebuilt) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
     <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
       ${row('Judge, s per title', 'judge_s')}${row('Card note, s per title', 'monologue_s')}${row('Generation, tok/s', 'gen_tok_s')}
       ${row('VRAM, GB', 'vram_gb')}${row('On the GPU, %', 'gpu_share_pct')}${row('Card note, words', 'monologue_words')}
@@ -437,7 +454,7 @@ export async function loadModelUpdates(btn, refresh = false) {
       const running = d.running === m.role;
       let body = '';
       if (m.comparison) {
-        body = _muCompare(m.comparison) + `<div class="section-actions mt-8">
+        body = _muCompare(m.role, m.comparison) + `<div class="section-actions mt-8">
           <button class="btn btn-primary btn-sm" ${act('decideModelUpdate', m.role, 'update', EL)}>Take the update</button>
           <button class="btn btn-secondary btn-sm" ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay on the pinned version</button></div>`;
       } else if (m.status === 'update' && m.comparable) {
@@ -484,6 +501,18 @@ export async function decideModelUpdate(role, action, btn) {
   try {
     await api(`/api/system/model-updates/${role}/decide`, 'POST', {action});
     toast(update ? 'Updated — the models were rebuilt.' : 'Staying on the pinned version.', 'success');
+    loadUnreadMessages();
+  } catch (e) {
+    toast(_errMsg(e), 'danger');
+  }
+  loadModelUpdates();
+}
+
+export async function evaluateModelUpdate(role, btn) {
+  btnBusy(btn, 'Starting…');
+  try {
+    await api(`/api/system/model-updates/${role}/evaluate`, 'POST');
+    toast('Review started — the current model reads both sides; progress in Activity.', 'info');
     loadUnreadMessages();
   } catch (e) {
     toast(_errMsg(e), 'danger');

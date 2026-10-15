@@ -225,6 +225,70 @@ check("...but leaves a FINISHED test alone (its result waits for the decision)",
 check("partials are only touched for a local Ollama",
       mu.remove_partials("http://192.168.0.5:11434", "sha256:new") == 0)
 
+# ── the self-review (services/model_update_eval.py) ───────────────────────
+from src.services import model_update_eval as ev  # noqa: E402
+
+base_summary = {"failures": {"old": 0, "new": 0}, "gpu_share_pct": {"old": 100, "new": 100},
+                "gen_tok_s": {"old": 30.0, "new": 29.0}}
+check("guards: a clean run has no hard rule", ev.guards(base_summary) == [])
+check("guards: more failures, a spill, or a big slowdown are hard rules",
+      len(ev.guards({"failures": {"old": 0, "new": 2}, "gpu_share_pct": {"new": 80},
+                     "gen_tok_s": {"old": 30.0, "new": 20.0}})) == 3)
+
+
+def asker(pick):
+    """A fake judge: pick(user_text) -> 'A' | 'B' | 'tie'."""
+    async def _ask(endpoint, model, system, user, schema):
+        if schema is ev.FINAL_SCHEMA:
+            return {"recommendation": FINAL["rec"], "reason": "numbers"}
+        return {"better": pick(user), "reason": "r"}
+    return _ask
+
+
+FINAL = {"rec": "update"}
+# Always prefers whichever answer mentions "NEWTEXT": a content preference.
+ev._ask = asker(lambda u: "A" if u.index("ANSWER A") < u.find("NEWTEXT") < u.index("ANSWER B") else "B")
+r = asyncio.run(ev.judge_pair("e", "m", "Title", "sys", "ctx", "old text", "NEWTEXT"))
+check("judge: a preference that survives the A/B swap counts", r["winner"] == "new" and not r["position_flip"])
+ev._ask = asker(lambda u: "A")      # always picks the first slot: pure position bias
+r = asyncio.run(ev.judge_pair("e", "m", "Title", "sys", "ctx", "old text", "NEWTEXT"))
+check("judge: pure position bias becomes a tie, flagged", r["winner"] == "tie" and r["position_flip"])
+check("judge: which side is A is seeded by the title (reproducible, not always the same slot)",
+      ev._new_is_a("x") == ev._new_is_a("x")
+      and len({ev._new_is_a(t) for t in ("a", "b", "c", "d", "e", "f")}) == 2)
+
+cmp_fixture = {
+    "summary": {**base_summary, "verdicts_same": 2, "verdicts_compared": 2,
+                "judge_s": {"old": 7, "new": 5}, "vram_gb": {"old": 20, "new": 20}},
+    "facts": {"T1": "FACTS one", "T2": "FACTS two"},
+    "old": {"titles": [{"title": "T1", "verdict": "CUT", "monologue": "old 1", "error": None},
+                       {"title": "T2", "verdict": "CUT", "monologue": "old 2", "error": None}],
+            "chat": [{"prompt": "q", "text": "old chat"}]},
+    "new": {"titles": [{"title": "T1", "verdict": "CUT", "monologue": "NEWTEXT 1", "error": None},
+                       {"title": "T2", "verdict": "CUT", "monologue": "NEWTEXT 2", "error": "timeout"}],
+            "chat": [{"prompt": "q", "text": "NEWTEXT chat"}]},
+}
+seen_ctx = []
+def pick_new(u):
+    seen_ctx.append(u)
+    return "A" if u.index("ANSWER A") < u.find("NEWTEXT") < u.index("ANSWER B") else "B"
+ev._ask = asker(pick_new)
+out = asyncio.run(ev.evaluate(cmp_fixture, "e", "gemma4:31b-pinned-old"))
+check("review: failed pairs are skipped, the rest tallied (titles + chat)",
+      out["tally"]["titles"]["new"] == 1 and len(out["titles"]) == 1 and out["tally"]["chat"]["new"] == 1)
+check("review: each title is judged against its own facts", any("FACTS one" in u for u in seen_ctx))
+check("review: no hard rule -> the model's recommendation stands",
+      out["recommendation"] == "update" and not out["overruled"] and out["self_judged"])
+spill = {**cmp_fixture, "summary": {**cmp_fixture["summary"], "gpu_share_pct": {"new": 70}}}
+out = asyncio.run(ev.evaluate(spill, "e", "m"))
+check("review: a hard rule overrules the model's 'update' -> stay, with the reason",
+      out["model_recommendation"] == "update" and out["recommendation"] == "stay"
+      and out["overruled"] and "GPU" in out["guards"][0])
+FINAL["rec"] = "stay"
+out = asyncio.run(ev.evaluate(spill, "e", "m"))
+check("review: a hard rule never turns a 'stay' into anything else",
+      out["recommendation"] == "stay" and not out["overruled"])
+
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]
 main = (root / "src/main.py").read_text(encoding="utf-8")
@@ -233,11 +297,16 @@ check("the routes are admin-only",
       and "dependencies=_ADMIN_ONLY)" in main.split("model_updates.router", 1)[1][:200])
 sched = (root / "src/services/scheduler.py").read_text(encoding="utf-8")
 check("a cut-off test is recovered once at startup", "recover_interrupted" in sched)
+_router = (root / "src/routers/model_updates.py").read_text(encoding="utf-8")
+check("the review runs right after a test and can be started on its own",
+      "run_evaluation" in _router and '"/{role}/evaluate"' in _router)
 check("a daily check is scheduled, and never with next_run_time=None (that pauses it)",
       "job_model_update_check" in sched
       and not __import__("re").search(r"next_run_time\s*=\s*None\s*[,)]", sched))
 from tests.frontend_files import everything  # noqa: E402
 html = everything()
+check("the Maintenance view shows the review and offers it when missing",
+      "_muEval(" in html and "act('evaluateModelUpdate'" in html)
 check("Maintenance has the section, the bell reaches it",
       "/api/system/model-updates" in html and "maint-models" in html
       and "act('openModelUpdates')" in html)
