@@ -270,14 +270,17 @@ async def admin_re_attribute(_admin: User = Depends(require_admin)):
 
 
 @router.post("/admin/cleanup-orphans")
-async def admin_cleanup_orphans(_admin: User = Depends(require_admin)):
+async def admin_cleanup_orphans(force: bool = False,
+                                _admin: User = Depends(require_admin)):
     """Drop watch_history rows whose Plex item no longer exists in any library.
 
-    Walks every configured library section, collects all live ratingKeys,
-    deletes WatchHistoryEntry rows whose plex_item_id is a numeric ratingKey
-    not present anymore. Spotify entries (``plex_item_id`` starts with
-    ``spotify:``) are kept untouched. Aborts cleanly if any section fetch
-    fails (so a transient network blip can't wipe history).
+    Walks every configured library section for the item type history keeps
+    there (movies, episodes, tracks), collects all live ratingKeys, deletes
+    WatchHistoryEntry rows whose plex_item_id is a numeric ratingKey not
+    present anymore. Spotify entries (``plex_item_id`` starts with
+    ``spotify:``) are kept untouched. Deletes nothing when any section can't
+    be read in full or answers empty, or when more than a fifth of the rows
+    would go — ``?force=true`` lifts only that last guard.
     """
-    result = await cleanup_orphan_watch_history()
+    result = await cleanup_orphan_watch_history(force=force)
     return result
