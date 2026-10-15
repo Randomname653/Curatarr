@@ -577,7 +577,8 @@ async def start_embedding_migration(user: User = Depends(get_current_user)):
     """One-shot atomic embedding migration to nomic-embed-text-v2-moe
     (parallel collection + prefixes + eval gate + profile flip). Admin via
     the router-wide gate; progress in the Activity view. The legacy
-    collection is kept for rollback."""
+    collection is kept for rollback. Refuses (creating and deleting
+    nothing) when v2 is already the live collection or no v1 source exists."""
     global _emb_migration_running
     if _emb_migration_running:
         raise HTTPException(status_code=409, detail="Migration already running")
@@ -589,8 +590,8 @@ async def start_embedding_migration(user: User = Depends(get_current_user)):
 
 @router.post("/embedding-migration/rollback")
 async def rollback_embedding(user: User = Depends(get_current_user)):
-    """Flip the profile back to the untouched legacy corpus (see the
-    caveat on DB-side memory vectors in the service docstring)."""
+    """Flip the profile back to the one that was live before the migration
+    flip (see the caveat on DB-side memory vectors in the service docstring)."""
     from src.services.embedding_migration import rollback_embedding_migration
     return rollback_embedding_migration()
 

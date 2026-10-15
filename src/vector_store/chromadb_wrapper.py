@@ -75,8 +75,11 @@ def _startup_quick_check() -> None:
             logger.critical(
                 "ChromaDB backing store FAILED quick_check: %r. Restore "
                 "path: stop the app, move data/chromadb aside, restart, "
-                "then rebuild via POST /api/enrichment/embedding-migration "
-                "(the corpus is reproducible from the enrichment caches).",
+                "then re-embed from the enrichment caches (re-enrichment; "
+                "scripts/revectorize_backfill.py covers rows with "
+                "vector_ready=0). POST /api/enrichment/embedding-migration "
+                "is NOT a restore path — it copies from the v1 collection, "
+                "which no longer exists.",
                 ok)
             raise RuntimeError(f"ChromaDB store corrupt (quick_check: {ok})")
         logger.info("[chroma] quick_check ok (%s)", db_file.name)
