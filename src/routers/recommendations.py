@@ -897,8 +897,9 @@ async def get_deletion_proposals(
         # Always return on non-refresh — never fall through to a live ARR fetch.
         # An empty result just shows the "Analyse library" prompt; it never
         # triggers a network call that can fail and wipe the loading state.
+        from src.services.display_tags import attach_tags
         return {
-            "proposals": [_proposal_dict(p) for p in cached],
+            "proposals": await asyncio.to_thread(attach_tags, [_proposal_dict(p) for p in cached]),
             "total_gb": round(sum(p.storage_mb for p in cached) / 1024, 1),
             "enrichment_coverage": _arr_enrichment_coverage(category),
             "stale": cache_stale,
@@ -1175,8 +1176,9 @@ async def get_deletion_proposals(
         pre_filter_count, recent_only, len(proposals_with_ids),
     )
 
+    from src.services.display_tags import attach_tags
     return {
-        "proposals":           proposals_with_ids,
+        "proposals":           await asyncio.to_thread(attach_tags, proposals_with_ids),
         "total_gb":            round(sum(p.get("size_mb", 0) for p in proposals_with_ids) / 1024, 1),
         "enrichment_coverage": _arr_enrichment_coverage(category),
         "last_run":            deletion_run_summary(category),

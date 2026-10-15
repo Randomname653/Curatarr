@@ -89,8 +89,14 @@ export function _renderDeletionProposals(proposals) {
   el.innerHTML = `
     <div class="fs-13 t2 mb-12">Potential savings: <b class="t-amber">${totalGb} GB</b> · ${proposals.length} proposals</div>` +
     proposals.map(p => {
-      const genreTags = (p.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
-        .map(g=>`<span class="badge muted badge-sm">${esc(g)}</span>`).join('');
+      // The server's pick (display_tags.py): genres minus what the tab already
+      // says, rarest first, then up to two themes. Plain genres for a list
+      // that came without them.
+      const tags = Array.isArray(p.tags) ? p.tags
+        : (p.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,4).map(label => ({label, kind: 'genre'}));
+      const genreTags = tags.map(t => t.kind === 'theme'
+        ? `<span class="badge theme badge-sm" title="Theme">${esc(t.label)}</span>`
+        : `<span class="badge muted badge-sm">${esc(t.label)}</span>`).join('');
       const placeholder = p.service==='lidarr'
         ? "e.g. 'Keep — listen to this regularly' or 'Delete — haven't touched it in years'"
         : p.service==='radarr'
