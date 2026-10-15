@@ -4,8 +4,10 @@ ARR Suite LLM - Metadata Cache (Phase A)
 SQLite cache for metadata API responses to avoid rate limit issues.
 """
 
+import os
 import sqlite3
 import json
+import threading
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -42,22 +44,143 @@ def write_fields(cache, cache_key: str, raw: Dict[str, Any],
     cache.set_cache(cache_key, raw, days=days)
 
 
+# ── Connections ──────────────────────────────────────────────────────────────
+#
+# One connection per (thread, cache file), reused by every MetadataCache made
+# on that thread. Constructing a MetadataCache used to open a fresh sqlite3
+# connection and run four PRAGMAs plus CREATE TABLE/INDEX IF NOT EXISTS and a
+# commit — per call site, and some call sites run once per candidate (the
+# deletion scorer's rating lookup: hundreds per category). Call sites that
+# skipped close() on an exception leaked the handle until GC.
+#
+# Now the connection, its PRAGMAs and the schema check happen once per thread
+# per file. A MetadataCache is a cheap handle: close() (or leaving a ``with``
+# block) only rolls back what the handle left uncommitted once the thread's
+# last open handle is released; the connection itself stays for the next one.
+# A thread's connection closes with the thread.
+#
+# ``conn`` resolves to the CALLING thread's connection, so a handle created on
+# the event loop and used inside ``asyncio.to_thread`` never shares one sqlite3
+# connection between two threads at once.
+_local = threading.local()
+
+
+class _Slot:
+    __slots__ = ("conn", "ident", "refs")
+
+    def __init__(self, conn: sqlite3.Connection, ident):
+        self.conn = conn
+        self.ident = ident
+        self.refs = 0
+
+
+def _file_ident(path: Path):
+    """(device, inode) of the cache file, or None when it does not exist. A
+    connection opened on a file that was since deleted or replaced (a test's
+    temp dir, a restored backup) points at the old inode — reopen then."""
+    try:
+        st = os.stat(path)
+        return (st.st_dev, st.st_ino)
+    except OSError:
+        return None
+
+
+def _open(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Pass 29: the cache connection used to be created with all-default
+    # pragmas — no WAL, no busy_timeout. Under concurrent enrichment this
+    # surfaced as "database is locked" on every collision, because the
+    # default busy_timeout is 0 ("fail immediately"). Match the pragma profile
+    # the main DB uses in src/database/connection.py.
+    conn = sqlite3.connect(
+        path,
+        check_same_thread=False,
+        timeout=60.0,   # python-side wait when SQLite reports BUSY
+    )
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA busy_timeout=60000")
+        cur.execute("PRAGMA wal_autocheckpoint=1000")
+        cur.close()
+    except Exception as e:
+        logger.warning("[metadata_cache] PRAGMA setup failed: %s", e)
+    _init_schema(conn)
+    return conn
+
+
+def _init_schema(conn: sqlite3.Connection) -> None:
+    """Pass 48: ``media_items`` table + ``idx_media_hash`` / ``idx_expiration``
+    indices were removed. Nothing in src/ ever read from media_items —
+    ``get_media`` / ``set_media`` / ``get_all`` / ``get_all_unenriched``
+    had no callers, and the parallel ``api_cache`` table covered the
+    actual cache needs. Existing DBs keep the orphaned table (no
+    destructive migration), but new installs don't create it.
+    """
+    cursor = conn.cursor()
+    # API response cache — the only cache surface this class actually serves.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_cache (
+            cache_key TEXT PRIMARY KEY,
+            response TEXT,
+            created_at TEXT,
+            expires_at TEXT
+        )
+    """)
+    # Performance optimization: Covering index for queries that filter by expires_at
+    # and optionally cache_key (e.g. live_key_set, _live_raw_entries, count_raw_with_marker).
+    # Without this, expires_at checks cause full table scans.
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_api_cache_expires
+        ON api_cache(expires_at, cache_key)
+    """)
+    conn.commit()
+    cursor.close()
+
+
+def _thread_slot(path: Path) -> _Slot:
+    """This thread's connection to ``path``, opened (or reopened) on demand."""
+    slots = getattr(_local, "slots", None)
+    if slots is None:
+        slots = _local.slots = {}
+    key = str(path)
+    ident = _file_ident(path)
+    slot = slots.get(key)
+    if slot is not None and (ident is None or slot.ident != ident):
+        try:
+            slot.conn.close()
+        except Exception:
+            pass
+        slot = None
+    if slot is None:
+        conn = _open(path)
+        slot = slots[key] = _Slot(conn, _file_ident(path))
+    return slot
+
+
 class MetadataCache:
     """
     SQLite cache for metadata API responses.
-    
+
     Stores:
     - TMDB movie/series data
     - OMDb data
     - AniDB data
     - Media hashes for deduplication
-    
+
     Features:
     - Cache expiration (7 days default)
     - Hash-based deduplication
     - Automatic cleanup of old entries
+
+    A cheap handle on the calling thread's shared connection (see the
+    connection notes above). Prefer ``with MetadataCache() as cache:``; a
+    bare ``close()`` still works, and a handle dropped without either is
+    released when it is garbage-collected.
     """
-    
+
     def __init__(self, cache_path: Path = None):
         """
         Initialize metadata cache.
@@ -69,64 +192,28 @@ class MetadataCache:
                 0-byte files it spawned were removed 2026-08-18)
         """
         self.cache_path = Path(cache_path or settings.ENRICHMENT_CACHE)
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._owner = threading.get_ident()
+        self._slot = _thread_slot(self.cache_path)
+        self._slot.refs += 1
+        self._closed = False
 
-        # Pass 29: the metadata.db connection used to be created with
-        # all-default pragmas — no WAL, no busy_timeout. Under concurrent
-        # enrichment (multiple producer/consumer tasks each opening their
-        # own MetadataCache) this surfaced as
-        #   sqlite3.OperationalError: database is locked
-        # on every collision, because the default busy_timeout is 0
-        # ("fail immediately"). Match the pragma profile the main DB uses
-        # in src/database/connection.py.
-        self.conn = sqlite3.connect(
-            self.cache_path,
-            check_same_thread=False,
-            timeout=60.0,   # python-side wait when SQLite reports BUSY
-        )
-        self.conn.row_factory = sqlite3.Row
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if threading.get_ident() == self._owner and not self._closed:
+            return self._slot.conn
+        return _thread_slot(self.cache_path).conn
+
+    def __enter__(self) -> "MetadataCache":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def __del__(self):
         try:
-            cur = self.conn.cursor()
-            cur.execute("PRAGMA journal_mode=WAL")
-            cur.execute("PRAGMA synchronous=NORMAL")
-            cur.execute("PRAGMA busy_timeout=60000")
-            cur.execute("PRAGMA wal_autocheckpoint=1000")
-            cur.close()
-        except Exception as e:
-            logger.warning("[metadata_cache] PRAGMA setup failed: %s", e)
-        self._init_db()
-    
-    def _init_db(self):
-        """Initialize database schema.
-
-        Pass 48: ``media_items`` table + ``idx_media_hash`` / ``idx_expiration``
-        indices were removed. Nothing in src/ ever read from media_items —
-        ``get_media`` / ``set_media`` / ``get_all`` / ``get_all_unenriched``
-        had no callers, and the parallel ``api_cache`` table covered the
-        actual cache needs. Existing DBs keep the orphaned table (no
-        destructive migration), but new installs don't create it.
-        """
-        cursor = self.conn.cursor()
-
-        # API response cache — the only cache surface this class actually serves.
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS api_cache (
-                cache_key TEXT PRIMARY KEY,
-                response TEXT,
-                created_at TEXT,
-                expires_at TEXT
-            )
-        """)
-
-        # Performance optimization: Covering index for queries that filter by expires_at
-        # and optionally cache_key (e.g. live_key_set, _live_raw_entries, count_raw_with_marker).
-        # Without this, expires_at checks cause full table scans.
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_cache_expires
-            ON api_cache(expires_at, cache_key)
-        """)
-
-        self.conn.commit()
+            self.close()
+        except Exception:
+            pass
 
     def _expires_at(self, days: int = 7) -> str:
         """Calculate expiration date."""
@@ -194,6 +281,47 @@ class MetadataCache:
                 "expires_at": row['expires_at'],
             }
         return None
+
+    def get_cache_many(self, cache_keys) -> Dict[str, Dict[str, Any]]:
+        """``get_cache`` for many keys at once: {key: entry} for every key
+        with a live row (same versioned-then-v1 precedence), absent keys
+        left out. One indexed ``IN`` query per 500 keys instead of two point
+        lookups per key — the deletion scorer and taste rebuild look up
+        hundreds to thousands of titles per run."""
+        keys = list(dict.fromkeys(k for k in cache_keys if k))
+        if not keys:
+            return {}
+        now_iso = datetime.now().isoformat()
+        vpre = f"{_CACHE_VERSION}:"
+        found_v1: Dict[str, Dict[str, Any]] = {}
+        found_v2: Dict[str, Dict[str, Any]] = {}
+        cur = self.conn.cursor()
+        try:
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                lookup = chunk + [vpre + k for k in chunk]
+                marks = ",".join("?" * len(lookup))
+                cur.execute(
+                    f"SELECT cache_key, response, created_at, expires_at FROM api_cache "  # nosec B608 - only '?' placeholders are interpolated
+                    f"WHERE cache_key IN ({marks}) AND expires_at > ?",
+                    (*lookup, now_iso),
+                )
+                for row in cur.fetchall():
+                    k = row["cache_key"]
+                    try:
+                        entry = {"response": json.loads(row["response"]),
+                                 "created_at": row["created_at"],
+                                 "expires_at": row["expires_at"]}
+                    except (TypeError, ValueError):
+                        continue
+                    if k.startswith(vpre):
+                        found_v2[k[len(vpre):]] = entry
+                    else:
+                        found_v1[k] = entry
+        finally:
+            cur.close()
+        # Pass 95 precedence: a v2 row wins; the v1 row is only a fallback.
+        return {**found_v1, **found_v2}
 
     def live_key_set(self, prefix: str) -> set:
         """All NON-EXPIRED cache keys starting with ``prefix`` (version prefix
@@ -352,5 +480,19 @@ class MetadataCache:
     #     read time anyway, so old rows are functionally invisible)
 
     def close(self):
-        """Close database connection."""
-        self.conn.close()
+        """Release this handle. The thread's connection stays open for the
+        next handle; once no handle on it is left, whatever a caller left
+        uncommitted is rolled back — the same outcome closing a private
+        connection had, without leaving a write lock behind."""
+        if getattr(self, "_closed", True):
+            return
+        self._closed = True
+        slot = self._slot
+        slot.refs -= 1
+        if slot.refs <= 0:
+            slot.refs = 0
+            try:
+                if slot.conn.in_transaction:
+                    slot.conn.rollback()
+            except Exception:
+                pass

@@ -582,6 +582,39 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
 
 # ── MAIN COMPUTATION ──────────────────────────────────────────────────────────
 
+def _load_watch_entries(user_id: int, category: Optional[str]) -> list:
+    """The user's watch history as plain dicts, newest first. Blocking — run
+    it with ``asyncio.to_thread``. Selects the nine columns the rebuild reads
+    rather than whole ORM rows (≈350k for the owner's music)."""
+    W = WatchHistoryEntry
+    cols = (W.plex_item_id, W.title, W.series_title, W.media_type, W.genres,
+            W.duration_ms, W.view_offset_ms, W.completed, W.viewed_at)
+    names = ("plex_item_id", "title", "series_title", "media_type", "genres",
+             "duration_ms", "view_offset_ms", "completed", "viewed_at")
+    with get_db_session() as db:
+        q = db.query(*cols).filter(W.user_id == user_id)
+        if category:
+            q = q.filter(W.media_type == category)
+        return [dict(zip(names, row)) for row in q.order_by(W.viewed_at.desc())]
+
+
+def _bulk_profile_tags(cache_keys: list) -> dict:
+    """{cache_key: (genres, themes, moods)} for every key with a live
+    enrichment profile — one batched cache read (blocking; run it in a
+    thread). Keeps three short lists per title instead of whole profiles."""
+    from src.cache.metadata_cache import MetadataCache
+    with MetadataCache() as cache:
+        found = cache.get_cache_many(cache_keys)
+    out = {}
+    for k, entry in found.items():
+        prof = (entry or {}).get("response") or {}
+        if not isinstance(prof, dict):
+            continue
+        out[k] = (list(prof.get("genres") or []), list(prof.get("themes") or []),
+                  list(prof.get("mood") or []))
+    return out
+
+
 async def compute_taste_vector_for_user(
     user_id: int,
     category: str = None,
@@ -597,29 +630,10 @@ async def compute_taste_vector_for_user(
     now = datetime.utcnow()
     cache = MetadataCache()
 
-    # Load all needed data within the session, convert to plain dicts
-    # to avoid DetachedInstanceError when used outside the session
-    with get_db_session() as db:
-        q = db.query(WatchHistoryEntry).filter(WatchHistoryEntry.user_id == user_id)
-        if category:
-            q = q.filter(WatchHistoryEntry.media_type == category)
-        raw_entries = q.order_by(WatchHistoryEntry.viewed_at.desc()).all()
-        # Convert to plain dicts immediately while session is open
-        entries = [
-            {
-                "plex_item_id": e.plex_item_id,
-                "title": e.title,
-                "series_title": e.series_title,
-                "media_type": e.media_type,
-                "genres": e.genres,
-                "duration_ms": e.duration_ms,
-                "view_offset_ms": e.view_offset_ms,
-                "completed": e.completed,
-                "viewed_at": e.viewed_at,
-            }
-            for e in raw_entries
-        ]
-
+    # The owner's music history alone is ≈350k plays: loaded as ORM entities
+    # on the event loop, this froze every request and SSE stream for seconds.
+    # Column tuples on a worker thread instead — same dicts out.
+    entries = await asyncio.to_thread(_load_watch_entries, user_id, category)
     logger.info("Computing taste vector: user=%d category=%s entries=%d",
                 user_id, category or "all", len(entries))
     _tv_task = task_monitor.create(
@@ -647,6 +661,13 @@ async def compute_taste_vector_for_user(
     # the denominator for drop RATES (raw drop counts just mirror the top
     # genres: you drop most of what you start most)
     dropped_titles: list = []  # series → list of viewed_at
+
+    # Every entry's enrichment profile in one batched read off the loop (it
+    # was one cache lookup per play, on the loop, for hundreds of thousands
+    # of plays). Only the three tag lists the counters need are kept.
+    _tags_by_key = await asyncio.to_thread(
+        _bulk_profile_tags,
+        [f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}" for e in entries])
 
     for idx, e in enumerate(entries):
         # Yield to event loop every 500 items so SSE updates can go out
@@ -685,21 +706,21 @@ async def compute_taste_vector_for_user(
 
         # Genres/themes from enrichment or Plex
         cache_key = f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}"
-        enriched_data = cache.get_cache(cache_key)
-        if not enriched_data and e.get('media_type') == 'movie':
+        tags = _tags_by_key.get(cache_key)
+        if tags is None and e.get('media_type') == 'movie':
             # Log first miss to help debug cache key mismatch
             _debug_logged = getattr(cache, '_debug_miss_logged', False)
             if not _debug_logged:
                 logger.debug("Cache miss example: key=%s", cache_key)
                 cache._debug_miss_logged = True
-        profile = enriched_data["response"] if enriched_data else None
 
-        if profile:
-            for g in profile.get("genres", []):
+        if tags is not None:
+            p_genres, p_themes, p_moods = tags
+            for g in p_genres:
                 genre_counter[g] += 1
-            for t in profile.get("themes", []):
+            for t in p_themes:
                 theme_counter[t] += 1
-            for m in profile.get("mood", []):
+            for m in p_moods:
                 mood_counter[m] += 1
         elif e.get('genres'):
             for g in e.get('genres').split(","):
@@ -720,14 +741,16 @@ async def compute_taste_vector_for_user(
     user_rating_by_item: dict[str, float] = {}
     try:
         from src.database.models import PlexRating as _PR
-        with get_db_session() as _rdb:
-            for plex_id, rating in (
-                _rdb.query(_PR.plex_item_id, _PR.rating)
-                .filter(_PR.user_id == user_id)
-                .all()
-            ):
-                if plex_id and rating is not None:
-                    user_rating_by_item[str(plex_id)] = float(rating)
+
+        def _load_ratings() -> list:
+            with get_db_session() as _rdb:
+                return (_rdb.query(_PR.plex_item_id, _PR.rating)
+                        .filter(_PR.user_id == user_id)
+                        .all())
+
+        for plex_id, rating in await asyncio.to_thread(_load_ratings):
+            if plex_id and rating is not None:
+                user_rating_by_item[str(plex_id)] = float(rating)
         if user_rating_by_item:
             logger.info(
                 "[taste-vector] loaded %d Plex user ratings as weight factors",
@@ -769,26 +792,31 @@ async def compute_taste_vector_for_user(
     top_entries = scored[:EMBED_CAP] if len(scored) > EMBED_CAP else scored
 
     # Load enrichment timestamps to know which items have new data
-    with get_db_session() as db:
-        from src.database.models import EnrichmentStatus
-        enrichment_ts = {}
-        enrichment_ts_by_title = {}
-        music_key_by_artist = {}   # artist title → enriched-doc cache key
+    from src.database.models import EnrichmentStatus
+
+    def _load_enrichment_rows() -> list:
         # Column tuples, not full ORM objects: instantiating tens of
         # thousands of EnrichmentStatus rows just to read four fields is
         # ~17x slower and holds every object in memory (Jules measured
-        # 2.7s vs 0.16s at 50k rows).
-        for plex_rating_key, title, media_category, enriched_at in db.query(
-            EnrichmentStatus.plex_rating_key,
-            EnrichmentStatus.title,
-            EnrichmentStatus.media_category,
-            EnrichmentStatus.enriched_at,
-        ).filter(EnrichmentStatus.enriched == True).all():
-            ts_val = enriched_at.isoformat() if enriched_at else "enriched"
-            enrichment_ts[plex_rating_key] = ts_val
-            enrichment_ts_by_title[title] = ts_val
-            if media_category == "music" and plex_rating_key:
-                music_key_by_artist[title] = plex_rating_key
+        # 2.7s vs 0.16s at 50k rows). On a worker thread, not the loop.
+        with get_db_session() as db:
+            return db.query(
+                EnrichmentStatus.plex_rating_key,
+                EnrichmentStatus.title,
+                EnrichmentStatus.media_category,
+                EnrichmentStatus.enriched_at,
+            ).filter(EnrichmentStatus.enriched == True).all()  # noqa: E712
+
+    enrichment_ts = {}
+    enrichment_ts_by_title = {}
+    music_key_by_artist = {}   # artist title → enriched-doc cache key
+    for plex_rating_key, title, media_category, enriched_at in await asyncio.to_thread(
+            _load_enrichment_rows):
+        ts_val = enriched_at.isoformat() if enriched_at else "enriched"
+        enrichment_ts[plex_rating_key] = ts_val
+        enrichment_ts_by_title[title] = ts_val
+        if media_category == "music" and plex_rating_key:
+            music_key_by_artist[title] = plex_rating_key
 
     # ── MUSIC: aggregate to ARTIST level before embedding ────────────────────
     # Row-level selection made the music vector a "last few weeks" vector:
@@ -1028,9 +1056,12 @@ async def compute_taste_vector_for_user(
     # Multi-centroid upgrade (eval 2.2, built only where the measurement
     # says so): for multimodal pairs, cluster the watch embeddings and let
     # the readers score as MAX over cluster centroids (ComiRec serving).
+    # The corpus pull (up to 30k vectors) and the k-means are seconds of
+    # disk and NumPy: on the Chroma thread, never on the loop.
+    from src.vector_store.chromadb_wrapper import run_chroma
     cluster_centroids = (
-        _cluster_centroids(_pos_titled,
-                           corpus_mean=_domain_corpus_mean(category))
+        await run_chroma(lambda: _cluster_centroids(
+            _pos_titled, corpus_mean=_domain_corpus_mean(category)))
         if multimodal and len(_pos) >= 40 else None)
     if cluster_centroids:
         logger.info("[taste] %s/%s: %d taste clusters: %s",
@@ -1189,7 +1220,8 @@ def _update_plain_taste_stats(user_id: int, all_results: dict, summary_parts: li
     return summary_text
 
 
-def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, summary_text: str):
+def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, summary_text: str,
+                       calibrations: Optional[dict] = None):
     # Store plain-text embeddings in EncryptedTasteVector
     # (the model is called EncryptedTasteVector but it currently stores plain JSON)
     try:
@@ -1241,9 +1273,14 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                 # BOTH centroids, one corpus pass (eval 1.6 + 2.3 + 2.4).
                 # Multimodal pairs calibrate against max-over-clusters —
                 # the same statistic the reader scores with.
-                calib = _corpus_calibration(
-                    res.get("cluster_centroids") or res.get("embedding"),
-                    res.get("drop_embedding"), cat)
+                # Precomputed off the loop by compute_all_taste_vectors;
+                # computed here only for a direct caller that passed none.
+                if calibrations is not None and cat in calibrations:
+                    calib = calibrations[cat]
+                else:
+                    calib = _corpus_calibration(
+                        res.get("cluster_centroids") or res.get("embedding"),
+                        res.get("drop_embedding"), cat)
 
                 # Store vector stats (embedding stored separately when PIN available)
                 blob_dict = {
@@ -1371,5 +1408,18 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
         return
 
     summary_parts = await _generate_summaries(user_id, all_results, skip_summaries)
-    summary_text = _update_plain_taste_stats(user_id, all_results, summary_parts)
-    _store_taste_blobs(user_id, all_results, summary_parts, summary_text)
+    # Corpus calibration pulls up to 30k vectors per category and runs the
+    # percentile math — on the Chroma thread. The two DB writers then run on
+    # the single DB writer thread; none of it on the event loop.
+    from src.vector_store.chromadb_wrapper import run_chroma
+    calibrations = {}
+    for cat, res in all_results.items():
+        if res.get("embedding"):
+            calibrations[cat] = await run_chroma(
+                _corpus_calibration,
+                res.get("cluster_centroids") or res.get("embedding"),
+                res.get("drop_embedding"), cat)
+    from src.database.runner import run_write
+    summary_text = await run_write(_update_plain_taste_stats, user_id, all_results, summary_parts)
+    await run_write(_store_taste_blobs, user_id, all_results, summary_parts, summary_text,
+                    calibrations=calibrations)

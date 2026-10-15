@@ -209,6 +209,11 @@ async def lifespan(app: FastAPI):
     # checkpoint the WAL into the main file (TRUNCATE), so data/ holds one
     # self-consistent .db before Syncthing may touch it again.
     try:
+        from src.vector_store.chromadb_wrapper import shutdown_chroma_pool
+        shutdown_chroma_pool()
+    except Exception as e:
+        logger.debug("[shutdown] Chroma thread did not stop cleanly: %s", e)
+    try:
         from src.database.runner import shutdown_writer
         shutdown_writer()
     except Exception as e:

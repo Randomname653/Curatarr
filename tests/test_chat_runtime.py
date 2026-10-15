@@ -244,7 +244,7 @@ def test_an_unstarted_stream_releases_the_guard_on_collection():
     g0 = src.index("    async def generate() -> AsyncGenerator[str, None]:")
     pre = src[g0:src.index("# Slot acquired", g0)]
     assert 'await curator_start("chat")' in pre and "except BaseException:" in pre \
-        and "CHAT_IN_FLIGHT.leave(user.id)" in pre, \
+        and "CHAT_IN_FLIGHT.leave(_uid)" in pre, \
         "a disconnect while queued must release the in-flight guard too"
 
 

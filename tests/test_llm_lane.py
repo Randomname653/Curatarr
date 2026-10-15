@@ -142,9 +142,11 @@ def test_the_options_helpers_carry_the_placement():
 def test_the_watcher_records_the_lane_and_the_badge_names_it():
     sched = (_ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
     watcher = sched.split("async def job_game_watcher()")[1].split("\nasync def ")[0]
-    assert 'set_state("llm_lane", mode)' in watcher and 'set_state("llm_lane_reason"' in watcher
+    assert '"llm_lane": mode,' in watcher and '"llm_lane_reason":' in watcher
+    assert "set_states_if_changed" in watcher, "only changed keys are written"
     assert 'logger.info("[lane] %s -> %s%s"' in watcher, "every change lands in the log"
-    assert "if mode != previous:" in watcher, "logged on transition, not every 30 s"
+    assert 'if "llm_lane" in changed:' in watcher, "logged on transition, not every 30 s"
+    assert "await asyncio.to_thread(is_game_running)" in watcher, "nvidia-smi off the loop"
     for mode in ('"game"', '"cpu"', '"paused"', '"free"'):
         assert mode in watcher, mode
 

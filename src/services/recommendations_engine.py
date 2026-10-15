@@ -313,6 +313,21 @@ def _score_factors(cand: dict) -> dict | None:
         return None
 
 
+def _with_guard(sf: dict | None, cand: dict, verdict: dict | None) -> dict | None:
+    """Carry a Python-side override of the model's verdict (``_guard``, e.g.
+    "household_floor": a CUT turned into "Your call" because another member
+    engaged with the title) inside the stored score_factors JSON, so the card
+    can say WHY it is the owner's call. Without it the guard died with the
+    verdict dict and the card showed the generic "merely fine" tooltip — the
+    opposite of the real reason. Rides in the existing column: no schema
+    change, and older rows simply have no "guard"."""
+    guard = (verdict or {}).get("_guard")
+    if not guard:
+        return sf
+    base = sf or {"total": round(cand.get("score") or 0, 1), "factors": []}
+    return {**base, "guard": guard}
+
+
 def _failure_sentence(kinds: dict) -> str:
     """'Ollama is not answering (2); the answer was cut off (1)' — the causes
     behind a run's failures, most frequent first, for the Deletions banner."""
@@ -411,52 +426,73 @@ def _play_protection(plays: int) -> float:
     return min(30.0, math.log1p(float(plays)) * 6.0)
 
 
+def _rating_cache_key(item: dict, category: str) -> str:
+    """The enrichment cache key a candidate's profile lives under — mirrors
+    the key logic in media_enricher.py."""
+    id_key = item.get("tmdb_id") or item.get("tvdb_id") or (item.get("title") or "")[:40]
+    return f"enriched:{category}:{id_key}"
+
+
+def _rating_from_cached(cached: dict | None) -> tuple:
+    """(rating_context_str, rating_float | None, cached_genres_list) from one
+    cache entry (or None). Pure — no I/O."""
+    if not cached:
+        return None, None, []
+    profile    = cached.get("response", {})
+    rating     = profile.get("rating")
+    vote_count = profile.get("vote_count") or 0
+    genres_raw = profile.get("genres") or []
+
+    # Pass 54: a rating of exactly 0 is NOT a 0/10 verdict — it's the
+    # "no rating data" sentinel. TMDB returns 0 for titles with no
+    # votes, AniList's averageScore is null (→ 0 here) for fresh /
+    # niche titles. Treating it as a real score punished obscure
+    # small titles hard (rating_swing of -20 in the deletion score)
+    # and fed the curator a literal "zero rating" pitch argument.
+    # Require a positive rating to count; 0 falls through to the
+    # caller's neutral-5.5 default. ``genres_raw`` is still returned
+    # so cached genres survive the rating gate.
+    if rating is not None and float(rating) > 0:
+        reliability = "limited votes — treat as indicative" if vote_count < 200 else f"{vote_count:,} votes"
+        ctx = f"External rating: {rating:.1f}/10 ({reliability})"
+        return ctx, float(rating), genres_raw
+    # Rating absent or zero — still hand back the cached genres.
+    return None, None, genres_raw
+
+
 def _get_cached_rating(item: dict, category: str) -> tuple:
     """
     Look up TMDB/AniList rating from the enrichment SQLite cache.
 
     Returns (rating_context_str, rating_float | None, cached_genres_list)
     rating_context_str is injected into the deletion prompt.
+
+    One title. A loop over candidates uses ``_bulk_cached_ratings`` — one
+    query for the whole batch.
     """
-    tmdb_id  = item.get("tmdb_id")
-    tvdb_id  = item.get("tvdb_id")
-    title    = item.get("title", "")
-
-    # Mirror the cache key logic in media_enricher.py
-    id_key    = tmdb_id or tvdb_id or title[:40]
-    cache_key = f"enriched:{category}:{id_key}"
-
     try:
         from src.cache.metadata_cache import MetadataCache
-        cache = MetadataCache()
-        cached = cache.get_cache(cache_key)
-        cache.close()
-
-        if cached:
-            profile    = cached.get("response", {})
-            rating     = profile.get("rating")
-            vote_count = profile.get("vote_count") or 0
-            genres_raw = profile.get("genres") or []
-
-            # Pass 54: a rating of exactly 0 is NOT a 0/10 verdict — it's the
-            # "no rating data" sentinel. TMDB returns 0 for titles with no
-            # votes, AniList's averageScore is null (→ 0 here) for fresh /
-            # niche titles. Treating it as a real score punished obscure
-            # small titles hard (rating_swing of -20 in the deletion score)
-            # and fed the curator a literal "zero rating" pitch argument.
-            # Require a positive rating to count; 0 falls through to the
-            # caller's neutral-5.5 default. ``genres_raw`` is still returned
-            # so cached genres survive the rating gate.
-            if rating is not None and float(rating) > 0:
-                reliability = "limited votes — treat as indicative" if vote_count < 200 else f"{vote_count:,} votes"
-                ctx = f"External rating: {rating:.1f}/10 ({reliability})"
-                return ctx, float(rating), genres_raw
-            # Rating absent or zero — still hand back the cached genres.
-            return None, None, genres_raw
+        with MetadataCache() as cache:
+            return _rating_from_cached(cache.get_cache(_rating_cache_key(item, category)))
     except Exception as exc:
-        logger.debug("Enrichment cache lookup failed for '%s': %s", title, exc)
-
+        logger.debug("Enrichment cache lookup failed for '%s': %s", item.get("title", ""), exc)
     return None, None, []
+
+
+def _bulk_cached_ratings(items: list, category: str) -> dict:
+    """{cache_key: (ctx, rating, genres)} for every item, in one batched
+    cache read (``MetadataCache.get_cache_many``). Blocking — call it with
+    ``asyncio.to_thread``. A failed read yields an empty map: the scorer then
+    treats every title as unrated (neutral), exactly as a per-item miss did."""
+    keys = [_rating_cache_key(it, category) for it in items]
+    try:
+        from src.cache.metadata_cache import MetadataCache
+        with MetadataCache() as cache:
+            found = cache.get_cache_many(keys)
+    except Exception as exc:
+        logger.warning("[deletions] bulk rating lookup failed: %s", exc)
+        found = {}
+    return {k: _rating_from_cached(found.get(k)) for k in keys}
 
 
 def _aggregate_arr_rating(item: dict) -> tuple[float, dict]:
@@ -1160,270 +1196,318 @@ async def generate_deletion_proposals(
         except Exception:
             pass
 
-    # Pass 40: detect user's chat language once so each pitch can be
-    # written in the same language the user chats in.
-    from src.services.llm_utils import detect_user_language, language_directive
-    with get_db_session() as _ld_db:
-        _lang_code = detect_user_language(user_id, _ld_db)
-    lang_directive_str = language_directive(_lang_code)
-
-    with get_db_session() as db:
-        # 1. Load Taste Vector
-        tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
-        user_vector = None
-        taste_blurb = ""
-        disliked_lc: set = set()
-        feedback_sentiment_lc: dict = {}
-        cal_anchors = None
-        corpus_mean = None
-        drop_vector = None
-        drop_anchors = None
-        taste_clusters = None
-        ts_genres: dict = {}
-        if tv:
-            # Use the taste section that matches THIS category — not a blind
-            # [:400] that always returned the [MOVIE] block (which judged anime/
-            # show/music pitches by the user's film taste).
-            taste_blurb = _taste_section(tv.summary_text, category)
-            try:
-                # genre affinity of THIS category — the taste fallback for
-                # candidates without an embedding (eval 1.7)
-                _td = json.loads(tv.genre_affinity or "{}")
-                ts_genres = {g.lower(): s for g, s in
-                             ((_td.get(category) or {}).get("genre_affinity")
-                              or {}).items()}
-            except Exception:
-                ts_genres = {}
-            encrypted = db.query(EncryptedTasteVector).filter(
-                EncryptedTasteVector.user_id == user_id,
-                EncryptedTasteVector.media_category == category
-            ).first()
-            if encrypted and encrypted.encrypted_blob:
-                # Version gate (eval 1.10): a v1-encrypted blob must degrade
-                # LOUDLY, not silently zero out every taste signal.
-                try:
-                    _blob = json.loads(encrypted.encrypted_blob)
-                except Exception:
-                    _blob = {}
-                if _blob.get("version") == 1:
-                    logger.warning("[deletions] %s taste blob is encrypted "
-                                   "(v1) — scoring WITHOUT taste signals "
-                                   "until the PIN flow decrypts it", category)
-                    _blob = {}
-                user_vector = _blob.get("embedding")
-                # Global calibration anchors from the last taste rebuild
-                # (eval 1.6) — per-batch anchors made stored scores
-                # non-stationary across runs.
-                _p10, _p90 = _blob.get("cal_p10"), _blob.get("cal_p90")
-                if _p10 is not None and _p90 is not None and (_p90 - _p10) > 1e-3:
-                    cal_anchors = (float(_p10), float(_p90))
-                # Eval 2.3/2.4: corpus mean (anisotropy centering — anchors
-                # in a blob that carries it are CENTERED ones), plus the
-                # drop centroid + its anchors for the scoring-side penalty.
-                corpus_mean = _blob.get("corpus_mean")
-                drop_vector = _blob.get("drop_embedding")
-                # Multimodal pairs: score as MAX over cluster centroids
-                # (ComiRec serving) — the blob's anchors were calibrated
-                # against exactly that statistic.
-                taste_clusters = _blob.get("cluster_centroids")
-                _d10, _d90 = _blob.get("drop_cal_p10"), _blob.get("drop_cal_p90")
-                drop_anchors = ((float(_d10), float(_d90))
-                                if _d10 is not None and _d90 is not None
-                                and (_d90 - _d10) > 1e-3 else None)
-                # explicit owner feedback finally gets a reader: a recorded
-                # dislike nudges a candidate UP the deletion list, recorded
-                # praise nudges it down (soft — taste mismatch still rules)
-                disliked_lc = {(t or "").lower()
-                               for t in _blob.get("disliked_titles") or []}
-                feedback_sentiment_lc = {}
-                for _fb in _blob.get("explicit_feedback") or []:
-                    _ft = (_fb.get("title") or "").lower()
-                    if _ft:   # chronological list — the latest statement wins
-                        # (sentiment, weight): weight > 1 = elevated signal
-                        # (verdict on a Curatarr-recommended title); entries
-                        # from before the field existed read as 1.0.
-                        feedback_sentiment_lc[_ft] = (
-                            _fb.get("sentiment"),
-                            float(_fb.get("weight") or 1.0),
-                        )
-
-        # 2. Load Whitelist (ProtectedMedia) — category-scoped: protections
-        # match by identifier (often a bare TITLE), and a title-only match
-        # crosses domains. The user protecting the BAND "The Devil Wears
-        # Prada" must not shield the same-named FILM from ever being
-        # pitched. NULL category = legacy rows → still protect everywhere.
-        from sqlalchemy import or_ as _or
-        protected = {
-            p.identifier for p in db.query(ProtectedMedia).filter(
-                ProtectedMedia.user_id == user_id,
-                _or(ProtectedMedia.category == category,
-                    ProtectedMedia.category.is_(None)),
-            ).all()
-        }
-
-        # 2b. KEEP-COOLDOWN: titles the user explicitly kept (clicked "Keep" →
-        # proposal status 'rejected') stay out of the pool for a while. A bare
-        # Keep previously left NO trace — the very next scan could re-pitch the
-        # same title (and a STAGNANT card the user dismissed came right back).
-        # This is deliberately a COOLDOWN, not a protection: after it lapses the
-        # judge looks again — taste and principles evolve. Category-scoped so a
-        # kept movie can't shield a same-named show/album (NULL = legacy rows).
-        _REJECT_COOLDOWN_DAYS = KEEP_COOLDOWN_DAYS
-        rejected_recent: set[str] = set()
-        try:
-            from src.database.models import DeletionProposal as _DP
-            from datetime import datetime as _rcdt, timedelta as _rctd
-            _rc_cutoff = _rcdt.utcnow() - _rctd(days=_REJECT_COOLDOWN_DAYS)
-            _rc_rows = (
-                db.query(_DP.title, _DP.tmdb_id)
-                .filter(_DP.user_id == user_id,
-                        _DP.status == "rejected",
-                        _DP.resolved_at >= _rc_cutoff,
-                        (_DP.category == category) | (_DP.category.is_(None)))
-                .all()
-            )
-            for _r in _rc_rows:
-                if _r.title:
-                    rejected_recent.add(_r.title)
-                if _r.tmdb_id is not None:
-                    rejected_recent.add(str(_r.tmdb_id))
-            if rejected_recent:
-                logger.info("[deletions] %s: keep-cooldown active for %d recently "
-                            "rejected title(s) (%dd)", category,
-                            len(_rc_rows), _REJECT_COOLDOWN_DAYS)
-        except Exception as e:
-            logger.debug("[deletions] keep-cooldown load failed: %s", e)
-
-        # 3. Pass 37: pre-compute the set of candidate titles the curator
-        # has positioned on in recent chat. The cold-metadata pitch path
-        # doesn't know about prior discussions, so it would happily
-        # propose deleting something the curator endorsed two days ago
-        # ("you yourself said Nukitashi is the gold standard for
-        # transgressive art … but the algorithm now wants to delete it
-        # for being superficial") — the user can weaponize that
-        # contradiction in the discuss thread, with no defensible
-        # comeback from the curator. Skipping these items means we only
-        # auto-propose deletion for titles the curator has NOT staked a
-        # position on in chat. Manual deletion via the UI still works.
-        from src.database.models import ConversationMessage
-        from datetime import datetime as _dt, timedelta as _td
-        cutoff = _dt.utcnow() - _td(days=60)
-        candidate_titles = {item.get("title") for item in arr_items if item.get("title")}
-        curator_positioned: set[str] = set()
-        # audit 11f: this used to fire one LIKE '%title%' query PER candidate
-        # (thousands per category per run). Load the recent assistant text
-        # ONCE and substring-match in Python instead.
-        try:
-            _rows = (db.query(ConversationMessage.content)
-                     .filter(ConversationMessage.user_id == user_id,
-                             ConversationMessage.role == "assistant",
-                             ConversationMessage.created_at >= cutoff)
-                     .all())
-            _blob = " | ".join((r.content or "") for r in _rows).lower()
-            if _blob:
-                for t in candidate_titles:
-                    if t and t.lower() in _blob:
-                        curator_positioned.add(t)
-        except Exception as e:
-            logger.debug("[deletions] curator-stance scan failed: %s", e)
-        if curator_positioned:
-            logger.info(
-                "[deletions] %d/%d candidates skipped — curator already positioned on them in chat: %s",
-                len(curator_positioned), len(candidate_titles),
-                ", ".join(sorted(curator_positioned)[:5])
-                + (", ..." if len(curator_positioned) > 5 else ""),
-            )
-
-        # 4. Pass 38: titles the user has actively engaged with in the
-        # last 90 days. Like Pass 37 (which catches titles the curator
-        # discussed) but watch-history-driven — scales to libraries where
-        # the user hasn't chatted about every item but still has clear
-        # consumption signals. WatchHistory is the strongest "this is
-        # being used" indicator we have; pitching deletion of something
-        # the user actively watched would be either contradictory
-        # (mid-binge) or premature (just finished). We err conservative:
-        # ANY watch activity in 90 days → skip auto-pitch.
-        from src.database.models import WatchHistoryEntry
-        watched_cutoff = _dt.utcnow() - _td(days=90)
-        recent_watched: set[str] = set()
-        try:
-            rows = (
-                db.query(WatchHistoryEntry.title, WatchHistoryEntry.series_title)
-                .filter(
-                    WatchHistoryEntry.user_id == user_id,
-                    WatchHistoryEntry.viewed_at >= watched_cutoff,
-                    # Media-family guard: without it the owner's ≈350k music
-                    # rows flooded this veto set with song/artist names, and any
-                    # VIDEO candidate sharing a name with a recently played
-                    # track ("American Pie", "Gold", …) was silently vetoed as
-                    # "recently watched" — an invisible false protection.
-                    (WatchHistoryEntry.media_type == "music"
-                     if category == "music"
-                     else WatchHistoryEntry.media_type != "music"),
-                )
-                .all()
-            )
-            for r in rows:
-                if r.title:
-                    recent_watched.add(r.title)
-                if r.series_title:
-                    recent_watched.add(r.series_title)
-        except Exception as e:
-            logger.debug("[deletions] watch-history veto check failed: %s", e)
-        # Count overlap with candidate pool — gives a useful "how many of
-        # YOUR plex items are recently watched" stat in the log without
-        # dumping the whole set (which can be hundreds of titles).
-        recent_watched_in_pool = candidate_titles & recent_watched
-        if recent_watched_in_pool:
-            logger.info(
-                "[deletions] %d/%d candidates skipped — recently watched (last 90d): %s",
-                len(recent_watched_in_pool), len(candidate_titles),
-                ", ".join(sorted(recent_watched_in_pool)[:5])
-                + (", ..." if len(recent_watched_in_pool) > 5 else ""),
-            )
-
     import math
 
-    # ── Pass 82c: Plex user-rating lookup for music ──────────────────────────
-    # Music-only because Kometa overwrites ``userRating`` on movies/shows
-    # with aggregated platform ratings, so it isn't a personal-opinion
-    # signal there. Aggregated per artist_name (lowercase) since Lidarr
-    # proposals are artist-scoped — a single ≥4-star track is enough to
-    # protect the whole artist.
+    # Plex user-rating hard-protect line (Pass 82c, see the music preload below).
     HARD_PROTECT_THRESHOLD = 8.0      # Plex 0-10 scale; 8.0 = 4 stars
-    user_rating_by_artist: dict[str, float] = {}
-    if category == "music":
-        try:
-            from src.database.models import PlexRating
-            from sqlalchemy import func as _sqlfunc
-            with get_db_session() as _rdb:
-                rating_rows = (
-                    _rdb.query(
-                        _sqlfunc.lower(PlexRating.artist_name).label("artist_lc"),
-                        _sqlfunc.max(PlexRating.rating).label("max_rating"),
-                    )
-                    .filter(
-                        PlexRating.user_id == user_id,
-                        PlexRating.artist_name.isnot(None),
-                    )
-                    .group_by(_sqlfunc.lower(PlexRating.artist_name))
+
+    def _load_phase_a() -> dict:
+        """Every DB read the scoring needs, on a worker thread: the taste
+        blob, protections, keep-cooldown, curator stances, the 90-day
+        watch veto (tens of thousands of rows for music) and the music
+        ratings. These ran on the event loop and froze every request and
+        SSE stream for seconds per category. No awaits and no task_monitor
+        calls in here — both belong to the loop."""
+        # Pass 40: detect user's chat language once so each pitch can be
+        # written in the same language the user chats in.
+        from src.services.llm_utils import detect_user_language, language_directive
+        with get_db_session() as _ld_db:
+            _lang_code = detect_user_language(user_id, _ld_db)
+        lang_directive_str = language_directive(_lang_code)
+
+        with get_db_session() as db:
+            # 1. Load Taste Vector
+            tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
+            user_vector = None
+            taste_blurb = ""
+            disliked_lc: set = set()
+            feedback_sentiment_lc: dict = {}
+            cal_anchors = None
+            corpus_mean = None
+            drop_vector = None
+            drop_anchors = None
+            taste_clusters = None
+            ts_genres: dict = {}
+            if tv:
+                # Use the taste section that matches THIS category — not a blind
+                # [:400] that always returned the [MOVIE] block (which judged anime/
+                # show/music pitches by the user's film taste).
+                taste_blurb = _taste_section(tv.summary_text, category)
+                try:
+                    # genre affinity of THIS category — the taste fallback for
+                    # candidates without an embedding (eval 1.7)
+                    _td = json.loads(tv.genre_affinity or "{}")
+                    ts_genres = {g.lower(): s for g, s in
+                                 ((_td.get(category) or {}).get("genre_affinity")
+                                  or {}).items()}
+                except Exception:
+                    ts_genres = {}
+                encrypted = db.query(EncryptedTasteVector).filter(
+                    EncryptedTasteVector.user_id == user_id,
+                    EncryptedTasteVector.media_category == category
+                ).first()
+                if encrypted and encrypted.encrypted_blob:
+                    # Version gate (eval 1.10): a v1-encrypted blob must degrade
+                    # LOUDLY, not silently zero out every taste signal.
+                    try:
+                        _blob = json.loads(encrypted.encrypted_blob)
+                    except Exception:
+                        _blob = {}
+                    if _blob.get("version") == 1:
+                        logger.warning("[deletions] %s taste blob is encrypted "
+                                       "(v1) — scoring WITHOUT taste signals "
+                                       "until the next taste rebuild rewrites it", category)
+                        _blob = {}
+                    user_vector = _blob.get("embedding")
+                    # Global calibration anchors from the last taste rebuild
+                    # (eval 1.6) — per-batch anchors made stored scores
+                    # non-stationary across runs.
+                    _p10, _p90 = _blob.get("cal_p10"), _blob.get("cal_p90")
+                    if _p10 is not None and _p90 is not None and (_p90 - _p10) > 1e-3:
+                        cal_anchors = (float(_p10), float(_p90))
+                    # Eval 2.3/2.4: corpus mean (anisotropy centering — anchors
+                    # in a blob that carries it are CENTERED ones), plus the
+                    # drop centroid + its anchors for the scoring-side penalty.
+                    corpus_mean = _blob.get("corpus_mean")
+                    drop_vector = _blob.get("drop_embedding")
+                    # Multimodal pairs: score as MAX over cluster centroids
+                    # (ComiRec serving) — the blob's anchors were calibrated
+                    # against exactly that statistic.
+                    taste_clusters = _blob.get("cluster_centroids")
+                    _d10, _d90 = _blob.get("drop_cal_p10"), _blob.get("drop_cal_p90")
+                    drop_anchors = ((float(_d10), float(_d90))
+                                    if _d10 is not None and _d90 is not None
+                                    and (_d90 - _d10) > 1e-3 else None)
+                    # explicit owner feedback finally gets a reader: a recorded
+                    # dislike nudges a candidate UP the deletion list, recorded
+                    # praise nudges it down (soft — taste mismatch still rules)
+                    disliked_lc = {(t or "").lower()
+                                   for t in _blob.get("disliked_titles") or []}
+                    feedback_sentiment_lc = {}
+                    for _fb in _blob.get("explicit_feedback") or []:
+                        _ft = (_fb.get("title") or "").lower()
+                        if _ft:   # chronological list — the latest statement wins
+                            # (sentiment, weight): weight > 1 = elevated signal
+                            # (verdict on a Curatarr-recommended title); entries
+                            # from before the field existed read as 1.0.
+                            feedback_sentiment_lc[_ft] = (
+                                _fb.get("sentiment"),
+                                float(_fb.get("weight") or 1.0),
+                            )
+
+            # 2. Load Whitelist (ProtectedMedia) — category-scoped: protections
+            # match by identifier (often a bare TITLE), and a title-only match
+            # crosses domains. The user protecting the BAND "The Devil Wears
+            # Prada" must not shield the same-named FILM from ever being
+            # pitched. NULL category = legacy rows → still protect everywhere.
+            from sqlalchemy import or_ as _or
+            protected = {
+                p.identifier for p in db.query(ProtectedMedia).filter(
+                    ProtectedMedia.user_id == user_id,
+                    _or(ProtectedMedia.category == category,
+                        ProtectedMedia.category.is_(None)),
+                ).all()
+            }
+
+            # 2b. KEEP-COOLDOWN: titles the user explicitly kept (clicked "Keep" →
+            # proposal status 'rejected') stay out of the pool for a while. A bare
+            # Keep previously left NO trace — the very next scan could re-pitch the
+            # same title (and a STAGNANT card the user dismissed came right back).
+            # This is deliberately a COOLDOWN, not a protection: after it lapses the
+            # judge looks again — taste and principles evolve. Category-scoped so a
+            # kept movie can't shield a same-named show/album (NULL = legacy rows).
+            _REJECT_COOLDOWN_DAYS = KEEP_COOLDOWN_DAYS
+            rejected_recent: set[str] = set()
+            try:
+                from src.database.models import DeletionProposal as _DP
+                from datetime import datetime as _rcdt, timedelta as _rctd
+                _rc_cutoff = _rcdt.utcnow() - _rctd(days=_REJECT_COOLDOWN_DAYS)
+                _rc_rows = (
+                    db.query(_DP.title, _DP.tmdb_id)
+                    .filter(_DP.user_id == user_id,
+                            _DP.status == "rejected",
+                            _DP.resolved_at >= _rc_cutoff,
+                            (_DP.category == category) | (_DP.category.is_(None)))
                     .all()
                 )
-            user_rating_by_artist = {
-                (r.artist_lc or ""): float(r.max_rating)
-                for r in rating_rows if r.artist_lc
-            }
-            if user_rating_by_artist:
-                hard_protected_count = sum(
-                    1 for v in user_rating_by_artist.values()
-                    if v >= HARD_PROTECT_THRESHOLD
-                )
+                for _r in _rc_rows:
+                    if _r.title:
+                        rejected_recent.add(_r.title)
+                    if _r.tmdb_id is not None:
+                        rejected_recent.add(str(_r.tmdb_id))
+                if rejected_recent:
+                    logger.info("[deletions] %s: keep-cooldown active for %d recently "
+                                "rejected title(s) (%dd)", category,
+                                len(_rc_rows), _REJECT_COOLDOWN_DAYS)
+            except Exception as e:
+                logger.debug("[deletions] keep-cooldown load failed: %s", e)
+
+            # 3. Pass 37: pre-compute the set of candidate titles the curator
+            # has positioned on in recent chat. The cold-metadata pitch path
+            # doesn't know about prior discussions, so it would happily
+            # propose deleting something the curator endorsed two days ago
+            # ("you yourself said Nukitashi is the gold standard for
+            # transgressive art … but the algorithm now wants to delete it
+            # for being superficial") — the user can weaponize that
+            # contradiction in the discuss thread, with no defensible
+            # comeback from the curator. Skipping these items means we only
+            # auto-propose deletion for titles the curator has NOT staked a
+            # position on in chat. Manual deletion via the UI still works.
+            from src.database.models import ConversationMessage
+            from datetime import datetime as _dt, timedelta as _td
+            cutoff = _dt.utcnow() - _td(days=60)
+            candidate_titles = {item.get("title") for item in arr_items if item.get("title")}
+            curator_positioned: set[str] = set()
+            # audit 11f: this used to fire one LIKE '%title%' query PER candidate
+            # (thousands per category per run). Load the recent assistant text
+            # ONCE and substring-match in Python instead.
+            try:
+                _rows = (db.query(ConversationMessage.content)
+                         .filter(ConversationMessage.user_id == user_id,
+                                 ConversationMessage.role == "assistant",
+                                 ConversationMessage.created_at >= cutoff)
+                         .all())
+                _blob = " | ".join((r.content or "") for r in _rows).lower()
+                if _blob:
+                    for t in candidate_titles:
+                        if t and t.lower() in _blob:
+                            curator_positioned.add(t)
+            except Exception as e:
+                logger.debug("[deletions] curator-stance scan failed: %s", e)
+            if curator_positioned:
                 logger.info(
-                    "[deletions] loaded %d artist ratings (%d at ≥4 stars → hard-protected)",
-                    len(user_rating_by_artist), hard_protected_count,
+                    "[deletions] %d/%d candidates skipped — curator already positioned on them in chat: %s",
+                    len(curator_positioned), len(candidate_titles),
+                    ", ".join(sorted(curator_positioned)[:5])
+                    + (", ..." if len(curator_positioned) > 5 else ""),
                 )
-        except Exception as e:
-            logger.warning("[deletions] artist-rating preload failed: %s", e)
+
+            # 4. Pass 38: titles the user has actively engaged with in the
+            # last 90 days. Like Pass 37 (which catches titles the curator
+            # discussed) but watch-history-driven — scales to libraries where
+            # the user hasn't chatted about every item but still has clear
+            # consumption signals. WatchHistory is the strongest "this is
+            # being used" indicator we have; pitching deletion of something
+            # the user actively watched would be either contradictory
+            # (mid-binge) or premature (just finished). We err conservative:
+            # ANY watch activity in 90 days → skip auto-pitch.
+            from src.database.models import WatchHistoryEntry
+            watched_cutoff = _dt.utcnow() - _td(days=90)
+            recent_watched: set[str] = set()
+            try:
+                rows = (
+                    db.query(WatchHistoryEntry.title, WatchHistoryEntry.series_title)
+                    .filter(
+                        WatchHistoryEntry.user_id == user_id,
+                        WatchHistoryEntry.viewed_at >= watched_cutoff,
+                        # Media-family guard: without it the owner's ≈350k music
+                        # rows flooded this veto set with song/artist names, and any
+                        # VIDEO candidate sharing a name with a recently played
+                        # track ("American Pie", "Gold", …) was silently vetoed as
+                        # "recently watched" — an invisible false protection.
+                        (WatchHistoryEntry.media_type == "music"
+                         if category == "music"
+                         else WatchHistoryEntry.media_type != "music"),
+                    )
+                    .all()
+                )
+                for r in rows:
+                    if r.title:
+                        recent_watched.add(r.title)
+                    if r.series_title:
+                        recent_watched.add(r.series_title)
+            except Exception as e:
+                logger.debug("[deletions] watch-history veto check failed: %s", e)
+            # Count overlap with candidate pool — gives a useful "how many of
+            # YOUR plex items are recently watched" stat in the log without
+            # dumping the whole set (which can be hundreds of titles).
+            recent_watched_in_pool = candidate_titles & recent_watched
+            if recent_watched_in_pool:
+                logger.info(
+                    "[deletions] %d/%d candidates skipped — recently watched (last 90d): %s",
+                    len(recent_watched_in_pool), len(candidate_titles),
+                    ", ".join(sorted(recent_watched_in_pool)[:5])
+                    + (", ..." if len(recent_watched_in_pool) > 5 else ""),
+                )
+
+
+        # ── Pass 82c: Plex user-rating lookup for music ──────────────────────────
+        # Music-only because Kometa overwrites ``userRating`` on movies/shows
+        # with aggregated platform ratings, so it isn't a personal-opinion
+        # signal there. Aggregated per artist_name (lowercase) since Lidarr
+        # proposals are artist-scoped — a single ≥4-star track is enough to
+        # protect the whole artist.
+        user_rating_by_artist: dict[str, float] = {}
+        if category == "music":
+            try:
+                from src.database.models import PlexRating
+                from sqlalchemy import func as _sqlfunc
+                with get_db_session() as _rdb:
+                    rating_rows = (
+                        _rdb.query(
+                            _sqlfunc.lower(PlexRating.artist_name).label("artist_lc"),
+                            _sqlfunc.max(PlexRating.rating).label("max_rating"),
+                        )
+                        .filter(
+                            PlexRating.user_id == user_id,
+                            PlexRating.artist_name.isnot(None),
+                        )
+                        .group_by(_sqlfunc.lower(PlexRating.artist_name))
+                        .all()
+                    )
+                user_rating_by_artist = {
+                    (r.artist_lc or ""): float(r.max_rating)
+                    for r in rating_rows if r.artist_lc
+                }
+                if user_rating_by_artist:
+                    hard_protected_count = sum(
+                        1 for v in user_rating_by_artist.values()
+                        if v >= HARD_PROTECT_THRESHOLD
+                    )
+                    logger.info(
+                        "[deletions] loaded %d artist ratings (%d at ≥4 stars → hard-protected)",
+                        len(user_rating_by_artist), hard_protected_count,
+                    )
+            except Exception as e:
+                logger.warning("[deletions] artist-rating preload failed: %s", e)
+        return {
+            "lang_directive_str": lang_directive_str,
+            "user_vector": user_vector,
+            "taste_blurb": taste_blurb,
+            "disliked_lc": disliked_lc,
+            "feedback_sentiment_lc": feedback_sentiment_lc,
+            "cal_anchors": cal_anchors,
+            "corpus_mean": corpus_mean,
+            "drop_vector": drop_vector,
+            "drop_anchors": drop_anchors,
+            "taste_clusters": taste_clusters,
+            "ts_genres": ts_genres,
+            "protected": protected,
+            "rejected_recent": rejected_recent,
+            "candidate_titles": candidate_titles,
+            "curator_positioned": curator_positioned,
+            "recent_watched": recent_watched,
+            "user_rating_by_artist": user_rating_by_artist,
+        }
+
+    _ctx = await asyncio.to_thread(_load_phase_a)
+    lang_directive_str = _ctx["lang_directive_str"]
+    user_vector = _ctx["user_vector"]
+    taste_blurb = _ctx["taste_blurb"]
+    disliked_lc = _ctx["disliked_lc"]
+    feedback_sentiment_lc = _ctx["feedback_sentiment_lc"]
+    cal_anchors = _ctx["cal_anchors"]
+    corpus_mean = _ctx["corpus_mean"]
+    drop_vector = _ctx["drop_vector"]
+    drop_anchors = _ctx["drop_anchors"]
+    taste_clusters = _ctx["taste_clusters"]
+    ts_genres = _ctx["ts_genres"]
+    protected = _ctx["protected"]
+    rejected_recent = _ctx["rejected_recent"]
+    candidate_titles = _ctx["candidate_titles"]
+    curator_positioned = _ctx["curator_positioned"]
+    recent_watched = _ctx["recent_watched"]
+    user_rating_by_artist = _ctx["user_rating_by_artist"]
 
     # SoulSync follows (owner decision 2026-10-09): an artist the owner
     # follows there is wanted, and its watchlist would fetch every new release
@@ -1476,12 +1560,24 @@ async def generate_deletion_proposals(
     # filter later edited in only one copy silently costs items their
     # embedding (neutral 0.5 mismatch, invisible); over-fetching skipped
     # items in bulk is effectively free.
-    _prefetched_embeddings = chroma_db.get_by_ids([
-        str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
-        for it in arr_items
-    ])
+    # Both reads run off the event loop: the embeddings on the Chroma thread,
+    # the cached ratings as ONE batched cache query (it was a fresh SQLite
+    # connection, four PRAGMAs and the schema DDL per candidate, on the loop).
+    from src.vector_store.chromadb_wrapper import run_chroma
+    _prefetched_embeddings, _ratings_by_key = await asyncio.gather(
+        run_chroma(chroma_db.get_by_ids, [
+            str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
+            for it in arr_items
+        ]),
+        asyncio.to_thread(_bulk_cached_ratings, arr_items, category),
+    )
 
-    for item in arr_items:
+    for _idx, item in enumerate(arr_items):
+        # Pure CPU from here (filters, one NumPy dot per item) — yield now and
+        # then so a library of thousands never holds the loop in one stretch.
+        # No transaction is open across this await.
+        if _idx and _idx % 250 == 0:
+            await asyncio.sleep(0)
         title = item.get("title")
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
 
@@ -1548,13 +1644,14 @@ async def generate_deletion_proposals(
 
         # Check enrichment cache at scoring time so well-rated items are never
         # unfairly proposed just because their ARR metadata field is empty/zero.
-        _, cached_rating, _ = _get_cached_rating(item, category)
+        _, cached_rating, _ = (_ratings_by_key.get(_rating_cache_key(item, category))
+                               or (None, None, []))
 
         if arr_rating > 0:
             # ARR has multi-source data — that's our richest signal.
             effective_rating = arr_rating
         elif cached_rating and cached_rating > 0:
-            # Pass 54: explicit > 0 guard. ``_get_cached_rating`` already
+            # Pass 54: explicit > 0 guard. ``_rating_from_cached`` already
             # returns None for a zero/absent rating, but keeping the check
             # here too means a future refactor of that helper can't
             # silently let a 0 back in as a real score.
@@ -1646,7 +1743,7 @@ async def generate_deletion_proposals(
     # per candidate would be thousands). Empty when the tech sync hasn't run yet,
     # in which case size_pts falls back to today's blanket log1p below.
     from src.services.size_norms import load_tech_index, size_outlier
-    _tech_idx = load_tech_index()
+    _tech_idx = await asyncio.to_thread(load_tech_index)
     # Owner listening depth (music): ONE grouped query → per-artist plays by
     # folded name and by mbid. The score needs it for every candidate — the
     # per-item music_listening_stats call would be hundreds of round trips.
@@ -1659,24 +1756,31 @@ async def generate_deletion_proposals(
             from src.database.connection import get_db_session as _gds
             from src.database.models import WatchHistoryEntry as _W
             from src.services.watch_status import _artist_variants as _variants_fn
-            with _gds() as _pdb:
-                # Skipped tracks are excluded (see REAL_LISTEN_MS): they used to
-                # count as listening depth, which handed deletion protection to
-                # artists the user demonstrably keeps skipping. Only the margins
-                # move — heavy rotation is capped by _play_protection anyway —
-                # but the margins are exactly who gets pitched for deletion.
-                for _nm, _mb, _n in (_pdb.query(_f.lower(_W.series_title),
-                                                _W.artist_mbid, _f.count(_W.id))
-                                     .filter(_W.user_id == user_id,
-                                             _W.media_type == "music",
-                                             _or(_W.completed == True,  # noqa: E712
-                                                 _W.view_offset_ms >= REAL_LISTEN_MS))
-                                     .group_by(_f.lower(_W.series_title),
-                                               _W.artist_mbid)):
-                    if _nm:
-                        _plays_by_name[_nm] = _plays_by_name.get(_nm, 0) + _n
-                    if _mb:
-                        _plays_by_mbid[_mb] = _plays_by_mbid.get(_mb, 0) + _n
+
+            def _load_play_rows() -> list:
+                # A GROUP BY over every music play (≈350k rows) — on a
+                # worker thread, not the loop.
+                with _gds() as _pdb:
+                    # Skipped tracks are excluded (see REAL_LISTEN_MS): they used to
+                    # count as listening depth, which handed deletion protection to
+                    # artists the user demonstrably keeps skipping. Only the margins
+                    # move — heavy rotation is capped by _play_protection anyway —
+                    # but the margins are exactly who gets pitched for deletion.
+                    return (_pdb.query(_f.lower(_W.series_title),
+                                       _W.artist_mbid, _f.count(_W.id))
+                            .filter(_W.user_id == user_id,
+                                    _W.media_type == "music",
+                                    _or(_W.completed == True,  # noqa: E712
+                                        _W.view_offset_ms >= REAL_LISTEN_MS))
+                            .group_by(_f.lower(_W.series_title),
+                                      _W.artist_mbid)
+                            .all())
+
+            for _nm, _mb, _n in await asyncio.to_thread(_load_play_rows):
+                if _nm:
+                    _plays_by_name[_nm] = _plays_by_name.get(_nm, 0) + _n
+                if _mb:
+                    _plays_by_mbid[_mb] = _plays_by_mbid.get(_mb, 0) + _n
         except Exception as _e:
             logger.debug("[deletions] play-map build failed: %s", _e)
     _play_protected: list = []
@@ -2160,7 +2264,7 @@ async def generate_deletion_proposals(
                         "title": item.get("title"),
                         "pitch": pitch,
                         "confidence": min(0.99, max(0.10, cand["score"] / 100)),
-                        "score_factors": _score_factors(cand),
+                        "score_factors": _with_guard(_score_factors(cand), cand, verdict),
                         "size_mb": _smb,
                         "size_gb": round(_smb / 1024, 1),
                         "arr_id": item.get("arr_id"),

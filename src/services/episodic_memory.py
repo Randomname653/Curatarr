@@ -203,71 +203,145 @@ async def write_memory(
     
 # ── CHECK MEMORIES FOR CONFLICTS ──────────────────────────────────────────────
 
+def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
+    """[(id, content)] of the older memories a new one may conflict with.
+    Blocking (a full scan of the user's memories plus the similarity math) —
+    run it with ``run_read``; the session closes before any LLM call."""
+    import numpy as np
+    from src.database.models import EpisodicMemory as M
+
+    # Only compare against memories older than 1 minute. Otherwise
+    # two memories written in the same chat batch would cannibalise
+    # each other as "duplicates" before either had a chance to land.
+    cutoff_time = datetime.utcnow() - timedelta(minutes=1)
+    with get_db_session() as db:
+        old_memories = db.query(M.id, M.content, M.metadata_json, M.embedding_json).filter(
+            M.user_id == user_id,
+            M.id != new_memory_id,
+            M.created_at < cutoff_time,
+        ).all()
+        new_emb_raw = None
+        if not title:
+            new_emb_raw = db.query(M.embedding_json).filter(M.id == new_memory_id).scalar()
+
+    if title:
+        # Title-bearing memory: a conflict is another memory about the SAME
+        # title (a changed opinion on that one title).
+        out = []
+        for mid, content, meta, _emb in old_memories:
+            try:
+                if (json.loads(meta) or {}).get("title") == title:
+                    out.append((mid, content))
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
+        return out
+
+    # Title-less GENERAL preference. The old code matched by title, so
+    # "" == "" made EVERY general preference a "conflict" of every other:
+    # one new statement (e.g. valuing a WWII doc) ran a NUANCE check
+    # against dozens of unrelated memories (D&D, franchise-keep,
+    # partner-keep…) and mass-decayed them — eroding the very pillars.
+    # Compare only near-DUPLICATE memories by embedding similarity, so a
+    # restatement reinforces its twin and unrelated preferences are never
+    # touched. One NumPy matrix product instead of a pure-Python cosine per
+    # memory; a vector of another dimension (an older embedding model) never
+    # matches, as before.
+    try:
+        new_emb = json.loads(new_emb_raw) if new_emb_raw else None
+    except Exception:
+        new_emb = None
+    if not new_emb:
+        return []
+    ids, contents, vecs = [], [], []
+    for mid, content, _meta, emb in old_memories:
+        if not emb:
+            continue
+        try:
+            v = json.loads(emb)
+        except Exception:
+            continue
+        if isinstance(v, list) and len(v) == len(new_emb):
+            ids.append(mid)
+            contents.append(content)
+            vecs.append(v)
+    if not vecs:
+        return []
+    try:
+        m = np.asarray(vecs, dtype=float)
+        q = np.asarray(new_emb, dtype=float)
+    except (TypeError, ValueError):
+        return []
+    qn = np.linalg.norm(q)
+    norms = np.linalg.norm(m, axis=1)
+    if not qn:
+        return []
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sims = (m @ q) / (norms * qn)
+    return [(ids[i], contents[i]) for i in np.flatnonzero(np.nan_to_num(sims) >= 0.80)]
+
+
+def _apply_conflict_verdict(user_id: int, new_memory_id: int, old_id: int, status: str) -> bool:
+    """Write one verdict in its own short transaction (run it with
+    ``run_write``). True when the new memory was consolidated into the old
+    one — the caller stops there."""
+    from src.database.connection import write_session
+    from src.database.models import EpisodicMemory as M
+    with write_session() as db:
+        old_mem = db.query(M).filter(M.id == old_id, M.user_id == user_id).first()
+        if old_mem is None:
+            return False   # gone since the scan (another verdict, a delete)
+        if status == "CONTRADICTION":
+            logger.info(f"🧹 [MEMORY RESOLUTION] Contradiction found! Deleting old memory ID {old_mem.id}.")
+            db.delete(old_mem)
+            return False
+        if status == "REAFFIRMATION":
+            # The user is RESTATING a standing preference — reinforce
+            # it, don't decay it. The old code had no such branch, so
+            # restatements fell through to NUANCE and lost 0.4 each
+            # time: the principles the user repeated MOST (their
+            # "pillars") decayed to the 0.1 floor and vanished from
+            # retrieval. Reinforce the old memory and drop the fresh
+            # duplicate so the signal consolidates instead of
+            # fragmenting into ever-weaker near-copies.
+            old_mem.importance = min(1.0, (old_mem.importance or 0.5) + 0.2)
+            old_mem.last_accessed = datetime.utcnow()
+            old_mem.access_count = (old_mem.access_count or 0) + 1
+            logger.info(f"💪 [MEMORY RESOLUTION] Reaffirmation — boosting old memory ID {old_mem.id} to importance {old_mem.importance:.2f}.")
+            new_mem = db.query(M).filter(M.id == new_memory_id).first()
+            if new_mem:
+                db.delete(new_mem)
+            return True   # consolidated into the reinforced old memory
+        if status == "NUANCE":
+            # A genuine partial shift slightly ages the old memory, but
+            # never below a still-retrievable floor. The old -0.4 to a
+            # 0.1 floor was a sledgehammer that made memories invisible
+            # (retrieval drops anything scoring < 0.1, and importance is
+            # a direct multiplier).
+            old_mem.importance = max(0.3, (old_mem.importance or 0.5) - 0.1)
+            logger.info(f"⚖️ [MEMORY RESOLUTION] Nuance shift — easing old memory ID {old_mem.id} to importance {old_mem.importance:.2f}.")
+        return False
+
+
 async def resolve_memory_conflicts(user_id: int, new_memory_id: int, new_content: str, metadata: dict):
     """
     Checks if a newly added memory conflicts with older memories and resolves it.
+
+    The scan and the similarity math run on a worker thread, no session is
+    open across the up-to-20 s LLM call per candidate, and each verdict is
+    written in its own short transaction on the DB writer thread.
     """
+    from src.database.runner import run_read, run_write
     title = metadata.get("title", "")
 
-    with get_db_session() as db:
-        from src.database.models import EpisodicMemory
-        
-        # Only compare against memories older than 1 minute. Otherwise
-        # two memories written in the same chat batch would cannibalise
-        # each other as "duplicates" before either had a chance to land.
-        cutoff_time = datetime.utcnow() - timedelta(minutes=1)
-        
-        old_memories = db.query(EpisodicMemory).filter(
-            EpisodicMemory.user_id == user_id,
-            EpisodicMemory.id != new_memory_id,
-            EpisodicMemory.created_at < cutoff_time
-        ).all()
-        
-        target_memories = []
-        if title:
-            # Title-bearing memory: a conflict is another memory about the SAME
-            # title (a changed opinion on that one title).
-            for m in old_memories:
-                try:
-                    if (json.loads(m.metadata_json) or {}).get("title") == title:
-                        target_memories.append(m)
-                except (json.JSONDecodeError, TypeError, AttributeError):
-                    pass
-        else:
-            # Title-less GENERAL preference. The old code matched by title, so
-            # "" == "" made EVERY general preference a "conflict" of every other:
-            # one new statement (e.g. valuing a WWII doc) ran a NUANCE check
-            # against dozens of unrelated memories (D&D, franchise-keep,
-            # partner-keep…) and mass-decayed them — eroding the very pillars.
-            # Compare only near-DUPLICATE memories by embedding similarity, so a
-            # restatement reinforces its twin and unrelated preferences are never
-            # touched.
-            new_mem = db.query(EpisodicMemory).filter(
-                EpisodicMemory.id == new_memory_id).first()
-            try:
-                new_emb = json.loads(new_mem.embedding_json) if (
-                    new_mem and new_mem.embedding_json) else None
-            except Exception:
-                new_emb = None
-            if not new_emb:
-                return
-            for m in old_memories:
-                if not m.embedding_json:
-                    continue
-                try:
-                    if _cosine_similarity(new_emb, json.loads(m.embedding_json)) >= 0.80:
-                        target_memories.append(m)
-                except Exception:
-                    pass
+    target_memories = await run_read(_conflict_targets, user_id, new_memory_id, title)
+    if not target_memories:
+        return
 
-        if not target_memories:
-            return
-
-        for old_mem in target_memories:
-            prompt = f"""[MODE: MEMORY CONFLICT RESOLUTION]
+    for old_id, old_content in target_memories:
+        prompt = f"""[MODE: MEMORY CONFLICT RESOLUTION]
 Analyze how the NEW memory relates to the OLD memory regarding the title '{title}'.
 
-OLD MEMORY: "{old_mem.content}"
+OLD MEMORY: "{old_content}"
 NEW MEMORY: "{new_content}"
 
 Evaluate the relationship:
@@ -279,61 +353,28 @@ Evaluate the relationship:
 Output ONLY a JSON block:
 {{"status": "CONTRADICTION" | "REAFFIRMATION" | "NUANCE" | "UNRELATED", "reason": "brief explanation"}}"""
 
-            try:
-                async with httpx.AsyncClient(timeout=20) as client:
-                    r = await client.post(
-                        f"{settings.effective_ollama}/api/chat",
-                        json={
-                            "model": settings.SUMMARIZER_MODEL,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "stream": False,
-                            "keep_alive": SUMMARIZER_KEEP_ALIVE,
-                            **ollama_options(temperature=0.1, num_predict=500),
-                        },
-                    )
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.post(
+                    f"{settings.effective_ollama}/api/chat",
+                    json={
+                        "model": settings.SUMMARIZER_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": False,
+                        "keep_alive": SUMMARIZER_KEEP_ALIVE,
+                        **ollama_options(temperature=0.1, num_predict=500),
+                    },
+                )
 
-                if r.status_code == 200:
-                    text = r.json().get("message", {}).get("content", "").strip()
-                    result = parse_llm_json(text)
-                    status = result.get("status")
-                    
-                    if status == "CONTRADICTION":
-                        logger.info(f"🧹 [MEMORY RESOLUTION] Contradiction found! Deleting old memory ID {old_mem.id}.")
-                        db.delete(old_mem)
-                        db.commit()
-
-                    elif status == "REAFFIRMATION":
-                        # The user is RESTATING a standing preference — reinforce
-                        # it, don't decay it. The old code had no such branch, so
-                        # restatements fell through to NUANCE and lost 0.4 each
-                        # time: the principles the user repeated MOST (their
-                        # "pillars") decayed to the 0.1 floor and vanished from
-                        # retrieval. Reinforce the old memory and drop the fresh
-                        # duplicate so the signal consolidates instead of
-                        # fragmenting into ever-weaker near-copies.
-                        old_mem.importance = min(1.0, (old_mem.importance or 0.5) + 0.2)
-                        old_mem.last_accessed = datetime.utcnow()
-                        old_mem.access_count = (old_mem.access_count or 0) + 1
-                        db.commit()
-                        logger.info(f"💪 [MEMORY RESOLUTION] Reaffirmation — boosting old memory ID {old_mem.id} to importance {old_mem.importance:.2f}.")
-                        new_mem = db.query(EpisodicMemory).filter(EpisodicMemory.id == new_memory_id).first()
-                        if new_mem:
-                            db.delete(new_mem)
-                            db.commit()
-                        return  # consolidated into the reinforced old memory
-
-                    elif status == "NUANCE":
-                        # A genuine partial shift slightly ages the old memory, but
-                        # never below a still-retrievable floor. The old -0.4 to a
-                        # 0.1 floor was a sledgehammer that made memories invisible
-                        # (retrieval drops anything scoring < 0.1, and importance is
-                        # a direct multiplier).
-                        old_mem.importance = max(0.3, (old_mem.importance or 0.5) - 0.1)
-                        logger.info(f"⚖️ [MEMORY RESOLUTION] Nuance shift — easing old memory ID {old_mem.id} to importance {old_mem.importance:.2f}.")
-                        db.commit()
-
-            except Exception as e:
-                logger.debug(f"Memory conflict resolution failed: {e}")
+            if r.status_code == 200:
+                text = r.json().get("message", {}).get("content", "").strip()
+                status = parse_llm_json(text).get("status")
+                if status in ("CONTRADICTION", "REAFFIRMATION", "NUANCE"):
+                    if await run_write(_apply_conflict_verdict, user_id,
+                                       new_memory_id, old_id, status):
+                        return
+        except Exception as e:
+            logger.debug(f"Memory conflict resolution failed: {e}")
 
 # ── RETRIEVE MEMORIES ─────────────────────────────────────────────────────────
 
@@ -2361,10 +2402,13 @@ async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: 
                 # We are in "Phase A" (unencrypted), so load the JSON directly.
                 current_vector = json.loads(etv.encrypted_blob)
 
-                # If the vector already uses the new v1 encryption, bail out —
-                # we don't have the PIN here and can't decrypt.
+                # A legacy v1 (encrypted) blob cannot be merged into; the
+                # passphrase feature that wrote them is gone (2026-10-10), and
+                # the next taste rebuild replaces the blob with plain JSON.
                 if current_vector.get("version") == 1:
-                    logger.warning(f"⚠️ [TASTE VECTOR] Vector for {media_category} is encrypted. Cannot update without PIN.")
+                    logger.warning("[TASTE VECTOR] %s vector is a legacy encrypted blob — "
+                                   "feedback not merged; the next taste rebuild replaces it",
+                                   media_category)
                     return
 
                 old_rev = int(current_vector.get("rev") or 0)
