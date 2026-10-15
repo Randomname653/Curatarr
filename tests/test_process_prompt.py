@@ -21,9 +21,14 @@ from src.services import process_monitor as pm  # noqa: E402
 
 class _Proc:
     def __init__(self, name, pid, rss_mb):
-        mem = None if rss_mb is None else types.SimpleNamespace(rss=rss_mb * 1024 * 1024)
-        self.info = {"name": name, "pid": pid, "memory_info": mem}
+        self._mem = None if rss_mb is None else types.SimpleNamespace(rss=rss_mb * 1024 * 1024)
+        self.info = {"name": name, "pid": pid}
         self.pid = pid
+
+    def memory_info(self):
+        if self._mem is None:
+            raise pm.psutil.AccessDenied()
+        return self._mem
 
 
 def _run(procs, games=(), ignored=()):
