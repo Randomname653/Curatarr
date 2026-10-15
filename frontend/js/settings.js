@@ -408,8 +408,11 @@ const _short = d => (d || '').replace('sha256:', '').slice(0, 12);
 // The current model's blind review (services/model_update_eval.py).
 const MU_REC = {update: ['ok', 'recommends the update'], stay: ['warn', 'recommends staying'],
                 either: ['', 'sees no clear winner']};
-function _muEval(role, ev, facts_rebuilt) {
-  if (!ev) return `<div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${act('evaluateModelUpdate', role, EL)}>Let the current model review it</button></div>`;
+function _muEval(role, ev, facts_rebuilt, run, err) {
+  if (run?.role === role && run.kind === 'review')
+    return `<div class="banner mt-8"><span class="banner-icon">…</span><div class="banner-text">The current model is reviewing — started ${esc(_muTime(run.since))}; this section updates by itself, progress in Activity.</div></div>`;
+  if (!ev) return (err ? `<p class="t-danger fs-12 mt-8">The last review failed: ${esc(err)}</p>` : '')
+    + `<div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${run ? 'disabled' : ''} ${act('evaluateModelUpdate', role, EL)}>${err ? 'Review again' : 'Let the current model review it'}</button></div>`;
   const [kind, label] = MU_REC[ev.recommendation] || ['', ev.recommendation];
   const t = ev.tally.titles, c = ev.tally.chat;
   const rules = ev.guards.length
@@ -422,7 +425,9 @@ function _muEval(role, ev, facts_rebuilt) {
       <details class="mt-4"><summary class="fs-12">Reason per title</summary><ul class="fs-12">${per}</ul></details></div></div>`;
 }
 
-function _muCompare(role, c) {
+const _muTime = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+
+function _muCompare(role, c, run, err) {
   const s = c.summary;
   const row = (label, k, unit = '') => `<tr><td>${esc(label)}</td><td>${esc(String(s[k]?.old ?? '–'))}${unit}</td><td>${esc(String(s[k]?.new ?? '–'))}${unit}</td></tr>`;
   const changes = s.verdict_changes.length
@@ -431,7 +436,7 @@ function _muCompare(role, c) {
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
   const chat = c.chat.map(p => `<div class="mt-8"><div class="fw-500 fs-12">${esc(p.prompt)}</div>
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
-  return _muEval(role, c.evaluation, c.facts_rebuilt) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
+  return _muEval(role, c.evaluation, c.facts_rebuilt, run, err) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
     ${s.timings_contaminated ? `<p class="fs-12 t-amber mt-8">The per-title times were taken while another model shared the card${s.remeasured_clean ? '; tok/s, VRAM and GPU share below were measured again with each side alone' : ''}.</p>` : ''}
     <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
       ${row('Judge, s per title', 'judge_s')}${row('Card note, s per title', 'monologue_s')}${row('Generation, tok/s', 'gen_tok_s')}
@@ -450,18 +455,22 @@ export async function loadModelUpdates(btn, refresh = false) {
       box.innerHTML = emptyHtml('Not checked yet — the first check runs a few minutes after the start.');
       return;
     }
+    // While a test or review runs: every action is disabled (the server
+    // refuses a second start anyway) and the section re-reads itself.
+    const run = d.running;
+    const off = run ? 'disabled' : '';
     box.innerHTML = d.models.map(m => {
       const [kind, label] = MU_STATUS[m.status] || ['', m.status];
-      const running = d.running === m.role;
+      const testing = run?.role === m.role && run.kind === 'test';
       let body = '';
       if (m.comparison) {
-        body = _muCompare(m.role, m.comparison) + `<div class="section-actions mt-8">
-          <button class="btn btn-primary btn-sm" ${act('decideModelUpdate', m.role, 'update', EL)}>Take the update</button>
-          <button class="btn btn-secondary btn-sm" ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay on the pinned version</button></div>`;
+        body = _muCompare(m.role, m.comparison, run, m.eval_error) + `<div class="section-actions mt-8">
+          <button class="btn btn-primary btn-sm" ${off} ${act('decideModelUpdate', m.role, 'update', EL)}>Take the update</button>
+          <button class="btn btn-secondary btn-sm" ${off} ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay on the pinned version</button></div>`;
       } else if (m.status === 'update' && m.comparable) {
-        body = `<p class="fs-12 t3 mt-8">The test downloads the new weights next to the pinned ones, then judges ten of your titles and answers three chat questions with both — about ten minutes on the GPU, chat waits meanwhile.</p>
-          <div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${running || d.running ? 'disabled' : ''} ${act('startModelCompare', m.role, EL)}>${running ? 'Test running — see Activity' : 'Test old vs new'}</button>
-          <button class="btn btn-secondary btn-sm" ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay without testing</button></div>`;
+        body = `<p class="fs-12 t3 mt-8">The test downloads the new weights next to the pinned ones, then judges ten of your titles and answers three chat questions with both, and the current model reviews the result — about half an hour on the GPU, chat waits meanwhile.</p>
+          <div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${off} ${act('startModelCompare', m.role, EL)}>${testing ? `Test running since ${esc(_muTime(run.since))} — see Activity` : 'Test old vs new'}</button>
+          <button class="btn btn-secondary btn-sm" ${off} ${act('decideModelUpdate', m.role, 'stay', EL)}>Stay without testing</button></div>`;
       } else if (m.status === 'update') {
         body = `<p class="fs-12 t3 mt-8">No old-vs-new test for the ${esc(m.role)} yet. To update: <code class="mono">ollama pull ${esc(m.base)}</code>, then Rebuild models.</p>`;
       }
@@ -470,11 +479,25 @@ export async function loadModelUpdates(btn, refresh = false) {
           <b>${esc(m.role)}</b> · ${esc(m.base)} — ${esc(label)}<span class="t3"> (running ${esc(_short(m.running))}${m.remote && m.remote !== m.running ? `, registry ${esc(_short(m.remote))}` : ''})</span>
           ${body}${err}</div></div>`;
     }).join('');
+    _muPoll(!!run);
   } catch (e) {
     box.innerHTML = `<p class="t-danger fs-12">Could not read the model updates: ${esc(_errMsg(e))}</p>`;
   } finally {
     if (btn) btnDone(btn, 'Check now');
   }
+}
+
+// Re-read every 15 s while something runs and the section is on screen;
+// stops by itself when the run ends or the pane is left.
+let _muTimer = null;
+function _muPoll(on) {
+  clearTimeout(_muTimer);
+  _muTimer = null;
+  if (!on) { loadUnreadMessages(); return; }
+  _muTimer = setTimeout(() => {
+    const box = document.getElementById('maint-models');
+    if (box && box.offsetParent !== null) loadModelUpdates();
+  }, 15000);
 }
 
 export async function startModelCompare(role, btn) {

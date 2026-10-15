@@ -29,12 +29,21 @@ def _model_update_items() -> list[dict]:
         role, base = m["role"], m["base"]
         nid = f"model-update:{role}:{(m.get('remote') or '')[7:19]}"
         if _running.get("role") == role:
+            review = _running.get("kind") == "review"
             items.append({"id": nid, "kind": "model_update", "severity": "info",
-                          "title": f"Testing the new {base}",
-                          "text": "Old against new on ten of your titles — progress in Activity.",
+                          "title": (f"The current model reviews the {base} test" if review
+                                    else f"Testing the new {base}"),
+                          "text": ("Blind, both orders, then a recommendation — progress in Activity."
+                                   if review else
+                                   "Old against new on ten of your titles — progress in Activity."),
                           "action": None})
+        elif m.get("comparison") and m.get("eval_error") and not m["comparison"].get("evaluation"):
+            items.append({"id": nid, "kind": "model_update", "severity": "danger",
+                          "title": f"Review failed: {base}",
+                          "text": f"The test result stands; the review broke off ({m['eval_error'][:160]}).",
+                          "action": {"key": "model_updates", "label": "Open"}})
         elif m.get("comparison"):
-            s = m["comparison"]["summary"]
+            s = m["comparison"].get("summary") or {}
             ev = m["comparison"].get("evaluation") or {}
             rec = ({"update": "The current model recommends the update.",
                     "stay": "The current model recommends staying.",
@@ -42,7 +51,7 @@ def _model_update_items() -> list[dict]:
                    + (" (Hard rule: " + ev["guards"][0] + ".)" if ev.get("guards") else ""))
             items.append({"id": nid, "kind": "model_update", "severity": "warn",
                           "title": f"Test result ready: {base}",
-                          "text": (f"{s['verdicts_same']} of {s['verdicts_compared']} verdicts unchanged, "
+                          "text": (f"{s.get('verdicts_same')} of {s.get('verdicts_compared')} verdicts unchanged, "
                                    f"wording {s.get('wording_similarity_pct')} % alike. "
                                    f"{rec or 'Take the update or stay on the pinned version.'}"),
                           "action": {"key": "model_updates", "label": "See the result"}})

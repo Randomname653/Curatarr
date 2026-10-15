@@ -521,8 +521,13 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
     # The judge must be the CURRENT weights: the pin when it still holds
     # them, else the tag, else the persona bake (its system prompt is
     # replaced by the reviewer's own, so the persona does not leak in).
-    judge = next((m for m in (cmp_.get("pinned_as"), row["base"])
-                  if m and await running_weights(endpoint, m) == row["running"]), row["bake"])
+    # (A plain loop: an `await` inside next(<genexp>) makes an async
+    # generator, which next() cannot take — the first live review died so.)
+    judge = row["bake"]
+    for m in (cmp_.get("pinned_as"), row["base"]):
+        if m and await running_weights(endpoint, m) == row["running"]:
+            judge = m
+            break
     if task is not None:
         task_monitor.update(task, message=f"{judge} reviews old vs new")
     await _refill_facts(cmp_, user_id)
@@ -664,15 +669,19 @@ def public_view(state: dict) -> list[dict]:
             continue
         cmp_ = r.get("comparison")
         out.append({k: r.get(k) for k in ("role", "base", "bake", "status", "running", "remote",
-                                          "checked_at", "comparable", "decided", "compare_error")}
+                                          "checked_at", "comparable", "decided", "compare_error",
+                                          "eval_error")}
                    | ({"comparison": {
-                       "summary": cmp_["summary"], "at": cmp_["at"],
+                       "summary": cmp_.get("summary") or {}, "at": cmp_.get("at"),
                        "evaluation": cmp_.get("evaluation"),
                        "facts_rebuilt": cmp_.get("facts_rebuilt", False),
-                       "pairs": [{"title": a["title"], "old": a["monologue"], "new": b["monologue"],
-                                  "old_verdict": a["verdict"], "new_verdict": b["verdict"]}
-                                 for a, b in zip(cmp_["old"]["titles"], cmp_["new"]["titles"])],
-                       "chat": [{"prompt": a["prompt"], "old": a["text"], "new": b["text"]}
-                                for a, b in zip(cmp_["old"]["chat"], cmp_["new"]["chat"])]}}
+                       "pairs": [{"title": a.get("title"), "old": a.get("monologue"),
+                                  "new": b.get("monologue"), "old_verdict": a.get("verdict"),
+                                  "new_verdict": b.get("verdict")}
+                                 for a, b in zip((cmp_.get("old") or {}).get("titles") or [],
+                                                 (cmp_.get("new") or {}).get("titles") or [])],
+                       "chat": [{"prompt": a.get("prompt"), "old": a.get("text"), "new": b.get("text")}
+                                for a, b in zip((cmp_.get("old") or {}).get("chat") or [],
+                                                (cmp_.get("new") or {}).get("chat") or [])]}}
                       if cmp_ else {}))
     return out

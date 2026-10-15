@@ -15,20 +15,43 @@ router = APIRouter()
 
 # Single-worker app: an in-process flag is enough and resets on reload,
 # like the OMDb backfill guard (routers/enrichment.py).
-_running: dict = {"role": None}
+# ``kind`` says what runs ("test" = pull + both sides + review, "review"
+# = the review alone), so the bell and Maintenance can say which.
+_running: dict = {"role": None, "kind": None, "since": None}
+
+
+def _start(role: str, kind: str) -> None:
+    from datetime import datetime, timezone
+    _running.update(role=role, kind=kind, since=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+
+def _stop() -> None:
+    _running.update(role=None, kind=None, since=None)
+
+
+def _running_view() -> dict | None:
+    return dict(_running) if _running["role"] else None
 
 
 @router.get("")
 async def status():
     from src.services import model_updates as mu
-    return {"models": mu.public_view(mu.load_state()), "running": _running["role"]}
+    return {"models": mu.public_view(mu.load_state()), "running": _running_view()}
 
 
 @router.post("/check")
 async def check():
     from src.services import model_updates as mu
     await mu.check_updates()
-    return {"models": mu.public_view(mu.load_state()), "running": _running["role"]}
+    return {"models": mu.public_view(mu.load_state()), "running": _running_view()}
+
+
+def _note_eval_error(role: str, e: Exception) -> None:
+    from src.services import model_updates as mu
+    state = mu.load_state()
+    if role in state:
+        state[role]["eval_error"] = f"{type(e).__name__}: {e}"[:300]
+        mu.save_state(state)
 
 
 async def _compare_bg(role: str, user_id: int) -> None:
@@ -45,6 +68,7 @@ async def _compare_bg(role: str, user_id: int) -> None:
             rec = f"; the current model recommends: {ev['recommendation']}"
         except Exception as e:   # the comparison stands even if the review fails
             logger.warning("[model update] %s review failed: %s", role, e)
+            _note_eval_error(role, e)
             rec = "; the review failed — run it again from Maintenance"
         task_monitor.done(task, f"Old vs new: {s['verdicts_same']}/{s['verdicts_compared']} "
                                 f"verdicts unchanged, wording {s['wording_similarity_pct']} % alike{rec}")
@@ -55,20 +79,21 @@ async def _compare_bg(role: str, user_id: int) -> None:
         mu.save_state(state)
         task_monitor.done(task, f"Model update test failed: {e}")
     finally:
-        _running["role"] = None
+        _stop()
 
 
 @router.post("/{role}/compare")
 async def compare(role: Literal["curator", "pitcher"], user: User = Depends(require_admin)):
     from src.services import model_updates as mu
     if _running["role"]:
-        raise HTTPException(409, f"a test is already running ({_running['role']})")
+        raise HTTPException(409, f"already running: the {_running['kind']} for the {_running['role']}")
     row = mu.load_state().get(role) or {}
     if row.get("status") != "update":
         raise HTTPException(409, "no update pending for this model")
-    _running["role"] = role
+    _start(role, "test")
     state = mu.load_state()
     state[role].pop("compare_error", None)
+    state[role].pop("eval_error", None)
     mu.save_state(state)
     asyncio.create_task(_compare_bg(role, user.id))
     return {"started": True}
@@ -84,9 +109,10 @@ async def _evaluate_bg(role: str, user_id: int) -> None:
         task_monitor.done(task, f"Review done — recommendation: {ev['recommendation']}")
     except Exception as e:
         logger.warning("[model update] %s review failed: %s", role, e)
+        _note_eval_error(role, e)
         task_monitor.done(task, f"Review failed: {e}")
     finally:
-        _running["role"] = None
+        _stop()
 
 
 @router.post("/{role}/evaluate")
@@ -95,10 +121,13 @@ async def evaluate(role: Literal["curator", "pitcher"], user: User = Depends(req
     result from before the review existed)."""
     from src.services import model_updates as mu
     if _running["role"]:
-        raise HTTPException(409, f"a test is already running ({_running['role']})")
+        raise HTTPException(409, f"already running: the {_running['kind']} for the {_running['role']}")
     if not (mu.load_state().get(role) or {}).get("comparison"):
         raise HTTPException(409, "compare first")
-    _running["role"] = role
+    _start(role, "review")
+    state = mu.load_state()
+    state[role].pop("eval_error", None)
+    mu.save_state(state)
     asyncio.create_task(_evaluate_bg(role, user.id))
     return {"started": True}
 

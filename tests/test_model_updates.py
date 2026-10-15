@@ -335,6 +335,68 @@ check("bulk hold: enrichment keeps waiting past its timeout while a long job hol
 check("bulk hold: without a hold the 600 s safety timeout still applies (here 0.1 s)",
       plain < 0.4)
 
+# ── run_evaluation end to end (fakes for Ollama, the gate and the judge) ──
+from contextlib import asynccontextmanager  # noqa: E402
+
+
+@asynccontextmanager
+async def no_gate(*a, **k):
+    yield
+
+
+async def noop(*a, **k):
+    return None
+
+
+async def fake_measure(endpoint, model):
+    return {"speed": {"gen_tok_s": 30.0}, "residency": {"vram_gb": 19.9, "gpu_share_pct": 100,
+                                                         "co_resident": []}, "clean": True}
+
+
+judged_by = []
+
+
+async def fake_evaluate(cmp_, endpoint, judge):
+    judged_by.append(judge)
+    return {"recommendation": "either", "guards": [], "tally": {}, "titles": [], "chat": []}
+
+
+lp.curator_priority, lp.evict_if_resident = no_gate, noop
+mu._refill_facts, mu._alone, mu.measure = noop, noop, fake_measure
+ev.evaluate = fake_evaluate
+store.clear()
+store["curator"] = {**row0, "comparison": {
+    "pinned_as": PIN, "summary": {"failures": {"old": 0, "new": 0}},
+    "old": {"titles": [], "chat": [], "clean": False}, "new": {"titles": [], "chat": []}}}
+RUN.update({PIN: "sha256:old", "gemma4:31b": "sha256:new"})
+out = asyncio.run(mu.run_evaluation("curator", 1))
+check("review: runs end to end and picks the PIN as judge (the current weights, no persona)",
+      judged_by == [PIN] and store["curator"]["comparison"]["evaluation"]["recommendation"] == "either")
+check("review: the clean re-measure replaces the test's speed/VRAM, contaminated times are flagged",
+      store["curator"]["comparison"]["summary"]["vram_gb"] == {"old": 19.9, "new": 19.9}
+      and store["curator"]["comparison"]["summary"]["timings_contaminated"] is True)
+RUN[PIN] = None
+judged_by.clear()
+asyncio.run(mu.run_evaluation("curator", 1))
+check("review: without a valid pin the bake judges (its persona is replaced by the reviewer's prompt)",
+      judged_by == ["curatarr-curator"])
+import inspect, re as _re  # noqa: E401,E402
+check("no `await` inside next(<generator>) in the update code (the first live review died of it)",
+      not _re.search(r"next\(\([^)]*await", inspect.getsource(mu)))
+
+class _Admin:
+    is_admin = True
+
+
+rmu._start("curator", "review")
+item = next(i for i in nt.system_notifications(_Admin())["items"] if "gemma4" in i["title"])
+check("bell: a running REVIEW says review, not test", "reviews" in item["title"] and item["action"] is None)
+rmu._stop()
+store["curator"]["eval_error"] = "TypeError: boom"
+store["curator"]["comparison"].pop("evaluation", None)
+item = next(i for i in nt.system_notifications(_Admin())["items"] if "gemma4" in i["title"])
+check("bell: a failed review is shown, the test result kept", item["title"].startswith("Review failed"))
+
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]
 main = (root / "src/main.py").read_text(encoding="utf-8")
@@ -351,6 +413,8 @@ check("a daily check is scheduled, and never with next_run_time=None (that pause
       and not __import__("re").search(r"next_run_time\s*=\s*None\s*[,)]", sched))
 from tests.frontend_files import everything  # noqa: E402
 html = everything()
+check("while a test or review runs, the view disables actions and re-reads itself",
+      "const off = run ? 'disabled' : ''" in html and "_muPoll(!!run)" in html)
 check("the view says when per-title times were taken next to another model",
       "timings_contaminated" in html)
 check("the Maintenance view shows the review and offers it when missing",
@@ -385,11 +449,11 @@ check("bell: an update waiting = an item with the test action, counted as needs-
 check("bell: the summarizer says there is no test for it",
       any("no test for this role" in i["text"] for i in n["items"]))
 check("bell: a non-admin sees nothing of it", nt.system_notifications(U(False))["items"] == [])
-rmu._running["role"] = "curator"
+rmu._start("curator", "test")
 item = next(i for i in nt.system_notifications(U(True))["items"] if "gemma4" in i["title"])
 check("bell: a running test is info without an action (nothing to decide yet)",
       item["title"].startswith("Testing") and item["action"] is None)
-rmu._running["role"] = None
+rmu._stop()
 store["curator"]["comparison"] = {"summary": {"verdicts_same": 9, "verdicts_compared": 10,
                                               "wording_similarity_pct": 41},
                                   "at": "t", "old": {"titles": [], "chat": []},
