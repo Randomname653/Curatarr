@@ -1,9 +1,9 @@
 """Model updates (admin): is there new weights for a model in use, test old
 against new, keep the pin or take the update. Logic: services/model_updates."""
-import asyncio
 import logging
 from typing import Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -34,7 +34,7 @@ def _running_view() -> dict | None:
 
 
 @router.get("")
-async def status():
+def status():
     from src.services import model_updates as mu
     return {"models": mu.public_view(mu.load_state()), "running": _running_view()}
 
@@ -96,15 +96,28 @@ async def compare(role: Literal["curator", "pitcher"], fresh: bool = False,
         raise HTTPException(409, "no update pending for this model")
     if row.get("comparison") and not fresh:
         raise HTTPException(409, "a result exists — decide, review it again, or run a fresh test")
-    _start(role, "test")
     state = mu.load_state()
     if fresh:
         mu.archive_comparison(state[role])
     state[role].pop("compare_error", None)
     state[role].pop("eval_error", None)
+    # Saved BEFORE the running flag is set: a save that raised used to leave
+    # _running set with no task behind it, so every action got 409 until a
+    # restart. Tracked, so the shutdown drain cancels it and its rollback runs.
     mu.save_state(state)
-    asyncio.create_task(_compare_bg(role, user.id))
+    _launch(role, "test", _compare_bg(role, user.id))
     return {"started": True}
+
+
+def _launch(role: str, kind: str, coro) -> None:
+    from src.services.bg_tasks import track_task
+    _start(role, kind)
+    try:
+        track_task(coro, name=f"model_update_{kind}_{role}")
+    except BaseException:
+        coro.close()
+        _stop()
+        raise
 
 
 async def _evaluate_bg(role: str, user_id: int) -> None:
@@ -132,11 +145,10 @@ async def evaluate(role: Literal["curator", "pitcher"], user: User = Depends(req
         raise HTTPException(409, f"already running: the {_running['kind']} for the {_running['role']}")
     if not (mu.load_state().get(role) or {}).get("comparison"):
         raise HTTPException(409, "compare first")
-    _start(role, "review")
     state = mu.load_state()
     state[role].pop("eval_error", None)
     mu.save_state(state)
-    asyncio.create_task(_evaluate_bg(role, user.id))
+    _launch(role, "review", _evaluate_bg(role, user.id))
     return {"started": True}
 
 
@@ -153,4 +165,9 @@ async def decide(role: Literal["curator", "pitcher", "summarizer"], req: DecideR
         await mu.decide(role, req.action)
     except ValueError as e:
         raise HTTPException(409, str(e))
+    except (RuntimeError, httpx.HTTPError) as e:
+        # A failed rebake (or Ollama unreachable) is not a success: 502 with
+        # the reason, the pin kept — the toast used to say "Updated".
+        logger.warning("[model update] %s decide(%s) failed: %s", role, req.action, e)
+        raise HTTPException(502, str(e) or type(e).__name__)
     return {"models": mu.public_view(mu.load_state())}

@@ -1,5 +1,5 @@
 // ── GAME PROCESS MONITOR ──────────────────────────────────────────────────────
-import { toast } from './ui.js';
+import { _errMsg, toast } from './ui.js';
 import { api } from './api.js';
 const _shownProcesses = new Set();   // names already shown in a toast this session
 let   _processPollTimer = null;
@@ -35,9 +35,21 @@ const LANE_BADGE = {
            title: 'Another program holds the graphics card — model work is paused until it is free'},
 };
 
+// statusR._err: the status read failed. That used to return early here, so a
+// "Game mode" badge stayed up after the game had ended for as long as the
+// endpoint kept failing. A badge on screen now says it is out of date; with
+// no badge up, nothing is claimed either way.
 export function _renderLaneBadge(statusR) {
   const indicator = document.getElementById('game-indicator');
   if (!indicator || !statusR) return;
+  if (statusR._err) {
+    if (!indicator.classList.contains('show')) return;
+    indicator.classList.add('busy');
+    const label = document.getElementById('game-indicator-label');
+    if (label) label.textContent = 'Status unknown';
+    indicator.title = `Couldn't check the game / GPU status (${statusR._err}) — this badge may be out of date. Checking again every 30 s.`;
+    return;
+  }
   const lane = statusR.lane || (statusR.game_running ? 'game' : 'free');
   const badge = LANE_BADGE[lane];
   indicator.classList.toggle('show', !!badge);
@@ -52,7 +64,7 @@ export function _renderLaneBadge(statusR) {
 export async function _pollGameProcesses() {
   try {
     // Update topbar indicator
-    const statusR = await api('/api/processes/status').catch(() => null);
+    const statusR = await api('/api/processes/status').catch(e => ({_err: _errMsg(e)}));
     _renderLaneBadge(statusR);
 
     // Check for unknown processes — show one toast per unknown exe

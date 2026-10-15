@@ -312,6 +312,14 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
                     stopped = "test window"
                     break
 
+    if stopped in ("game", "zlib"):
+        # A partial dump must not replace a complete one: the rebuild below
+        # DROPs the tables first, and the fresh mtime would then hold the
+        # near-empty result for MAX_AGE_DAYS. "error" keeps the task due.
+        logger.warning("[discogs] stream stopped (%s) after %.0f MB - existing "
+                       "styles DB kept", stopped, read_c / 1e6)
+        return {"error": f"stopped: {stopped}", "read_mb": round(read_c / 1e6, 1)}
+
     STYLES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(STYLES_DB_PATH)
     try:

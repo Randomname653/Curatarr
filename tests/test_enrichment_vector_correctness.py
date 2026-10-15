@@ -296,17 +296,17 @@ async def _backfill_scenario():
             return asyncio.create_task(t.func(*t.args, **t.kwargs))
 
         bt = BackgroundTasks()
-        await en.start_backfill(_SRC, bt, user=None)
+        en.start_backfill(_SRC, bt, user=None)
         w1 = _launch(bt)
         await asyncio.sleep(0.03)
-        await en.stop_backfill(_SRC, user=None)
+        en.stop_backfill(_SRC, user=None)
         bt2 = BackgroundTasks()
-        await en.start_backfill(_SRC, bt2, user=None)   # before w1 noticed
+        en.start_backfill(_SRC, bt2, user=None)   # before w1 noticed
         w2 = _launch(bt2)
         await asyncio.sleep(0.1)
         r = {"old_exited": w1.done(), "one_worker": live["n"] == 1,
              "still_running": _SRC in en._backfill_running and not w2.done()}
-        await en.stop_backfill(_SRC, user=None)
+        en.stop_backfill(_SRC, user=None)
         await asyncio.wait_for(w2, 2)
         r["cleared_after_stop"] = _SRC not in en._backfill_running
         return r

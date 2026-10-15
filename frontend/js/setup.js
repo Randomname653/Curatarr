@@ -1,7 +1,7 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
 import { state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
-import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errMsg, act, actOn, esc } from './ui.js';
+import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, toast } from './ui.js';
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
@@ -419,7 +419,16 @@ export async function renderOnboardingStep(step) {
     title.textContent = 'Step 1 — Configure your Plex libraries';
     sub.textContent = 'Tell Curatarr what each Plex library contains so it can handle them correctly.';
 
-    const disc = await api('/api/libraries/discover').catch(()=>({sections:[]}));
+    // A failed discover used to read as "no libraries": an empty table whose
+    // Save & Continue stored an empty mapping. It is an error with a Retry.
+    let disc;
+    try { disc = await api('/api/libraries/discover'); }
+    catch (e) {
+      state.discoverSections = [];
+      body.innerHTML = `${_errHtml(e, act('retryOnboardingStep'))}
+        <p class="fs-12 t3 mt-8">Curatarr could not reach Plex to list your libraries. Check that Plex is running, then retry.</p>`;
+      return;
+    }
     state.discoverSections = disc.sections || [];
 
     body.innerHTML = `
@@ -434,7 +443,7 @@ export async function renderOnboardingStep(step) {
         </tr>`).join('')}
         </tbody></table>
       </div>
-      <button class="w-full p-12 btn btn-primary" ${act('saveOnboardingLibraries')}>
+      <button class="w-full p-12 btn btn-primary" ${act('saveOnboardingLibraries', EL)}>
         Save & Continue →
       </button>`;
   }
@@ -445,7 +454,7 @@ export async function renderOnboardingStep(step) {
     body.innerHTML = `
       <div class="mb-20" id="ob-sync-status">
         <div class="mb-8 progress-bar"><div class="w-0 progress-fill" id="ob-sync-bar"></div></div>
-        <div class="fs-12 t2" id="ob-sync-label">Waiting to start…</div>
+        <div class="fs-12 t2" id="ob-sync-label" role="status" aria-live="polite">Waiting to start…</div>
       </div>
       <button class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
         Start sync
@@ -485,18 +494,30 @@ export async function renderOnboardingStep(step) {
   }
 }
 
-export async function saveOnboardingLibraries() {
+// Retry for an onboarding step that failed to load.
+export function retryOnboardingStep() { return renderOnboardingStep(onboardingStep || 'libraries'); }
+
+export async function saveOnboardingLibraries(btn) {
   const libraries = state.discoverSections.map(s=>({
     key: s.key, title: s.title, plex_type: s.type,
     category: document.getElementById(`ob-libcat-${s.key}`)?.value || s.suggested_category,
   }));
-  await api('/api/libraries/configure','POST',{libraries});
+  btnBusy(btn, 'Saving…');
+  try {
+    await api('/api/libraries/configure','POST',{libraries});
+  } catch (e) {
+    // Used to be an unhandled rejection: the button did nothing, silently.
+    toast(`Couldn't save the library mapping — ${_errMsg(e)}`, 'danger');
+    btnDone(btn);
+    return;
+  }
   state.libraryCfg = libraries;
   renderOnboardingStep('sync');
   onboardingStep = 'sync';
 }
 
 let _onboardingPoll = null;
+const ONBOARDING_POLL_MAX_FAILS = 5;
 export function _stopOnboardingPoll() {
   if (_onboardingPoll) { clearInterval(_onboardingPoll); _onboardingPoll = null; }
 }
@@ -518,15 +539,26 @@ export async function startOnboardingSync() {
     // don't keep hitting /api/history/status forever if onboarding is left
     // open in a stale tab.
     const deadline = Date.now() + 30 * 60 * 1000;
+    // The poll used to swallow every error for the whole 30 minutes and then
+    // stop without a word, the button stuck on "Syncing…". Five misses in a
+    // row, or the deadline, now say so and give the button back as Retry.
+    let fails = 0;
+    const giveUp = why => {
+      _stopOnboardingPoll();
+      if (lbl) lbl.textContent = why;
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+    };
 
     _onboardingPoll = setInterval(async () => {
       // If onboarding moved on or the user navigated, stop hitting the API.
-      if (onboardingStep !== 'sync' || Date.now() > deadline) {
-        _stopOnboardingPoll();
+      if (onboardingStep !== 'sync') { _stopOnboardingPoll(); return; }
+      if (Date.now() > deadline) {
+        giveUp('The sync has not finished after 30 minutes — Activity shows whether it is still running. Retry to start it again.');
         return;
       }
       try {
         const s = await api('/api/history/status');
+        fails = 0;
         const entries = s.watch_history_entries || 0;
         lbl.textContent = `${entries.toLocaleString()} entries synced…`;
         if (entries > 0) bar.style.width = '60%';
@@ -539,7 +571,11 @@ export async function startOnboardingSync() {
             onboardingStep = 'models';
           }, 1500);
         }
-      } catch {}
+      } catch (e) {
+        if (++fails >= ONBOARDING_POLL_MAX_FAILS) {
+          giveUp(`Lost track of the sync — ${_errMsg(e)}. It may still be running; Retry, or check Activity.`);
+        }
+      }
     }, 3000);
   } catch(e) {
     _stopOnboardingPoll();
@@ -560,10 +596,15 @@ export async function buildOnboardingModels() {
       // A model that doesn't quite fit VRAM runs silently part-on-CPU and
       // the whole app just feels broken-slow. Catch that HERE, not on the
       // user's first real conversation.
-      let warm = null;
-      try { warm = await api('/api/setup/warmup','POST',{model:'curatarr-curator'}); } catch {}
+      let warm = null, warmErr = null;
+      try { warm = await api('/api/setup/warmup','POST',{model:'curatarr-curator'}); }
+      catch (e) { warmErr = _errMsg(e); }
       let verdict = '';
-      if (warm && warm.ok) {
+      // A warm-up that could not run used to skip the GPU-fit warning in
+      // silence — "unknown" is not "fits".
+      if (warmErr || (warm && !warm.ok)) {
+        verdict = `<p class="t-amber">${SVG_WARN} The warm-up check could not run (${esc(warmErr || warm.error || 'no answer')}) — whether the curator fits this GPU is unknown. If chat feels slow, check Ollama and consider a smaller curator model.</p>`;
+      } else if (warm && warm.ok) {
         if (warm.verdict === 'cpu_spill')
           verdict = `<p class="t-amber">${SVG_WARN} ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
         else if (warm.verdict === 'slow')
@@ -573,7 +614,7 @@ export async function buildOnboardingModels() {
       }
       el.innerHTML = okLine + verdict;
       setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; },
-                 warm && warm.ok && warm.verdict !== 'ok' ? 7000 : 1500);
+                 !warm || !warm.ok || warm.verdict !== 'ok' ? 7000 : 1500);
     } else {
       let msg = '';
       if (!r.curator) msg += `${SVG_X} curatarr-curator failed<br>`;

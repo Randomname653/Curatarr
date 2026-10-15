@@ -123,8 +123,13 @@ const showToast = toast;
 // One layer: opening a second modal replaces the first. Escape, the backdrop
 // and the X all close it; the first control gets focus. body/foot are HTML.
 // Moved state._modal to state
+// Focus goes back where it came from on close: the control that opened the
+// modal (kept across a replacement, so a confirm opened from a modal returns
+// to the first opener) — keyboard and screen-reader users used to land on
+// <body> at the top of the page.
 export function openModal(o = {}) {
-  closeModal();
+  const opener = state._modal ? state._modal.opener : document.activeElement;
+  _closeModal(false);
   const root = _mount('modal-root');
   root.innerHTML = `<div class="modal ${o.size || ''}${o.danger ? ' danger' : ''}" role="dialog" aria-modal="true" aria-label="${escAttr(o.title || '')}">
       <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" ${act('closeModal')}>×</button></div>
@@ -134,17 +139,24 @@ export function openModal(o = {}) {
   root.classList.add('open');
   root.onclick = ev => { if (ev.target === root) closeModal(); };
   const el = root.firstElementChild;
-  state._modal = {el, onClose: o.onClose};
+  state._modal = {el, onClose: o.onClose, opener};
   const first = el.querySelector('.modal-body input:not([type=hidden]), .modal-body select, .modal-body textarea, .modal-foot button:not([disabled])');
   if (first) setTimeout(() => first.focus(), 0);
   return {el, close: closeModal};
 }
-export function closeModal() {
+export function closeModal() { _closeModal(true); }
+function _closeModal(restoreFocus) {
   const root = document.getElementById('modal-root');
   const m = state._modal;
   state._modal = null;
   if (root) { root.classList.remove('open'); root.innerHTML = ''; }
   if (m?.onClose) { try { m.onClose(); } catch (_) {} }
+  // Not when a replacement is opening, and not when onClose already opened
+  // another modal (a confirm chained off this one keeps the focus it took).
+  const back = m?.opener;
+  if (restoreFocus && !state._modal && back && back !== document.body && back.isConnected && typeof back.focus === 'function') {
+    try { back.focus(); } catch (_) {}
+  }
 }
 
 // confirmDialog({title, body, confirmLabel, cancelLabel, danger, countdown,
@@ -215,9 +227,19 @@ export function menuHtml(items, label = 'More') {
 export function toggleMenu(btn) {
   const menu = btn.closest('.menu');
   const wasOpen = menu.classList.contains('open');
-  document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+  closeMenus();
   if (!wasOpen) menu.classList.add('open');
   btn.setAttribute('aria-expanded', String(!wasOpen));
+}
+// Every way a menu closes (Escape, an outside click, picking an item, opening
+// another) goes through here, so its button never keeps saying
+// aria-expanded="true" over a closed list. Pass one menu to close only that.
+export function closeMenus(only = null) {
+  const menus = only ? [only] : [...document.querySelectorAll('.menu.open')];
+  for (const m of menus) {
+    m.classList.remove('open');
+    m.querySelector('[aria-haspopup]')?.setAttribute('aria-expanded', 'false');
+  }
 }
 
 // pagerHtml({offset, limit, total, page}) — "1–50 of 812 · Prev · Next";

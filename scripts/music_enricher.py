@@ -83,7 +83,8 @@ from sqlalchemy import func as _func  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.database.connection import get_db_session  # noqa: E402
 from src.database.models import EnrichmentStatus, User, WatchHistoryEntry  # noqa: E402
-from src.services.app_state import get_state, set_state, force_set_state  # noqa: E402
+from src.services.app_state import (  # noqa: E402
+    EXTERNAL_HOLDER_KEY, get_state, set_state, force_set_state)
 from src.services.music_metadata import enrich_artist  # noqa: E402
 
 
@@ -162,6 +163,10 @@ def acquire_lock() -> tuple[bool, Optional[str]]:
     if get_state("music_pipeline_running") == "1":
         return False, "music_pipeline_running"
     set_state("music_pipeline_running", "1")
+    # The lease: the server's boot reset clears every *_running flag, and
+    # this runner is meant to outlive a server restart. While this PID is
+    # alive the boot reset leaves the flag alone (main.py).
+    set_state(EXTERNAL_HOLDER_KEY, str(os.getpid()))
     return True, None
 
 
@@ -175,6 +180,7 @@ def release_lock() -> None:
     # writable in that window.
     ok_run  = force_set_state("music_pipeline_running", "0")
     ok_stop = force_set_state("music_pipeline_stop_requested", "0")
+    force_set_state(EXTERNAL_HOLDER_KEY, "")
     if not (ok_run and ok_stop):
         logger.error(
             "[release_lock] FAILED to clear pipeline flags after 120 s busy-wait. "

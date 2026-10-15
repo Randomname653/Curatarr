@@ -464,8 +464,16 @@ async def _run_collections(deep: bool = False, task=None) -> bool:
         return False
     _prog(task, message=f"Pushing {len(designs)} shelf design(s) to Plex…")
     res = await push_collections(designs)
-    logger.info("[custodian] collections pushed: %s", res)
     _prog(task, message=f"Pushed: {res}")
+    # push_collections deletes the old shelves before it creates new ones, so
+    # a run whose creates failed (Plex down mid-push) left the household with
+    # no shelves — and returning True stamped that as done until next week.
+    if (res or {}).get("created", 0) < len(designs):
+        logger.warning("[custodian] collections: only %s of %d shelves created — "
+                       "task stays due: %s", (res or {}).get("created", 0),
+                       len(designs), res)
+        return False
+    logger.info("[custodian] collections pushed: %s", res)
     return True
 
 

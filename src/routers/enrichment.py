@@ -66,14 +66,14 @@ async def enrichment_overview(user: User = Depends(get_current_user)):
 
 @router.get("/custodian")
 @ttl_response(10, shared=True)   # one maintenance state for the install
-async def custodian_status_endpoint(user: User = Depends(get_current_user)):
+def custodian_status_endpoint(user: User = Depends(get_current_user)):
     """Debt-based maintenance state: last tick report + per-task due list."""
     from src.services.data_custodian import custodian_status
     return custodian_status()
 
 
 @router.post("/custodian/run")
-async def custodian_run(
+def custodian_run(
     background_tasks: BackgroundTasks,
     deep: bool = True,
     user: User = Depends(get_current_user),
@@ -91,7 +91,7 @@ async def custodian_run(
 
 
 @router.post("/custodian/sprint")
-async def custodian_sprint(
+def custodian_sprint(
     background_tasks: BackgroundTasks,
     hours: float = 10.0,
     user: User = Depends(get_current_user),
@@ -486,7 +486,7 @@ async def refresh_arr_counts(user: User = Depends(get_current_user)):
 
 
 @router.post("/arr-pre-enrich")
-async def start_arr_pre_enrich(
+def start_arr_pre_enrich(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
 ):
@@ -589,7 +589,7 @@ async def start_embedding_migration(user: User = Depends(get_current_user)):
 
 
 @router.post("/embedding-migration/rollback")
-async def rollback_embedding(user: User = Depends(get_current_user)):
+def rollback_embedding(user: User = Depends(get_current_user)):
     """Flip the profile back to the one that was live before the migration
     flip (see the caveat on DB-side memory vectors in the service docstring)."""
     from src.services.embedding_migration import rollback_embedding_migration
@@ -632,7 +632,7 @@ async def _run_backfill_bg(source: str, token: object) -> None:
 
 @router.get("/backfill-status")
 @ttl_response(15, shared=True)   # archive coverage of the shared library
-async def backfill_status(user: User = Depends(get_current_user)):
+def backfill_status(user: User = Depends(get_current_user)):
     """Per-source coverage of the archive metadata, and whether a manual
     catch-up is still worth offering (see archive_backfill.THRESHOLD_PCT)."""
     from src.services.archive_backfill import coverage
@@ -643,7 +643,7 @@ async def backfill_status(user: User = Depends(get_current_user)):
 
 
 @router.post("/backfill/{source}")
-async def start_backfill(
+def start_backfill(
     source: str,
     background_tasks: BackgroundTasks,
     user: User = Depends(require_admin),
@@ -662,7 +662,7 @@ async def start_backfill(
 
 
 @router.post("/backfill/{source}/stop")
-async def stop_backfill(source: str, user: User = Depends(require_admin)):
+def stop_backfill(source: str, user: User = Depends(require_admin)):
     """Ask a running backfill to stop after the current title. What it has
     already written stays written."""
     _backfill_running.pop(source, None)
@@ -670,7 +670,7 @@ async def stop_backfill(source: str, user: User = Depends(require_admin)):
 
 
 @router.post("/omdb-backfill")
-async def start_omdb_backfill(
+def start_omdb_backfill(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
 ):
@@ -688,7 +688,7 @@ async def start_omdb_backfill(
 
 
 @router.post("/start")
-async def start_enrichment(
+def start_enrichment(
     req: EnrichRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
@@ -716,7 +716,7 @@ async def start_enrichment(
 
 
 @router.post("/compute-taste")
-async def compute_taste(
+def compute_taste(
     background_tasks: BackgroundTasks,
     categories: Optional[List[str]] = Query(None),
     user: User = Depends(get_current_user),
@@ -871,7 +871,11 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 pins[f"{ov.service}:{ov.arr_id}"] = {
                     "tmdb_id": ov.tmdb_id, "anilist_id": ov.anilist_id, "mbid": ov.mbid}
     except Exception as e:
-        logger.debug("[audit] pin lookup failed: %s", e)
+        # With the pins unreadable every pinned item looked unpinned, so the
+        # entity check flagged the owner's deliberate match as wrong and
+        # purged/requeued it. Skip the entity check this run instead.
+        logger.warning("[audit] pin lookup failed — skipping entity check this run: %r", e)
+        truth = {}
 
     mc = MetadataCache()
     try:
@@ -1384,7 +1388,7 @@ def _purge_and_requeue_item(service: str, arr_id: int, category: str) -> dict:
 
 
 @router.get("/match-overrides")
-async def list_match_overrides(user: User = Depends(require_admin)):
+def list_match_overrides(user: User = Depends(require_admin)):
     from src.database.models import MediaMatchOverride
     with get_db_session() as db:
         rows = db.query(MediaMatchOverride).order_by(
@@ -1398,7 +1402,7 @@ async def list_match_overrides(user: User = Depends(require_admin)):
 
 
 @router.post("/match-override")
-async def apply_match_override(
+def apply_match_override(
     payload: dict,
     user: User = Depends(require_admin),
 ):
@@ -1466,7 +1470,7 @@ async def apply_match_override(
 
 
 @router.delete("/match-override/{service}/{arr_id}")
-async def delete_match_override(
+def delete_match_override(
     service: str, arr_id: int,
     user: User = Depends(require_admin),
 ):
@@ -1696,7 +1700,7 @@ async def enrichment_unmatched(
 
 
 @router.get("/findings")
-async def enrichment_findings(
+def enrichment_findings(
     status: str = "pending",
     kind: Optional[str] = None,
     offset: int = 0,
@@ -1722,7 +1726,7 @@ async def enrichment_findings(
 
 
 @router.post("/findings/{finding_id}/dismiss")
-async def dismiss_finding(finding_id: int, payload: Optional[dict] = None,
+def dismiss_finding(finding_id: int, payload: Optional[dict] = None,
                           user: User = Depends(require_admin)):
     """Dismiss: silenced for good — the audit will not raise it again."""
     from src.database.models import EnrichmentFinding as F
@@ -1738,7 +1742,7 @@ async def dismiss_finding(finding_id: int, payload: Optional[dict] = None,
 
 
 @router.post("/findings/{finding_id}/reopen")
-async def reopen_finding(finding_id: int, user: User = Depends(require_admin)):
+def reopen_finding(finding_id: int, user: User = Depends(require_admin)):
     """Reopen a dismissed or resolved finding (back to pending)."""
     from src.database.models import EnrichmentFinding as F
     with get_db_session() as db:
@@ -1757,7 +1761,7 @@ def _check_service(service: str) -> None:
 
 
 @router.post("/items/{service}/{arr_id}/retry")
-async def enrichment_item_retry(service: str, arr_id: int, user: User = Depends(require_admin)):
+def enrichment_item_retry(service: str, arr_id: int, user: User = Depends(require_admin)):
     """Retry now: attempts back to zero, cached rows purged, row re-queued —
     the next enrichment run picks the item up (or start one)."""
     from src.services import kb_overview as _kb
@@ -1770,7 +1774,7 @@ async def enrichment_item_retry(service: str, arr_id: int, user: User = Depends(
 
 
 @router.post("/items/{service}/{arr_id}/ignore")
-async def enrichment_item_ignore(service: str, arr_id: int, user: User = Depends(require_admin)):
+def enrichment_item_ignore(service: str, arr_id: int, user: User = Depends(require_admin)):
     """Ignore: the owner accepts that this item stays unenriched. Held back by
     the pre-filter, excluded from the open count, its own KB column."""
     from src.database.models import ArrEnrichmentStatus as _AES
@@ -1799,7 +1803,7 @@ async def enrichment_item_ignore(service: str, arr_id: int, user: User = Depends
 
 
 @router.delete("/items/{service}/{arr_id}/ignore")
-async def enrichment_item_unignore(service: str, arr_id: int, user: User = Depends(require_admin)):
+def enrichment_item_unignore(service: str, arr_id: int, user: User = Depends(require_admin)):
     """Un-ignore: back into the queue (a fresh start for the backoff)."""
     from src.services import kb_overview as _kb
     _check_service(service)
@@ -1810,7 +1814,7 @@ async def enrichment_item_unignore(service: str, arr_id: int, user: User = Depen
 
 
 @router.get("/cache-inventory")
-async def cache_inventory(user: User = Depends(get_current_user)):
+def cache_inventory(user: User = Depends(get_current_user)):
     """Cache transparency (owner ask 2026-08-18: 'wie viele Wikipedia/TVDB/
     OMDb-Einträge sind gecached und wie viele davon alt?'). One SQL pass:
     per-class rows/live/expired/MB plus field-level coverage (Wikipedia
@@ -2737,7 +2741,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                         return None
 
                     before = len(items)
-                    kept, n_dead, n_changed, n_skipped = [], 0, 0, 0
+                    kept, n_dead, n_changed, n_skipped, n_check_err = [], 0, 0, 0, 0
                     for i in items:
                         fkey = ((i.get("series_title") or i["title"]), i["media_type"])
                         if fkey not in enriched_set:
@@ -2758,10 +2762,22 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                                     n_changed += 1   # source metadata changed
                                     kept.append(i)
                                     continue
-                        except Exception:
-                            pass
+                        except Exception as _pe:
+                            # This was `pass` → n_skipped: an unreadable profile
+                            # or hash check counted as "live-enriched" and the
+                            # item silently dropped out of the run. Keep it.
+                            n_check_err += 1
+                            if n_check_err == 1:
+                                logger.warning(
+                                    "Pre-filter: freshness check failed for %r — keeping "
+                                    "it in the run: %r", i.get("title"), _pe, exc_info=True)
+                            kept.append(i)
+                            continue
                         n_skipped += 1
                     items = kept
+                    if n_check_err > 1:
+                        logger.warning("Pre-filter: freshness check failed for %d items "
+                                       "(kept in the run)", n_check_err)
                 finally:
                     _pc.close()
                 logger.info(
@@ -2947,6 +2963,19 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     # Reconcile the EnrichmentStatus row to reflect
                     # that — no re-fetch, no LLM polish needed.
                     cached_profile = raw["_cached_profile"]
+                    if cached_profile.get("vector_pending"):
+                        # Polished, but its vector never landed (embed or
+                        # Chroma down at the time). Re-embed from the cache:
+                        # one embedding call, no summariser call.
+                        from src.services.media_enricher import store_profile_vector
+                        if await store_profile_vector(
+                                cached_profile,
+                                media_type=cached_profile.get("media_type") or pcat,
+                                fallback_title=pitem.get("title") or ""):
+                            cached_profile.pop("vector_pending", None)
+                            from src.cache.metadata_cache import MetadataCache
+                            with MetadataCache() as _vc:
+                                _vc.set_cache(raw["_cache_key"], cached_profile, days=30)
                     await _write_enrichment_db(pitem, cached_profile, pcat, fresh_attempt=False)
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
@@ -3372,7 +3401,7 @@ async def get_mapping_stats(user: User = Depends(get_current_user)):
 
 
 @router.get("/profiles")
-async def browse_profiles(
+def browse_profiles(
     category: str = "movie",
     limit: int = 10,
     offset: int = 0,

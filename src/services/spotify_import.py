@@ -23,6 +23,7 @@ import zipfile
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +50,14 @@ _USABLE = re.compile(r"^(Streaming_History_Audio_.*|endsong_?\d*)\.json$", re.I)
 _BASIC = re.compile(r"^StreamingHistory\d*\.json$", re.I)
 
 
-def _parse_ts(ts_str: str) -> datetime:
+def _parse_ts(ts_str: str) -> Optional[datetime]:
+    """The play's timestamp, or None when it cannot be read. This used to
+    fall back to utcnow(): the play then looked recent, and since dedup keys
+    on (track, timestamp) a re-import inserted it again."""
     try:
         return datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
     except (ValueError, TypeError):
-        return datetime.utcnow()
+        return None
 
 
 def _classify(filename: str) -> str:
@@ -170,7 +174,7 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
         task_monitor.update(task, processed=0, total=len(files),
                             message="importing listening history")
 
-    imported = skipped = dupes = 0
+    imported = skipped = dupes = bad_ts = 0
     buffer: list = []
     done_dir = import_dir / "imported"
 
@@ -233,6 +237,9 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
                     skipped += 1
                     continue
                 viewed_at = _parse_ts(item.get("ts", ""))
+                if viewed_at is None:
+                    bad_ts += 1
+                    continue
 
                 # "trackdone" = played to the end; an unskipped 2-minute play
                 # counts too — the same completion rule the Plex path applies.
@@ -277,6 +284,8 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
             _flush_buffer(db)
 
     stats = {"imported": imported, "skipped": skipped, "duplicates": dupes,
-             "files": len(files), "user_id": user_id}
+             "bad_timestamp": bad_ts, "files": len(files), "user_id": user_id}
+    if bad_ts:
+        logger.warning("[spotify-import] %d plays skipped: unreadable timestamp", bad_ts)
     logger.info("[spotify-import] %s", stats)
     return stats

@@ -36,6 +36,7 @@ import httpx
 from src.cache.metadata_cache import MetadataCache, write_fields
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
 
 SPARQL_URL = "https://query.wikidata.org/sparql"
 USER_AGENT = "Curatarr/1.0 (https://github.com/Randomname653/Curatarr)"
@@ -250,7 +251,7 @@ async def topup_wikidata(
             write_fields(cache, key, raw, fields, drop=drop, days=_RAW_CACHE_DAYS)
         return added
     except Exception as e:
-        logger.debug("[wikidata] top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[wikidata]", title, e)
         return False
     finally:
         if owns:

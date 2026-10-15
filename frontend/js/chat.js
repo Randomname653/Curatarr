@@ -28,7 +28,20 @@ export async function newChat() {
   abortActiveStream();
   _threadSeq++;                              // a history load in flight must not repaint the pane
   try {
-    await api(`/api/chat/history?thread_id=${encodeURIComponent(tid)}`, 'DELETE');
+    const url = `/api/chat/history?thread_id=${encodeURIComponent(tid)}`;
+    try {
+      await api(url, 'DELETE');
+    } catch (e) {
+      // 409: the server could not save this chat's memories before the wipe
+      // (summarizer down). Clearing now would lose them, so ask first.
+      if (e.status !== 409) throw e;
+      const again = await confirmDialog({
+        title: 'Memories not saved yet', danger: true, confirmLabel: 'Clear anyway',
+        body: `<p>${esc(_errMsg(e).replace(/,? or clear anyway with \?force=1\.?/, '.'))}</p><p>Clearing now loses what Curatarr would have remembered from this chat.</p>`,
+      });
+      if (!again.ok) return;
+      await api(url + '&force=1', 'DELETE');
+    }
     const msgs = document.getElementById('messages');
     if (msgs) {
       // Pass: + New is the explicit "start over" action, so it's also the

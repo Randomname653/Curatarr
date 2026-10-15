@@ -63,9 +63,13 @@ async def create_collection(section_key: str, plex_type: int, title: str,
     work and can exceed the module default (a 20s timeout dropped one of
     four shelves on the first live run)."""
     token = _owner_token()
-    mid = await get_machine_identifier()
-    if not token or not mid or not keys:
+    if not token or not keys:
         return None
+    mid = await get_machine_identifier()
+    if not mid:
+        # Was a silent None (= "nothing created") after the cleanup had
+        # already deleted the old shelves.
+        raise RuntimeError("Plex machineIdentifier unavailable")
     async with httpx.AsyncClient(timeout=60.0) as c:
         def params(m):
             uri = (f"server://{m}/com.plexapp.plugins.library"
@@ -112,7 +116,7 @@ async def push_collections(designs: list[dict]) -> dict:
         except Exception as e:
             logger.warning("[collections] cleanup of section %s failed: %s", sec, e)
 
-    created, results = 0, []
+    created, failed, results = 0, 0, []
     for d in designs:
         try:
             meta = await create_collection(d["section_key"], d["plex_type"],
@@ -125,11 +129,15 @@ async def push_collections(designs: list[dict]) -> dict:
                                 "rating_key": meta.get("ratingKey")})
                 logger.info("[collections] created %r (%d items)",
                             d["title"], len(d["keys"]))
+            else:
+                failed += 1
+                logger.warning("[collections] create %r produced nothing", d.get("title"))
         except Exception as e:
+            failed += 1
             logger.warning("[collections] create %r failed: %s", d.get("title"), e)
 
     set_state("curatarr_collections", json.dumps({
         "pushed_at": datetime.utcnow().isoformat(),
         "designs": results,
     }))
-    return {"created": created, "deleted": deleted}
+    return {"created": created, "deleted": deleted, "failed": failed}

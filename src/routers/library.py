@@ -31,7 +31,7 @@ from src.database.models import User
 from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
 from src.services.endpoint_policy import (
-    NEW_ADDRESS_NEEDS_KEY, secret_for_target, validate_service_url)
+    NEW_ADDRESS_NEEDS_KEY, resolved_refusal, secret_for_target, validate_service_url)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -146,7 +146,7 @@ def _make_client(service: str, url: str, api_key: str):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/status")
-async def library_status(_user: User = Depends(get_current_user)):
+def library_status(_user: User = Depends(get_current_user)):
     """
     Return per-arr config + connection state for the Library settings UI.
 
@@ -212,6 +212,12 @@ async def library_test(
     # doesn't silently leak the API key over the open internet.
     from src.services.setup_wizard import endpoint_privacy_note
     privacy_warning = endpoint_privacy_note(effective_url)
+    refused = await resolved_refusal(effective_url)
+    if refused:
+        logger.warning("[library] %s test refused: %s", req.service, refused)
+        return {"ok": False, "service": req.service,
+                "error": "That address resolves to a link-local / metadata "
+                         "address - not a media service"}
 
     client = _make_client(req.service, effective_url, effective_key)
     try:
@@ -340,13 +346,13 @@ async def library_profiles(
 
 
 @router.get("/defaults")
-async def library_defaults_all(_user: User = Depends(get_current_user)):
+def library_defaults_all(_user: User = Depends(get_current_user)):
     """All saved defaults for all configured arrs."""
     return {svc: _read_defaults(svc) for svc in ("sonarr", "radarr", "lidarr")}
 
 
 @router.put("/defaults/{service}")
-async def library_set_defaults(
+def library_set_defaults(
     service: str,
     req: ArrDefaultsRequest,
     _user: User = Depends(require_admin),
@@ -954,7 +960,7 @@ def _wish_in_library(title: str, mbid: Optional[str]) -> bool:
 
 
 @router.get("/wishes")
-async def list_wishes(user: User = Depends(get_current_user)):
+def list_wishes(user: User = Depends(get_current_user)):
     """The wanted list: artists asked for while no arr is configured. Each
     row says whether Plex has the artist meanwhile — the owner fulfils
     wishes in SoulSync and the daily walk sees the result."""
@@ -970,7 +976,7 @@ async def list_wishes(user: User = Depends(get_current_user)):
 
 
 @router.post("/wish")
-async def add_wish(req: WishRequest, user: User = Depends(require_admin)):
+def add_wish(req: WishRequest, user: User = Depends(require_admin)):
     """Add a wish; a second one for the same artist (by mbid, else name)
     returns the existing row. in_library tells the caller when Plex already
     has the artist — then there is nothing to wish for."""
@@ -995,7 +1001,7 @@ async def add_wish(req: WishRequest, user: User = Depends(require_admin)):
 
 
 @router.delete("/wish/{wish_id}")
-async def remove_wish(wish_id: int, user: User = Depends(require_admin)):
+def remove_wish(wish_id: int, user: User = Depends(require_admin)):
     from src.database.connection import get_db_session
     from src.database.models import MusicWish
     with get_db_session() as db:
@@ -1454,7 +1460,7 @@ def _top_tracks_by_artist(rows, per_artist: int = 3) -> dict:
 
 
 @router.get("/spotify-backlog")
-async def spotify_backlog(
+def spotify_backlog(
     limit: int = 100,
     only_resolved: bool = False,
     not_added_only: bool = False,

@@ -1,6 +1,6 @@
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 import { api } from './api.js';
-import { btnDone, toast } from './ui.js';
+import { _errMsg, btnDone, toast } from './ui.js';
 import { state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
@@ -12,8 +12,23 @@ import { startProcessMonitor } from './game.js';
 import { routeFromHash } from './nav.js';
 
 
+// The poll used to ignore every answer but ok / 429 / 403: a plex.tv outage
+// or a server mid-restart left "Waiting for authentication…" up for the
+// PIN's whole 15 minutes. Three misses in a row say so (and keep retrying).
+const PLEX_POLL_MISSES = 3;
+export function _plexPollNote(misses) {
+  return misses >= PLEX_POLL_MISSES ? 'Plex sign-in is not answering — retrying' : 'Waiting for authentication…';
+}
+
 export async function startPlexLogin() {
-  const data = await api('/api/auth/plex/pin','POST');
+  let data;
+  try {
+    data = await api('/api/auth/plex/pin','POST');
+  } catch (e) {
+    // The button used to do nothing at all on a failure here.
+    toast(`Couldn't start the Plex sign-in — ${_errMsg(e)}`, 'danger');
+    return;
+  }
   document.getElementById('pin-box').hidden = false;
   document.getElementById('pin-code').textContent = data.code.slice(0,4)+' '+data.code.slice(4);
   window.open(data.auth_url,'_blank');
@@ -30,6 +45,17 @@ export async function startPlexLogin() {
   const POLL_MS = 13000;
   const POLL_MS_BACKOFF = 30000;
   const schedulePoll = (ms) => { clearInterval(state.pollInterval); state.pollInterval = setInterval(doPoll, ms); };
+  let misses = 0;
+  const codeText = data.code.slice(0,4)+' '+data.code.slice(4);
+  const showMisses = () => {
+    const status = document.getElementById('poll-status');
+    if (status) { status.textContent = _plexPollNote(misses); return; }
+    // No status line on this screen: the code's own slot carries the note,
+    // and gets the code back once Plex answers again.
+    const codeEl = document.getElementById('pin-code');
+    if (codeEl) codeEl.textContent = misses >= PLEX_POLL_MISSES ? _plexPollNote(misses) : codeText;
+  };
+  showMisses();   // a fresh PIN starts from "Waiting…", not a previous attempt's note
   async function doPoll() {
     if (Date.now() > expiresAt) {
       // PIN expired client-side — stop polling and let the user re-trigger.
@@ -44,6 +70,7 @@ export async function startPlexLogin() {
       // for it from anyone else (auth.py _check_pin_binding). Sent as a
       // header so it never lands in an access log.
       const r = await api(`/api/auth/plex/poll/${data.pin_id}`, 'GET', null, false, {'X-Plex-Pin-Nonce': data.nonce});
+      if (misses) { misses = 0; showMisses(); }
       if (r.status==='ok') {
         clearInterval(state.pollInterval);
         state.pollInterval = null;
@@ -66,6 +93,8 @@ export async function startPlexLogin() {
         const codeEl = document.getElementById('pin-code');
         if (codeEl) codeEl.textContent = why;
       }
+      // 5xx, a network error, anything else: keep polling, but say so.
+      else if (++misses >= PLEX_POLL_MISSES) showMisses();
     }
   }
   schedulePoll(POLL_MS);
@@ -110,17 +139,26 @@ export async function showApp() {
   // and a brand-new user with no watch history yet — e.g. nothing of theirs
   // survives in Plex's retention window — should still land straight in the
   // app. Their taste profile builds as they watch and chat.
+  // A failed check is NOT a first run: one transient error here used to drop
+  // a configured admin into onboarding (whose Save rewrites the library
+  // mapping). Unknown means "say so and open the app".
   if (state.currentUser?.is_admin) {
     // Check if onboarding is needed
-    const cfg = await api('/api/libraries/config').catch(()=>({configured:false, libraries:[]}));
-    if (!cfg.configured || !cfg.libraries?.length) {
+    let cfg = null;
+    try { cfg = await api('/api/libraries/config'); }
+    catch (e) { toast(`Couldn't check the library setup — ${_errMsg(e)}. Opening the app anyway.`, 'amber', {ms: 8000}); }
+    if (cfg && (!cfg.configured || !cfg.libraries?.length)) {
       showOnboarding('libraries');
       return;
     }
 
-    // Check if initial sync has happened
-    const hist = await api('/api/history/status').catch(()=>({watch_history_entries:0}));
-    if (hist.watch_history_entries === 0) {
+    // Check if initial sync has happened (only meaningful once the libraries are known)
+    let hist = null;
+    if (cfg) {
+      try { hist = await api('/api/history/status'); }
+      catch (e) { toast(`Couldn't check the watch-history sync — ${_errMsg(e)}. Opening the app anyway.`, 'amber', {ms: 8000}); }
+    }
+    if (hist && hist.watch_history_entries === 0) {
       showOnboarding('sync');
       return;
     }

@@ -133,20 +133,24 @@ def classify_files(files: list) -> dict:
             "custom_formats": ", ".join(sorted(cfs))[:300], "sample_release": sample[:300]}
 
 
-def anidb_flags(title: str, year: Optional[int] = None, *, lookup=None) -> dict:
+def anidb_flags(title: str, year: Optional[int] = None, *, lookup=None) -> Optional[dict]:
     """AniDB's verdict from the tags of the offline snapshot: ``uncensored``
     (an uncensored version exists — for "tv censoring" that is the DVD/BD
     release), ``censored`` (the airing was censored), ``disc_censored``
     (even the disc release keeps censoring), ``tags`` (the censoring tags
-    seen, comma-joined). ``lookup`` is injectable for tests."""
+    seen, comma-joined). ``lookup`` is injectable for tests.
+
+    None when the lookup FAILED (snapshot missing/unreadable). It used to
+    return _NO_FLAGS, and the walker wrote that over a series' real
+    "uncensored" flags and stamped it checked for a week."""
     try:
         if lookup is None:
             from src.services import anime_offline
-            lookup = lambda **kw: anime_offline.lookup(**kw)  # noqa: E731
+            lookup = lambda **kw: anime_offline.lookup(strict=True, **kw)  # noqa: E731
         off = lookup(title=title, year=year) or {}
     except Exception as e:
-        logger.debug("[editions] anidb lookup failed for %r: %s", title, e)
-        return dict(_NO_FLAGS)
+        logger.warning("[editions] anidb lookup failed for %r: %r", title, e)
+        return None
     tags = {str(t).strip().lower() for t in (off.get("tags") or [])}
     seen = sorted(t for t in TAGS_CENSORED + (TAG_UNCENSORED_AVAILABLE,) if t in tags)
     return {"uncensored": any(t in tags for t in TAGS_UNCENSORED_EXISTS),
@@ -229,11 +233,18 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
             ed.year = s.get("year")
             for k, v in row.items():
                 setattr(ed, k, v)
-            ed.anidb_uncensored = bool(flags["uncensored"])
-            ed.anidb_censored = bool(flags["censored"])
-            ed.anidb_disc_censored = bool(flags["disc_censored"])
-            ed.anidb_tags = flags["tags"] or None
-            ed.checked_at = now
+            if flags is not None:
+                ed.anidb_uncensored = bool(flags["uncensored"])
+                ed.anidb_censored = bool(flags["censored"])
+                ed.anidb_disc_censored = bool(flags["disc_censored"])
+                ed.anidb_tags = flags["tags"] or None
+                ed.checked_at = now
+            # flags None: AniDB unreadable — keep the stored flags and leave
+            # checked_at alone so the series is re-offered next run.
+        if flags is None:
+            failed += 1
+            last_id = sid
+            continue
         checked += 1
         last_id = sid
         if checked % 25 == 0:
@@ -408,11 +419,14 @@ async def check_releases(client, series_id: int, seasons=(1, 2)) -> list:
     are uncensored by name or come from a Blu-ray/DVD source. Sonarr searches
     live, per season — keep the season list short."""
     out, seen = [], set()
+    errors: list = []
+    seasons = tuple(seasons)
     for season in seasons:
         try:
             rels = await client.search_releases(int(series_id), int(season))
         except Exception as e:
-            logger.debug("[editions] release search %s s%s failed: %s", series_id, season, e)
+            logger.warning("[editions] release search %s s%s failed: %r", series_id, season, e)
+            errors.append(e)
             continue
         for r in rels or []:
             if not isinstance(r, dict):
@@ -429,5 +443,9 @@ async def check_releases(client, series_id: int, seasons=(1, 2)) -> list:
             out.append({"title": title, "indexer": r.get("indexer"), "season": season, "why": why,
                         "size_gb": round((r.get("size") or 0) / 1e9, 2), "seeders": r.get("seeders"),
                         "custom_formats": cfs})
+    # Every season failing used to come back as "0 releases" — read by the
+    # owner as "no uncensored release exists". Raise so the router answers 502.
+    if errors and len(errors) == len(seasons):
+        raise errors[-1]
     out.sort(key=lambda o: (o["why"] != "named uncensored", o["season"]))
     return out

@@ -186,7 +186,7 @@ panel_base = add("Delete unwatched sequels.")
 panel = add("Keep sequels of franchises the owner completes.", status="shadow",
             novelty="contradiction", related=f"#{panel_base}: sequels")
 with _session() as db:
-    out = asyncio.run(update_principle(panel, "activate", user=SimpleNamespace(id=1), db=db))
+    out = (update_principle(panel, "activate", user=SimpleNamespace(id=1), db=db))
 check("activating from the panel adopts the rule", out["new_status"] == "active")
 check("…and supersedes the rule it contradicts", get(panel_base).status == "superseded")
 

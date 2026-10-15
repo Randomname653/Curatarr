@@ -11,11 +11,32 @@ import { searchLibrary } from './recs.js';
 // from fresh data; saveLibraries() invalidates explicitly on success since
 // this view doesn't otherwise self-reload after a save.
 import { state } from './state.js';
-import { EL, SVG_CHECK, _errHtml, _errMsg, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, SVG_CHECK, SVG_WARN, _errHtml, _errMsg, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
+// Plex unreachable is not "no libraries": the saved mapping is shown read-only
+// under a banner, with nothing to Save (an empty section list would post an
+// empty mapping).
+export function _plexDownHtml(cfg, err) {
+  const saved = (cfg.libraries || []).map(l => `
+      <div class="panel-item">
+        <div class="panel-item-head">
+          <div class="fs-15 panel-item-title">${esc(l.title || l.key)}<span class="badge muted badge-sm">${esc(l.plex_type || '')}</span></div>
+          <div class="panel-actions"><span class="badge muted badge-sm">${esc(l.category || '')}</span></div>
+        </div>
+      </div>`).join('');
+  return `<div class="banner warn" role="status"><span class="banner-icon">${SVG_WARN}</span><div class="banner-text"><b>Plex unreachable — showing saved mapping</b> (${esc(err)}). Categories can be changed once Plex answers again.</div><button type="button" class="btn btn-secondary btn-sm" ${act('loadLibraryConfig')}>Retry</button></div>`
+    + (saved || emptyHtml('No saved library mapping yet.'));
+}
+
 export function _renderLibraryConfig([cfg, disc]) {
   const el=document.getElementById('lib-config-content');
   state.discoverSections=disc.sections||[];
+  if (disc._err) {
+    el.innerHTML = _plexDownHtml(cfg, disc._err);
+    const save = document.getElementById('lib-save-btn');
+    if (save) save.disabled = true;
+    return;
+  }
   const cfgMap=Object.fromEntries((cfg.libraries||[]).map(l=>[l.key,l.category]));
 
   function fmtDate(iso) {
@@ -63,14 +84,21 @@ export async function loadLibraryConfig() {
   const el=document.getElementById('lib-config-content');
   if (!_swrCache.has('libraries')) el.innerHTML='<p class="loading" role="status" aria-live="polite">Fetching library info from Plex…</p>';
   try {
-    await _swrRun('libraries', () => Promise.all([
+    const data = await _swrRun('libraries', () => Promise.all([
       api('/api/libraries/config'),
-      api('/api/libraries/discover').catch(()=>({sections:[]}))
+      api('/api/libraries/discover').catch(e => ({sections: [], _err: _errMsg(e)})),
     ]), _renderLibraryConfig, { noAutoReplace: true });
+    // noAutoReplace would serve a failed discover for the rest of the
+    // session; drop it so the next visit (or Retry) asks Plex again.
+    if (data?.[1]?._err) _swrInvalidate('libraries');
   } catch(e){el.innerHTML=_errHtml(e, act('loadLibraryConfig'));}
 }
 
 export async function saveLibraries(btn) {
+  if (!state.discoverSections.length) {
+    toast('No Plex libraries loaded — nothing to save. Retry once Plex answers.', 'amber');
+    return;
+  }
   const libraries=state.discoverSections.map(s=>({
     key:s.key, title:s.title, plex_type:s.type,
     category:document.getElementById(`libcat-${s.key}`)?.value||s.suggested_category

@@ -118,7 +118,7 @@ check("setup gate: no token at all is a 401",
 
 before = member.token_version or 0
 member_req = _bearer(member)
-asyncio.run(users.delete_user(member.id, _admin=admin, db=db))
+(users.delete_user(member.id, _admin=admin, db=db))
 db.refresh(member)
 check("delete: the user is deactivated", member.is_active is False)
 check("delete: the token version is bumped", (member.token_version or 0) == before + 1)

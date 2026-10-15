@@ -49,7 +49,7 @@ class PipelineRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/ping")
-async def pipeline_ping():
+def pipeline_ping():
     """
     Auth-free endpoint — returns pipeline running state + progress only.
     No user-specific data. Use this to check status from the browser without a token.
@@ -63,7 +63,7 @@ async def pipeline_ping():
 
 
 @router.post("/start")
-async def start_pipeline(
+def start_pipeline(
     req: PipelineRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
@@ -92,7 +92,7 @@ async def start_pipeline(
 
 
 @router.post("/stop")
-async def stop_pipeline(user: User = Depends(get_current_user)):
+def stop_pipeline(user: User = Depends(get_current_user)):
     """
     Request a soft stop.  The pipeline finishes the current DB batch / Last.fm
     call then saves progress.  Re-running /start afterwards continues safely
@@ -110,7 +110,7 @@ async def stop_pipeline(user: User = Depends(get_current_user)):
 
 
 @router.get("/status")
-async def pipeline_status(user: User = Depends(get_current_user)):
+def pipeline_status(user: User = Depends(get_current_user)):
     """
     Return current pipeline state + enrichment statistics.
     """
@@ -183,18 +183,23 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
     from src.services.task_monitor import task_monitor
 
     # music_pipeline_running is already held: the endpoint (or custodian)
-    # acquired it atomically before this task was scheduled.
-    set_state("music_pipeline_interrupted", "1")
-    set_state("music_pipeline_stop_requested", "0")
-    set_state("music_pipeline_progress", _json.dumps({
-        "phase": "starting", "processed": 0, "total": 0,
-        "tracks_queried": 0, "enriched_plays": 0,
-    }))
-
-    task = task_monitor.create(name="Music Pipeline", category="music")
-    task_monitor.start(task)
-
+    # acquired it atomically before this task was scheduled. The lock-release
+    # finally must cover the WHOLE body (mirrors Audit #4 in
+    # enrichment._run_enrichment): these set_state calls and
+    # task_monitor.create used to run before the try, so a "database is
+    # locked" here left music_pipeline_running stuck at "1" until restart.
+    task = None
     try:
+        set_state("music_pipeline_interrupted", "1")
+        set_state("music_pipeline_stop_requested", "0")
+        set_state("music_pipeline_progress", _json.dumps({
+            "phase": "starting", "processed": 0, "total": 0,
+            "tracks_queried": 0, "enriched_plays": 0,
+        }))
+
+        task = task_monitor.create(name="Music Pipeline", category="music")
+        task_monitor.start(task)
+
         from src.services.music_matcher import (
             match_spotify_to_plex,
             resolve_artist_mbids,
@@ -334,7 +339,8 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
 
     except Exception as exc:
         logger.error("[music_pipeline] Failed: %s", exc, exc_info=True)
-        task_monitor.error(task, str(exc))
+        if task is not None:
+            task_monitor.error(task, str(exc))
         # Keep interrupted="1" so startup auto-resumes
     finally:
         set_state("music_pipeline_running",        "0")

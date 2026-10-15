@@ -27,7 +27,7 @@ router = APIRouter()
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[UserResponse])
-async def list_users(
+def list_users(
     skip: int = 0,
     limit: int = 100,
     _admin: User = Depends(require_admin),
@@ -38,7 +38,7 @@ async def list_users(
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
+def create_user(
     user: UserCreate,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -60,7 +60,7 @@ async def create_user(
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
-async def update_user(
+def update_user(
     user_id: int,
     update: UserUpdate,
     _admin: User = Depends(require_admin),
@@ -80,7 +80,7 @@ async def update_user(
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
+def delete_user(
     user_id: int,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -118,12 +118,12 @@ async def delete_user(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(user: User = Depends(get_current_user)):
+def get_me(user: User = Depends(get_current_user)):
     return UserResponse.from_orm(user)
 
 
 @router.get("/me/notification-preferences")
-async def get_notification_preferences(user: User = Depends(get_current_user)):
+def get_notification_preferences(user: User = Depends(get_current_user)):
     """Return the catalogue of proactive triggers + this user's enabled state.
 
     UI renders one toggle per item; ``enabled`` defaults to ``True`` for any
@@ -145,7 +145,7 @@ class NotificationPreferenceUpdate(BaseModel):
 
 
 @router.post("/me/notification-preferences")
-async def set_notification_preference(
+def set_notification_preference(
     body: NotificationPreferenceUpdate,
     user: User = Depends(get_current_user),
 ):

@@ -190,6 +190,11 @@ Rules:
 
 # ── CONNECTION TESTS ──────────────────────────────────────────────────────────
 
+# The fixed-host tests (TMDB, Spotify, Last.fm) answered with str(e): never
+# exception text in a response (the policy _test_failed states).
+_HOSTED = "the service"
+
+
 def _test_failed(what: str, exc: Exception) -> dict:
     """A failed test of an operator-supplied address, without the raw error.
     Its text told "refused" from "timed out" from "no route" - a port scanner
@@ -201,9 +206,23 @@ def _test_failed(what: str, exc: Exception) -> dict:
     return {"ok": False, "error": f"Could not connect to {what} - check the address and that it is running"}
 
 
+async def _refused_target(what: str, url: str) -> Optional[dict]:
+    """A host NAME that resolves to a link-local / metadata address: the
+    URL validator only sees literal addresses (2026-10-10 audit, open item)."""
+    from src.services.endpoint_policy import resolved_refusal
+    why = await resolved_refusal(url)
+    if not why:
+        return None
+    logger.warning("[setup] %s test refused: %s", what, why)
+    return {"ok": False, "error": f"That {what} address resolves to a link-local / "
+                                  "metadata address - not a media service"}
+
+
 async def test_plex(url: str, token: str) -> dict:
     headers = {"Accept": "application/json", "X-Plex-Token": token,
                "X-Plex-Client-Identifier": "Curatarr-Setup"}
+    if (refused := await _refused_target("Plex", url)):
+        return refused
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{url.rstrip('/')}/identity", headers=headers)
@@ -217,6 +236,8 @@ async def test_plex(url: str, token: str) -> dict:
 
 
 async def test_ollama(endpoint: str) -> dict:
+    if (refused := await _refused_target("Ollama", endpoint)):
+        return refused
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{endpoint.rstrip('/')}/api/tags")
@@ -229,6 +250,8 @@ async def test_ollama(endpoint: str) -> dict:
 
 
 async def test_arr(url: str, api_key: str, service: str) -> dict:
+    if (refused := await _refused_target(service.capitalize(), url)):
+        return refused
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
@@ -255,7 +278,7 @@ async def test_tmdb(api_key: str) -> dict:
             return {"ok": True}
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(_HOSTED, e)
 
 
 async def test_spotify(client_id: str, client_secret: str) -> dict:
@@ -276,7 +299,7 @@ async def test_spotify(client_id: str, client_secret: str) -> dict:
             return {"ok": True}
         return {"ok": False, "error": data.get("error_description", f"HTTP {r.status_code}")}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(_HOSTED, e)
 
 
 async def test_lastfm(api_key: str) -> dict:
@@ -291,7 +314,7 @@ async def test_lastfm(api_key: str) -> dict:
             return {"ok": True}
         return {"ok": False, "error": r.json().get("message", "Invalid key")}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _test_failed(_HOSTED, e)
 
 
 # ── ENV WRITER ────────────────────────────────────────────────────────────────
@@ -306,21 +329,33 @@ def _restrict_env_acl(path) -> None:
     """Windows: chmod is a no-op and NTFS inherits the parent DACL, so on a
     shared family PC every local account could read .env (all tokens live in
     it). Strip inheritance and grant the current user alone. Best-effort."""
+    # Both failures used to be DEBUG (and icacls's exit code was never read),
+    # so .env with every token could stay readable by other local accounts
+    # without a trace. Still best-effort: the write itself has succeeded.
     if os.name != "nt":
         try:
             import stat
             os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
         except Exception as e:
-            logger.debug("Could not chmod .env: %s", e)
+            logger.warning("Could not chmod .env to owner-only — other local accounts "
+                           "may read its tokens: %s", e)
         return
     try:
         import subprocess
         user = os.environ.get("USERNAME") or os.getlogin()
-        subprocess.run(  # nosec B603 B607 - fixed argv, no shell, path is ours
+        proc = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, path is ours
             ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
             check=False, capture_output=True, timeout=10)
+        if proc.returncode != 0:
+            # icacls's own message (path / account, never the file content).
+            out = proc.stderr or proc.stdout or b""
+            if isinstance(out, bytes):
+                out = out.decode(errors="replace")
+            logger.warning("Could not narrow the .env ACL (icacls exit %s) — other local "
+                           "accounts may read its tokens: %s", proc.returncode, out.strip()[:300])
     except Exception as e:  # noqa: BLE001
-        logger.debug("Could not narrow .env ACL: %s", e)
+        logger.warning("Could not narrow the .env ACL — other local accounts may read "
+                       "its tokens: %s", e)
 
 
 # Keys whose values must never travel back to a browser. The integrations
@@ -704,8 +739,13 @@ async def warmup_check(ollama_endpoint: str, model: str) -> dict:
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return {"ok": False, "error": f"Could not connect to Ollama at "
                 f"{ollama_endpoint}. Is it running?"}
+    except httpx.HTTPStatusError as e:
+        logger.info("[setup] warm-up failed: %s", e)
+        return {"ok": False, "error": f"Ollama answered HTTP {e.response.status_code} - "
+                                      "is the model pulled?"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        logger.info("[setup] warm-up failed: %s", e)
+        return {"ok": False, "error": "The warm-up did not complete - the log has the detail"}
 
 
 async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
@@ -724,7 +764,13 @@ async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
     except (httpx.ConnectError, httpx.ConnectTimeout):
         _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
         return False
-    except Exception:
+    except httpx.HTTPError as e:
+        logger.debug("model_exists(%s): Ollama unreachable: %s", model_name, e)
+        return False
+    except Exception as e:
+        # A bug here (an /api/tags entry without "name", say) read as "not
+        # present" and silently re-pulled gigabytes.
+        logger.warning("model_exists(%s) failed: %s: %s", model_name, type(e).__name__, e)
         return False
 
 
@@ -783,7 +829,10 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
                         _safe_print()
                         return True
 
-        return True
+        # The stream ended without Ollama ever saying "success" — a dropped
+        # connection, not a finished download (the same fix as create_model).
+        logger.error("pull %s: stream ended without success", model_name)
+        return False
     except (httpx.ConnectError, httpx.ConnectTimeout):
         _safe_print(f"\n  ⚠️  Could not connect to Ollama at {ollama_endpoint}. Is it running?", flush=True)
         return False

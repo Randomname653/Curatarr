@@ -81,8 +81,12 @@ export async function loadHistoryStatus() {
       ).join('');
       showTasteTabData(byType, tv.summary||'', types[0]);
 
-      const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
-      renderRecent(h.entries, types[0]);
+      // Its own error slot: a failed recent list used to replace the stats
+      // tile above (which had loaded fine) with "Couldn't load".
+      try {
+        const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
+        renderRecent(h.entries, types[0]);
+      } catch (e) { _tasteErr('recent-history', e, act('showTasteTab', types[0], null)); }
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }
@@ -90,8 +94,17 @@ export async function loadHistoryStatus() {
 export function showTasteTab(type,btn) {
   document.querySelectorAll('#taste-tabs .cat-tab').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  api('/api/history/status').then(s=>showTasteTabData(s.taste_vector.by_type||{},s.taste_vector.summary||'',type)).catch(()=>{});
-  api(`/api/history/recent?limit=100&category=${encodeURIComponent(type)}`).then(h=>renderRecent(h.entries,type)).catch(()=>{});
+  // A failed load used to leave the previous tab's numbers under the new
+  // tab's heading. Each half says it failed, with a Retry of this tab.
+  const retry = act('showTasteTab', type, null);
+  api('/api/history/status').then(s=>showTasteTabData(s.taste_vector.by_type||{},s.taste_vector.summary||'',type))
+    .catch(e => _tasteErr('taste-content', e, retry));
+  api(`/api/history/recent?limit=100&category=${encodeURIComponent(type)}`).then(h=>renderRecent(h.entries,type))
+    .catch(e => _tasteErr('recent-history', e, retry));
+}
+function _tasteErr(id, e, retry) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = _errHtml(e, retry);
 }
 
 export function showTasteTabData(byType, summary, type) {

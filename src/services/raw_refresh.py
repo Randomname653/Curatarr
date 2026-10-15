@@ -148,6 +148,7 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
     the per-tick budget for owner-triggered catch-up sprints."""
     from src.cache.metadata_cache import MetadataCache
     from src.services.app_state import get_state, set_state
+    from src.services.enrichment_state import log_topup_failure
 
     budget = _BUDGET * (3 if deep else 1)
     done = 0
@@ -171,13 +172,19 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
                     continue
                 _prog(task, message=f"Discovery raw: {title}", processed=done,
                       total=budget)
-                if await _refresh_one({"title": title, "media_type": cat,
-                                       "tmdb_id": tmdb_id}):
-                    done += 1
+                # Per row: the whole pass used to sit in the one except below
+                # (DEBUG), so the first non-TMDB error ended it — and as the
+                # same 200 rows come first every day, it ended there daily.
+                try:
+                    if await _refresh_one({"title": title, "media_type": cat,
+                                           "tmdb_id": tmdb_id}):
+                        done += 1
+                except Exception as e:
+                    log_topup_failure(logger, "[raw-refresh] discovery", title, e)
         finally:
             mc.close()
     except Exception as e:
-        logger.debug("[raw-refresh] discovery pass failed: %s", e)
+        logger.warning("[raw-refresh] discovery pass failed: %r", e)
 
     # ── 2. expired raw_prefetch rows (stale-read → re-resolve from the arr) ──
     # One arr sweep per run, not per item: the doc-id → item map is what lets

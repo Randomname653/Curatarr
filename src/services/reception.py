@@ -34,6 +34,8 @@ from src.services.llm_utils import (clean_llm_text, ollama_options,
                                     strip_think_tags, SUMMARIZER_KEEP_ALIVE)
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import (  # noqa: E402
+    load_walker_attempts, log_topup_failure, save_walker_attempts)
 
 ANILIST_URL = "https://graphql.anilist.co"
 JIKAN_URL = "https://api.jikan.moe/v4"
@@ -520,7 +522,7 @@ async def topup_reception(
         logger.debug("[reception] transient for %r: %s", title, e)
         return False
     except Exception as e:
-        logger.debug("[reception] top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[reception]", title, e)
         return False
     finally:
         if owns:
@@ -602,7 +604,7 @@ async def topup_franchise(
         logger.debug("[reception] franchise transient for %r: %s", title, e)
         return False
     except Exception as e:
-        logger.debug("[reception] franchise top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[reception] franchise", title, e)
         return False
     finally:
         if owns:
@@ -610,6 +612,9 @@ async def topup_franchise(
 
 
 # ── custodian walker (mirrors run_significance_backfill) ─────────────────────
+
+_RECEPTION_ATTEMPTS_KEY = "reception_backfill_attempts"
+
 
 async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     """Custodian walker: attach community reception to LIVE raw:* entries that
@@ -672,8 +677,15 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     # with ~2k anime unchecked, movies never got a turn — 45/6304 movies
     # reception-checked while the Panic Room pitch judged a Fincher film
     # with zero reception on file. Interleaving keeps every domain moving.
+    # Rows a pass tried and could not settle used to come back FIRST next
+    # pass (fixed order, items[:limit]): a systematic failure - the 2-vs-4
+    # unpacking bug hid this way for months - filled every batch with the
+    # same titles and the walker reported clean passes. Each attempt is
+    # stamped; never-tried rows go first, then the least recently tried.
     from collections import deque
-    _queues = {c: deque(x for x in items if x[1] == c)
+    attempts = load_walker_attempts(_RECEPTION_ATTEMPTS_KEY)
+    _queues = {c: deque(sorted((x for x in items if x[1] == c),
+                               key=lambda x: attempts.get(x[2], "")))
                for c in ("anime", "show", "movie")}
     interleaved = []
     while any(_queues.values()):
@@ -712,7 +724,8 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
             ):
                 added += 1
         except Exception as e:
-            logger.debug("[reception-backfill] %r failed: %s", title, e)
+            log_topup_failure(logger, "[reception-backfill]", title, e)
+        attempts[id_key] = datetime.now().isoformat(timespec="seconds")
         # piggyback: studio reputation notes (cache-hit after the first few
         # titles — ~400 distinct studios cover the whole anime library)
         try:
@@ -722,5 +735,8 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
         except Exception as e:
             logger.debug("[reception-backfill] studio note %r: %s", title, e)
         checked += 1
+    # Only rows still waiting are worth remembering (bounded by the queue).
+    save_walker_attempts(_RECEPTION_ATTEMPTS_KEY, attempts,
+                         keep={x[2] for x in items})
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}

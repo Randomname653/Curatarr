@@ -30,7 +30,7 @@ class ClassifyRequest(BaseModel):
 
 @router.get("/unknown")
 @ttl_response(10, shared=True)   # processes on this host, not per user
-async def get_unknown_processes(_user: User = Depends(get_current_user)):
+def get_unknown_processes(_user: User = Depends(get_current_user)):
     """
     Return running processes that are not yet classified.
     Frontend polls this every 30s and shows a toast for each result.
@@ -52,7 +52,7 @@ def _forget_process_views() -> None:
 
 
 @router.post("/classify")
-async def classify_process(
+def classify_process(
     req: ClassifyRequest,
     _user: User = Depends(get_current_user),
 ):
@@ -81,7 +81,7 @@ async def classify_process(
 
 
 @router.get("/list")
-async def list_classified(_user: User = Depends(get_current_user)):
+def list_classified(_user: User = Depends(get_current_user)):
     """Return all user-classified processes (for settings UI)."""
     with get_db_session() as db:
         rows = db.query(GameProcess).order_by(GameProcess.added_at.desc()).all()
@@ -98,7 +98,7 @@ async def list_classified(_user: User = Depends(get_current_user)):
 
 
 @router.delete("/{process_name}")
-async def delete_classification(
+def delete_classification(
     process_name: str,
     _user: User = Depends(get_current_user),
 ):
@@ -117,7 +117,7 @@ async def delete_classification(
 
 @router.get("/status")
 @ttl_response(10, shared=True)   # this host's GPU/lane state
-async def game_status(_user: User = Depends(get_current_user)):
+def game_status(_user: User = Depends(get_current_user)):
     """Return whether a game is currently running (for the UI badge).
 
     Pass 75: pure read, no side effects. VRAM unloading is now owned by the

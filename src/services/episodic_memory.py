@@ -148,13 +148,33 @@ async def _embed(text: str, kind: str = "document") -> Optional[list]:
         vecs = await embed_documents([text])
         return vecs[0] if vecs else None
     except Exception as e:
-        logger.debug("Memory embedding failed: %s", e)
+        # WARNING, not DEBUG: a None here means the memory is written without
+        # an embedding and only ever ranks on the neutral score.
+        logger.warning("Memory embedding failed: %s", e)
         return None
 
 
-def _cosine_similarity(a: list, b: list) -> float:
-    if not a or not b or len(a) != len(b):
+# Semantic score for a memory that cannot be compared with the query (no
+# stored embedding, or one from a different embedding model).
+_NEUTRAL_SEM = 0.3
+_dim_mismatch_warned: set = set()
+
+
+def _cosine_similarity(a: list, b: list) -> Optional[float]:
+    """Cosine of a and b. None when the dimensions differ (vectors from two
+    embedding models): callers treat that like "no embedding". It used to
+    return 0.0, ranking such a memory BELOW one with no embedding at all
+    (neutral 0.3). Warned once per dimension pair."""
+    if not a or not b:
         return 0.0
+    if len(a) != len(b):
+        pair = (len(a), len(b))
+        if pair not in _dim_mismatch_warned:
+            _dim_mismatch_warned.add(pair)
+            logger.warning("[memory] embedding dimension mismatch %d vs %d — "
+                           "stored vectors from another model? treated as "
+                           "no embedding", *pair)
+        return None
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
@@ -405,15 +425,27 @@ Output ONLY a JSON block:
                     },
                 )
 
-            if r.status_code == 200:
-                text = r.json().get("message", {}).get("content", "").strip()
-                status = parse_llm_json(text).get("status")
-                if status in ("CONTRADICTION", "REAFFIRMATION", "NUANCE"):
-                    if await run_write(_apply_conflict_verdict, user_id,
-                                       new_memory_id, old_id, status):
-                        return
+            if r.status_code != 200:
+                continue
+            text = r.json().get("message", {}).get("content", "").strip()
+            status = parse_llm_json(text).get("status")
         except Exception as e:
+            # LLM down / unparseable verdict: expected, best-effort.
             logger.debug(f"Memory conflict resolution failed: {e}")
+            continue
+        if status not in ("CONTRADICTION", "REAFFIRMATION", "NUANCE"):
+            continue
+        # Separate from the LLM try: a bug in the ORM writer used to be logged
+        # at DEBUG as an LLM hiccup, so contradicted memories silently stayed
+        # live and reaffirmations never merged.
+        try:
+            if await run_write(_apply_conflict_verdict, user_id,
+                               new_memory_id, old_id, status):
+                return
+        except Exception as e:
+            logger.warning("Memory conflict verdict %s could not be applied "
+                           "(memory %s vs %s): %s", status, new_memory_id,
+                           old_id, e, exc_info=True)
 
 # ── RETRIEVE MEMORIES ─────────────────────────────────────────────────────────
 
@@ -536,8 +568,10 @@ async def retrieve_memories(
                     sem_score = _cosine_similarity(query_embedding, mem_emb)
                 except Exception:
                     sem_score = 0.0
+                if sem_score is None:
+                    sem_score = _NEUTRAL_SEM   # other model's vector → as if none
             else:
-                sem_score = 0.3  # no embedding → neutral
+                sem_score = _NEUTRAL_SEM  # no embedding → neutral
 
             # Recency boost: memories from last N days get a boost
             age_days = (now - mem.created_at).days if mem.created_at else 999
@@ -703,6 +737,8 @@ async def retrieve_considerations(
             sem = _cosine_similarity(item_emb, json.loads(emb_json))
         except Exception:
             continue
+        if sem is None:
+            continue   # other model's vector — same as no embedding
         sims.append((sem, mid, content, importance, mcat))
     if len(sims) < 3:
         return []
@@ -1045,12 +1081,15 @@ async def extract_memories_from_thread(
     user_id: int,
     thread_id: str,
     media_category: str = None,
-) -> None:
+) -> bool:
     """Extract long-term memories from the user-message SEQUENCE of one chat
     thread, picking up where the last extraction left off (AppState cursor).
 
     Sees the whole conversation rather than a single exchange, so a position
     the user developed or revised across turns is captured as its final form.
+
+    Returns False when the window was NOT extracted (runner failed — the
+    cursor stays put), True when it was or there was nothing to do.
     """
     from src.database.models import ConversationMessage
     from src.services.app_state import get_state, set_state
@@ -1081,7 +1120,7 @@ async def extract_memories_from_thread(
         logger.debug(
             "[memory] thread %s: no new user messages since cursor %d", thread_id, since_id
         )
-        return
+        return True
 
     max_id = rows[-1][0]
     user_msgs = [r[1] for r in rows if r[1]]
@@ -1089,7 +1128,7 @@ async def extract_memories_from_thread(
         # Rows existed but all empty — still advance the cursor so we don't
         # re-scan the same window every flush.
         set_state(cursor_key, str(max_id))
-        return
+        return True
 
     logger.info(
         "🔍 [MEMORY EXTRACTION] thread=%s user=%d — %d new message(s) since id %d",
@@ -1106,17 +1145,23 @@ async def extract_memories_from_thread(
     # without exposing any assistant claims.
     anchor_line = ""
     followup_ctx = None   # set for recommendation_followup threads (see below)
+    # Plain columns, read INSIDE the session: get_db_session commits on exit
+    # (expire_on_commit) and closes, so reading an ORM row's attributes after
+    # the block raised DetachedInstanceError on every discussion thread. The
+    # DEBUG except below swallowed it: no thread ever got its anchor line, and
+    # recommendation follow-up verdicts never reached analyze_recommendation_
+    # feedback - the same class of bug as the 2026-10 taste-cluster one.
     try:
         if thread_id.startswith("proactive_message:"):
-            from src.database.models import ProactiveMessage
+            from src.database.models import ProactiveMessage as _PM
             with get_db_session() as db:
                 # user_id filter: the thread id comes from the client's
                 # discuss_context, so without it any user could anchor their
                 # extraction on (and have the summarizer read) another
                 # user's message.
-                pm = db.query(ProactiveMessage).filter(
-                    ProactiveMessage.id == int(thread_id.split(":", 1)[1]),
-                    ProactiveMessage.user_id == user_id).first()
+                pm = db.query(_PM.message, _PM.trigger_type, _PM.trigger_data).filter(
+                    _PM.id == int(thread_id.split(":", 1)[1]),
+                    _PM.user_id == user_id).first()
             if pm and pm.message:
                 anchor_line = ("CONVERSATION SUBJECT (the assistant's opening that the "
                                "user is replying to — context ONLY, extract nothing "
@@ -1127,19 +1172,20 @@ async def extract_memories_from_thread(
                     if td.get("title"):
                         followup_ctx = {"title": td["title"],
                                         "category": td.get("category")}
-                except Exception:
-                    pass
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.warning("[memory] follow-up trigger data unreadable "
+                                   "for %s: %s", thread_id, e)
         elif thread_id.startswith("deletion_proposal:"):
-            from src.database.models import DeletionProposal
+            from src.database.models import DeletionProposal as _DP
             with get_db_session() as db:
-                dp = db.query(DeletionProposal).filter(
-                    DeletionProposal.id == int(thread_id.split(":", 1)[1]),
-                    DeletionProposal.user_id == user_id).first()
+                dp = db.query(_DP.title, _DP.category).filter(
+                    _DP.id == int(thread_id.split(":", 1)[1]),
+                    _DP.user_id == user_id).first()
             if dp and dp.title:
                 anchor_line = (f"CONVERSATION SUBJECT: the deletion of "
                                f"'{dp.title}' ({dp.category or 'title'}).\n\n")
     except Exception as e:
-        logger.debug("[memory] anchor line failed for %s: %s", thread_id, e)
+        logger.warning("[memory] anchor line failed for %s: %s", thread_id, e)
 
     numbered = "\n".join(f"{i}. {m[:600]}" for i, m in enumerate(user_msgs, 1))
     prompt = f"""[MODE: LONG-TERM MEMORY EXTRACTION]
@@ -1213,7 +1259,7 @@ JSON:"""
         # re-offers this window on the next flush; advancing it would
         # silently drop these messages from memory extraction for ever.
         task_monitor.error(_mt, "extraction failed — window will be retried")
-        return
+        return False
     task_monitor.done(_mt, f"{len(user_msgs)} new message(s) analyzed")
 
     # Advance the cursor only AFTER a successful run — a crash mid-extract
@@ -1269,6 +1315,7 @@ JSON:"""
             )
     except Exception as e:
         logger.warning("[rec-feedback] scheduling failed for %s: %s", thread_id, e)
+    return True
 
 
 async def _debounced_thread_extract(
@@ -1317,12 +1364,16 @@ def schedule_thread_extraction(
 
 
 async def flush_thread_extraction(user_id: int, thread_id: str,
-                                  media_category: str = None) -> None:
+                                  media_category: str = None) -> bool:
     """Fire a thread's pending extraction NOW instead of waiting out the
     debounce. Called on explicit end-of-conversation signals (New chat,
     Exit discussion, Delete & exit). Safe to call when nothing is pending —
     the cursor means a no-op extraction just returns immediately.
     ``media_category`` defaults to the one the pending run was scheduled with.
+
+    Returns True when the thread's memories are saved (or there was nothing
+    to save), False when extraction failed. It returned None on every path,
+    so "New chat" deleted threads whose memories were never extracted.
     """
     key = _extract_key(user_id, thread_id)
     pending = _pending_thread_extracts.pop(key, None)
@@ -1330,11 +1381,13 @@ async def flush_thread_extraction(user_id: int, thread_id: str,
     if pending and not pending.done():
         pending.cancel()
     try:
-        await extract_memories_from_thread(
+        ok = await extract_memories_from_thread(
             user_id, thread_id,
             media_category=media_category or scheduled_category)
     except Exception as e:
         logger.error("💥 [MEMORY EXTRACTION] flush failed for thread %s: %s", thread_id, e)
+        return False
+    return ok is not False
 
 
 async def extract_catchup(min_quiet_minutes: int = 15) -> dict:

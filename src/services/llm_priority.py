@@ -30,6 +30,7 @@ Lifecycle invariants
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import httpx
 
@@ -133,7 +134,10 @@ def gate_contested() -> bool:
 
 # ── MODEL INTROSPECTION ───────────────────────────────────────────────────────
 
-async def loaded_models() -> list[dict]:
+_ps_failing = False   # warn once per /api/ps outage, not every 0.3 s poll
+
+
+async def loaded_models() -> Optional[list[dict]]:
     """
     Return the list of models currently resident in Ollama VRAM.
 
@@ -141,17 +145,29 @@ async def loaded_models() -> list[dict]:
 
         {"name": "qwen3.6:27b", "size_vram": 22123456789, "size": 22123456789, ...}
 
-    Returns an empty list on error or when nothing is loaded.
+    Returns [] when nothing is loaded and None when /api/ps could not be
+    read. Errors used to return [] too ("nothing resident"), so
+    _evict_model logged "Confirmed evicted" for a model it never saw leave
+    and evict_others evicted nothing — reopening the VRAM race.
     """
+    global _ps_failing
     from src.config import settings
+    err = None
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{settings.effective_ollama}/api/ps")
         if r.status_code == 200:
+            _ps_failing = False
             return r.json().get("models", [])
-    except Exception:
-        pass
-    return []
+        err = f"HTTP {r.status_code}"
+    except Exception as e:
+        err = str(e) or type(e).__name__
+    if not _ps_failing:
+        _ps_failing = True
+        logger.warning("Ollama /api/ps unreadable (%s) — VRAM residency unknown", err)
+    else:
+        logger.debug("Ollama /api/ps still unreadable: %s", err)
+    return None
 
 
 async def _evict_model(model_name: str, timeout: float = 8.0) -> bool:
@@ -190,13 +206,14 @@ async def _evict_model(model_name: str, timeout: float = 8.0) -> bool:
     deadline = loop.time() + timeout
     while loop.time() < deadline:
         loaded = await loaded_models()
-        still_loaded = any(base_name in m.get("name", "") for m in loaded)
-        if not still_loaded:
+        # None = /api/ps unreadable: unknown is not "gone" — keep polling.
+        if loaded is not None and not any(
+                base_name in m.get("name", "") for m in loaded):
             logger.info("Confirmed evicted from VRAM: %s", model_name)
             return True
         await asyncio.sleep(0.3)
     logger.warning(
-        "Eviction timeout for %s after %.0fs — VRAM may still be busy; "
+        "Eviction of %s NOT confirmed after %.0fs — VRAM may still be busy; "
         "curator may load partially on CPU",
         model_name, timeout,
     )
@@ -218,7 +235,7 @@ async def check_curator_vram_health(curator_model: str) -> dict:
     Returns a dict shape consumed by the chat router to decide whether to
     emit an SSE warning frame to the frontend.
     """
-    loaded = await loaded_models()
+    loaded = await loaded_models() or []   # unreadable → reported as not_loaded
     base_name = (curator_model or "").split(":")[0]
     if not base_name:
         return {"loaded": False, "ratio": 0.0, "cpu_pct": 0,
@@ -350,6 +367,12 @@ async def evict_others(target_model: str) -> None:
     if not candidates:
         return
     loaded = await loaded_models()
+    if loaded is None:
+        # Residency unknown: evicting blind would LOAD absent models (see
+        # above), so evict nothing — but say so instead of "none resident".
+        logger.warning("Gate holder needs %s — VRAM residency unknown "
+                       "(/api/ps unreadable); nothing evicted", target_model)
+        return
     evicted = False
     for model in candidates:
         base_name = model.split(":")[0]
@@ -370,6 +393,9 @@ async def evict_if_resident(model_name: str) -> None:
         return
     base_name = model_name.split(":")[0]
     loaded = await loaded_models()
+    if loaded is None:
+        logger.warning("evict %s skipped — VRAM residency unknown", model_name)
+        return
     if any(base_name in m.get("name", "") for m in loaded):
         await _evict_model(model_name)
 
@@ -470,6 +496,9 @@ async def _scheduled_curator_evict() -> None:
     if not curator:
         return
     loaded = await loaded_models()
+    if loaded is None:
+        logger.warning("Idle eviction skipped — VRAM residency unknown")
+        return
     targets = [curator, (settings.PITCHER_MODEL or "").strip()]
     for model in [t for t in targets if t]:
         base_name = model.split(":")[0]

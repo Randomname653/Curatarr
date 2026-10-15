@@ -53,6 +53,11 @@ class AnimeMapping:
 # Module-level singleton
 _mapping: Optional[AnimeMapping] = None
 _load_lock: Optional[asyncio.Lock] = None
+# An empty load (first install + failed download) used to be cached for the
+# whole process life, so anime routing stayed blind until a restart. Empty
+# results are now only held for this long before the next caller retries.
+_EMPTY_RETRY_SECONDS = 15 * 60
+_empty_until: Optional[datetime] = None
 
 
 def _get_load_lock() -> asyncio.Lock:
@@ -70,18 +75,31 @@ async def get_anime_mapping(force_refresh: bool = False) -> AnimeMapping:
     happens and every caller receives the same populated mapping (no empty
     fallback on a coincident timeout).
     """
-    global _mapping
+    global _mapping, _empty_until
 
-    if _mapping and not force_refresh:
+    if _mapping is not None and not force_refresh and _is_settled(_mapping):
         return _mapping
 
     async with _get_load_lock():
         # Double-check after acquiring the lock — a previous waiter may have
         # already populated the mapping.
-        if _mapping and not force_refresh:
+        if _mapping is not None and not force_refresh and _is_settled(_mapping):
             return _mapping
         _mapping = await _load_or_download()
+        if _mapping.total_entries == 0:
+            _empty_until = datetime.utcnow() + timedelta(seconds=_EMPTY_RETRY_SECONDS)
+            logger.warning("Anime mapping is empty — will retry the download in %d min",
+                           _EMPTY_RETRY_SECONDS // 60)
+        else:
+            _empty_until = None
         return _mapping
+
+
+def _is_settled(mapping: AnimeMapping) -> bool:
+    """A populated mapping is final; an empty one only until its retry time."""
+    if mapping.total_entries > 0:
+        return True
+    return _empty_until is not None and datetime.utcnow() < _empty_until
 
 
 async def _load_or_download() -> AnimeMapping:
@@ -107,7 +125,18 @@ async def _load_or_download() -> AnimeMapping:
             return _load_from_db()  # fall back to cached
 
         mapping = _parse_xml(r.text)
-        _save_to_db(mapping)
+        if mapping.total_entries == 0:
+            # A truncated/garbled download parses to nothing. Saving that used
+            # to DROP the populated cache table and leave the DB empty.
+            logger.warning("Anime mapping download parsed to 0 entries — keeping cached copy")
+            return _load_from_db()
+        try:
+            _save_to_db(mapping)
+        except Exception as e:
+            # The parsed mapping is still good for this process; the old cache
+            # survives because the swap is transactional.
+            logger.warning("Anime mapping cache write failed: %s", e)
+            return mapping
         logger.info("Anime mapping downloaded and cached: %d entries", mapping.total_entries)
         return mapping
 
@@ -151,31 +180,61 @@ def _parse_xml(xml_text: str) -> AnimeMapping:
 
 
 def _save_to_db(mapping: AnimeMapping):
-    """Persist mapping to local SQLite for fast startup."""
-    conn = sqlite3.connect(MAPPING_DB_PATH)
-    conn.execute("DROP TABLE IF EXISTS anime_mapping")
-    conn.execute("""
-        CREATE TABLE anime_mapping (
-            anidb_id INTEGER NOT NULL,
-            tvdb_id  INTEGER NOT NULL,
-            anilist_id INTEGER,
-            PRIMARY KEY (anidb_id)
-        )
-    """)
-    conn.execute("CREATE INDEX idx_tvdb ON anime_mapping (tvdb_id)")
+    """Persist mapping to local SQLite for fast startup.
 
-    rows = [
-        (anidb, tvdb, mapping.anidb_to_anilist.get(anidb))
-        for tvdb, anidb in mapping.tvdb_to_anidb.items()
-    ]
-    conn.executemany("INSERT OR REPLACE INTO anime_mapping VALUES (?,?,?)", rows)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)
-    """)
-    conn.execute("INSERT OR REPLACE INTO meta VALUES ('downloaded_at', ?)",
-                 (datetime.utcnow().isoformat(),))
-    conn.commit()
-    conn.close()
+    Builds the new table beside the old one and swaps inside one transaction:
+    the old DROP-then-INSERT ran in autocommit, so a crash (or an empty parse)
+    left the cache wiped. An empty mapping is never saved.
+    """
+    if mapping.total_entries == 0 or not mapping.tvdb_to_anidb:
+        logger.warning("Refusing to save an empty anime mapping over the cache")
+        return
+    conn = sqlite3.connect(MAPPING_DB_PATH, isolation_level=None)
+    try:
+        conn.execute("BEGIN")
+        # AniList ids are learned at runtime via update_anilist_id(); the XML
+        # never carries them, so the weekly refresh used to reset them to NULL.
+        learned: dict[int, int] = {}
+        has_old = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='anime_mapping'"
+        ).fetchone()
+        if has_old:
+            learned = dict(conn.execute(
+                "SELECT anidb_id, anilist_id FROM anime_mapping WHERE anilist_id IS NOT NULL"
+            ).fetchall())
+        conn.execute("DROP TABLE IF EXISTS anime_mapping_new")
+        conn.execute("""
+            CREATE TABLE anime_mapping_new (
+                anidb_id INTEGER NOT NULL,
+                tvdb_id  INTEGER NOT NULL,
+                anilist_id INTEGER,
+                PRIMARY KEY (anidb_id)
+            )
+        """)
+        rows = [
+            (anidb, tvdb, mapping.anidb_to_anilist.get(anidb) or learned.get(anidb))
+            for tvdb, anidb in mapping.tvdb_to_anidb.items()
+        ]
+        conn.executemany("INSERT OR REPLACE INTO anime_mapping_new VALUES (?,?,?)", rows)
+        conn.execute("DROP TABLE IF EXISTS anime_mapping")
+        conn.execute("ALTER TABLE anime_mapping_new RENAME TO anime_mapping")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tvdb ON anime_mapping (tvdb_id)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)
+        """)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('downloaded_at', ?)",
+                     (datetime.utcnow().isoformat(),))
+        conn.execute("COMMIT")
+        for anidb, anilist in learned.items():
+            if anidb in mapping.anidb_to_tvdb and anidb not in mapping.anidb_to_anilist:
+                mapping.anidb_to_anilist[anidb] = anilist
+                mapping.tvdb_to_anilist[mapping.anidb_to_tvdb[anidb]] = anilist
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
 
 
 def _load_from_db() -> AnimeMapping:
