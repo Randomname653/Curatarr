@@ -34,6 +34,7 @@ from sqlalchemy import update
 from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
+from src.services.enrichment_state import TRANSIENT
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,11 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
             failed += 1
             continue
 
+        if profile is TRANSIENT:
+            # Throttled / down is not "no match": recording a miss here parked
+            # every artist of an outage batch for 14-90 days.
+            failed += 1
+            continue
         mbid = (profile or {}).get("mbid")
         if not mbid:
             failed += 1

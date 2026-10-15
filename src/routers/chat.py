@@ -1911,10 +1911,16 @@ async def _build_discuss_context_block(
             from src.services.watch_status import (music_listening_stats,
                                                    format_listening_line)
             _mbid_m = _re.search(r"/artist/([0-9a-f\-]{36})", proposal.arr_url or "")
-            _ls = music_listening_stats(proposal.user_id, proposal.title,
-                                        _mbid_m.group(1) if _mbid_m else None)
+            try:
+                _ls_line = format_listening_line(music_listening_stats(
+                    proposal.user_id, proposal.title,
+                    _mbid_m.group(1) if _mbid_m else None))
+            except Exception as _e:
+                logger.warning("[chat] listening record for %r unreadable: %s",
+                               proposal.title, _e)
+                _ls_line = "UNKNOWN — could not be read just now."
             block += (f"\nOWNER LISTENING RECORD for '{proposal.title}': "
-                      f"{format_listening_line(_ls)}\n")
+                      f"{_ls_line}\n")
             try:
                 from src.services.lidarr_discography import discography_summary
                 _disc = await discography_summary(

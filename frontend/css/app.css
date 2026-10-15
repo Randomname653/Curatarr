@@ -78,10 +78,10 @@
   --danger-dim-hover: rgba(242,123,123,.2);
   --danger-line: rgba(242,123,123,.3);
   --danger-line-strong: rgba(242,123,123,.5);
-  --amber-line: var(--amber-line);
-  --success-line: var(--success-line);
-  --info-dim: var(--info-dim);
-  --info-line: var(--info-line);
+  --amber-line: rgba(229,160,13,.3);
+  --success-line: rgba(61,220,151,.3);
+  --info-dim: rgba(91,141,238,.12);
+  --info-line: rgba(91,141,238,.25);
   --success: #3ddc97;
   --success-dim: rgba(61,220,151,.1);
   --info: #5b8dee;

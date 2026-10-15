@@ -1106,17 +1106,23 @@ async def extract_memories_from_thread(
     # without exposing any assistant claims.
     anchor_line = ""
     followup_ctx = None   # set for recommendation_followup threads (see below)
+    # Plain columns, read INSIDE the session: get_db_session commits on exit
+    # (expire_on_commit) and closes, so reading an ORM row's attributes after
+    # the block raised DetachedInstanceError on every discussion thread. The
+    # DEBUG except below swallowed it: no thread ever got its anchor line, and
+    # recommendation follow-up verdicts never reached analyze_recommendation_
+    # feedback - the same class of bug as the 2026-10 taste-cluster one.
     try:
         if thread_id.startswith("proactive_message:"):
-            from src.database.models import ProactiveMessage
+            from src.database.models import ProactiveMessage as _PM
             with get_db_session() as db:
                 # user_id filter: the thread id comes from the client's
                 # discuss_context, so without it any user could anchor their
                 # extraction on (and have the summarizer read) another
                 # user's message.
-                pm = db.query(ProactiveMessage).filter(
-                    ProactiveMessage.id == int(thread_id.split(":", 1)[1]),
-                    ProactiveMessage.user_id == user_id).first()
+                pm = db.query(_PM.message, _PM.trigger_type, _PM.trigger_data).filter(
+                    _PM.id == int(thread_id.split(":", 1)[1]),
+                    _PM.user_id == user_id).first()
             if pm and pm.message:
                 anchor_line = ("CONVERSATION SUBJECT (the assistant's opening that the "
                                "user is replying to — context ONLY, extract nothing "
@@ -1127,19 +1133,20 @@ async def extract_memories_from_thread(
                     if td.get("title"):
                         followup_ctx = {"title": td["title"],
                                         "category": td.get("category")}
-                except Exception:
-                    pass
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.warning("[memory] follow-up trigger data unreadable "
+                                   "for %s: %s", thread_id, e)
         elif thread_id.startswith("deletion_proposal:"):
-            from src.database.models import DeletionProposal
+            from src.database.models import DeletionProposal as _DP
             with get_db_session() as db:
-                dp = db.query(DeletionProposal).filter(
-                    DeletionProposal.id == int(thread_id.split(":", 1)[1]),
-                    DeletionProposal.user_id == user_id).first()
+                dp = db.query(_DP.title, _DP.category).filter(
+                    _DP.id == int(thread_id.split(":", 1)[1]),
+                    _DP.user_id == user_id).first()
             if dp and dp.title:
                 anchor_line = (f"CONVERSATION SUBJECT: the deletion of "
                                f"'{dp.title}' ({dp.category or 'title'}).\n\n")
     except Exception as e:
-        logger.debug("[memory] anchor line failed for %s: %s", thread_id, e)
+        logger.warning("[memory] anchor line failed for %s: %s", thread_id, e)
 
     numbered = "\n".join(f"{i}. {m[:600]}" for i, m in enumerate(user_msgs, 1))
     prompt = f"""[MODE: LONG-TERM MEMORY EXTRACTION]

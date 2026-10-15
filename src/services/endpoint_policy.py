@@ -16,6 +16,7 @@ SoulSync), shared by the setup wizard and the library panel (2026-10-10 audit):
   the write-only masking of the integrations panel.
 """
 import ipaddress
+import re
 from typing import Optional
 
 import httpx
@@ -27,6 +28,10 @@ _REFUSED_NETS = tuple(ipaddress.ip_network(n) for n in (
     "169.254.0.0/16", "fe80::/10", "fd00:ec2::254/128", "100.100.100.200/32",
 ))
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+# Every spelling inet_aton accepts: 1-4 dot-separated decimal, octal or hex
+# parts (the last may be empty only before a trailing dot, stripped first).
+_NUMERIC_HOST = re.compile(r"(?:0x[0-9a-f]*|[0-9]+)(?:\.(?:0x[0-9a-f]*|[0-9]+)){0,3}",
+                           re.IGNORECASE)
 
 
 def validate_service_url(raw: Optional[str]) -> Optional[str]:
@@ -48,10 +53,28 @@ def validate_service_url(raw: Optional[str]) -> Optional[str]:
         raise ValueError("put credentials in the key field, not in the URL")
     if u.query or u.fragment or "?" in raw or "#" in raw:
         raise ValueError("a service address cannot carry a query string or fragment")
+    # A trailing dot is a legal absolute name, and "169.254.169.254." still
+    # connects to the metadata service: check what is left without it.
+    host = u.host.rstrip(".")
+    # inet_aton - what the connect underneath resolves with - also takes
+    # 2852039166, 0xa9fea9fe, 0251.0376.0251.0376, 169.254.43518 and "0".
+    # None of those parse as an ip_address below, so each one walked past
+    # every refusal (audit 2026-10-15). A media server's address is written
+    # as four decimal numbers; any other all-numeric host is refused.
+    if _NUMERIC_HOST.fullmatch(host):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            raise ValueError(f"write {u.host} as a plain IPv4 address (four "
+                             "decimal numbers) or a host name")
     try:
-        ip = ipaddress.ip_address(u.host)
+        ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
+    if ip is not None and ip.version == 6 and ip.ipv4_mapped:
+        # [::ffff:169.254.169.254] is IPv4 on the wire, and an IPv4Network
+        # never "contains" an IPv6 address - judge the address it maps to.
+        ip = ip.ipv4_mapped
     if ip is not None:
         # Order matters: link-local and 0.0.0.0 both count as is_private,
         # and ::1 sits in a reserved block - so the refusals come first and

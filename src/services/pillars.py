@@ -529,7 +529,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
             # side is known after all.
             flags["owner_watch_unknown"] = False
         except Exception as e:
-            logger.debug("[pillars] listening stats failed for %r: %s", title, e)
+            # Unreadable is not "never played": the deletion loop defers it.
+            flags["owner_watch_unknown"] = True
+            owner_line = ("UNKNOWN — the owner's listening history could not be "
+                          "read; do not assume it is unplayed")
+            logger.warning("[pillars] listening stats failed for %r: %s", title, e)
         try:
             from src.services.lidarr_discography import discography_summary
             disc = await discography_summary(

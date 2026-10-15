@@ -72,23 +72,38 @@ async def lifespan(app: FastAPI):
     from src.services.scheduler import start_scheduler
     start_scheduler()
 
-    # Reset any stuck flags from previous crash
+    # Reset any stuck flags from previous crash. This is the ONLY recovery
+    # for a lock a crash left at "1", so each key is cleared on its own (one
+    # failure used to skip every reset after it) and a failure is an ERROR:
+    # the jobs behind a stuck flag wait for it until the next restart.
+    from src.services.app_state import get_state, set_state
+    for _flag in ("enrichment_running", "music_pipeline_running",
+                  "music_pipeline_stop_requested", "deletion_run",
+                  "plex_sync_running"):
+        try:
+            set_state(_flag, "0")
+            if get_state(_flag) not in (None, "0"):
+                raise RuntimeError("the database stayed locked")
+        except Exception as e:
+            logger.error("Boot: stale flag %s could not be cleared - the jobs "
+                         "that take it stay blocked until a restart: %s", _flag, e)
+    # Pass 75/76: seed the game flag with the ACTUAL current state, not
+    # a blind "0". A blind reset left a ~30 s window (until the watcher's
+    # first tick) where game_active was wrong — long enough for the
+    # startup catch-ups to load the LLM and OOM a running game. A direct
+    # is_game_running() check here makes the flag correct from t=0, and a
+    # probe that fails counts as a game until the watcher knows better.
     try:
-        from src.services.app_state import set_state
-        set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
-        set_state("deletion_run", "0")
-        set_state("plex_sync_running", "0")
-        # Pass 75/76: seed the game flag with the ACTUAL current state, not
-        # a blind "0". A blind reset left a ~30 s window (until the watcher's
-        # first tick) where game_active was wrong — long enough for the
-        # startup catch-ups to load the LLM and OOM a running game. A direct
-        # is_game_running() check here makes the flag correct from t=0.
         from src.services.process_monitor import is_game_running as _igr
-        set_state("game_active", "1" if _igr() else "0")
-    except Exception:
-        pass
+        _game = _igr()
+    except Exception as e:
+        logger.warning("Boot: game probe failed - assuming a game until the "
+                       "watcher's first tick: %s", e)
+        _game = True
+    try:
+        set_state("game_active", "1" if _game else "0")
+    except Exception as e:
+        logger.error("Boot: game_active could not be seeded: %s", e)
     # A proposal claimed "deleting" when the process died mid-delete: the
     # outcome is unknown, so park it in limbo (listed, retryable) rather
     # than leave it invisible forever.
@@ -101,8 +116,9 @@ async def lifespan(app: FastAPI):
             _db.commit()
         if _n:
             logger.warning("Boot: %d interrupted deletion(s) parked in limbo", _n)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Boot: interrupted deletions could not be parked in limbo - "
+                     "they stay hidden as 'deleting': %s", e)
 
     # Pass 41: all startup background tasks now go through ``track_task``
     # which retains a strong reference until the task completes. Without
@@ -248,8 +264,10 @@ async def _startup_sync_if_needed():
         if is_game_running():
             logger.info("[startup] Game running — skipping startup sync")
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[startup] game check failed - skipping startup sync; "
+                       "the schedule covers it: %s", e)
+        return
     try:
         from pathlib import Path
         from src.database.connection import get_db_session

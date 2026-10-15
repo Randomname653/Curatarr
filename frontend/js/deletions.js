@@ -588,19 +588,39 @@ export async function bulkDelete() {
   }
   // The job runs server-side (visible live in Activity too) — poll the task
   // registry until it finishes, then reload the list and show the summary.
+  // A failing poll used to be swallowed (`catch {}`) and retried forever:
+  // the button sat on "Deleting N…" and no outcome ever came, on the one
+  // irreversible action. A sign-out, or five misses in a row, stops polling
+  // and says the outcome is unknown; a job the server no longer lists
+  // (restarted mid-run) is unknown too, never "finished".
   const tid = started.task_id;
+  let misses = 0;
   const poll = setInterval(async () => {
+    let r;
     try {
-      const r = await api('/api/tasks/');
-      const t = (r.tasks || []).find(x => x.id === tid);
-      if (!t || !['running', 'pending'].includes(t.status)) {
+      r = await api('/api/tasks/');
+      misses = 0;
+    } catch (e) {
+      if (e.status === 401 || ++misses >= 5) {
         clearInterval(poll);
-        const last = t?.logs?.length ? t.logs[t.logs.length - 1].msg : 'finished';
-        state._delProposalsAll = null;
-        loadDeletions(state.currentDelCategory);
-        toast('Bulk delete: ' + last, t?.status === 'done' ? 'success' : 'amber', {ms: 8000, sticky: t?.status !== 'done'});
+        updateDelBulkCount();
+        toast(`Lost track of the bulk delete (${_errMsg(e)}) — it may still be running. Activity shows its progress.`,
+          'danger', {sticky: true});
       }
-    } catch {}
+      return;
+    }
+    const t = (r.tasks || []).find(x => x.id === tid);
+    if (t && ['running', 'pending'].includes(t.status)) return;
+    clearInterval(poll);
+    state._delProposalsAll = null;
+    loadDeletions(state.currentDelCategory);
+    if (!t) {
+      toast('Bulk delete: outcome unknown — the server no longer lists the job (restarted?). The list shows what is left.',
+        'amber', {sticky: true});
+      return;
+    }
+    const last = t.logs?.length ? t.logs[t.logs.length - 1].msg : t.status;
+    toast('Bulk delete: ' + last, t.status === 'done' ? 'success' : 'amber', {ms: 8000, sticky: t.status !== 'done'});
   }, 2000);
 }
 

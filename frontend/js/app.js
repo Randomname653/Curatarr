@@ -6,7 +6,7 @@ import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelR
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { closeModal, toggleMenu, keyActivate, hideOnError } from './ui.js';
+import { _errMsg, closeModal, toggleMenu, keyActivate, hideOnError, toast } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -35,8 +35,16 @@ if (localStorage.getItem('curatarr_sidebar_collapsed') === '1') {
   document.getElementById('sb-collapse-toggle').title = 'Expand sidebar';
 }
 window.onload = async () => {
-  // Check if setup is needed
-  const status = await api('/api/setup/status').catch(()=>({first_run:true}));
+  // Check if setup is needed. A failed check is NOT a first run: it used to
+  // fall back to {first_run:true}, so a server mid-restart or a 500 showed a
+  // configured install the Setup wizard, whose Finish rewrites the config.
+  let status;
+  try {
+    status = await api('/api/setup/status');
+  } catch (e) {
+    toast(`Can't reach Curatarr (${_errMsg(e)}) — reload once it is back.`, 'danger', {sticky: true});
+    status = {first_run: false};
+  }
   if (status.first_run) {
     renderSetupStep(0);
     return;

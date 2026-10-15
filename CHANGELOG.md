@@ -76,6 +76,22 @@ DEBUG; `update_db.py` refuses to run while Curatarr is up and backs the
 database up first. A "Your call" card that the household rule produced
 says so in its tooltip.
 
+**Failures that say so** (`docs/SILENT_FAILURE_SWEEP_2026_10.md`). A sweep of the
+code's error handlers, after the taste-cluster read that failed silently for months, found
+a second one like it. The memory extractor read its thread's subject after the database
+session had closed, so no discussion thread got one, and a verdict from a "how was it?"
+thread never reached the taste profile. Deletions now stop instead of judging without a
+protection they could not read: a Keep cooldown, the curator's stances, recent plays,
+Plex star ratings, listening depth or the learned keep-reasons. An artist whose listening
+history could not be read is no longer "never played"; it is deferred. Game mode no longer
+switches off when a status probe or the flag write fails, and an unreadable game flag
+counts as a game. Each stale lock is cleared at start on its own. Service addresses
+spelled as a decimal, hex or IPv6-mapped number no longer get past the link-local check.
+A Discogs download cut short keeps the complete styles database, and a MusicBrainz outage
+no longer parks artists as "no match". In the browser, badge, banner and hover colours
+are back (four colour tokens referred to themselves); a bulk delete whose progress can't
+be read says so; a failed start-up check no longer opens the Setup wizard.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:
