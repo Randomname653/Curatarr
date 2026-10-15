@@ -76,6 +76,14 @@ DEBUG; `update_db.py` refuses to run while Curatarr is up and backs the
 database up first. A "Your call" card that the household rule produced
 says so in its tooltip.
 
+**Card tags that tell titles apart.** A deletion card showed the arr's first
+four genres, so nearly every anime read "Action, Animation, Anime, Drama".
+Cards now take the genres from the enriched profile (AniList's for anime:
+Ecchi, Mecha, Slice of Life), drop what the tab already says, put the
+genre that is rarest in your library first, and add up to two short
+themes in a quieter chip ("Anthropomorphic warships", "Drug heist"). Music
+cards, which showed none, get theirs from the artist profile.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

@@ -73,7 +73,9 @@ export async function loadPrinciples() {
           ? '<span class="badge muted">rejected</span>'
           : p.status === 'merged'
             ? '<span class="badge muted" title="Consolidated into a newer rule">merged</span>'
-            : '<span class="badge amber">shadow</span>';
+            : p.status === 'superseded'
+              ? '<span class="badge muted" title="Replaced by a rule you adopted that contradicts it">superseded</span>'
+              : '<span class="badge amber">shadow</span>';
       const nov = p.novelty === 'contradiction'
         ? ' <span class="badge danger" title="Conflicts with an existing principle — your call">contradiction</span>'
         : (p.novelty ? ` <span class="badge muted">${esc(p.novelty)}</span>` : '');

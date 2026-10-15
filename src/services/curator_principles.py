@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
 from datetime import datetime
@@ -91,7 +92,8 @@ verdict for each candidate:
 - REFINEMENT    — sharpens or adds nuance to an existing point.
 - CONTRADICTION — conflicts with an existing principle (flag it; the owner decides).
 
-Set related to a few words of the existing rule / profile point it matches (or "-"), and reason to one line."""
+Set related to a few words of the existing rule / profile point it matches (or "-"), and reason to one line.
+Each existing principle is listed with its ID: set related_id to the ID of the existing principle the candidate duplicates, refines or contradicts — 0 when it matches only the taste profile, a previously rejected rule, or nothing."""
 
 _NOVELTY_SCHEMA = {
     "type": "object",
@@ -105,6 +107,7 @@ _NOVELTY_SCHEMA = {
                     "verdict": {"type": "string",
                                 "enum": ["NEW", "DUPLICATE", "REFINEMENT", "CONTRADICTION"]},
                     "related": {"type": "string"},
+                    "related_id": {"type": "integer"},
                     "reason": {"type": "string"},
                 },
                 "required": ["n", "verdict"],
@@ -167,22 +170,23 @@ def _thread_text(user_id: int, thread_id: str) -> tuple[str, int]:
 
 # ── EXISTING CONTEXT for the novelty check ───────────────────────────────────
 
-def _existing_context(user_id: int) -> tuple[list[str], str, list[str]]:
+def _existing_context(user_id: int) -> tuple[list[tuple[int, str]], str, list[str]]:
     """The rule-set the candidate is judged against: the current principles
-    (active + shadow, so we don't re-capture a shadow duplicate), the owner's
-    taste-profile summary, and the REJECTED principles — the owner's explicit
-    "no" is knowledge too. Without the rejected list, the next debate touching
-    the same theme re-derived the same rule as NEW and rang the bell again
-    (the comfort-food principle would have resurrected forever)."""
-    texts: list[str] = []
+    as (id, text) (active + shadow, so we don't re-capture a shadow
+    duplicate; the id lets the verdict name WHICH rule it relates to), the
+    owner's taste-profile summary, and the REJECTED principles — the owner's
+    explicit "no" is knowledge too. Without the rejected list, the next debate
+    touching the same theme re-derived the same rule as NEW and rang the bell
+    again (the comfort-food principle would have resurrected forever)."""
+    existing: list[tuple[int, str]] = []
     rejected: list[str] = []
     with get_db_session() as db:
-        rows = (db.query(CuratorPrinciple.text, CuratorPrinciple.status)
+        rows = (db.query(CuratorPrinciple.id, CuratorPrinciple.text, CuratorPrinciple.status)
                   .filter(CuratorPrinciple.user_id == user_id,
                           CuratorPrinciple.status.in_(("active", "shadow", "rejected")))
                   .all())
-        texts = [r[0] for r in rows if r[0] and r[1] in ("active", "shadow")]
-        rejected = [r[0] for r in rows if r[0] and r[1] == "rejected"]
+        existing = [(r[0], r[1]) for r in rows if r[1] and r[2] in ("active", "shadow")]
+        rejected = [r[1] for r in rows if r[1] and r[2] == "rejected"]
     taste = ""
     try:
         from src.database.models import TasteVectorEntry
@@ -193,16 +197,19 @@ def _existing_context(user_id: int) -> tuple[list[str], str, list[str]]:
                 taste = tv.summary_text[:3500]
     except Exception as e:
         logger.debug("[principles] taste fetch failed: %s", e)
-    return texts, taste, rejected
+    return existing, taste, rejected
 
 
-def _build_novelty_user(candidates: list[str], existing: list[str], taste: str,
+def _build_novelty_user(candidates: list[str], existing: list, taste: str,
                         rejected: list[str] | None = None) -> str:
+    """``existing`` holds (id, text) pairs — listed with their IDs so the
+    verdict can name one — or plain texts (the prototype scripts)."""
     parts = []
     if taste:
         parts.append("TASTE PROFILE (existing knowledge):\n" + taste)
     parts.append("EXISTING PRINCIPLES:\n" + (
-        "\n".join(f"- {t}" for t in existing) if existing else "(none yet)"))
+        "\n".join(f"- ID {e[0]}: {e[1]}" if isinstance(e, (tuple, list)) else f"- {e}"
+                  for e in existing) if existing else "(none yet)"))
     if rejected:
         parts.append(
             "PREVIOUSLY REJECTED BY THE OWNER (they explicitly dismissed these "
@@ -223,9 +230,73 @@ async def _embed(text: str):
         return None
 
 
-def _reinforce_duplicate(user_id: int, related: str) -> None:
+_RELATED_ID = re.compile(r"^#(\d+)\b")
+
+
+def _related_ref(related_id, related: str | None, known_ids: set) -> str | None:
+    """The stored ``related`` value: "#<id>: <words>" when the verdict named an
+    existing principle by a VALID id (one actually listed — a model may
+    invent one), else the free-text words as before."""
+    words = (related or "").strip()
+    words = None if words in ("", "-", "—") else words
+    try:
+        rid = int(related_id or 0)
+    except (TypeError, ValueError):
+        rid = 0
+    if rid and rid in known_ids:
+        return f"#{rid}: {words}" if words else f"#{rid}"
+    return words
+
+
+def _related_id(related: str | None) -> int | None:
+    m = _RELATED_ID.match(related or "")
+    return int(m.group(1)) if m else None
+
+
+def supersede_contradicted(db, row) -> int | None:
+    """When a CONTRADICTION principle is adopted, the rule it contradicts
+    stops being active (status 'superseded', excluded from retrieval). Before,
+    both stayed active and the judge was told to "apply" two opposite rules.
+    Works only when the capture resolved the related rule's id; free-text
+    ``related`` is left alone (it cannot be resolved safely). Returns the
+    superseded id. The caller commits."""
+    if (row.novelty or "") != "contradiction":
+        return None
+    rid = _related_id(row.related)
+    if not rid or rid == row.id:
+        return None
+    old = (db.query(CuratorPrinciple)
+             .filter(CuratorPrinciple.id == rid,
+                     CuratorPrinciple.user_id == row.user_id,
+                     CuratorPrinciple.status.in_(("active", "shadow")))
+             .first())
+    if old is None:
+        return None
+    old.status = "superseded"
+    old.related = f"superseded by #{row.id}"
+    logger.info("🧭 [PRINCIPLE] #%d supersedes contradicted #%d", row.id, old.id)
+    return old.id
+
+
+def _reinforce_duplicate(user_id: int, related: str, related_id: int | None = None) -> None:
     """Recurrence = a confidence BOOSTER, not a gate: when the owner restates a
-    principle we already hold, bump its counter instead of storing a near-copy."""
+    principle we already hold, bump its counter instead of storing a near-copy.
+    A resolved ``related_id`` names the rule exactly; otherwise the free-text
+    ``related`` words are matched as before."""
+    if related_id:
+        try:
+            with get_db_session() as db:
+                row = (db.query(CuratorPrinciple)
+                         .filter(CuratorPrinciple.id == related_id,
+                                 CuratorPrinciple.user_id == user_id).first())
+                if row is not None:
+                    row.times_reinforced = (row.times_reinforced or 0) + 1
+                    db.commit()
+                    logger.info("[principles] reinforced #%d (×%d): %s", row.id,
+                                row.times_reinforced, (row.text or "")[:60])
+                    return
+        except Exception as e:
+            logger.debug("[principles] reinforce by id failed: %s", e)
     if not related or related.strip() in ("-", "—", ""):
         return
     key = related.strip().lower()[:40]
@@ -286,6 +357,7 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
 
     # 2 — novelty-check against the existing rule-set (decide-only)
     existing, taste, rejected = _existing_context(user_id)
+    known_ids = {pid for pid, _ in existing}
     cand_texts = [c["principle"].strip() for c in candidates]
     try:
         nv = await _curator_json(
@@ -302,8 +374,9 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     for i, c in enumerate(candidates, 1):
         r = by_n.get(i, {})
         verdict = (r.get("verdict") or "NEW").upper()   # unclassified → treat as NEW
+        related = _related_ref(r.get("related_id"), r.get("related"), known_ids)
         if verdict == "DUPLICATE":
-            _reinforce_duplicate(user_id, r.get("related") or "")
+            _reinforce_duplicate(user_id, r.get("related") or "", _related_id(related))
             continue
         if verdict not in ("NEW", "REFINEMENT", "CONTRADICTION"):
             verdict = "NEW"
@@ -319,7 +392,7 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
                 row = CuratorPrinciple(
                     user_id=user_id, text=text, basis=c.get("basis"),
                     category=category, status=status, novelty=verdict.lower(),
-                    related=(r.get("related") or None), origin_thread_id=thread_id,
+                    related=related, origin_thread_id=thread_id,
                     origin_summary=(r.get("reason") or None),
                     embedding_json=json.dumps(emb) if emb else None,
                     created_at=datetime.utcnow(),
@@ -410,6 +483,7 @@ async def detect_and_apply_principle_verdict(user_id: int, principle_id: int,
                         pass
                 row.status = "active"
                 row.activated_at = datetime.utcnow()
+                supersede_contradicted(db, row)
                 logger.info("🧭 [PRINCIPLE REVIEW] #%d ADOPTED (%s) — now active",
                             row.id, decision)
             db.commit()

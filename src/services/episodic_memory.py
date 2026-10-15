@@ -203,6 +203,22 @@ async def write_memory(
     
 # ── CHECK MEMORIES FOR CONFLICTS ──────────────────────────────────────────────
 
+# A CONTRADICTION no longer hard-deletes the old memory: it is marked
+# superseded in its metadata (recoverable, auditable) and retrieval skips it.
+# And a statement this much WEAKER than the one it contradicts (a passing
+# chat remark vs an explicit, reaffirmed preference) never supersedes it —
+# it is weighed as nuance instead.
+_SUPERSEDE_MARGIN = 0.15
+_SUPERSEDED_IMPORTANCE = 0.05
+
+
+def _is_superseded(metadata_json) -> bool:
+    try:
+        return bool((json.loads(metadata_json or "{}") or {}).get("superseded_by"))
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
     """[(id, content)] of the older memories a new one may conflict with.
     Blocking (a full scan of the user's memories plus the similarity math) —
@@ -229,6 +245,8 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
         # title (a changed opinion on that one title).
         out = []
         for mid, content, meta, _emb in old_memories:
+            if _is_superseded(meta):
+                continue
             try:
                 if (json.loads(meta) or {}).get("title") == title:
                     out.append((mid, content))
@@ -253,8 +271,8 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
     if not new_emb:
         return []
     ids, contents, vecs = [], [], []
-    for mid, content, _meta, emb in old_memories:
-        if not emb:
+    for mid, content, meta, emb in old_memories:
+        if not emb or _is_superseded(meta):
             continue
         try:
             v = json.loads(emb)
@@ -291,8 +309,27 @@ def _apply_conflict_verdict(user_id: int, new_memory_id: int, old_id: int, statu
         if old_mem is None:
             return False   # gone since the scan (another verdict, a delete)
         if status == "CONTRADICTION":
-            logger.info(f"🧹 [MEMORY RESOLUTION] Contradiction found! Deleting old memory ID {old_mem.id}.")
-            db.delete(old_mem)
+            new_mem = db.query(M).filter(M.id == new_memory_id, M.user_id == user_id).first()
+            if new_mem is not None and \
+                    (new_mem.importance or 0) + _SUPERSEDE_MARGIN < (old_mem.importance or 0):
+                # A weaker statement never erases a stronger standing one
+                # (it used to DELETE it): weigh it as a nuance shift instead.
+                was = old_mem.importance or 0.5
+                old_mem.importance = max(0.3, was - 0.1)
+                logger.info("⚖️ [MEMORY RESOLUTION] Contradiction from a weaker memory "
+                            "(%.2f vs %.2f) — easing old memory ID %d to %.2f, not superseding.",
+                            new_mem.importance or 0, was, old_mem.id, old_mem.importance)
+                return False
+            try:
+                meta = json.loads(old_mem.metadata_json or "{}") or {}
+            except (ValueError, TypeError):
+                meta = {}
+            meta["superseded_by"] = new_memory_id
+            meta["superseded_at"] = datetime.utcnow().isoformat()
+            old_mem.metadata_json = json.dumps(meta)
+            old_mem.importance = _SUPERSEDED_IMPORTANCE
+            logger.info(f"🧹 [MEMORY RESOLUTION] Contradiction found — old memory ID {old_mem.id} "
+                        f"superseded by {new_memory_id} (kept, no longer retrieved).")
             return False
         if status == "REAFFIRMATION":
             # The user is RESTATING a standing preference — reinforce
@@ -337,9 +374,11 @@ async def resolve_memory_conflicts(user_id: int, new_memory_id: int, new_content
     if not target_memories:
         return
 
+    # A title-less memory used to be framed as "regarding the title ''".
+    subject = f"the title '{title}'" if title else "the user's general preferences"
     for old_id, old_content in target_memories:
         prompt = f"""[MODE: MEMORY CONFLICT RESOLUTION]
-Analyze how the NEW memory relates to the OLD memory regarding the title '{title}'.
+Analyze how the NEW memory relates to the OLD memory regarding {subject}.
 
 OLD MEMORY: "{old_content}"
 NEW MEMORY: "{new_content}"
@@ -348,7 +387,7 @@ Evaluate the relationship:
 - "CONTRADICTION": They are exact opposites (e.g., hating vs. loving). One must be false.
 - "REAFFIRMATION": The NEW repeats, restates, or strengthens the SAME point or sentiment as the OLD — the user is reinforcing a standing preference, not changing it.
 - "NUANCE": A DIFFERENT but compatible aspect, or a genuine partial shift in opinion that doesn't completely invalidate the old one.
-- "UNRELATED": They talk about completely different things.
+- "UNRELATED": They talk about completely different things — OR either memory is situational or momentary (tonight, right now, this week, "in the mood for"). A passing mood never contradicts a standing taste.
 
 Output ONLY a JSON block:
 {{"status": "CONTRADICTION" | "REAFFIRMATION" | "NUANCE" | "UNRELATED", "reason": "brief explanation"}}"""
@@ -488,6 +527,8 @@ async def retrieve_memories(
         scored = []
 
         for mem in memories:
+            if _is_superseded(mem.metadata_json):
+                continue   # contradicted by a newer memory — kept, not served
             # Semantic score
             if query_embedding and mem.embedding_json:
                 try:
@@ -503,20 +544,25 @@ async def retrieve_memories(
             recency = max(0.0, 1.0 - (age_days / max(recency_boost_days, 1)))
             recency_factor = 1.0 + (0.3 * recency)
 
-            # Access count boost (frequently retrieved = relevant)
-            access_boost = min(0.2, mem.access_count * 0.02)
+            # Access boost, scaled by THIS query's semantic match: it was a
+            # flat +0.02 per past retrieval (up to +0.2), so a memory that had
+            # been retrieved often enough ranked on habit alone — and decayed
+            # memories (importance 0.1) ranked almost purely on it.
+            access_boost = min(0.2, (mem.access_count or 0) * 0.02) * max(0.0, sem_score)
 
-            score = sem_score * mem.importance * recency_factor + access_boost
+            score = sem_score * (mem.importance or 0.0) * recency_factor + access_boost
 
             scored.append((score, mem))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[:top_k]
+        # Minimum relevance BEFORE counting access: every top-k memory used to
+        # be counted as "accessed" even when the threshold then hid it, so
+        # irrelevant memories accrued the boost that later surfaced them.
+        top = [(s, m) for s, m in scored[:top_k] if s > 0.1]
 
-        # Update access counts
-        mem_ids = [m.id for _, m in top]
+        returned = {m.id for _, m in top}
         for mem in memories:
-            if mem.id in mem_ids:
+            if mem.id in returned:
                 mem.last_accessed = now
                 mem.access_count = (mem.access_count or 0) + 1
         db.commit()
@@ -533,7 +579,6 @@ async def retrieve_memories(
                 "score": round(score, 3),
             }
             for score, m in top
-            if score > 0.1  # minimum relevance threshold
         ]
 
 
@@ -564,6 +609,36 @@ _CONSIDERATION_STOP = {
     "values", "value", "valued", "valuing", "wants", "want", "keep", "keeps", "likes",
     "like", "liked", "enjoy", "enjoys", "enjoyed", "watch", "watches", "early",
     "portions", "featured", "original", "considers", "comprehensive", "part", "still",
+}
+
+
+def _word_prefix_re(terms) -> "re.Pattern":
+    """Terms matched at the START of a word: stems keep their suffixes
+    ("valu" → valued, "nostalg" → nostalgic) but no longer match INSIDE a
+    word — plain substring tests vetoed "whatever" as a "hate" memory and
+    read "glove" as "love"."""
+    return re.compile(r"\b(?:" + "|".join(re.escape(t) for t in terms) + r")", re.I)
+
+
+_CONSIDERATION_POSITIVE_RE = _word_prefix_re(_CONSIDERATION_POSITIVE)
+_CONSIDERATION_NEGATIVE_RE = _word_prefix_re(_CONSIDERATION_NEGATIVE)
+
+# Genre vocabulary. The item profile carries its genres, so a single shared
+# genre word ("comedy", "war", "horror") let one title's memory soft-protect
+# every title of that genre (up to the 45-point cap). The lexical path now
+# needs two shared tokens, or one that is not a genre word.
+_GENRE_TOKENS = {
+    "action", "adventure", "animation", "animated", "biography", "comedy",
+    "comedies", "crime", "documentary", "documentaries", "drama", "dramas",
+    "family", "fantasy", "fiction", "history", "horror", "kids", "music",
+    "musical", "mystery", "news", "reality", "romance", "romantic", "sci",
+    "science", "scifi", "sport", "sports", "superhero", "supernatural",
+    "suspense", "talk", "thriller", "thrillers", "war", "western", "sitcom",
+    "sitcoms", "soap", "mecha", "shounen", "shonen", "seinen", "shoujo",
+    "shojo", "josei", "isekai", "ecchi", "slice", "life", "psychological",
+    "rock", "pop", "jazz", "metal", "hip", "hop", "rap", "electronic", "folk",
+    "punk", "indie", "blues", "country", "soul", "ambient", "techno",
+    "house", "classical", "soundtrack",
 }
 
 
@@ -615,13 +690,14 @@ async def retrieve_considerations(
         # Pull plain fields out before the session closes — the ORM instances
         # would otherwise raise DetachedInstanceError on attribute access below.
         rows = [
-            (m.id, m.content, m.importance, m.embedding_json, m.media_category)
+            (m.id, m.content, m.importance, m.embedding_json, m.media_category,
+             m.metadata_json)
             for m in q.all()
         ]
 
     sims = []
-    for mid, content, importance, emb_json, mcat in rows:
-        if not emb_json:
+    for mid, content, importance, emb_json, mcat, meta in rows:
+        if not emb_json or _is_superseded(meta):
             continue
         try:
             sem = _cosine_similarity(item_emb, json.loads(emb_json))
@@ -640,18 +716,20 @@ async def retrieve_considerations(
 
     out = []
     for sem, mid, content, importance, mcat in sims:
-        c = (content or "").lower()
-        if any(w in c for w in _CONSIDERATION_NEGATIVE):
+        c = content or ""
+        if _CONSIDERATION_NEGATIVE_RE.search(c):
             continue
-        if not any(w in c for w in _CONSIDERATION_POSITIVE):
+        if not _CONSIDERATION_POSITIVE_RE.search(c):
             continue
         overlap = item_tokens & _consideration_tokens(content)
         embed_standout = sem >= threshold
         # lexical path: a shared distinctive concept (LGBTQ, a franchise name,
         # "partner") is a reliable signal the embedding misses — but require the
         # topics to be at least cluster-average close so a coincidental shared
-        # word on unrelated items doesn't fire.
-        lexical_hit = len(overlap) >= 1 and sem >= mean
+        # word on unrelated items doesn't fire, and a lone GENRE word is not
+        # distinctive (see _GENRE_TOKENS).
+        lexical_hit = sem >= mean and (len(overlap) >= 2
+                                       or bool(overlap - _GENRE_TOKENS))
         if not (embed_standout or lexical_hit):
             continue
         # relevance = the stronger of the two signals; importance only modulates.
