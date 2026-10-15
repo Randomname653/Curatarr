@@ -87,6 +87,7 @@ from src.database.connection import get_db_session  # noqa: E402
 from src.database.models import EnrichmentStatus, User, WatchHistoryEntry  # noqa: E402
 from src.services import state_lease  # noqa: E402
 from src.services.app_state import get_state, set_state, force_set_state  # noqa: E402
+from src.services.enrichment_state import TRANSIENT  # noqa: E402
 from src.services.music_metadata import enrich_artist  # noqa: E402
 
 
@@ -115,6 +116,8 @@ _PENDING_LLM_MARKER = "api_cached — LLM pending"
 # pipeline and the custodian), and how often it proves it is alive.
 _LEASE_KEY = "music_pipeline_running"
 _HEARTBEAT_S = 60
+# Artists in a row whose upstreams did not answer before the run gives up.
+_MAX_OUTAGES = 10
 
 
 # ── logging ──────────────────────────────────────────────────────────────────
@@ -415,7 +418,7 @@ async def _run_spotify_phase(
 # ── worker: loop over not-enriched music rows, enrich one at a time ──────────
 
 
-def _pop_next_row_id() -> tuple[int, str] | None:
+def _pop_next_row_id(after_id: int = 0) -> tuple[int, str] | None:
     """Return (id, title) of the next not-enriched music artist, or None when
     nothing's left. Selected by id ascending = oldest first. No row is held
     across the enrich call — we re-fetch by id to update.
@@ -428,6 +431,10 @@ def _pop_next_row_id() -> tuple[int, str] | None:
     showed thousands of identical MISS warnings for one artist in an hour.
     ``--retry-errors`` (``reset_errors``) clears ``error`` and lets rows
     flow through again on the next run.
+
+    ``after_id``: a row whose upstreams did not answer is left unmarked (it
+    is not a miss), so without a cursor it would come back as the lowest id
+    straight away. The worker passes the last id it handled.
     """
     with get_db_session() as db:
         row = (
@@ -436,6 +443,7 @@ def _pop_next_row_id() -> tuple[int, str] | None:
                 EnrichmentStatus.media_category == "music",
                 EnrichmentStatus.enriched == False,  # noqa: E712
                 EnrichmentStatus.error.is_(None),
+                EnrichmentStatus.id > after_id,
             )
             .order_by(EnrichmentStatus.id.asc())
             .first()
@@ -505,6 +513,8 @@ async def worker(
     fast_hits  = 0   # enrich_artist returned in < _CACHE_HIT_THRESHOLD_S
     slow_hits  = 0   # enrich_artist took longer (live API or failure)
     last_beat  = _t_mod.monotonic()
+    cursor     = 0   # last row id handled — transient rows are skipped, not marked
+    outages    = 0   # transient answers in a row
 
     while not stop_event.is_set():
         if stop_requested_from_ui():
@@ -516,11 +526,12 @@ async def worker(
                              "stopping so two runners never share the rows.")
                 break
             last_beat = _t_mod.monotonic()
-        nxt = _pop_next_row_id()
+        nxt = _pop_next_row_id(cursor)
         if nxt is None:
             logger.info("No more not-enriched music artists. Done.")
             break
         row_id, artist = nxt
+        cursor = row_id
         if not artist:
             # Defensive: empty title — skip and mark so we never loop on it.
             with get_db_session() as db:
@@ -534,6 +545,24 @@ async def worker(
         _t0 = _t_mod.monotonic()
         try:
             data = await enrich_artist(artist)
+            if data is TRANSIENT:
+                # MusicBrainz / Last.fm did not answer: no verdict. The row
+                # stays as it was for the next run; a run of these means the
+                # upstreams are down, so back off and eventually stop.
+                outages += 1
+                logger.warning("[%d] UPSTREAM DOWN: %s — left for the next run (%d in a row)",
+                               processed + 1, artist, outages)
+                if outages >= _MAX_OUTAGES:
+                    logger.error("%d artists in a row got no answer from MusicBrainz/Last.fm — "
+                                 "the upstreams look down; stopping.", outages)
+                    break
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=min(60, 2 ** outages))
+                    break
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            outages = 0
             if data is None:
                 # enrich_artist returned None — no record at any source
                 _mark_error(row_id, RuntimeError("no artist record found"))
