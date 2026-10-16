@@ -123,13 +123,19 @@ check("driver sysmem fallback: Ollama says 2974 MiB resident, the card took 2323
 check("...a model that really fits is not flagged (compute buffers make smi >= ps)",
       not sysmem_fallback({"vram_model_mib": 3366, "size_vram_mib": 2974, "size_mib": 2974,
                            "gpu_share_pct": 100})["sysmem_fallback"])
-_full = sysmem_fallback({"vram_model_mib": 23362, "size_vram_mib": 19566, "size_mib": 19566,
-                         "gpu_share_pct": 100}, idle_mib=1201, total_mib=24564)
-check("a FULL card counts as spilled even when Ollama under-reports (gemma4:31b at 256k)",
+_full = sysmem_fallback({"vram_model_mib": 19787, "size_vram_mib": 19326, "size_mib": 19326,
+                         "gpu_share_pct": 100}, idle_free_mib=19915)
+check("a FULL card counts as spilled even when Ollama under-reports (gemma4:31b on 20 GB: 128 MiB left)",
       _full["sysmem_fallback"] and _full["card_full"] and _full["gpu_share_effective_pct"] < 100)
-check("...16k on the same card, with room left, does not",
+check("...16k on the full 24 GB card, 1.4 GB left, does not",
       not sysmem_fallback({"vram_model_mib": 22156, "size_vram_mib": 19326, "size_mib": 19326,
-                           "gpu_share_pct": 100}, idle_mib=1201, total_mib=24564)["sysmem_fallback"])
+                           "gpu_share_pct": 100}, idle_free_mib=23529)["sysmem_fallback"])
+from tests.benchmarks.hwbench.perf import stalled  # noqa: E402
+_pts = [{"num_ctx": c, "vram_model_mib": v} for c, v in
+        ((2048, 21022), (4096, 21184), (8192, 21496), (16384, 22156), (24576, 22656), (32768, 23274))]
+check("sweep: growth that stalls (32k -> 48k: +48 MiB, ~1.2 GB expected) means spilled",
+      stalled(_pts, 49152, 23322))
+check("sweep: normal KV growth does not", not stalled(_pts[:5], 32768, 23274))
 check("a spilled cell counts as offloaded in the matrix (effective share wins)",
       matrix.share({"gpu_share_pct": 100, "gpu_share_effective_pct": 78}) == 78
       and not matrix._tier_fit_derived({**ok, "gpu_share_effective_pct": 78, "vram_model_mib": 2000}, 8, 1024))
