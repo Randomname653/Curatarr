@@ -83,6 +83,12 @@ def quality_ok(m: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def share(m: dict):
+    """What really sits on the card: the effective share when the driver
+    spilled into shared memory, else Ollama's own figure."""
+    return m.get("gpu_share_effective_pct", m.get("gpu_share_pct"))
+
+
 def perf_ok(m: dict) -> tuple[bool, str]:
     if m.get("status") != "ok":
         return False, m.get("status") or "no status"
@@ -94,7 +100,7 @@ def perf_ok(m: dict) -> tuple[bool, str]:
         return False, f"long-context probe: {m['long_error'][:80]}"
     if (m.get("judge_escalation_ratio") or 1) > MAX_ESCALATION:
         return False, f"latency escalation x{m['judge_escalation_ratio']}"
-    if (m.get("gpu_share_pct") or 0) < 100:
+    if (share(m) or 0) < 100:
         if (m.get("mono_gen_tok_s_median") or 0) < MIN_GEN_TOK_S:
             return False, f"offloaded, {m.get('mono_gen_tok_s_median')} tok/s"
         if (m.get("judge_wall_s_p90") or 1e9) > MAX_JUDGE_P90_S:
@@ -104,7 +110,7 @@ def perf_ok(m: dict) -> tuple[bool, str]:
 
 def _tier_fit_derived(cell: dict, tier_gb: int, reserve_mib: int) -> bool:
     need = (cell.get("vram_model_mib") or 0) + reserve_mib + FIT_MARGIN_MIB
-    return cell.get("gpu_share_pct") == 100 and need <= tier_gb * 1024
+    return share(cell) == 100 and need <= tier_gb * 1024
 
 
 def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
@@ -145,7 +151,7 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     confirmed = defaultdict(lambda: 99)
     for p in perf:
         s = p["settings"]
-        if isinstance(s.get("tier_gb"), int) and p["metrics"].get("gpu_share_pct") == 100:
+        if isinstance(s.get("tier_gb"), int) and share(p["metrics"]) == 100:
             k = (p["model_key"], s["num_ctx"], s["server"])
             confirmed[k] = min(confirmed[k], s["tier_gb"])
 
@@ -183,7 +189,8 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
                     "judge_s": m.get("judge_wall_s_median"),
                     "monologue_s": m.get("mono_wall_s_median"),
                     "vram_gb": round((m.get("vram_model_mib") or 0) / 1024, 1),
-                    "gpu_share_pct": m.get("gpu_share_pct"),
+                    "gpu_share_pct": share(m),
+                    "sysmem_fallback": bool(m.get("sysmem_fallback")),
                     "ram_taken_gb": round((m.get("ram_taken_mib") or 0) / 1024, 1),
                 },
                 "quality": {"score25": q["score25"], "provisional": q["provisional"],

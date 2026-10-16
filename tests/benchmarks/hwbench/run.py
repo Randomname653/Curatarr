@@ -251,7 +251,7 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                 led.add_run(key, "perf", s, env=environment(bench, reserve_mib, prefetched),
                             metrics=m, started=started)   # a failed load IS the result
                 log(f"  {cfg.label} {profile} ctx {ctx} tier {tier} gpu {num_gpu}: "
-                    f"{m.get('status')} share {m.get('gpu_share_pct')} % "
+                    f"{m.get('status')} share {matrix.share(m)} %{' (SYSMEM FALLBACK)' if m.get('sysmem_fallback') else ''} "
                     f"vram {m.get('vram_model_mib')} MiB gen {m.get('mono_gen_tok_s_median')} t/s "
                     f"judge {m.get('judge_wall_s_median')} s")
                 return m
@@ -263,13 +263,13 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                     prefetched = True
                 total = gpu.query()["total_mib"]
                 fit = None
-                if full.get("gpu_share_pct") == 100:
+                if matrix.share(full) == 100:
                     t = tightest_tier(full.get("vram_model_mib") or 0, reserve_mib, total)
                     for _ in range(2):
                         if t is None:
                             break
                         spot = cell(t, 99)
-                        if spot.get("gpu_share_pct") == 100 and spot.get("status") == "ok":
+                        if matrix.share(spot) == 100 and spot.get("status") == "ok":
                             fit = t
                             break
                         ups = [x for x in matrix.TIERS_GB if x > t and x * 1024 < total]
@@ -282,7 +282,7 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                 for t in reversed(below):
                     m = cell(t, None)
                     ok, _ = matrix.perf_ok(m)
-                    if m.get("status") == "load_failed" or (m.get("gpu_share_pct") or 0) < 20:
+                    if m.get("status") == "load_failed" or (matrix.share(m) or 0) < 20:
                         break
                     misses += 0 if ok else 1
                     if misses >= 2:
@@ -330,6 +330,25 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
     store.cleanup(ref)
 
 
+class KeepAwake:
+    """No standby while the bench runs (the owner's Balanced plan sleeps
+    after 15 minutes on AC, which would end an overnight run). The display
+    may still turn off. Windows only; elsewhere a no-op."""
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+
+    def __enter__(self):
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED)
+        return self
+
+    def __exit__(self, *exc):
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(self.ES_CONTINUOUS)
+        return False
+
+
 def cmd_run(args) -> None:
     global _LOG
     DATA.mkdir(parents=True, exist_ok=True)
@@ -345,7 +364,7 @@ def cmd_run(args) -> None:
     reserve = args.desktop_reserve or max(400, min(1536, idle["used_mib"]))
     log(f"bench {BENCH_VERSION} on {idle['name']} (driver {idle['driver']}), "
         f"desktop reserve {reserve} MiB, {len(cands)} candidates, phases {args.phases}")
-    with server.BenchServer(log_dir=DATA / "logs") as bench:
+    with KeepAwake(), server.BenchServer(log_dir=DATA / "logs") as bench:
         bench.ensure(SERVERS["default"])
         store = models.Store(bench.endpoint, min_free_gb=args.min_free_gb, log=log)
         store.cleanup_leftovers(keep={c["ref"] for c in cands})

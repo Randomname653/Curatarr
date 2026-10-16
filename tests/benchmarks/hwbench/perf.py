@@ -102,6 +102,23 @@ def ps_implausible(res: dict, vram_model_mib: int | None) -> bool:
     return bool(size and vram_model_mib and size < 0.8 * vram_model_mib)
 
 
+def sysmem_fallback(cell: dict) -> dict:
+    """The NVIDIA driver on Windows spills CUDA memory into shared system RAM
+    when VRAM runs out ("Sysmem Fallback"), and Ollama then counts that as
+    VRAM: on 2026-10-16 llama3.2:3b on a simulated 4 GB card reported
+    2974 MiB fully resident while nvidia-smi saw 2323 MiB taken and system
+    RAM lost another 1.6-2.6 GB. A real share below Ollama's claim is the
+    sign; the effective share is what really sits on the card."""
+    vram, claimed = cell.get("vram_model_mib"), cell.get("size_vram_mib")
+    size = cell.get("size_mib")
+    if not (vram and claimed and size):
+        return {"sysmem_fallback": False}
+    spilled = vram < 0.9 * claimed
+    return {"sysmem_fallback": spilled,
+            "gpu_share_effective_pct": (round(100 * min(vram, claimed) / size) if spilled
+                                        else cell.get("gpu_share_pct"))}
+
+
 def _agg(rows: list[dict], key: str) -> dict:
     vals = [r[key] for r in rows if r.get(key) is not None]
     if not vals:
@@ -144,9 +161,15 @@ def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
             break
         res = _residency(endpoint, model)
         vram = gpu.query()["used_mib"] - idle
-        points.append({"num_ctx": ctx, "vram_model_mib": vram, "load_s": r.get("load_s"),
-                       "ps_implausible": ps_implausible(res, vram), **res})
-        if (res.get("gpu_share_pct") or 0) < 100:
+        point = {"num_ctx": ctx, "vram_model_mib": vram, "load_s": r.get("load_s"),
+                 "ps_implausible": ps_implausible(res, vram), **res}
+        point.update(sysmem_fallback(point))
+        # A window that spilled into shared memory does not fit either, even
+        # when Ollama reports it resident.
+        if point["sysmem_fallback"]:
+            point["gpu_share_pct"] = point["gpu_share_effective_pct"]
+        points.append(point)
+        if (point.get("gpu_share_pct") or 0) < 100:
             break
     server.unload_all(endpoint)
     fitted = [p for p in points if p.get("gpu_share_pct") == 100]
@@ -184,6 +207,7 @@ def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
     loaded = gpu.query()
     out["vram_model_mib"] = loaded["used_mib"] - idle["used_mib"]
     out["ps_implausible"] = ps_implausible(out, out["vram_model_mib"])
+    out.update(sysmem_fallback(out))
 
     system, schema = _judge_system(profile)
     judge = []

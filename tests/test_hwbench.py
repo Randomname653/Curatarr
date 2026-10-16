@@ -115,6 +115,17 @@ check("a cell whose /api/ps figure is implausible cannot vouch for a fit",
 from tests.benchmarks.hwbench.perf import ps_implausible  # noqa: E402
 check("ps 2.1 GB vs nvidia-smi 22 GB is implausible, a close pair is not",
       ps_implausible({"size_mib": 2160}, 22400) and not ps_implausible({"size_mib": 21000}, 22400))
+from tests.benchmarks.hwbench.perf import sysmem_fallback  # noqa: E402
+_sf = sysmem_fallback({"vram_model_mib": 2323, "size_vram_mib": 2974, "size_mib": 2974,
+                       "gpu_share_pct": 100})
+check("driver sysmem fallback: Ollama says 2974 MiB resident, the card took 2323 -> spilled",
+      _sf["sysmem_fallback"] and _sf["gpu_share_effective_pct"] == round(100 * 2323 / 2974))
+check("...a model that really fits is not flagged (compute buffers make smi >= ps)",
+      not sysmem_fallback({"vram_model_mib": 3366, "size_vram_mib": 2974, "size_mib": 2974,
+                           "gpu_share_pct": 100})["sysmem_fallback"])
+check("a spilled cell counts as offloaded in the matrix (effective share wins)",
+      matrix.share({"gpu_share_pct": 100, "gpu_share_effective_pct": 78}) == 78
+      and not matrix._tier_fit_derived({**ok, "gpu_share_effective_pct": 78, "vram_model_mib": 2000}, 8, 1024))
 check("JSON gate under 95 % is a K.O.", not matrix.quality_ok({"gate_valid_pct": 93.3})[0])
 check("empty monologues over 5 % are a K.O.",
       not matrix.quality_ok({"gate_valid_pct": 100, "mono_empty_pct": 10})[0])
