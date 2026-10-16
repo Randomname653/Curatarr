@@ -83,13 +83,23 @@ def slug(s: str) -> str:
 # ── preconditions ────────────────────────────────────────────────────────
 def preflight(force_busy: bool, busy_mib: int) -> list[str]:
     problems = []
-    if server.loaded_models(OWNER_OLLAMA):
-        problems.append(f"the owner's Ollama ({OWNER_OLLAMA}) holds a model — stop Curatarr first")
     try:
         httpx.get(APP_URL, timeout=3)
+        app_up = True
         problems.append(f"Curatarr answers on {APP_URL} — stop the app (it would load models mid-bench)")
     except httpx.HTTPError:
-        pass
+        app_up = False
+    leftovers = server.loaded_models(OWNER_OLLAMA)
+    if leftovers and app_up:
+        problems.append(f"the owner's Ollama ({OWNER_OLLAMA}) holds a model — stop Curatarr first")
+    elif leftovers:
+        # With the app off, what is still loaded is a leftover (snapshot_items
+        # loads the embedder for the considerations) — unload, don't refuse.
+        names = [m.get("name") for m in leftovers]
+        server.unload_all(OWNER_OLLAMA)
+        log(f"preflight: unloaded leftovers on the owner's Ollama: {', '.join(names)}")
+        if server.loaded_models(OWNER_OLLAMA):
+            problems.append(f"the owner's Ollama ({OWNER_OLLAMA}) still holds {names} after unloading")
     q = gpu.query()
     with gpu.Sampler() as s:
         time.sleep(3)
