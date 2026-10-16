@@ -102,21 +102,34 @@ def ps_implausible(res: dict, vram_model_mib: int | None) -> bool:
     return bool(size and vram_model_mib and size < 0.8 * vram_model_mib)
 
 
-def sysmem_fallback(cell: dict) -> dict:
+CARD_FULL_SLACK_MIB = 256
+
+
+def sysmem_fallback(cell: dict, idle_mib: int | None = None,
+                    total_mib: int | None = None) -> dict:
     """The NVIDIA driver on Windows spills CUDA memory into shared system RAM
     when VRAM runs out ("Sysmem Fallback"), and Ollama then counts that as
-    VRAM: on 2026-10-16 llama3.2:3b on a simulated 4 GB card reported
-    2974 MiB fully resident while nvidia-smi saw 2323 MiB taken and system
-    RAM lost another 1.6-2.6 GB. A real share below Ollama's claim is the
-    sign; the effective share is what really sits on the card."""
+    VRAM. Two signs, either is enough:
+
+    * the card took less than Ollama claims — llama3.2:3b on a simulated
+      4 GB card: 2974 MiB "resident", 2323 MiB taken (2026-10-16);
+    * the card is FULL — /api/ps does not count the KV cache at all for
+      gemma4:31b (its size grew 250 MiB from 2k to 256k context), so the
+      first sign never fires; nvidia-smi rose until the 24 GB card was full
+      at 64k and stayed there up to 256k, the rest in system RAM.
+    """
     vram, claimed = cell.get("vram_model_mib"), cell.get("size_vram_mib")
     size = cell.get("size_mib")
-    if not (vram and claimed and size):
-        return {"sysmem_fallback": False}
-    spilled = vram < 0.9 * claimed
-    return {"sysmem_fallback": spilled,
-            "gpu_share_effective_pct": (round(100 * min(vram, claimed) / size) if spilled
-                                        else cell.get("gpu_share_pct"))}
+    under = bool(vram and claimed and vram < 0.9 * claimed)
+    full = bool(vram is not None and idle_mib is not None and total_mib
+                and idle_mib + vram >= total_mib - CARD_FULL_SLACK_MIB)
+    if not (under or full):
+        return {"sysmem_fallback": False, "card_full": False,
+                "gpu_share_effective_pct": cell.get("gpu_share_pct")}
+    eff = round(100 * min(vram, claimed) / size) if (under and size) else None
+    # A full card hides how much spilled: below 100 is all that is known.
+    return {"sysmem_fallback": True, "card_full": full,
+            "gpu_share_effective_pct": min(99, eff) if eff is not None else 99}
 
 
 def _agg(rows: list[dict], key: str) -> dict:
@@ -151,7 +164,8 @@ def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
             break
         server.unload_all(endpoint)
         time.sleep(1.0)
-        idle = gpu.query()["used_mib"]
+        q0 = gpu.query()
+        idle, total = q0["used_mib"], q0["total_mib"]
         r = _stream_chat(endpoint, {"model": model, "think": False, "keep_alive": "2m",
                                     "messages": [{"role": "user", "content": "ready"}],
                                     "options": {"num_ctx": ctx, "num_gpu": 99, "num_predict": 1,
@@ -163,7 +177,7 @@ def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
         vram = gpu.query()["used_mib"] - idle
         point = {"num_ctx": ctx, "vram_model_mib": vram, "load_s": r.get("load_s"),
                  "ps_implausible": ps_implausible(res, vram), **res}
-        point.update(sysmem_fallback(point))
+        point.update(sysmem_fallback(point, idle, total))
         # A window that spilled into shared memory does not fit either, even
         # when Ollama reports it resident.
         if point["sysmem_fallback"]:
@@ -207,7 +221,7 @@ def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
     loaded = gpu.query()
     out["vram_model_mib"] = loaded["used_mib"] - idle["used_mib"]
     out["ps_implausible"] = ps_implausible(out, out["vram_model_mib"])
-    out.update(sysmem_fallback(out))
+    out.update(sysmem_fallback(out, idle["used_mib"], idle["total_mib"]))
 
     system, schema = _judge_system(profile)
     judge = []
