@@ -44,7 +44,7 @@ def music_listening_stats(user_id: int, artist: str,
         with get_db_session() as db:
             base = db.query(W).filter(W.user_id == user_id,
                                       W.media_type == "music", or_(*conds))
-            plays = base.count()
+            plays = db.query(func.count(W.id)).filter(W.user_id == user_id, W.media_type == "music", or_(*conds)).scalar()
             if not plays:
                 return None
             tracks = base.with_entities(func.count(func.distinct(W.title))).scalar()
