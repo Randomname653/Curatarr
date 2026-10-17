@@ -439,11 +439,12 @@ async def _get_arr_counts() -> dict:
                             _ES.enriched == True,
                         ).all()
                     }
-                    enriched_albums = db.query(ArrEnrichmentStatus).filter(
+                    from sqlalchemy import func
+                    enriched_albums = db.query(func.count(ArrEnrichmentStatus.id)).filter(
                         ArrEnrichmentStatus.service == "lidarr",
                         ArrEnrichmentStatus.enriched == True,
                         ArrEnrichmentStatus.category == "album",
-                    ).count()
+                    ).scalar()
                 lidarr_names = {
                     (a.get("artistName") or "").lower() for a in artists
                 }
@@ -1709,12 +1710,13 @@ async def enrichment_findings(
     limit = max(1, min(int(limit or 100), 500))
     offset = max(0, int(offset or 0))
     with get_db_session() as db:
+        from sqlalchemy import func
         q = db.query(F)
         if status in ("pending", "resolved", "dismissed"):
             q = q.filter(F.status == status)
         if kind:
             q = q.filter(F.kind.like(f"{kind}%"))
-        total = q.count()
+        total = q.with_entities(func.count(F.id)).scalar()
         rows = q.order_by(F.last_seen.desc()).offset(offset).limit(limit).all()
         items = [_ES.finding_to_dict(r) for r in rows]
     return {"total": total, "offset": offset, "limit": limit, "status": status,
