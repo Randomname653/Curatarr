@@ -8,6 +8,15 @@ from sqlalchemy.pool import StaticPool
 from src.config import settings
 from src.database.models import Base
 
+# How long a statement waits for another writer's lock before "database is
+# locked". It was 60 s while coroutines ran SQLite on the event loop: a lock
+# wait there froze the whole server, and a long timeout was the only way to
+# ride out a writer in another process. With the loop kept free of database
+# work (src/database/loop_guard.py, tests/test_loop_db_ratchet.py) a wait
+# blocks only its worker thread, so the timeout can be what a write should
+# actually tolerate.
+BUSY_TIMEOUT_S = 15
+
 # Check if we're using in-memory SQLite and adjust pool settings accordingly
 if "sqlite:///:memory:" in settings.DATABASE_URL:
     engine = create_engine(
@@ -15,7 +24,6 @@ if "sqlite:///:memory:" in settings.DATABASE_URL:
         connect_args={
             "check_same_thread": False,
         },
-        pool_pre_ping=True,
         poolclass=StaticPool,
     )
 else:
@@ -23,12 +31,15 @@ else:
         settings.DATABASE_URL,
         connect_args={
             "check_same_thread": False,
-            "timeout": 60,  # SQLite connection-level timeout (seconds)
+            "timeout": BUSY_TIMEOUT_S,  # SQLite connection-level timeout (seconds)
         } if "sqlite" in settings.DATABASE_URL else {},
-        pool_pre_ping=True,
-        pool_size=5,
+        # A local file needs no liveness ping per checkout. Ten connections:
+        # the worker threads that now carry every read, without a request
+        # queueing behind a background job for a pooled connection; a
+        # checkout that still waits 10 s points at a leak, not at load.
+        pool_size=10,
         max_overflow=10,
-        pool_timeout=60,
+        pool_timeout=10,
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -41,9 +52,10 @@ def _apply_sqlite_pragmas(dbapi_connection) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=60000")
+    cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_S * 1000}")
     cursor.execute("PRAGMA wal_autocheckpoint=1000")
     cursor.execute("PRAGMA cache_size=-64000")
+    cursor.execute("PRAGMA temp_store=MEMORY")
     cursor.close()
 
 
@@ -51,12 +63,6 @@ if "sqlite" in settings.DATABASE_URL:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         _apply_sqlite_pragmas(dbapi_connection)
-
-    @event.listens_for(engine, "checkout")
-    def on_checkout(dbapi_connection, connection_record, connection_proxy):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA busy_timeout=60000")
-        cursor.close()
 
 
 @contextmanager
@@ -105,10 +111,10 @@ _write_engine = None
 def _build_write_engine(url):
     eng = create_engine(
         url,
-        connect_args={"check_same_thread": False, "timeout": 60},
+        connect_args={"check_same_thread": False, "timeout": BUSY_TIMEOUT_S},
         pool_size=2,
         max_overflow=2,
-        pool_timeout=60,
+        pool_timeout=BUSY_TIMEOUT_S,
     )
 
     @event.listens_for(eng, "connect")

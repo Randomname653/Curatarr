@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**The server no longer waits on the database.** Every page, stream and background job
+shares one event loop, and 561 database calls ran on it directly: while another program
+(the music enricher, a backup) held the database, the whole app could freeze for up to a
+minute. Those calls now run on worker threads. A built-in check logs any new one (and lists
+them at `GET /api/system/loop-guard`, admin only), and a test stops them coming back. The
+database now gives up waiting after 15 seconds instead of 60. Two crashes this turned
+up are fixed: the Deletions list failed when served from its cache, and proactive
+messages were never generated.
+
 **No silent error handlers left.** The last 277 handlers that swallowed an error
 (`pass`, or a DEBUG line nobody sees) now each do one of four things: narrow to the
 error they expect, log a real failure as a warning, keep outages quiet while bugs are
