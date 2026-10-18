@@ -82,7 +82,7 @@ def _node(js: str):
     if not node:
         print("  (node not installed - checked statically)")
         return None
-    r = subprocess.run([node, "-e", js], capture_output=True, text=True)
+    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8")
     if r.returncode != 0:
         print(r.stderr[:800])
         return {}

@@ -125,7 +125,7 @@ globalThis.fetch = async (path) => ({
   console.log(JSON.stringify(out));
 })();
 """ % body
-    r = subprocess.run([node, "-e", js], capture_output=True, text=True)
+    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8")
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}
     if r.returncode != 0:
         print(r.stderr[:600])
