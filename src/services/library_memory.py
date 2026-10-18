@@ -112,7 +112,10 @@ def seen_index(user_id: int, category: str | None = None) -> dict:
                 if tid:
                     tmdb_ids.add(tid)
     except Exception as e:
-        logger.debug("[memory] seen_index failed: %s", e)
+        # An empty index here disables discovery's "never pitch what was
+        # already watched" guarantee for the whole run — not a DEBUG event.
+        logger.warning("[memory] seen_index failed — watched titles unguarded: %r",
+                       e, exc_info=True)
 
     return {"titles": titles, "tmdb_ids": tmdb_ids}
 
@@ -132,7 +135,10 @@ async def owned_index(category: str | None = None) -> dict:
         from src.routers.recommendations import _fetch_arr_candidates
         items = await _fetch_arr_candidates(category)
     except Exception as e:
-        logger.debug("[memory] owned_index fetch failed: %s", e)
+        # Same guarantee for owned titles: an empty index lets discovery
+        # pitch what is already in the library.
+        logger.warning("[memory] owned_index fetch failed — owned titles unguarded: %r",
+                       e, exc_info=True)
         return {"titles": titles, "tmdb_ids": tmdb_ids, "tvdb_ids": tvdb_ids}
 
     for it in items or []:
@@ -186,7 +192,9 @@ def removed_index(user_id: int, category: str | None = None,
                 if _as_int(tvdb_id):
                     tvdb_ids.add(_as_int(tvdb_id))
     except Exception as e:
-        logger.debug("[memory] removed_index failed: %s", e)
+        # Deleted titles would be re-pitched for re-acquisition.
+        logger.warning("[memory] removed_index failed — removed titles unguarded: %r",
+                       e, exc_info=True)
     return {"titles": titles, "tmdb_ids": tmdb_ids, "tvdb_ids": tvdb_ids}
 
 

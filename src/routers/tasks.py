@@ -49,17 +49,17 @@ def _is_admin(user_id: int) -> bool:
 
 
 @router.get("/")
-async def get_tasks(user: User = Depends(get_current_user)):
+def get_tasks(user: User = Depends(get_current_user)):
     return {"tasks": _visible(task_monitor.get_all(), user.id, bool(user.is_admin))}
 
 
 @router.get("/running")
-async def get_running(user: User = Depends(get_current_user)):
+def get_running(user: User = Depends(get_current_user)):
     return {"tasks": _visible(task_monitor.get_running(), user.id, bool(user.is_admin))}
 
 
 @router.get("/history")
-async def get_task_history(user: User = Depends(get_current_user)):
+def get_task_history(user: User = Depends(get_current_user)):
     """Last completed run per category (in-memory, resets on restart).
     Per category means one entry can be another user's run, so members get
     none; their own tasks are in the list above."""
@@ -67,14 +67,14 @@ async def get_task_history(user: User = Depends(get_current_user)):
 
 
 @router.get("/ticket")
-async def get_stream_ticket(user: User = Depends(get_current_user)):
+def get_stream_ticket(user: User = Depends(get_current_user)):
     """Issue a short-lived one-time ticket for the SSE stream (avoids JWT in URL)."""
     ticket = create_ticket(user.id)
     return {"ticket": ticket}
 
 
 @router.post("/{task_id}/cancel")
-async def cancel_task(task_id: str, _admin: User = Depends(require_admin)):
+def cancel_task(task_id: str, _admin: User = Depends(require_admin)):
     """Request cancellation of a running task. Admin only.
 
     Tasks are server-wide (sync, enrichment, music pipeline, etc.); cancelling

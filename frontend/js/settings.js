@@ -54,7 +54,18 @@ export async function cleanupOrphans(btn) {
   btnBusy(btn, 'Deleting…');
   setStatus(status, 'Deleting history for removed media…', 'busy');
   try {
-    const r = await api('/api/history/admin/cleanup-orphans', 'POST');
+    let r = await api('/api/history/admin/cleanup-orphans', 'POST');
+    if (r.error && r.would_delete) {
+      // The share guard: a mass "orphaning" is usually a reading failure, so
+      // the owner confirms the number before anything goes.
+      const again = await confirmDialog({
+        title: `Delete ${r.would_delete} of ${r.examined} history entries?`, danger: true,
+        confirmLabel: 'Delete anyway',
+        body: '<p>That is more than a fifth of all history. This usually means a library was not fully readable, not that the media is gone.</p><p class="t3 fs-12 mt-8">Only continue if you really removed that much from Plex.</p>',
+      });
+      if (!again.ok) { setStatus(status, r.error + ' (deleted: 0)', 'err'); return; }
+      r = await api('/api/history/admin/cleanup-orphans?force=true', 'POST');
+    }
     if (r.error) { setStatus(status, r.error + ' (deleted: 0)', 'err'); return; }
     setStatus(status, `Done — deleted ${r.deleted} of ${r.examined} entries checked`, 'ok');
     toast(`Deleted ${r.deleted} history entries for removed media`, 'success');

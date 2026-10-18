@@ -302,7 +302,7 @@ def test_keep_and_delete_again_endpoints():
     _p(db, 2, "Heat", "movie", "radarr", returned_info=json.dumps({**info, "title": "Heat"}))
     db.commit()
     user = types.SimpleNamespace(id=1)
-    assert asyncio.run(recs.keep_returned(2, user=user, db=db)) == {"ok": True}
+    assert (recs.keep_returned(2, user=user, db=db)) == {"ok": True}
     assert json.loads(db.get(DeletionProposal, 2).returned_info)["state"] == "kept"
 
     seen = {}
@@ -326,7 +326,7 @@ def test_keep_and_delete_again_endpoints():
 
     from fastapi import HTTPException
     try:
-        asyncio.run(recs.keep_returned(1, user=user, db=db))
+        (recs.keep_returned(1, user=user, db=db))
         raise AssertionError("a closed return is not open any more")
     except HTTPException as e:
         assert e.status_code == 404

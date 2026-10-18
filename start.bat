@@ -120,6 +120,9 @@ REM phone) can only delay shutdown by 8s instead of forever.
 "!PY!" -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir src --timeout-graceful-shutdown 8 --no-server-header
 
 REM Clean exit (web-UI shutdown / Ctrl+C) -> close the window by itself.
+REM Under --reload the web-UI shutdown stops the reloader too (it sends the
+REM console one Ctrl+C - src/main.py request_dev_server_stop), so cmd may ask
+REM "Terminate batch job (Y/N)?" exactly as after a typed Ctrl+C.
 REM Crash (port in use, import error) -> keep the output visible.
 if errorlevel 1 (
     echo.

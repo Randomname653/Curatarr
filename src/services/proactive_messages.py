@@ -1681,10 +1681,10 @@ async def check_and_generate_messages(user_id: int) -> int:
             return 0
 
         # Count unread cached messages — don't generate more if cache is full
-        unread_count = db.query(ProactiveMessage).filter(
+        unread_count = db.query(_func.count(ProactiveMessage.id)).filter(
             ProactiveMessage.user_id == user_id,
             ProactiveMessage.read == False,
-        ).count()
+        ).scalar()
 
         if unread_count >= _CACHE_TARGET:
             logger.debug("[proactive] Cache full (%d unread), skipping generation", unread_count)

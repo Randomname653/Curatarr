@@ -183,6 +183,11 @@ db_path = os.path.join(tmp, "curatarr.db")
 c = sqlite3.connect(db_path)
 c.execute("CREATE TABLE t (x)")
 c.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(500)])
+# Free pages to reclaim: the vacuum is gated on a 20 % freelist share.
+c.execute("CREATE TABLE junk (b BLOB)")
+c.executemany("INSERT INTO junk VALUES (?)", [(b"x" * 4000,) for _ in range(400)])
+c.commit()
+c.execute("DELETE FROM junk")
 c.commit()
 c.close()
 
@@ -209,6 +214,21 @@ try:
           threads and all(t != main_thread for t in threads))
     check("vacuum: success -> done", v is not False)
 
+    # Gates (2026-10-15): nothing to reclaim -> no rewrite; a long writer
+    # running -> postponed and still due.
+    threads.clear()
+    v = run(sched.job_db_vacuum())          # freshly vacuumed: ~0 % free
+    check("vacuum: a file without free pages is not rewritten",
+          v is not False and not threads)
+    import src.services.app_state as _as
+    _real_get = _as.get_state
+    _as.get_state = lambda k: "1" if k == "plex_sync_running" else _real_get(k)
+    try:
+        check("vacuum: postponed (still due) while a sync writes",
+              run(sched.job_db_vacuum()) is False and not threads)
+    finally:
+        _as.get_state = _real_get
+
     threads.clear()
     b = run(sched.job_db_backup())
     snaps = [f for f in os.listdir(os.path.join(tmp, "backups")) if f.endswith(".db")]
@@ -225,6 +245,12 @@ try:
     sched._snapshot_sqlite = _snap_boom
     check("backup: failure -> False (was None = stamped done)",
           run(sched.job_db_backup()) is False)
+    _c = sqlite3.connect(db_path)            # free pages again, so it runs
+    _c.executemany("INSERT INTO junk VALUES (?)", [(b"x" * 4000,) for _ in range(400)])
+    _c.commit()
+    _c.execute("DELETE FROM junk")
+    _c.commit()
+    _c.close()
     sched._vacuum_sqlite_file = _vac_boom
     check("vacuum: failure -> False", run(sched.job_db_vacuum()) is False)
 finally:

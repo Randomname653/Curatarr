@@ -365,7 +365,8 @@ def _fresh_filter(q, user_id: int, now: datetime):
 def pool_fresh_count(user_id: int) -> int:
     now = datetime.utcnow()
     with get_db_session() as db:
-        return _fresh_filter(db.query(ChatStarter), user_id, now).count()
+        from sqlalchemy import func
+        return _fresh_filter(db.query(func.count(ChatStarter.id)), user_id, now).scalar()
 
 
 def pick_starters(user_id: int, limit: int = 3) -> list[dict]:

@@ -51,7 +51,7 @@ def _summary(albums):
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
 
-        async def get(self, url, params=None):
+        async def get(self, url, params=None, **kw):
             if url.endswith("/artist"):
                 return _Resp([{"id": 1, "artistName": "Motörhead",
                                "foreignArtistId": "mb-1"}])

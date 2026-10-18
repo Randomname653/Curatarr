@@ -59,7 +59,7 @@ db.commit()
 
 
 def reject(pid, protect):
-    return asyncio.run(recs.reject_deletion(pid, protect=protect, user=USER, db=db))
+    return (recs.reject_deletion(pid, protect=protect, user=USER, db=db))
 
 
 def protections(title):

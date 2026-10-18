@@ -49,7 +49,7 @@ class PipelineRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/ping")
-async def pipeline_ping():
+def pipeline_ping():
     """
     Auth-free endpoint — returns pipeline running state + progress only.
     No user-specific data. Use this to check status from the browser without a token.
@@ -63,7 +63,7 @@ async def pipeline_ping():
 
 
 @router.post("/start")
-async def start_pipeline(
+def start_pipeline(
     req: PipelineRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
@@ -76,12 +76,16 @@ async def start_pipeline(
     # Audit #7: atomic acquire in the ENDPOINT — the old get_state check
     # here + set_state later in the background task left a window where two
     # fast starts (or a custodian tick) both passed the check.
-    from src.services.app_state import acquire_state_lock
+    # The lease, not a bare flag: the out-of-process music enricher holds the
+    # same key, and only a live holder blocks (state_lease). A plain def:
+    # FastAPI runs it on a worker thread, so the lease's blocking SQLite
+    # transaction stays off the event loop.
+    from src.services import state_lease
     from src.services import rate_limit as _rl
     # Hours of MusicBrainz / Last.fm / Spotify spend per run — two starts per
     # ten minutes per user is plenty for a human, not for a loop.
     _rl.enforce("music-start", user.id, _rl.MUSIC_STARTS_PER_10MIN, 600)
-    if not acquire_state_lock("music_pipeline_running"):
+    if not state_lease.acquire("music_pipeline_running"):
         raise HTTPException(status_code=409, detail="Music pipeline already running")
 
     set_state("music_pipeline_stop_requested", "0")
@@ -92,7 +96,7 @@ async def start_pipeline(
 
 
 @router.post("/stop")
-async def stop_pipeline(user: User = Depends(get_current_user)):
+def stop_pipeline(user: User = Depends(get_current_user)):
     """
     Request a soft stop.  The pipeline finishes the current DB batch / Last.fm
     call then saves progress.  Re-running /start afterwards continues safely
@@ -110,7 +114,7 @@ async def stop_pipeline(user: User = Depends(get_current_user)):
 
 
 @router.get("/status")
-async def pipeline_status(user: User = Depends(get_current_user)):
+def pipeline_status(user: User = Depends(get_current_user)):
     """
     Return current pipeline state + enrichment statistics.
     """
@@ -182,19 +186,24 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
     from datetime import datetime
     from src.services.task_monitor import task_monitor
 
-    # music_pipeline_running is already held: the endpoint (or custodian)
-    # acquired it atomically before this task was scheduled.
-    set_state("music_pipeline_interrupted", "1")
-    set_state("music_pipeline_stop_requested", "0")
-    set_state("music_pipeline_progress", _json.dumps({
-        "phase": "starting", "processed": 0, "total": 0,
-        "tracks_queried": 0, "enriched_plays": 0,
-    }))
-
-    task = task_monitor.create(name="Music Pipeline", category="music")
-    task_monitor.start(task)
-
+    # music_pipeline_running is already held: the endpoint (or the boot
+    # resume) acquired the lease before this task was scheduled. The
+    # lock-release finally must cover the WHOLE body (mirrors Audit #4 in
+    # enrichment._run_enrichment): these set_state calls and
+    # task_monitor.create used to run before the try, so a "database is
+    # locked" here left music_pipeline_running stuck at "1" until restart.
+    task = None
     try:
+        set_state("music_pipeline_interrupted", "1")
+        set_state("music_pipeline_stop_requested", "0")
+        set_state("music_pipeline_progress", _json.dumps({
+            "phase": "starting", "processed": 0, "total": 0,
+            "tracks_queried": 0, "enriched_plays": 0,
+        }))
+
+        task = task_monitor.create(name="Music Pipeline", category="music")
+        task_monitor.start(task)
+
         from src.services.music_matcher import (
             match_spotify_to_plex,
             resolve_artist_mbids,
@@ -334,8 +343,12 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
 
     except Exception as exc:
         logger.error("[music_pipeline] Failed: %s", exc, exc_info=True)
-        task_monitor.error(task, str(exc))
+        if task is not None:
+            task_monitor.error(task, str(exc))
         # Keep interrupted="1" so startup auto-resumes
     finally:
-        set_state("music_pipeline_running",        "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # Compare-and-clear: a blind "0" here released a lease the
+        # out-of-process enricher held whenever this run had not taken it.
+        from src.services import state_lease
+        if state_lease.release("music_pipeline_running"):
+            set_state("music_pipeline_stop_requested", "0")

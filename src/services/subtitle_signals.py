@@ -667,12 +667,39 @@ def _os_budget_key() -> str:
 
 
 def os_spent_today() -> int:
-    """Downloads charged to today. Date-scoped, so it resets by itself."""
+    """Downloads charged to today. Date-scoped, so it resets by itself.
+    An unreadable count is a spent budget, not an empty one."""
     try:
         from src.services import app_state
         return int(app_state.get_state(_os_budget_key()) or 0)
+    except Exception as e:
+        logger.warning("[subtitles] quota count unreadable - pausing for now: %s", e)
+        return 1 << 30
+
+
+def _os_blocked_key() -> str:
+    return _os_budget_key().replace("subs_os_dl_", "subs_os_blocked_")
+
+
+def _os_blocked_today() -> bool:
+    try:
+        from src.services import app_state
+        return app_state.get_state(_os_blocked_key()) == "1"
     except Exception:
-        return 0
+        return True
+
+
+def _os_block_today(why: str) -> None:
+    """The service refused us for the day (quota spent, key or login
+    rejected). Every later title would get the same answer: stop asking
+    until tomorrow instead of stamping them "no subtitles"."""
+    logger.warning("[subtitles] OpenSubtitles refused (%s) - paused until tomorrow", why)
+    _os_token["jwt"] = None
+    try:
+        from src.services import app_state
+        app_state.set_state(_os_blocked_key(), "1")
+    except Exception as e:
+        logger.warning("[subtitles] could not record the pause: %s", e)
 
 
 def _os_charge() -> None:
@@ -720,6 +747,8 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
     if budget and os_spent_today() >= budget:
         logger.info("[subtitles] OpenSubtitles daily budget (%d) reached", budget)
         return None                      # transient by design: tomorrow works
+    if _os_blocked_today():
+        return None
 
     imdb = str(imdb_id or "").lower().replace("tt", "").lstrip("0")
     if not imdb.isdigit():
@@ -778,9 +807,21 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
         return None
     except httpx.HTTPStatusError as e:
-        return None if e.response.status_code >= 500 else ""
+        # Only "there is no such subtitle" is an answer about the title. 406
+        # is the spent daily download quota and 401/403 a rejected key or
+        # login: both were stamped "no subtitles" for good, on every title
+        # after the real quota (lower than the local budget) ran out.
+        code = e.response.status_code
+        if code in (404, 410):
+            return ""
+        if code in (401, 403, 406):
+            _os_block_today(f"HTTP {code}")
+        else:
+            logger.warning("[subtitles] OpenSubtitles HTTP %s for %s - retried later",
+                           code, imdb_id)
+        return None
     except Exception as e:
-        logger.debug("[subtitles] OpenSubtitles failed for %s: %s", imdb_id, e)
+        logger.warning("[subtitles] OpenSubtitles failed for %s: %s", imdb_id, e)
         return None
 
 
@@ -855,8 +896,10 @@ async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
                                  + str(plex_rating_key) + "/allLeaves",
                                  headers=headers,
                                  params={"X-Plex-Container-Size": 1})
-                leaves = (lv.json().get("MediaContainer", {}).get("Metadata")
-                          or []) if lv.status_code == 200 else []
+                if lv.status_code == 404:
+                    return {}
+                lv.raise_for_status()   # 401/5xx: not "no episodes"
+                leaves = lv.json().get("MediaContainer", {}).get("Metadata") or []
                 if not leaves:
                     return {}
                 ep = await c.get(base + "/library/metadata/"
@@ -885,9 +928,15 @@ async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
         return None
     except httpx.HTTPStatusError as e:
-        return None if e.response.status_code >= 500 else {}
+        # 404/410: the item is gone - a real answer. A revoked token (401)
+        # or a refusal (403) was stamped "checked, no subtitles" before.
+        if e.response.status_code in (404, 410):
+            return {}
+        logger.warning("[subtitles] %s: Plex HTTP %s - retried later",
+                       plex_rating_key, e.response.status_code)
+        return None
     except Exception as e:
-        logger.debug("[subtitles] %s: plex read failed: %s", plex_rating_key, e)
+        logger.warning("[subtitles] %s: plex read failed: %s", plex_rating_key, e)
         return None
 
     # An operator's own service comes before the public one: better coverage

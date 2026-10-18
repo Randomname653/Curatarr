@@ -82,9 +82,17 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
                 "genres": ", ".join(genres),
                 "themes": ", ".join(keywords[:6]),
                 "mood": "", "year": year}
-        chroma.collection.delete(ids=[str(doc_id)])
-        chroma.collection.add(ids=[str(doc_id)], documents=[doc_text],
-                              embeddings=[vecs[0]], metadatas=[meta])
+        # ONE upsert, not delete-then-add: when add raised after the delete,
+        # the doc was gone yet reported "left untouched", and a gone-from-arr
+        # item never re-enriches — the knowledge this module exists to keep
+        # was lost. An upsert either replaces the doc or leaves the old one.
+        try:
+            chroma.upsert_documents(documents=[doc_text], embeddings=[vecs[0]],
+                                    metadatas=[meta], ids=[str(doc_id)])
+        except Exception as e:
+            logger.warning("[repair] write failed for %s (old doc kept): %s",
+                           doc_id, e, exc_info=True)
+            return False
         from src.services.facet_index import write_facets
         await write_facets(str(doc_id), meta["title"], domain,
                            meta["genres"], keywords[:6])

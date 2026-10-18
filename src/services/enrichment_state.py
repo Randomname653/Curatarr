@@ -665,3 +665,73 @@ def finding_to_dict(row) -> dict:
         "dismissed_at": row.dismissed_at.isoformat() + "Z" if row.dismissed_at else None,
         "note": row.note,
     }
+
+
+# ── walker top-up failures: outage vs. bug ───────────────────────────────────
+# The walkers' top-ups caught every exception, logged it at DEBUG and offered
+# the title again next pass. Right for an outage, invisible for a bug: the
+# reception walker's 2-vs-4 unpacking error failed on every film and show for
+# months this way, and the fixed-order walk kept the same rows at the front.
+# Outages stay quiet; anything else is logged as the crash it is (with the
+# traceback for the first few per walker, so a systematic bug is one line
+# per title after that, not a wall).
+
+_TRANSIENT_NAMES = frozenset({"TransientSourceError", "TMDBTransientError",
+                              "TransientFetchError", "TimeoutError",
+                              "CancelledError"})
+_CRASH_TRACEBACKS: dict[str, int] = {}
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    """A network/outage failure (retry later), as opposed to a bug."""
+    try:
+        import httpx
+        if isinstance(exc, httpx.HTTPError):
+            return True
+    except ImportError:          # pragma: no cover - httpx is a dependency
+        pass
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    return any(c.__name__ in _TRANSIENT_NAMES for c in type(exc).__mro__)
+
+
+def log_topup_failure(logger, tag: str, title, exc: BaseException) -> None:
+    """Log a walker top-up failure at the level it deserves."""
+    if is_transient_error(exc):
+        logger.debug("%s transient for %r: %s", tag, title, exc)
+        return
+    n = _CRASH_TRACEBACKS.get(tag, 0)
+    _CRASH_TRACEBACKS[tag] = n + 1
+    logger.warning("%s top-up crashed for %r: %r", tag, title, exc,
+                   exc_info=exc if n < 3 else None)
+
+
+# ── walker attempt stamps: failing rows go to the back ───────────────────────
+# A walker that takes the first ``limit`` unsettled rows in a fixed order
+# offers the same failing rows first on every pass. Stamping each attempt
+# lets the walker order never-tried rows first, then the least recently
+# tried, so one stuck title cannot starve the rest of the queue.
+
+def load_walker_attempts(key: str) -> dict:
+    """{row id: ISO time of the last attempt} for one walker ({} when none)."""
+    import logging
+    try:
+        from src.services.app_state import get_state
+        data = json.loads(get_state(key) or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logging.getLogger(__name__).warning("[walker] %s unreadable - fixed order "
+                                            "this pass: %s", key, e)
+        return {}
+
+
+def save_walker_attempts(key: str, attempts: dict, keep=None) -> None:
+    """Store the stamps, dropping ids no longer waiting (``keep``)."""
+    import logging
+    if keep is not None:
+        attempts = {k: v for k, v in attempts.items() if k in keep}
+    try:
+        from src.services.app_state import set_state
+        set_state(key, json.dumps(attempts, separators=(",", ":")))
+    except Exception as e:
+        logging.getLogger(__name__).warning("[walker] could not store %s: %s", key, e)

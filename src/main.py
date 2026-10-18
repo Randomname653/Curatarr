@@ -5,6 +5,7 @@ Curatarr - Main Application Entry Point
 import asyncio
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,16 +27,19 @@ logger = logging.getLogger("curatarr")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pass 100: stop Syncthing from touching the live SQLite DB while we run.
-    # Syncing an open WAL-mode database causes "database is locked" errors and
-    # risks corruption. The guard excludes data/ from the enclosing Syncthing
-    # folder's .stignore now and restores it on clean shutdown (no-op when
-    # Syncthing isn't present). Done first, before we open the DB.
+    # Pass 100: stop Syncthing from touching the live SQLite DB. Syncing an
+    # open WAL-mode database causes "database is locked" errors and risks
+    # corruption. The guard excludes data/ in the enclosing Syncthing
+    # folder's .stignore — PERMANENTLY: it is never removed on shutdown, a
+    # stopped DB is no safer to file-sync (no-op when Syncthing isn't
+    # present). Done first, before we open the DB.
     try:
         from src.services.sync_guard import enable as _sync_guard_enable
         _sync_guard_enable()
     except Exception as e:
-        logger.debug("[sync-guard] enable failed: %s", e)
+        # enable() handles its own errors; reaching here is a bug (an import
+        # failure) and leaves the live DB unguarded — not a DEBUG matter.
+        logger.warning("[sync-guard] enable failed — data/ may be synced while open: %s", e)
 
     # Which Python this is, on record for every start: start.bat once picked
     # a different interpreter depending on how its window was opened
@@ -72,23 +76,53 @@ async def lifespan(app: FastAPI):
     from src.services.scheduler import start_scheduler
     start_scheduler()
 
-    # Reset any stuck flags from previous crash
+    # Reset any stuck flags from previous crash. This is the ONLY recovery
+    # for a lock a crash left at "1", so each key is cleared on its own (one
+    # failure used to skip every reset after it) and a failure is an ERROR:
+    # the jobs behind a stuck flag wait for it until the next restart.
+    from src.services.app_state import get_state, set_state
+    # The music flag can be held by ANOTHER OS process (scripts/
+    # music_enricher.py survives server restarts by design): a blind "0"
+    # here handed its lock to the custodian and two passes ran side by side.
+    # The lease (state_lease) clears it only when its holder is gone.
+    _music_free = False
     try:
-        from src.services.app_state import set_state
-        set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
-        set_state("deletion_run", "0")
-        set_state("plex_sync_running", "0")
-        # Pass 75/76: seed the game flag with the ACTUAL current state, not
-        # a blind "0". A blind reset left a ~30 s window (until the watcher's
-        # first tick) where game_active was wrong — long enough for the
-        # startup catch-ups to load the LLM and OOM a running game. A direct
-        # is_game_running() check here makes the flag correct from t=0.
+        from src.services import state_lease
+        _music_free = state_lease.reclaim_if_stale("music_pipeline_running")
+        if not _music_free:
+            logger.info("[startup] music pipeline held by a live process (pid %s) — left alone",
+                        state_lease.holder_pid("music_pipeline_running"))
+    except Exception as e:
+        logger.error("Boot: the music pipeline lease could not be checked - its "
+                     "flag is left as it is until a restart: %s", e)
+    _flags = ["enrichment_running", "deletion_run", "plex_sync_running"]
+    if _music_free:
+        _flags.append("music_pipeline_stop_requested")
+    for _flag in _flags:
+        try:
+            set_state(_flag, "0")
+            if get_state(_flag) not in (None, "0"):
+                raise RuntimeError("the database stayed locked")
+        except Exception as e:
+            logger.error("Boot: stale flag %s could not be cleared - the jobs "
+                         "that take it stay blocked until a restart: %s", _flag, e)
+    # Pass 75/76: seed the game flag with the ACTUAL current state, not
+    # a blind "0". A blind reset left a ~30 s window (until the watcher's
+    # first tick) where game_active was wrong — long enough for the
+    # startup catch-ups to load the LLM and OOM a running game. A direct
+    # is_game_running() check here makes the flag correct from t=0, and a
+    # probe that fails counts as a game until the watcher knows better.
+    try:
         from src.services.process_monitor import is_game_running as _igr
-        set_state("game_active", "1" if _igr() else "0")
-    except Exception:
-        pass
+        _game = _igr()
+    except Exception as e:
+        logger.warning("Boot: game probe failed - assuming a game until the "
+                       "watcher's first tick: %s", e)
+        _game = True
+    try:
+        set_state("game_active", "1" if _game else "0")
+    except Exception as e:
+        logger.error("Boot: game_active could not be seeded: %s", e)
     # A proposal claimed "deleting" when the process died mid-delete: the
     # outcome is unknown, so park it in limbo (listed, retryable) rather
     # than leave it invisible forever.
@@ -101,8 +135,9 @@ async def lifespan(app: FastAPI):
             _db.commit()
         if _n:
             logger.warning("Boot: %d interrupted deletion(s) parked in limbo", _n)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Boot: interrupted deletions could not be parked in limbo - "
+                     "they stay hidden as 'deleting': %s", e)
 
     # Pass 41: all startup background tasks now go through ``track_task``
     # which retains a strong reference until the task completes. Without
@@ -188,8 +223,13 @@ async def lifespan(app: FastAPI):
     try:
         from src.services.app_state import set_state
         set_state("enrichment_running", "0")
-        set_state("music_pipeline_running", "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # Only OUR music lease: an out-of-process enricher keeps its own.
+        try:
+            from src.services import state_lease
+            if state_lease.release("music_pipeline_running"):
+                set_state("music_pipeline_stop_requested", "0")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[shutdown] music lease release failed: %s", e)
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
     except Exception:
@@ -224,9 +264,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("[shutdown] DB release failed: %s", e)
 
-    # Pass 100: re-enable Syncthing for data/ now that the DB is released, so
-    # the database can sync between machines while Curatarr is stopped. Done
-    # last: background tasks drained, connections closed, WAL checkpointed.
+    # Pass 100: the sync-guard's shutdown hook. It deliberately leaves the
+    # data/ exclusion in place (sync_guard.disable is a no-op): a stopped
+    # SQLite/ChromaDB store is no safer to file-sync than a running one.
     try:
         from src.services.sync_guard import disable as _sync_guard_disable
         _sync_guard_disable()
@@ -248,8 +288,10 @@ async def _startup_sync_if_needed():
         if is_game_running():
             logger.info("[startup] Game running — skipping startup sync")
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[startup] game check failed - skipping startup sync; "
+                       "the schedule covers it: %s", e)
+        return
     try:
         from pathlib import Path
         from src.database.connection import get_db_session
@@ -421,8 +463,8 @@ async def shutdown_server():
     the exact Ctrl+C path: in-flight requests finish and the lifespan
     teardown executes (pending memory extractions flushed, scheduler
     stopped, app-state flags cleared, sync-guard released). No console
-    access needed."""
-    import signal
+    access needed. Under ``uvicorn --reload`` the reloader is stopped too
+    (request_dev_server_stop)."""
 
     async def _raise_sigint():
         await asyncio.sleep(0.6)   # let the HTTP response leave first
@@ -442,11 +484,45 @@ async def shutdown_server():
         if request_app_stop():
             logger.info("Shutdown requested from the web UI — host stop callback engaged.")
         else:
-            logger.info("Shutdown requested from the web UI — raising SIGINT.")
-            signal.raise_signal(signal.SIGINT)
+            path = request_dev_server_stop()
+            logger.info("Shutdown requested from the web UI — SIGINT via %s.", path)
 
     asyncio.create_task(_raise_sigint())
     return {"status": "shutting_down"}
+
+
+def request_dev_server_stop(*, parent=None, platform=None, kill=None,
+                            raise_signal=None, ppid=None) -> str:
+    """Stop the server the way Ctrl+C does, also under ``uvicorn --reload``
+    (start.bat). Returns which path it took. The keyword arguments are for
+    tests.
+
+    Without --reload this process IS the server: SIGINT to itself. Under
+    --reload it is a worker the reloader spawned, and the reloader never
+    notices a worker that exits (uvicorn's BaseReload only waits for file
+    changes): it kept the port and the console, the tray then saw the port
+    "in use" by a dead server, and the next save in src/ resurrected it. So
+    the reloader is asked instead, ONCE — a second SIGINT makes uvicorn
+    force-exit, which skips the lifespan teardown:
+      * POSIX: SIGINT to the reloader, which SIGTERMs this worker.
+      * Windows: one Ctrl+C to the console the two share (the reloader's own
+        restart path uses the same event); each gets it once. cmd.exe may
+        then ask "Terminate batch job (Y/N)?" as after a typed Ctrl+C.
+    """
+    import multiprocessing as _mp
+    import signal as _signal
+    parent = _mp.parent_process() if parent is None else parent
+    platform = sys.platform if platform is None else platform
+    kill = os.kill if kill is None else kill
+    raise_signal = _signal.raise_signal if raise_signal is None else raise_signal
+    if not parent:
+        raise_signal(_signal.SIGINT)
+        return "self"
+    if platform == "win32":
+        kill(0, getattr(_signal, "CTRL_C_EVENT", 0))
+        return "console"
+    kill(os.getppid() if ppid is None else ppid, _signal.SIGINT)
+    return "reloader"
 
 
 # ── FRONTEND ──────────────────────────────────────────────────────────────────

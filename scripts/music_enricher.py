@@ -14,10 +14,12 @@ or a running game for VRAM — safe to run alongside everything else.
 
 Coordination with the in-app pipeline
 -------------------------------------
-Sets ``music_pipeline_running="1"`` in AppState while active so the in-app
-``job_music_pipeline`` sees the flag and skips. Refuses to start if the
-flag is already ``"1"`` (another runner active). Releases the flag on a
-clean exit AND on Ctrl+C / SIGTERM.
+Holds the ``music_pipeline_running`` lease (src/services/state_lease.py)
+while active, so the in-app pipeline and the custodian see it and skip.
+Refuses to start while a LIVE runner holds it; a killed runner's lease is
+taken over. The server's restarts leave the lease alone. Stops between
+artists on Ctrl+C / SIGTERM / console close (SIGBREAK) and on the web UI's
+Stop button, and releases the lease on the way out.
 
 Each artist commit is atomic and independent, so interruption between
 artists is always safe — pick up where you left off on the next run.
@@ -83,7 +85,9 @@ from sqlalchemy import func as _func  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.database.connection import get_db_session  # noqa: E402
 from src.database.models import EnrichmentStatus, User, WatchHistoryEntry  # noqa: E402
+from src.services import state_lease  # noqa: E402
 from src.services.app_state import get_state, set_state, force_set_state  # noqa: E402
+from src.services.enrichment_state import TRANSIENT  # noqa: E402
 from src.services.music_metadata import enrich_artist  # noqa: E402
 
 
@@ -108,6 +112,13 @@ _CACHE_HIT_THRESHOLD_S = 0.2
 
 _PENDING_LLM_MARKER = "api_cached — LLM pending"
 
+# The cross-process lease this runner holds (shared with the in-app music
+# pipeline and the custodian), and how often it proves it is alive.
+_LEASE_KEY = "music_pipeline_running"
+_HEARTBEAT_S = 60
+# Artists in a row whose upstreams did not answer before the run gives up.
+_MAX_OUTAGES = 10
+
 
 # ── logging ──────────────────────────────────────────────────────────────────
 
@@ -129,7 +140,7 @@ def setup_logging(log_file: str | None) -> None:
 
 
 def acquire_lock() -> tuple[bool, Optional[str]]:
-    """Try to acquire the standalone-runner mutex.
+    """Take the cross-process music lease (src/services/state_lease.py).
 
     Returns ``(success, blocking_flag)``. ``blocking_flag`` is the name
     of the AppState flag that prevented acquisition (when ``success`` is
@@ -138,49 +149,52 @@ def acquire_lock() -> tuple[bool, Optional[str]]:
     History:
       - Pass 89: originally checked BOTH ``music_pipeline_running`` AND
         ``enrichment_running``. Both pipelines wrote to
-        ``enrichment_status``, and pre-89 the Music pipeline did all
+        ``EnrichmentStatus`` and the Spotify phase committed its
         Spotify-genre updates in a single mega-transaction that locked
         the SQLite write-lock for minutes and cascaded into
         ``database is locked`` errors on the in-app side.
-      - Pass 89 ALSO introduced ``_DB_COMMIT_CHUNK = 100`` chunked
-        commits in ``enrich_music_genres_spotify``, so the write-lock
-        is released every 100 tracks. That structurally removed the
-        cascade trigger.
-      - Pass 94: returned the blocker name in the tuple so the error
-        message could identify the actual blocker.
-      - Pass 97 (now): the cross-mutex with ``enrichment_running`` was
-        defense-in-depth from when chunked commits were new. It was
-        too strict — Music-Enricher in default mode is LLM-free, writes
-        to ``media_category='music'`` rows (disjoint from in-app's
-        movie/show/anime rows), and the chunked commits prevent the
-        write-lock cascade. So we drop the cross-mutex: the standalone
-        runner now coexists with the in-app enrichment consumer.
-        We still self-check ``music_pipeline_running`` to keep two
-        music runners from colliding with each other (same rows, same
-        Spotify API quota).
+      - Pass 97: the chunked commits in ``enrich_music_genres_spotify``
+        removed the write-lock cascade, so the cross-mutex with
+        ``enrichment_running`` was dropped: the standalone runner coexists
+        with the in-app movie/show/anime enrichment consumer. It still
+        excludes the other music runners (same rows, same Spotify quota).
+      - 2026-10: a lease instead of get-then-set. Two runners could both
+        read "0" and both start, and the server's boot/shutdown reset
+        handed this script's lock to the custodian. The lease is one
+        compare-and-set transaction and records this PID, so a live
+        runner is never reset and a killed one is taken over.
     """
-    if get_state("music_pipeline_running") == "1":
-        return False, "music_pipeline_running"
-    set_state("music_pipeline_running", "1")
+    if not state_lease.acquire(_LEASE_KEY):
+        return False, _LEASE_KEY
+    # Not a member's run: only an admin may stop it from the web UI.
+    set_state("music_pipeline_owner", "")
+    set_state("music_pipeline_stop_requested", "0")
     return True, None
 
 
 def release_lock() -> None:
-    # Pass 89b: bypass SQLAlchemy for the cleanup write. If the engine is
-    # in a contention-cascade state — exactly the case where releasing
-    # matters most — ``set_state`` would also fail and leave the flag
-    # stale, blocking every future pipeline run until manual reset.
-    # ``force_set_state`` opens a fresh sqlite3 connection with a 120 s
-    # busy-wait, so the release goes through whenever the DB becomes
-    # writable in that window.
-    ok_run  = force_set_state("music_pipeline_running", "0")
-    ok_stop = force_set_state("music_pipeline_stop_requested", "0")
-    if not (ok_run and ok_stop):
+    # Pass 89b: the release must go through even when the SQLAlchemy engine
+    # is in a contention-cascade state — the lease uses its own sqlite3
+    # connection with a busy-wait. Compare-and-clear: a lease that was
+    # taken over (this process stalled past it) is not ours to clear.
+    try:
+        released = state_lease.release(_LEASE_KEY)
+    except Exception as e:  # noqa: BLE001
         logger.error(
-            "[release_lock] FAILED to clear pipeline flags after 120 s busy-wait. "
-            "Manual reset: python -c \"from src.services.app_state import "
-            "force_set_state; force_set_state('music_pipeline_running', '0')\""
-        )
+            "[release_lock] FAILED to release the music lease: %s. It frees itself once "
+            "this process has exited (the next taker sees a dead PID).", e)
+        return
+    if released and not force_set_state("music_pipeline_stop_requested", "0"):
+        logger.error("[release_lock] lease released, but the stop flag could not be cleared")
+
+
+def stop_requested_from_ui() -> bool:
+    """The web UI's Stop button (/api/music/stop) sets this flag; this
+    runner never read it, so Stop did nothing while the script ran."""
+    try:
+        return get_state("music_pipeline_stop_requested") == "1"
+    except Exception:  # noqa: BLE001 - a busy DB is no stop request
+        return False
 
 
 # ── seed: walk watch-history + Lidarr, insert missing EnrichmentStatus rows ──
@@ -404,7 +418,7 @@ async def _run_spotify_phase(
 # ── worker: loop over not-enriched music rows, enrich one at a time ──────────
 
 
-def _pop_next_row_id() -> tuple[int, str] | None:
+def _pop_next_row_id(after_id: int = 0) -> tuple[int, str] | None:
     """Return (id, title) of the next not-enriched music artist, or None when
     nothing's left. Selected by id ascending = oldest first. No row is held
     across the enrich call — we re-fetch by id to update.
@@ -417,6 +431,10 @@ def _pop_next_row_id() -> tuple[int, str] | None:
     showed thousands of identical MISS warnings for one artist in an hour.
     ``--retry-errors`` (``reset_errors``) clears ``error`` and lets rows
     flow through again on the next run.
+
+    ``after_id``: a row whose upstreams did not answer is left unmarked (it
+    is not a miss), so without a cursor it would come back as the lowest id
+    straight away. The worker passes the last id it handled.
     """
     with get_db_session() as db:
         row = (
@@ -425,6 +443,7 @@ def _pop_next_row_id() -> tuple[int, str] | None:
                 EnrichmentStatus.media_category == "music",
                 EnrichmentStatus.enriched == False,  # noqa: E712
                 EnrichmentStatus.error.is_(None),
+                EnrichmentStatus.id > after_id,
             )
             .order_by(EnrichmentStatus.id.asc())
             .first()
@@ -493,13 +512,26 @@ async def worker(
     processed  = 0
     fast_hits  = 0   # enrich_artist returned in < _CACHE_HIT_THRESHOLD_S
     slow_hits  = 0   # enrich_artist took longer (live API or failure)
+    last_beat  = _t_mod.monotonic()
+    cursor     = 0   # last row id handled — transient rows are skipped, not marked
+    outages    = 0   # transient answers in a row
 
     while not stop_event.is_set():
-        nxt = _pop_next_row_id()
+        if stop_requested_from_ui():
+            logger.info("Stop requested from the web UI — exiting after %d artist(s).", processed)
+            break
+        if _t_mod.monotonic() - last_beat >= _HEARTBEAT_S:
+            if not state_lease.heartbeat(_LEASE_KEY):
+                logger.error("The music lease is no longer ours (taken over after a stall) — "
+                             "stopping so two runners never share the rows.")
+                break
+            last_beat = _t_mod.monotonic()
+        nxt = _pop_next_row_id(cursor)
         if nxt is None:
             logger.info("No more not-enriched music artists. Done.")
             break
         row_id, artist = nxt
+        cursor = row_id
         if not artist:
             # Defensive: empty title — skip and mark so we never loop on it.
             with get_db_session() as db:
@@ -513,6 +545,24 @@ async def worker(
         _t0 = _t_mod.monotonic()
         try:
             data = await enrich_artist(artist)
+            if data is TRANSIENT:
+                # MusicBrainz / Last.fm did not answer: no verdict. The row
+                # stays as it was for the next run; a run of these means the
+                # upstreams are down, so back off and eventually stop.
+                outages += 1
+                logger.warning("[%d] UPSTREAM DOWN: %s — left for the next run (%d in a row)",
+                               processed + 1, artist, outages)
+                if outages >= _MAX_OUTAGES:
+                    logger.error("%d artists in a row got no answer from MusicBrainz/Last.fm — "
+                                 "the upstreams look down; stopping.", outages)
+                    break
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=min(60, 2 ** outages))
+                    break
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            outages = 0
             if data is None:
                 # enrich_artist returned None — no record at any source
                 _mark_error(row_id, RuntimeError("no artist record found"))
@@ -608,12 +658,11 @@ async def amain(argv: list[str] | None = None) -> int:
         # standalone runner can coexist with the in-app movie/show/anime
         # enrichment consumer — see ``acquire_lock`` for the rationale.
         logger.error(
-            "%s is '1' — another music runner is active (the in-app "
-            "job_music_pipeline or another copy of this script). "
-            "Wait for it to finish, OR clear the stale flag with:\n"
-            "  python -c \"from src.services.app_state import "
-            "force_set_state; force_set_state('%s', '0')\"",
-            blocker, blocker,
+            "%s is held by a live music runner (pid %s: the in-app pipeline, "
+            "the custodian or another copy of this script). Wait for it to "
+            "finish or stop it — a dead runner's lease is taken over "
+            "automatically, no manual reset needed.",
+            blocker, state_lease.holder_pid(blocker),
         )
         return 2
 
@@ -626,7 +675,11 @@ async def amain(argv: list[str] | None = None) -> int:
             logger.info("Stop signal received — finishing the current artist, then exiting.")
         stop_event.set()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    # SIGBREAK: Windows delivers Ctrl+Break and closing the console window
+    # as SIGBREAK. Unhandled, it killed the runner between two writes.
+    for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
+        if sig is None:
+            continue
         try:
             loop.add_signal_handler(sig, _request_stop)
         except (NotImplementedError, RuntimeError):
@@ -664,7 +717,7 @@ async def amain(argv: list[str] | None = None) -> int:
             processed = await worker(args.limit, args.final, stop_event)
     finally:
         release_lock()
-        logger.info("Released music_pipeline_running flag. Processed %d artist(s) this run.",
+        logger.info("Released the music lease. Processed %d artist(s) this run.",
                     processed)
 
     return 0

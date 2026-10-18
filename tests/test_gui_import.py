@@ -91,9 +91,11 @@ check("clear removes them", si.clear_pending(TMP) >= 2
 
 # ── the completion rule matches the Plex path ───────────────────────────────
 
+# A bad timestamp is None (the row is skipped and counted), not utcnow():
+# a faked "now" made old plays look recent and broke dedup on re-import.
 check("timestamps parse and bad ones do not crash",
       si._parse_ts("2024-01-02T03:04:05Z").year == 2024
-      and si._parse_ts("garbage") is not None)
+      and si._parse_ts("garbage") is None)
 
 # ── wiring ──────────────────────────────────────────────────────────────────
 

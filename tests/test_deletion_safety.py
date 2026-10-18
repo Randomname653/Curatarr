@@ -381,7 +381,7 @@ check("unknown delete outcome -> limbo (retryable), not a dead-end error",
 pid = seed("Already Gone", status="deleted")
 db = Session()
 try:
-    asyncio.run(recs_fresh.reject_deletion(pid, user=_U(), db=db))
+    (recs_fresh.reject_deletion(pid, user=_U(), db=db))
     code = None
 except HTTPException as e:
     code = e.status_code
@@ -393,7 +393,7 @@ check("Keep on a deleted proposal -> 409, status stays deleted, no false log",
 
 pid = seed("Keep Me", status="limbo")
 db = Session()
-r = asyncio.run(recs_fresh.reject_deletion(pid, user=_U(), db=db))
+r = (recs_fresh.reject_deletion(pid, user=_U(), db=db))
 db.close()
 with fake_db_session() as s:
     kept_logs = s.query(CuratorResolutionLog).filter_by(title="Keep Me", outcome="kept").count()
@@ -401,7 +401,7 @@ check("Keep on an open (limbo) proposal still works + logs",
       r.get("ok") and status_of(pid) == "rejected" and kept_logs == 1)
 
 db = Session()
-r = asyncio.run(recs_fresh.reject_deletion(pid, user=_U(), db=db))
+r = (recs_fresh.reject_deletion(pid, user=_U(), db=db))
 db.close()
 check("Keep twice stays idempotent", r.get("already_rejected") is True)
 

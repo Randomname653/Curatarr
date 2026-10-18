@@ -103,10 +103,13 @@ def test_the_polled_endpoints_are_actually_memoized():
     for anchor in ('@ttl_response(10, shared=True)', '@ttl_response(15, shared=True)',
                    '@ttl_response(10, key=lambda **kw: bool(kw.get("quick")))'):
         assert anchor in en, anchor
+    # async when the body awaits, a plain def (memo runs it on a worker
+    # thread) when it only reads the database.
     for fn_name in ('enrichment_overview', 'custodian_status_endpoint',
                     'enrichment_status', 'backfill_status'):
-        assert f'async def {fn_name}' in en, fn_name
-    assert ('@ttl_response(10, key=lambda **kw: kw["user"].id)\nasync def sync_status'
+        assert f'async def {fn_name}' in en or f'\ndef {fn_name}' in en, fn_name
+    # A plain def is memoized the same way; its body runs on a worker thread.
+    assert ('@ttl_response(10, key=lambda **kw: kw["user"].id)\ndef sync_status'
             in src("routers/history.py"))
     assert '@ttl_response(30, shared=True)' in src("routers/libraries.py")
 

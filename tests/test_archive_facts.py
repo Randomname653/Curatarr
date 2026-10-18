@@ -130,7 +130,7 @@ _router = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
 for route in ("/backfill-status", "/backfill/{source}", "/backfill/{source}/stop"):
     check(f"endpoint {route} exists", f'"{route}"' in _router)
 check("starting a backfill is admin-only",
-      "async def start_backfill" in _router and "require_admin" in _router)
+      "def start_backfill(" in _router and "require_admin" in _router)
 check("a running backfill can be asked to stop mid-run",
       "should_stop=lambda: _backfill_running.get(source) is not token" in _router)
 

@@ -34,8 +34,40 @@ export async function api(path, method='GET', body=null, _retried=false, headers
   // makes a session under active use effectively immortal.
   const freshToken = r.headers.get('x-curatarr-refreshed-token');
   if (freshToken) { state.token = freshToken; localStorage.setItem('curatarr_token', freshToken); }
-  if (!r.ok) { const err = new Error(await r.text()); err.status = r.status; throw err; }
+  if (!r.ok) {
+    const err = new Error(await r.text()); err.status = r.status;
+    if (r.status === 401 && _endsSession(path)) sessionEnded(err.message);
+    throw err;
+  }
   return r.json();
+}
+
+// ── SESSION END ──────────────────────────────────────────────────────────────
+// A 401 mid-session means the session is over: signed out on another device
+// (token_version bump), account deactivated or deleted. Every view used to
+// show "Couldn't load — Session revoked" with a Retry that could never work,
+// while the bell, the task stream and the status polls kept failing in the
+// background for as long as the tab stayed open. Now the first such 401
+// clears the token and reloads, which stops every poller at once and lands
+// on the sign-in screen with the reason (app.js shows it).
+// Not a session end: the setup gate's 401 (asks for the setup code above),
+// and the auth routes, whose callers handle their own answers.
+export const SESSION_ENDED_KEY = 'curatarr_session_ended';
+let _sessionEnding = false;
+
+function _endsSession(path) {
+  return !!state.token && !path.startsWith('/api/setup/') && !path.startsWith('/api/auth/');
+}
+
+export function sessionEnded(body) {
+  if (_sessionEnding) return;
+  _sessionEnding = true;
+  let why = 'Your session ended';
+  try { why = JSON.parse(body).detail || why; } catch { /* plain-text body */ }
+  state.token = '';
+  try { localStorage.removeItem('curatarr_token'); } catch {}
+  try { sessionStorage.setItem(SESSION_ENDED_KEY, String(why)); } catch {}
+  location.reload();
 }
 
 // ── SWR VIEW CACHE ───────────────────────────────────────────────────────────

@@ -846,30 +846,35 @@ async def generate_recommendations(
         # picks serve each interest instead of an averaged blend. The same
         # blob carries the owner's disliked titles (discovery exclusions).
         disliked_titles: list = []
+        # The blob COLUMN, read inside the session: get_db_session commits on
+        # exit (expire_on_commit), so reading an ORM row's attribute after the
+        # block raised DetachedInstanceError — swallowed by a bare
+        # ``except Exception: pass`` here, which silently dropped the cluster
+        # hint from every prompt for months. Only an unreadable blob is
+        # expected; anything else is a bug and is logged as one.
+        _cl = []
         try:
-            # The blob COLUMN, read inside the session: get_db_session commits
-            # on exit (expire_on_commit), so reading an ORM row's attribute
-            # after the block raised DetachedInstanceError — swallowed below,
-            # which silently dropped the cluster hint from every prompt.
             with get_db_session() as _cdb:
                 _blob_raw = _cdb.query(EncryptedTasteVector.encrypted_blob).filter(
                     EncryptedTasteVector.user_id == user_id,
                     EncryptedTasteVector.media_category == cat).limit(1).scalar()
-            _cl = []
-            if _blob_raw:
-                _cb = json.loads(_blob_raw)
-                if _cb.get("version") != 1:
-                    _cl = _cb.get("cluster_centroids") or []
-                    disliked_titles = list(_cb.get("disliked_titles") or [])
-            if _cl:
-                context_line += ("\nTheir taste here splits into distinct "
-                                 "clusters — serve them ALL, not a blend: "
-                                 + " | ".join(
-                                     f"{int(c.get('share', 0) * 100)}% around "
-                                     f"{', '.join(c.get('top_titles', [])[:3])}"
-                                     for c in _cl[:5]))
+            _cb = json.loads(_blob_raw) if _blob_raw else {}
+            if isinstance(_cb, dict) and _cb.get("version") != 1:
+                _cl = [c for c in (_cb.get("cluster_centroids") or [])
+                       if isinstance(c, dict)]
+                disliked_titles = [str(t) for t in (_cb.get("disliked_titles") or [])]
+        except (ValueError, TypeError) as e:
+            logger.warning("[recs] %s: taste blob unreadable — no cluster hint "
+                           "or disliked titles this run: %s", cat, e)
         except Exception:
-            pass
+            logger.warning("[recs] %s: taste-cluster read failed", cat, exc_info=True)
+        if _cl:
+            context_line += ("\nTheir taste here splits into distinct "
+                             "clusters — serve them ALL, not a blend: "
+                             + " | ".join(
+                                 f"{int(float(c.get('share') or 0) * 100)}% around "
+                                 f"{', '.join(str(t) for t in (c.get('top_titles') or [])[:3])}"
+                                 for c in _cl[:5]))
 
         import re
         match = re.search(rf'\[{re.escape(cat.upper())}\]([^\[]*)', summary_text)
@@ -1052,30 +1057,36 @@ Output format:
         if not response:
             continue
 
+        # Only the model's JSON is expected to fail. The partition below is
+        # the hard guarantee against owned/seen/deleted titles: a bug in it
+        # must surface, not read as "the model returned junk" (empty lane).
         try:
             recs = json.loads(clean_llm_text(response))
-            if not isinstance(recs, list):
-                continue
-            recs = [r for r in recs if isinstance(r, dict) and r.get("title")]
-            # DISCOVERY: hard-drop anything the user owns or has already seen.
-            # The model ignores soft "don't suggest" lines, so this — matching
-            # on stable id + normalised title — is the real guarantee that a
-            # watched/owned title (the "Ex Machina" bug) never surfaces here.
-            if lane == "discovery":
-                kept = partition(recs, seen, owned, removed)["new"]
-                if len(kept) != len(recs):
-                    logger.info(
-                        "[recs] discovery/%s: dropped %d owned/seen/removed of %d "
-                        "LLM suggestions", cat, len(recs) - len(kept), len(recs),
-                    )
-                recs = kept
-            for rec in recs:
-                rec["category"] = cat
-                rec["category_label"] = CATEGORY_LABELS.get(cat, cat)
-                rec["lane"] = lane
-                all_recs.append(rec)
-        except Exception as e:
-            logger.debug("Recommendation parse error: %s", e)
+        except ValueError as e:
+            logger.warning("[recs] %s/%s: unparseable LLM answer (%d chars): %s",
+                           lane, cat, len(response), e)
+            continue
+        if not isinstance(recs, list):
+            logger.warning("[recs] %s/%s: LLM answer is not a JSON list", lane, cat)
+            continue
+        recs = [r for r in recs if isinstance(r, dict) and r.get("title")]
+        # DISCOVERY: hard-drop anything the user owns or has already seen.
+        # The model ignores soft "don't suggest" lines, so this — matching
+        # on stable id + normalised title — is the real guarantee that a
+        # watched/owned title (the "Ex Machina" bug) never surfaces here.
+        if lane == "discovery":
+            kept = partition(recs, seen, owned, removed)["new"]
+            if len(kept) != len(recs):
+                logger.info(
+                    "[recs] discovery/%s: dropped %d owned/seen/removed of %d "
+                    "LLM suggestions", cat, len(recs) - len(kept), len(recs),
+                )
+            recs = kept
+        for rec in recs:
+            rec["category"] = cat
+            rec["category_label"] = CATEGORY_LABELS.get(cat, cat)
+            rec["lane"] = lane
+            all_recs.append(rec)
 
     return all_recs
 
@@ -1254,6 +1265,10 @@ async def generate_deletion_proposals(
         with get_db_session() as _ld_db:
             _lang_code = detect_user_language(user_id, _ld_db)
         lang_directive_str = language_directive(_lang_code)
+        # Every veto below SHIELDS titles. One that cannot be read must stop
+        # the category, not score it as if nobody had kept, discussed, played
+        # or rated anything: an empty set reads as "no protection".
+        guard_failures: list[str] = []
 
         with get_db_session() as db:
             # 1. Load Taste Vector
@@ -1380,7 +1395,8 @@ async def generate_deletion_proposals(
                                 "rejected title(s) (%dd)", category,
                                 len(_rc_rows), _REJECT_COOLDOWN_DAYS)
             except Exception as e:
-                logger.debug("[deletions] keep-cooldown load failed: %s", e)
+                guard_failures.append("keep-cooldown")
+                logger.warning("[deletions] keep-cooldown load failed: %s", e, exc_info=True)
 
             # 3. Pass 37: pre-compute the set of candidate titles the curator
             # has positioned on in recent chat. The cold-metadata pitch path
@@ -1413,7 +1429,8 @@ async def generate_deletion_proposals(
                         if t and t.lower() in _blob:
                             curator_positioned.add(t)
             except Exception as e:
-                logger.debug("[deletions] curator-stance scan failed: %s", e)
+                guard_failures.append("curator stances")
+                logger.warning("[deletions] curator-stance scan failed: %s", e, exc_info=True)
             if curator_positioned:
                 logger.info(
                     "[deletions] %d/%d candidates skipped — curator already positioned on them in chat: %s",
@@ -1457,7 +1474,9 @@ async def generate_deletion_proposals(
                     if r.series_title:
                         recent_watched.add(r.series_title)
             except Exception as e:
-                logger.debug("[deletions] watch-history veto check failed: %s", e)
+                guard_failures.append("recent-watch veto")
+                logger.warning("[deletions] watch-history veto check failed: %s", e,
+                               exc_info=True)
             # Count overlap with candidate pool — gives a useful "how many of
             # YOUR plex items are recently watched" stat in the log without
             # dumping the whole set (which can be hundreds of titles).
@@ -1509,8 +1528,11 @@ async def generate_deletion_proposals(
                         len(user_rating_by_artist), hard_protected_count,
                     )
             except Exception as e:
-                logger.warning("[deletions] artist-rating preload failed: %s", e)
+                guard_failures.append("Plex artist ratings")
+                logger.warning("[deletions] artist-rating preload failed: %s", e,
+                               exc_info=True)
         return {
+            "guard_failures": guard_failures,
             "lang_directive_str": lang_directive_str,
             "user_vector": user_vector,
             "taste_blurb": taste_blurb,
@@ -1531,6 +1553,13 @@ async def generate_deletion_proposals(
         }
 
     _ctx = await asyncio.to_thread(_load_phase_a)
+    if _ctx["guard_failures"]:
+        _why = ("could not read " + ", ".join(_ctx["guard_failures"])
+                + " — nothing proposed rather than judging without them")
+        _msg(f"{category}: not proposing deletions — {_why}")
+        logger.warning("[deletions] %s: skipped — %s", category, _why)
+        _record_deletion_run(category, stopped=_why)
+        return []
     lang_directive_str = _ctx["lang_directive_str"]
     user_vector = _ctx["user_vector"]
     taste_blurb = _ctx["taste_blurb"]
@@ -1551,12 +1580,19 @@ async def generate_deletion_proposals(
 
     # SoulSync follows (owner decision 2026-10-09): an artist the owner
     # follows there is wanted, and its watchlist would fetch every new release
-    # again anyway. No answer from SoulSync = no follow veto this run.
+    # again anyway. SoulSync configured but not answering used to mean "no
+    # follow veto this run" — followed artists became deletable. Stop instead.
     followed: set[str] = set()
     from src.services.soulsync_client import norm_name as _ss_norm
     if category == "music":
-        from src.services.soulsync_client import watchlist_artists
+        from src.services.soulsync_client import watchlist_artists, _configured as _ss_on
         _names = await watchlist_artists()
+        if _names is None and _ss_on():
+            _why = "could not read the SoulSync watchlist — nothing proposed"
+            _msg(f"{category}: not proposing deletions — {_why}")
+            logger.warning("[deletions] %s: skipped — %s", category, _why)
+            _record_deletion_run(category, stopped=_why)
+            return []
         followed = {_ss_norm(n) for n in _names or []}
         _hit = sorted(t for t in candidate_titles if _ss_norm(t) in followed)
         if _hit:
@@ -1853,7 +1889,13 @@ async def generate_deletion_proposals(
                 if _mb:
                     _plays_by_mbid[_mb] = _plays_by_mbid.get(_mb, 0) + _n
         except Exception as _e:
-            logger.debug("[deletions] play-map build failed: %s", _e)
+            # The play map IS the listening-depth protection: without it
+            # every heavily played artist would score as if never played.
+            _why = "could not read listening depth — nothing proposed rather than judging without it"
+            logger.warning("[deletions] music: play-map build failed: %s", _e, exc_info=True)
+            _msg(f"{category}: not proposing deletions — {_why}")
+            _record_deletion_run(category, stopped=_why)
+            return []
     _play_protected: list = []
     _taste_src_counts = {"embedding": 0, "genre": 0, "none": 0}
     for p in prelim:
@@ -2014,13 +2056,25 @@ async def generate_deletion_proposals(
             cons = await retrieve_considerations(
                 user_id, profile, media_category=category, top_k=3)
         except Exception as e:
-            logger.debug("[deletions] considerations lookup failed for %r: %s",
-                         it.get("title"), e)
-            cons = []
+            # No lookup is not "no keep-value": deferred to the next scan
+            # instead of being judged without its learned protections.
+            logger.warning("[deletions] considerations lookup failed for %r — "
+                           "deferred: %s", it.get("title"), e)
+            cand["considerations_failed"] = True
+            continue
         keep_pts = round(min(_CONSIDER_CAP, sum(c["strength"] for c in cons) * 30.0), 1)
         cand["considerations"] = cons
         cand["keep_value_pts"] = keep_pts
         cand["score"] = cand["score"] - keep_pts
+    _cons_failed = sum(1 for c in _consider_slice if c.get("considerations_failed"))
+    if _consider_slice and _cons_failed == len(_consider_slice):
+        _why = "learned keep-considerations could not be read (embedding or vector store down)"
+        _msg(f"{category}: not proposing deletions — {_why}")
+        _record_deletion_run(category, stopped=_why)
+        return []
+    if _cons_failed:
+        scored_candidates = [c for c in scored_candidates
+                             if not c.get("considerations_failed")]
     if any(c.get("keep_value_pts") for c in _consider_slice):
         scored_candidates.sort(key=lambda x: x["score"], reverse=True)
         _before = len(scored_candidates)
@@ -2082,6 +2136,7 @@ async def generate_deletion_proposals(
         misfiled_skipped = 0
         unchecked_skipped = 0
         watch_unknown_skipped = 0
+        signal_unknown_skipped = 0
         # Why titles got no verdict, by llm_errors.LLMFailure value. A real
         # EVALUATE is not in here: the model looked and could not decide.
         fail_kinds: Counter = Counter()
@@ -2283,6 +2338,18 @@ async def generate_deletion_proposals(
                                        "history could not be read",
                                        category, item.get("title"))
                         continue
+                    # UNREADABLE-OWNER-SIGNAL GATE: the owner's recorded
+                    # verdicts, keep-reasons and taught principles are what
+                    # keep a valued title from being cut on taste alone. Not
+                    # being able to read them is not "the owner never said".
+                    if _fl.get("owner_signal_unknown"):
+                        signal_unknown_skipped += 1
+                        judged -= 1
+                        logger.warning("[deletions] %s: deferring %r — the "
+                                       "owner's feedback, keep-reasons or "
+                                       "principles could not be read",
+                                       category, item.get("title"))
+                        continue
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
@@ -2387,6 +2454,8 @@ async def generate_deletion_proposals(
                 if unchecked_skipped else "")
              + (f" ({watch_unknown_skipped} deferred: watch history unreadable)"
                 if watch_unknown_skipped else "")
+             + (f" ({signal_unknown_skipped} deferred: owner feedback unreadable)"
+                if signal_unknown_skipped else "")
              + (f" ({household_floored} turned into 'Your call': another "
                 f"household member engaged)" if household_floored else "")
              + (f" ({sum(fail_kinds.values())} failed: "
@@ -2396,7 +2465,7 @@ async def generate_deletion_proposals(
         _record_deletion_run(
             category, judged=judged, flagged=len(final_proposals),
             deferred=(thin_skipped + misfiled_skipped + unchecked_skipped
-                      + watch_unknown_skipped),
+                      + signal_unknown_skipped + watch_unknown_skipped),
             fail_kinds=dict(fail_kinds), stopped=stopped)
         return final_proposals
 
@@ -2881,27 +2950,31 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         doc_id = str(item.get("plex_rating_key") or item.get("tmdb_id") or item.get("title") or "")
         if not doc_id:
             return None
-        try:
-            res = _prefetched_embeddings.get(doc_id)
-            # Pass 74: ChromaDB embeddings are numpy arrays — check
-            # ``is not None``, never truthiness. ``bool(array)`` raises
-            # ValueError; the old ``if res.get("embedding")`` raised inside
-            # this try/except, so it was silently swallowed and EVERY item
-            # fell through to the genre fallback — the pass-70 vector ranking
-            # never actually ran.
-            emb = res.get("embedding") if res else None
-            if emb is not None:
-                # Audit #6: stored embeddings are RAW (norm ~13) -- the same
-                # trap the deletion path fixed with _normalize_vec. A bare
-                # dot ranked by |emb| instead of taste fit and drowned the
-                # 0.1 monitored bonus.
-                emb_n = _normalize_vec(emb)
-                if emb_n is not None and user_vecs_n:
-                    return max(float(np.dot(u, emb_n)) for u in user_vecs_n)
-        except Exception:
-            pass
-        return None
+        res = _prefetched_embeddings.get(doc_id)
+        # Pass 74: ChromaDB embeddings are numpy arrays — check
+        # ``is not None``, never truthiness. ``bool(array)`` raises
+        # ValueError; the old ``if res.get("embedding")`` raised inside a
+        # try/except here, so it was silently swallowed and EVERY item fell
+        # through to the genre fallback — the pass-70 vector ranking never
+        # actually ran. No blanket except any more: the one expected
+        # mismatch (an embedding from another model's space) is checked
+        # and counted, anything else is a bug and surfaces.
+        emb = res.get("embedding") if res else None
+        if emb is None:
+            return None
+        # Audit #6: stored embeddings are RAW (norm ~13) -- the same
+        # trap the deletion path fixed with _normalize_vec. A bare
+        # dot ranked by |emb| instead of taste fit and drowned the
+        # 0.1 monitored bonus.
+        emb_n = _normalize_vec(emb)
+        if emb_n is None:
+            return None
+        if any(u.shape != emb_n.shape for u in user_vecs_n):
+            _dim_mismatch[0] += 1
+            return None
+        return max(float(np.dot(u, emb_n)) for u in user_vecs_n)
 
+    _dim_mismatch = [0]
     vectored: list = []
     genre_only: list = []
     for item in items:
@@ -2912,6 +2985,10 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
             genre_only.append(((_dislike_rank(item), _genre_score(item),
                                 _monitored_rank(item)), item))
 
+    if _dim_mismatch[0]:
+        logger.warning("[recs] %d item embedding(s) have another dimension than "
+                       "the taste vector (embedding model changed?) — ranked by "
+                       "genre until the next taste rebuild", _dim_mismatch[0])
     vectored.sort(key=lambda t: t[0], reverse=True)
     genre_only.sort(key=lambda t: t[0], reverse=True)
     # Enriched items first (real semantic taste-fit), genre-only fallback after.

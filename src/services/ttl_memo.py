@@ -27,7 +27,10 @@ import time
 
 
 def ttl_response(seconds: float, key=None, *, shared: bool = False):
-    """Decorate an async endpoint: cache its return value for ``seconds``.
+    """Decorate an endpoint: cache its return value for ``seconds``.
+
+    A plain ``def`` endpoint (blocking database work) runs on a worker
+    thread; the memo itself stays on the loop, so single-flight still holds.
 
     ``key(**kwargs) -> hashable`` scopes the cache — per user id, per query
     flag, whatever the answer depends on. Exceptions are never cached.
@@ -50,6 +53,8 @@ def ttl_response(seconds: float, key=None, *, shared: bool = False):
     locks: dict = {}
 
     def deco(fn):
+        is_coro = asyncio.iscoroutinefunction(fn)
+
         @functools.wraps(fn)
         async def wrapped(*args, **kwargs):
             k = key(**kwargs) if key else ()
@@ -62,7 +67,8 @@ def ttl_response(seconds: float, key=None, *, shared: bool = False):
                 ent = cache.get(k)
                 if ent and time.monotonic() - ent[0] < seconds:
                     return ent[1]
-                value = await fn(*args, **kwargs)
+                value = (await fn(*args, **kwargs) if is_coro
+                         else await asyncio.to_thread(fn, *args, **kwargs))
                 cache[k] = (time.monotonic(), value)
                 return value
 
