@@ -71,6 +71,8 @@ async def lifespan(app: FastAPI):
     (DATA_DIR / "chromadb").mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
 
+    from src.database import loop_guard
+    loop_guard.serving(False)
     from src.database.connection import init_db
     init_db()
 
@@ -200,6 +202,7 @@ async def lifespan(app: FastAPI):
         if settings.SYNC_ON_STARTUP:
             track_task(_startup_sync_if_needed(), name="startup_sync_if_needed")
 
+    loop_guard.serving(True)
     yield
 
     # Pass 61: flush any pending debounced memory extractions before we go
@@ -224,6 +227,7 @@ async def lifespan(app: FastAPI):
         await drain(timeout=15)
     except Exception as e:
         logger.warning("[shutdown] draining background tasks failed: %s", e)
+    loop_guard.serving(False)
 
     try:
         from src.services.app_state import set_state
@@ -460,6 +464,15 @@ async def system_dependencies():
     out = check().as_dict()
     out["lock"] = lock_check().as_dict()   # the tested install vs. this interpreter
     return out
+
+
+@app.get("/api/system/loop-guard", dependencies=_ADMIN_ONLY)
+def system_loop_guard():
+    """Database statements that ran on the event-loop thread since start,
+    by call site (src/database/loop_guard.py). Each one stalled every
+    request for as long as it took."""
+    from src.database import loop_guard
+    return loop_guard.snapshot()
 
 
 @app.post("/api/system/shutdown", dependencies=_ADMIN_ONLY)

@@ -33,6 +33,9 @@ else:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+from src.database import loop_guard  # noqa: E402
+loop_guard.install(engine)
+
 
 def _apply_sqlite_pragmas(dbapi_connection) -> None:
     cursor = dbapi_connection.cursor()
@@ -117,6 +120,7 @@ def _build_write_engine(url):
     def _begin(conn):
         conn.exec_driver_sql("BEGIN IMMEDIATE")
 
+    loop_guard.install(eng)
     return eng
 
 
