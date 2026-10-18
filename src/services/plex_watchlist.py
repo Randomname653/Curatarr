@@ -113,9 +113,14 @@ async def add_to_watchlist(user_id: int, title: str,
     try:
         from src.database.connection import get_db_session
         from src.database.models import User
-        with get_db_session() as db:
-            user = db.query(User).filter(User.id == user_id).first()
-            token = (user.plex_token or "").strip() if user else ""
+        from src.database.runner import run_read
+
+        def _token() -> str:
+            with get_db_session() as db:
+                user = db.query(User).filter(User.id == user_id).first()
+                return (user.plex_token or "").strip() if user else ""
+
+        token = await run_read(_token)
         if not token:
             return {"ok": False, "error": "user has no plex.tv token on file"}
 

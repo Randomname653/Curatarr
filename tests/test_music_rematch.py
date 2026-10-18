@@ -152,9 +152,9 @@ def test_the_pipeline_runs_it_as_phase_1b():
     body = src.split("async def run_music_pipeline")[1]
     assert "from src.services.music_rematch import rematch_arrivals" in body
     assert '"phase1b_arrivals":     phase1b,' in body
-    assert body.index("rematch_arrivals(user_id)") > body.index("match_spotify_to_plex(user_id)"), \
+    assert body.index("run_write(rematch_arrivals, user_id)") > body.index("match_spotify_to_plex(user_id)"), \
         "the incremental pass first, then the arrivals"
-    guarded = body.split("phase1b = rematch_arrivals(user_id)")[0].rsplit("try:", 1)[-1]
+    guarded = body.split("phase1b = await run_write(rematch_arrivals, user_id)")[0].rsplit("try:", 1)[-1]
     assert "import rematch_arrivals" in guarded, "import and call sit inside the same try"
     assert len(guarded.splitlines()) <= 3, "nothing else crept between the try and the call"
     assert 'phase1b = {"error": str(e)}' in body, "a broken index must not abort the pipeline"

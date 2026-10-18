@@ -12,6 +12,7 @@ raw_prefetch entry (TMDB-sourced, trustworthy), embedded and written over
 the old doc, facets refreshed. NO LLM anywhere — no confabulation surface.
 """
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,33 +30,39 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
         return False
     try:
         from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
-        mc = MetadataCache()
-        try:
-            hit = mc.get_cache(f"raw_prefetch:{doc_id}")
-            raw = (hit or {}).get("response")
-            if not isinstance(raw, dict):
-                # STALE fallback: gone-from-arr media never refresh their
-                # prefetch, so an EXPIRED row is the final — and only —
-                # trustworthy record. get_cache filters expiry; read past it.
-                try:
-                    import json as _json
-                    for k in (f"{_CACHE_VERSION}:raw_prefetch:{doc_id}",
-                              f"raw_prefetch:{doc_id}"):
-                        row = mc.conn.execute(
-                            "SELECT response FROM api_cache WHERE cache_key=?",
-                            (k,)).fetchone()
-                        if row:
-                            cand = _json.loads(row[0])
-                            if isinstance(cand, dict):
-                                raw = cand
-                                break
-                except (ValueError, TypeError):
-                    pass    # an unparseable row is no trustworthy record
-                except Exception as e:
-                    logger.warning("[corpus-repair] stale prefetch read failed "
-                                   "for %s: %s", doc_id, e)
-        finally:
-            mc.close()
+
+        def _read_prefetch():
+            mc = MetadataCache()
+            try:
+                hit = mc.get_cache(f"raw_prefetch:{doc_id}")
+                raw = (hit or {}).get("response")
+                if not isinstance(raw, dict):
+                    # STALE fallback: gone-from-arr media never refresh their
+                    # prefetch, so an EXPIRED row is the final — and only —
+                    # trustworthy record. get_cache filters expiry; read past it.
+                    try:
+                        import json as _json
+                        for k in (f"{_CACHE_VERSION}:raw_prefetch:{doc_id}",
+                                  f"raw_prefetch:{doc_id}"):
+                            row = mc.conn.execute(
+                                "SELECT response FROM api_cache WHERE cache_key=?",
+                                (k,)).fetchone()
+                            if row:
+                                cand = _json.loads(row[0])
+                                if isinstance(cand, dict):
+                                    raw = cand
+                                    break
+                    except (ValueError, TypeError):
+                        pass    # an unparseable row is no trustworthy record
+                    except Exception as e:
+                        logger.warning("[corpus-repair] stale prefetch read failed "
+                                       "for %s: %s", doc_id, e)
+            finally:
+                mc.close()
+            return raw
+
+        # The cache file has its own lock: read it on a worker thread.
+        raw = await asyncio.to_thread(_read_prefetch)
         if not isinstance(raw, dict):
             return False
         title = (raw.get("title") or "").strip()

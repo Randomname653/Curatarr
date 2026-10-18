@@ -478,8 +478,8 @@ body = chat_src.split("async def _send_message_guarded(")[1].split("\ndef _relea
 after = body.split("_uid = user.id")[1]
 check("no ORM attribute read after the commit (it re-opened a transaction)",
       "user." not in after)
-check("the request session is handed back before the stream starts",
-      "db.close()\n    return StreamingResponse(stream" in after)
+check("the chat path holds no request session (its DB work runs on worker threads)",
+      "db: Session" not in body.split(")")[0] and "return StreamingResponse(stream" in after)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

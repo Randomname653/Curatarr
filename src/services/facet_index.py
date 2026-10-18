@@ -155,13 +155,14 @@ async def run_facet_backfill(task=None) -> bool:
     ``task`` is the custodian's Activity card (task_monitor Task) — page
     progress goes there so the run is visible outside the console."""
     from src.services.app_state import get_state, set_state
+    from src.database.runner import run_read, run_write
     from src.vector_store.chromadb_wrapper import get_chroma_db
 
-    if backfill_done():
+    if await run_read(backfill_done):
         return True
     chroma = get_chroma_db()
     try:
-        offset = int(get_state(_BACKFILL_CURSOR_KEY) or 0)
+        offset = int(await run_read(get_state, _BACKFILL_CURSOR_KEY) or 0)
     except Exception:
         offset = 0
     total = chroma.get_count()
@@ -195,7 +196,7 @@ async def run_facet_backfill(task=None) -> bool:
     _report()
     for _ in range(pages_per_run):
         if offset >= total:
-            set_state(_BACKFILL_DONE_KEY, "1")
+            await run_write(set_state, _BACKFILL_DONE_KEY, "1")
             logger.info("[facets] backfill COMPLETE — %d facet points",
                         chroma.facets_count())
             _report()
@@ -254,7 +255,7 @@ async def run_facet_backfill(task=None) -> bool:
             if (i + 1) % 25 == 0:
                 _report(written, within=i + 1)
         offset += len(ids) if ids else _PAGE
-        set_state(_BACKFILL_CURSOR_KEY, str(offset))
+        await run_write(set_state, _BACKFILL_CURSOR_KEY, str(offset))
         logger.info("[facets] backfill %d/%d titles (+%d points this page)",
                     min(offset, total), total, written)
         _report(written)

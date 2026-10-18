@@ -52,6 +52,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from src.config import settings
+from src.database.runner import run_read, run_write
 
 logger = logging.getLogger(__name__)
 
@@ -186,14 +187,18 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
     series = await client.get_series()
     series = sorted((s for s in series or [] if isinstance(s, dict) and s.get("id")), key=lambda s: int(s["id"]))
     try:
-        cursor = int(get_state(_CURSOR_KEY) or 0)
+        cursor = int(await run_read(get_state, _CURSOR_KEY) or 0)
     except Exception:
         cursor = 0
     fresh_before = now - timedelta(days=_RECHECK_DAYS)
-    with get_db_session() as db:
-        fresh = {r.arr_id for r in db.query(SeriesEdition).filter(
-            SeriesEdition.service == "sonarr", SeriesEdition.checked_at >= fresh_before,
-            SeriesEdition.files_disc.isnot(None)).all()}
+
+    def _fresh_ids() -> set:
+        with get_db_session() as db:
+            return {r.arr_id for r in db.query(SeriesEdition).filter(
+                SeriesEdition.service == "sonarr", SeriesEdition.checked_at >= fresh_before,
+                SeriesEdition.files_disc.isnot(None)).all()}
+
+    fresh = await run_read(_fresh_ids)
     todo = [s for s in series if int(s["id"]) > cursor and int(s["id"]) not in fresh]
     batch, rest = todo[:budget], todo[budget:]
     checked = failed = 0
@@ -221,26 +226,29 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
         row = classify_files(files)
         cat = _category(s)
         flags = anidb_flags(s.get("title") or "", s.get("year"), lookup=lookup) if cat == "anime" else dict(_NO_FLAGS)
-        with get_db_session() as db:
-            ed = db.query(SeriesEdition).filter(SeriesEdition.service == "sonarr", SeriesEdition.arr_id == sid).first()
-            if ed is None:
-                ed = SeriesEdition(service="sonarr", arr_id=sid)
-                db.add(ed)
-            ed.title = s.get("title")
-            ed.category = cat
-            ed.tvdb_id = s.get("tvdbId")
-            ed.title_slug = s.get("titleSlug")
-            ed.year = s.get("year")
-            for k, v in row.items():
-                setattr(ed, k, v)
-            if flags is not None:
-                ed.anidb_uncensored = bool(flags["uncensored"])
-                ed.anidb_censored = bool(flags["censored"])
-                ed.anidb_disc_censored = bool(flags["disc_censored"])
-                ed.anidb_tags = flags["tags"] or None
-                ed.checked_at = now
-            # flags None: AniDB unreadable — keep the stored flags and leave
-            # checked_at alone so the series is re-offered next run.
+        def _upsert(s=s, sid=sid, row=row, cat=cat, flags=flags):
+            with get_db_session() as db:
+                ed = db.query(SeriesEdition).filter(SeriesEdition.service == "sonarr", SeriesEdition.arr_id == sid).first()
+                if ed is None:
+                    ed = SeriesEdition(service="sonarr", arr_id=sid)
+                    db.add(ed)
+                ed.title = s.get("title")
+                ed.category = cat
+                ed.tvdb_id = s.get("tvdbId")
+                ed.title_slug = s.get("titleSlug")
+                ed.year = s.get("year")
+                for k, v in row.items():
+                    setattr(ed, k, v)
+                if flags is not None:
+                    ed.anidb_uncensored = bool(flags["uncensored"])
+                    ed.anidb_censored = bool(flags["censored"])
+                    ed.anidb_disc_censored = bool(flags["disc_censored"])
+                    ed.anidb_tags = flags["tags"] or None
+                    ed.checked_at = now
+                # flags None: AniDB unreadable — keep the stored flags and leave
+                # checked_at alone so the series is re-offered next run.
+
+        await run_write(_upsert)
         if flags is None:
             failed += 1
             last_id = sid
@@ -250,7 +258,7 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
         if checked % 25 == 0:
             _report(f"{checked}/{len(batch)} series checked")
     done = not rest
-    set_state(_CURSOR_KEY, "0" if done else str(last_id))
+    await run_write(set_state, _CURSOR_KEY, "0" if done else str(last_id))
     _report(f"{checked} checked, {failed} failed, {len(rest)} left")
     return {"series": len(series), "todo": len(todo), "checked": checked, "failed": failed,
             "left": len(rest), "done": done}

@@ -19,6 +19,7 @@ Connection settings live in ``.env`` and are written via the existing
 setup_wizard write_env helper (re-using the file format the wizard owns).
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
@@ -28,6 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.config import settings
 from src.database.models import User
+from src.database.runner import run_read, run_write
 from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
 from src.services.endpoint_policy import (
@@ -225,8 +227,8 @@ async def library_test(
             try:
                 status = await client.test_connection()
                 version = (status or {}).get("version", "")
-                set_state(f"lib_test:{req.service}:last",
-                          f"ok|{version}|{__import__('datetime').datetime.utcnow().isoformat()}")
+                await run_write(set_state, f"lib_test:{req.service}:last",
+                                f"ok|{version}|{__import__('datetime').datetime.utcnow().isoformat()}")
                 return {
                     "ok": True,
                     "service": req.service,
@@ -237,8 +239,8 @@ async def library_test(
             except Exception as exc:
                 logger.info("[library] %s test failed: %s", req.service, exc)
                 error = _public_test_error(exc)
-                set_state(f"lib_test:{req.service}:last",
-                          f"fail|{error}|{__import__('datetime').datetime.utcnow().isoformat()}")
+                await run_write(set_state, f"lib_test:{req.service}:last",
+                                f"fail|{error}|{__import__('datetime').datetime.utcnow().isoformat()}")
                 return {
                     "ok": False,
                     "service": req.service,
@@ -640,8 +642,7 @@ async def prewarm_arr_caches() -> None:
     Both steps are best-effort and never raise — the normal on-demand
     fetch path remains available regardless.
     """
-    import asyncio
-    restored = _load_lib_cache_from_db()
+    restored = await asyncio.to_thread(_load_lib_cache_from_db)
     logger.info("[library] prewarm: restored %d arr cache(s) from DB", restored)
 
     async def _bg_refresh(svc: str):
@@ -720,7 +721,7 @@ async def _live_arr_library(service: str, url: str, api_key: str,
     # L1 (in-memory) + L2 (persisted DB row) populated together so the
     # next process restart starts warm.
     _LIB_CACHE[service] = {"items_raw": items_raw, "tags": tags, "at": now}
-    _persist_lib_cache(service, items_raw, tags, now)
+    await asyncio.to_thread(_persist_lib_cache, service, items_raw, tags, now)
     return items_raw, tags
 
 
@@ -770,7 +771,7 @@ async def _fetch_arr_library(service: str, *, force_refresh: bool = False) -> tu
     url, api_key = _get_arr_url_key(service)
     if not url or not api_key:
         if service == "lidarr":
-            plex = _plex_music_library()
+            plex = await asyncio.to_thread(_plex_music_library)   # a SQLite file
             if plex is not None:
                 return plex
         raise HTTPException(400, f"{service} not configured")
@@ -838,15 +839,17 @@ async def library_items(
                 curatarr_tag_id = t.get("id")
                 break
 
-    from src.cache.metadata_cache import MetadataCache
-    cache = MetadataCache()
-    try:
-        items = [
-            _flatten_arr_item(service, raw, _enrichment_lookup(service, raw, cache))
-            for raw in items_raw
-        ]
-    finally:
-        cache.close()
+    def _flatten_all() -> list:
+        from src.cache.metadata_cache import MetadataCache
+        cache = MetadataCache()
+        try:
+            return [
+                _flatten_arr_item(service, raw, _enrichment_lookup(service, raw, cache))
+                for raw in items_raw
+            ]
+        finally:
+            cache.close()
+    items = await asyncio.to_thread(_flatten_all)
 
     # Apply filters
     if needs_enrichment:
@@ -895,7 +898,7 @@ async def library_items(
     }
 
 
-def _reenrich_plex_artist(req, row: dict) -> dict:
+async def _reenrich_plex_artist(req, row: dict) -> dict:
     """Re-enrich one artist of the Plex music index (no Lidarr). The
     enricher keys music by name[:40] (raw:music:<name>, enriched:music:<name>)
     and the artist's Plex key; metadata mode drops both entries, summary mode
@@ -903,23 +906,26 @@ def _reenrich_plex_artist(req, row: dict) -> dict:
     title = row.get("name") or ""
     mbid = row.get("mbid")
     key = str(row.get("artist_key"))
-    from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
-    cache = MetadataCache()
-    try:
-        drop = [f"enriched:music:{title[:40]}"]
-        if req.mode in ("metadata", "both"):
-            drop += [f"raw:music:{title[:40]}", f"raw:music:{key}", f"raw_prefetch:{key}"]
-        for k in drop:
-            cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (f"{_CACHE_VERSION}:{k}",))
-        # The embedding keys carry the model tag ({ver}:emb:{model}:{pid});
-        # the bare {ver}:emb:{pid} this used to delete matched nothing.
-        from src.routers.enrichment import _clear_emb_caches
-        _clear_emb_caches(cache.conn, {key})
-        cache.conn.commit()
-    except Exception as e:
-        logger.warning("[library] plex re-enrich cache clear failed: %s", e)
-    finally:
-        cache.close()
+
+    def _drop_caches() -> None:
+        from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
+        cache = MetadataCache()
+        try:
+            drop = [f"enriched:music:{title[:40]}"]
+            if req.mode in ("metadata", "both"):
+                drop += [f"raw:music:{title[:40]}", f"raw:music:{key}", f"raw_prefetch:{key}"]
+            for k in drop:
+                cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (f"{_CACHE_VERSION}:{k}",))
+            # The embedding keys carry the model tag ({ver}:emb:{model}:{pid});
+            # the bare {ver}:emb:{pid} this used to delete matched nothing.
+            from src.routers.enrichment import _clear_emb_caches
+            _clear_emb_caches(cache.conn, {key})
+            cache.conn.commit()
+        except Exception as e:
+            logger.warning("[library] plex re-enrich cache clear failed: %s", e)
+        finally:
+            cache.close()
+    await asyncio.to_thread(_drop_caches)
 
     async def _run():
         try:
@@ -1047,9 +1053,9 @@ async def library_reenrich(
         if req.service == "lidarr":
             # Lidarr optional: a Plex-index artist re-enriches by name + mbid
             from src.services.lyrics import plex_artist
-            row = plex_artist(str(req.arr_id))
+            row = await asyncio.to_thread(plex_artist, str(req.arr_id))
             if row:
-                return _reenrich_plex_artist(req, row)
+                return await _reenrich_plex_artist(req, row)
         raise HTTPException(400, f"{req.service} not configured")
 
     # Resolve arr-side IDs we need for the enrichment lookup
@@ -1091,67 +1097,68 @@ async def library_reenrich(
 
     # mode=metadata or both → bust the cached profile so the next
     # enrich_media_item call re-fetches
-    from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
-    cache = MetadataCache()
-    try:
-        if req.mode in ("metadata", "both"):
-            cache_key = f"enriched:{media_type}:{ext_id}"
-            doc_id = f"{req.service}:{req.arr_id}"
-            try:
-                # Direct DELETE — no helper for this; safe even if row absent.
-                # Pass 16h: use _CACHE_VERSION instead of hardcoded "v2:" so a
-                # version bump doesn't silently break re-enrich invalidation.
-                cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?",
-                                   (f"{_CACHE_VERSION}:{cache_key}",))
-                # Also bust EVERY doc-id-keyed entry (enriched / raw /
-                # raw_prefetch under e.g. "sonarr:3568") — those are what the
-                # deletion discussion + pitch actually read, and a wrong-entity
-                # resolution (Lupin III → Fujiko Mine) poisoned exactly those.
-                cache.conn.execute("DELETE FROM api_cache WHERE cache_key LIKE ?",
-                                   (f"%:{doc_id}",))
+    def _bust_caches() -> None:
+        from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
+        cache = MetadataCache()
+        try:
+            if req.mode in ("metadata", "both"):
+                cache_key = f"enriched:{media_type}:{ext_id}"
+                doc_id = f"{req.service}:{req.arr_id}"
+                try:
+                    # Direct DELETE — no helper for this; safe even if row absent.
+                    # Pass 16h: use _CACHE_VERSION instead of hardcoded "v2:" so a
+                    # version bump doesn't silently break re-enrich invalidation.
+                    cache.conn.execute("DELETE FROM api_cache WHERE cache_key = ?",
+                                       (f"{_CACHE_VERSION}:{cache_key}",))
+                    # Also bust EVERY doc-id-keyed entry (enriched / raw /
+                    # raw_prefetch under e.g. "sonarr:3568") — those are what the
+                    # deletion discussion + pitch actually read, and a wrong-entity
+                    # resolution (Lupin III → Fujiko Mine) poisoned exactly those.
+                    cache.conn.execute("DELETE FROM api_cache WHERE cache_key LIKE ?",
+                                       (f"%:{doc_id}",))
 
-                # Pass 46 (Bug 4 / B7): bust the per-item embedding cache too.
-                # The taste-vector recompute decides whether to re-embed by
-                # comparing the stored ``emb_ts:{pid}`` against
-                # ``EnrichmentStatus.enriched_at``. ``enrich_media_item`` on
-                # this single-item path does NOT update ``enriched_at``
-                # (only the bulk ``_run_enrichment`` does that), so without
-                # an explicit emb-cache bust here the stored 90-day TTL
-                # vector would keep representing the OLD profile long after
-                # the user clicked "re-fetch metadata". Fix: look the
-                # plex_rating_key up by title + category and DELETE both
-                # ``emb:{pid}`` and ``emb_ts:{pid}``. Title-mismatch falls
-                # back to the pre-existing TTL-based invalidation — safe
-                # to miss, not safe to skip.
-                from src.database.connection import get_db_session
-                from src.database.models import EnrichmentStatus
-                cleared_embs = 0
-                with get_db_session() as _db:
-                    rows = _db.query(EnrichmentStatus).filter(
-                        EnrichmentStatus.title == title,
-                        EnrichmentStatus.media_category == media_type,
-                    ).all()
-                    pids = [r.plex_rating_key for r in rows if r.plex_rating_key]
-                if pids:
-                    # Keys carry the model tag ({ver}:emb:{model}:{pid}); the
-                    # bare {ver}:emb:{pid} this built matched nothing, so the
-                    # stale vector survived every "re-fetch metadata".
-                    from src.routers.enrichment import _clear_emb_caches
-                    _clear_emb_caches(cache.conn, set(pids))
-                    cleared_embs = len(pids)
+                    # Pass 46 (Bug 4 / B7): bust the per-item embedding cache too.
+                    # The taste-vector recompute decides whether to re-embed by
+                    # comparing the stored ``emb_ts:{pid}`` against
+                    # ``EnrichmentStatus.enriched_at``. ``enrich_media_item`` on
+                    # this single-item path does NOT update ``enriched_at``
+                    # (only the bulk ``_run_enrichment`` does that), so without
+                    # an explicit emb-cache bust here the stored 90-day TTL
+                    # vector would keep representing the OLD profile long after
+                    # the user clicked "re-fetch metadata". Fix: look the
+                    # plex_rating_key up by title + category and DELETE both
+                    # ``emb:{pid}`` and ``emb_ts:{pid}``. Title-mismatch falls
+                    # back to the pre-existing TTL-based invalidation — safe
+                    # to miss, not safe to skip.
+                    from src.database.connection import get_db_session
+                    from src.database.models import EnrichmentStatus
+                    cleared_embs = 0
+                    with get_db_session() as _db:
+                        rows = _db.query(EnrichmentStatus).filter(
+                            EnrichmentStatus.title == title,
+                            EnrichmentStatus.media_category == media_type,
+                        ).all()
+                        pids = [r.plex_rating_key for r in rows if r.plex_rating_key]
+                    if pids:
+                        # Keys carry the model tag ({ver}:emb:{model}:{pid}); the
+                        # bare {ver}:emb:{pid} this built matched nothing, so the
+                        # stale vector survived every "re-fetch metadata".
+                        from src.routers.enrichment import _clear_emb_caches
+                        _clear_emb_caches(cache.conn, set(pids))
+                        cleared_embs = len(pids)
 
-                cache.conn.commit()
-                logger.info(
-                    "[library] re-enrich: cleared cache %s (+%d emb rows)",
-                    cache_key, cleared_embs,
-                )
-            except Exception as e:
-                logger.warning("[library] cache clear failed: %s", e)
-    finally:
-        cache.close()
+                    cache.conn.commit()
+                    logger.info(
+                        "[library] re-enrich: cleared cache %s (+%d emb rows)",
+                        cache_key, cleared_embs,
+                    )
+                except Exception as e:
+                    logger.warning("[library] cache clear failed: %s", e)
+        finally:
+            cache.close()
+    await asyncio.to_thread(_bust_caches)
 
     # Fire enrichment in the background — don't block the user
-    import asyncio
     from src.services.media_enricher import enrich_media_item
     from src.services.llm_priority import priority_enrichment
 
@@ -1363,7 +1370,7 @@ async def library_add(
     if not url or not api_key:
         raise HTTPException(400, f"{req.service} not configured")
 
-    defaults = _read_defaults(req.service)
+    defaults = await run_read(_read_defaults, req.service)
     root_folder = defaults.get("root_folder_path")
     quality_id  = defaults.get("quality_profile_id")
     if not root_folder or not quality_id:
@@ -1713,23 +1720,25 @@ async def library_breakdown(
     )
 
     # ── 1. Read configured libraries ─────────────────────────────────────────
-    with get_db_session() as db:
-        configs = db.query(_LC).all()
-        library_rows = [
-            {
-                "key":       c.plex_section_key,
-                "title":     c.plex_section_title,
-                "plex_type": c.plex_section_type,
-                "category":  c.media_category,
-            }
-            for c in configs
-        ]
+    def _load_libraries() -> list:
+        with get_db_session() as db:
+            configs = db.query(_LC).all()
+            return [
+                {
+                    "key":       c.plex_section_key,
+                    "title":     c.plex_section_title,
+                    "plex_type": c.plex_section_type,
+                    "category":  c.media_category,
+                }
+                for c in configs
+            ]
+    library_rows = await run_read(_load_libraries)
 
     # ── 2. ARR counts (cached for 5 min; quick=True bypasses live fetch) ─────
     from src.routers.enrichment import _get_arr_counts
     if quick:
         import json as _json
-        cached_raw = get_state("arr_counts_cache")
+        cached_raw = await run_read(get_state, "arr_counts_cache")
         arr_counts = _json.loads(cached_raw) if cached_raw else {}
     else:
         try:
@@ -1802,163 +1811,169 @@ async def library_breakdown(
     # Excludes Spotify ext-script seeds (Pass 91b — they aren't in any Plex
     # section so they don't belong to a library row here).
     from src.services.enrichment_state import classify_enrichment_row as _classify
-    state_buckets: dict[str, dict[str, int]] = {}
-    with get_db_session() as db:
-        # One classifier for every view (services/enrichment_state.py): the
-        # SQL CASE that lived here disagreed with the KB tile's own if-chain
-        # (and neither knew about the not-found backoff). Row-level Python
-        # over ~20k rows is a few ms and keeps the vocabulary in one place.
-        _now = datetime.utcnow()
-        for r in (
-            db.query(_ES.media_category, _ES.enriched, _ES.error,
-                     _ES.provisional, _ES.next_retry_at)
-            .filter(~_ES.plex_rating_key.like("ext-script:%"))
-            .all()
-        ):
-            bucket = _classify(r, now=_now)
-            cb = state_buckets.setdefault(r.media_category, {})
-            cb[bucket] = cb.get(bucket, 0) + 1
 
-        vector_ready_counts = dict(
-            db.query(_ES.media_category, _func.count(_ES.id))
-            .filter(
-                _ES.vector_ready == True,
-                ~_ES.plex_rating_key.like("ext-script:%"),
+    def _load_counts() -> tuple:
+        state_buckets: dict[str, dict[str, int]] = {}
+        with get_db_session() as db:
+            # One classifier for every view (services/enrichment_state.py): the
+            # SQL CASE that lived here disagreed with the KB tile's own if-chain
+            # (and neither knew about the not-found backoff). Row-level Python
+            # over ~20k rows is a few ms and keeps the vocabulary in one place.
+            _now = datetime.utcnow()
+            for r in (
+                db.query(_ES.media_category, _ES.enriched, _ES.error,
+                         _ES.provisional, _ES.next_retry_at)
+                .filter(~_ES.plex_rating_key.like("ext-script:%"))
+                .all()
+            ):
+                bucket = _classify(r, now=_now)
+                cb = state_buckets.setdefault(r.media_category, {})
+                cb[bucket] = cb.get(bucket, 0) + 1
+
+            vector_ready_counts = dict(
+                db.query(_ES.media_category, _func.count(_ES.id))
+                .filter(
+                    _ES.vector_ready == True,
+                    ~_ES.plex_rating_key.like("ext-script:%"),
+                )
+                .group_by(_ES.media_category)
+                .all()
             )
-            .group_by(_ES.media_category)
-            .all()
-        )
 
-        # Watch-history per category (unique titles + total plays) for the
-        # logged-in user.
-        wh_unique_show = dict(
-            db.query(
-                _WH.media_type,
-                _func.count(_func.distinct(_WH.series_title)),
+            # Watch-history per category (unique titles + total plays) for the
+            # logged-in user.
+            wh_unique_show = dict(
+                db.query(
+                    _WH.media_type,
+                    _func.count(_func.distinct(_WH.series_title)),
+                )
+                .filter(
+                    _WH.user_id == user.id,
+                    _WH.media_type.in_(["show", "anime", "music"]),
+                    _WH.series_title.isnot(None),
+                )
+                .group_by(_WH.media_type)
+                .all()
             )
-            .filter(
-                _WH.user_id == user.id,
-                _WH.media_type.in_(["show", "anime", "music"]),
-                _WH.series_title.isnot(None),
+            wh_unique_movie = (
+                db.query(_func.count(_func.distinct(_WH.title)))
+                .filter(_WH.user_id == user.id, _WH.media_type == "movie")
+                .scalar() or 0
             )
-            .group_by(_WH.media_type)
-            .all()
-        )
-        wh_unique_movie = (
-            db.query(_func.count(_func.distinct(_WH.title)))
-            .filter(_WH.user_id == user.id, _WH.media_type == "movie")
-            .scalar() or 0
-        )
-        wh_total_plays = dict(
-            db.query(_WH.media_type, _func.count(_WH.id))
-            .filter(_WH.user_id == user.id)
-            .group_by(_WH.media_type)
-            .all()
-        )
+            wh_total_plays = dict(
+                db.query(_WH.media_type, _func.count(_WH.id))
+                .filter(_WH.user_id == user.id)
+                .group_by(_WH.media_type)
+                .all()
+            )
 
-        # ── Music-specific: Spotify pipeline phase coverage ──────────────────
-        # Computed once even if multiple music libraries are configured (rare).
-        music_extras = None
-        has_music_lib = any(r["category"] == "music" for r in library_rows)
-        if has_music_lib:
-            # ⚡ BOLT OPTIMIZATION:
-            # Replaced 5 redundant aggregate queries against WatchHistoryEntry
-            # with a single pass using conditional SUM(CASE...) and COUNT(DISTINCT CASE...).
-            # This cuts database roundtrips for the music phase coverage stats.
-            from sqlalchemy import and_, case as _case
-            spotify_stats = db.query(
-                _func.count(_WH.id).label("total_plays"),
-                _func.sum(_case((_WH.plex_item_id.like("spotify%"), 1), else_=0)).label("unmatched_plays"),
-                _func.count(_func.distinct(_case((
-                    and_(_WH.plex_item_id.like("spotify%"), _WH.series_title.isnot(None)),
-                    _WH.series_title
-                ), else_=None))).label("unique_artists"),
-                _func.count(_func.distinct(_case((
-                    and_(_WH.plex_item_id.like("spotify%"), _WH.series_title.isnot(None), _WH.artist_mbid.isnot(None)),
-                    _WH.series_title
-                ), else_=None))).label("mbid_resolved"),
-                _func.sum(_case((
-                    and_(_WH.plex_item_id.like("spotify%"), _WH.genres.isnot(None)), 1
-                ), else_=0)).label("with_genres")
-            ).filter(
-                _WH.user_id == user.id,
-                _WH.media_type == "music",
-                _WH.source == "spotify"
-            ).first()
+            # ── Music-specific: Spotify pipeline phase coverage ──────────────────
+            # Computed once even if multiple music libraries are configured (rare).
+            music_extras = None
+            has_music_lib = any(r["category"] == "music" for r in library_rows)
+            if has_music_lib:
+                # ⚡ BOLT OPTIMIZATION:
+                # Replaced 5 redundant aggregate queries against WatchHistoryEntry
+                # with a single pass using conditional SUM(CASE...) and COUNT(DISTINCT CASE...).
+                # This cuts database roundtrips for the music phase coverage stats.
+                from sqlalchemy import and_, case as _case
+                spotify_stats = db.query(
+                    _func.count(_WH.id).label("total_plays"),
+                    _func.sum(_case((_WH.plex_item_id.like("spotify%"), 1), else_=0)).label("unmatched_plays"),
+                    _func.count(_func.distinct(_case((
+                        and_(_WH.plex_item_id.like("spotify%"), _WH.series_title.isnot(None)),
+                        _WH.series_title
+                    ), else_=None))).label("unique_artists"),
+                    _func.count(_func.distinct(_case((
+                        and_(_WH.plex_item_id.like("spotify%"), _WH.series_title.isnot(None), _WH.artist_mbid.isnot(None)),
+                        _WH.series_title
+                    ), else_=None))).label("mbid_resolved"),
+                    _func.sum(_case((
+                        and_(_WH.plex_item_id.like("spotify%"), _WH.genres.isnot(None)), 1
+                    ), else_=0)).label("with_genres")
+                ).filter(
+                    _WH.user_id == user.id,
+                    _WH.media_type == "music",
+                    _WH.source == "spotify"
+                ).first()
 
-            # Phase 1: Plex match — spotify-source rows whose plex_item_id no
-            # longer starts with 'spotify:' have been rewritten to point at a
-            # real Plex track ID by match_spotify_to_plex.
-            spotify_total_plays = spotify_stats.total_plays or 0
-            spotify_unmatched_plays = spotify_stats.unmatched_plays or 0
-            spotify_matched_plays = max(0, spotify_total_plays - spotify_unmatched_plays)
+                # Phase 1: Plex match — spotify-source rows whose plex_item_id no
+                # longer starts with 'spotify:' have been rewritten to point at a
+                # real Plex track ID by match_spotify_to_plex.
+                spotify_total_plays = spotify_stats.total_plays or 0
+                spotify_unmatched_plays = spotify_stats.unmatched_plays or 0
+                spotify_matched_plays = max(0, spotify_total_plays - spotify_unmatched_plays)
 
-            # Phase 1.4: MBID resolve — distinct spotify artists with
-            # artist_mbid set. Counts only the still-unmatched set (matched
-            # rows had their plex_item_id rewritten and already feed
-            # taste-vector through the local Plex track).
-            spotify_unique_artists = spotify_stats.unique_artists or 0
-            spotify_mbid_resolved = spotify_stats.mbid_resolved or 0
+                # Phase 1.4: MBID resolve — distinct spotify artists with
+                # artist_mbid set. Counts only the still-unmatched set (matched
+                # rows had their plex_item_id rewritten and already feed
+                # taste-vector through the local Plex track).
+                spotify_unique_artists = spotify_stats.unique_artists or 0
+                spotify_mbid_resolved = spotify_stats.mbid_resolved or 0
 
-            # Phase 1.5 + Phase 2: Genre coverage — both phases write to the
-            # same ``genres`` column on the same rows, so we report combined
-            # coverage. The split between "Spotify wrote it" vs "Last.fm
-            # fallback wrote it" isn't tracked at the row level (would
-            # require a new column); the honest number is the combined
-            # "rows with genres" / "rows total".
-            spotify_with_genres = spotify_stats.with_genres or 0
+                # Phase 1.5 + Phase 2: Genre coverage — both phases write to the
+                # same ``genres`` column on the same rows, so we report combined
+                # coverage. The split between "Spotify wrote it" vs "Last.fm
+                # fallback wrote it" isn't tracked at the row level (would
+                # require a new column); the honest number is the combined
+                # "rows with genres" / "rows total".
+                spotify_with_genres = spotify_stats.with_genres or 0
 
-            music_extras = {
-                "phase_1_plex_match": {
-                    "label":     "Phase 1 — Plex Match",
-                    "matched":   spotify_matched_plays,
-                    "total":     spotify_total_plays,
-                    "remaining": spotify_unmatched_plays,
-                    "pct":       round(
-                        100 * spotify_matched_plays / max(spotify_total_plays, 1)
-                    ),
-                    "explainer": (
-                        "Spotify plays where a local Plex track was found "
-                        "and ``plex_item_id`` was rewritten from "
-                        "``spotify:track:…`` to the Plex rating key. "
-                        "Matched plays feed the taste vector through the "
-                        "local track and skip Phases 1.4/1.5/2 entirely."
-                    ),
-                },
-                "phase_1_4_mbid_resolve": {
-                    "label":     "Phase 1.4 — MBID Resolve (MusicBrainz)",
-                    "resolved":  spotify_mbid_resolved,
-                    "total":     spotify_unique_artists,
-                    "remaining": max(0, spotify_unique_artists - spotify_mbid_resolved),
-                    "pct":       round(
-                        100 * spotify_mbid_resolved / max(spotify_unique_artists, 1)
-                    ),
-                    "explainer": (
-                        "Distinct still-unmatched Spotify artists with a "
-                        "resolved MusicBrainz MBID (``artist_mbid``). MBID "
-                        "enables the one-click ‘Add to Lidarr’ flow on the "
-                        "Spotify-Backlog page without a live MB lookup. "
-                        "Throttled to 1 req/s — use ``scripts/mbid_speedrunner.py`` "
-                        "to clear a backlog faster than the daily cap allows."
-                    ),
-                },
-                "phase_1_5_2_genres": {
-                    "label":     "Phase 1.5 + 2 — Genre Coverage (Spotify + Last.fm)",
-                    "with_genres": spotify_with_genres,
-                    "total":     spotify_unmatched_plays,
-                    "remaining": max(0, spotify_unmatched_plays - spotify_with_genres),
-                    "pct":       round(
-                        100 * spotify_with_genres / max(spotify_unmatched_plays, 1)
-                    ),
-                    "explainer": (
-                        "Still-unmatched Spotify plays with genres filled. "
-                        "Phase 1.5 (Spotify Client-Credentials API) runs first; "
-                        "Phase 2 (Last.fm) is the fallback for anything Spotify "
-                        "couldn't resolve. Both phases write the same "
-                        "``genres`` column, so the split is reported combined."
-                    ),
-                },
-            }
+                music_extras = {
+                    "phase_1_plex_match": {
+                        "label":     "Phase 1 — Plex Match",
+                        "matched":   spotify_matched_plays,
+                        "total":     spotify_total_plays,
+                        "remaining": spotify_unmatched_plays,
+                        "pct":       round(
+                            100 * spotify_matched_plays / max(spotify_total_plays, 1)
+                        ),
+                        "explainer": (
+                            "Spotify plays where a local Plex track was found "
+                            "and ``plex_item_id`` was rewritten from "
+                            "``spotify:track:…`` to the Plex rating key. "
+                            "Matched plays feed the taste vector through the "
+                            "local track and skip Phases 1.4/1.5/2 entirely."
+                        ),
+                    },
+                    "phase_1_4_mbid_resolve": {
+                        "label":     "Phase 1.4 — MBID Resolve (MusicBrainz)",
+                        "resolved":  spotify_mbid_resolved,
+                        "total":     spotify_unique_artists,
+                        "remaining": max(0, spotify_unique_artists - spotify_mbid_resolved),
+                        "pct":       round(
+                            100 * spotify_mbid_resolved / max(spotify_unique_artists, 1)
+                        ),
+                        "explainer": (
+                            "Distinct still-unmatched Spotify artists with a "
+                            "resolved MusicBrainz MBID (``artist_mbid``). MBID "
+                            "enables the one-click ‘Add to Lidarr’ flow on the "
+                            "Spotify-Backlog page without a live MB lookup. "
+                            "Throttled to 1 req/s — use ``scripts/mbid_speedrunner.py`` "
+                            "to clear a backlog faster than the daily cap allows."
+                        ),
+                    },
+                    "phase_1_5_2_genres": {
+                        "label":     "Phase 1.5 + 2 — Genre Coverage (Spotify + Last.fm)",
+                        "with_genres": spotify_with_genres,
+                        "total":     spotify_unmatched_plays,
+                        "remaining": max(0, spotify_unmatched_plays - spotify_with_genres),
+                        "pct":       round(
+                            100 * spotify_with_genres / max(spotify_unmatched_plays, 1)
+                        ),
+                        "explainer": (
+                            "Still-unmatched Spotify plays with genres filled. "
+                            "Phase 1.5 (Spotify Client-Credentials API) runs first; "
+                            "Phase 2 (Last.fm) is the fallback for anything Spotify "
+                            "couldn't resolve. Both phases write the same "
+                            "``genres`` column, so the split is reported combined."
+                        ),
+                    },
+                }
+        return (state_buckets, vector_ready_counts, wh_unique_show, wh_unique_movie,
+                wh_total_plays, music_extras)
+    (state_buckets, vector_ready_counts, wh_unique_show, wh_unique_movie,
+     wh_total_plays, music_extras) = await run_read(_load_counts)
 
     # ── 5. Vector-store counts (ChromaDB, per-service prefix) ───────────────
     # Lazy import so the endpoint still loads when Chroma is misconfigured.

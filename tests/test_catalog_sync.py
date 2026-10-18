@@ -129,13 +129,33 @@ from sqlalchemy.orm import sessionmaker
 
 from src.database.models import Base, DeletionProposal
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+from contextlib import contextmanager
+from sqlalchemy.pool import StaticPool
+
+# StaticPool + recs' sessions on it: the delete path opens its own sessions
+# on the DB worker threads
+engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                       poolclass=StaticPool)
 Base.metadata.create_all(engine)
 db = sessionmaker(bind=engine)()
 db.add(DeletionProposal(id=1, user_id=1, title="Stale Band", service="lidarr",
                         media_id="77", reason="r", confidence=0.8,
                         storage_mb=1000, status="pending", category="music"))
 db.commit()
+
+
+@contextmanager
+def _test_session():
+    s = sessionmaker(bind=engine)()
+    try:
+        yield s
+        s.commit()
+    finally:
+        s.close()
+
+
+_real_session = recs.get_db_session
+recs.get_db_session = _test_session
 
 exec_calls = []
 
@@ -158,8 +178,8 @@ async def guard_drift(p):
 
 
 recs._lidarr_freshness_guard = guard_drift
-p = db.query(DeletionProposal).get(1)
-ok = asyncio.run(recs._delete_one_and_log(db, 1, p))
+p = recs._load_proposal(1, 1)
+ok = asyncio.run(recs._delete_one_and_log(1, p))
 check("drift -> delete BLOCKED, parked in limbo, arr never called",
       ok is False and p.status == "limbo" and exec_calls == [])
 
@@ -171,10 +191,11 @@ async def guard_ok(p):
 
 recs._lidarr_freshness_guard = guard_ok
 p.status = "pending"
-ok = asyncio.run(recs._delete_one_and_log(db, 1, p))
+ok = asyncio.run(recs._delete_one_and_log(1, p))
 check("clean guard -> delete proceeds with trued-up size",
       ok is True and p.status == "deleted" and exec_calls == ["Stale Band"]
       and p.storage_mb == 512.0)
+recs.get_db_session = _real_session
 
 # ── wiring asserts ───────────────────────────────────────────────────────────
 

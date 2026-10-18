@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from src.database.models import User
+from src.database.runner import run_read, run_write
 from src.routers.auth import get_current_user
 from src.services.app_state import get_state, set_state
 
@@ -194,9 +195,9 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
     # locked" here left music_pipeline_running stuck at "1" until restart.
     task = None
     try:
-        set_state("music_pipeline_interrupted", "1")
-        set_state("music_pipeline_stop_requested", "0")
-        set_state("music_pipeline_progress", _json.dumps({
+        await run_write(set_state, "music_pipeline_interrupted", "1")
+        await run_write(set_state, "music_pipeline_stop_requested", "0")
+        await run_write(set_state, "music_pipeline_progress", _json.dumps({
             "phase": "starting", "processed": 0, "total": 0,
             "tracks_queried": 0, "enriched_plays": 0,
         }))
@@ -213,13 +214,13 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
 
         # ── Phase 1: Plex match ───────────────────────────────────────────────
         task_monitor.update(task, message="Phase 1: Matching Spotify plays to Plex tracks…")
-        set_state("music_pipeline_progress", _json.dumps({
+        await run_write(set_state, "music_pipeline_progress", _json.dumps({
             "phase": "plex_match", "processed": 0, "total": 0,
             "tracks_queried": 0, "enriched_plays": 0,
         }))
 
         p1 = await match_spotify_to_plex(user_id)
-        set_state("music_pipeline_progress", _json.dumps({
+        await run_write(set_state, "music_pipeline_progress", _json.dumps({
             "phase":           "plex_match_done",
             "matched":         p1.get("matched", 0),
             "unmatched":       p1.get("unmatched", 0),
@@ -230,10 +231,10 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
             message=f"Phase 1 done — matched={p1.get('matched',0)} unmatched={p1.get('unmatched',0)}")
 
         # Check stop after Phase 1
-        if get_state("music_pipeline_stop_requested") == "1":
+        if await run_read(get_state, "music_pipeline_stop_requested") == "1":
             task_monitor.skip(task, "Stopped after Phase 1 (Plex match)")
-            set_state("music_pipeline_interrupted", "0")
-            set_state("music_pipeline_last_run", datetime.utcnow().isoformat())
+            await run_write(set_state, "music_pipeline_interrupted", "0")
+            await run_write(set_state, "music_pipeline_last_run", datetime.utcnow().isoformat())
             return
 
         # ── Phase 1.4: MusicBrainz MBID resolve ──────────────────────────────
@@ -252,15 +253,15 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
             ))
 
         # Check stop after Phase 1.4
-        if get_state("music_pipeline_stop_requested") == "1":
+        if await run_read(get_state, "music_pipeline_stop_requested") == "1":
             task_monitor.skip(task, "Stopped after Phase 1.4 (MBID resolve)")
-            set_state("music_pipeline_interrupted", "0")
-            set_state("music_pipeline_last_run", datetime.utcnow().isoformat())
+            await run_write(set_state, "music_pipeline_interrupted", "0")
+            await run_write(set_state, "music_pipeline_last_run", datetime.utcnow().isoformat())
             return
 
         # ── Phase 1.5: Spotify genre enrichment ──────────────────────────────
         task_monitor.update(task, message="Phase 1.5: Fetching genres from Spotify…")
-        set_state("music_pipeline_progress", _json.dumps({
+        await run_write(set_state, "music_pipeline_progress", _json.dumps({
             "phase":          "spotify_enrich",
             "matched":        p1.get("matched", 0),
             "unmatched":      p1.get("unmatched", 0),
@@ -284,15 +285,15 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
                     if not psp.get("note") else f"Spotify skipped: {psp.get('note')}"
                 ))
 
-        if get_state("music_pipeline_stop_requested") == "1":
+        if await run_read(get_state, "music_pipeline_stop_requested") == "1":
             task_monitor.skip(task, "Stopped after Phase 1.5 (Spotify genres)")
-            set_state("music_pipeline_interrupted", "0")
-            set_state("music_pipeline_last_run", datetime.utcnow().isoformat())
+            await run_write(set_state, "music_pipeline_interrupted", "0")
+            await run_write(set_state, "music_pipeline_last_run", datetime.utcnow().isoformat())
             return
 
         # ── Phase 2: Last.fm genres ───────────────────────────────────────────
         task_monitor.update(task, message="Phase 2: Fetching genres from Last.fm…")
-        set_state("music_pipeline_progress", _json.dumps({
+        await run_write(set_state, "music_pipeline_progress", _json.dumps({
             "phase":                "lastfm_enrich",
             "matched":              p1.get("matched", 0),
             "unmatched":            p1.get("unmatched", 0),
@@ -317,7 +318,7 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
             "artist_fallback":        p2.get("artist_fallback", 0),
             "no_data":                p2.get("no_data", 0),
         }
-        set_state("music_pipeline_progress", _json.dumps(final_progress))
+        await run_write(set_state, "music_pipeline_progress", _json.dumps(final_progress))
 
         spotify_note = (
             f" | Spotify: {psp.get('enriched_plays',0)} plays enriched"
@@ -337,8 +338,8 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
             f"{p2.get('no_data',0)} no-data cached)"
         )
         task_monitor.done(task, summary)
-        set_state("music_pipeline_interrupted", "0")
-        set_state("music_pipeline_last_run", datetime.utcnow().isoformat())
+        await run_write(set_state, "music_pipeline_interrupted", "0")
+        await run_write(set_state, "music_pipeline_last_run", datetime.utcnow().isoformat())
         logger.info("[music_pipeline] Complete: %s", summary)
 
     except Exception as exc:
@@ -350,5 +351,5 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
         # Compare-and-clear: a blind "0" here released a lease the
         # out-of-process enricher held whenever this run had not taken it.
         from src.services import state_lease
-        if state_lease.release("music_pipeline_running"):
-            set_state("music_pipeline_stop_requested", "0")
+        if await run_write(state_lease.release, "music_pipeline_running"):
+            await run_write(set_state, "music_pipeline_stop_requested", "0")

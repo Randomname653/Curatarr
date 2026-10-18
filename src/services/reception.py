@@ -464,23 +464,36 @@ async def topup_reception(
         return False
     from src.cache.metadata_cache import MetadataCache, write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
+    shared = cache
+
+    def _on_cache(fn):
+        # The cache reads and writes run on a worker, never the loop. A
+        # handle passed in serves any thread; without one, each call opens
+        # its own on its worker (connections are per thread).
+        if shared is not None:
+            return fn(shared)
+        with MetadataCache() as c:
+            return fn(c)
+
     try:
         id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
-        targets = []
-        for k in id_keys:
-            hit = cache.get_cache(f"raw:{media_type}:{k}")
-            if not hit or not isinstance(hit.get("response"), dict):
-                continue
-            raw = hit["response"]
-            if _reception_settled(raw):
-                return False  # already done for this title
-            targets.append((f"raw:{media_type}:{k}", raw))
+
+        def _targets(cache):
+            targets = []
+            for k in id_keys:
+                hit = cache.get_cache(f"raw:{media_type}:{k}")
+                if not hit or not isinstance(hit.get("response"), dict):
+                    continue
+                raw = hit["response"]
+                if _reception_settled(raw):
+                    return None  # already done for this title
+                targets.append((f"raw:{media_type}:{k}", raw))
+            return targets
+
+        targets = await asyncio.to_thread(_on_cache, _targets)
         if not targets:
             return False
         # prefer ids the raw doc itself carries (sonarr prefetch resolves them)
@@ -490,31 +503,37 @@ async def topup_reception(
             anilist_id=anilist_id or doc.get("anilist_id"),
             tmdb_id=tmdb_id or doc.get("tmdb_id"),
         )
-        anidb_tags = _offline_tags(title, media_type,
-                                   anilist_id=anilist_id or doc.get("anilist_id"),
-                                   mal_id=doc.get("mal_id"),
-                                   year=year or doc.get("year"))
-        added = False
-        for key, raw in targets:
-            # Marker set even on None so titles with no community data are
-            # never re-queried (same contract as significance_checked).
-            fields = {"reception_checked": True, "relations_checked": True,
-                      "reception_v": RECEPTION_LOGIC_V}
-            if rec:
-                fields["reception"] = rec
-                added = True
-            if rels:
-                fields["relations"] = rels
-            if staff:
-                fields["staff"] = staff
-            if finale:
-                fields["finale_reception"] = finale
-            if anidb_tags:
-                fields["anidb_tags"] = anidb_tags
-            # Only these fields — the entry was read before a slow fetch, and
-            # another walker may have written to it since.
-            write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
-        return added
+        # the offline snapshot is a local SQLite read
+        anidb_tags = await asyncio.to_thread(
+            _offline_tags, title, media_type,
+            anilist_id=anilist_id or doc.get("anilist_id"),
+            mal_id=doc.get("mal_id"),
+            year=year or doc.get("year"))
+
+        def _write(cache):
+            added = False
+            for key, raw in targets:
+                # Marker set even on None so titles with no community data are
+                # never re-queried (same contract as significance_checked).
+                fields = {"reception_checked": True, "relations_checked": True,
+                          "reception_v": RECEPTION_LOGIC_V}
+                if rec:
+                    fields["reception"] = rec
+                    added = True
+                if rels:
+                    fields["relations"] = rels
+                if staff:
+                    fields["staff"] = staff
+                if finale:
+                    fields["finale_reception"] = finale
+                if anidb_tags:
+                    fields["anidb_tags"] = anidb_tags
+                # Only these fields — the entry was read before a slow fetch, and
+                # another walker may have written to it since.
+                write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
+            return added
+
+        return await asyncio.to_thread(_on_cache, _write)
     except TransientSourceError as e:
         # A source (or the condenser) did not answer. Nothing is stamped; the
         # walker offers the title again next pass. This is the whole reason
@@ -524,9 +543,6 @@ async def topup_reception(
     except Exception as e:
         log_topup_failure(logger, "[reception]", title, e)
         return False
-    finally:
-        if owns:
-            cache.close()
 
 
 async def topup_franchise(
@@ -546,26 +562,39 @@ async def topup_franchise(
         return False
     from src.cache.metadata_cache import MetadataCache, write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
+    shared = cache
+
+    def _on_cache(fn):
+        # The cache reads and writes run on a worker, never the loop. A
+        # handle passed in serves any thread; without one, each call opens
+        # its own on its worker (connections are per thread).
+        if shared is not None:
+            return fn(shared)
+        with MetadataCache() as c:
+            return fn(c)
+
     try:
         id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
-        targets = []
-        for k in id_keys:
-            hit = cache.get_cache(f"raw:{media_type}:{k}")
-            if not hit or not isinstance(hit.get("response"), dict):
-                continue
-            raw = hit["response"]
-            if raw.get("relations_checked") and (
-                    raw.get("relations_v")
-                    or any(raw.get(f) for f in ("relations", "staff",
-                                                "anidb_tags"))):
-                return False
-            targets.append((f"raw:{media_type}:{k}", raw))
+
+        def _targets(cache):
+            targets = []
+            for k in id_keys:
+                hit = cache.get_cache(f"raw:{media_type}:{k}")
+                if not hit or not isinstance(hit.get("response"), dict):
+                    continue
+                raw = hit["response"]
+                if raw.get("relations_checked") and (
+                        raw.get("relations_v")
+                        or any(raw.get(f) for f in ("relations", "staff",
+                                                    "anidb_tags"))):
+                    return None
+                targets.append((f"raw:{media_type}:{k}", raw))
+            return targets
+
+        targets = await asyncio.to_thread(_on_cache, _targets)
         if not targets:
             return False
         doc = targets[0][1]
@@ -582,33 +611,35 @@ async def topup_franchise(
                 raise TransientSourceError("anilist did not answer")
             rels = _extract_relations(al) if al else []
             staff = _extract_staff(al) if al else []
-            anidb_tags = _offline_tags(title, media_type, anilist_id=al_id,
-                                       mal_id=doc.get("mal_id"),
-                                       year=year or doc.get("year"))
-        added = False
-        for key, raw in targets:
-            fields = {"relations_checked": True,
-                      "relations_v": RECEPTION_LOGIC_V}
-            if rels:
-                fields["relations"] = rels
-                added = True
-            if staff:
-                fields["staff"] = staff
-                added = True
-            if anidb_tags:
-                fields["anidb_tags"] = anidb_tags
-                added = True
-            write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
-        return added
+            anidb_tags = await asyncio.to_thread(
+                _offline_tags, title, media_type, anilist_id=al_id,
+                mal_id=doc.get("mal_id"),
+                year=year or doc.get("year"))
+
+        def _write(cache):
+            added = False
+            for key, raw in targets:
+                fields = {"relations_checked": True,
+                          "relations_v": RECEPTION_LOGIC_V}
+                if rels:
+                    fields["relations"] = rels
+                    added = True
+                if staff:
+                    fields["staff"] = staff
+                    added = True
+                if anidb_tags:
+                    fields["anidb_tags"] = anidb_tags
+                    added = True
+                write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
+            return added
+
+        return await asyncio.to_thread(_on_cache, _write)
     except TransientSourceError as e:
         logger.debug("[reception] franchise transient for %r: %s", title, e)
         return False
     except Exception as e:
         log_topup_failure(logger, "[reception] franchise", title, e)
         return False
-    finally:
-        if owns:
-            cache.close()
 
 
 # ── custodian walker (mirrors run_significance_backfill) ─────────────────────
@@ -639,23 +670,27 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     from src.services.anime_offline import ensure_offline_db
     await ensure_offline_db(allow_download=True)
 
-    cache = MetadataCache()
-    try:
-        cur = cache.conn.cursor()
-        cur.execute(
-            """
-            SELECT cache_key, response FROM api_cache
-            WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
-              AND expires_at > ?
-              AND NOT (response LIKE '%"reception_checked"%'
-                       AND response LIKE '%"relations_checked"%')
-            """,
-            (datetime.now().isoformat(),),
-        )
-        rows = cur.fetchall()
-        cur.close()
-    finally:
-        cache.close()
+    def _unchecked():
+        cache = MetadataCache()
+        try:
+            cur = cache.conn.cursor()
+            cur.execute(
+                """
+                SELECT cache_key, response FROM api_cache
+                WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
+                  AND expires_at > ?
+                  AND NOT (response LIKE '%"reception_checked"%'
+                           AND response LIKE '%"relations_checked"%')
+                """,
+                (datetime.now().isoformat(),),
+            )
+            rows = cur.fetchall()
+            cur.close()
+            return rows
+        finally:
+            cache.close()
+
+    rows = await asyncio.to_thread(_unchecked)
 
     order = {"anime": 0, "show": 1, "movie": 2}
     items = []
@@ -683,7 +718,8 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     # same titles and the walker reported clean passes. Each attempt is
     # stamped; never-tried rows go first, then the least recently tried.
     from collections import deque
-    attempts = load_walker_attempts(_RECEPTION_ATTEMPTS_KEY)
+    from src.database.runner import run_read, run_write
+    attempts = await run_read(load_walker_attempts, _RECEPTION_ATTEMPTS_KEY)
     _queues = {c: deque(sorted((x for x in items if x[1] == c),
                                key=lambda x: attempts.get(x[2], "")))
                for c in ("anime", "show", "movie")}
@@ -697,7 +733,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     total = len(items)
     checked = added = 0
     for _, cat, id_key, resp in items[:limit]:
-        if _gaming():
+        if await run_read(_gaming):
             logger.info("[reception-backfill] game active — stopping early "
                         "(%d/%d this pass)", checked, min(limit, total))
             break
@@ -736,7 +772,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
             log_topup_failure(logger, "[reception-backfill] studio note", title, e)
         checked += 1
     # Only rows still waiting are worth remembering (bounded by the queue).
-    save_walker_attempts(_RECEPTION_ATTEMPTS_KEY, attempts,
-                         keep={x[2] for x in items})
+    await run_write(save_walker_attempts, _RECEPTION_ATTEMPTS_KEY, attempts,
+                    keep={x[2] for x in items})
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}

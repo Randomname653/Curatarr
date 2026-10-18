@@ -48,6 +48,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
+from src.database.runner import run_read, run_write  # noqa: E402
 
 # Bump when a formula below changes, so stamped rows re-offer themselves.
 METRICS_VERSION = "1"
@@ -551,16 +552,21 @@ async def topup_subtitle_metrics(title: str, media_type: str, *,
         from src.database.connection import get_db_session
         from src.database.models import MediaSubtitleProfile
 
-        rk, _dur = _resolve_plex_key(media_type, tmdb_id, tvdb_id)
-        if not rk:
-            return False
-        rk = str(rk)
+        def _due():
+            # The plex key (None: nothing to fetch for), and whether the row
+            # already holds numbers under the current formula.
+            rk, _dur = _resolve_plex_key(media_type, tmdb_id, tvdb_id)
+            if not rk:
+                return None, False
+            rk = str(rk)
+            with get_db_session() as db:
+                row = (db.query(MediaSubtitleProfile)
+                       .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
+                return rk, bool(row and row.checked and row.metrics_v == METRICS_VERSION)
 
-        with get_db_session() as db:
-            row = (db.query(MediaSubtitleProfile)
-                   .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
-            if row and row.checked and row.metrics_v == METRICS_VERSION:
-                return False
+        rk, done = await run_read(_due)
+        if not rk or done:
+            return False
 
         m = await fetch_subtitle_metrics(rk, hints={
             "title_hint": title, "media_hint": media_type,
@@ -568,30 +574,33 @@ async def topup_subtitle_metrics(title: str, media_type: str, *,
         if m is None:
             return False                      # transient — do NOT stamp
 
-        with get_db_session() as db:
-            row = (db.query(MediaSubtitleProfile)
-                   .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
-            if not row:
-                row = MediaSubtitleProfile(plex_rating_key=rk,
-                                           media_type=media_type)
-                db.add(row)
-            row.title = title
-            row.tmdb_id = tmdb_id
-            row.tvdb_id = tvdb_id
-            row.checked = True
-            row.metrics_v = METRICS_VERSION
-            if m:
-                row.source = m.get("source")
-                row.language = m.get("language")
-                row.is_sdh = bool(m.get("is_sdh"))
-                row.words_per_min = m.get("words_per_min")
-                row.silent_min = m.get("silent_min")
-                row.silent_share = m.get("silent_share")
-                row.mattr = m.get("mattr")
-                row.total_words = m.get("total_words")
-                row.coverage = m.get("coverage")
-                row.duration_min = m.get("duration_min")
-            db.commit()
+        def _save():
+            with get_db_session() as db:
+                row = (db.query(MediaSubtitleProfile)
+                       .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
+                if not row:
+                    row = MediaSubtitleProfile(plex_rating_key=rk,
+                                               media_type=media_type)
+                    db.add(row)
+                row.title = title
+                row.tmdb_id = tmdb_id
+                row.tvdb_id = tvdb_id
+                row.checked = True
+                row.metrics_v = METRICS_VERSION
+                if m:
+                    row.source = m.get("source")
+                    row.language = m.get("language")
+                    row.is_sdh = bool(m.get("is_sdh"))
+                    row.words_per_min = m.get("words_per_min")
+                    row.silent_min = m.get("silent_min")
+                    row.silent_share = m.get("silent_share")
+                    row.mattr = m.get("mattr")
+                    row.total_words = m.get("total_words")
+                    row.coverage = m.get("coverage")
+                    row.duration_min = m.get("duration_min")
+                db.commit()
+
+        await run_write(_save)
         return bool(m)
     except Exception as e:
         log_topup_failure(logger, "[subtitles]", title, e)
@@ -756,10 +765,10 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
     api_key, user, pw, budget = _os_conf()
     if not api_key:
         return None                      # not configured — retry if it ever is
-    if budget and os_spent_today() >= budget:
+    if budget and await run_read(os_spent_today) >= budget:
         logger.info("[subtitles] OpenSubtitles daily budget (%d) reached", budget)
         return None                      # transient by design: tomorrow works
-    if _os_blocked_today():
+    if await run_read(_os_blocked_today):
         return None
 
     imdb = str(imdb_id or "").lower().replace("tt", "").lstrip("0")
@@ -811,7 +820,7 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
             link = (d.json() or {}).get("link")
             if not link:
                 return None
-            _os_charge()
+            await run_write(_os_charge)
             txt = await _bounded_text(c, link, {"User-Agent": _OS_UA})
             if txt is None:
                 return None
@@ -827,7 +836,7 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
         if code in (404, 410):
             return ""
         if code in (401, 403, 406):
-            _os_block_today(f"HTTP {code}")
+            await run_write(_os_block_today, f"HTTP {code}")
         else:
             logger.warning("[subtitles] OpenSubtitles HTTP %s for %s - retried later",
                            code, imdb_id)

@@ -33,14 +33,14 @@ sch = (root / "src/services/scheduler.py").read_text(encoding="utf-8")
 mn = (root / "src/main.py").read_text(encoding="utf-8")
 
 check("manual Analyze acquires the mutex before generating",
-      'acquire_state_lock("deletion_run")' in rr
+      'run_write(acquire_state_lock, "deletion_run")' in rr
       and "A deletion analysis is already running" in rr)
 # One release, in a finally: the old three hand-placed releases (error,
 # empty, saved) missed any exception in the enrich / DB-write block, which
 # left the lock held until restart. The functional check below proves it.
 check("manual path releases in a finally (covers every exit)",
-      rr.count('release_state_lock("deletion_run")') == 1
-      and 'finally:\n        release_state_lock("deletion_run")' in rr)
+      rr.count('release_state_lock, "deletion_run")') == 1
+      and 'finally:\n        await run_write(release_state_lock, "deletion_run")' in rr)
 
 # ── functional: an exception AFTER generation still frees the lock ──────────
 import asyncio
@@ -95,7 +95,7 @@ class _U:
 try:
     asyncio.run(recs.get_deletion_proposals(
         category="movie", refresh=True, recent_only=False, recent_days=7,
-        user=_U(), db=None))
+        user=_U()))
     raised = False
 except RuntimeError:
     raised = True
@@ -104,12 +104,12 @@ check("...and the deletion_run lock is released anyway",
       _lock["held"] is False and _lock["released"] == 1)
 check("scheduler scan respects the mutex and STAYS DUE when busy "
       "(return False, not a done-stamp)",
-      'if not acquire_state_lock("deletion_run"):' in sch
+      'if not await run_write(acquire_state_lock, "deletion_run"):' in sch
       and "retrying next tick" in sch
       and sch.count("return False") >= 1)
 check("scheduler releases on no-proposals, success AND error — error "
       "release guarded so it never clears the MANUAL run's lock",
-      sch.count('release_state_lock("deletion_run")') >= 2
+      sch.count('run_write(release_state_lock, "deletion_run")') >= 2
       and "_dr_locked = True" in sch
       and "if _dr_locked:" in sch)
 # Boot clears each stale flag on its own (one failure no longer skips the

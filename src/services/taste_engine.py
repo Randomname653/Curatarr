@@ -32,6 +32,7 @@ from src.config import settings
 from src.database.connection import get_db_session
 from src.database.models import WatchHistoryEntry, TasteVectorEntry, User
 from src.cache.metadata_cache import MetadataCache
+from src.database.runner import run_read, run_write
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ async def soulsync_signals() -> dict:
     if not ss._configured():
         return {}
     try:
-        cached = json.loads(get_state(_SIGNALS_KEY) or "{}")
+        cached = json.loads(await run_read(get_state, _SIGNALS_KEY) or "{}")
         fresh = datetime.utcnow() - datetime.fromisoformat(cached["at"]) < _SIGNALS_TTL
     except Exception:
         cached, fresh = {}, False
@@ -103,7 +104,7 @@ async def soulsync_signals() -> dict:
             cached = {"at": datetime.utcnow().isoformat(),
                       "followed": followed if followed is not None else cached.get("followed") or [],
                       "liked": liked if liked is not None else cached.get("liked") or []}
-            set_state(_SIGNALS_KEY, json.dumps(cached))
+            await run_write(set_state, _SIGNALS_KEY, json.dumps(cached))
     out = {ss.norm_name(n): LIKED_FACTOR for n in cached.get("liked") or []}
     out.update({ss.norm_name(n): FOLLOW_FACTOR for n in cached.get("followed") or []})
     out.pop("", None)
@@ -768,6 +769,24 @@ def _bulk_profile_tags(cache_keys: list) -> dict:
     return out
 
 
+def _cache_many(keys: list) -> dict:
+    """``get_cache`` for many keys in one batched read: {key: entry} for the
+    live ones. Blocking (the cache file has its own lock) — run it in a thread."""
+    with MetadataCache() as cache:
+        return cache.get_cache_many(keys)
+
+
+def _cache_one(key: str):
+    with MetadataCache() as cache:
+        return cache.get_cache(key)
+
+
+def _cache_set_many(items: list, days: int) -> None:
+    with MetadataCache() as cache:
+        for key, value in items:
+            cache.set_cache(key, value, days=days)
+
+
 async def compute_taste_vector_for_user(
     user_id: int,
     category: str = None,
@@ -781,7 +800,8 @@ async def compute_taste_vector_for_user(
     max_items: cap for embedding computation (most recent, highest weight)
     """
     now = datetime.utcnow()
-    cache = MetadataCache()
+    # No cache handle is held here: every enrichment-cache read and write
+    # below runs on a worker thread (_cache_many / _cache_one / _cache_set_many).
 
     # The owner's music history alone is ≈350k plays: loaded as ORM entities
     # on the event loop, this froze every request and SSE stream for seconds.
@@ -798,7 +818,6 @@ async def compute_taste_vector_for_user(
     task_monitor.start(_tv_task)
 
     if not entries:
-        cache.close()
         task_monitor.skip(_tv_task, "No entries for this category")
         return {}
 
@@ -822,6 +841,7 @@ async def compute_taste_vector_for_user(
         _bulk_profile_tags,
         [f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}" for e in entries])
 
+    _miss_logged = False
     for idx, e in enumerate(entries):
         # Yield to event loop every 500 items so SSE updates can go out
         if idx % 500 == 0:
@@ -862,10 +882,9 @@ async def compute_taste_vector_for_user(
         tags = _tags_by_key.get(cache_key)
         if tags is None and e.get('media_type') == 'movie':
             # Log first miss to help debug cache key mismatch
-            _debug_logged = getattr(cache, '_debug_miss_logged', False)
-            if not _debug_logged:
+            if not _miss_logged:
                 logger.debug("Cache miss example: key=%s", cache_key)
-                cache._debug_miss_logged = True
+                _miss_logged = True
 
         if tags is not None:
             p_genres, p_themes, p_moods = tags
@@ -1032,10 +1051,14 @@ async def compute_taste_vector_for_user(
         top_entries = artist_entries[:EMBED_CAP]
 
     # ── SHOW / ANIME: aggregate to SERIES level (see _series_entries) ────────
+    def _enriched_key(e: dict) -> str:
+        return f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}"
+
     if category in ("show", "anime"):
+        _live_rows = await asyncio.to_thread(_cache_many, [_enriched_key(e) for e in entries])
+
         def _has_profile(e: dict) -> bool:
-            return cache.get_cache(
-                f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}") is not None
+            return _live_rows.get(_enriched_key(e)) is not None
         series_entries = _series_entries(entries, now, series_key_by_title, _has_profile)
         logger.info("%s: %d episode rows → %d series entries (%d drops)",
                     category, len(entries), len(series_entries),
@@ -1052,8 +1075,9 @@ async def compute_taste_vector_for_user(
         t = (entry.get("series_title") if mt in ("show", "anime", "music") else None) or entry.get("title")
         return enrichment_ts_by_title.get(t)
 
+    _top_profiles = await asyncio.to_thread(_cache_many, [_enriched_key(e) for _, e in top_entries])
     enriched_entries = [(w, e) for w, e in top_entries
-                        if cache.get_cache(f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}")]
+                        if _top_profiles.get(_enriched_key(e))]
 
     # We only count needs_embed uniquely per plex_item_id. Model-scoped key —
     # the legacy un-scoped `emb:{pid}` rows were purged in the 2026-08-18
@@ -1063,13 +1087,16 @@ async def compute_taste_vector_for_user(
     needs_embed = 0
     seen_pids = set()
     from src.services.embed_service import get_profile as _cnt_profile
-    _cnt_model = _cnt_profile().get("model") or "?"
+    _cnt_model = (await run_read(_cnt_profile)).get("model") or "?"
+    _pids = list(dict.fromkeys(e.get("plex_item_id") for _, e in enriched_entries))
+    _embs = await asyncio.to_thread(
+        _cache_many, [f"{p}:{_cnt_model}:{pid}" for pid in _pids for p in ("emb", "emb_ts")])
     for _, e in enriched_entries:
         pid = e.get("plex_item_id")
         if pid not in seen_pids:
             seen_pids.add(pid)
-            if (cache.get_cache(f"emb:{_cnt_model}:{pid}") is None
-                    or get_emb_ts(e) != (cache.get_cache(f"emb_ts:{_cnt_model}:{pid}") or {}).get("response")):
+            if (_embs.get(f"emb:{_cnt_model}:{pid}") is None
+                    or get_emb_ts(e) != (_embs.get(f"emb_ts:{_cnt_model}:{pid}") or {}).get("response")):
                 needs_embed += 1
 
     logger.info("Items: %d total, %d enriched, %d need fresh embedding, %d use cache",
@@ -1099,7 +1126,8 @@ async def compute_taste_vector_for_user(
             return None, weight, _t
 
         pid = entry.get("plex_item_id", "")
-        enriched_data = cache.get_cache(f"enriched:{entry.get('media_type') or 'movie'}:{pid}")
+        enriched_data = await asyncio.to_thread(
+            _cache_one, f"enriched:{entry.get('media_type') or 'movie'}:{pid}")
         profile = enriched_data["response"] if enriched_data else None
 
         # Skip embedding entirely if no enrichment data — genre counters handle these
@@ -1116,8 +1144,10 @@ async def compute_taste_vector_for_user(
         emb_ts = get_emb_ts(entry)
         # Model-scoped cache key: a model flip must never serve vectors
         # from the previous embedding space.
-        cached_emb = cache.get_cache(f"emb:{_emb_model}:{pid}")
-        cached_ts = (cache.get_cache(f"emb_ts:{_emb_model}:{pid}") or {}).get("response")
+        _hits = await asyncio.to_thread(
+            _cache_many, [f"emb:{_emb_model}:{pid}", f"emb_ts:{_emb_model}:{pid}"])
+        cached_emb = _hits.get(f"emb:{_emb_model}:{pid}")
+        cached_ts = (_hits.get(f"emb_ts:{_emb_model}:{pid}") or {}).get("response")
 
         # Use cached embedding if enrichment hasn't changed since last embed
         if cached_emb and cached_ts == emb_ts:
@@ -1133,8 +1163,9 @@ async def compute_taste_vector_for_user(
             emb = await embed_text(text)
 
         if emb:
-            cache.set_cache(f"emb:{_emb_model}:{pid}", emb, days=90)
-            cache.set_cache(f"emb_ts:{_emb_model}:{pid}", emb_ts if emb_ts else "none", days=90)
+            await asyncio.to_thread(_cache_set_many, [
+                (f"emb:{_emb_model}:{pid}", emb),
+                (f"emb_ts:{_emb_model}:{pid}", emb_ts if emb_ts else "none")], 90)
 
         return _unit(emb) if emb else None, weight, _t
 
@@ -1145,7 +1176,6 @@ async def compute_taste_vector_for_user(
     for i in range(0, len(tasks), CHUNK):
         if _tv_task.status.value == "skipped":
             logger.info("Taste vector computation cancelled at %d/%d", i, len(tasks))
-            cache.close()
             task_monitor.skip(_tv_task, "Cancelled by user")
             return {}
 
@@ -1168,21 +1198,18 @@ async def compute_taste_vector_for_user(
         )
 
     # Collect canonical titles that had enrichment data — needed for vector_ready tracking.
-    # Must happen before cache.close(). EnrichmentStatus has one row per title, so
+    # EnrichmentStatus has one row per title, so
     # matching by plex_rating_key (episode/track level) only hits the one canonical key;
     # matching by title covers the whole series/artist correctly.
     enriched_titles_for_vr: set = set()
+    _vr_profiles = await asyncio.to_thread(_cache_many, [_enriched_key(e) for _, e in top_entries])
     for _, e in top_entries:
-        enriched_data = cache.get_cache(
-            f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}"
-        )
+        enriched_data = _vr_profiles.get(_enriched_key(e))
         if enriched_data:
             mt = e.get("media_type", "")
             t = (e.get("series_title") if mt in ("show", "anime", "music") else None) or e.get("title")
             if t:
                 enriched_titles_for_vr.add(t)
-
-    cache.close()
 
     logger.info("Got %d/%d embeddings successfully", len(embeddings_weights), len(top_entries))
 
@@ -1190,7 +1217,7 @@ async def compute_taste_vector_for_user(
     # single EnrichmentStatus row per series/artist is found regardless of which
     # episode's plex_rating_key was stored there.
     if embeddings_weights and enriched_titles_for_vr:
-        try:
+        def _mark_vector_ready():
             with get_db_session() as db:
                 from src.database.models import EnrichmentStatus
                 db.query(EnrichmentStatus).filter(
@@ -1201,6 +1228,9 @@ async def compute_taste_vector_for_user(
                 db.commit()
                 logger.debug("Marked %d titles as vector_ready for %s",
                              len(enriched_titles_for_vr), category)
+
+        try:
+            await run_write(_mark_vector_ready)
         except Exception as e:
             logger.warning("vector_ready update failed: %s", e)
     task_monitor.update(_tv_task, processed=embed_total,

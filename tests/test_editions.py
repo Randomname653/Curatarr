@@ -18,12 +18,16 @@ sys.path.insert(0, str(_ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, SeriesEdition  # noqa: E402
 import src.database.connection as _conn  # noqa: E402
 from src.services import editions as ed  # noqa: E402
 
-_engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+# One shared connection: the walker reads and writes on worker threads, and an
+# in-memory database is otherwise private to the thread that opened it.
+_engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
 Base.metadata.create_all(_engine)
 _Session = sessionmaker(bind=_engine)
 

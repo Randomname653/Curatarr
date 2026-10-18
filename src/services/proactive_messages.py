@@ -34,6 +34,7 @@ from typing import Optional
 import httpx
 
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.database.models import (
     WatchHistoryEntry, ProactiveMessage, TasteVectorEntry, User, ConversationMessage
 )
@@ -1682,86 +1683,95 @@ async def check_and_generate_messages(user_id: int) -> int:
     """
     now = datetime.utcnow()
 
-    with get_db_session() as db:
-        user_obj = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-        if not user_obj:
-            return 0
-
-        # Count unread cached messages — don't generate more if cache is full
-        unread_count = db.query(_func.count(ProactiveMessage.id)).filter(
-            ProactiveMessage.user_id == user_id,
-            ProactiveMessage.read == False,
-        ).scalar()
-
-        if unread_count >= _CACHE_TARGET:
-            logger.debug("[proactive] Cache full (%d unread), skipping generation", unread_count)
-            return 0
-
-        # Which trigger types fired recently (avoid same trigger repeating)?
-        cooldown_cutoff = now - timedelta(days=_TRIGGER_COOLDOWN_DAYS)
-        recent_triggers = {
-            r[0]
-            for r in db.query(ProactiveMessage.trigger_type)
-            .filter(
-                ProactiveMessage.user_id == user_id,
-                ProactiveMessage.created_at >= cooldown_cutoff,
-            )
-            .all()
-        }
-        # When each type was last the message: the pick weights quiet types up.
+    def _load():
         from sqlalchemy import func as _func
-        last_fired = {
-            t: at
-            for t, at in db.query(ProactiveMessage.trigger_type,
-                                  _func.max(ProactiveMessage.created_at))
-            .filter(ProactiveMessage.user_id == user_id)
-            .group_by(ProactiveMessage.trigger_type)
-            .all()
-        }
+        with get_db_session() as db:
+            user_obj = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+            if not user_obj:
+                return None
 
-        tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
-        taste_blurb = (tv.summary_text or "") if tv else ""
-        # The newest message's register, so the next one is not the same voice again.
-        _newest = (db.query(ProactiveMessage.trigger_data)
-                   .filter(ProactiveMessage.user_id == user_id)
-                   .order_by(ProactiveMessage.created_at.desc()).first())
-        prev_register = _register_of(_newest[0] if _newest else None)
+            # Count unread cached messages — don't generate more if cache is full
+            unread_count = db.query(_func.count(ProactiveMessage.id)).filter(
+                ProactiveMessage.user_id == user_id,
+                ProactiveMessage.read == False,
+            ).scalar()
 
-        # ⚡ Bolt: Query specific columns instead of full ORM objects.
-        # Instantiating 5000 WatchHistoryEntry objects adds significant overhead.
-        # Fetching tuples reduces execution time by ~50%.
-        entries_raw = (
-            db.query(
-                WatchHistoryEntry.title,
-                WatchHistoryEntry.series_title,
-                WatchHistoryEntry.media_type,
-                WatchHistoryEntry.viewed_at,
-                WatchHistoryEntry.duration_ms,
-                WatchHistoryEntry.view_offset_ms,
-                WatchHistoryEntry.completed,
-                WatchHistoryEntry.season,
-                WatchHistoryEntry.episode,
-                WatchHistoryEntry.genres,
+            if unread_count >= _CACHE_TARGET:
+                logger.debug("[proactive] Cache full (%d unread), skipping generation", unread_count)
+                return None
+
+            # Which trigger types fired recently (avoid same trigger repeating)?
+            cooldown_cutoff = now - timedelta(days=_TRIGGER_COOLDOWN_DAYS)
+            recent_triggers = {
+                r[0]
+                for r in db.query(ProactiveMessage.trigger_type)
+                .filter(
+                    ProactiveMessage.user_id == user_id,
+                    ProactiveMessage.created_at >= cooldown_cutoff,
+                )
+                .all()
+            }
+            # When each type was last the message: the pick weights quiet types up.
+            last_fired = {
+                t: at
+                for t, at in db.query(ProactiveMessage.trigger_type,
+                                      _func.max(ProactiveMessage.created_at))
+                .filter(ProactiveMessage.user_id == user_id)
+                .group_by(ProactiveMessage.trigger_type)
+                .all()
+            }
+
+            tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
+            taste_blurb = (tv.summary_text or "") if tv else ""
+            # The newest message's register, so the next one is not the same voice again.
+            _newest = (db.query(ProactiveMessage.trigger_data)
+                       .filter(ProactiveMessage.user_id == user_id)
+                       .order_by(ProactiveMessage.created_at.desc()).first())
+            prev_register = _register_of(_newest[0] if _newest else None)
+
+            # ⚡ Bolt: Query specific columns instead of full ORM objects.
+            # Instantiating 5000 WatchHistoryEntry objects adds significant overhead.
+            # Fetching tuples reduces execution time by ~50%.
+            entries_raw = (
+                db.query(
+                    WatchHistoryEntry.title,
+                    WatchHistoryEntry.series_title,
+                    WatchHistoryEntry.media_type,
+                    WatchHistoryEntry.viewed_at,
+                    WatchHistoryEntry.duration_ms,
+                    WatchHistoryEntry.view_offset_ms,
+                    WatchHistoryEntry.completed,
+                    WatchHistoryEntry.season,
+                    WatchHistoryEntry.episode,
+                    WatchHistoryEntry.genres,
+                )
+                .filter(WatchHistoryEntry.user_id == user_id)
+                .order_by(WatchHistoryEntry.viewed_at.desc())
+                .limit(5000)
+                .all()
             )
-            .filter(WatchHistoryEntry.user_id == user_id)
-            .order_by(WatchHistoryEntry.viewed_at.desc())
-            .limit(5000)
-            .all()
-        )
-        entries = _to_dicts(entries_raw)
+            entries = _to_dicts(entries_raw)
+        return (unread_count, recent_triggers, last_fired, taste_blurb,
+                prev_register, entries)
+
+    loaded = await run_read(_load)
+    if loaded is None:
+        return 0
+    (unread_count, recent_triggers, last_fired, taste_blurb,
+     prev_register, entries) = loaded
 
     if not entries:
         return 0
 
     # Read user's per-trigger notification preferences once before the loop.
-    disabled_triggers = get_disabled_triggers(user_id)
+    disabled_triggers = await run_read(get_disabled_triggers, user_id)
     if disabled_triggers:
         logger.debug("[proactive] User %d has %d trigger(s) disabled: %s",
                      user_id, len(disabled_triggers), sorted(disabled_triggers))
 
     # What have we already asked about? Index it so the generator rotates to
     # fresh subjects instead of repeating a song / series already answered.
-    asked_subjects = _load_asked_subjects(user_id)
+    asked_subjects = await run_read(_load_asked_subjects, user_id)
 
     # Sonarr season/episode totals, fetched once per run (TTL-cached across the
     # scheduler sweep) and married with the Plex watch history for "season X of
@@ -1772,8 +1782,10 @@ async def check_and_generate_messages(user_id: int) -> int:
     generated = 0
 
     for _ in range(slots):
-        trigger = _run_all_triggers(
-            entries, now, user_id,
+        # The detectors read the DB (track_obsession's aggregate, the
+        # recommendation queue in app_state): a worker, not the loop.
+        trigger = await run_read(
+            _run_all_triggers, entries, now, user_id,
             recently_fired=recent_triggers,
             disabled=disabled_triggers,
             asked_subjects=asked_subjects,
@@ -1784,13 +1796,13 @@ async def check_and_generate_messages(user_id: int) -> int:
 
         # Frame series triggers to the user's actual position and stamp the
         # progress milestone (persisted in trigger_data for future de-dup).
-        _attach_series_progress(trigger, user_id, sonarr_index=sonarr_index)
+        await run_read(_attach_series_progress, trigger, user_id, sonarr_index=sonarr_index)
         # One voice per message, never the same twice in a row; and the
         # user's earlier answer on this subject, when there is one.
         trigger["register"] = _pick_register(prev_register)
         prev_register = trigger["register"]
         try:
-            trigger["prior"] = _prior_exchange(user_id, trigger, asked_subjects)
+            trigger["prior"] = await run_read(_prior_exchange, user_id, trigger, asked_subjects)
         except Exception as e:  # noqa: BLE001
             logger.debug("[proactive] prior exchange lookup failed: %s", e)
             trigger["prior"] = None
@@ -1800,25 +1812,32 @@ async def check_and_generate_messages(user_id: int) -> int:
         # arrives in the same language they've been writing in. Falls back
         # to English when no recent user chat exists.
         from src.services.llm_utils import detect_user_language, language_directive
-        with get_db_session() as _ld_db:
-            lang = detect_user_language(user_id, _ld_db)
+
+        def _lang():
+            with get_db_session() as _ld_db:
+                return detect_user_language(user_id, _ld_db)
+
+        lang = await run_read(_lang)
         directive = language_directive(lang)
         message = await generate_proactive_message(trigger, taste_blurb, lang_directive=directive)
         if not message:
             recent_triggers.add(trigger["type"])
             continue
 
-        with get_db_session() as db:
-            db.add(ProactiveMessage(
-                user_id=user_id,
-                trigger_type=trigger["type"],
-                trigger_data=json.dumps(trigger, default=str),
-                message=message,
-                read=False,
-                created_at=now + timedelta(seconds=generated),
-                expires_at=_expiry_for(trigger, now),
-            ))
-            db.commit()
+        def _save():
+            with get_db_session() as db:
+                db.add(ProactiveMessage(
+                    user_id=user_id,
+                    trigger_type=trigger["type"],
+                    trigger_data=json.dumps(trigger, default=str),
+                    message=message,
+                    read=False,
+                    created_at=now + timedelta(seconds=generated),
+                    expires_at=_expiry_for(trigger, now),
+                ))
+                db.commit()
+
+        await run_write(_save)
 
         recent_triggers.add(trigger["type"])
         last_fired[trigger["type"]] = now
@@ -1843,59 +1862,68 @@ async def get_unread_messages(user_id: int, seen: bool = False) -> dict:
     minutes of an open tab — unread, never shown to anyone.
     """
     now = datetime.utcnow()
-    with get_db_session() as db:
-        # Ignored bubbles decay: a message past its TTL, or surfaced past
-        # the impression cap without ever being clicked, is retired (marked
-        # read) instead of squatting at the head of the queue for days —
-        # the owner's words: the same bubble he hasn't clicked in three
-        # days serves nobody.
-        stale = (
-            db.query(ProactiveMessage)
-            .filter(ProactiveMessage.user_id == user_id,
-                    ProactiveMessage.read == False)
-            .filter((ProactiveMessage.expires_at != None)
-                    & (ProactiveMessage.expires_at < now)
-                    | (ProactiveMessage.impressions >= 40))
-            .all()
-        )
-        for m in stale:
-            m.read = True
-        if stale:
-            db.commit()
 
-        all_unread = (
-            db.query(ProactiveMessage)
-            .filter(ProactiveMessage.user_id == user_id, ProactiveMessage.read == False)
-            .order_by(ProactiveMessage.created_at.asc())
-            .all()
-        )
-        total = len(all_unread)
-        if not all_unread:
-            return {"message": None, "total": 0}
+    # Retiring stale bubbles and counting the impression write: one
+    # read-modify-write on the writer thread.
+    def _next():
+        with get_db_session() as db:
+            # Ignored bubbles decay: a message past its TTL, or surfaced past
+            # the impression cap without ever being clicked, is retired (marked
+            # read) instead of squatting at the head of the queue for days —
+            # the owner's words: the same bubble he hasn't clicked in three
+            # days serves nobody.
+            stale = (
+                db.query(ProactiveMessage)
+                .filter(ProactiveMessage.user_id == user_id,
+                        ProactiveMessage.read == False)
+                .filter((ProactiveMessage.expires_at != None)
+                        & (ProactiveMessage.expires_at < now)
+                        | (ProactiveMessage.impressions >= 40))
+                .all()
+            )
+            for m in stale:
+                m.read = True
+            if stale:
+                db.commit()
 
-        m = all_unread[0]
-        if seen:
-            m.impressions = (m.impressions or 0) + 1
-            db.commit()
-        return {
-            "message": {
-                "id": m.id,
-                "message": m.message,
-                "trigger_type": m.trigger_type,
-                "created_at": m.created_at.isoformat(),
-            },
-            "total": total,
-        }
+            all_unread = (
+                db.query(ProactiveMessage)
+                .filter(ProactiveMessage.user_id == user_id, ProactiveMessage.read == False)
+                .order_by(ProactiveMessage.created_at.asc())
+                .all()
+            )
+            total = len(all_unread)
+            if not all_unread:
+                return {"message": None, "total": 0}
+
+            m = all_unread[0]
+            if seen:
+                m.impressions = (m.impressions or 0) + 1
+                db.commit()
+            return {
+                "message": {
+                    "id": m.id,
+                    "message": m.message,
+                    "trigger_type": m.trigger_type,
+                    "created_at": m.created_at.isoformat(),
+                },
+                "total": total,
+            }
+
+    return await run_write(_next)
 
 
 async def mark_message_read(message_id: int, user_id: int) -> bool:
-    with get_db_session() as db:
-        msg = db.query(ProactiveMessage).filter(
-            ProactiveMessage.id == message_id,
-            ProactiveMessage.user_id == user_id,
-        ).first()
-        if msg:
-            msg.read = True
-            db.commit()
-            return True
-    return False
+    def _mark():
+        with get_db_session() as db:
+            msg = db.query(ProactiveMessage).filter(
+                ProactiveMessage.id == message_id,
+                ProactiveMessage.user_id == user_id,
+            ).first()
+            if msg:
+                msg.read = True
+                db.commit()
+                return True
+        return False
+
+    return await run_write(_mark)

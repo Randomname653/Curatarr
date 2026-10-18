@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 
+from src.database.runner import run_read
 from src.services.llm_utils import parse_llm_json, seasonal_context
 
 logger = logging.getLogger(__name__)
@@ -88,25 +89,29 @@ async def design_collections() -> list:
     from src.services.app_state import get_state
     from src.services.recommendations_engine import _call_llm, _taste_section
 
-    with get_db_session() as db:
-        sections = {lc.media_category: lc.plex_section_key
-                    for lc in db.query(LibraryConfig).all()}
-        admin = db.query(User).filter(User.is_admin == True).first()  # noqa: E712
-        tv = admin and db.query(TasteVectorEntry).filter(
-            TasteVectorEntry.user_id == admin.id).first()
-        summary_text = (tv.summary_text or "") if tv else ""
-        cands = {}
-        for cat in ("movie", "show", "anime"):
-            rows = (db.query(MediaTechProfile.title, MediaTechProfile.plex_rating_key)
-                    .filter(MediaTechProfile.media_type == cat,
-                            MediaTechProfile.plex_rating_key.isnot(None))
-                    .order_by(MediaTechProfile.id.desc())
-                    .limit(_CANDIDATE_CAP).all())
-            cands[cat] = [{"title": t, "plex_rating_key": k} for t, k in rows if t]
+    def _load():
+        with get_db_session() as db:
+            sections = {lc.media_category: lc.plex_section_key
+                        for lc in db.query(LibraryConfig).all()}
+            admin = db.query(User).filter(User.is_admin == True).first()  # noqa: E712
+            tv = admin and db.query(TasteVectorEntry).filter(
+                TasteVectorEntry.user_id == admin.id).first()
+            summary_text = (tv.summary_text or "") if tv else ""
+            cands = {}
+            for cat in ("movie", "show", "anime"):
+                rows = (db.query(MediaTechProfile.title, MediaTechProfile.plex_rating_key)
+                        .filter(MediaTechProfile.media_type == cat,
+                                MediaTechProfile.plex_rating_key.isnot(None))
+                        .order_by(MediaTechProfile.id.desc())
+                        .limit(_CANDIDATE_CAP).all())
+                cands[cat] = [{"title": t, "plex_rating_key": k} for t, k in rows if t]
+        return sections, summary_text, cands
+
+    sections, summary_text, cands = await run_read(_load)
 
     from src.services.plex_collections import COLLECTION_PREFIX
     try:
-        prev = json.loads(get_state("curatarr_collections") or "{}")
+        prev = json.loads(await run_read(get_state, "curatarr_collections") or "{}")
         prev_names = [d.get("title", "").removeprefix(COLLECTION_PREFIX)
                       for d in prev.get("designs", [])]
     except Exception:

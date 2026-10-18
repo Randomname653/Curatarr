@@ -128,33 +128,37 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     from src.services.app_state import get_state, set_state
     cursor_key = f"music_match_cursor:{user_id}"
     try:
-        since_id = int(get_state(cursor_key) or 0)
+        since_id = int(await run_read(get_state, cursor_key) or 0)
     except (TypeError, ValueError):
         since_id = 0
 
     # ── 1. Find configured music library sections ─────────────────────────────
-    with get_db_session() as db:
-        music_sections = [
-            c.plex_section_key
-            for c in db.query(LibraryConfig)
-            .filter(LibraryConfig.media_category == "music")
-            .all()
-        ]
+    def _load_sections():
+        with get_db_session() as db:
+            music_sections = [
+                c.plex_section_key
+                for c in db.query(LibraryConfig)
+                .filter(LibraryConfig.media_category == "music")
+                .all()
+            ]
 
-        # Early-out BEFORE the Plex fetch: nothing new since the cursor means
-        # no work — skip the section download + index build entirely.
-        from sqlalchemy import func
-        new_plays = (
-            db.query(func.count(WatchHistoryEntry.id))
-            .filter(
-                WatchHistoryEntry.user_id    == user_id,
-                WatchHistoryEntry.source     == "spotify",
-                WatchHistoryEntry.media_type == "music",
-                WatchHistoryEntry.plex_item_id.like("spotify%"),
-                WatchHistoryEntry.id > since_id,
+            # Early-out BEFORE the Plex fetch: nothing new since the cursor means
+            # no work — skip the section download + index build entirely.
+            from sqlalchemy import func
+            new_plays = (
+                db.query(func.count(WatchHistoryEntry.id))
+                .filter(
+                    WatchHistoryEntry.user_id    == user_id,
+                    WatchHistoryEntry.source     == "spotify",
+                    WatchHistoryEntry.media_type == "music",
+                    WatchHistoryEntry.plex_item_id.like("spotify%"),
+                    WatchHistoryEntry.id > since_id,
+                )
+                .scalar()
             )
-            .scalar()
-        )
+        return music_sections, new_plays
+
+    music_sections, new_plays = await run_read(_load_sections)
     if new_plays == 0:
         logger.info("[music_matcher] No new Spotify plays since cursor %d — "
                     "match phase up to date", since_id)
@@ -177,7 +181,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
 
     async with httpx.AsyncClient(timeout=120) as client:
         for sec_key in music_sections:
-            if _stop_requested():
+            if await run_read(_stop_requested):
                 break
             try:
                 resp = await client.get(
@@ -304,21 +308,24 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
 
     # Find unresolved unique artist names (one row per name; we update ALL
     # plays for that name once we have the MBID).
-    with get_db_session() as db:
-        from sqlalchemy import distinct
-        rows = (
-            db.query(distinct(WatchHistoryEntry.series_title))
-            .filter(
-                WatchHistoryEntry.user_id    == user_id,
-                WatchHistoryEntry.media_type == "music",
-                WatchHistoryEntry.source     == "spotify",
-                WatchHistoryEntry.artist_mbid.is_(None),
-                WatchHistoryEntry.series_title.isnot(None),
+    def _load_unresolved():
+        with get_db_session() as db:
+            from sqlalchemy import distinct
+            rows = (
+                db.query(distinct(WatchHistoryEntry.series_title))
+                .filter(
+                    WatchHistoryEntry.user_id    == user_id,
+                    WatchHistoryEntry.media_type == "music",
+                    WatchHistoryEntry.source     == "spotify",
+                    WatchHistoryEntry.artist_mbid.is_(None),
+                    WatchHistoryEntry.series_title.isnot(None),
+                )
+                .all()
             )
-            .all()
-        )
-    unresolved = [r[0] for r in rows if r[0]]
-    artist_names = music_misses.due_filter(unresolved)
+        return [r[0] for r in rows if r[0]]
+
+    unresolved = await run_read(_load_unresolved)
+    artist_names = await run_read(lambda: music_misses.due_filter(unresolved))
     parked = len(unresolved) - len(artist_names)
     total_unique = len(artist_names)
 
@@ -364,13 +371,13 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
         except Exception:  # noqa: BLE001 - progress panel only; the work itself is unaffected
             pass
 
-    _emit_progress()  # initial — mark Phase 1.4 as live in the UI
+    await run_write(_emit_progress)  # initial — mark Phase 1.4 as live in the UI
 
     for i, name in enumerate(names):
         # Stop check + progress emit every _STOP_CHECK iterations
         if i % _STOP_CHECK == 0:
-            _emit_progress()
-            if _stop_requested():
+            await run_write(_emit_progress)
+            if await run_read(_stop_requested):
                 logger.info("[music_matcher] Phase 1.4: stop requested after %d artists", queried)
                 break
 
@@ -391,11 +398,11 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
         if not mbid:
             failed += 1
             # Write the miss down, or this name is back tomorrow night.
-            music_misses.record_miss(name, reason="musicbrainz: no match")
+            await run_write(lambda: music_misses.record_miss(name, reason="musicbrainz: no match"))
             continue
 
         # Write MBID back to ALL plays for this artist
-        try:
+        def _write_mbid():
             with get_db_session() as db:
                 count = (
                     db.query(WatchHistoryEntry)
@@ -408,16 +415,20 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
                     .update({"artist_mbid": mbid}, synchronize_session=False)
                 )
                 db.commit()
-                resolved += 1
-                music_misses.clear_miss(name)
-                if count > 1:
-                    logger.debug("[music_matcher] MBID %s -> %d plays for %r",
-                                 mbid, count, name)
+            return count
+
+        try:
+            count = await run_write(_write_mbid)
+            resolved += 1
+            await run_write(lambda: music_misses.clear_miss(name))
+            if count > 1:
+                logger.debug("[music_matcher] MBID %s -> %d plays for %r",
+                             mbid, count, name)
         except Exception as exc:
             logger.warning("[music_matcher] MBID writeback failed for %r: %s", name, exc)
             failed += 1
 
-    _emit_progress("mbid_resolve_done")  # final — caller advances to Phase 1.5 next
+    await run_write(_emit_progress, "mbid_resolve_done")  # final — caller advances to Phase 1.5 next
 
     logger.info(
         "[music_matcher] Phase 1.4 done — resolved=%d failed=%d queried=%d "
@@ -473,22 +484,25 @@ async def enrich_music_genres_spotify(user_id: int, batch: int = 200) -> dict:
                 "note": "Spotify credentials not configured"}
 
     # ── Collect plays with a spotify:track: URI and no genres ─────────────────
-    with get_db_session() as db:
-        rows = (
-            db.query(
-                WatchHistoryEntry.id,
-                WatchHistoryEntry.plex_item_id,
-                WatchHistoryEntry.series_title,
-                WatchHistoryEntry.title,
-            )
-            .filter(
-                WatchHistoryEntry.user_id    == user_id,
-                WatchHistoryEntry.media_type == "music",
-                WatchHistoryEntry.genres.is_(None),
-                WatchHistoryEntry.plex_item_id.like("spotify:track:%"),
-            )
-            .all()
-        )
+    def _load_rows():
+        with get_db_session() as db:
+            return [tuple(r) for r in (
+                db.query(
+                    WatchHistoryEntry.id,
+                    WatchHistoryEntry.plex_item_id,
+                    WatchHistoryEntry.series_title,
+                    WatchHistoryEntry.title,
+                )
+                .filter(
+                    WatchHistoryEntry.user_id    == user_id,
+                    WatchHistoryEntry.media_type == "music",
+                    WatchHistoryEntry.genres.is_(None),
+                    WatchHistoryEntry.plex_item_id.like("spotify:track:%"),
+                )
+                .all()
+            )]
+
+    rows = await run_read(_load_rows)
 
     if not rows:
         return {"skipped": 0, "enriched_plays": 0, "tracks_queried": 0,
@@ -549,13 +563,14 @@ async def enrich_music_genres_spotify(user_id: int, batch: int = 200) -> dict:
     unknown_ids   = 0
     _DB_COMMIT_CHUNK = 100   # tracks per commit — tuned for ~50ms write windows
     items = list(genre_map.items())
-    for chunk_start in range(0, len(items), _DB_COMMIT_CHUNK):
-        chunk = items[chunk_start:chunk_start + _DB_COMMIT_CHUNK]
+
+    def _write_chunk(chunk) -> tuple[int, int]:
+        enriched = unknown = 0
         with get_db_session() as db:
             for track_id, genres in chunk:
                 play_ids = track_plays.get(track_id)
                 if not play_ids:
-                    unknown_ids += 1
+                    unknown += 1
                     continue
                 genres_str = ",".join(genres)
                 count = (
@@ -563,9 +578,16 @@ async def enrich_music_genres_spotify(user_id: int, batch: int = 200) -> dict:
                     .filter(WatchHistoryEntry.id.in_(play_ids))
                     .update({"genres": genres_str}, synchronize_session=False)
                 )
-                enriched_plays += count
+                enriched += count
             # ``get_db_session`` context manager commits on exit; explicit
             # ``db.commit()`` would be redundant.
+        return enriched, unknown
+
+    for chunk_start in range(0, len(items), _DB_COMMIT_CHUNK):
+        chunk = items[chunk_start:chunk_start + _DB_COMMIT_CHUNK]
+        enriched, unknown = await run_write(_write_chunk, chunk)
+        enriched_plays += enriched
+        unknown_ids += unknown
     if unknown_ids:
         logger.warning(
             "[music_matcher] Spotify resolver returned %d track IDs we didn't ask about — skipped",
@@ -658,22 +680,25 @@ async def enrich_music_genres_lastfm(
     # ── Collect Spotify-source rows missing genres ───────────────────────────
     # Query only the columns we need as plain tuples — avoids DetachedInstanceError
     # when accessing attributes outside the session context.
-    with get_db_session() as db:
-        rows = (
-            db.query(
-                WatchHistoryEntry.id,
-                WatchHistoryEntry.series_title,
-                WatchHistoryEntry.title,
-            )
-            .filter(
-                WatchHistoryEntry.user_id    == user_id,
-                WatchHistoryEntry.media_type == "music",
-                WatchHistoryEntry.source     == "spotify",
-                WatchHistoryEntry.genres.is_(None),
-            )
-            .all()
-        )
-    # rows is a list of (id, series_title, title) named tuples — session-independent
+    def _load_rows():
+        with get_db_session() as db:
+            return [tuple(r) for r in (
+                db.query(
+                    WatchHistoryEntry.id,
+                    WatchHistoryEntry.series_title,
+                    WatchHistoryEntry.title,
+                )
+                .filter(
+                    WatchHistoryEntry.user_id    == user_id,
+                    WatchHistoryEntry.media_type == "music",
+                    WatchHistoryEntry.source     == "spotify",
+                    WatchHistoryEntry.genres.is_(None),
+                )
+                .all()
+            )]
+
+    rows = await run_read(_load_rows)
+    # rows is a list of (id, series_title, title) tuples — session-independent
 
     if not rows:
         return {"enriched_plays": 0, "tracks_queried": 0, "failed": 0}
@@ -710,13 +735,17 @@ async def enrich_music_genres_lastfm(
 
     # Pre-load matching stats once so the progress block can include them
     _total_unmatched = 0
-    try:
+
+    def _count_unmatched():
         from sqlalchemy import func
         with get_db_session() as _db:
-            _total_unmatched = _db.query(func.count(WatchHistoryEntry.id)).filter(
+            return _db.query(func.count(WatchHistoryEntry.id)).filter(
                 WatchHistoryEntry.source == "spotify",
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
             ).scalar()
+
+    try:
+        _total_unmatched = await run_read(_count_unmatched)
     except Exception:  # noqa: BLE001 - progress-panel stat only; matching is unaffected
         pass
 
@@ -741,7 +770,7 @@ async def enrich_music_genres_lastfm(
                 try:
                     import json as _json
                     from src.services.app_state import set_state as _set_state
-                    _set_state("music_pipeline_progress", _json.dumps({
+                    await run_write(_set_state, "music_pipeline_progress", _json.dumps({
                         "phase":           "lastfm_enrich",
                         "tracks_queried":  queried,
                         "total_unique":    len(unique_tracks),
@@ -752,7 +781,7 @@ async def enrich_music_genres_lastfm(
                     }))
                 except Exception:  # noqa: BLE001 - progress panel only; the work itself is unaffected
                     pass
-                if _stop_requested():
+                if await run_read(_stop_requested):
                     logger.info("[music_matcher] Stop requested after %d Last.fm calls", queried)
                     break
 
@@ -862,37 +891,41 @@ async def enrich_music_genres_lastfm(
     )
 
     # ── Write genres back (batched) ───────────────────────────────────────────
-    enriched_plays = 0
-    with get_db_session() as db:
-        # Tracks with usable genres
-        for norm_key, genres_str in genre_map.items():
-            play_ids = groups[norm_key][2]
-            count = (
-                db.query(WatchHistoryEntry)
-                .filter(WatchHistoryEntry.id.in_(play_ids))
-                .update({"genres": genres_str}, synchronize_session=False)
-            )
-            enriched_plays += count
+    def _write_genres() -> int:
+        enriched = 0
+        with get_db_session() as db:
+            # Tracks with usable genres
+            for norm_key, genres_str in genre_map.items():
+                play_ids = groups[norm_key][2]
+                count = (
+                    db.query(WatchHistoryEntry)
+                    .filter(WatchHistoryEntry.id.in_(play_ids))
+                    .update({"genres": genres_str}, synchronize_session=False)
+                )
+                enriched += count
 
-        # Tracks with NO usable genres from either source: write empty string so
-        # they leave the genres-IS-NULL retry pool.  The empty string is filtered
-        # out in genre display code (split(",") → [""] → no tags shown).
-        # Re-tries would only waste Last.fm quota since these artists/tracks are
-        # consistently absent from Last.fm's database.
-        if no_data_keys:
-            no_data_ids = [
-                pid
-                for nk in no_data_keys
-                for pid in groups[nk][2]
-            ]
-            db.query(WatchHistoryEntry).filter(
-                WatchHistoryEntry.id.in_(no_data_ids),
-                WatchHistoryEntry.genres.is_(None),  # don't overwrite real genres
-            ).update({"genres": ""}, synchronize_session=False)
-            logger.info("[music_matcher] Wrote no-data sentinel to %d plays (%d tracks)",
-                        len(no_data_ids), len(no_data_keys))
+            # Tracks with NO usable genres from either source: write empty string so
+            # they leave the genres-IS-NULL retry pool.  The empty string is filtered
+            # out in genre display code (split(",") → [""] → no tags shown).
+            # Re-tries would only waste Last.fm quota since these artists/tracks are
+            # consistently absent from Last.fm's database.
+            if no_data_keys:
+                no_data_ids = [
+                    pid
+                    for nk in no_data_keys
+                    for pid in groups[nk][2]
+                ]
+                db.query(WatchHistoryEntry).filter(
+                    WatchHistoryEntry.id.in_(no_data_ids),
+                    WatchHistoryEntry.genres.is_(None),  # don't overwrite real genres
+                ).update({"genres": ""}, synchronize_session=False)
+                logger.info("[music_matcher] Wrote no-data sentinel to %d plays (%d tracks)",
+                            len(no_data_ids), len(no_data_keys))
 
-        db.commit()
+            db.commit()
+        return enriched
+
+    enriched_plays = await run_write(_write_genres)
 
     logger.info("[music_matcher] Last.fm enrichment complete — "
                 "plays enriched=%d artist_fallback=%d tracks_queried=%d failed=%d",
@@ -902,7 +935,7 @@ async def enrich_music_genres_lastfm(
     try:
         import json as _json
         from src.services.app_state import set_state as _set_state
-        _set_state("music_pipeline_progress", _json.dumps({
+        await run_write(_set_state, "music_pipeline_progress", _json.dumps({
             "phase":           "lastfm_batch_done",
             "tracks_queried":  queried,
             "total_unique":    len(unique_tracks),
@@ -969,7 +1002,7 @@ async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
     # from materialising them as ORM rows).
     try:
         from src.services.music_rematch import rematch_arrivals
-        phase1b = rematch_arrivals(user_id)
+        phase1b = await run_write(rematch_arrivals, user_id)
     except Exception as e:
         logger.warning("[music_matcher] Phase 1b (arrivals) failed: %s", e)
         phase1b = {"error": str(e)}

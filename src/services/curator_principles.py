@@ -42,6 +42,7 @@ import httpx
 
 from src.config import settings
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.database.models import CuratorPrinciple
 from src.services.llm_utils import parse_llm_json
 
@@ -337,7 +338,7 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     call on any thread — a thin / non-principled one just returns []."""
     if not getattr(settings, "PRINCIPLES_ENABLED", False):
         return []
-    convo, n = _thread_text(user_id, thread_id)
+    convo, n = await run_read(_thread_text, user_id, thread_id)
     if n < _MIN_THREAD_MESSAGES:
         return []
 
@@ -361,7 +362,7 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
         return []
 
     # 2 — novelty-check against the existing rule-set (decide-only)
-    existing, taste, rejected = _existing_context(user_id)
+    existing, taste, rejected = await run_read(_existing_context, user_id)
     known_ids = {pid for pid, _ in existing}
     cand_texts = [c["principle"].strip() for c in candidates]
     try:
@@ -390,7 +391,8 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
         verdict = (r.get("verdict") or "NEW").upper()   # unclassified → treat as NEW
         related = _related_ref(r.get("related_id"), r.get("related"), known_ids)
         if verdict == "DUPLICATE":
-            _reinforce_duplicate(user_id, r.get("related") or "", _related_id(related))
+            await run_write(_reinforce_duplicate, user_id, r.get("related") or "",
+                            _related_id(related))
             continue
         if verdict not in ("NEW", "REFINEMENT", "CONTRADICTION"):
             verdict = "NEW"
@@ -401,7 +403,8 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
         status = "shadow"
         if verdict != "CONTRADICTION" and getattr(settings, "PRINCIPLE_AUTO_ACTIVATE", False):
             status = "active"
-        try:
+
+        def _store():
             with get_db_session() as db:
                 row = CuratorPrinciple(
                     user_id=user_id, text=text, basis=c.get("basis"),
@@ -415,10 +418,14 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
                 db.add(row)
                 db.commit()
                 db.refresh(row)
-                stored.append({"id": row.id, "text": text, "novelty": verdict.lower(),
-                               "basis": c.get("basis"), "status": status})
-                logger.info("🧭 [PRINCIPLE %s] %s #%d: %s",
-                            verdict, status, row.id, text[:80])
+                return row.id
+
+        try:
+            row_id = await run_write(_store)
+            stored.append({"id": row_id, "text": text, "novelty": verdict.lower(),
+                           "basis": c.get("basis"), "status": status})
+            logger.info("🧭 [PRINCIPLE %s] %s #%d: %s",
+                        verdict, status, row_id, text[:80])
         except Exception as e:
             logger.warning("[principles] store failed: %s", e)
     return stored
@@ -456,14 +463,18 @@ async def detect_and_apply_principle_verdict(user_id: int, principle_id: int,
     text (this is the ONE place a rewrite is allowed: the owner endorsed it
     explicitly, which is the opposite of autonomous drift) and it activates.
     Best-effort: any failure leaves the principle in shadow for the panel."""
-    try:
+    def _rule_text():
         with get_db_session() as db:
             row = (db.query(CuratorPrinciple)
                    .filter(CuratorPrinciple.id == principle_id,
                            CuratorPrinciple.user_id == user_id).first())
-            if not row:
-                return
-            rule_text = row.text
+            return (row.text,) if row else None
+
+    try:
+        found = await run_read(_rule_text)
+        if not found:
+            return
+        rule_text = found[0]
         convo = (f"RULE UNDER REVIEW:\n\"{rule_text}\"\n\n"
                  f"OWNER: {(user_message or '').strip()[:1200]}\n\n"
                  f"CURATOR: {(assistant_response or '').strip()[:1500]}")
@@ -472,35 +483,44 @@ async def detect_and_apply_principle_verdict(user_id: int, principle_id: int,
         revised = (v.get("revised_text") or "").strip()
         if decision == "none":
             return
-        with get_db_session() as db:
-            row = (db.query(CuratorPrinciple)
-                   .filter(CuratorPrinciple.id == principle_id,
-                           CuratorPrinciple.user_id == user_id).first())
-            if not row:
-                return
-            if decision == "reject":
-                row.status = "rejected"
-                logger.info("🧭 [PRINCIPLE REVIEW] #%d rejected by the owner in chat",
-                            row.id)
-            elif decision in ("adopt", "adopt_revised"):
-                if decision == "adopt_revised" and len(revised) >= 15:
-                    logger.info("🧭 [PRINCIPLE REVIEW] #%d wording refined in review: %s",
-                                row.id, revised[:90])
-                    row.text = revised
-                    row.origin_summary = ((row.origin_summary or "")
-                                          + " | wording refined in owner review").strip(" |")
-                    try:
-                        emb = await _embed(revised)
+        refine = decision == "adopt_revised" and len(revised) >= 15
+        # The embedding is fetched before the write: the write below runs on
+        # the writer thread and cannot await.
+        emb = None
+        if refine:
+            try:
+                emb = await _embed(revised)
+            except (TypeError, ValueError):
+                pass
+
+        def _apply():
+            with get_db_session() as db:
+                row = (db.query(CuratorPrinciple)
+                       .filter(CuratorPrinciple.id == principle_id,
+                               CuratorPrinciple.user_id == user_id).first())
+                if not row:
+                    return
+                if decision == "reject":
+                    row.status = "rejected"
+                    logger.info("🧭 [PRINCIPLE REVIEW] #%d rejected by the owner in chat",
+                                row.id)
+                elif decision in ("adopt", "adopt_revised"):
+                    if refine:
+                        logger.info("🧭 [PRINCIPLE REVIEW] #%d wording refined in review: %s",
+                                    row.id, revised[:90])
+                        row.text = revised
+                        row.origin_summary = ((row.origin_summary or "")
+                                              + " | wording refined in owner review").strip(" |")
                         if emb:
                             row.embedding_json = json.dumps(emb)
-                    except (TypeError, ValueError):
-                        pass
-                row.status = "active"
-                row.activated_at = datetime.utcnow()
-                supersede_contradicted(db, row)
-                logger.info("🧭 [PRINCIPLE REVIEW] #%d ADOPTED (%s) — now active",
-                            row.id, decision)
-            db.commit()
+                    row.status = "active"
+                    row.activated_at = datetime.utcnow()
+                    supersede_contradicted(db, row)
+                    logger.info("🧭 [PRINCIPLE REVIEW] #%d ADOPTED (%s) — now active",
+                                row.id, decision)
+                db.commit()
+
+        await run_write(_apply)
     except Exception as e:
         logger.warning("[principles] review verdict failed for #%s: %s",
                        principle_id, e)
@@ -516,14 +536,17 @@ async def retrieve_principles(user_id: int, category: str | None = None,
     given we rank by embedding similarity and keep the top_k, else return all
     active (there are few). Shadow principles are never injected — that is the
     whole point of the shadow rollout."""
-    with get_db_session() as db:
-        q = db.query(CuratorPrinciple).filter(
-            CuratorPrinciple.user_id == user_id,
-            CuratorPrinciple.status == "active")
-        if category:
-            q = q.filter((CuratorPrinciple.category == category)
-                         | (CuratorPrinciple.category.is_(None)))
-        rows = [(p.text, p.embedding_json) for p in q.all() if p.text]
+    def _load():
+        with get_db_session() as db:
+            q = db.query(CuratorPrinciple).filter(
+                CuratorPrinciple.user_id == user_id,
+                CuratorPrinciple.status == "active")
+            if category:
+                q = q.filter((CuratorPrinciple.category == category)
+                             | (CuratorPrinciple.category.is_(None)))
+            return [(p.text, p.embedding_json) for p in q.all() if p.text]
+
+    rows = await run_read(_load)
     if not rows:
         return []
     if not item_profile or len(rows) <= top_k:
@@ -602,13 +625,16 @@ async def condense_principles(user_id: int, dry_run: bool = False) -> dict:
     category group. Sources become status='merged' (audit trail, never hard
     deleted, related records the successor); the consolidated rule is written
     active with basis='condensed' and the summed reinforcement count."""
-    with get_db_session() as db:
-        rows = [{"id": p.id, "text": p.text, "category": p.category,
-                 "basis": p.basis, "times_reinforced": p.times_reinforced or 0}
-                for p in db.query(CuratorPrinciple).filter(
-                    CuratorPrinciple.user_id == user_id,
-                    CuratorPrinciple.status == "active",
-                ).order_by(CuratorPrinciple.id)]
+    def _load():
+        with get_db_session() as db:
+            return [{"id": p.id, "text": p.text, "category": p.category,
+                     "basis": p.basis, "times_reinforced": p.times_reinforced or 0}
+                    for p in db.query(CuratorPrinciple).filter(
+                        CuratorPrinciple.user_id == user_id,
+                        CuratorPrinciple.status == "active",
+                    ).order_by(CuratorPrinciple.id)]
+
+    rows = await run_read(_load)
 
     groups: dict = {}
     for r in rows:
@@ -645,26 +671,30 @@ async def condense_principles(user_id: int, dry_run: bool = False) -> dict:
                 for i in sorted(ids)], "text": text}
             if not dry_run:
                 emb = await _embed(text)
-                with get_db_session() as db:
-                    new = CuratorPrinciple(
-                        user_id=user_id, text=text, category=cat,
-                        basis="condensed", status="active",
-                        novelty="NEW",
-                        times_reinforced=sum(valid[i]["times_reinforced"] for i in ids),
-                        origin_summary="condensed from #" + ",#".join(str(i) for i in sorted(ids)),
-                        embedding_json=json.dumps(emb) if emb else None,
-                        created_at=datetime.utcnow(),
-                        activated_at=datetime.utcnow(),
-                    )
-                    db.add(new)
-                    db.flush()
-                    for i in ids:
-                        src = db.get(CuratorPrinciple, i)
-                        if src:
-                            src.status = "merged"
-                            src.related = f"merged into #{new.id}"
-                    db.commit()
-                    entry["new_id"] = new.id
+
+                def _merge():
+                    with get_db_session() as db:
+                        new = CuratorPrinciple(
+                            user_id=user_id, text=text, category=cat,
+                            basis="condensed", status="active",
+                            novelty="NEW",
+                            times_reinforced=sum(valid[i]["times_reinforced"] for i in ids),
+                            origin_summary="condensed from #" + ",#".join(str(i) for i in sorted(ids)),
+                            embedding_json=json.dumps(emb) if emb else None,
+                            created_at=datetime.utcnow(),
+                            activated_at=datetime.utcnow(),
+                        )
+                        db.add(new)
+                        db.flush()
+                        for i in ids:
+                            src = db.get(CuratorPrinciple, i)
+                            if src:
+                                src.status = "merged"
+                                src.related = f"merged into #{new.id}"
+                        db.commit()
+                        return new.id
+
+                entry["new_id"] = await run_write(_merge)
             report["merged"].append(entry)
 
     report["active_after"] = (report["active_before"]

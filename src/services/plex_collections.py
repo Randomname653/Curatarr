@@ -96,11 +96,12 @@ async def push_collections(designs: list[dict]) -> dict:
     Cleans ALL sections passed in *plus* any sections named in the previous
     push snapshot, so an emptied category doesn't strand orphans. Snapshot
     lands in app_state "curatarr_collections"."""
+    from src.database.runner import run_read, run_write
     from src.services.app_state import get_state, set_state
 
     sections = {str(d["section_key"]) for d in designs}
     try:
-        prev = json.loads(get_state("curatarr_collections") or "{}")
+        prev = json.loads(await run_read(get_state, "curatarr_collections") or "{}")
         sections |= {str(d.get("section_key")) for d in prev.get("designs", [])
                      if d.get("section_key")}
     except (ValueError, TypeError, AttributeError):
@@ -139,7 +140,7 @@ async def push_collections(designs: list[dict]) -> dict:
             failed += 1
             logger.warning("[collections] create %r failed: %s", d.get("title"), e)
 
-    set_state("curatarr_collections", json.dumps({
+    await run_write(set_state, "curatarr_collections", json.dumps({
         "pushed_at": datetime.utcnow().isoformat(),
         "designs": results,
     }))

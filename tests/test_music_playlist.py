@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import src.database.connection as dbc
 import src.services.app_state as app_state
@@ -66,7 +67,10 @@ check("fresh cache short-circuits SoulSync", nb2 == nb and calls == [])
 
 # ── push_user_music_playlist against faked boundaries ────────────────────────
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+# StaticPool: the push reads through run_read on a worker thread, which must
+# see the same in-memory database.
+engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                       poolclass=StaticPool)
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 _shared = Session()

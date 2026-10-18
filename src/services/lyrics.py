@@ -760,14 +760,27 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
     expire the polished summary, re-polish. True when nothing eligible
     remains; False to continue next tick."""
     from src.cache.metadata_cache import MetadataCache
+    from src.database.runner import run_read
     call_llm = call_llm or _call_summarizer
     repolish = repolish or _repolish
     budget = _PROFILE_BUDGET if budget is None else budget
     now = now or datetime.utcnow()
     owns = cache is None
-    cache = cache or MetadataCache()
     made = failed = reattached = 0
     todo = []
+
+    # Every cache, plex_music.db and history read below runs on a worker
+    # thread, never the loop. Without a cache handed in, each call opens its
+    # own handle on its worker (connections are per thread).
+    def _cached(fn, *args):
+        if not owns:
+            return fn(cache, *args)
+        with MetadataCache() as c:
+            return fn(c, *args)
+
+    def _reattach(c) -> int:
+        return sum(attach_profile(c, p["artist"], p["artist_key"], p["profile"], p["based_on"])
+                   for p in all_profiles(db_path))
 
     def _report(msg: str):
         if task is None:
@@ -778,55 +791,53 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
         except Exception:  # noqa: BLE001 - progress card only; profiling is unaffected
             pass
 
-    try:
-        for p in all_profiles(db_path):
-            reattached += attach_profile(cache, p["artist"], p["artist_key"], p["profile"], p["based_on"])
-        todo = eligible_artists(db_path)
-        _report(f"{len(todo):,} artists eligible, {reattached} profiles re-attached")
-        yield_warned = False
-        for a in todo[:budget]:
-            try:
-                from src.services.llm_priority import wait_for_curator
-                await wait_for_curator()
-            except Exception as e:
-                # wait_for_curator proceeds after its own timeout too: a
-                # courtesy yield, so carry on - but a broken one is a bug.
-                if not yield_warned:
-                    yield_warned = True
-                    logger.warning("[lyrics] curator yield failed: %r", e, exc_info=True)
-            block, shown, used = _profile_input(a["artist_key"], db_path)
-            if not shown:
-                continue
-            prompt = LYRICS_PROFILE_PROMPT.format(
-                artist=a["artist"], with_text=a["with_text"], tracks=a["tracks"], shown=shown,
-                max_quote_words=_MAX_QUOTE_WORDS, lyrics=block, moods=", ".join(_MOODS))
-            prof = _clean_profile(await call_llm(prompt), block)
-            if prof is None:
-                failed += 1
-                _report(f"{a['artist']}: no usable profile")
-                continue
-            based_on = {"with_text": a["with_text"], "tracks": a["tracks"], "shown": shown}
+    reattached += await asyncio.to_thread(_cached, _reattach)
+    todo = await asyncio.to_thread(eligible_artists, db_path)
+    _report(f"{len(todo):,} artists eligible, {reattached} profiles re-attached")
+    yield_warned = False
+    for a in todo[:budget]:
+        try:
+            from src.services.llm_priority import wait_for_curator
+            await wait_for_curator()
+        except Exception as e:
+            # wait_for_curator proceeds after its own timeout too: a
+            # courtesy yield, so carry on - but a broken one is a bug.
+            if not yield_warned:
+                yield_warned = True
+                logger.warning("[lyrics] curator yield failed: %r", e, exc_info=True)
+        # _listen_counts inside reads the watch history.
+        block, shown, used = await run_read(_profile_input, a["artist_key"], db_path)
+        if not shown:
+            continue
+        prompt = LYRICS_PROFILE_PROMPT.format(
+            artist=a["artist"], with_text=a["with_text"], tracks=a["tracks"], shown=shown,
+            max_quote_words=_MAX_QUOTE_WORDS, lyrics=block, moods=", ".join(_MOODS))
+        prof = _clean_profile(await call_llm(prompt), block)
+        if prof is None:
+            failed += 1
+            _report(f"{a['artist']}: no usable profile")
+            continue
+        based_on = {"with_text": a["with_text"], "tracks": a["tracks"], "shown": shown}
+
+        def _store(c):
             _store_profile(a, prof, based_on, db_path, now)
-            targets = _raw_targets(cache, a["artist"], a["artist_key"])
+            targets = _raw_targets(c, a["artist"], a["artist_key"])
             mbid = next((r.get("mbid") for _, r in targets if r.get("mbid")), None)
-            attach_profile(cache, a["artist"], a["artist_key"], prof, based_on)
-            _expire_polished(cache, a["artist"])
-            try:
-                await repolish(a["artist"], a["artist_key"], mbid)
-            except Exception as e:
-                logger.warning("[lyrics] re-polish of %r failed: %s", a["artist"], e)
-            made += 1
-            _report(f"{made} profiled this run ({a['artist']})")
-        remaining = max(0, len(todo) - budget)
-        logger.info("[lyrics] profiles: %d made, %d failed, %d re-attached, %d remaining",
-                    made, failed, reattached, remaining)
-        return remaining == 0
-    finally:
-        if owns:
-            try:
-                cache.close()
-            except Exception:  # noqa: BLE001 - teardown; the profiles are stored
-                pass
+            attach_profile(c, a["artist"], a["artist_key"], prof, based_on)
+            _expire_polished(c, a["artist"])
+            return mbid
+
+        mbid = await asyncio.to_thread(_cached, _store)
+        try:
+            await repolish(a["artist"], a["artist_key"], mbid)
+        except Exception as e:
+            logger.warning("[lyrics] re-polish of %r failed: %s", a["artist"], e)
+        made += 1
+        _report(f"{made} profiled this run ({a['artist']})")
+    remaining = max(0, len(todo) - budget)
+    logger.info("[lyrics] profiles: %d made, %d failed, %d re-attached, %d remaining",
+                made, failed, reattached, remaining)
+    return remaining == 0
 
 
 # ── step 3: what the curator sees ───────────────────────────────────────────
@@ -906,8 +917,10 @@ async def run_lyrics_sync(task=None) -> bool:
     headers = {"Accept": "application/json", "X-Plex-Token": token,
                "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID}
 
+    from src.database.runner import run_read
+
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        sections = _music_sections()
+        sections = await run_read(_music_sections)
         if not sections:
             sections = await _discover_music_sections(client, base, headers)
             if sections:

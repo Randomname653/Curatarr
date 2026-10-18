@@ -307,12 +307,16 @@ async def _startup_sync_if_needed():
         from pathlib import Path
         from src.database.connection import get_db_session
         from src.database.models import User
+        from src.database.runner import run_read
 
-        with get_db_session() as db:
-            # ⚡ Bolt: Fast existence check avoiding full table count and ORM instantiation
-            if db.query(User.id).filter(User.is_active == True).first() is None:
-                logger.info("No users yet — skipping startup sync")
-                return
+        def _any_active_user() -> bool:
+            with get_db_session() as db:
+                # ⚡ Bolt: Fast existence check avoiding full table count and ORM instantiation
+                return db.query(User.id).filter(User.is_active == True).first() is not None
+
+        if not await run_read(_any_active_user):
+            logger.info("No users yet — skipping startup sync")
+            return
 
         marker = DATA_DIR / ".last_sync"
         if marker.exists():
@@ -339,14 +343,18 @@ async def _startup_sync():
         from src.services.plex_sync import sync_plex_history
         from src.database.connection import get_db_session
         from src.database.models import User
+        from src.database.runner import run_read
         from src.services.proactive_messages import check_and_generate_messages
 
         result = await sync_plex_history()
         logger.info("Sync: %d new, %d skipped", result.get("synced", 0), result.get("skipped", 0))
         (DATA_DIR / ".last_sync").touch()
 
-        with get_db_session() as db:
-            user_ids = [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]
+        def _active_ids():
+            with get_db_session() as db:
+                return [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]
+
+        user_ids = await run_read(_active_ids)
         for uid in user_ids:
             await check_and_generate_messages(uid)
 
@@ -447,9 +455,10 @@ from src.routers.auth import get_current_user  # noqa: E402
 
 
 @app.get("/api/system/notifications")
-async def system_notifications_route(user=Depends(get_current_user)):
+def system_notifications_route(user=Depends(get_current_user)):
     """The bell's system section (services/notifications.py). Every signed-in
-    user may ask; admin-only kinds are filtered by the providers."""
+    user may ask; admin-only kinds are filtered by the providers. A plain def:
+    the providers read app_state, so it runs in the threadpool, off the loop."""
     from src.services.notifications import system_notifications
     return system_notifications(user)
 

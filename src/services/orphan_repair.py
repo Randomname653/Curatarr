@@ -16,6 +16,7 @@ import httpx
 from src.config import settings
 from src.database.connection import get_db_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
+from src.database.runner import run_read, run_write
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,11 @@ async def detect_orphaned_sections() -> list:
         "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
     }
 
-    with get_db_session() as db:
-        known_keys = {c.plex_section_key for c in db.query(LibraryConfig).all()}
+    def _known_keys():
+        with get_db_session() as db:
+            return {c.plex_section_key for c in db.query(LibraryConfig).all()}
+
+    known_keys = await run_read(_known_keys)
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
@@ -130,70 +134,75 @@ async def apply_orphan_mapping(mappings: list) -> dict:
     all_items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
     section_map = {m["section_id"]: m["category"] for m in active}
 
-    # Find admin user
-    with get_db_session() as db:
-        from src.database.models import User
-        admin = db.query(User).filter_by(is_admin=True).first()
-        admin_user_id = admin.id if admin else None
-        admin_plex_id = admin.plex_user_id if admin else "1"
+    # Find admin user, dedupe and insert: read-modify-write, so ONE helper
+    # on the writer thread.
+    def _import_entries() -> int:
+        with get_db_session() as db:
+            from src.database.models import User
+            admin = db.query(User).filter_by(is_admin=True).first()
+            admin_user_id = admin.id if admin else None
+            admin_plex_id = admin.plex_user_id if admin else "1"
 
-        # Get existing keys to deduplicate
-        existing_keys = set()
-        for row in db.query(
-            WatchHistoryEntry.user_id,
-            WatchHistoryEntry.plex_item_id,
-            WatchHistoryEntry.viewed_at,
-        ).all():
-            existing_keys.add((row.user_id, row.plex_item_id, row.viewed_at))
+            # Get existing keys to deduplicate
+            existing_keys = set()
+            for row in db.query(
+                WatchHistoryEntry.user_id,
+                WatchHistoryEntry.plex_item_id,
+                WatchHistoryEntry.viewed_at,
+            ).all():
+                existing_keys.add((row.user_id, row.plex_item_id, row.viewed_at))
 
-        synced = 0
-        for item in all_items:
-            sid = str(item.get("librarySectionID", "?"))
-            if sid not in section_map:
-                continue
+            synced = 0
+            for item in all_items:
+                sid = str(item.get("librarySectionID", "?"))
+                if sid not in section_map:
+                    continue
 
-            category = section_map[sid]
-            rating_key = str(item.get("ratingKey", ""))
-            viewed_at_ts = item.get("viewedAt")
-            if not rating_key or not viewed_at_ts:
-                continue
+                category = section_map[sid]
+                rating_key = str(item.get("ratingKey", ""))
+                viewed_at_ts = item.get("viewedAt")
+                if not rating_key or not viewed_at_ts:
+                    continue
 
-            viewed_at = datetime.utcfromtimestamp(int(viewed_at_ts))
-            dedup = (admin_user_id, rating_key, viewed_at)
-            if dedup in existing_keys:
-                continue
+                viewed_at = datetime.utcfromtimestamp(int(viewed_at_ts))
+                dedup = (admin_user_id, rating_key, viewed_at)
+                if dedup in existing_keys:
+                    continue
 
-            plex_type = item.get("type", "")
-            genres_list = [g.get("tag", "") for g in (item.get("Genre") or [])]
+                plex_type = item.get("type", "")
+                genres_list = [g.get("tag", "") for g in (item.get("Genre") or [])]
 
-            # Plex history events are typically completed plays. Honor any
-            # `viewOffset` returned (in-progress); else assume completed.
-            duration_ms = item.get("duration")
-            view_offset_ms = item.get("viewOffset") or duration_ms
-            completed = bool(duration_ms) and (
-                view_offset_ms is None or view_offset_ms >= duration_ms * 0.9
-            )
+                # Plex history events are typically completed plays. Honor any
+                # `viewOffset` returned (in-progress); else assume completed.
+                duration_ms = item.get("duration")
+                view_offset_ms = item.get("viewOffset") or duration_ms
+                completed = bool(duration_ms) and (
+                    view_offset_ms is None or view_offset_ms >= duration_ms * 0.9
+                )
 
-            db.add(WatchHistoryEntry(
-                user_id=admin_user_id,
-                plex_user_id=str(admin_plex_id),
-                plex_item_id=rating_key,
-                title=item.get("title", ""),
-                media_type=category,
-                series_title=item.get("grandparentTitle"),
-                season=int(item["parentIndex"]) if item.get("parentIndex") else None,
-                episode=int(item["index"]) if item.get("index") else None,
-                viewed_at=viewed_at,
-                duration_ms=duration_ms,
-                view_offset_ms=view_offset_ms,
-                completed=completed,
-                genres=",".join(g for g in genres_list if g),
-                tmdb_id=None,
-            ))
-            existing_keys.add(dedup)
-            synced += 1
+                db.add(WatchHistoryEntry(
+                    user_id=admin_user_id,
+                    plex_user_id=str(admin_plex_id),
+                    plex_item_id=rating_key,
+                    title=item.get("title", ""),
+                    media_type=category,
+                    series_title=item.get("grandparentTitle"),
+                    season=int(item["parentIndex"]) if item.get("parentIndex") else None,
+                    episode=int(item["index"]) if item.get("index") else None,
+                    viewed_at=viewed_at,
+                    duration_ms=duration_ms,
+                    view_offset_ms=view_offset_ms,
+                    completed=completed,
+                    genres=",".join(g for g in genres_list if g),
+                    tmdb_id=None,
+                ))
+                existing_keys.add(dedup)
+                synced += 1
 
-        db.commit()
+            db.commit()
+        return synced
+
+    synced = await run_write(_import_entries)
 
     logger.info("Orphan repair: saved %d mappings, synced %d entries", len(active), synced)
     return {"saved": len(active), "synced": synced}

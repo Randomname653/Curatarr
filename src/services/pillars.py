@@ -29,12 +29,14 @@ Pillars (priority high -> low), enforced in the prompt:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Literal
 
 from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
                       ValidationError, field_validator, model_validator)
 
+from src.database.runner import run_read
 from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
 
 logger = logging.getLogger(__name__)
@@ -480,8 +482,12 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
 
     if db is None:
         from src.database.connection import get_db_session
-        with get_db_session() as _db:
-            dbf = _read_db_facts(_db, item, user_id, category, title)
+
+        def _own_facts():
+            with get_db_session() as _db:
+                return _read_db_facts(_db, item, user_id, category, title)
+
+        dbf = await run_read(_own_facts)
     else:
         dbf = _read_db_facts(db, item, user_id, category, title)
 
@@ -508,7 +514,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         # abandon position, entry-loop rewatches, binge vs slow drip
         try:
             from src.services.watch_status import viewing_pattern
-            vp = viewing_pattern(user_id, title, category=category)
+            vp = await run_read(viewing_pattern, user_id, title, category=category)
             if vp:
                 owner_line += f". Pattern: {vp}"
         except Exception as e:
@@ -531,9 +537,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         try:
             from src.services.watch_status import (music_listening_stats,
                                                    format_listening_line)
-            ls = music_listening_stats(
+            ls = await run_read(lambda: music_listening_stats(
                 user_id, title, item.get("musicbrainz_id")
-                or item.get("artist_mbid") or item.get("mbid"))
+                or item.get("artist_mbid") or item.get("mbid")))
             owner_line = format_listening_line(ls)
             flags["owner_watched"] = bool(ls)
             # Its own read of the same history: if it answered, the owner's
@@ -808,7 +814,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
 
     # ── TECH / bitrate axis ──
     try:
-        tech_line, outlier = _tech_facts(item, media_type)
+        tech_line, outlier = await run_read(_tech_facts, item, media_type)
     except Exception as e:
         logger.debug("[pillars] tech failed for %r: %s", title, e)
         tech_line, outlier = "", False
@@ -824,7 +830,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         try:
             from src.services.recommendations_engine import (
                 _get_cached_rating, _is_spoken_word)
-            _, _, _cg = _get_cached_rating(item, category, strict=True)
+            # The enrichment cache has its own lock: read it on a worker.
+            _, _, _cg = await asyncio.to_thread(
+                lambda: _get_cached_rating(item, category, strict=True))
             _gl = "" if genres_str == "Unknown" else genres_str
             if isinstance(_cg, list) and _cg:
                 _gl += " " + ", ".join(str(g) for g in _cg)
@@ -850,7 +858,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         # evidence it reasons from.
         try:
             from src.services.recommendations_engine import _get_cached_rating
-            _, _, _cg = _get_cached_rating(item, category, strict=True)
+            _, _, _cg = await asyncio.to_thread(
+                lambda: _get_cached_rating(item, category, strict=True))
             _gl = "" if genres_str == "Unknown" else genres_str
             if isinstance(_cg, list) and _cg:
                 _gl += " " + ", ".join(str(g) for g in _cg)
@@ -874,7 +883,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     dialogue_line = ""
     try:
         from src.services.subtitle_signals import subtitle_facts
-        dialogue_line = subtitle_facts(item, media_type)
+        dialogue_line = await run_read(lambda: subtitle_facts(item, media_type))
         flags["dialogue_signal"] = bool(dialogue_line)
     except Exception as e:
         logger.warning("[pillars] dialogue signal failed for %r: %s", title, e)

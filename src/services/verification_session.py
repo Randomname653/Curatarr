@@ -21,6 +21,7 @@ from typing import Optional
 import httpx
 
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.database.models import (
     User, WatchHistoryEntry, TasteVectorEntry,
     ProactiveMessage, EpisodicMemory
@@ -109,6 +110,11 @@ async def generate_verification_questions(user_id: int) -> list:
     Analyze the taste data and generate specific, provocative verification questions.
     Focuses on patterns that reveal real taste — not generic music artist questions.
     """
+    return await run_read(_verification_questions, user_id)
+
+
+def _verification_questions(user_id: int) -> list:
+    # Seven history queries; on a worker thread (see the coroutine above).
     questions = []
     now = datetime.utcnow()
 
@@ -319,30 +325,36 @@ async def start_verification_session(user_id: int) -> Optional[str]:
     Returns the question text or None if nothing to ask.
     """
     # Check we haven't already started a verification session recently
-    with get_db_session() as db:
-        recent_verification = db.query(ProactiveMessage).filter(
-            ProactiveMessage.user_id == user_id,
-            ProactiveMessage.trigger_type == "verification",
-            ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
-        ).first()
-        if recent_verification:
-            return None  # don't spam
+    def _asked_recently() -> bool:
+        with get_db_session() as db:
+            return db.query(ProactiveMessage).filter(
+                ProactiveMessage.user_id == user_id,
+                ProactiveMessage.trigger_type == "verification",
+                ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
+            ).first() is not None
+
+    if await run_read(_asked_recently):
+        return None  # don't spam
 
     questions = await generate_verification_questions(user_id)
     if not questions:
         return None
 
     # Check which questions have already been asked (stored in memories)
-    asked_titles = set()
-    with get_db_session() as db:
-        memories = db.query(EpisodicMemory).filter(
-            EpisodicMemory.user_id == user_id,
-            EpisodicMemory.memory_type == "verification_asked",
-        ).all()
-        for m in memories:
-            meta = json.loads(m.metadata_json or "{}")
-            if meta.get("title"):
-                asked_titles.add(meta["title"])
+    def _asked_titles() -> set:
+        asked_titles = set()
+        with get_db_session() as db:
+            memories = db.query(EpisodicMemory).filter(
+                EpisodicMemory.user_id == user_id,
+                EpisodicMemory.memory_type == "verification_asked",
+            ).all()
+            for m in memories:
+                meta = json.loads(m.metadata_json or "{}")
+                if meta.get("title"):
+                    asked_titles.add(meta["title"])
+        return asked_titles
+
+    asked_titles = await run_read(_asked_titles)
 
     # Find first unasked question
     question = None
@@ -360,8 +372,11 @@ async def start_verification_session(user_id: int) -> Optional[str]:
     # as worst-case fallback if the LLM call fails. Pattern-Hint tells
     # the LLM what the question is FOR, not how to phrase it — that's
     # the LLM's job, in the right language and tone.
-    with get_db_session() as db:
-        user_lang = detect_user_language(user_id, db)
+    def _user_lang():
+        with get_db_session() as db:
+            return detect_user_language(user_id, db)
+
+    user_lang = await run_read(_user_lang)
     lang_line = language_directive(user_lang)
 
     trigger = question.get("trigger") or {}
@@ -412,16 +427,19 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
         logger.warning("Question rephrase failed: %r", e, exc_info=True)
 
     # Store the message and mark the question as asked
-    with get_db_session() as db:
-        db.add(ProactiveMessage(
-            user_id=user_id,
-            trigger_type="verification",
-            trigger_data=json.dumps(question),
-            message=rephrased,
-            read=False,
-            created_at=datetime.utcnow(),
-        ))
-        db.commit()
+    def _store():
+        with get_db_session() as db:
+            db.add(ProactiveMessage(
+                user_id=user_id,
+                trigger_type="verification",
+                trigger_data=json.dumps(question),
+                message=rephrased,
+                read=False,
+                created_at=datetime.utcnow(),
+            ))
+            db.commit()
+
+    await run_write(_store)
 
     await write_memory(
         user_id=user_id,

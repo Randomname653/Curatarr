@@ -134,7 +134,7 @@ music = src("src/routers/music.py")
 # is called directly rather than through asyncio.to_thread.
 check("/start acquires the lease", 'state_lease.acquire("music_pipeline_running")' in music)
 check("the in-app runner's finally compares-and-clears",
-      'state_lease.release("music_pipeline_running")' in music
+      'state_lease.release, "music_pipeline_running"' in music
       and 'set_state("music_pipeline_running",        "0")' not in music)
 sched = src("src/services/scheduler.py")
 i = sched.index("async def _resume_music_pipeline_if_needed")

@@ -82,7 +82,7 @@ def test_the_knowledge_base_music_row_comes_from_the_index():
 
 def test_the_readers_and_the_docs_know_the_index():
     enr = (_ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
-    assert "if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):" in enr and "_plex_music_counts(_count_vectors)" in enr
+    assert "if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):" in enr and "run_read(_plex_music_counts, _count_vectors)" in enr
     disc = (_ROOT / "src/services/discogs_offline.py").read_text(encoding="utf-8")
     assert "from src.services.lyrics import plex_artists" in disc
     js = (_ROOT / "frontend/js/library_settings.js").read_text(encoding="utf-8")
