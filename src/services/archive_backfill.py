@@ -22,6 +22,7 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
 
 # Above this, catching up by hand stops being worth a button: the remainder
 # is a rounding error the daily ticks clear on their own.
@@ -303,8 +304,7 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
                 try:
                     added += bool(await _one(t))
                 except Exception as e:
-                    logger.debug("[backfill] %s failed for %r: %s",
-                                 source, t["title"], e)
+                    log_topup_failure(logger, f"[backfill] {source}", t["title"], e)
                 seen += 1
                 _tick(seen, t)
 

@@ -20,7 +20,7 @@ from typing import Optional
 from src.config import settings
 from src.routers.auth import require_admin_or_first_run, require_admin
 from src.services.endpoint_policy import (
-    NEW_ADDRESS_NEEDS_KEY, secret_for_target, validate_service_url)
+    NEW_ADDRESS_NEEDS_KEY, resolved_refusal, secret_for_target, validate_service_url)
 from src.services.setup_wizard import (
     test_plex, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
@@ -28,6 +28,23 @@ from src.services.setup_wizard import (
 )
 
 logger = logging.getLogger(__name__)
+
+_URL_FIELDS = ("plex_url", "ollama_endpoint", "radarr_url", "sonarr_url",
+               "lidarr_url", "soulsync_url")
+
+
+async def _refuse_resolved(values: dict) -> None:
+    """422 when a configured address NAME resolves to a link-local /
+    metadata address. The validators judge literal addresses only; saving
+    such a name would point every later background call (model pulls and
+    builds, syncs) at the metadata service."""
+    for field in _URL_FIELDS:
+        url = (values.get(field) or "").strip()
+        if url:
+            why = await resolved_refusal(url)
+            if why:
+                logger.warning("[setup] %s refused: %s", field, why)
+                raise HTTPException(status_code=422, detail=f"{field}: {why}")
 router = APIRouter()
 
 
@@ -42,7 +59,7 @@ def _write_env_or_400(cfg: dict) -> None:
 
 
 @router.get("/status")
-async def setup_status():
+def setup_status():
     """Return whether setup is complete and what's configured."""
     return {
         "first_run": settings.FIRST_RUN,
@@ -59,7 +76,7 @@ async def setup_status():
 
 
 @router.get("/fields")
-async def get_setup_fields():
+def get_setup_fields():
     """Return setup field definitions for the wizard UI."""
     return {"fields": SETUP_FIELDS}
 
@@ -186,6 +203,7 @@ async def warmup(req: WarmupRequest,
     """Post-bake reality check: GPU residency + generation speed."""
     from src.services.setup_wizard import warmup_check
     endpoint = req.ollama_endpoint or settings.effective_ollama
+    await _refuse_resolved({"ollama_endpoint": endpoint})
     return await warmup_check(endpoint, req.model)
 
 
@@ -285,6 +303,7 @@ async def complete_setup(
                             detail="Plex URL and token are required to complete setup")
     # Write .env - enable_pitcher becomes the baked name the runtime keys on
     cfg = req.dict()
+    await _refuse_resolved(cfg)
     cfg["pitcher_model"] = "curatarr-pitcher" if req.enable_pitcher else ""
     _write_env_or_400(cfg)
 
@@ -334,7 +353,7 @@ _MODEL_KEYS = ("base_curator_model", "base_summarizer_model", "embedding_model",
 
 
 @router.get("/integrations")
-async def integrations_status(_admin=Depends(require_admin)):
+def integrations_status(_admin=Depends(require_admin)):
     """Every integration the wizard knows, as the live settings hold it -
     plain values for URLs/models, ``{"set": bool}`` for secrets, and the
     JWT secret not at all. This is what Settings -> Integrations renders."""
@@ -362,6 +381,7 @@ async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
         raise HTTPException(status_code=422, detail="Plex URL cannot be empty")
     if "plex_token" in changes and not changes["plex_token"].strip():
         raise HTTPException(status_code=422, detail="Plex token cannot be empty")
+    await _refuse_resolved(changes)
     before = current_env_config()
     merged = merge_env_config(before, changes)
     _write_env_or_400(merged)

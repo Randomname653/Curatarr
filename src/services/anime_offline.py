@@ -40,6 +40,7 @@ OFFLINE_DB_PATH = _REPO_ROOT / "data" / "cache" / "anime_offline.db"
 MAX_AGE_DAYS = 7
 
 _load_lock: Optional[asyncio.Lock] = None
+_lookup_failures = 0
 
 
 def _get_load_lock() -> asyncio.Lock:
@@ -94,37 +95,63 @@ async def ensure_offline_db(allow_download: bool = True) -> bool:
                 r = await client.get(DUMP_URL)
             if r.status_code != 200:
                 logger.warning("[anime-offline] download HTTP %s", r.status_code)
-                return OFFLINE_DB_PATH.exists()
+                return _usable()
             entries = (json.loads(r.content).get("data")) or []
+            if not entries:
+                logger.warning("[anime-offline] download held 0 entries — keeping snapshot")
+                return _usable()
             _rebuild(entries)
             logger.info("[anime-offline] snapshot rebuilt: %d entries in %.0fs",
                         len(entries), time.time() - t0)
             return True
         except Exception as e:
             logger.warning("[anime-offline] refresh failed: %s", e)
-            return OFFLINE_DB_PATH.exists()
+            # exists() alone said True for a file whose tables were dropped
+            # by a half-finished rebuild; report whether lookups can work.
+            return _usable()
+
+
+def _usable() -> bool:
+    """The snapshot file exists AND its table holds rows."""
+    if not OFFLINE_DB_PATH.exists():
+        return False
+    try:
+        con = sqlite3.connect(OFFLINE_DB_PATH)
+        try:
+            return con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0] > 0
+        finally:
+            con.close()
+    except Exception:
+        return False
 
 
 def _rebuild(entries: list[dict]) -> None:
+    """Rebuild the snapshot tables in ONE transaction (build *_new, then swap).
+
+    The old version ran DROP TABLE through executescript (autocommit), so a
+    failure mid-insert left empty tables behind while ensure_offline_db()
+    still reported the DB usable. Now the old tables survive any failure.
+    """
     OFFLINE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(OFFLINE_DB_PATH)
+    con = sqlite3.connect(OFFLINE_DB_PATH, isolation_level=None)
     try:
         cur = con.cursor()
-        cur.executescript("""
-            DROP TABLE IF EXISTS offline_anime;
-            DROP TABLE IF EXISTS offline_names;
-            CREATE TABLE offline_anime (
+        cur.execute("BEGIN")
+        cur.execute("DROP TABLE IF EXISTS offline_anime_new")
+        cur.execute("DROP TABLE IF EXISTS offline_names_new")
+        cur.execute("""
+            CREATE TABLE offline_anime_new (
                 id INTEGER PRIMARY KEY,
                 anidb INTEGER, anilist INTEGER, mal INTEGER,
                 title TEXT, year INTEGER, type TEXT, episodes INTEGER,
                 score_median REAL, studios TEXT, tags TEXT
-            );
-            CREATE TABLE offline_names (name TEXT, anime_id INTEGER);
+            )
         """)
+        cur.execute("CREATE TABLE offline_names_new (name TEXT, anime_id INTEGER)")
         for i, e in enumerate(entries):
             src = e.get("sources") or []
             cur.execute(
-                "INSERT INTO offline_anime VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO offline_anime_new VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (i, _id_from(src, "anidb.net"), _id_from(src, "anilist.co"),
                  _id_from(src, "myanimelist.net"),
                  e.get("title"), (e.get("animeSeason") or {}).get("year"),
@@ -135,25 +162,37 @@ def _rebuild(entries: list[dict]) -> None:
             )
             names = {_norm(e.get("title") or "")}
             names.update(_norm(s) for s in (e.get("synonyms") or []))
-            cur.executemany("INSERT INTO offline_names VALUES (?,?)",
+            cur.executemany("INSERT INTO offline_names_new VALUES (?,?)",
                             [(n, i) for n in names if n])
-        cur.executescript("""
-            CREATE INDEX idx_off_anilist ON offline_anime(anilist);
-            CREATE INDEX idx_off_anidb   ON offline_anime(anidb);
-            CREATE INDEX idx_off_mal     ON offline_anime(mal);
-            CREATE INDEX idx_off_name    ON offline_names(name);
-        """)
-        con.commit()
+        cur.execute("DROP TABLE IF EXISTS offline_anime")
+        cur.execute("DROP TABLE IF EXISTS offline_names")
+        cur.execute("ALTER TABLE offline_anime_new RENAME TO offline_anime")
+        cur.execute("ALTER TABLE offline_names_new RENAME TO offline_names")
+        cur.execute("CREATE INDEX idx_off_anilist ON offline_anime(anilist)")
+        cur.execute("CREATE INDEX idx_off_anidb   ON offline_anime(anidb)")
+        cur.execute("CREATE INDEX idx_off_mal     ON offline_anime(mal)")
+        cur.execute("CREATE INDEX idx_off_name    ON offline_names(name)")
+        cur.execute("COMMIT")
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
     finally:
         con.close()
 
 
 def lookup(*, anilist_id=None, mal_id=None, anidb_id=None,
-           title: str = None, year: int = None) -> Optional[dict]:
+           title: str = None, year: int = None, strict: bool = False) -> Optional[dict]:
     """Resolve one anime from the snapshot. Priority: anilist > mal >
     title+year (±1) > anidb (the drifting id space, last resort). A known
-    year must roughly match the entry or the hit is rejected."""
+    year must roughly match the entry or the hit is rejected.
+
+    ``strict=True`` raises instead of returning None when the snapshot is
+    missing or unreadable, for callers that would otherwise write "not in
+    AniDB" over a value they already hold."""
     if not OFFLINE_DB_PATH.exists():
+        if strict:
+            raise FileNotFoundError(f"offline snapshot missing: {OFFLINE_DB_PATH}")
         return None
     try:
         con = sqlite3.connect(OFFLINE_DB_PATH)
@@ -188,5 +227,13 @@ def lookup(*, anilist_id=None, mal_id=None, anidb_id=None,
             "tags": json.loads(row["tags"] or "[]"),
         }
     except Exception as e:
-        logger.debug("[anime-offline] lookup failed: %s", e)
+        # A broken snapshot (missing table, corrupt file) read as "not in the
+        # snapshot", so AniDB tags silently vanished from every anime. Warn
+        # the first few times, then drop to DEBUG to avoid per-item spam.
+        if strict:
+            raise
+        global _lookup_failures
+        _lookup_failures += 1
+        level = logging.WARNING if _lookup_failures <= 3 else logging.DEBUG
+        logger.log(level, "[anime-offline] lookup failed: %r", e)
         return None

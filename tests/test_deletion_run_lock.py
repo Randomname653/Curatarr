@@ -112,8 +112,12 @@ check("scheduler releases on no-proposals, success AND error — error "
       sch.count('release_state_lock("deletion_run")') >= 2
       and "_dr_locked = True" in sch
       and "if _dr_locked:" in sch)
+# Boot clears each stale flag on its own (one failure no longer skips the
+# rest); shutdown still names it directly.
+_boot = mn[mn.index("Reset any stuck flags"):mn.index("interrupted deletion")]
 check("boot + shutdown clear a crashed run's lock",
-      mn.count('set_state("deletion_run", "0")') == 2)
+      '"deletion_run"' in _boot and 'set_state(_flag, "0")' in _boot
+      and mn.count('set_state("deletion_run", "0")') == 1)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -200,9 +200,17 @@ def _toggle_autostart(icon, _item):
             icon_line=(f"$s.IconLocation='{str(ico).replace(chr(39), chr(39)*2)}';"
                        if ico.exists() else ""),
         )
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                       capture_output=True, timeout=30,
-                       creationflags=_CREATE_NO_WINDOW)
+        proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                              capture_output=True, timeout=30,
+                              creationflags=_CREATE_NO_WINDOW)
+        # The exit code was never read: a blocked COM call or policy denial
+        # still said "will start with Windows". The shortcut must exist.
+        if proc.returncode != 0 or not _STARTUP_LNK.exists():
+            err = (proc.stderr or proc.stdout or b"").decode(errors="replace").strip()
+            logger.warning("Autostart shortcut not created (PowerShell exit %s): %s",
+                           proc.returncode, err[:300])
+            icon.notify("Could not enable autostart — see the log.", "Curatarr")
+            return
         icon.notify("Curatarr will start with Windows.", "Curatarr")
     except Exception as e:
         logger.warning("Autostart toggle failed: %s", e)

@@ -28,7 +28,11 @@ def music_listening_stats(user_id: int, artist: str,
                           artist_mbid: str = None) -> dict | None:
     """The owner's REAL listening record for one artist, from watch_history:
     {plays, tracks, last, top:[(track, plays)…]} or None when never played.
-    Matches by dash-folded artist name OR artist_mbid (the robust key)."""
+    Matches by dash-folded artist name OR artist_mbid (the robust key).
+
+    A failed read RAISES. None means "never played", which the deletion judge
+    reads as the strongest CUT signal there is; a locked or broken database
+    must not say that. The callers decide what unreadable means for them."""
     if not user_id or not (artist or artist_mbid):
         return None
     from sqlalchemy import func, or_
@@ -40,24 +44,20 @@ def music_listening_stats(user_id: int, artist: str,
         conds.append(func.lower(W.series_title).in_(variants))
     if artist_mbid:
         conds.append(W.artist_mbid == artist_mbid)
-    try:
-        with get_db_session() as db:
-            base = db.query(W).filter(W.user_id == user_id,
-                                      W.media_type == "music", or_(*conds))
-            plays = base.count()
-            if not plays:
-                return None
-            tracks = base.with_entities(func.count(func.distinct(W.title))).scalar()
-            last = base.with_entities(func.max(W.viewed_at)).scalar()
-            top = (db.query(W.title, func.count(W.id).label("n"))
-                   .filter(W.user_id == user_id, W.media_type == "music", or_(*conds))
-                   .group_by(W.title).order_by(func.count(W.id).desc())
-                   .limit(5).all())
-            return {"plays": plays, "tracks": tracks, "last": last,
-                    "top": [(t, n) for t, n in top]}
-    except Exception as e:
-        logger.debug("[watch] music_listening_stats failed for %r: %s", artist, e)
-        return None
+    with get_db_session() as db:
+        base = db.query(W).filter(W.user_id == user_id,
+                                  W.media_type == "music", or_(*conds))
+        plays = base.count()
+        if not plays:
+            return None
+        tracks = base.with_entities(func.count(func.distinct(W.title))).scalar()
+        last = base.with_entities(func.max(W.viewed_at)).scalar()
+        top = (db.query(W.title, func.count(W.id).label("n"))
+               .filter(W.user_id == user_id, W.media_type == "music", or_(*conds))
+               .group_by(W.title).order_by(func.count(W.id).desc())
+               .limit(5).all())
+        return {"plays": plays, "tracks": tracks, "last": last,
+                "top": [(t, n) for t, n in top]}
 
 
 def format_listening_line(stats: dict | None) -> str:
@@ -113,7 +113,9 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
                              else WatchHistoryEntry.media_type != "music")
             rows = q.all()
     except Exception as e:
-        logger.debug("[watch] lookup failed: %s", e)
+        # {} reads as "none of these were watched" to every caller, so a DB
+        # error made watched titles look unwatched (deletion/discovery bias).
+        logger.warning("[watch] lookup failed: %r", e)
         return {}
     for r in rows:
         key = r.title if r.title in tset else (

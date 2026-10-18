@@ -111,11 +111,15 @@ async def delete_playlist(token: str, rating_key: str) -> None:
 async def create_playlist(token: str, title: str, metadata_keys: list[str],
                           playlist_type: str = "video") -> Optional[dict]:
     """Create a dumb (non-smart) playlist from item ratingKeys. Returns the
-    playlist metadata (ratingKey, leafCount) or None. For audio playlists an
-    ALBUM key expands to all its tracks (probe-verified)."""
-    mid = await get_machine_identifier()
-    if not mid or not metadata_keys:
+    playlist metadata (ratingKey, leafCount) or None for no keys. For audio
+    playlists an ALBUM key expands to all its tracks (probe-verified).
+    Raises when the server identity is unknown: a None here used to be
+    stamped as a successful push after the old playlist had been deleted."""
+    if not metadata_keys:
         return None
+    mid = await get_machine_identifier()
+    if not mid:
+        raise RuntimeError("Plex machineIdentifier unavailable")
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
         def params(m):
             uri = (f"server://{m}/com.plexapp.plugins.library"
@@ -186,14 +190,46 @@ async def reconcile_playlist(token: str, playlist_key: str,
 
 
 async def key_exists(token: str, rating_key: str) -> bool:
-    """One cheap metadata GET — the stale-key probe for the self-heal."""
+    """One cheap metadata GET — the stale-key probe for the self-heal.
+
+    Only a 404 means "stale". Any other failure raises: it used to return
+    False, so with Plex down every item looked stale, the push came back
+    {"pushed": []} and the custodian stamped the task done for a week.
+    """
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-        try:
-            r = await c.get(f"{_base()}/library/metadata/{rating_key}",
-                            headers=_headers(token))
-            return r.status_code == 200
-        except Exception:
-            return False
+        r = await c.get(f"{_base()}/library/metadata/{rating_key}",
+                        headers=_headers(token))
+    if r.status_code == 200:
+        return True
+    if r.status_code == 404:
+        return False
+    raise RuntimeError(f"Plex metadata probe HTTP {r.status_code}")
+
+
+async def _search_sections(token: str, sections: list, params: dict, what: str) -> Optional[str]:
+    """First ratingKey a title search finds across ``sections``, or None.
+
+    A section that fails is skipped, but if NO section answered with a hit
+    and one of them failed, the failure is raised: "Plex unreachable" is not
+    "not in Plex" (the old lookups returned None for both, at DEBUG).
+    """
+    err: Optional[Exception] = None
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        for sec in sections:
+            try:
+                r = await c.get(f"{_base()}/library/sections/{sec}/all",
+                                headers=_headers(token), params=params)
+                if r.status_code != 200:
+                    raise RuntimeError(f"section {sec} search HTTP {r.status_code}")
+                meta = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+                if meta:
+                    return str(meta[0].get("ratingKey"))
+            except Exception as e:
+                logger.debug("[playlists] %s lookup in %s failed: %s", what, sec, e)
+                err = e
+    if err is not None:
+        raise err
+    return None
 
 
 _VIDEO_TYPE = {"movie": "1", "show": "2", "anime": "2"}
@@ -216,19 +252,8 @@ async def resolve_video_key(title: str, category: str, sections: Optional[list[s
                         .filter(LibraryConfig.media_category == category).all()]
 
     t = _VIDEO_TYPE.get(category, "1")
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-        for sec in sections:
-            try:
-                r = await c.get(f"{_base()}/library/sections/{sec}/all",
-                                headers=_headers(token),
-                                params={"type": t, "title": title})
-                meta = (r.json().get("MediaContainer") or {}).get("Metadata") or []
-                if meta:
-                    return str(meta[0].get("ratingKey"))
-            except Exception as e:
-                logger.debug("[playlists] video lookup %r in %s failed: %s",
-                             title, sec, e)
-    return None
+    return await _search_sections(token, sections, {"type": t, "title": title},
+                                  f"video {title!r}")
 
 
 def _heal_rec_key(user_id: int, category: str, title: str, new_key: str) -> None:
@@ -377,6 +402,10 @@ async def push_user_playlists(user) -> dict:
         # survives the weekly refresh. Extra same-title copies from the old
         # delete+recreate era are removed; a failed reconcile falls back to
         # the destructive recreate exactly once, loudly.
+        # Server identity first: without it reconcile fails, the fallback
+        # deletes the playlist and the recreate cannot run.
+        if not await get_machine_identifier():
+            raise RuntimeError("Plex machineIdentifier unavailable")
         existing = [pl for pl in await list_video_playlists(user.plex_token)
                     if pl.get("title") == title]
         meta = None
@@ -438,19 +467,8 @@ async def resolve_artist_key(name: str, sections: Optional[list[str]] = None) ->
                         db.query(LibraryConfig.plex_section_key)
                         .filter(LibraryConfig.media_category == "music").all()]
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-        for sec in sections:
-            try:
-                r = await c.get(f"{_base()}/library/sections/{sec}/all",
-                                headers=_headers(token),
-                                params={"type": "8", "title": name})
-                meta = (r.json().get("MediaContainer") or {}).get("Metadata") or []
-                if meta:
-                    return str(meta[0].get("ratingKey"))
-            except Exception as e:
-                logger.debug("[playlists] artist lookup %r in %s failed: %s",
-                             name, sec, e)
-    return None
+    return await _search_sections(token, sections, {"type": "8", "title": name},
+                                  f"artist {name!r}")
 
 
 async def pick_album_key(user_token: str, artist_key: str,
@@ -544,6 +562,9 @@ async def push_user_music_playlist(user) -> dict:
                     user.plex_username)
         return {"pushed": []}
 
+    # Identity before the delete: a create that cannot run must not follow it.
+    if not await get_machine_identifier():
+        raise RuntimeError("Plex machineIdentifier unavailable")
     for pl in await list_playlists(user.plex_token, "audio"):
         if pl.get("title") == MUSIC_PLAYLIST_TITLE:
             await delete_playlist(user.plex_token, str(pl.get("ratingKey")))

@@ -477,7 +477,11 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         try:
             from src.services.soulsync_client import artist_info
             ss = await artist_info(artist_name)
-        except Exception:
+        except Exception as e:
+            # artist_info already degrades to None on HTTP trouble; reaching
+            # here is a bug in it, and was silent (MB/Last.fm quietly took
+            # over as primary).
+            logger.warning("[music] SoulSync artist_info crashed for %r: %r", artist_name, e)
             ss = None
         _ss_covers_lastfm = bool(ss and ss.get("lastfm_tags")
                                  and ss.get("lastfm_bio")
@@ -488,6 +492,9 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
              else asyncio.sleep(0, result=None)),
             return_exceptions=True,
         )
+        # TRANSIENT (falsy) or a raised fetch = "did not answer", not "no such
+        # artist" — remembered so neither outcome is negative-cached below.
+        any_transient = any(x is TRANSIENT or isinstance(x, Exception) for x in (mb, lfm))
         if isinstance(mb, Exception):
             mb = None
         if isinstance(lfm, Exception):
@@ -499,6 +506,7 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         # short-circuits identical fast requests on the same item.
         mb = None
         ss = None
+        any_transient = False
         try:
             lfm = await fetch_lastfm_artist(artist_name)
         except Exception:
@@ -512,9 +520,13 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         # an artist is reliably unfindable. 7 days matches the sub-fetches.
         # #38b: skip the cache write in fast mode — a fast-mode "no data"
         # may flip to "found" once MB is consulted in the upgrade pass.
-        if not skip_mb:
+        # A TRANSIENT from MB/Last.fm used to land here too and froze an
+        # outage as "unfindable" for 7 days. Written under the key that is
+        # READ above (it was always the name key, so an mbid caller never
+        # saw it).
+        if not skip_mb and not any_transient:
             cache = MetadataCache()
-            cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", None, days=7)
+            cache.set_cache(cache_key, None, days=7)
             cache.close()
         return None
 
@@ -569,9 +581,15 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
     # #38b: only write the artist_profile cache in full mode. A fast-mode
     # profile is intentionally not cached here so a subsequent full pass
     # for the same artist sees an empty profile cache + runs MB.
+    # Written under the key read above as well as the name key: an mbid
+    # caller reads artist_profile:<mbid>, which used to be read but never
+    # written, so every mbid-pinned lookup re-fetched. A profile built while
+    # a source was down is kept one day only, so the gap refills soon.
     if not skip_mb:
+        days = 1 if any_transient else 30
         cache = MetadataCache()
-        cache.set_cache(f"artist_profile:{artist_name[:60].lower()}", profile, days=30)
+        for k in dict.fromkeys((cache_key, f"artist_profile:{artist_name[:60].lower()}")):
+            cache.set_cache(k, profile, days=days)
         cache.close()
     return profile
 

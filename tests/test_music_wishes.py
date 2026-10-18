@@ -66,24 +66,24 @@ def test_wishes_are_added_once_listed_with_their_library_state_and_removed():
     try:
         with _sess() as db:
             db.query(MusicWish).delete()
-        r = asyncio.run(lib.add_wish(lib.WishRequest(title="Neelix", source="rec"), ADMIN))
+        r = (lib.add_wish(lib.WishRequest(title="Neelix", source="rec"), ADMIN))
         assert r["ok"] and not r["already"] and r["in_library"] is False
-        again = asyncio.run(lib.add_wish(lib.WishRequest(title="  neelix ", source="backlog"), ADMIN))
+        again = (lib.add_wish(lib.WishRequest(title="  neelix ", source="backlog"), ADMIN))
         assert again["already"] and again["id"] == r["id"], "same artist by name: one open wish"
-        have = asyncio.run(lib.add_wish(lib.WishRequest(title="the band", mbid="aaaa-1", source="backlog"), ADMIN))
+        have = (lib.add_wish(lib.WishRequest(title="the band", mbid="aaaa-1", source="backlog"), ADMIN))
         assert have["in_library"] is True, "Plex has it: the caller says so instead of wishing"
-        listed = asyncio.run(lib.list_wishes(ADMIN))
+        listed = (lib.list_wishes(ADMIN))
         assert listed["total"] == 2 and [w["title"] for w in listed["wishes"]] == ["the band", "Neelix"]
         assert [w["in_library"] for w in listed["wishes"]] == [True, False]
-        assert asyncio.run(lib.remove_wish(r["id"], ADMIN)) == {"ok": True}
-        assert asyncio.run(lib.list_wishes(ADMIN))["total"] == 1
+        assert (lib.remove_wish(r["id"], ADMIN)) == {"ok": True}
+        assert (lib.list_wishes(ADMIN))["total"] == 1
         try:
-            asyncio.run(lib.remove_wish(99999, ADMIN))
+            (lib.remove_wish(99999, ADMIN))
             assert False, "expected 404"
         except Exception as e:
             assert "no such wish" in str(e)
         try:
-            asyncio.run(lib.add_wish(lib.WishRequest(title="   "), ADMIN))
+            (lib.add_wish(lib.WishRequest(title="   "), ADMIN))
             assert False, "expected 400"
         except Exception as e:
             assert "title required" in str(e)

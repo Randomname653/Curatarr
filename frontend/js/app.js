@@ -2,14 +2,14 @@ import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdat
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
+import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { closeModal, toggleMenu, keyActivate, hideOnError } from './ui.js';
+import { _errMsg, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, toast } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
-import { discussPrinciple, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
+import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzoneOver, dropzoneLeave, openSpotifyPicker, onSpotifyFile } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
@@ -20,7 +20,7 @@ import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
 import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
-import { api } from './api.js';
+import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 
 export function init() {
@@ -35,8 +35,16 @@ if (localStorage.getItem('curatarr_sidebar_collapsed') === '1') {
   document.getElementById('sb-collapse-toggle').title = 'Expand sidebar';
 }
 window.onload = async () => {
-  // Check if setup is needed
-  const status = await api('/api/setup/status').catch(()=>({first_run:true}));
+  // Check if setup is needed. A failed check is NOT a first run: it used to
+  // fall back to {first_run:true}, so a server mid-restart or a 500 showed a
+  // configured install the Setup wizard, whose Finish rewrites the config.
+  let status;
+  try {
+    status = await api('/api/setup/status');
+  } catch (e) {
+    toast(`Can't reach Curatarr (${_errMsg(e)}) — reload once it is back.`, 'danger', {sticky: true});
+    status = {first_run: false};
+  }
   if (status.first_run) {
     renderSetupStep(0);
     return;
@@ -60,19 +68,27 @@ window.onload = async () => {
     }
   }
   document.getElementById('auth-overlay').classList.remove('hidden');
+  // api.sessionEnded() reloads into this screen; say why, once.
+  let ended = null;
+  try { ended = sessionStorage.getItem(SESSION_ENDED_KEY); sessionStorage.removeItem(SESSION_ENDED_KEY); } catch {}
+  if (ended) toast(`${ended} — sign in again.`, 'amber', {sticky: true});
 };
 // Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
 window.addEventListener('hashchange', () => routeFromHash());
 document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
   const menu = document.querySelector('.menu.open');
-  if (menu) { menu.classList.remove('open'); return; }   // innermost layer first
+  if (menu) {   // innermost layer first; focus back on its button
+    closeMenus(menu);
+    menu.querySelector('[aria-haspopup]')?.focus();
+    return;
+  }
   if (state._modal) closeModal();
 });
 document.addEventListener('click', ev => {
   const inMenu = ev.target.closest('.menu');
-  if (ev.target.closest('.menu-item')) { inMenu?.classList.remove('open'); return; }
-  if (!inMenu) document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+  if (ev.target.closest('.menu-item')) { if (inMenu) closeMenus(inMenu); return; }
+  if (!inMenu) closeMenus();
 });
 }
 
@@ -199,6 +215,7 @@ const actions = {
   renderSynopsisBrowser,
   renderWanted,
   respondToMessage,
+  retryOnboardingStep,
   runMaintenance,
   runSpotifyImport,
   saveArrConfig,
@@ -239,6 +256,7 @@ const actions = {
   toggleMenu,
   toggleMobileSidebar,
   toggleMsgPanel,
+  loadUnreadMessages,
   togglePitcherWrap,
   toggleSidebar,
   toggleUser,

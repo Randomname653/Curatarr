@@ -23,7 +23,7 @@ router = APIRouter()
 
 
 @router.post("/sync")
-async def trigger_sync(
+def trigger_sync(
     background_tasks: BackgroundTasks,
     force: bool = False,
     user: User = Depends(get_current_user),
@@ -48,7 +48,7 @@ async def _run_sync(force: bool = False):
 
 @router.get("/status")
 @ttl_response(10, key=lambda **kw: kw["user"].id)
-async def sync_status(
+def sync_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -239,7 +239,7 @@ async def recent_history(
 
 
 @router.post("/recompute-taste")
-async def recompute_taste(
+def recompute_taste(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
 ):

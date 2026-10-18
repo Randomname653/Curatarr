@@ -368,6 +368,15 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     except Exception as e:
         logger.warning("[principles] novelty check failed for %s: %s", thread_id, e)
         by_n = {}
+    # Fail CLOSED. An empty verdict map used to turn every candidate into NEW:
+    # duplicates and contradictions of standing rules were stored and rang the
+    # bell (or went live under PRINCIPLE_AUTO_ACTIVATE). Capture has no
+    # cursor, so the next extraction on this thread mines it again.
+    if not by_n:
+        logger.warning("[principles] thread %s: no novelty verdicts — capture "
+                       "skipped this run (%d candidate(s))", thread_id,
+                       len(candidates))
+        return []
 
     # 3 — store per verdict (DUPLICATE dropped+reinforced; the rest → shadow)
     stored = []
@@ -525,6 +534,8 @@ async def retrieve_principles(user_id: int, category: str | None = None,
                     sem = _cosine_similarity(qe, json.loads(emb_json)) if emb_json else 0.0
                 except Exception:
                     sem = 0.0
+                if sem is None:
+                    sem = 0.0   # dimension mismatch ranks like "no embedding"
                 scored.append((sem, text))
             scored.sort(key=lambda x: x[0], reverse=True)
             return [t for _, t in scored[:top_k]]

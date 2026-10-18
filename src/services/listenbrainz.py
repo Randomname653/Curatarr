@@ -41,6 +41,7 @@ from src.cache.metadata_cache import MetadataCache
 from src.config import settings
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
 
 LB_BASE = "https://api.listenbrainz.org/1"
 LB_HEADERS = {
@@ -260,7 +261,7 @@ async def topup_listenbrainz(
             write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
     except Exception as e:
-        logger.debug("[listenbrainz] top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[listenbrainz]", title, e)
         return False
     finally:
         if owns:

@@ -182,9 +182,17 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
         results = chroma.query(query_embeddings=[embedding],
                                n_results=n_results,
                                where=_domain_where(domain))
+    except Exception as e:
+        # Embedder / Chroma outage: chat answers without library context.
+        logger.debug("semantic search failed: %s", e)
+        return []
+    # Outside the outage try: a bug in watched_lookup / short_size_tag used
+    # to empty chat's library context at DEBUG, indistinguishable from an
+    # outage. Still [] (chat must answer), but visible.
+    try:
         return _hits_from_results(results, user_id=user_id, domain=domain)
     except Exception as e:
-        logger.debug("semantic search failed: %s", e)
+        logger.warning("semantic search: building hits failed: %s", e, exc_info=True)
         return []
 
 
@@ -410,7 +418,13 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
 
 # ── Embedding with a persistent per-text cache ───────────────────────────────
 
-_vec_memo: dict = {}   # in-process: norm_text -> unit vector
+_vec_memo: dict = {}   # in-process: norm_text -> unit vector (for _vec_memo_model)
+# The model the memo's vectors came from. Effectively a (model, text) key with
+# one model resident: the memo used to be keyed by text alone, so after an
+# embedding-profile flip old-model vectors were compared against new-model
+# ones. A model change empties it. (Readers keep their text-keyed lookups.)
+_vec_memo_model: dict = {"model": None}
+_dot_mismatch_warned: set = set()
 
 
 async def _texts_to_vectors(texts: list) -> dict:
@@ -427,6 +441,9 @@ async def _texts_to_vectors(texts: list) -> dict:
     from src.services.embed_service import (get_profile, _post_embed, _l2)
     prof = get_profile()
     model = prof.get("model") or ""
+    if _vec_memo_model["model"] != model:
+        _vec_memo.clear()
+        _vec_memo_model["model"] = model
     want = {}
     for t in texts:
         k = _norm_tag(t)
@@ -483,6 +500,16 @@ async def _texts_to_vectors(texts: list) -> dict:
 
 
 def _dot(a: list, b: list) -> float:
+    """Cosine of two unit vectors. Different lengths (vectors from two
+    embedding models) score 0.0 — no evidence — with a one-time WARNING per
+    length pair; zip() used to truncate silently to a meaningless number."""
+    if len(a) != len(b):
+        pair = (len(a), len(b))
+        if pair not in _dot_mismatch_warned:
+            _dot_mismatch_warned.add(pair)
+            logger.warning("[semantic] vector length mismatch %d vs %d — "
+                           "mixed embedding models? scored as no evidence", *pair)
+        return 0.0
     return sum(x * y for x, y in zip(a, b))
 
 
