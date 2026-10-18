@@ -670,8 +670,11 @@ def test_enrich_artist_negative_cache_and_keys():
     with patched(mm, MetadataCache=FakeMC, fetch_musicbrainz_artist=mb_down,
                  fetch_lastfm_artist=lfm_none), patched(ss, artist_info=ss_none):
         r = asyncio.run(mm.enrich_artist("Solstice"))
+    # Since the #161 integration the verdict is TRANSIENT itself (falsy, so
+    # every "no profile" caller still reads it as nothing), which lets the
+    # music enricher leave the row for the next run instead of writing it off.
     check("music: a TRANSIENT MusicBrainz is not negative-cached for 7 days",
-          r is None and not store)
+          r is TRANSIENT and not store)
 
     with patched(mm, MetadataCache=FakeMC, fetch_musicbrainz_artist=mb_miss,
                  fetch_lastfm_artist=lfm_hit), patched(ss, artist_info=ss_crash), \
@@ -754,7 +757,12 @@ def test_music_pipeline_lock_released_when_setup_fails():
         if k == "music_pipeline_interrupted" and v == "1":
             raise sqlite3.OperationalError("database is locked")
         state[k] = v
-    with patched(mr, set_state=set_state, get_state=state.get):
+    import src.services.state_lease as sl
+
+    def release(key, db_path=None):      # the #161 lease: compare-and-clear
+        state[key] = "0"
+        return True
+    with patched(mr, set_state=set_state, get_state=state.get), patched(sl, release=release):
         try:
             asyncio.run(mr._run_music_pipeline(1, 10))
         except Exception:

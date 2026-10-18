@@ -21,6 +21,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+import psutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,9 +81,21 @@ try:
     check("boot reclaim leaves a live holder alone", not L.reclaim_if_stale(K, DB) and value(K) == "1")
     check("a release by a non-holder is refused (no blind '0')", not L.release(K, DB) and value(K) == "1")
     check("heartbeat by a non-holder is refused", not L.heartbeat(K, DB))
-    check("holder_pid names the child", L.holder_pid(K, DB) == child.pid)
+    # On Windows a venv's python.exe is a launcher that runs the real
+    # interpreter as ITS child, so the lease holder may be one level below
+    # child.pid; killing the launcher alone would leave the holder alive.
+    _tree = [psutil.Process(child.pid)] + psutil.Process(child.pid).children(recursive=True)
+    check("holder_pid names the child", L.holder_pid(K, DB) in [pr.pid for pr in _tree])
 finally:
-    child.kill()
+    # Kill the whole tree and wait until it is gone: Windows ends a killed
+    # process asynchronously, and a holder still exiting is still alive.
+    _procs = locals().get("_tree") or [psutil.Process(child.pid)]
+    for pr in _procs:
+        try:
+            pr.kill()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(_procs, timeout=10)
     child.wait()
 
 print("\n-- the holder dies hard --")
@@ -116,7 +130,9 @@ check("boot: reclaim, not a blind reset",
       and 'set_state("music_pipeline_running", "0")' not in main)
 check("shutdown: releases only its own lease", 'state_lease.release("music_pipeline_running")' in main)
 music = src("src/routers/music.py")
-check("/start acquires the lease", 'state_lease.acquire, "music_pipeline_running"' in music)
+# /start is a plain def since #162 (FastAPI's worker thread), so the lease
+# is called directly rather than through asyncio.to_thread.
+check("/start acquires the lease", 'state_lease.acquire("music_pipeline_running")' in music)
 check("the in-app runner's finally compares-and-clears",
       'state_lease.release("music_pipeline_running")' in music
       and 'set_state("music_pipeline_running",        "0")' not in music)

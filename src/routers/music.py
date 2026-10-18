@@ -77,14 +77,15 @@ def start_pipeline(
     # here + set_state later in the background task left a window where two
     # fast starts (or a custodian tick) both passed the check.
     # The lease, not a bare flag: the out-of-process music enricher holds the
-    # same key, and only a live holder blocks (state_lease).
-    import asyncio as _asyncio
+    # same key, and only a live holder blocks (state_lease). A plain def:
+    # FastAPI runs it on a worker thread, so the lease's blocking SQLite
+    # transaction stays off the event loop.
     from src.services import state_lease
     from src.services import rate_limit as _rl
     # Hours of MusicBrainz / Last.fm / Spotify spend per run — two starts per
     # ten minutes per user is plenty for a human, not for a loop.
     _rl.enforce("music-start", user.id, _rl.MUSIC_STARTS_PER_10MIN, 600)
-    if not await _asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
+    if not state_lease.acquire("music_pipeline_running"):
         raise HTTPException(status_code=409, detail="Music pipeline already running")
 
     set_state("music_pipeline_stop_requested", "0")
