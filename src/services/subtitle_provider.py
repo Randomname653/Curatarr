@@ -188,7 +188,8 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
     except httpx.HTTPStatusError as e:
         return None if e.response.status_code >= 500 else ""
     except Exception as e:
-        logger.debug("[subtitle-provider] request failed: %s", e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[subtitle-provider]", params, e)
         return None
 
 
@@ -225,6 +226,6 @@ def anime_ids_for(title: str, *, tmdb_id=None, tvdb_id=None) -> dict:
         finally:
             cache.close()
     except Exception as e:
-        logger.debug("[subtitle-provider] id lookup failed for %r: %s",
-                     title, e)
+        logger.warning("[subtitle-provider] id lookup failed for %r: %s",
+                       title, e)
     return out

@@ -899,6 +899,9 @@ def get_disabled_triggers(user_id: int) -> set[str]:
 
     Stored as JSON in app_state under the per-user key
     ``notif_disabled:user_id=<id>``. Empty / missing = all triggers enabled.
+    An unreadable value counts as EVERY trigger disabled: it holds the
+    user's opt-outs, and "unreadable" must not switch them all back on.
+    Re-saving any toggle in Settings rewrites it cleanly.
     """
     from src.services.app_state import get_state
     raw = get_state(f"notif_disabled:user_id={user_id}")
@@ -906,11 +909,13 @@ def get_disabled_triggers(user_id: int) -> set[str]:
         return set()
     try:
         items = json.loads(raw)
-        if isinstance(items, list):
-            return {str(x) for x in items if isinstance(x, str)}
-    except Exception:
-        pass
-    return set()
+    except (ValueError, TypeError):
+        items = None
+    if isinstance(items, list):
+        return {str(x) for x in items if isinstance(x, str)}
+    logger.warning("[proactive] notification preferences for user %s unreadable "
+                   "- treating every trigger as disabled", user_id)
+    return set(TRIGGER_TYPE_NAMES)
 
 
 def set_disabled_triggers(user_id: int, disabled: set[str]) -> None:
@@ -1206,7 +1211,8 @@ async def _get_sonarr_index() -> dict:
             logger.debug("[proactive] Sonarr index: %d series by tvdb",
                          len(index["by_tvdb"]))
     except Exception as e:
-        logger.debug("[proactive] Sonarr index build failed: %s", e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[proactive] Sonarr index", "series", e)
     _sonarr_index_cache.update(at=now_ts, data=index)
     return index
 
@@ -1296,7 +1302,8 @@ def _attach_series_progress(trigger: dict, user_id: int,
             full, series_key, mt, sonarr=sonarr_stats, now=datetime.utcnow(),
         )
     except Exception as e:
-        logger.debug("[proactive] progress attach failed for %r: %s", series_key, e)
+        logger.warning("[proactive] progress attach failed for %r: %s", series_key, e,
+                       exc_info=True)
         return
     if not prog:
         return
@@ -1526,7 +1533,7 @@ def _compose_prompt(trigger: dict, taste_blurb: str) -> Optional[str]:
                 dt = datetime.fromisoformat(trigger["viewed_at"])
                 days = (datetime.utcnow() - dt).days
                 ago = f" about {days} days ago"
-            except Exception:
+            except (ValueError, TypeError):
                 pass
         prompt = (
             f"Looking back at the user's watch history, they watched \"{trigger['title']}\" "

@@ -405,8 +405,11 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
             # that would silently overwrite the original question with nothing.
             if llm_text:
                 rephrased = llm_text
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
+        # the English original is asked instead
         logger.debug("Question rephrase failed: %s", e)
+    except Exception as e:
+        logger.warning("Question rephrase failed: %r", e, exc_info=True)
 
     # Store the message and mark the question as asked
     with get_db_session() as db:
@@ -504,6 +507,10 @@ Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": 
         logger.info("Verification response processed: %s → %s", title, sentiment)
         return True
 
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
+        # Ollama down or no JSON back: the caller re-opens the question.
         logger.debug("Verification response processing failed: %s", e)
+        return False
+    except Exception as e:
+        logger.warning("Verification response processing failed: %r", e, exc_info=True)
         return False

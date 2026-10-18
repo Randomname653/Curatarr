@@ -280,8 +280,9 @@ def update_anilist_id(anidb_id: int, anilist_id: int):
             )
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[anime-mapping] could not store AniDB %s -> AniList %s: %s",
+                           anidb_id, anilist_id, e)
 
 
 async def get_mapping_stats() -> dict:

@@ -396,6 +396,7 @@ async def resolve_memory_conflicts(user_id: int, new_memory_id: int, new_content
 
     # A title-less memory used to be framed as "regarding the title ''".
     subject = f"the title '{title}'" if title else "the user's general preferences"
+    crash_logged = False
     for old_id, old_content in target_memories:
         prompt = f"""[MODE: MEMORY CONFLICT RESOLUTION]
 Analyze how the NEW memory relates to the OLD memory regarding {subject}.
@@ -429,9 +430,16 @@ Output ONLY a JSON block:
                 continue
             text = r.json().get("message", {}).get("content", "").strip()
             status = parse_llm_json(text).get("status")
-        except Exception as e:
+        except (httpx.HTTPError, asyncio.TimeoutError, ValueError, AttributeError) as e:
             # LLM down / unparseable verdict: expected, best-effort.
             logger.debug(f"Memory conflict resolution failed: {e}")
+            continue
+        except Exception as e:
+            # Anything else is a bug that would hit every candidate: warn once.
+            if not crash_logged:
+                crash_logged = True
+                logger.warning("Memory conflict resolution crashed (memory %s): %s",
+                               new_memory_id, e, exc_info=True)
             continue
         if status not in ("CONTRADICTION", "REAFFIRMATION", "NUANCE"):
             continue
@@ -487,7 +495,7 @@ def _title_category(title: str) -> Optional[str]:
         if row and row[0] in _CATEGORY_VALUES:
             return row[0]
     except Exception as e:
-        logger.debug("[memory] proposal lookup failed for %r: %s", t, e)
+        logger.warning("[memory] proposal lookup failed for %r: %s", t, e)
     try:
         from src.routers.chat import _library_title_index, _norm_for_match
         want = _norm_for_match(t)
@@ -495,7 +503,7 @@ def _title_category(title: str) -> Optional[str]:
         if len(cats) == 1:
             return cats.pop()
     except Exception as e:
-        logger.debug("[memory] library lookup failed for %r: %s", t, e)
+        logger.warning("[memory] library lookup failed for %r: %s", t, e)
     return None
 
 
@@ -526,7 +534,7 @@ def classify_memory_category(content: str, title: str = None) -> Optional[str]:
         if m:
             return m[1]
     except Exception as e:
-        logger.debug("[memory] library classify failed: %s", e)
+        logger.warning("[memory] library classify failed: %s", e)
     return None
 
 
@@ -851,8 +859,10 @@ async def _run_memory_extraction(
     try:
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
-    except Exception:
-        pass
+    except Exception as e:
+        # wait_for_curator already proceeds after its own timeout; a raise
+        # here is a bug, so say so and carry on the same way.
+        logger.warning("[memory] curator priority wait failed: %s", e)
 
     try:
         # Timeout raised from 30s → 90s (Pass 14.13). With the curator
@@ -1576,8 +1586,9 @@ async def handle_protection_intent(
                     from src.services.size_norms import is_bloated_by_title
                     bloated = is_bloated_by_title(title, media_type=category)
                 except Exception as _be:
-                    logger.debug("[protection] bloat probe failed for %r: %s",
-                                 title, _be)
+                    # Unflagged is the safe side: the keep stands, no downscale.
+                    logger.warning("[protection] bloat probe failed for %r: %s",
+                                   title, _be)
 
                 # Avoid duplicate entries — update reason if already protected
                 existing = db.query(ProtectedMedia).filter(
@@ -1776,7 +1787,7 @@ def _fetch_recent_thread_turns(user_id: int, thread_id: str) -> str:
                 + "\n".join(turns) + "\n"
             )
     except Exception as e:
-        logger.debug("[protection] recent-thread fetch failed: %s", e)
+        logger.warning("[protection] recent-thread fetch failed: %s", e)
     return ""
 
 
@@ -1947,8 +1958,8 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
     try:
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[protection] curator priority wait failed: %s", e)
 
     try:
         # Timeout 20s → 90s (Pass 14.13).

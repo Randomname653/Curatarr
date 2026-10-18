@@ -98,8 +98,8 @@ class TokenRefreshMiddleware:
         auth = next((v for k, v in scope.get("headers", [])
                      if k == b"authorization"), b"")
         if auth.startswith(b"Bearer "):
+            import jwt
             try:
-                import jwt
                 from src.config import settings
                 payload = jwt.decode(auth[7:].decode(),
                                      settings.effective_jwt_secret,
@@ -115,8 +115,11 @@ class TokenRefreshMiddleware:
                         from src.routers.auth import _create_jwt
                         fresh = _create_jwt(subject["id"], subject["is_admin"],
                                             subject["token_version"]).encode()
-            except Exception:
+            except (jwt.PyJWTError, ValueError, KeyError, TypeError):
                 pass          # expired/garbage → the endpoint 401s as before
+            except Exception as e:
+                # No refresh this request (the token itself stays as valid as it was).
+                logger.warning("[auth] rolling token refresh failed: %r", e)
 
         async def send_with_token(message):
             if fresh and message["type"] == "http.response.start":

@@ -28,6 +28,7 @@ import httpx
 from src.config import settings
 from src.services.llm_utils import (clean_llm_text, ollama_options,
                                     strip_think_tags, SUMMARIZER_KEEP_ALIVE)
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +89,8 @@ def get_studio_note_cached(studio: str, cache) -> Optional[str]:
         hit = cache.get_cache(_cache_key(studio))
         if hit and isinstance(hit.get("response"), dict):
             return hit["response"].get("note")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[studio-note] cache read failed for %r: %s", studio, e)
     return None
 
 
@@ -155,7 +156,8 @@ async def _condense(studio: str, extract: str,
                 return ""      # definitive — the model read it and said NONE
             return out
         except Exception as e:
-            logger.debug("[studio-note] condense via %s failed: %s", model, e)
+            log_topup_failure(logger, f"[{label.lower()}-note] condense via {model}",
+                              studio, e)
     return None                # transient — no model answered
 
 
@@ -165,8 +167,8 @@ def get_director_note_cached(name: str, cache) -> Optional[str]:
         hit = cache.get_cache(f"director_note:{_norm(name)}")
         if hit and isinstance(hit.get("response"), dict):
             return hit["response"].get("note")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[director-note] cache read failed for %r: %s", name, e)
     return None
 
 
@@ -239,7 +241,7 @@ async def ensure_director_note(name: str, cache=None) -> Optional[str]:
             logger.info("[director-note] %s: %s", name, note[:100])
         return note
     except Exception as e:
-        logger.debug("[director-note] failed for %r: %s", name, e)
+        log_topup_failure(logger, "[director-note]", name, e)
         return None
     finally:
         if owns:
@@ -275,7 +277,7 @@ async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
             logger.info("[studio-note] %s: %s", studio, note[:100])
         return note
     except Exception as e:
-        logger.debug("[studio-note] failed for %r: %s", studio, e)
+        log_topup_failure(logger, "[studio-note]", studio, e)
         return None
     finally:
         if owns:

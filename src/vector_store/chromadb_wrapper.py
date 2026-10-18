@@ -313,8 +313,9 @@ class ChromaDBWrapper:
             self._facets_collection().delete(where={"parent": str(parent_id)})
             return True
         except Exception as e:
-            logger.debug("[chroma] facets_delete_by_parent(%s) failed: %s",
-                         parent_id, e)
+            # The old facets stay beside the re-added ones: stale points.
+            logger.warning("[chroma] facets_delete_by_parent(%s) failed: %s",
+                           parent_id, e)
             return False
 
     def facets_count(self) -> int:
@@ -556,7 +557,7 @@ class ChromaDBWrapper:
             ids = result.get("ids") or []
             return sum(1 for i in ids if str(i).startswith(prefix))
         except Exception as e:
-            logger.debug("count_by_id_prefix(%r) failed: %s", prefix, e)
+            logger.warning("count_by_id_prefix(%r) failed: %s", prefix, e)
             return 0
     
     def all_ids(self) -> List[str]:
@@ -567,7 +568,7 @@ class ChromaDBWrapper:
         try:
             return list((self.collection.get(include=[]) or {}).get("ids") or [])
         except Exception as e:
-            logger.debug("all_ids() failed: %s", e)
+            logger.warning("all_ids() failed: %s", e)
             return []
 
     def get_all(self, limit: int = 1000) -> List[Dict]:

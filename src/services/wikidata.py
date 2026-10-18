@@ -139,7 +139,7 @@ async def resolve_enwiki_article(imdb_id: str, *,
             links = ent.get("sitelinks", {})
             return (links.get("enwiki") or {}).get("title") or ""
     except Exception as e:
-        logger.debug("[wikidata] sitelink lookup failed for %s: %s", imdb_id, e)
+        log_topup_failure(logger, "[wikidata] sitelink", imdb_id, e)
         return None
 
 
@@ -168,7 +168,7 @@ async def fetch_wikidata_facts(imdb_id: str, *, timeout: float = 25.0) -> Option
             return None
         rows = r.json().get("results", {}).get("bindings", [])
     except Exception as e:
-        logger.debug("[wikidata] query failed for %s: %s", imdb_id, e)
+        log_topup_failure(logger, "[wikidata] query", imdb_id, e)
         return None
 
     if not rows:

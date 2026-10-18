@@ -37,6 +37,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +272,7 @@ def _heal_rec_key(user_id: int, category: str, title: str, new_key: str) -> None
             ).update({"plex_rating_key": new_key}, synchronize_session=False)
             db.commit()
     except Exception as e:
-        logger.debug("[playlists] key heal failed for %r: %s", title, e)
+        logger.warning("[playlists] key heal failed for %r: %s", title, e)
 
 
 async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[str]:
@@ -292,7 +293,7 @@ async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[s
                 if leaves:
                     return str(leaves[0].get("ratingKey"))
             except Exception as e:
-                logger.debug("[playlists] allLeaves(%s) failed: %s", series_key, e)
+                log_topup_failure(logger, "[playlists] allLeaves", series_key, e)
     return None
 
 
@@ -353,7 +354,7 @@ async def push_user_playlists(user) -> dict:
                 recent = (datetime.utcnow() - pushed_dt).total_seconds() < _REPUSH_HOURS * 3600
                 if fresh and recent:
                     continue
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
         from src.database.models import LibraryConfig
@@ -418,7 +419,7 @@ async def push_user_playlists(user) -> dict:
                 try:
                     meta["leafCount"] = len(
                         await playlist_items(user.plex_token, keep_key))
-                except Exception:
+                except Exception:  # noqa: BLE001 - count only; falls back to the pushed key count
                     pass
             else:
                 logger.warning("[playlists] reconcile failed for '%s' — "
@@ -483,7 +484,7 @@ async def pick_album_key(user_token: str, artist_key: str,
                             headers=_headers(user_token))
             albums = (r.json().get("MediaContainer") or {}).get("Metadata") or []
         except Exception as e:
-            logger.debug("[playlists] albums of %s failed: %s", artist_key, e)
+            log_topup_failure(logger, "[playlists] albums", artist_key, e)
             return None
         if not albums:
             return None
@@ -537,7 +538,7 @@ async def push_user_music_playlist(user) -> dict:
             recent = (datetime.utcnow() - pushed_dt).total_seconds() < _REPUSH_HOURS * 3600
             if fresh and recent:
                 return {"pushed": []}
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     from src.database.models import LibraryConfig

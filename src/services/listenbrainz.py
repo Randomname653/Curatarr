@@ -170,7 +170,7 @@ async def fetch_artist_popularity(artist_mbid: str,
                     headers,
                 )
         except Exception as e:
-            logger.debug("[listenbrainz] request failed for %s: %s", artist_mbid, e)
+            log_topup_failure(logger, "[listenbrainz]", artist_mbid, e)
             return None
 
         if r.status_code == 404:

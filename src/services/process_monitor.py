@@ -386,8 +386,11 @@ async def unload_llm_models() -> list[str]:
             if ps.status_code < 400:
                 resident = {m.get("name", "") for m in ps.json().get("models", [])}
                 probe_ok = True
-        except Exception as e:
+        except httpx.HTTPError as e:
             logger.debug("Ollama /api/ps probe failed: %s", e)
+        except Exception as e:
+            # Falls back to the unconditional unload below either way.
+            logger.warning("Ollama /api/ps probe failed: %s", e)
         for model in ours:
             # When the probe worked, only unload resident models (no
             # load-then-unload thrash). /api/ps reports "name:tag" — match

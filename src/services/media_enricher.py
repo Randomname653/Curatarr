@@ -207,7 +207,7 @@ _RAW_CACHE_DAYS = 90
 def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DAYS) -> None:
     """Persist a fresh API fetch under raw:{cat}:{id_key} for reuse.
 
-    Best-effort: any cache failure is logged at debug and swallowed so a
+    Best-effort: any cache failure is logged at warning and swallowed so a
     flaky cache write can't break the producer's hand-off to the consumer.
     Strips underscore-prefixed transport fields before writing — those
     are caller-instance specific (plex_rating_key, _cache_key, etc.)
@@ -223,8 +223,8 @@ def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DA
         finally:
             c.close()
     except Exception as e:
-        logger.debug("[enricher] raw-cache write failed for raw:%s:%s — %s",
-                     cat, id_key, e)
+        logger.warning("[enricher] raw-cache write failed for raw:%s:%s — %s",
+                       cat, id_key, e)
 
 
 # ── Verified-data assembly (NO LLM) ───────────────────────────────────────────
@@ -446,8 +446,8 @@ def _studio_note_for(cache, studios) -> Optional[str]:
             note = get_studio_note_cached(s, cache)
             if note:
                 return note
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[enricher] studio-note cache read failed for %r: %s", studios, e)
     return None
 
 
@@ -623,8 +623,9 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             _edl = edition_line(edition_by_title(data.get("title"), _mt))
             if _edl:
                 add("Edition", _edl, cap=400)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[enricher] edition line failed for %r: %r",
+                           data.get("title"), e, exc_info=True)
     add("Plot", data.get("plot"), cap=700)
     lines.append("<<<END_UNTRUSTED_SOURCE>>>")
     return "\n".join(lines)
@@ -1000,7 +1001,7 @@ async def fetch_significance(
         out = _re.sub(r"\s*\bNONE\b.*$", "", out, flags=_re.I | _re.S)           # trailing echoed NONE
         out = _re.sub(r"\s{2,}", " ", out.replace("**", "")).strip()
     except Exception as e:
-        logger.debug("[significance] distillation failed for %r: %s", title, e)
+        log_topup_failure(logger, "[significance] distill", title, e)
         return None
     if not out or out.upper().startswith("NONE") or len(out) < 20:
         return ""              # definitive — the distiller read it and said NONE
@@ -1057,7 +1058,7 @@ async def fetch_wikipedia_summary(
                     return extract[:max_chars]
             return None
     except Exception as e:
-        logger.debug("[wiki-summary] fetch failed for %r: %s", title, e)
+        log_topup_failure(logger, "[wiki-summary]", title, e)
         return None
 
 
@@ -1559,7 +1560,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
                 task_monitor.update(
                     task, processed=checked, total=min(limit, total),
                     message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
-            except Exception:
+            except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
                 pass
         await wait_for_curator()
         try:
@@ -1635,7 +1636,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         try:
             from src.services.task_monitor import task_monitor
             task_monitor.update(task, message=msg, **kw)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
             pass
 
     _tick(f"OMDb backfill: {total} candidates", total=total)
@@ -1648,7 +1649,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
                 if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb, cache=cache):
                     state["updated"] += 1
             except Exception as e:
-                logger.debug("[omdb-backfill] %r failed: %s", title, e)
+                log_topup_failure(logger, "[omdb-backfill]", title, e)
             state["done"] += 1
             if state["done"] % 100 == 0:
                 _tick(f"OMDb backfill: {state['done']}/{total} "
@@ -2142,7 +2143,7 @@ async def _finalize_streaming_merge(
         if id_key:
             _write_raw_cache(media_type, id_key, live_raw)
     except Exception as _e:
-        logger.debug("[finalize] raw-cache write failed for %s: %s", plex_rating_key, _e)
+        logger.warning("[finalize] raw-cache write failed for %s: %s", plex_rating_key, _e)
 
 
 # ── ANILIST RATE-LIMIT CIRCUIT BREAKER ────────────────────────────────────────
@@ -2411,8 +2412,9 @@ async def authoritative_tv_tmdb_id(tvdb_id, tmdb_id=None, *, cache=None):
                 data = await _tmdb_get(client, f"/find/{tvdb}",
                                        {"external_source": "tvdb_id"})
         except Exception as e:
-            # Transient by contract — do NOT cache, do NOT re-point.
-            logger.debug("[enricher] tvdb->tmdb lookup deferred for %s: %s", tvdb, e)
+            # Transient by contract: the lookup deferred for now — do NOT
+            # cache, do NOT re-point.
+            log_topup_failure(logger, "[enricher] tvdb->tmdb", tvdb, e)
             return tmdb_id
         results = (data or {}).get("tv_results") or []
         found = results[0].get("id") if results else None
@@ -2583,8 +2585,9 @@ def _omdb_note_call(spent: bool = False) -> None:
         if spent:
             n = max(n, int(getattr(settings, "OMDB_DAILY_LIMIT", 1000) or 0))
         set_state(key, str(n))
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[omdb] budget note failed: %s", e)
+    except Exception as e:  # noqa: BLE001 - reported; the call itself already happened
+        # An unrecorded call is budget the next check does not see.
+        logger.warning("[omdb] budget note failed: %s", e)
 
 
 async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
@@ -2686,7 +2689,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             "content_rating": _na(d.get("Rated")) or None,
         }
     except Exception as e:
-        logger.debug("OMDB error for %s: %s", imdb_id, e)
+        log_topup_failure(logger, "[omdb]", imdb_id, e)
         return None
 
 
@@ -2761,7 +2764,7 @@ async def _fetch_jikan(mal_id: int = None, title: str = None,
             else:
                 return None
     except Exception as e:
-        logger.debug("Jikan error for %s/%s: %s", mal_id, title, e)
+        log_topup_failure(logger, "[jikan]", f"{mal_id}/{title}", e)
         return TRANSIENT
 
     if r.status_code == 429:
@@ -3075,7 +3078,7 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
             if not media:
                 return {}
     except Exception as e:
-        logger.debug("AniList %s error: %s", anilist_id, e)
+        log_topup_failure(logger, "[anilist]", anilist_id, e)
         return TRANSIENT
 
     # Pass 56: AniList can return ``title: null`` on some entries. dict.get
@@ -3494,10 +3497,9 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                                 "keeping first attempt", raw_metadata.get("title", "?"),
                             )
                 except Exception as _re:
-                    logger.debug(
-                        "[summarize] number-retry call failed for %r: %s — "
-                        "keeping first attempt", raw_metadata.get("title", "?"), _re,
-                    )
+                    # Keeps the first attempt either way; outage → DEBUG, bug → WARNING.
+                    log_topup_failure(logger, "[summarize] number-retry",
+                                      raw_metadata.get("title", "?"), _re)
 
             logger.debug("Summarizer success for '%s': source=%s",
                          raw_metadata.get("title", "?"), result["source"])
@@ -3543,7 +3545,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
             except Exception as _e:
                 # Pass 47 (B3-rest): the suffix-loop is a recovery best-effort,
                 # but a silent miss here masks bugs in the recovery itself.
-                logger.debug("[enricher] truncated-JSON recovery failed: %s", _e)
+                logger.warning("[enricher] truncated-JSON recovery failed: %r", _e)
             if recovered:
                 return recovered
             logger.warning("LLM JSON parse failed for '%s': %s — raw: %s",
@@ -3859,7 +3861,7 @@ async def fetch_and_prepare_raw(
             if ids.get("anilist_id"):
                 anilist_id = ids["anilist_id"]
         except Exception as e:
-            logger.debug("anime-lists lookup failed: %s", e)
+            log_topup_failure(logger, "[anime-lists]", tvdb_id, e)
 
     # Phase 2 #39: streaming-merge fetch.
     # All relevant per-source APIs fire IN PARALLEL via
@@ -4193,7 +4195,7 @@ async def store_profile_vector(profile: dict, *, media_type: str,
                                chroma_meta["genres"],
                                profile.get("themes"))
         except Exception as _fe:
-            logger.debug("facet write failed for %r: %s", title, _fe)
+            logger.warning("facet write failed for %r: %s", title, _fe)
         return True
     except Exception:
         logger.exception("[enricher] ChromaDB store failed for %r - vector retried next run",
@@ -4203,7 +4205,7 @@ async def store_profile_vector(profile: dict, *, media_type: str,
         if gen is not None:
             try:
                 await gen.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 - teardown close; the store result is already set
                 pass
 
 
@@ -4311,7 +4313,7 @@ async def enrich_media_item(
             try:
                 cached_dt = datetime.fromisoformat(str(cached_at_str))
                 cache_age_days = (datetime.utcnow() - cached_dt).days
-            except Exception as _e:
+            except (ValueError, TypeError) as _e:
                 # Pass 43 (B3): timestamp parse fail leaves cache_age_days at
                 # the "very old" default — cache miss path takes over.
                 logger.debug("[enricher] cached_at parse failed (%r): %s", cached_at_str, _e)
@@ -4333,7 +4335,7 @@ async def enrich_media_item(
                 anilist_id = ids["anilist_id"]
                 logger.debug("Resolved tvdb:%d → anilist:%d via anime-lists", tvdb_id, anilist_id)
         except Exception as e:
-            logger.debug("anime-lists lookup failed: %s", e)
+            log_topup_failure(logger, "[anime-lists]", tvdb_id, e)
 
     # ── MUSIC: fetch via MusicBrainz + Last.fm, then LLM-summarize ──────────
     if media_type == "music":
@@ -4414,10 +4416,11 @@ async def enrich_media_item(
                                        chroma_meta["genres"],
                                        profile.get("themes"))
                 except Exception as _fe:
-                    logger.debug("facet write failed for %r: %s", title, _fe)
+                    logger.warning("facet write failed for %r: %s", title, _fe)
             await gen.close()
         except Exception as e:
-            logger.debug("Music ChromaDB store failed for '%s': %s", title, e)
+            logger.warning("Music ChromaDB store failed for '%s': %s", title, e,
+                           exc_info=True)
         cache.close()
         return profile
 
@@ -4441,7 +4444,7 @@ async def enrich_media_item(
                 except Exception as _e:
                     # Pass 43 (B3): anime-mapping update is best-effort —
                     # log so failures don't silently rot the cross-ref DB.
-                    logger.debug("[enricher] update_anilist_id(%s) failed: %s", anidb_id, _e)
+                    logger.warning("[enricher] update_anilist_id(%s) failed: %s", anidb_id, _e)
     elif tmdb_id and media_type == "movie":
         # Movie with TMDB ID — direct fetch
         raw = await fetch_tmdb_full(tmdb_id, "movie")
@@ -4636,13 +4639,13 @@ async def enrich_media_item(
                                        chroma_metadata.get("genres", ""),
                                        profile.get("themes"))
                 except Exception as _fe:
-                    logger.debug("facet write failed for %r: %s",
-                                 profile.get("title"), _fe)
+                    logger.warning("facet write failed for %r: %s",
+                                   profile.get("title"), _fe)
                 logger.debug("Successfully stored '%s' in ChromaDB.", profile.get("title"))
 
             try:
                 await generator.close()
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 - generator close is teardown; vector already stored
                 # Pass 47 (B3-rest): generator close is best-effort cleanup;
                 # logging at debug surfaces leak-pattern bugs without
                 # spamming the happy-path log.
@@ -4652,7 +4655,7 @@ async def enrich_media_item(
         # Best-effort: ensure we don't leak the embedding generator on failure.
         try:
             await generator.close()
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 - teardown close after the store error is logged
             # Pass 43 (B3): close-on-error is itself error-prone (HTTP client
             # already-closed, transport gone). Log at debug — a generator
             # leak is benign at process scope but worth seeing if it spikes.
@@ -4876,7 +4879,7 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None,
             if not media_list:
                 return None
     except Exception as e:
-        logger.debug("AniList search '%s' error: %s", title, e)
+        log_topup_failure(logger, "[anilist] search", title, e)
         return TRANSIENT
 
     # Iterate all returned candidates and pick the first one whose title is
@@ -4985,7 +4988,7 @@ async def anilist_candidates(title: str, limit: int = 6) -> list[dict]:
             return []
         media = r.json().get("data", {}).get("Page", {}).get("media") or []
     except Exception as e:
-        logger.debug("AniList candidates '%s' error: %s", title, e)
+        log_topup_failure(logger, "[anilist] candidates", title, e)
         return []
     out = []
     for m in media[:limit]:
@@ -5105,5 +5108,5 @@ async def _tmdb_fetch_by_external_id(imdb_id: str, media_type: str) -> Optional[
         fetch_type = "movie" if media_type == "movie" else "tv"
         return await fetch_tmdb_full(found_id, fetch_type)
     except Exception as e:
-        logger.debug("TMDB external ID lookup failed for %s: %s", imdb_id, e)
+        log_topup_failure(logger, "[tmdb] external-id", imdb_id, e)
         return None

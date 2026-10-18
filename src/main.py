@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
         import platform as _platform
         import sys as _sys
         logger.info("[python] %s (%s)", _sys.executable, _platform.python_version())
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - startup banner line only; nothing depends on it
         pass
 
     # Pinned requirements vs. this interpreter: reported, never installed from
@@ -58,14 +58,15 @@ async def lifespan(app: FastAPI):
         from src.deps_check import check as _deps_check
         _deps = _deps_check()
         (logger.info if _deps.clean else logger.warning)("[deps] %s", _deps.summary())
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[deps] check failed: %s", e)
+    except Exception as e:  # noqa: BLE001 - reported, the server still starts
+        # A broken check would hide the drift it exists to report.
+        logger.warning("[deps] check failed: %s", e)
     try:
         from src.deps_lock import check as _lock_check
         _lock = _lock_check()
         (logger.info if _lock.clean else logger.warning)("[lock] %s", _lock.summary())
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[lock] check failed: %s", e)
+    except Exception as e:  # noqa: BLE001 - reported, the server still starts
+        logger.warning("[lock] check failed: %s", e)
 
     (DATA_DIR / "chromadb").mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
@@ -152,7 +153,8 @@ async def lifespan(app: FastAPI):
             m = await get_anime_mapping()
             logger.info("Anime mapping ready: %d entries", m.total_entries)
         except Exception as e:
-            logger.debug("Anime mapping load failed: %s", e)
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[boot] anime mapping", "anime-lists", e)
     track_task(_load_anime_mapping(), name="anime_mapping_load")
 
     # Pass 16k: pre-warm Library Manager arr caches.
@@ -167,7 +169,8 @@ async def lifespan(app: FastAPI):
             from src.routers.library import prewarm_arr_caches
             await prewarm_arr_caches()
         except Exception as e:
-            logger.debug("Library prewarm failed: %s", e)
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[boot] library prewarm", "arr caches", e)
     track_task(_prewarm_library(), name="library_prewarm")
 
     if not settings.is_configured:
@@ -182,8 +185,9 @@ async def lifespan(app: FastAPI):
                     "LAN (or through a reverse proxy) needs this one-time code: %s  "
                     "(a browser on this machine at http://localhost:%d does not).",
                     SETUP_CODE, settings.PORT)
-    except Exception as _e:  # noqa: BLE001
-        logger.debug("setup-code notice skipped: %s", _e)
+    except Exception as _e:  # noqa: BLE001 - reported, the server still starts
+        # Without this line a first run cannot be finished from another device.
+        logger.warning("setup-code notice skipped: %s", _e)
     else:
         from src.database.connection import get_db_session
         from src.database.models import User
@@ -205,7 +209,8 @@ async def lifespan(app: FastAPI):
         from src.services.episodic_memory import flush_all_pending_extractions
         await flush_all_pending_extractions()
     except Exception as e:
-        logger.debug("Shutdown memory flush failed: %s", e)
+        # Pending extractions are lost on this path — worth seeing.
+        logger.warning("[shutdown] memory flush failed: %s", e, exc_info=True)
 
     from src.services.scheduler import stop_scheduler
     stop_scheduler()
@@ -232,8 +237,9 @@ async def lifespan(app: FastAPI):
             logger.warning("[shutdown] music lease release failed: %s", e)
         set_state("deletion_run", "0")
         set_state("plex_sync_running", "0")
-    except Exception:
-        pass
+    except Exception as e:
+        # A flag left at "1" reads as a run in progress after the restart.
+        logger.warning("[shutdown] clearing run flags failed: %s", e)
 
     # Cancel the idle-evict timer and free the VRAM on the way out — the
     # most common reason this app gets closed is that the GPU is wanted for
@@ -243,7 +249,8 @@ async def lifespan(app: FastAPI):
         from src.services.llm_priority import shutdown_evict
         await shutdown_evict()
     except Exception as e:
-        logger.debug("[shutdown] evict pass failed: %s", e)
+        # shutdown_evict swallows Ollama outages itself; this is a bug.
+        logger.warning("[shutdown] evict pass failed: %s", e)
 
     # Release the database: finish queued writes, close every connection and
     # checkpoint the WAL into the main file (TRUNCATE), so data/ holds one
@@ -252,7 +259,7 @@ async def lifespan(app: FastAPI):
         from src.vector_store.chromadb_wrapper import shutdown_chroma_pool
         shutdown_chroma_pool()
     except Exception as e:
-        logger.debug("[shutdown] Chroma thread did not stop cleanly: %s", e)
+        logger.warning("[shutdown] Chroma thread did not stop cleanly: %s", e)
     try:
         from src.database.runner import shutdown_writer
         shutdown_writer()
@@ -271,7 +278,7 @@ async def lifespan(app: FastAPI):
         from src.services.sync_guard import disable as _sync_guard_disable
         _sync_guard_disable()
     except Exception as e:
-        logger.debug("[sync-guard] disable failed: %s", e)
+        logger.warning("[sync-guard] disable failed: %s", e)
 
     logger.info("Curatarr shutting down.")
 
@@ -474,8 +481,9 @@ async def shutdown_server():
         try:
             from src.services.task_monitor import shutdown_event
             shutdown_event.set()
-        except Exception:
-            pass
+        except Exception as e:
+            # Open SSE tabs would then pin the shutdown until closed by hand.
+            logger.warning("[shutdown] could not end SSE streams: %s", e)
         await asyncio.sleep(0.4)   # let the streams drain
         # Tray mode: the launcher registered a stop callback (sets
         # server.should_exit — the graceful path for an embedded server).

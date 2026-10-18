@@ -389,7 +389,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                                 _db.commit()
                         set_state(_section_miss_key(sec_key), "0")
                     except Exception as _e:
-                        logger.debug("Could not remove dead library config: %s", _e)
+                        # kept: the next sync retries the removal
+                        logger.warning("Could not remove dead library config: %s", _e)
                     continue
                 logger.warning("Library %r (key=%s) returned 404 — kept; treated as not fetched",
                                sec_title, sec_key)
@@ -402,7 +403,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
             try:   # it answered: any 404 streak ends (best-effort, never fails the sync)
                 if get_state(_section_miss_key(sec_key)) not in (None, "", "0"):
                     set_state(_section_miss_key(sec_key), "0")
-            except Exception as _e:  # noqa: BLE001
+            except Exception as _e:  # noqa: BLE001 - only a 404-streak counter; the next sync resets it
                 logger.debug("Section miss streak reset failed: %s", _e)
 
             items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
@@ -505,8 +506,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 if item is not None:
                     genres = [g.get("tag", "") for g in item.findall("Genre")]
                     return rk, {"genres": genres, "tmdb_id": None}
-        except Exception:
-            pass
+        except (httpx.HTTPError, ET.ParseError) as e:
+            logger.debug("Genre fetch for %s failed: %s", rk, e)
+        except Exception as e:
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[plex-sync] genre fetch", rk, e)
         return rk, None
 
     sem = asyncio.Semaphore(20)  # 20 parallel requests
@@ -1824,7 +1828,7 @@ CRITICAL RULES (YOU MUST OBEY):
         try:
             from src.services.embed_service import evict_embedder
             await evict_embedder()
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 - speed only; the summary still runs
             logger.debug("Taste summary: embedder evict failed: %s", _e)
         for model in model_order:
             if not model:

@@ -397,7 +397,7 @@ async def _startup_check():
         await _resume_music_pipeline_if_needed(user_id)
 
     except Exception as e:
-        logger.debug("[startup] Startup check failed: %s", e)
+        logger.warning("[startup] Startup check failed: %s", e, exc_info=True)
 
 
 async def _resume_music_pipeline_if_needed(user_id: int):
@@ -426,7 +426,7 @@ async def _resume_music_pipeline_if_needed(user_id: int):
             name=f"music_pipeline_resume_user_{user_id}",
         ))
     except Exception as e:
-        logger.debug("[startup] Music pipeline resume check failed: %s", e)
+        logger.warning("[startup] Music pipeline resume check failed: %s", e, exc_info=True)
 
 
 async def _run_music_pipeline_bg(user_id: int):
@@ -498,7 +498,7 @@ async def _resume_enrichment_if_needed(user_id: int):
             if not handed_off:
                 release_state_lock("enrichment_running")
     except Exception as e:
-        logger.debug("[startup] Enrichment resume check failed: %s", e)
+        logger.warning("[startup] Enrichment resume check failed: %s", e, exc_info=True)
 
 
 async def job_plex_sync(chain_llm: bool = True):
@@ -738,8 +738,9 @@ async def job_arr_sync():
             try:
                 from src.services.app_state import release_state_lock as _rsl
                 _rsl("deletion_run")
-            except Exception:
-                pass
+            except Exception as _re:
+                # A lock left held blocks the next deletion run - say so.
+                logger.warning("[scheduler] could not release deletion_run: %s", _re)
         task_monitor.error(task, str(e))
         logger.error("[scheduler] ARR sync failed: %s", e)
         return False
@@ -1071,7 +1072,7 @@ async def _recompute_and_cache_recs(user_id: int = None):
             from src.services.verification_session import start_verification_session
             await start_verification_session(user_id)
         except Exception as e:
-            logger.debug("[scheduler] Verification session skipped: %s", e)
+            logger.warning("[scheduler] Verification session skipped: %s", e)
 
     except Exception as e:
         logger.error("[scheduler] Recompute+cache failed: %s", e)
@@ -1101,6 +1102,7 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
         from src.database.connection import get_db_session
         from src.database.models import WatchHistoryEntry
         from src.services.music_metadata import enrich_track
+        from src.services.enrichment_state import log_topup_failure
 
         cutoff = datetime.utcnow() - timedelta(days=days)
         with get_db_session() as db:
@@ -1135,7 +1137,7 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
                 await enrich_track(track, artist)
                 warmed += 1
             except Exception as e:
-                logger.debug("[scheduler] warm track %r failed: %s", track, e)
+                log_topup_failure(logger, "[scheduler] warm track", track, e)
         logger.info("[scheduler] track-metadata warm: %d/%d tracks cached (last %dd, top %d)",
                     warmed, len(tracks), days, limit)
         return warmed

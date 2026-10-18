@@ -240,7 +240,7 @@ async def _condense(prompt: str) -> Optional[str]:
             if len(out) >= 40:
                 return out
         except Exception as e:
-            logger.debug("[reception] condense via %s failed: %s", model, e)
+            log_topup_failure(logger, "[reception] condense", model, e)
     return None
 
 
@@ -284,7 +284,7 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
             try:
                 finale = await _finale_reception(client, al, title)
             except Exception as e:
-                logger.debug("[reception] finale walk failed for %r: %s", title, e)
+                log_topup_failure(logger, "[reception] finale walk", title, e)
             staff = _extract_staff(al)
             mal_stats, mal_reviews = {}, []
             if al.get("idMal"):
@@ -708,7 +708,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
                 task_monitor.update(
                     task, processed=checked, total=min(limit, total),
                     message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
-            except Exception:
+            except Exception:  # noqa: BLE001 - progress card only; the backfill is unaffected
                 pass
         await wait_for_curator()
         # full pass when reception was never fetched; light relations/tags
@@ -733,7 +733,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
             for s in (resp.get("studios") or [])[:2]:
                 await ensure_studio_note(s)
         except Exception as e:
-            logger.debug("[reception-backfill] studio note %r: %s", title, e)
+            log_topup_failure(logger, "[reception-backfill] studio note", title, e)
         checked += 1
     # Only rows still waiting are worth remembering (bounded by the queue).
     save_walker_attempts(_RECEPTION_ATTEMPTS_KEY, attempts,

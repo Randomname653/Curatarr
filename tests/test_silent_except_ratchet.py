@@ -1,4 +1,4 @@
-"""Silent broad excepts may only go down (silent-failure sweep, 2026-10-15).
+"""No silent broad excepts in src/ (silent-failure sweep, 2026-10).
 
 A broad handler (``except:``, ``except Exception``, ``except BaseException``)
 whose whole body is ``pass``, or one ``logger.debug(...)`` line (optionally
@@ -6,25 +6,28 @@ followed by ``pass`` / ``continue`` / ``return ...``), turns a bug into "no
 data" without a trace a normal log level shows. That is how the 2026-10
 taste-cluster DetachedInstanceError hid for months.
 
-This suite counts those handlers per file and fails when a file has MORE than
-its recorded baseline (tests/silent_except_baseline.json). Lower counts pass
-and print a reminder to tighten the baseline:
+This began as a ratchet (342 such handlers, each file allowed only to go
+down) and reached zero; now it is a rule. A handler that must stay silent
+says why on its ``except`` line, concretely:
 
-    python tests/test_silent_except_ratchet.py            # check
-    python tests/test_silent_except_ratchet.py --update   # rewrite baseline
+    except Exception:  # noqa: BLE001 - progress card only; the work is unaffected
 
-A handler that is silent on purpose says why on its ``except`` line:
-``except Exception:  # noqa: BLE001 - <reason>`` - it is not counted.
+Anything else either narrows the exception, logs at WARNING, or - when it
+guards a decision - fails closed.
+
+    python tests/test_silent_except_ratchet.py
 """
 import ast
-import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-BASELINE = ROOT / "tests" / "silent_except_baseline.json"
 _BROAD = {"Exception", "BaseException"}
+# A reason, not a shrug: at least a few words after the marker.
+_REASON = re.compile(r"#\s*noqa:\s*BLE001\s*[-\u2013\u2014]\s*(\S.{11,})")
+_VAGUE = {"best effort", "best-effort", "ignore", "ignored", "not important", "harmless"}
 
 
 def _is_broad(handler: ast.ExceptHandler) -> bool:
@@ -49,49 +52,47 @@ def _is_silent(body: list) -> bool:
     return all(isinstance(s, (ast.Pass, ast.Continue, ast.Return)) for s in body[1:])
 
 
-def count_silent(path: Path) -> int:
+def _annotation(line: str):
+    """(annotated, reason_ok) for an except line."""
+    if "noqa: BLE001" not in line:
+        return False, False
+    m = _REASON.search(line)
+    reason = (m.group(1).strip().lower() if m else "")
+    return True, bool(m) and reason.rstrip(".") not in _VAGUE
+
+
+def silent_sites(path: Path) -> list:
+    """[(line, problem)] for one file: unannotated silent handlers, and
+    annotations whose reason is missing or a shrug."""
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
-    n = 0
+    out = []
     for node in ast.walk(ast.parse(text, filename=str(path))):
         if isinstance(node, ast.ExceptHandler) and _is_broad(node) and _is_silent(node.body):
-            if "noqa: BLE001" in lines[node.lineno - 1]:
-                continue
-            n += 1
-    return n
-
-
-def scan() -> dict:
-    out = {}
-    for p in sorted(SRC.rglob("*.py")):
-        n = count_silent(p)
-        if n:
-            out[p.relative_to(ROOT).as_posix()] = n
+            annotated, reason_ok = _annotation(lines[node.lineno - 1])
+            if not annotated:
+                out.append((node.lineno, "silent broad except"))
+            elif not reason_ok:
+                out.append((node.lineno, "noqa: BLE001 without a concrete reason"))
     return out
 
 
+def count_silent(path: Path) -> int:
+    """Unannotated silent handlers in one file (kept for tooling)."""
+    return sum(1 for _, why in silent_sites(path) if why == "silent broad except")
+
+
 def main() -> int:
-    current = scan()
-    if "--update" in sys.argv:
-        BASELINE.write_text(json.dumps(current, indent=1, sort_keys=True) + "\n",
-                            encoding="utf-8")
-        print(f"baseline rewritten: {sum(current.values())} silent handlers "
-              f"in {len(current)} files")
-        return 0
-    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
-    grew = {f: (baseline.get(f, 0), n) for f, n in current.items()
-            if n > baseline.get(f, 0)}
-    shrank = {f: (b, current.get(f, 0)) for f, b in baseline.items()
-              if current.get(f, 0) < b}
-    for f, (b, n) in sorted(grew.items()):
-        print(f"  FAIL  {f}: {n} silent broad excepts (baseline {b}) - log at "
-              "WARNING, narrow the except, or say why with '# noqa: BLE001 - <reason>'")
-    for f, (b, n) in sorted(shrank.items()):
-        print(f"  note  {f}: {n} (baseline {b}) - run with --update to lock it in")
-    total_b, total_n = sum(baseline.values()), sum(current.values())
-    print(f"\nsilent broad excepts: {total_n} (baseline {total_b})")
-    print(f"{0 if grew else 1} passed, {1 if grew else 0} failed")
-    return 1 if grew else 0
+    problems = []
+    for p in sorted(SRC.rglob("*.py")):
+        for line, why in silent_sites(p):
+            problems.append(f"{p.relative_to(ROOT).as_posix()}:{line}: {why}")
+    for msg in problems:
+        print(f"  FAIL  {msg} - log at WARNING, narrow the except, fail closed, "
+              "or say why with '# noqa: BLE001 - <reason>'")
+    print(f"\nsilent broad excepts: {len(problems)}")
+    print(f"{0 if problems else 1} passed, {1 if problems else 0} failed")
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

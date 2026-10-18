@@ -17,7 +17,7 @@ import httpx
 
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache
-from src.services.enrichment_state import TRANSIENT
+from src.services.enrichment_state import TRANSIENT, log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -311,8 +311,9 @@ async def enrich_album(album_name: str, artist_name: str, mbid: str = None) -> O
                 tags_data = r.json().get("toptags", {}).get("tag", [])
                 lastfm_tags = [t["name"].lower() for t in tags_data
                                if int(t.get("count", 0)) >= 25][:8]
-        except Exception:
-            pass
+        except Exception as e:
+            log_topup_failure(logger, "[music] lastfm album tags",
+                              f"{artist_name} - {album_name}", e)
 
     all_tags = list(dict.fromkeys(
         (mb_data.get("tags", []) if mb_data else []) + lastfm_tags
@@ -679,5 +680,5 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
         return result
 
     except Exception as e:
-        logger.debug("Track enrich error %s - %s: %s", artist, title, e)
+        log_topup_failure(logger, "[music] track enrich", f"{artist} - {title}", e)
         return await enrich_artist(artist)

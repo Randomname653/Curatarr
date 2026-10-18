@@ -122,7 +122,7 @@ def _prog(task, message: str = None, processed: int = None,
         if total is not None:
             kw["total"] = total
         task_monitor.update(task, message=message, **kw)
-    except Exception:
+    except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
         pass
 
 
@@ -204,7 +204,7 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
         if warmed:
             logger.info("[custodian] top-track metadata warmed: %d", warmed)
     except Exception as e:
-        logger.debug("[custodian] track warm failed: %s", e)
+        logger.warning("[custodian] track warm failed: %s", e)
     # Heuristic done-check: every phase consumed less than its batch → the
     # queues are (near) drained; otherwise stay due and continue next tick.
     # Audit #1: the keys MUST match what the phases actually return
@@ -724,8 +724,8 @@ def custodian_status() -> dict:
     try:
         raw = get_state(_REPORT_KEY)
         report = json.loads(raw) if raw else None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[custodian] stored report unreadable: %s", e)
     tasks = []
     for t in _registry():
         last = _last_job_run(t.job_id)
@@ -801,8 +801,8 @@ def _store_report(queue: str, report: dict) -> None:
             if raw:
                 latest.append(json.loads(raw))
         set_state(_REPORT_KEY, json.dumps(_merge_reports(latest)))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[custodian] could not store the %s report: %s", queue, e)
 
 
 def _cancel_requested() -> bool:

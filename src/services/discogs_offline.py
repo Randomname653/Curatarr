@@ -136,14 +136,17 @@ def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
                 artists = r.json() if r.status_code == 200 else []
             for a in artists:
                 _add(a.get("artistName") or "", a.get("genres"))
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
         logger.debug("[discogs] lidarr artist list failed: %s", e)
+    except Exception as e:
+        logger.warning("[discogs] lidarr artist list failed: %r", e, exc_info=True)
     try:
         from src.services.lyrics import plex_artists
         for a in plex_artists():
             _add(a.get("name") or "")
     except Exception as e:
-        logger.debug("[discogs] plex artist list failed: %s", e)
+        # a local sqlite read, not a network call
+        logger.warning("[discogs] plex artist list failed: %s", e)
     try:
         from src.database.connection import get_db_session
         from src.database.models import WatchHistoryEntry as W
@@ -153,7 +156,7 @@ def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
                          .filter(W.media_type == "music").all()):
                 _add(n or "")
     except Exception as e:
-        logger.debug("[discogs] history artist list failed: %s", e)
+        logger.warning("[discogs] history artist list failed: %s", e)
     try:
         # richest anchor: Last.fm genres on the raw music docs. Resolve the
         # cache path against the repo root — standalone scripts/background
@@ -167,14 +170,14 @@ def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
                 "SELECT response FROM api_cache WHERE cache_key LIKE '%raw:music:%'"):
             try:
                 d = json.loads(resp)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
             if isinstance(d, dict) and (d.get("name") or d.get("title")):
                 _add(d.get("name") or d.get("title"),
                      (d.get("genres") or []) + (d.get("tags") or []))
         con.close()
     except Exception as e:
-        logger.debug("[discogs] cache genre anchor failed: %s", e)
+        logger.warning("[discogs] cache genre anchor failed: %s", e)
     return names
 
 
@@ -189,8 +192,11 @@ def _latest_masters_key() -> Optional[str]:
             keys = re.findall(r'\?download=([^"]*masters\.xml\.gz)', r.text)
             if keys:
                 return keys[-1]
-    except Exception as e:
+    except httpx.HTTPError as e:
+        # the index 429s for hours; the deterministic key below is the norm
         logger.debug("[discogs] index fetch failed: %s", e)
+    except Exception as e:
+        logger.warning("[discogs] index fetch failed: %r", e, exc_info=True)
     now = datetime.now()
     first = now.replace(day=1)
     prev = (first - timedelta(days=1)).replace(day=1)
@@ -254,7 +260,7 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
                 message=f"Streaming masters dump: {read_b >> 20} MB"
                         + (f"/{total_b >> 20} MB" if total_b else "")
                         + f" · {n_masters:,} library matches")
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the stream is unaffected
             pass
 
     decomp = zlib.decompressobj(wbits=31)

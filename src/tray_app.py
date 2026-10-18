@@ -394,7 +394,7 @@ def main() -> None:
         try:
             if server_loop is not None:
                 server_loop.call_soon_threadsafe(shutdown_event.set)
-        except Exception:
+        except Exception:  # noqa: BLE001 - loop may be closed; should_exit still stops it
             pass
         server.should_exit = True
 
@@ -430,12 +430,12 @@ def main() -> None:
             logger.error("Server crashed: %s", e, exc_info=True)
             try:
                 icon.notify("Curatarr failed to start — see data\\logs.", "Curatarr")
-            except Exception:
+            except Exception:  # noqa: BLE001 - toast only; the crash is logged above
                 pass
         finally:
             try:
                 loop.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 - teardown after the server stopped
                 pass
             icon.stop()
 
@@ -449,8 +449,9 @@ def main() -> None:
             i.visible = True
             try:
                 i.notify(ollama_warning, "Curatarr")
-            except Exception:
-                pass
+            except Exception as e:
+                # The toast was the only place this warning surfaced.
+                logger.warning("%s (tray notification failed: %s)", ollama_warning, e)
         icon.run(setup=_late_notify)
     else:
         icon.run()

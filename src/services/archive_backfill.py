@@ -164,7 +164,8 @@ def coverage(cache=None) -> dict:
             try:
                 done = sum(1 for raw in entries if spec["done"](raw))
             except Exception as e:
-                logger.debug("[backfill] coverage for %s failed: %s", key, e)
+                # The predicates are pure dict checks: raising here is a bug.
+                logger.warning("[backfill] coverage for %s failed: %r", key, e)
                 continue
             pct = (100.0 * done / total) if total else 100.0
             sources.append({

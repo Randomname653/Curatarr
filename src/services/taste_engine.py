@@ -294,6 +294,11 @@ def _unit(vec) -> Optional[list]:
     return [float(x) / norm for x in vec]
 
 
+# Per-item lookup in the embed loop: warn on the first failure of each kind,
+# DEBUG after, so a broken Chroma is visible without a line per item.
+_ITEM_LOOKUP_WARNED: set = set()
+
+
 def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
     """The item's STORED index vector, if it is in ChromaDB (eval 1.3).
 
@@ -327,7 +332,13 @@ def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
                     continue
                 return _unit(list(emb))
     except Exception as e:
-        logger.debug("chroma item lookup failed: %s", e)
+        kind = type(e).__name__
+        if kind in _ITEM_LOOKUP_WARNED:
+            logger.debug("chroma item lookup failed: %s", e)
+        else:
+            _ITEM_LOOKUP_WARNED.add(kind)
+            logger.warning("chroma item lookup failed (%s; repeats at DEBUG) — "
+                           "re-embedding instead: %s", kind, e, exc_info=True)
     return None
 
 
@@ -444,7 +455,7 @@ def _domain_corpus_mean(category: str):
         m = _clean_unit_rows(get_chroma_db().embeddings_for_domain(category))
         return None if m is None else m.mean(axis=0)
     except Exception as e:
-        logger.debug("corpus mean for %s failed: %s", category, e)
+        logger.warning("corpus mean for %s failed — raw-cosine gate: %s", category, e)
         return None
 
 
@@ -899,7 +910,7 @@ async def compute_taste_vector_for_user(
                 len(user_rating_by_item),
             )
     except Exception as e:
-        logger.debug("[taste-vector] user-rating preload failed: %s", e)
+        logger.warning("[taste-vector] user-rating preload failed: %s", e)
 
     # Select top items by combined weight for embedding
     scored = []
@@ -1191,7 +1202,7 @@ async def compute_taste_vector_for_user(
                 logger.debug("Marked %d titles as vector_ready for %s",
                              len(enriched_titles_for_vr), category)
         except Exception as e:
-            logger.debug("vector_ready update failed: %s", e)
+            logger.warning("vector_ready update failed: %s", e)
     task_monitor.update(_tv_task, processed=embed_total,
         message=f"Embeddings complete: {len(embeddings_weights)}/{embed_total} vectors")
 

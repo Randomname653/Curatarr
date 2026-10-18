@@ -326,8 +326,9 @@ def _score_factors(cand: dict) -> dict | None:
                     **terms, keep_value_pts=cand.get("keep_value_pts") or 0.0,
                     considerations=cand.get("considerations"))}
     except Exception as e:
-        logger.debug("[deletions] score factors failed for %r: %s",
-                     (cand.get("item") or {}).get("title"), e)
+        # The terms are our own numbers: a failure here is a bug, not data.
+        logger.warning("[deletions] score factors failed for %r: %s",
+                       (cand.get("item") or {}).get("title"), e, exc_info=True)
         return None
 
 
@@ -420,8 +421,17 @@ def _judge_lane() -> tuple:
         why = gpu_reason()
         return False, DESCRIPTIONS[LLMFailure.LANE_CLOSED] + (f" ({why})" if why else "")
     except Exception as e:
-        logger.debug("[deletions] lane check failed: %s", e)
+        # Runs before every verdict: say it once, not once per title.
+        if not _LANE_CHECK_WARNED:
+            _LANE_CHECK_WARNED.append(True)
+            logger.warning("[deletions] lane check failed - judging as if the "
+                           "GPU were free: %r", e, exc_info=True)
+        else:
+            logger.debug("[deletions] lane check failed: %s", e)
         return True, ""
+
+
+_LANE_CHECK_WARNED: list = []
 
 
 # Two outages in a row end the run: Ollama down, or a model that cannot load,
@@ -478,12 +488,15 @@ def _rating_from_cached(cached: dict | None) -> tuple:
     return None, None, genres_raw
 
 
-def _get_cached_rating(item: dict, category: str) -> tuple:
+def _get_cached_rating(item: dict, category: str, strict: bool = False) -> tuple:
     """
     Look up TMDB/AniList rating from the enrichment SQLite cache.
 
     Returns (rating_context_str, rating_float | None, cached_genres_list)
     rating_context_str is injected into the deletion prompt.
+
+    ``strict`` re-raises a failed cache read instead of answering "nothing
+    cached": the judge's form guards must tell the two apart.
 
     One title. A loop over candidates uses ``_bulk_cached_ratings`` — one
     query for the whole batch.
@@ -491,9 +504,18 @@ def _get_cached_rating(item: dict, category: str) -> tuple:
     try:
         from src.cache.metadata_cache import MetadataCache
         with MetadataCache() as cache:
-            return _rating_from_cached(cache.get_cache(_rating_cache_key(item, category)))
+            cached = cache.get_cache(_rating_cache_key(item, category))
     except Exception as exc:
-        logger.debug("Enrichment cache lookup failed for '%s': %s", item.get("title", ""), exc)
+        if strict:
+            raise
+        logger.warning("Enrichment cache lookup failed for '%s': %s", item.get("title", ""), exc)
+        return None, None, []
+    try:
+        return _rating_from_cached(cached)
+    except (TypeError, ValueError, AttributeError) as exc:
+        # An odd-shaped record is read as "nothing cached", as before; it
+        # is not an outage, so strict callers are not stopped by it.
+        logger.warning("Cached rating unreadable for '%s': %s", item.get("title", ""), exc)
     return None, None, []
 
 
@@ -664,8 +686,8 @@ async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
         cached = json.loads(get_state(key) or "{}")
         if _trending_fresh(cached, ttl_h=168):
             return cached.get("names") or []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[music-neighbors] cache unreadable - refetching: %s", e)
     names: list = []
     try:
         from src.services import soulsync_client
@@ -696,7 +718,8 @@ async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
             set_state(key, json.dumps(
                 {"fetched_at": datetime.utcnow().isoformat(), "names": names}))
     except Exception as e:
-        logger.debug("[music-neighbors] failed: %s", e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[music-neighbors]", user_id, e)
     return names
 
 
@@ -723,8 +746,8 @@ async def _get_trending(cat: str) -> list:
         cached = json.loads(get_state(key) or "{}")
         if _trending_fresh(cached):
             return cached.get("titles") or []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[trending] cache unreadable for %s - refetching: %s", cat, e)
     api_key = settings.TMDB_API_KEY
     if not api_key:
         return []
@@ -758,7 +781,8 @@ async def _get_trending(cat: str) -> list:
             set_state(key, json.dumps(
                 {"fetched_at": datetime.utcnow().isoformat(), "titles": titles}))
     except Exception as e:
-        logger.debug("[trending] fetch failed for %s: %s", cat, e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[trending]", cat, e)
     return titles
 
 
@@ -1244,7 +1268,7 @@ async def generate_deletion_proposals(
         try:
             from src.services.task_monitor import task_monitor as _tm
             _tm.update(monitor_task, message=text)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the run is unaffected
             pass
 
     import math
@@ -2161,6 +2185,7 @@ async def generate_deletion_proposals(
         # arguing about. Reception costs no summarizer time (plain HTTP), so
         # there is no GPU reason to skip it here either.
         try:
+            from src.services.enrichment_state import log_topup_failure
             from src.services.media_enricher import topup_significance
             from src.services.reception import topup_reception
             from src.services.wikidata import topup_wikidata
@@ -2176,14 +2201,17 @@ async def generate_deletion_proposals(
                     if await asyncio.wait_for(topup_significance(
                             _it.get("title"), category, **_ids), timeout=20.0):
                         _warmed += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    # A miss stays unchecked and the judge defers the title.
+                    log_topup_failure(logger, "[deletions] warm-up significance",
+                                      _it.get("title"), _e)
                 try:
                     if await asyncio.wait_for(topup_reception(
                             _it.get("title"), category, **_ids), timeout=20.0):
                         _warmed_rec += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    log_topup_failure(logger, "[deletions] warm-up reception",
+                                      _it.get("title"), _e)
                 # Dialogue metrics: one Plex read per candidate, no LLM, no GPU.
                 # Cheap enough to sit here, and this is the only place that can
                 # fetch them — build_evidence runs inside the gate and may only
@@ -2194,8 +2222,9 @@ async def generate_deletion_proposals(
                             tmdb_id=_it.get("tmdb_id"),
                             tvdb_id=_it.get("tvdb_id")), timeout=25.0):
                         _warmed_sub += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    log_topup_failure(logger, "[deletions] warm-up dialogue",
+                                      _it.get("title"), _e)
                 try:
                     if await asyncio.wait_for(topup_wikidata(
                             _it.get("title"), category,
@@ -2203,8 +2232,9 @@ async def generate_deletion_proposals(
                             plex_rating_key=_it.get("plex_rating_key")),
                             timeout=25.0):
                         _warmed_wd += 1
-                except Exception:
-                    continue
+                except Exception as _e:
+                    log_topup_failure(logger, "[deletions] warm-up wikidata",
+                                      _it.get("title"), _e)
             if _warmed or _warmed_rec or _warmed_wd or _warmed_sub:
                 _msg(f"{category}: warmed {_warmed} significance, "
                      f"{_warmed_rec} reception, {_warmed_wd} on-record facts, "
@@ -2215,7 +2245,10 @@ async def generate_deletion_proposals(
                             category, _warmed, _warmed_rec, _warmed_wd,
                             _warmed_sub)
         except Exception as _e:
-            logger.debug("[deletions] pre-judge warm-up failed: %s", _e)
+            # Judging goes on with what is cached; the evidence gates defer
+            # anything the warm-up was meant to fill.
+            logger.warning("[deletions] pre-judge warm-up failed: %s", _e,
+                           exc_info=True)
         _gate_label = f"deletion scan: {category}"
         await curator_start(_gate_label, exclusive_model=pitch_model)
         # Whether THIS run currently owns a slot. The yield below drops it and
@@ -2442,7 +2475,7 @@ async def generate_deletion_proposals(
                 if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
                     try:
                         await evict_if_resident(pitch_model)
-                    except Exception as _ee:
+                    except Exception as _ee:  # noqa: BLE001 - teardown; keep_alive frees VRAM anyway
                         logger.debug("[deletions] pitcher evict failed: %s", _ee)
                 curator_done()
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
@@ -2811,7 +2844,7 @@ CRITICAL RULES AND GUARDRAILS:
             try:
                 from src.services.llm_priority import evict_if_resident
                 await evict_if_resident(pitch_model)
-            except Exception as _ee:
+            except Exception as _ee:  # noqa: BLE001 - teardown; keep_alive frees VRAM anyway
                 logger.debug("[deletions] pitcher evict failed: %s", _ee)
         curator_done()
 

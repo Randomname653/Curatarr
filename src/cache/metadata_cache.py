@@ -151,7 +151,7 @@ def _thread_slot(path: Path) -> _Slot:
     if slot is not None and (ident is None or slot.ident != ident):
         try:
             slot.conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - dropping a stale handle; a fresh one opens below
             pass
         slot = None
     if slot is None:
@@ -212,7 +212,7 @@ class MetadataCache:
     def __del__(self):
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - finalizer; raising here is only noise
             pass
 
     def _expires_at(self, days: int = 7) -> str:
@@ -494,5 +494,7 @@ class MetadataCache:
             try:
                 if slot.conn.in_transaction:
                     slot.conn.rollback()
-            except Exception:
-                pass
+            except Exception as e:
+                # The rollback is what releases a write lock left behind.
+                logger.warning("[cache] rollback on release failed - a write "
+                               "lock may linger: %s", e)

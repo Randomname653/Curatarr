@@ -26,6 +26,7 @@ from src.database.models import (
 )
 from src.routers.auth import get_current_user, require_admin
 from src.config import settings
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -249,8 +250,7 @@ async def _fetch_tmdb(
             from src.services.media_enricher import authoritative_tv_tmdb_id
             tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id)
         except Exception as e:
-            logger.debug("[recs] tvdb id authority check failed for %r: %s",
-                         title, e)
+            log_topup_failure(logger, "[recs] tvdb id authority", title, e)
 
     def _from_entry(data: dict) -> tuple:
         """Pull (poster, synopsis) out of a full TMDB movie/tv object."""
@@ -369,8 +369,8 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
                     if pic and "default_artist" not in pic:
                         return pic
             # No Deezer link / lookup whiffed — fall through to name search.
-        except Exception:
-            pass
+        except Exception as e:
+            log_topup_failure(logger, "[recs] deezer mbid", artist_name, e)
 
     # Fallback path: name search (popularity-sorted — best-effort).
     try:
@@ -388,8 +388,8 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
         # Deezer returns a generic silhouette for unknown artists — skip it
         if pic and "default_artist" not in pic:
             return pic
-    except Exception:
-        pass
+    except Exception as e:
+        log_topup_failure(logger, "[recs] deezer search", artist_name, e)
     return None
 
 
@@ -757,7 +757,7 @@ def get_upgrade_candidates(_user: User = Depends(require_admin)):
         from src.services.editions import upgrade_rows
         rows = rows + upgrade_rows()
     except Exception as e:
-        logger.debug("[upgrades] editions unavailable: %s", e)
+        logger.warning("[upgrades] editions rows unavailable: %s", e, exc_info=True)
     return {"candidates": rows}
 
 
@@ -802,13 +802,15 @@ async def get_redundancy(_user: User = Depends(require_admin)):
                         })
                     if files:
                         entry["files"] = files
-                except Exception:
-                    pass   # series keys carry no Media[] — panel degrades
+                except Exception as e:
+                    # Series keys carry no Media[] (handled above) — the panel
+                    # degrades; an outage stays at DEBUG, a bug warns.
+                    log_topup_failure(logger, "[redundancy] plex files", key, e)
 
             await _aio.gather(*[_attach_files(e)
                                 for e in rep.get("intra_item") or []])
     except Exception as e:
-        logger.debug("[redundancy] plex detail enrich failed: %s", e)
+        log_topup_failure(logger, "[redundancy] plex detail", "intra_item", e)
 
     # Second jump-off: the arr detail page. The cached candidate pool
     # already carries each item's ready-made arr_url — matched per
@@ -834,7 +836,7 @@ async def get_redundancy(_user: User = Depends(require_admin)):
             for c in grp.get("copies") or []:
                 _attach_arr(c)
     except Exception as e:
-        logger.debug("[redundancy] arr-url enrich failed: %s", e)
+        logger.warning("[redundancy] arr-url enrich failed: %s", e, exc_info=True)
     return rep
 
 
@@ -1518,7 +1520,7 @@ async def _arr_recycle_bin(service: str, client=None) -> dict:
         return {"recycle_bin": bool((data.get("recycleBin") or "").strip()),
                 "cleanup_days": days if isinstance(days, int) else None}
     except Exception as e:
-        logger.debug("[deletions] recycle-bin probe failed for %s: %s", service, e)
+        log_topup_failure(logger, "[deletions] recycle-bin probe", service, e)
         return unknown
     finally:
         if owns:
@@ -1884,8 +1886,8 @@ async def _run_bulk_delete_bg(task, user_id: int, ids: list[int], comment: str) 
                                 user_id, title, f"Deleted: {comment}",
                                 media_category=p.category or "show")
                         except Exception as e:
-                            logger.debug("[bulk-delete] comment learn failed for %r: %s",
-                                         title, e)
+                            log_topup_failure(logger, "[bulk-delete] comment learn",
+                                              title, e)
                     success = await _delete_one_and_log(db, user_id, p)
                     await _commit_outcome(db, p)
                     if success:
@@ -2293,8 +2295,8 @@ async def _plex_music_candidates() -> list:
     try:
         from src.services.plex_playlists import get_machine_identifier
         mid = await get_machine_identifier()
-    except Exception:
-        pass
+    except Exception as e:
+        log_topup_failure(logger, "[plex] machine id", "music candidates", e)
     base = str(settings.effective_plex_url).rstrip("/")
     items = []
     for a in arts:
@@ -2711,7 +2713,9 @@ async def _plex_delete_artist(key: str, client=None) -> Optional[bool]:
             from src.services.lyrics import mark_artist_gone
             mark_artist_gone(key)
         except Exception as e:
-            logger.debug("[plex] index update after delete failed: %s", e)
+            # The delete itself is confirmed; only the local index is stale.
+            logger.warning("[plex] artist %s gone, index update failed: %s", key, e,
+                           exc_info=True)
         return True
     except Exception as e:
         logger.error("[plex] delete failed for artist %s: %s", key, e)
@@ -2744,7 +2748,8 @@ async def _verify_arr_item_gone(client, url: str, headers: dict) -> Optional[boo
             if r.status_code == 404:
                 return True
         except Exception as e:
-            logger.debug("[arr] post-timeout verify GET failed: %s", e)
+            # Never proof either way — the caller treats None as limbo.
+            log_topup_failure(logger, "[arr] post-timeout verify", url, e)
         if attempt < _DELETE_VERIFY_POLLS - 1:
             await asyncio.sleep(_DELETE_VERIFY_INTERVAL_S)
     return None

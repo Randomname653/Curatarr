@@ -52,8 +52,8 @@ def _plex_error(resp) -> str:
     try:
         err = (resp.json() or {}).get("Error") or {}
         msg = str(err.get("message") or "")[:120]
-    except Exception:  # noqa: BLE001
-        pass
+    except (ValueError, TypeError, AttributeError):
+        pass                       # not a JSON error body: the status says enough
     return f"plex.tv returned {resp.status_code}" + (f": {msg}" if msg else "")
 
 # Curatarr category → Discover metadata type. Anime series live as "show".

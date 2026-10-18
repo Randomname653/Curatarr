@@ -510,9 +510,19 @@ def _enrichment_lookup(svc: str, item: dict, cache) -> dict | None:
                         "source": "raw metadata (awaiting polish)",
                         "_cached_at": row.get("created_at"),
                     }
-    except Exception:
-        pass
+    except Exception as e:
+        # Runs once per library row: one warning, not one per item.
+        if not _LOOKUP_WARNED:
+            _LOOKUP_WARNED.append(True)
+            logger.warning("[library] enrichment lookup failed for %r: %r",
+                           item.get("title") or item.get("artistName"), e,
+                           exc_info=True)
+        else:
+            logger.debug("[library] enrichment lookup failed: %s", e)
     return None
+
+
+_LOOKUP_WARNED: list = []
 
 
 # ── Pass 16i/16k: Arr library cache (in-memory + DB-persisted) ────────────
@@ -667,7 +677,7 @@ def _plex_music_library() -> "tuple[list, list, dict] | None":
         from src.services.lyrics import plex_artists
         arts = plex_artists()
     except Exception as e:
-        logger.debug("[library] plex music index unavailable: %s", e)
+        logger.warning("[library] plex music index unavailable: %s", e)
         return None
     if not arts:
         return None
@@ -1509,7 +1519,7 @@ def spotify_backlog(
         from src.services.lyrics import plex_artists
         in_lidarr.update(a["mbid"] for a in plex_artists() if a.get("mbid"))
     except Exception as e:
-        logger.debug("[backlog] plex index unavailable: %s", e)
+        logger.warning("[backlog] plex index unavailable: %s", e)
 
     # Pass 30: when not_added_only is on, the python-side in_lidarr filter
     # below culls already-added artists AFTER SQL aggregation. Without
@@ -1769,8 +1779,11 @@ async def library_breakdown(
                             return int(r.json()
                                        .get("MediaContainer", {})
                                        .get("totalSize", 0))
-                    except Exception:
-                        pass
+                    except (_httpx.HTTPError, ValueError) as e:
+                        logger.debug("[breakdown] Plex count for section %s failed: %s", key, e)
+                    except Exception as e:
+                        logger.warning("[breakdown] Plex count for section %s failed: %r",
+                                       key, e)
                     return 0
 
                 counts_out = await _asyncio.gather(

@@ -43,7 +43,7 @@ def _prog(task, message=None, processed=None, total=None):
         if total is not None:
             kw["total"] = total
         task_monitor.update(task, message=message, **kw)
-    except Exception:
+    except Exception:  # noqa: BLE001 - progress card only; the refresh is unaffected
         pass
 
 
@@ -236,8 +236,9 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
     try:
         set_state(_CURSOR_KEY, "0" if drained and len(rows) < budget * 3
                   else str(cursor))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[raw-refresh] cursor not saved, next tick repeats "
+                       "this stretch: %s", e)
     _prog(task, message=f"{done} raw entries refreshed", processed=done,
           total=max(budget, 1))
     logger.info("[raw-refresh] %d entries refreshed (cursor %s)", done, cursor)

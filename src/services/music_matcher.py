@@ -361,7 +361,7 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
                 "batch_size":    len(names),
                 "pct":           round(100 * queried / max(len(names), 1)),
             }))
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress panel only; the work itself is unaffected
             pass
 
     _emit_progress()  # initial — mark Phase 1.4 as live in the UI
@@ -717,7 +717,7 @@ async def enrich_music_genres_lastfm(
                 WatchHistoryEntry.source == "spotify",
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
             ).scalar()
-    except Exception:
+    except Exception:  # noqa: BLE001 - progress-panel stat only; matching is unaffected
         pass
 
     iterations_done = 0
@@ -750,7 +750,7 @@ async def enrich_music_genres_lastfm(
                         "artist_fallback": artist_fallback,
                         "pct":            round(100 * queried / max(len(unique_tracks), 1)),
                     }))
-                except Exception:
+                except Exception:  # noqa: BLE001 - progress panel only; the work itself is unaffected
                     pass
                 if _stop_requested():
                     logger.info("[music_matcher] Stop requested after %d Last.fm calls", queried)
@@ -912,7 +912,7 @@ async def enrich_music_genres_lastfm(
             "failed":          failed,
             "pct":             100,
         }))
-    except Exception:
+    except Exception:  # noqa: BLE001 - progress panel only; the work itself is unaffected
         pass
 
     return {
@@ -953,7 +953,7 @@ async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
         try:
             from src.services.task_monitor import task_monitor
             task_monitor.update(task, message=message, processed=done, total=4)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
             pass
 
     _prog("Phase 1: matching Spotify plays to Plex tracks…", 0)

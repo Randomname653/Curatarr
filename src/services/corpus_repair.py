@@ -49,8 +49,11 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
                             if isinstance(cand, dict):
                                 raw = cand
                                 break
-                except Exception:
-                    pass
+                except (ValueError, TypeError):
+                    pass    # an unparseable row is no trustworthy record
+                except Exception as e:
+                    logger.warning("[corpus-repair] stale prefetch read failed "
+                                   "for %s: %s", doc_id, e)
         finally:
             mc.close()
         if not isinstance(raw, dict):

@@ -67,7 +67,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
             if total is not None:
                 kw["total"] = total
             task_monitor.update(task, message=message, **kw)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the sync is unaffected
             pass
 
     if not soulsync_client._configured():
@@ -181,7 +181,8 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                 await client.refresh_artist(aid)
                 refreshed += 1
             except Exception as e:
-                logger.debug("[catalog-sync] refresh %s failed: %s", aid, e)
+                from src.services.enrichment_state import log_topup_failure
+                log_topup_failure(logger, "[catalog-sync] refresh", aid, e)
 
     result = {
         "ok": True,

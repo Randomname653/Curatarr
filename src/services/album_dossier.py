@@ -31,6 +31,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ async def _lidarr_artist_albums(artist_name: str) -> tuple[Optional[dict], list]
                                           "artistId": artist["id"]})).json()
             return artist, albums or []
     except Exception as e:
-        logger.debug("[album] lidarr fetch failed for %r: %s", artist_name, e)
+        log_topup_failure(logger, "[album] lidarr fetch", artist_name, e)
         return None, []
 
 
@@ -80,7 +81,8 @@ def _plex_album(artist_name: str, album_title: str) -> tuple:
             return None, None, []
         tracks = plex_album_tracks(alb["album_key"])
     except Exception as e:
-        logger.debug("[album] plex index failed for %r / %r: %s", artist_name, album_title, e)
+        logger.warning("[album] plex index failed for %r / %r: %s", artist_name,
+                       album_title, e, exc_info=True)
         return None, None, []
     artist_obj = {"id": a["artist_key"], "artistName": a.get("name"), "foreignArtistId": a.get("mbid")}
     album_obj = {"id": alb["album_key"], "title": alb.get("album"),
@@ -125,17 +127,17 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
 
     # album tracklist -> owner plays (LAN + one history query)
     tnames: list[str] = list(tnames_plex or [])
-    try:
-        if tnames or not settings.LIDARR_URL:
-            raise LookupError("tracklist known, or no Lidarr")
-        base = settings.LIDARR_URL.rstrip("/")
-        async with httpx.AsyncClient(timeout=15) as c:
-            tracks = (await c.get(f"{base}/api/v1/track",
-                                  params={"apikey": settings.LIDARR_API_KEY,
-                                          "albumId": alb["id"]})).json()
-        tnames = [t.get("title") for t in tracks if t.get("title")]
-    except Exception as e:
-        logger.debug("[album] tracklist failed: %s", e)
+    # Tracklist already known (Plex), or no Lidarr to ask.
+    if not tnames and settings.LIDARR_URL:
+        try:
+            base = settings.LIDARR_URL.rstrip("/")
+            async with httpx.AsyncClient(timeout=15) as c:
+                tracks = (await c.get(f"{base}/api/v1/track",
+                                      params={"apikey": settings.LIDARR_API_KEY,
+                                              "albumId": alb["id"]})).json()
+            tnames = [t.get("title") for t in tracks if t.get("title")]
+        except Exception as e:
+            log_topup_failure(logger, "[album] tracklist", album_title, e)
     if tnames:
         try:
             from sqlalchemy import func
@@ -157,7 +159,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
                 lines.append(f"Owner plays: NONE of the {len(tnames)} tracks "
                              "appear in the listening history")
         except Exception as e:
-            logger.debug("[album] history match failed: %s", e)
+            logger.warning("[album] history match failed: %s", e, exc_info=True)
 
     # Last.fm community numbers + tags
     # Lyrics on file for this album (Plex sidecars, src/services/lyrics.py) and
@@ -168,7 +170,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
         if ll:
             lines.append(ll)
     except Exception as e:
-        logger.debug("[album] lyrics line failed: %s", e)
+        logger.warning("[album] lyrics line failed: %s", e, exc_info=True)
 
     if settings.LASTFM_API_KEY:
         try:
@@ -191,7 +193,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
                     line += f"; tags: {', '.join(tags)}"
                 lines.append(line)
         except Exception as e:
-            logger.debug("[album] lastfm failed: %s", e)
+            log_topup_failure(logger, "[album] lastfm", album_title, e)
 
     # ListenBrainz: rank THIS album inside the artist's own catalogue by
     # global listens. Resolved independently of the judge's raw:music:*
@@ -208,7 +210,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
             if _hit and isinstance(_hit.get("response"), dict):
                 mbid = _hit["response"].get("mbid")
         except Exception as e:
-            logger.debug("[album] mb:artist fallback failed: %s", e)
+            logger.warning("[album] mb:artist cache fallback failed: %s", e)
     if mbid:
         try:
             from src.services.listenbrainz import (fetch_artist_popularity,
@@ -237,7 +239,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
                         f"Community (ListenBrainz): outside the top {len(pool)} "
                         f"of {lb['n_release_groups']} releases by global listens")
         except Exception as e:
-            logger.debug("[album] listenbrainz rank failed: %s", e)
+            log_topup_failure(logger, "[album] listenbrainz rank", album_title, e)
 
     # per-work Discogs styles from the offline snapshot
     try:
@@ -256,7 +258,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
                 if styles:
                     lines.append(f"Styles (Discogs): {', '.join(styles[:8])}")
     except Exception as e:
-        logger.debug("[album] discogs styles failed: %s", e)
+        logger.warning("[album] discogs styles failed: %s", e)
 
     # SoulSync (LAN neighbour): aggregated per-album metadata from its
     # enrichment workers — genres/style/tags/label fill in over time as the
@@ -281,7 +283,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
             if bits:
                 lines.append("SoulSync: " + "; ".join(bits))
     except Exception as e:
-        logger.debug("[album] soulsync failed: %s", e)
+        log_topup_failure(logger, "[album] soulsync", album_title, e)
 
     return "\n".join(lines)
 
