@@ -229,14 +229,15 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
 async def _run_taste_if_due(deep: bool = False) -> bool:
     """Trigger-based: recompute taste vectors once enough NEW profiles landed
     since the last compute (the manual button's job, automated)."""
+    from sqlalchemy import func
     from src.database.connection import get_db_session
     from src.database.models import EnrichmentStatus
     from src.services.scheduler import _last_job_run
     last = _last_job_run("custodian_taste") or datetime(1970, 1, 1)
     with get_db_session() as db:
-        fresh = (db.query(EnrichmentStatus)
+        fresh = (db.query(func.count(EnrichmentStatus.id))
                  .filter(EnrichmentStatus.enriched == True,
-                         EnrichmentStatus.enriched_at > last).count())
+                         EnrichmentStatus.enriched_at > last).scalar())
     if fresh < 100 and not deep:
         return True   # nothing meaningful to recompute — counts as done
     uid = _admin_id()

@@ -1780,12 +1780,13 @@ async def bulk_approve_deletions(
     ids = list({int(i) for i in (req.ids or [])})   # dedupe, keep ints
     if not ids:
         raise HTTPException(400, "No proposal ids given")
+    from sqlalchemy import func
     with get_db_session() as db:
-        n = db.query(DeletionProposal).filter(
+        n = db.query(func.count(DeletionProposal.id)).filter(
             DeletionProposal.id.in_(ids),
             DeletionProposal.user_id == user.id,
             DeletionProposal.status.in_(["pending", "limbo"]),
-        ).count()
+        ).scalar()
     if not n:
         raise HTTPException(404, "No matching open proposals")
 

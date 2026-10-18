@@ -143,8 +143,9 @@ async def match_spotify_to_plex(user_id: int) -> dict:
 
         # Early-out BEFORE the Plex fetch: nothing new since the cursor means
         # no work — skip the section download + index build entirely.
+        from sqlalchemy import func
         new_plays = (
-            db.query(WatchHistoryEntry.id)
+            db.query(func.count(WatchHistoryEntry.id))
             .filter(
                 WatchHistoryEntry.user_id    == user_id,
                 WatchHistoryEntry.source     == "spotify",
@@ -152,7 +153,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
                 WatchHistoryEntry.id > since_id,
             )
-            .count()
+            .scalar()
         )
     if new_plays == 0:
         logger.info("[music_matcher] No new Spotify plays since cursor %d — "
@@ -710,11 +711,12 @@ async def enrich_music_genres_lastfm(
     # Pre-load matching stats once so the progress block can include them
     _total_unmatched = 0
     try:
+        from sqlalchemy import func
         with get_db_session() as _db:
-            _total_unmatched = _db.query(WatchHistoryEntry).filter(
+            _total_unmatched = _db.query(func.count(WatchHistoryEntry.id)).filter(
                 WatchHistoryEntry.source == "spotify",
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
-            ).count()
+            ).scalar()
     except Exception:
         pass
 
