@@ -58,15 +58,32 @@ CURATOR = "curator"
 _CPU_CAPABLE = (SUMMARIZER,)
 
 
+_probe_errors: dict = {}      # probe -> the last error text logged
+
+
+def _probe_failed(probe: str, e: Exception) -> None:
+    """Fail open stays (a broken probe must not stop all LLM work), but it
+    was DEBUG: a persistent bug in process_monitor silently switched off the
+    GPU-pressure and game guards. WARNING once per distinct error — the lane
+    is asked every few seconds."""
+    text = f"{type(e).__name__}: {e}"
+    if _probe_errors.get(probe) != text:
+        _probe_errors[probe] = text
+        logger.warning("[lane] %s unavailable — treated as no %s until it works: %s",
+                       probe, "GPU pressure" if probe == "gpu_pressure" else "game", text)
+
+
 def _pressed() -> bool:
     """True when something that is not Ollama has been holding the GPU long
     enough to count (process_monitor.gpu_pressure, 30 s cache, 45 s hold)."""
     try:
         from src.services.process_monitor import gpu_pressure
-        return bool(gpu_pressure())
-    except Exception as e:                                   # pragma: no cover
-        logger.debug("[lane] gpu_pressure unavailable: %s", e)
+        res = bool(gpu_pressure())
+    except Exception as e:
+        _probe_failed("gpu_pressure", e)
         return False
+    _probe_errors.pop("gpu_pressure", None)
+    return res
 
 
 def _game() -> bool:
@@ -75,10 +92,12 @@ def _game() -> bool:
     thing that drops frames."""
     try:
         from src.services.process_monitor import game_process_running
-        return bool(game_process_running())
-    except Exception as e:                                   # pragma: no cover
-        logger.debug("[lane] game detection unavailable: %s", e)
+        res = bool(game_process_running())
+    except Exception as e:
+        _probe_failed("game detection", e)
         return False
+    _probe_errors.pop("game detection", None)
+    return res
 
 
 _ram_cache = {"at": 0.0, "free_mb": None}

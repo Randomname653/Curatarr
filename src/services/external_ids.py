@@ -32,6 +32,7 @@ to undo. Anything still ambiguous after both steps is left alone.
 """
 import json
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +183,10 @@ def _match(raw: dict, index: dict, families: tuple):
     return None, None
 
 
-async def build_arr_id_index() -> dict:
+async def build_arr_id_index(failed: Optional[list] = None) -> dict:
     """{"tv": {"by_name":…, "by_id":…}, "movie": {…}} from whatever *arr is
-    configured."""
+    configured. A configured *arr that could not be read is appended to
+    ``failed`` (when given)."""
     from src.config import settings
     from src.services.arr_client import RadarrClient, SonarrClient
 
@@ -207,7 +209,9 @@ async def build_arr_id_index() -> dict:
                 entries = await getattr(client, method)() or []
             index[fam] = {"by_name": _index(entries), "by_id": _by_id(entries)}
         except Exception as e:
-            logger.debug("[external-ids] %s unavailable: %s", fam, e)
+            logger.warning("[external-ids] %s unavailable: %r", fam, e)
+            if failed is not None:
+                failed.append(fam)
     return index
 
 
@@ -281,7 +285,17 @@ async def harvest(cache, *, limit: int = 0, task=None, should_stop=None,
     from src.cache.metadata_cache import write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
 
-    index = await build_arr_id_index()
+    failed: list = []
+    index = await build_arr_id_index(failed)
+    if failed:
+        # A partial index is worse than none: with Sonarr missing, a film of
+        # the same name and year is the only candidate left and claims the
+        # series' IMDb id, and _recheck would revert claims it can no longer
+        # see. This used to log at DEBUG and carry on.
+        logger.warning("[external-ids] harvest skipped — %s library unavailable",
+                       ", ".join(failed))
+        return {"source": "external_ids", "visited": 0, "added": 0,
+                "reverted": 0, "error": f"{', '.join(failed)} unavailable"}
     if not any(index[f]["by_name"] or index[f]["by_id"] for f in index):
         return {"source": "external_ids", "visited": 0, "added": 0,
                 "reverted": 0}

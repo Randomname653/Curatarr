@@ -76,7 +76,11 @@ def get_profile() -> dict:
         if stored.get("model"):
             prof.update(stored)
     except Exception as e:
-        logger.debug("[embed] profile read failed (using default): %s", e)
+        # Serve the default for this call only. It used to be cached for the
+        # process lifetime, so one transient read failure (a locked DB at
+        # boot) pinned the wrong model + collection after any migration.
+        logger.warning("[embed] profile read failed (default used, not cached): %s", e)
+        return prof
     _profile_cache["value"] = prof
     return prof
 

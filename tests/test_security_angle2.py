@@ -163,7 +163,11 @@ def test_plex_sync_is_single_flight():
     ps = _src("src/services/plex_sync.py")
     assert 'acquire_state_lock("plex_sync_running")' in ps and 'release_state_lock("plex_sync_running")' in ps
     assert "async def _sync_plex_history_impl(" in ps
-    assert _src("src/main.py").count('set_state("plex_sync_running", "0")') == 2, "stale lock cleared at boot and shutdown"
+    mn = _src("src/main.py")
+    boot = mn[mn.index("Reset any stuck flags"):mn.index("interrupted deletion")]
+    assert ('"plex_sync_running"' in boot and 'set_state(_flag, "0")' in boot
+            and mn.count('set_state("plex_sync_running", "0")') == 1), \
+        "stale lock cleared at boot and shutdown"
 
 
 def test_request_shapes_reject_abuse_values():

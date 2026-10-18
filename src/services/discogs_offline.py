@@ -16,6 +16,7 @@ clients, so this module never retries aggressively.
 """
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import logging
@@ -123,12 +124,18 @@ def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
         from src.config import settings
         base = (settings.LIDARR_URL or "").rstrip("/")
         if base and settings.LIDARR_API_KEY:
-            r = httpx.get(f"{base}/api/v1/artist",
-                          params={"apikey": settings.LIDARR_API_KEY},
-                          timeout=30)
-            if r.status_code == 200:
-                for a in r.json():
-                    _add(a.get("artistName") or "", a.get("genres"))
+            # The Library Manager's cached list first; the live list (a
+            # couple of minutes on a big Lidarr) only when there is none.
+            from src.services.lidarr_discography import cached_lidarr_artists
+            artists = cached_lidarr_artists()
+            if artists is None:
+                from src.services.arr_client import listing_timeout
+                r = httpx.get(f"{base}/api/v1/artist",
+                              params={"apikey": settings.LIDARR_API_KEY},
+                              timeout=httpx.Timeout(listing_timeout(), connect=10.0))
+                artists = r.json() if r.status_code == 200 else []
+            for a in artists:
+                _add(a.get("artistName") or "", a.get("genres"))
     except Exception as e:
         logger.debug("[discogs] lidarr artist list failed: %s", e)
     try:
@@ -224,10 +231,13 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
     = the custodian's Activity card (MB progress for the long stream)."""
     if _fresh() and not force and max_bytes is None:
         return {"skipped": "fresh"}
-    key = _latest_masters_key()
+    # Both are blocking (a synchronous httpx GET each, 30 s and up to the
+    # arr listing budget): run on the event loop they froze every request
+    # and SSE stream of the server while they waited.
+    key = await asyncio.to_thread(_latest_masters_key)
     if not key:
         return {"error": "no dump key"}
-    wanted = _library_artists()
+    wanted = await asyncio.to_thread(_library_artists)
     if not wanted:
         return {"error": "no library artists"}
     url = f"{DATA_INDEX}?download={key}"
@@ -311,6 +321,14 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
                 if max_bytes and read_c >= max_bytes:
                     stopped = "test window"
                     break
+
+    if stopped in ("game", "zlib"):
+        # A partial dump must not replace a complete one: the rebuild below
+        # DROPs the tables first, and the fresh mtime would then hold the
+        # near-empty result for MAX_AGE_DAYS. "error" keeps the task due.
+        logger.warning("[discogs] stream stopped (%s) after %.0f MB - existing "
+                       "styles DB kept", stopped, read_c / 1e6)
+        return {"error": f"stopped: {stopped}", "read_mb": round(read_c / 1e6, 1)}
 
     STYLES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(STYLES_DB_PATH)

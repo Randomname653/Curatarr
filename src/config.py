@@ -174,6 +174,12 @@ class Settings(BaseSettings):
     SONARR_API_KEY: Optional[str] = None
     LIDARR_URL: Optional[str] = None
     LIDARR_API_KEY: Optional[str] = None
+    # Read timeout for a FULL library listing (/api/v1/artist, /api/v3/movie,
+    # /api/v3/series): the time an arr may take to start and keep streaming.
+    # Lidarr computes per-artist statistics first — 124 s measured on 5,211
+    # artists — so the old 60-90 s budgets failed every time on a big
+    # library. Connecting still fails within 10 s, so a down arr is quick.
+    ARR_LISTING_TIMEOUT_S: int = 240
 
     # ── Metadata APIs ────────────────────────────────────────────────────────
     TMDB_API_KEY: Optional[str] = None

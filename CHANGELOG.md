@@ -76,6 +76,55 @@ DEBUG; `update_db.py` refuses to run while Curatarr is up and backs the
 database up first. A "Your call" card that the household rule produced
 says so in its tooltip.
 
+**Failures that say so** (`docs/SILENT_FAILURE_SWEEP_2026_10.md`). A sweep of the
+code's error handlers, after the taste-cluster read that failed silently for months, found
+a second one like it. The memory extractor read its thread's subject after the database
+session had closed, so no discussion thread got one, and a verdict from a "how was it?"
+thread never reached the taste profile. Deletions now stop instead of judging without a
+protection they could not read: a Keep cooldown, the curator's stances, recent plays,
+Plex star ratings, listening depth or the learned keep-reasons. An artist whose listening
+history could not be read is no longer "never played"; it is deferred. Game mode no longer
+switches off when a status probe or the flag write fails, and an unreadable game flag
+counts as a game. Each stale lock is cleared at start on its own. Service addresses
+spelled as a decimal, hex or IPv6-mapped number no longer get past the link-local check.
+A Discogs download cut short keeps the complete styles database, and a MusicBrainz outage
+no longer parks artists as "no match". In the browser, badge, banner and hover colours
+are back (four colour tokens referred to themselves); a bulk delete whose progress can't
+be read says so; a failed start-up check no longer opens the Setup wizard.
+
+**…and the follow-up.** Signing out on another device, or a deactivated account, now
+ends the session in every open tab at once, with the reason on the sign-in screen. Before,
+the views showed a Retry that could never work, and the bell and Activity kept failing in
+the background. Activity says when its live stream is down and retries with growing gaps.
+The deletion judge defers a title when the owner's feedback, keep-reasons, principles or
+verified facts could not be read. A Last.fm, OpenSubtitles or Plex outage, a spent
+subtitle quota or a rejected key is retried, not recorded as "no genres" or "no subtitles"
+for good. A profile whose vector never reached the vector store is embedded again on the
+next pass. A failed save after a delete no longer fails the rest of a bulk delete, and a
+Plex artist delete that can't be confirmed is listed as unconfirmed rather than failed or
+done. "Test connection" refuses a host name that resolves to a cloud-metadata address,
+Spotify uploads are bounded, and sign-in errors no longer echo library or plex.tv text.
+Re-attributing history to household accounts runs off the event loop in short writes;
+a large Plex sync commits as it goes; the weekly VACUUM waits for long jobs and skips files
+with little to reclaim; and a music enricher running outside the server keeps its claim
+across a server restart. A new test keeps the number of silent error handlers from
+growing.
+
+**…and the rest of the list.** 80 endpoints that only read or write the database
+now run off the event loop, so a slow query no longer freezes the UI and its live streams.
+Failing titles go to the back of the enrichment walkers' queue. Setup refuses an address
+that resolves to a cloud-metadata host. A failed read no longer turns into a confident
+answer:
+- the vector store reports dimension mismatches;
+- an unreadable memory flush stops "+ New" from deleting the chat (you can still clear anyway);
+- a rebake that failed is not shown as an installed model update;
+- a GPU check that times out counts as busy;
+- an empty download never replaces the anime mapping;
+- a Plex outage keeps playlist and collection pushes due instead of deleting the shelves.
+
+The views say when a request failed instead of showing stale or empty state, deleting
+explains a lost reason, and "Why?" closes with Escape.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

@@ -1,12 +1,16 @@
 // ── NOTIFICATION CENTER (bell: proactive messages + system notifications) ────
 import { api } from './api.js';
 import { state } from './state.js';
-import { EL, act, esc, escAttr, setBadge } from './ui.js';
+import { EL, _errHtml, act, esc, escAttr, setBadge } from './ui.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 // seen === true only when the panel is open and the message is on screen —
 // the 60 s badge poll must not count as an impression, or every message
 // retires unread after ~40 minutes of an open tab. Strict === because
 // setInterval may hand the callback a stray argument.
+// Consecutive failed polls. The whole poll sat in `catch {}`: the badge and
+// list froze at their last values for as long as the server failed.
+let _bellFails = 0;
+
 export async function loadUnreadMessages(seen) {
   try {
     const r = await api(seen === true ? '/api/messages/unread?seen=1' : '/api/messages/unread');
@@ -22,10 +26,12 @@ export async function loadUnreadMessages(seen) {
     // System notifications (services/notifications.py): model updates today,
     // more kinds later — one list, rendered the same way. The server names an
     // action KEY; only the handlers in SYS_ACTIONS can run from here.
-    let sys = {items: [], needs_action: 0};
-    try { sys = await api('/api/system/notifications'); } catch {}
+    let sys = {items: [], needs_action: 0}, sysOk = true;
+    try { sys = await api('/api/system/notifications'); } catch { sysOk = false; }
     // The Settings bubble in the sidebar: what waits for an admin decision.
-    setBadge('settings-badge', sys.needs_action || 0);
+    // A failed read keeps the last count: zeroing it hid a pending
+    // model-update decision whenever this one call failed.
+    if (sysOk) setBadge('settings-badge', sys.needs_action || 0);
     const badge = document.getElementById('msg-badge');
     const total = (r.total || 0) + principles.length + (sys.needs_action || 0);
     badge.textContent = total;
@@ -75,7 +81,16 @@ export async function loadUnreadMessages(seen) {
       if (r.total > 1) html += `<div class="mp-more">${r.total - 1} more waiting</div>`;
     }
     list.innerHTML = html || '<div id="msg-empty">No new notifications</div>';
-  } catch {}
+    _bellFails = 0;
+  } catch (e) {
+    // A 401 already ended the session in api(). Anything else: the third
+    // miss in a row marks the bell and puts the error in the panel.
+    if (++_bellFails < 3) return;
+    const badge = document.getElementById('msg-badge');
+    if (badge) { badge.textContent = '!'; badge.classList.add('show'); }
+    const list = document.getElementById('msg-list');
+    if (list) list.innerHTML = _errHtml(e, act('loadUnreadMessages'));
+  }
 }
 
 // The only handlers a system notification may trigger, by the key the

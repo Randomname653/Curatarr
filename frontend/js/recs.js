@@ -166,7 +166,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
     if (!r.recommendations?.length) {
       // No cache yet — kick off a background build of BOTH lanes and poll.
       el.innerHTML = emptyHtml('Generating recommendations from your library and beyond — about 2–4 minutes the first time. This view updates on its own.');
-      api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
+      _startRefresh(category);
       _pollRecsUntilFresh(category, btn, null);
       return;
     }
@@ -200,17 +200,57 @@ export function setRecLane(lane, btn) {
 // cached lanes and reload once something new is there — a moved stamp when
 // regenerating, anything at all on a first build. Killed after 5 min and
 // whenever the category changes (loadRecs stops it first).
+// prevStamp: a string = the stamp to move past; null = first build (wait for
+// anything); undefined = unknown (the stamp read failed) — the first answer
+// becomes the baseline instead of counting as fresh, which is what the old
+// 'none' sentinel did with the OLD cache.
+// The poll used to swallow every error, and the 5-minute kill switch left
+// "updates on its own" on screen for good; both now say what happened.
+const RECS_POLL_MAX_FAILS = 5;
+export function _recsFresh(baseline, r) {
+  return baseline ? !!(r.cached_at && r.cached_at !== baseline) : !!r.recommendations?.length;
+}
 export function _pollRecsUntilFresh(cat, btn, prevStamp) {
   _stopRecsPoll();
+  let baseline = prevStamp, fails = 0;
+  const stillHere = () => state.currentRecsCategory === cat && document.getElementById('recs-content');
   state._recsPollTimer = setInterval(async () => {
     if (state.currentRecsCategory !== cat) { _stopRecsPoll(); return; }
+    let r2;
     try {
-      const r2 = await api('/api/recommendations/?limit=8' + (cat ? `&category=${cat}` : '') + '&source=cache' + _laneParam());
-      const fresh = prevStamp ? (r2.cached_at && r2.cached_at !== prevStamp) : !!r2.recommendations?.length;
-      if (fresh) { _stopRecsPoll(); loadRecs(cat, btn, false); }
-    } catch {}
+      r2 = await api('/api/recommendations/?limit=8' + (cat ? `&category=${cat}` : '') + '&source=cache' + _laneParam());
+      fails = 0;
+    } catch (e) {
+      if (++fails >= RECS_POLL_MAX_FAILS) {
+        _stopRecsPoll();
+        const el = stillHere();
+        if (el) el.innerHTML = _errHtml(e, act('reloadRecs'));
+      }
+      return;
+    }
+    if (baseline === undefined) { baseline = r2.cached_at || null; if (baseline) return; }
+    if (_recsFresh(baseline, r2)) { _stopRecsPoll(); loadRecs(cat, btn, false); }
   }, 15000);
-  state._recsPollKillswitch = setTimeout(_stopRecsPoll, 300000);
+  state._recsPollKillswitch = setTimeout(() => {
+    _stopRecsPoll();
+    const el = stillHere();
+    if (el) el.innerHTML = emptyHtml('Still generating after 5 minutes — this view stopped checking. Reload to see whether the new recommendations are in.', 'Reload', act('reloadRecs'));
+  }, 300000);
+}
+
+// Start the background build. 409 = one is already running for you, which
+// the poll picks up like any other; anything else (429 rate limit, 500)
+// means nothing is being built, so the "updates on its own" note goes.
+async function _startRefresh(cat) {
+  try {
+    await api('/api/recommendations/refresh-cache', 'POST');
+  } catch (e) {
+    if (e.status === 409) return;
+    if (state.currentRecsCategory !== cat) return;
+    _stopRecsPoll();
+    const el = document.getElementById('recs-content');
+    if (el) el.innerHTML = _errHtml(e, act('regenerateRecs'));
+  }
 }
 
 export function _laneParam() {
@@ -220,15 +260,15 @@ export function _laneParam() {
 export async function regenerateRecs() {
   _stopRecsPoll();
   const cat = state.currentRecsCategory;
-  let prevStamp = null;
+  let prevStamp;   // undefined: unknown — the poll takes its first answer as the baseline
   try {
     const cur = await api('/api/recommendations/?source=cache' + (cat ? `&category=${cat}` : ''));
     prevStamp = cur.cached_at || null;
-  } catch {}
+  } catch { /* unknown stays undefined, never a sentinel the old stamp would "beat" */ }
   document.getElementById('recs-content').innerHTML =
     emptyHtml('Regenerating both lanes — library picks and fresh discoveries across every category, ~2-4 min. The view updates on its own.');
-  api('/api/recommendations/refresh-cache', 'POST').catch(()=>{});
-  _pollRecsUntilFresh(cat, null, prevStamp || 'none');
+  _pollRecsUntilFresh(cat, null, prevStamp);
+  _startRefresh(cat);
 }
 
 // Same reason as reloadDeletions: a handler string cannot read module state.

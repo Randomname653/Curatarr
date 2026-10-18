@@ -35,6 +35,7 @@ import httpx
 from src.config import settings
 from src.services.anime_mapping import get_anime_mapping
 from src.services.app_state import get_state, set_state
+from src.services.enrichment_state import is_transient_error
 
 logger = logging.getLogger(__name__)
 
@@ -95,18 +96,26 @@ async def _tmdb_meta(client: httpx.AsyncClient, tvdb_id: int) -> tuple[list, boo
         return [c for c in o.split(",") if c], a == "1"
     origin: list = []
     animated = False
+    # Only a 200 is an answer worth caching. An exception or a 429/5xx used
+    # to be cached as "#0" (no origin, not animated) with no expiry, so one
+    # TMDB hiccup classified a series as non-anime for good.
     try:
         r = await client.get(
             f"https://api.themoviedb.org/3/find/{tvdb_id}",
             params={"external_source": "tvdb_id", "api_key": settings.TMDB_API_KEY},
         )
-        if r.status_code == 200:
-            res = r.json().get("tv_results") or []
-            if res:
-                origin = res[0].get("origin_country") or []
-                animated = 16 in (res[0].get("genre_ids") or [])
+        if r.status_code != 200:
+            logger.debug("[lib-sort] TMDB meta lookup for tvdb %s -> HTTP %s",
+                         tvdb_id, r.status_code)
+            return origin, animated
+        res = r.json().get("tv_results") or []
+        if res:
+            origin = res[0].get("origin_country") or []
+            animated = 16 in (res[0].get("genre_ids") or [])
     except Exception as e:
-        logger.debug("[lib-sort] TMDB meta lookup failed for tvdb %s: %s", tvdb_id, e)
+        logger.log(logging.DEBUG if is_transient_error(e) else logging.WARNING,
+                   "[lib-sort] TMDB meta lookup failed for tvdb %s: %r", tvdb_id, e)
+        return origin, animated
     set_state(ck, f"{','.join(origin)}#{'1' if animated else '0'}")
     return origin, animated
 
@@ -256,15 +265,18 @@ async def scan_misclassified() -> dict:
 
 # ── Stage 2: apply selected reclassifications (the only write path) ──────────
 
-def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
+def _recategorize_local(sonarr_id: int, new_cat: str,
+                        errors: Optional[list] = None) -> Optional[str]:
     """Re-file one item's category inside Curatarr WITHOUT re-enriching.
 
     Four cheap, best-effort updates that keep ``(title, category)`` aligned so
     the next enrichment scan SKIPS the item (no TMDB re-fetch, no re-embed, no
     LLM): the two persisted category columns, the MetadataCache profile key,
     and the ChromaDB vector's domain/media_type quarantine metadata. Returns
-    the previous category (for the result log).
+    the previous category (for the result log). A step that fails is named
+    in ``errors`` (when given) so the caller can report a partial apply.
     """
+    errors = errors if errors is not None else []
     key = f"sonarr:{sonarr_id}"
     old_cat = None
     try:
@@ -285,6 +297,7 @@ def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
             db.commit()
     except Exception as e:
         logger.warning("[lib-sort] DB recategorize failed for %s: %s", key, e)
+        errors.append(f"db: {e}"[:120])
 
     if not old_cat or old_cat == new_cat:
         return old_cat
@@ -304,6 +317,7 @@ def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
             mc.set_cache(f"enriched:{new_cat}:{key}", payload, days=3650)
     except Exception as e:
         logger.warning("[lib-sort] cache re-key failed for %s: %s", key, e)
+        errors.append(f"cache: {e}"[:120])
 
     # ChromaDB: flip the vector's domain/media_type so gated retrieval files it
     # under the new category. Metadata-only — the embedding itself is untouched.
@@ -322,6 +336,7 @@ def _recategorize_local(sonarr_id: int, new_cat: str) -> Optional[str]:
             # original fire-and-forget here as a silent no-op.
     except Exception as e:
         logger.warning("[lib-sort] vector re-categorize failed for %s: %s", key, e)
+        errors.append(f"vector: {e}"[:120])
     return old_cat
 
 
@@ -374,7 +389,17 @@ async def apply_reclassify(items: list) -> dict:
                 sim["seriesType"] = fix.get("seriesType", series.get("seriesType"))
                 new_cat = classify_sonarr_category(sim) if series else (
                     "anime" if fix.get("seriesType") == "anime" else "show")
-                old_cat = await asyncio.to_thread(_recategorize_local, sid, new_cat)
+                # Sonarr has accepted the change at this point. A local step
+                # that fails used to be swallowed and the row still said
+                # ok:True, so Curatarr kept filing the series under the old
+                # category with nothing telling the owner.
+                local_errors: list = []
+                try:
+                    old_cat = await asyncio.to_thread(_recategorize_local, sid,
+                                                      new_cat, local_errors)
+                except Exception as _le:
+                    old_cat = None
+                    local_errors.append(f"local: {_le}"[:120])
                 # Facet points carry their own domain copy — rewrite them in
                 # THIS async context (the sync helper runs in a worker
                 # thread where a fire-and-forget task has no loop).
@@ -389,11 +414,20 @@ async def apply_reclassify(items: list) -> dict:
                 except Exception as _fe:
                     logger.debug("[lib-sort] facet re-categorize failed for %s: %s",
                                  sid, _fe)
-                results.append({"sonarr_id": sid, "title": title, "ok": True, "moved": move,
-                                "old_category": old_cat, "new_category": new_cat})
+                row = {"sonarr_id": sid, "title": title, "ok": True, "moved": move,
+                       "old_category": old_cat, "new_category": new_cat}
+                if local_errors:
+                    logger.warning("[lib-sort] %s: Sonarr updated but local re-file "
+                                   "incomplete: %s", sid, local_errors)
+                    row.update(ok="partial", partial=True,
+                               message="Sonarr updated; Curatarr's local re-file failed ("
+                                       + "; ".join(local_errors) + ")")
+                results.append(row)
             except Exception as e:
                 logger.warning("[lib-sort] apply failed for %s: %s", sid, e)
                 results.append({"sonarr_id": sid, "title": title, "ok": False,
                                 "error": str(e)[:200]})
     ok = sum(1 for r in results if r.get("ok"))
-    return {"applied": ok, "failed": len(results) - ok, "results": results}
+    partial = sum(1 for r in results if r.get("partial"))
+    return {"applied": ok, "failed": len(results) - ok, "partial": partial,
+            "results": results}

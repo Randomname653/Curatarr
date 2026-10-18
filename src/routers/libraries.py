@@ -182,7 +182,7 @@ class LibraryConfigRequest(BaseModel):
 
 
 @router.post("/configure")
-async def configure_libraries(
+def configure_libraries(
     req: LibraryConfigRequest,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -215,7 +215,7 @@ async def configure_libraries(
 
 
 @router.get("/config")
-async def get_library_config(
+def get_library_config(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

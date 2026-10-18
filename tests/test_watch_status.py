@@ -104,7 +104,10 @@ def test_music_listening_stats_early_exit():
 
 
 def test_music_listening_stats_exception():
-    # A DB failure is silence, not a crash — the caller renders "no plays".
+    # A DB failure RAISES. It used to be silence rendered as "NO recorded
+    # plays" - the judge's strongest CUT signal, for an artist whose history
+    # simply could not be read. The deletion evidence turns it into UNKNOWN
+    # (deferred); the chat callers say the record is unreadable.
     import contextlib
 
     @contextlib.contextmanager
@@ -113,7 +116,12 @@ def test_music_listening_stats_exception():
         yield
 
     with patch("src.database.connection.get_db_session", new=_boom):
-        assert music_listening_stats(1, "Artist") is None
+        try:
+            music_listening_stats(1, "Artist")
+            raised = False
+        except Exception:
+            raised = True
+        assert raised
 
 
 # ── watched_lookup / watch_tag: music is plays of tracks, never episodes ────────

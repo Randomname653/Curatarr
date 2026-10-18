@@ -116,12 +116,14 @@ def _track_task(task: asyncio.Task) -> asyncio.Task:
 def _gaming() -> bool:
     """True when the game watcher has flagged a game as running. LLM-heavy
     scheduler jobs check this and skip — no point fighting the game for VRAM
-    (Pass 75)."""
+    (Pass 75). An unreadable flag counts as a game: the jobs behind this
+    check load the LLM, and guessing "no game" is the guess that can OOM one."""
     try:
         from src.services.app_state import get_state
         return get_state("game_active") == "1"
-    except Exception:
-        return False
+    except Exception as e:
+        logger.warning("[scheduler] game flag unreadable - treating as a game: %s", e)
+        return True
 
 
 async def job_game_watcher():
@@ -140,17 +142,33 @@ async def job_game_watcher():
     ``unload_llm_models`` is /api/ps-aware, so a tick with VRAM already clear
     is just one cheap GET.
     """
+    from src.database.runner import run_write
+    from src.services.process_monitor import is_game_running, unload_llm_models
+    from src.services.app_state import set_states_if_changed
+    from src.services.llm_lane import status as lane_status
+    # Both readings block: nvidia-smi (up to 4 s), a synchronous GET of
+    # Ollama's /api/ps (2 s), psutil's process walk. On the event loop
+    # they froze every request and SSE stream once per tick — the 30 s
+    # caches inside expire on the same 30 s cadence, so nearly every tick
+    # paid in full. A worker thread does the waiting now.
     try:
-        from src.database.runner import run_write
-        from src.services.process_monitor import is_game_running, unload_llm_models
-        from src.services.app_state import set_states_if_changed
-        from src.services.llm_lane import status as lane_status
-        # Both readings block: nvidia-smi (up to 4 s), a synchronous GET of
-        # Ollama's /api/ps (2 s), psutil's process walk. On the event loop
-        # they froze every request and SSE stream once per tick — the 30 s
-        # caches inside expire on the same 30 s cadence, so nearly every tick
-        # paid in full. A worker thread does the waiting now.
         running = await asyncio.to_thread(is_game_running)
+    except Exception as e:
+        logger.warning("[game watcher] game probe failed: %s", e, exc_info=True)
+        return
+    # The eviction comes first and stands alone. It sat behind the lane
+    # reading and the flag write in one try with a DEBUG except, so a failing
+    # UI-only lane probe or a locked database switched game-mode enforcement
+    # off, silently, every 30 s.
+    if running:
+        try:
+            unloaded = await unload_llm_models()
+            if unloaded:
+                logger.info("[game watcher] game active — evicted from VRAM: %s",
+                            ", ".join(unloaded))
+        except Exception as e:
+            logger.warning("[game watcher] VRAM eviction failed: %s", e)
+    try:
         # The lane is a switch, so it gets watched like the game flag: one
         # reading per tick, persisted for the UI and logged on every change,
         # so the log tells the story afterwards instead of only the moment.
@@ -172,13 +190,10 @@ async def job_game_watcher():
         if "llm_lane" in changed:   # logged on transition, not every 30 s
             logger.info("[lane] %s -> %s%s", changed["llm_lane"] or "unknown", mode,
                         f" ({st['reason']})" if st["reason"] else "")
-        if running:
-            unloaded = await unload_llm_models()
-            if unloaded:
-                logger.info("[game watcher] game active — evicted from VRAM: %s",
-                            ", ".join(unloaded))
     except Exception as e:
-        logger.debug("[game watcher] tick failed: %s", e)
+        # game_active is what every LLM job checks: a write that keeps
+        # failing must be visible.
+        logger.warning("[game watcher] lane/flag update failed: %s", e, exc_info=True)
 
 
 def start_scheduler():
@@ -336,7 +351,10 @@ async def _startup_check():
             logger.info("[startup] Game running — skipping rec-cache + overdue catch-ups")
             return
     except Exception as _e:
-        logger.debug("[startup] game check failed: %s", _e)
+        # Not knowing is not "no game": the work below loads the LLM.
+        logger.warning("[startup] game check failed - skipping rec-cache + "
+                       "catch-ups; the schedule picks them up: %s", _e)
+        return
 
     try:
         from src.database.connection import get_db_session
@@ -392,11 +410,17 @@ async def _resume_music_pipeline_if_needed(user_id: int):
         logger.info("[startup] Music pipeline was interrupted — resuming automatically")
         await asyncio.sleep(15)  # give the API a moment to be fully ready
 
-        from src.services.app_state import get_state as _gs
-        if _gs("music_pipeline_running") == "1":
-            return  # already running (shouldn't happen after flag reset on startup)
+        # Take the lease before resuming: this used to check the flag and
+        # then run WITHOUT holding it, so the custodian (or an out-of-process
+        # enricher) could start beside the resumed run. _run_music_pipeline
+        # releases it in its finally.
+        from src.services import state_lease
+        if not await asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
+            logger.info("[startup] Music pipeline held by another runner — not resuming")
+            return
 
         set_state("music_pipeline_stop_requested", "0")
+        set_state("music_pipeline_owner", str(user_id))
         _track_task(asyncio.create_task(
             _run_music_pipeline_bg(user_id),
             name=f"music_pipeline_resume_user_{user_id}",
@@ -1120,6 +1144,26 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
         return 0
 
 
+# Below this share of free pages a full VACUUM rewrites the file for little:
+# skip it (the 2026-10-11 concurrency audit, gating).
+_VACUUM_MIN_FREE_RATIO = 0.2
+# Long writers a VACUUM would stall for its whole rewrite.
+_VACUUM_BUSY_FLAGS = ("enrichment_running", "music_pipeline_running",
+                      "plex_sync_running", "deletion_run")
+
+
+def _free_page_ratio(path: str) -> float:
+    """freelist_count / page_count of one SQLite file (read-only)."""
+    import sqlite3
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    try:
+        pages = conn.execute("PRAGMA page_count").fetchone()[0] or 0
+        free = conn.execute("PRAGMA freelist_count").fetchone()[0] or 0
+        return free / pages if pages else 0.0
+    finally:
+        conn.close()
+
+
 def _vacuum_sqlite_file(path: str) -> None:
     """Blocking VACUUM of one SQLite file — run it off the event loop.
 
@@ -1190,10 +1234,26 @@ async def job_db_vacuum():
         task_monitor.skip(task, "No SQLite files found to vacuum")
         return
 
+    # A VACUUM holds the write lock for the whole rewrite: every writer that
+    # comes along waits up to the busy timeout and then fails. Not while a
+    # long job is writing - the task stays due and the next tick tries again.
+    from src.services.app_state import get_state
+    busy = [k for k in _VACUUM_BUSY_FLAGS if get_state(k) == "1"]
+    if busy:
+        task_monitor.skip(task, "Postponed - running: " + ", ".join(busy))
+        logger.info("[scheduler] vacuum postponed: %s running", ", ".join(busy))
+        return False
+
     summary_lines = []
     failed = False
     for label, path in targets:
         try:
+            ratio = await asyncio.to_thread(_free_page_ratio, path)
+            if ratio < _VACUUM_MIN_FREE_RATIO:
+                line = f"{label}: {ratio:.0%} free pages - nothing worth a rewrite"
+                summary_lines.append(line)
+                logger.info("[scheduler] vacuum skipped %s", line)
+                continue
             size_before = os.path.getsize(path)
             await asyncio.to_thread(_vacuum_sqlite_file, path)
             size_after = os.path.getsize(path)

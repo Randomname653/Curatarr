@@ -35,6 +35,7 @@ from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_opt
                                     fence_untrusted, scrub_untrusted)
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
 
 
 # Pass 99-fu2: prompt version tag for the two-tier cache split.
@@ -962,7 +963,7 @@ async def fetch_significance(
             # significance vocabulary, within the same total budget.
             extract = _significance_slice(extract)
     except Exception as e:
-        logger.debug("[significance] Wikipedia fetch failed for %r: %s", title, e)
+        log_topup_failure(logger, "[significance] Wikipedia", title, e)
         return None
 
     # Scrubbed, not fenced: the template above is hashed into the cache
@@ -1307,7 +1308,11 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] fast-enrich on cache-miss failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] fast-enrich", title, e)
+
+    # The top-ups below all log through log_topup_failure: they used to log at
+    # DEBUG, so a crash (a bug: every verdict reasoning from thin data) looked
+    # exactly like a timeout. Timeouts/outages stay DEBUG; anything else warns.
 
     # Archive-pillar grounding: fetch the title's cultural/historical significance
     # from Wikipedia (once, cached) so the curator can judge "is this a defining
@@ -1332,7 +1337,7 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] significance top-up failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] significance", title, e)
 
     # Community-reception grounding (AniList/MAL/TMDB reviews) — the judge's
     # blind spot on obscure titles. Same contract as the significance top-up:
@@ -1354,7 +1359,7 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] reception top-up failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] reception", title, e)
 
     # Studio reputation note (Wikipedia lead -> summarizer, once per STUDIO
     # ever) — the Princess Lover! debate flipped on exactly this knowledge
@@ -1373,7 +1378,7 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] studio note failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] studio-note", title, e)
 
     # Director reputation note — JIT-ONLY (4.3k distinct directors forbid a
     # bulk walker; debated titles collect the relevant names fast).
@@ -1390,7 +1395,7 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] director note failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] director-note", title, e)
 
     # Franchise/tags catch-up for docs reception-checked before relations
     # existed — one AniList call + a local snapshot read, no LLM involved,
@@ -1410,7 +1415,7 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] franchise top-up failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] franchise", title, e)
 
     # ListenBrainz global popularity (music only) — raw API top-up, no LLM,
     # so like the OMDb block below it is NOT allow_summarizer-gated: the
@@ -1432,7 +1437,7 @@ async def ensure_verified_data(
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
         except Exception as e:
-            logger.debug("[verified] listenbrainz top-up failed for %r: %s", title, e)
+            log_topup_failure(logger, "[verified] listenbrainz", title, e)
 
     # Fully OMDb-checked (incl. the ratings era), has the fields, or no
     # imdb_id → done. Docs checked before the full-harvest fix (writer/awards
@@ -1454,7 +1459,7 @@ async def ensure_verified_data(
                 plex_rating_key=plex_rating_key, cache=cache,
             )
     except Exception as e:
-        logger.debug("[verified] OMDb top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[verified] OMDb", title, e)
     return data
 
 
@@ -1470,6 +1475,9 @@ def _domain_for_write(media_type, genres) -> str:
         return mt
     g = genres if isinstance(genres, str) else ", ".join(genres or [])
     return "anime" if "anime" in g.lower() else "show"
+
+
+_SIG_ATTEMPTS_KEY = "significance_backfill_attempts"
 
 
 async def run_significance_backfill(limit: int = 150, task=None) -> dict:
@@ -1517,6 +1525,18 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     finally:
         cache.close()
 
+    # Never-tried rows first, then the least recently tried: a fixed order
+    # put the same failing rows at the front of every pass (see the
+    # reception walker, which hid a bug for months that way).
+    from src.services.enrichment_state import load_walker_attempts, save_walker_attempts
+
+    def _row_key(row) -> str:
+        k = row["cache_key"]
+        return k.split(":", 1)[1] if k.startswith("v2:") else k
+
+    attempts = load_walker_attempts(_SIG_ATTEMPTS_KEY)
+    rows = sorted(rows, key=lambda r: attempts.get(_row_key(r), ""))
+
     total = len(rows)
     checked = added = 0
     for row in rows[:limit]:
@@ -1549,8 +1569,10 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             ):
                 added += 1
         except Exception as e:
-            logger.debug("[significance-backfill] %r failed: %s", title, e)
+            log_topup_failure(logger, "[significance-backfill]", title, e)
+        attempts[_row_key(row)] = datetime.now().isoformat(timespec="seconds")
         checked += 1
+    save_walker_attempts(_SIG_ATTEMPTS_KEY, attempts, keep={_row_key(r) for r in rows})
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}
 
@@ -1849,9 +1871,13 @@ def _merge_source_into_raw(raw: dict, source: str, data: Optional[dict],
     except Exception as _me:
         # _merge_raw_metadata historically crashed on shape drift
         # (Pass 99-fu11 float-rating bug). Don't let a merge failure
-        # take down the whole streaming run — log + keep the
-        # setdefault'd data we already have.
-        logger.debug("[stream] merge into raw failed for %s: %s", source, _me)
+        # take down the whole streaming run — keep the setdefault'd data.
+        # That data skipped the merge's adult-genre guard, though, so an
+        # arr-supplied 'Hentai' rode through unconfirmed while the source
+        # still read "ok"; strip it here, and warn — this is a bug.
+        logger.warning("[stream] merge into raw failed for %s on %r: %r",
+                       source, raw.get("title"), _me, exc_info=True)
+        _strip_unconfirmed_adult_genres(raw, norm, source)
 
     # Provenance label: comma-join the contributing source names.
     existing_label = raw.get("source") or ""
@@ -2319,8 +2345,15 @@ def _match_override_ids(plex_rating_key) -> dict:
             if _rejected:
                 pin["_rejected"] = _rejected
     except Exception as _e:
-        logger.debug("[enricher] match-override lookup failed: %s", _e)
-        return {}
+        # This used to return {} at DEBUG, i.e. "no pin": the item was then
+        # resolved from the arr's ids — the very entity the owner rejected —
+        # and that wrong match was written. Fail as transient instead: the
+        # item stays due and is retried once the DB answers.
+        logger.warning("[enricher] match-override lookup failed for %s: %r",
+                       plex_rating_key, _e)
+        raise TransientFetchError(
+            {"match_override": {"status": "transient", "error": repr(_e)[:120]}},
+            retry_after_s=2.0) from _e
     if pin:
         logger.info("[enricher] owner match override active for %s (%s)",
                     plex_rating_key,
@@ -2700,6 +2733,11 @@ async def _fetch_jikan(mal_id: int = None, title: str = None,
     Free, no key needed. Returns synopsis, genres, themes, demographics, score.
     ``rejected``: MAL ids the owner excluded ("Not this one") — skipped in
     the title search.
+
+    Only the NETWORK step maps to ``TRANSIENT``. Parsing used to sit inside
+    the same ``except Exception``, so a shape change (a KeyError) read as a
+    Jikan outage and the source was paused as down; a parse failure is a bug
+    in our reader — logged at WARNING and returned as a miss (None).
     """
     _ensure_concurrency_primitives()
     rejected = set(rejected or ())
@@ -2711,75 +2749,91 @@ async def _fetch_jikan(mal_id: int = None, title: str = None,
                 r = await client.get("https://api.jikan.moe/v4/anime",
                     params={"q": title, "limit": 8})
                 if r.status_code == 200:
-                    results = [x for x in r.json().get("data", [])
-                               if x.get("mal_id") not in rejected]
-                    if not results:
+                    try:
+                        matched = _jikan_pick_match(r.json(), title, rejected)
+                    except Exception as e:
+                        logger.warning("Jikan search parse failed for %r: %r", title, e)
                         return None
-                    # Validate title match before using any result
-                    matched = None
-                    for result in results:
-                        candidate_titles = [
-                            result.get("title", ""),
-                            result.get("title_english", ""),
-                            result.get("title_japanese", ""),
-                        ]
-                        if _titles_close_enough(title, candidate_titles):
-                            matched = result
-                            break
                     if not matched:
-                        logger.debug(
-                            "Jikan title search '%s' → no close match in top %d results, skipping",
-                            title, len(results)
-                        )
                         return None
-                    mal_id = matched["mal_id"]
+                    mal_id = matched
                     r = await client.get(f"https://api.jikan.moe/v4/anime/{mal_id}/full")
             else:
                 return None
-
-            if r.status_code == 429:
-                logger.debug("Jikan rate limited for '%s' — skipping supplement", title or mal_id)
-                return TRANSIENT          # throttled — not "no such anime"
-            if r.status_code >= 500:
-                return TRANSIENT          # Jikan down
-            if r.status_code != 200:
-                return None
-            data = r.json().get("data", {})
-        if not data:
-            return None
-
-        # Extract themes, demographics, explicit genres
-        explicit_genres = [g["name"] for g in data.get("explicit_genres", [])]
-        themes = [t["name"] for t in data.get("themes", [])]
-        demographics = [d["name"] for d in data.get("demographics", [])]
-        genres = [g["name"] for g in data.get("genres", [])]
-
-        return {
-            "source": "mal",
-            "mal_id": data.get("mal_id"),
-            # The entity Jikan resolved to — evidence for the match score /
-            # the "found X (year)" explanation; absent before the healing work.
-            "title": data.get("title_english") or data.get("title"),
-            "year": data.get("year") or ((data.get("aired") or {}).get("prop") or {})
-                                         .get("from", {}).get("year"),
-            "synopsis": (data.get("synopsis") or "")[:800],
-            "genres": genres,
-            "themes": themes,
-            "demographics": demographics,
-            "explicit_genres": explicit_genres,
-            "score": data.get("score"),
-            "scored_by": data.get("scored_by"),
-            "rank": data.get("rank"),
-            "popularity": data.get("popularity"),
-            "episodes": data.get("episodes"),
-            "status": data.get("status"),
-            "rating": data.get("rating"),  # e.g. "R - 17+ (violence & profanity)"
-            "studios": [s["name"] for s in data.get("studios", [])],
-            "source_material": data.get("source"),  # e.g. "Manga", "Light novel"
-        }
     except Exception as e:
         logger.debug("Jikan error for %s/%s: %s", mal_id, title, e)
         return TRANSIENT
+
+    if r.status_code == 429:
+        logger.debug("Jikan rate limited for '%s' — skipping supplement", title or mal_id)
+        return TRANSIENT          # throttled — not "no such anime"
+    if r.status_code >= 500:
+        return TRANSIENT          # Jikan down
+    if r.status_code != 200:
+        return None
+    try:
+        return _jikan_supplement(r.json().get("data", {}))
+    except Exception as e:
+        logger.warning("Jikan response parse failed for %s/%s: %r", mal_id, title, e)
+        return None
+
+
+def _jikan_pick_match(payload: dict, title: str, rejected: set) -> Optional[int]:
+    """The MAL id of the first search hit whose title is close enough, or None."""
+    results = [x for x in payload.get("data", [])
+               if x.get("mal_id") not in rejected]
+    if not results:
+        return None
+    # Validate title match before using any result
+    for result in results:
+        candidate_titles = [
+            result.get("title", ""),
+            result.get("title_english", ""),
+            result.get("title_japanese", ""),
+        ]
+        if _titles_close_enough(title, candidate_titles):
+            return result["mal_id"]
+    logger.debug(
+        "Jikan title search '%s' → no close match in top %d results, skipping",
+        title, len(results)
+    )
+    return None
+
+
+def _jikan_supplement(data: dict) -> Optional[dict]:
+    """Shape a Jikan ``/anime/{id}/full`` ``data`` object as a supplement."""
+    if not data:
+        return None
+
+    # Extract themes, demographics, explicit genres
+    explicit_genres = [g["name"] for g in data.get("explicit_genres", [])]
+    themes = [t["name"] for t in data.get("themes", [])]
+    demographics = [d["name"] for d in data.get("demographics", [])]
+    genres = [g["name"] for g in data.get("genres", [])]
+
+    return {
+        "source": "mal",
+        "mal_id": data.get("mal_id"),
+        # The entity Jikan resolved to — evidence for the match score /
+        # the "found X (year)" explanation; absent before the healing work.
+        "title": data.get("title_english") or data.get("title"),
+        "year": data.get("year") or ((data.get("aired") or {}).get("prop") or {})
+                                     .get("from", {}).get("year"),
+        "synopsis": (data.get("synopsis") or "")[:800],
+        "genres": genres,
+        "themes": themes,
+        "demographics": demographics,
+        "explicit_genres": explicit_genres,
+        "score": data.get("score"),
+        "scored_by": data.get("scored_by"),
+        "rank": data.get("rank"),
+        "popularity": data.get("popularity"),
+        "episodes": data.get("episodes"),
+        "status": data.get("status"),
+        "rating": data.get("rating"),  # e.g. "R - 17+ (violence & profanity)"
+        "studios": [s["name"] for s in data.get("studios", [])],
+        "source_material": data.get("source"),  # e.g. "Manga", "Light novel"
+    }
 
 
 _ADULT_TAGS = {
@@ -2810,6 +2864,30 @@ _ADULT_CONFIRMING_SOURCES = {"anilist", "jikan", "mal", "anidb"}
 def _lists_adult_genre(d: dict) -> bool:
     pool = (d.get("genres") or []) + (d.get("explicit_genres") or [])
     return any(str(g).lower() in _ADULT_GENRES for g in pool)
+
+
+def _strip_unconfirmed_adult_genres(raw: dict, norm: dict, source: str) -> None:
+    """The merge's adult-genre guard, for a raw dict the merge never reached.
+
+    Confirmation is narrower than in the merge (only THIS source or a content
+    rating counts): on a crashed merge we fail closed.
+    """
+    confirmed = (str(source).lower() in _ADULT_CONFIRMING_SOURCES
+                 and _lists_adult_genre(norm))
+    for d in (raw, norm):
+        rating = d.get("rating")
+        if isinstance(rating, str) and ("Rx" in rating or "Hentai" in rating):
+            confirmed = True
+    if confirmed:
+        return
+    for key in ("genres", "explicit_genres"):
+        vals = raw.get(key)
+        if isinstance(vals, list):
+            kept = [g for g in vals if str(g).lower() not in _ADULT_GENRES]
+            if len(kept) != len(vals):
+                raw[key] = kept
+                logger.info("[merge] dropped unconfirmed adult genre(s) from %s for %r "
+                            "after a failed merge", key, raw.get("title"))
 
 
 def _merge_raw_metadata(primary: dict, *supplements) -> dict:
@@ -3629,9 +3707,11 @@ async def fetch_and_prepare_raw(
         except Exception as _e:
             # Pass 43 (B3): MediaIdentity lookup is best-effort; the
             # caller fills missing IDs via direct API calls when this
-            # fast-path returns nothing. Log so persistent DB issues
-            # don't hide behind the silent swallow.
-            logger.debug("[enricher] MediaIdentity merge failed: %s", _e)
+            # fast-path returns nothing. WARNING, not DEBUG: without these
+            # ids the item falls back to a title search, which is where
+            # same-named wrong entities come from.
+            logger.warning("[enricher] MediaIdentity merge failed for %s: %r",
+                           plex_rating_key, _e)
 
     # The arr handed us a tmdbId; TMDB's own tvdb index is the primary record
     # of that cross-reference and overrules it. Not for a pinned entity — the
@@ -4037,17 +4117,37 @@ async def process_and_save(raw: dict) -> Optional[dict]:
     if match_conf is not None:
         profile["match_confidence"] = match_conf
 
+    # Vector first, cache second. The profile used to be cached as final
+    # BEFORE the embed, and an embed or Chroma failure was logged at DEBUG:
+    # the item was marked enriched, every later run took the "already
+    # enriched" exit, and it was never embedded. A failed write now rides in
+    # the cached profile as ``vector_pending``; the next run re-embeds it from
+    # the cache (an embedding call, no summariser call).
+    if not await store_profile_vector(profile, media_type=media_type,
+                                      fallback_title=raw.get("title", "")):
+        profile["vector_pending"] = True
     if cache_key:
         cache = MetadataCache()
         cache.set_cache(cache_key, profile, days=30)
         cache.close()
 
-    # Generate embedding and store in ChromaDB
+    return profile
+
+
+async def store_profile_vector(profile: dict, *, media_type: str,
+                               fallback_title: str = "") -> bool:
+    """Embed a polished profile and upsert it into ChromaDB. True when the
+    vector landed, or there was nothing to embed; False when it should be
+    retried. Ids come off the profile (plex key, TMDB, AniList, title)."""
+    plex_rating_key = profile.get("plex_rating_key")
+    tmdb_id = profile.get("tmdb_id")
+    anilist_id = profile.get("anilist_id")
+    gen = None
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
         from src.vector_store.chromadb_wrapper import chroma_db
 
-        title = profile.get("title", raw.get("title", ""))
+        title = profile.get("title", fallback_title)
         text_to_embed = profile.get("embedding_text")
         if not text_to_embed and media_type == "music":
             text_to_embed = (
@@ -4055,46 +4155,56 @@ async def process_and_save(raw: dict) -> Optional[dict]:
                 f"Tags: {', '.join(profile.get('keywords', [])[:8])}."
             )
 
-        if text_to_embed:
-            gen = EmbeddingGenerator()
-            vec = await gen.generate_embedding(text_to_embed)
-            if vec:
-                doc_id = str(plex_rating_key or tmdb_id or anilist_id or title)
-                _dom = _domain_for_write(media_type, profile.get("genres"))
-                chroma_meta = {
-                    "title": title,
-                    "media_type": _dom,
-                    "domain": _dom,   # hard quarantine key for gated retrieval
-                    "genres": ", ".join(profile.get("genres", [])[:6]
-                                       if isinstance(profile.get("genres"), list) else []),
-                    "themes": ", ".join(profile.get("themes", [])[:6]
-                                       if isinstance(profile.get("themes"), list) else []),
-                    "mood": ", ".join(profile.get("mood", [])
-                                     if isinstance(profile.get("mood"), list) else []),
-                    "year": profile.get("year") or 0,
-                }
-                # Upsert, not add: a re-enrich must replace the vector too
-                # (add keeps the old one for an existing id — see the wrapper).
-                chroma_db.upsert_documents(
-                    documents=[text_to_embed],
-                    embeddings=[vec],
-                    metadatas=[chroma_meta],
-                    ids=[doc_id],
-                )
-                # Facet points (multi-vector items, stage 1) — isolated so a
-                # facet failure can never break the main index write.
-                try:
-                    from src.services.facet_index import write_facets
-                    await write_facets(doc_id, title, media_type,
-                                       chroma_meta["genres"],
-                                       profile.get("themes"))
-                except Exception as _fe:
-                    logger.debug("facet write failed for %r: %s", title, _fe)
-            await gen.close()
-    except Exception as e:
-        logger.debug("ChromaDB store failed for '%s': %s", profile.get("title", "?"), e)
-
-    return profile
+        if not text_to_embed:
+            return True
+        gen = EmbeddingGenerator()
+        vec = await gen.generate_embedding(text_to_embed)
+        if not vec:
+            logger.warning("[enricher] no embedding for %r - vector retried next run",
+                           title)
+            return False
+        doc_id = str(plex_rating_key or tmdb_id or anilist_id or title)
+        _dom = _domain_for_write(media_type, profile.get("genres"))
+        chroma_meta = {
+            "title": title,
+            "media_type": _dom,
+            "domain": _dom,   # hard quarantine key for gated retrieval
+            "genres": ", ".join(profile.get("genres", [])[:6]
+                               if isinstance(profile.get("genres"), list) else []),
+            "themes": ", ".join(profile.get("themes", [])[:6]
+                               if isinstance(profile.get("themes"), list) else []),
+            "mood": ", ".join(profile.get("mood", [])
+                             if isinstance(profile.get("mood"), list) else []),
+            "year": profile.get("year") or 0,
+        }
+        # Upsert, not add: a re-enrich must replace the vector too
+        # (add keeps the old one for an existing id — see the wrapper).
+        chroma_db.upsert_documents(
+            documents=[text_to_embed],
+            embeddings=[vec],
+            metadatas=[chroma_meta],
+            ids=[doc_id],
+        )
+        # Facet points (multi-vector items, stage 1) — isolated so a
+        # facet failure can never break the main index write.
+        try:
+            from src.services.facet_index import write_facets
+            await write_facets(doc_id, title, media_type,
+                               chroma_meta["genres"],
+                               profile.get("themes"))
+        except Exception as _fe:
+            logger.debug("facet write failed for %r: %s", title, _fe)
+        return True
+    except Exception:
+        logger.exception("[enricher] ChromaDB store failed for %r - vector retried next run",
+                         profile.get("title") or fallback_title)
+        return False
+    finally:
+        if gen is not None:
+            try:
+                await gen.close()
+            except Exception:
+                pass
 
 
 # ── MAIN ENRICHMENT ENTRY POINT ───────────────────────────────────────────────
@@ -4170,9 +4280,11 @@ async def enrich_media_item(
         except Exception as _e:
             # Pass 43 (B3): MediaIdentity lookup is best-effort; the
             # caller fills missing IDs via direct API calls when this
-            # fast-path returns nothing. Log so persistent DB issues
-            # don't hide behind the silent swallow.
-            logger.debug("[enricher] MediaIdentity merge failed: %s", _e)
+            # fast-path returns nothing. WARNING, not DEBUG: without these
+            # ids the item falls back to a title search, which is where
+            # same-named wrong entities come from.
+            logger.warning("[enricher] MediaIdentity merge failed for %s: %r",
+                           plex_rating_key, _e)
 
     # Same id authority as the bulk path — otherwise the two disagree about
     # which work this is, and the cache key they write under disagrees with it.

@@ -34,6 +34,7 @@ from sqlalchemy import update
 from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
+from src.services.enrichment_state import TRANSIENT
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +143,9 @@ async def match_spotify_to_plex(user_id: int) -> dict:
 
         # Early-out BEFORE the Plex fetch: nothing new since the cursor means
         # no work — skip the section download + index build entirely.
+        from sqlalchemy import func
         new_plays = (
-            db.query(WatchHistoryEntry.id)
+            db.query(func.count(WatchHistoryEntry.id))
             .filter(
                 WatchHistoryEntry.user_id    == user_id,
                 WatchHistoryEntry.source     == "spotify",
@@ -151,7 +153,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
                 WatchHistoryEntry.id > since_id,
             )
-            .count()
+            .scalar()
         )
     if new_plays == 0:
         logger.info("[music_matcher] No new Spotify plays since cursor %d — "
@@ -380,6 +382,11 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
             failed += 1
             continue
 
+        if profile is TRANSIENT:
+            # Throttled / down is not "no match": recording a miss here parked
+            # every artist of an outage batch for 14-90 days.
+            failed += 1
+            continue
         mbid = (profile or {}).get("mbid")
         if not mbid:
             failed += 1
@@ -586,6 +593,34 @@ async def enrich_music_genres_spotify(user_id: int, batch: int = 200) -> dict:
 
 _LASTFM_BASE  = "https://ws.audioscrobbler.com/2.0/"
 _LASTFM_DELAY = 0.25   # 250ms between requests ≈ 4 req/s (well within free-tier limits)
+
+# Five unanswered calls in a row is an outage, not five obscure tracks.
+_LASTFM_OUTAGE_STREAK = 5
+
+
+class _LastfmTransient(Exception):
+    """Last.fm did not answer the question (timeout, 5xx, rate limit, key)."""
+
+
+def _lastfm_json(resp) -> dict:
+    """The answer as a dict, or _LastfmTransient when there is none.
+
+    Last.fm reports most failures as JSON with an ``error`` code, often under
+    HTTP 200: 6 is "not found" (a real answer: no tags), everything else -
+    29 rate limit, 10/26 key, 11/16 service down, 8 operation failed - says
+    nothing about the track."""
+    try:
+        data = resp.json()
+    except ValueError:
+        raise _LastfmTransient(f"HTTP {resp.status_code}, not JSON")
+    if not isinstance(data, dict):
+        raise _LastfmTransient("unexpected answer shape")
+    err = data.get("error")
+    if err is not None and err != 6:
+        raise _LastfmTransient(f"Last.fm error {err}: {data.get('message', '')}")
+    if err is None and resp.status_code >= 400:
+        raise _LastfmTransient(f"HTTP {resp.status_code}")
+    return data
 _STOP_CHECK   = 20     # check stop flag every N Last.fm calls
 
 # Generic tags that add no meaningful genre signal
@@ -676,17 +711,26 @@ async def enrich_music_genres_lastfm(
     # Pre-load matching stats once so the progress block can include them
     _total_unmatched = 0
     try:
+        from sqlalchemy import func
         with get_db_session() as _db:
-            _total_unmatched = _db.query(WatchHistoryEntry).filter(
+            _total_unmatched = _db.query(func.count(WatchHistoryEntry.id)).filter(
                 WatchHistoryEntry.source == "spotify",
                 WatchHistoryEntry.plex_item_id.like("spotify%"),
-            ).count()
+            ).scalar()
     except Exception:
         pass
 
     iterations_done = 0
+    transient_streak = 0
     async with httpx.AsyncClient(timeout=15) as client:
         for i, (norm_key, (artist, title, _ids)) in enumerate(unique_tracks):
+            # An outage is not "Last.fm has no tags": tracks it could not
+            # answer for stay NULL (retried), and five in a row end the batch.
+            if transient_streak >= _LASTFM_OUTAGE_STREAK:
+                logger.warning("[music_matcher] Last.fm unavailable (%d failures in a "
+                               "row) — stopping this batch; the rest stays queued",
+                               transient_streak)
+                break
             iterations_done = i + 1
             if not artist or not title:
                 failed += 1
@@ -726,21 +770,29 @@ async def enrich_music_genres_lastfm(
                         "autocorrect": 1,
                     },
                 )
-                data = resp.json()
+                data = _lastfm_json(resp)
                 tags = data.get("track", {}).get("toptags", {}).get("tag", [])
                 # Last.fm returns a single tag as a bare dict instead of [dict].
                 if isinstance(tags, dict):
                     tags = [tags]
                 queried += 1
+                transient_streak = 0
 
                 good_tags = [
                     t["name"] for t in tags
                     if isinstance(t, dict) and t.get("name") and t["name"].lower() not in _SKIP_TAGS
                 ][:5]
 
-            except Exception as exc:
-                logger.debug("[music_matcher] track.getInfo failed for %r / %r: %s",
+            except (_LastfmTransient, httpx.HTTPError) as exc:
+                logger.debug("[music_matcher] track.getInfo transient for %r / %r: %s",
                              artist, title, exc)
+                failed += 1
+                transient_streak += 1
+                await asyncio.sleep(_LASTFM_DELAY)
+                continue
+            except Exception as exc:
+                logger.warning("[music_matcher] track.getInfo failed for %r / %r: %s",
+                               artist, title, exc)
                 failed += 1
 
             await asyncio.sleep(_LASTFM_DELAY)
@@ -765,7 +817,7 @@ async def enrich_music_genres_lastfm(
                         "autocorrect": 1,
                     },
                 )
-                data2      = resp2.json()
+                data2      = _lastfm_json(resp2)
                 artist_tags = data2.get("toptags", {}).get("tag", [])
                 if isinstance(artist_tags, dict):
                     artist_tags = [artist_tags]
@@ -776,18 +828,26 @@ async def enrich_music_genres_lastfm(
                     if isinstance(t, dict) and t.get("name") and t["name"].lower() not in _SKIP_TAGS
                 ][:5]
 
+                transient_streak = 0
                 if good_tags:
                     genre_map[norm_key] = ",".join(good_tags)
                     artist_fallback += 1
                 else:
-                    # Both queries returned nothing useful — mark for negative cache
+                    # Both queries ANSWERED with nothing useful — negative cache
                     no_data_keys.add(norm_key)
 
-            except Exception as exc:
-                logger.debug("[music_matcher] artist.getTopTags failed for %r: %s",
+            except (_LastfmTransient, httpx.HTTPError) as exc:
+                # Timeout, 5xx, a rate-limit or bad-key answer: leave genres
+                # NULL so the track is retried. Writing "" here took a whole
+                # outage batch out of the retry pool for good.
+                logger.debug("[music_matcher] artist.getTopTags transient for %r: %s",
                              artist, exc)
                 failed += 1
-                no_data_keys.add(norm_key)
+                transient_streak += 1
+            except Exception as exc:
+                logger.warning("[music_matcher] artist.getTopTags failed for %r: %s",
+                               artist, exc)
+                failed += 1
 
             await asyncio.sleep(_LASTFM_DELAY)
 

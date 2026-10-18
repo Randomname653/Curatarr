@@ -180,15 +180,21 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
         return True
     # Audit #7: same lock as the manual /music/start endpoint — the two
     # paths used to run the pipeline CONCURRENTLY into MusicBrainz/Last.fm.
-    from src.services.app_state import acquire_state_lock, release_state_lock
-    if not acquire_state_lock("music_pipeline_running"):
+    # The cross-process lease: scripts/music_enricher.py holds the same key
+    # from another OS process.
+    from src.services import state_lease
+    from src.services.app_state import set_state
+    if not await asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
         logger.info("[custodian] music pipeline already running — retry next tick")
         return False
+    set_state("music_pipeline_owner", "")          # no member's run: only an admin may stop it
     batch = 2000 if deep else 1000
     try:
         r = await run_music_pipeline(uid, batch=batch, task=task)
     finally:
-        release_state_lock("music_pipeline_running")
+        # Synchronous on purpose: an await here is skipped when the drain at
+        # shutdown cancels this task a second time, leaving the lease held.
+        state_lease.release("music_pipeline_running")
     # Top-track metadata warm phase (Pass 69) — its only caller used to be
     # the retired job_music_pipeline, so the track-obsession discuss cache
     # went cold when the custodian absorbed the pipeline (audit #10).
@@ -223,14 +229,15 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
 async def _run_taste_if_due(deep: bool = False) -> bool:
     """Trigger-based: recompute taste vectors once enough NEW profiles landed
     since the last compute (the manual button's job, automated)."""
+    from sqlalchemy import func
     from src.database.connection import get_db_session
     from src.database.models import EnrichmentStatus
     from src.services.scheduler import _last_job_run
     last = _last_job_run("custodian_taste") or datetime(1970, 1, 1)
     with get_db_session() as db:
-        fresh = (db.query(EnrichmentStatus)
+        fresh = (db.query(func.count(EnrichmentStatus.id))
                  .filter(EnrichmentStatus.enriched == True,
-                         EnrichmentStatus.enriched_at > last).count())
+                         EnrichmentStatus.enriched_at > last).scalar())
     if fresh < 100 and not deep:
         return True   # nothing meaningful to recompute — counts as done
     uid = _admin_id()
@@ -464,8 +471,16 @@ async def _run_collections(deep: bool = False, task=None) -> bool:
         return False
     _prog(task, message=f"Pushing {len(designs)} shelf design(s) to Plex…")
     res = await push_collections(designs)
-    logger.info("[custodian] collections pushed: %s", res)
     _prog(task, message=f"Pushed: {res}")
+    # push_collections deletes the old shelves before it creates new ones, so
+    # a run whose creates failed (Plex down mid-push) left the household with
+    # no shelves — and returning True stamped that as done until next week.
+    if (res or {}).get("created", 0) < len(designs):
+        logger.warning("[custodian] collections: only %s of %d shelves created — "
+                       "task stays due: %s", (res or {}).get("created", 0),
+                       len(designs), res)
+        return False
+    logger.info("[custodian] collections pushed: %s", res)
     return True
 
 

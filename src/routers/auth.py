@@ -89,7 +89,10 @@ def _decode_jwt(token: str) -> dict:
     try:
         return jwt.decode(token, _signing_key(), algorithms=["HS256"])
     except PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+        # The library's text ("Signature has expired", "Not enough segments")
+        # stays in the log; the client learns only that it must sign in.
+        logger.debug("[auth] token rejected: %s", exc)
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -360,7 +363,11 @@ async def request_plex_pin(request: Request):
             timeout=10,
         )
     if resp.status_code != 201:
-        raise HTTPException(status_code=502, detail=f"Plex PIN request failed: {resp.text}")
+        # plex.tv's body went to the client verbatim (2026-10-10 audit, Info).
+        logger.warning("[auth] plex.tv PIN request failed: HTTP %s %s",
+                       resp.status_code, resp.text[:300])
+        raise HTTPException(status_code=502, detail=f"plex.tv refused the sign-in "
+                            f"request (HTTP {resp.status_code}) - try again in a minute")
 
     data = resp.json()
     pin_id = data["id"]
@@ -527,7 +534,7 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
 
 
 @router.get("/status")
-async def auth_status(user: User = Depends(get_current_user)):
+def auth_status(user: User = Depends(get_current_user)):
     return {
         "authenticated": True,
         "user_id": user.id,
@@ -537,7 +544,7 @@ async def auth_status(user: User = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout(response: Response, user: User = Depends(get_current_user),
+def logout(response: Response, user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     """Server-side logout: bump the user's token version so THIS token - and
     every other copy of it on other devices - is rejected from now on. The

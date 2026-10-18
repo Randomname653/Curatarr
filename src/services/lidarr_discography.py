@@ -8,8 +8,9 @@ files (the pending Mike WiLL proposal: "Creed II: The Album, 0/15 tracks" —
 a ghost entry). Probe results that motivated this (tests via live API):
 Dr. Peacock = 64 singles, 36 EPs, 7 albums, 6.2 GB.
 
-No cache: the Lidarr call is LAN-local (~50 ms) and per-discussion/judged
-candidate, and disk state changes with every grab — fresh is correct here.
+The album call is LAN-local (~50 ms) and per-discussion/judged candidate,
+and disk state changes with every grab — fresh is correct there. The artist
+itself is resolved without the full library list (find_lidarr_artist).
 """
 from __future__ import annotations
 
@@ -48,6 +49,73 @@ def plex_discography_summary(artist_mbid: str = None, artist_name: str = None) -
     return line
 
 
+# One artist by MBID is a small, fast Lidarr query; the full /artist list
+# is 15-30 MB and ~2 minutes on a big library — far too slow for a chat turn
+# or once per judged candidate, which is where these lookups run.
+_ONE_ARTIST_TIMEOUT_S = 15
+_FULL_LIST_TIMEOUT_S = 60
+
+
+def cached_lidarr_artists() -> Optional[list]:
+    """The Library Manager's cached Lidarr artist list (refreshed behind
+    requests, persisted across restarts), or None when there is none."""
+    try:
+        from src.routers.library import _LIB_CACHE
+        items = (_LIB_CACHE.get("lidarr") or {}).get("items_raw")
+    except Exception:  # noqa: BLE001
+        return None
+    return items if isinstance(items, list) and items else None
+
+
+def _same_name(a: Optional[str], b: Optional[str]) -> bool:
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
+async def find_lidarr_artist(client, base: str, key: str, *, mbid: str = None,
+                             name: str = None, same_name=_same_name) -> Optional[dict]:
+    """Lidarr's artist object for ``mbid`` (first) or ``name``, without
+    downloading the whole library on every call:
+
+    1. the cached library list — no network at all;
+    2. Lidarr's ``/api/v1/artist?mbId=`` — one artist, short timeout
+       (an artist added since the cache was filled);
+    3. the full list only when there is no cached copy at all — the old
+       behaviour, for an install whose library was never listed.
+    """
+    def pick(artists):
+        if mbid:
+            hit = next((a for a in artists if a.get("foreignArtistId") == mbid), None)
+            if hit:
+                return hit
+        if name:
+            return next((a for a in artists if same_name(a.get("artistName"), name)), None)
+        return None
+
+    cached = cached_lidarr_artists()
+    if cached is not None:
+        hit = pick(cached)
+        if hit:
+            return hit
+    if mbid:
+        try:
+            r = await client.get(f"{base}/api/v1/artist", params={"apikey": key, "mbId": mbid},
+                                 timeout=_ONE_ARTIST_TIMEOUT_S)
+            if r.status_code == 200:
+                data = r.json()
+                hit = pick(data if isinstance(data, list) else [data])
+                if hit:
+                    return hit
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[lidarr] mbId lookup failed for %s: %s", mbid, e)
+    if cached is not None:
+        return None
+    r = await client.get(f"{base}/api/v1/artist", params={"apikey": key},
+                         timeout=_FULL_LIST_TIMEOUT_S)
+    if r.status_code != 200:
+        return None
+    return pick(r.json())
+
+
 async def discography_summary(artist_mbid: str = None,
                               artist_name: str = None) -> Optional[str]:
     """One evidence line describing the artist's on-disk discography, or
@@ -60,22 +128,12 @@ async def discography_summary(artist_mbid: str = None,
     if not base or not key:
         return plex_discography_summary(artist_mbid=artist_mbid, artist_name=artist_name)
     try:
-        # 60 s, not 15: the full /artist payload is 15-30 MB (ARCHITECTURE
-        # "ARR collect needs >=60s") — cold Lidarr silently cost the judge
-        # this evidence line.
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.get(f"{base}/api/v1/artist", params={"apikey": key})
-            if r.status_code != 200:
-                return None
-            artists = r.json()
-            artist = None
-            if artist_mbid:
-                artist = next((a for a in artists
-                               if a.get("foreignArtistId") == artist_mbid), None)
-            if artist is None and artist_name:
-                low = artist_name.strip().lower()
-                artist = next((a for a in artists
-                               if (a.get("artistName") or "").strip().lower() == low), None)
+        # The artist comes from the cached library or a one-artist query: the
+        # full /artist list (15-30 MB, ~2 min on a big Lidarr) per chat turn
+        # and per judged candidate left every music answer waiting on it.
+        async with httpx.AsyncClient(timeout=_ONE_ARTIST_TIMEOUT_S) as client:
+            artist = await find_lidarr_artist(client, base, key,
+                                              mbid=artist_mbid, name=artist_name)
             if artist is None:
                 return None
             r2 = await client.get(f"{base}/api/v1/album",

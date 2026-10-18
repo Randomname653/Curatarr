@@ -5,6 +5,7 @@ Provides unified async interface with rate limiting, caching, and error handling
 """
 
 import asyncio
+import email.utils
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -40,6 +41,40 @@ def classify_sonarr_category(series: dict) -> str:
             or "Anime" in (series.get("genres") or [])):
         return "anime"
     return "show"
+
+
+# Connecting is quick on a LAN or it is not happening: a down or wrong host
+# fails here instead of after the whole read budget.
+_CONNECT_TIMEOUT_S = 10.0
+_RETRY_AFTER_CAP_S = 120.0
+
+
+def listing_timeout() -> float:
+    """Read budget for a FULL library listing (settings.ARR_LISTING_TIMEOUT_S)."""
+    try:
+        from src.config import settings
+        return float(getattr(settings, "ARR_LISTING_TIMEOUT_S", 240) or 240)
+    except Exception:  # noqa: BLE001
+        return 240.0
+
+
+def retry_after_s(header: Optional[str], default: float = 60.0,
+                  cap: float = _RETRY_AFTER_CAP_S) -> float:
+    """Seconds to wait from a Retry-After header: delta-seconds OR an
+    HTTP-date (RFC 9110). ``int()`` alone raised ValueError on the date
+    form and turned a polite 429 into a failed request. Capped, so a
+    misbehaving proxy cannot park a request for an hour."""
+    if not header:
+        return min(default, cap)
+    try:
+        return max(0.0, min(cap, float(header)))
+    except ValueError:
+        pass
+    try:
+        dt = email.utils.parsedate_to_datetime(header)
+        return max(0.0, min(cap, dt.timestamp() - time.time()))
+    except (TypeError, ValueError, OverflowError):
+        return min(default, cap)
 
 
 class RateLimiter:
@@ -139,7 +174,9 @@ class MediaService(ABC):
         listings on a slow Lidarr / busy Sonarr) can opt into longer waits.
         Default 30 s is fine for ``/system/status``, profile lists, lookups.
         Library listings (``get_artists`` / ``get_movies`` / ``get_series``)
-        bump it to 90 s.
+        use ``ARR_LISTING_TIMEOUT_S`` (240 s) with no second attempt. It is a
+        READ timeout (time to start answering / between chunks), with 10 s to
+        connect, so a down arr still fails fast.
 
         ``max_timeout_retries`` (Pass 16j) bounds how often we re-attempt on
         ``asyncio.TimeoutError``. Default 1 means "try twice, then give up"
@@ -172,8 +209,20 @@ class MediaService(ABC):
         rate_limit_attempts = 0
         timeout_attempts    = 0
 
+        # ``timeout`` bounds the wait for the arr to START and KEEP answering
+        # (sock_read), not the whole body: a 124 s Lidarr listing that streams
+        # steadily used to die at total=90 s every time, after two tries
+        # (182 s of Lidarr load for nothing). Connecting gets 10 s; the
+        # overall cap is a backstop against a trickle that never ends.
+        client_timeout = aiohttp.ClientTimeout(
+            total=timeout * 2 + _CONNECT_TIMEOUT_S,
+            sock_connect=min(_CONNECT_TIMEOUT_S, timeout),
+            sock_read=timeout,
+        )
+
         while True:
             await self.rate_limiter.acquire()
+            retry_after = None
             try:
                 async with self.session.request(
                     method,
@@ -181,30 +230,27 @@ class MediaService(ABC):
                     json=json_data,
                     headers=headers,
                     params=params,
-                    timeout=aiohttp.ClientTimeout(total=timeout)
+                    timeout=client_timeout,
                 ) as resp:
                     if resp.status == 429:
                         if rate_limit_attempts >= max_retries:
                             raise Exception(f"API rate-limited after {max_retries} retries")
                         rate_limit_attempts += 1
-                        retry_after = int(resp.headers.get('Retry-After', 60))
+                        retry_after = retry_after_s(resp.headers.get('Retry-After'))
                         logger.warning(
                             f"Rate limited (attempt {rate_limit_attempts}/{max_retries + 1}), "
-                            f"retrying after {retry_after}s"
+                            f"retrying after {retry_after:.0f}s"
                         )
-                        await asyncio.sleep(retry_after)
-                        continue
-
-                    if resp.status >= 400:
+                    elif resp.status >= 400:
                         error_text = await resp.text()
                         raise Exception(f"API error {resp.status}: {error_text}")
+                    else:
+                        result = await resp.json()
 
-                    result = await resp.json()
+                        if use_cache and cache_key:
+                            self._cache_set(cache_key, result)
 
-                    if use_cache and cache_key:
-                        self._cache_set(cache_key, result)
-
-                    return result
+                        return result
 
             except asyncio.TimeoutError:
                 # Bounded retry — a single slow response on a flaky arr
@@ -224,6 +270,9 @@ class MediaService(ABC):
                 # whatever was hanging.
                 await asyncio.sleep(2)
                 continue
+
+            # A 429: wait AFTER the response is released, not while holding it.
+            await asyncio.sleep(retry_after)
 
     def _get_headers(self) -> Dict:
         """Get request headers (service-specific)."""
@@ -367,14 +416,17 @@ class RadarrClient(MediaService):
         return headers
 
     async def get_movies(self) -> List[Dict]:
-        """Fetch all movies. 90s timeout — full library on a busy Radarr can
-        take a while as it joins statistics across all entries."""
+        """Fetch all movies — full library on a busy Radarr can take a while
+        as it joins statistics across all entries (ARR_LISTING_TIMEOUT_S)."""
         result = await self.request(
             "GET",
             "/api/v3/movie",
             use_cache=True,
             cache_key="radarr_movies",
-            timeout=90.0,
+            # One long read, no second attempt: a listing that timed out
+            # once costs the arr the same full scan again.
+            timeout=listing_timeout(),
+            max_timeout_retries=0,
         )
         return result
 
@@ -486,14 +538,17 @@ class SonarrClient(MediaService):
         return headers
 
     async def get_series(self) -> List[Dict]:
-        """Fetch all series. 90s timeout — full library + season statistics
-        on a busy Sonarr can hang briefly."""
+        """Fetch all series — full library + season statistics on a busy
+        Sonarr can hang briefly (ARR_LISTING_TIMEOUT_S)."""
         result = await self.request(
             "GET",
             "/api/v3/series",
             use_cache=True,
             cache_key="sonarr_series",
-            timeout=90.0,
+            # One long read, no second attempt: a listing that timed out
+            # once costs the arr the same full scan again.
+            timeout=listing_timeout(),
+            max_timeout_retries=0,
         )
         return result
 
@@ -648,15 +703,18 @@ class LidarrClient(MediaService):
         return headers
 
     async def get_artists(self) -> List[Dict]:
-        """Fetch all artists. 90s timeout — Lidarr's /artist endpoint is
-        notoriously slow on bigger libraries (Pass 16j: bumped from 30s
-        after a real-world 30s timeout on a working Lidarr)."""
+        """Fetch all artists. Lidarr's /artist endpoint is notoriously slow
+        on bigger libraries (~124 s on 5,211 artists): 30 s and then 90 s
+        both failed on a working Lidarr (ARR_LISTING_TIMEOUT_S)."""
         result = await self.request(
             "GET",
             "/api/v1/artist",
             use_cache=True,
             cache_key="lidarr_artists",
-            timeout=90.0,
+            # One long read, no second attempt: a listing that timed out
+            # once costs the arr the same full scan again.
+            timeout=listing_timeout(),
+            max_timeout_retries=0,
         )
         return result
 
