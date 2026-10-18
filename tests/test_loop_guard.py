@@ -91,6 +91,22 @@ async def _off_loop():
 loop_guard.reset()
 asyncio.run(_off_loop())
 check("the same calls through run_read / run_write are not", _sites() == {})
+
+
+async def _wrappers():
+    await app_state.aset_state("guard_probe", "2")
+    got = [await app_state.aget_state("guard_probe")]
+    got.append(await app_state.aacquire_state_lock("guard_lock"))
+    got.append(await app_state.aacquire_state_lock("guard_lock"))
+    got.append(await app_state.arelease_state_lock("guard_lock"))
+    got.append(await app_state.aset_states_if_changed({"guard_probe": "3"}))
+    return got
+
+
+loop_guard.reset()
+check("the app_state a*-wrappers keep their results and stay off the loop",
+      asyncio.run(_wrappers()) == ["2", True, False, True, {"guard_probe": "2"}]
+      and _sites() == {})
 check("a call with no running loop is not", (app_state.get_state("guard_probe"), _sites())[1] == {})
 
 # ── 2. raise mode ───────────────────────────────────────────────────────────
