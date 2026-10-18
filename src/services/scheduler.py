@@ -410,11 +410,17 @@ async def _resume_music_pipeline_if_needed(user_id: int):
         logger.info("[startup] Music pipeline was interrupted — resuming automatically")
         await asyncio.sleep(15)  # give the API a moment to be fully ready
 
-        from src.services.app_state import get_state as _gs
-        if _gs("music_pipeline_running") == "1":
-            return  # already running (shouldn't happen after flag reset on startup)
+        # Take the lease before resuming: this used to check the flag and
+        # then run WITHOUT holding it, so the custodian (or an out-of-process
+        # enricher) could start beside the resumed run. _run_music_pipeline
+        # releases it in its finally.
+        from src.services import state_lease
+        if not await asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
+            logger.info("[startup] Music pipeline held by another runner — not resuming")
+            return
 
         set_state("music_pipeline_stop_requested", "0")
+        set_state("music_pipeline_owner", str(user_id))
         _track_task(asyncio.create_task(
             _run_music_pipeline_bg(user_id),
             name=f"music_pipeline_resume_user_{user_id}",

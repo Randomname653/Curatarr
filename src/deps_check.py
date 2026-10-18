@@ -155,9 +155,10 @@ def install(requirements: Path = REQUIREMENTS, run=subprocess.run) -> bool:
     re-checks afterwards."""
     lock = install_source(requirements)
     target = ["--require-hashes", "-r", str(lock)] if lock else ["-r", str(requirements)]
+    from src.winproc import NO_WINDOW   # the tray runs this under pythonw
     r = run([sys.executable, "-m", "pip", "install", *target,
              "--quiet", "--disable-pip-version-check"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, **NO_WINDOW)
     if r.returncode != 0:
         sys.stderr.write((r.stderr or r.stdout or "")[-1200:])
         return False

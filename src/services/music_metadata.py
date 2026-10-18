@@ -492,13 +492,11 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
              else asyncio.sleep(0, result=None)),
             return_exceptions=True,
         )
-        # TRANSIENT (falsy) or a raised fetch = "did not answer", not "no such
-        # artist" — remembered so neither outcome is negative-cached below.
-        any_transient = any(x is TRANSIENT or isinstance(x, Exception) for x in (mb, lfm))
+        # An exception is an upstream that did not answer, not "no record".
         if isinstance(mb, Exception):
-            mb = None
+            mb = TRANSIENT
         if isinstance(lfm, Exception):
-            lfm = None
+            lfm = TRANSIENT
     else:
         # Fast mode: skip MB entirely + skip the artist_profile cache
         # so a fast result can't shadow a later full fetch. The outer
@@ -506,13 +504,20 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         # short-circuits identical fast requests on the same item.
         mb = None
         ss = None
-        any_transient = False
         try:
             lfm = await fetch_lastfm_artist(artist_name)
         except Exception:
-            lfm = None
+            lfm = TRANSIENT
+
+    # TRANSIENT is falsy, so the test below used to read "MusicBrainz and
+    # Last.fm both down" exactly like "no such artist": it cached None for
+    # 7 days and the music enricher wrote the row off as "no artist record
+    # found" for good. Any source that did not answer withholds the verdict.
+    transient = any(x is TRANSIENT for x in (mb, lfm, ss))
 
     if not mb and not lfm and not ss:
+        if transient:
+            return TRANSIENT                 # no verdict, nothing cached
         # Pass 80: cache the merged-None outcome as well. The two sub-fetches
         # now neg-cache on their own — this layer's neg-cache is the
         # belt-and-braces: a single ``get_cache`` lookup short-circuits the
@@ -524,7 +529,7 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         # outage as "unfindable" for 7 days. Written under the key that is
         # READ above (it was always the name key, so an mbid caller never
         # saw it).
-        if not skip_mb and not any_transient:
+        if not skip_mb:                     # a TRANSIENT returned above
             cache = MetadataCache()
             cache.set_cache(cache_key, None, days=7)
             cache.close()
@@ -584,9 +589,10 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
     # Written under the key read above as well as the name key: an mbid
     # caller reads artist_profile:<mbid>, which used to be read but never
     # written, so every mbid-pinned lookup re-fetched. A profile built while
-    # a source was down is kept one day only, so the gap refills soon.
+    # one source was down lacks its fields (an MB hit with Last.fm throttled
+    # has no tags or bio): kept for a day, not 30, so the next ask fills the gap.
     if not skip_mb:
-        days = 1 if any_transient else 30
+        days = 1 if transient else 30
         cache = MetadataCache()
         for k in dict.fromkeys((cache_key, f"artist_profile:{artist_name[:60].lower()}")):
             cache.set_cache(k, profile, days=days)
@@ -622,11 +628,14 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
     # actual artist fallback. 7-day TTL keeps the door open for Last.fm to
     # add the track later. Footprint cost: a per-track copy of the artist
     # profile (~1-5KB each), bounded by realistic top-N track counts.
-    async def _cache_artist_fallback() -> Optional[dict]:
+    async def _cache_artist_fallback(cacheable: bool = True) -> Optional[dict]:
         fb = await enrich_artist(artist)
-        _c = MetadataCache()
-        _c.set_cache(cache_key, fb, days=7)
-        _c.close()
+        # Never persist an outage: TRANSIENT (an upstream down) or a fallback
+        # served because Last.fm itself was throttled or failing.
+        if cacheable and fb is not TRANSIENT:
+            _c = MetadataCache()
+            _c.set_cache(cache_key, fb, days=7)
+            _c.close()
         return fb
 
     try:
@@ -643,7 +652,9 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
                 },
             )
         if r.status_code != 200:
-            return await _cache_artist_fallback()
+            # 404 is Last.fm's "no such track"; 429/5xx/... is Last.fm having
+            # a moment — serve the fallback without freezing it for a week.
+            return await _cache_artist_fallback(cacheable=r.status_code == 404)
 
         track = r.json().get("track", {})
         if not track:

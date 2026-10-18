@@ -222,26 +222,4 @@ def force_set_state(key: str, value: str, timeout_s: int = 120) -> bool:
         return False
 
 
-# ── lease for the out-of-process music runner ────────────────────────────────
-# scripts/music_enricher.py holds music_pipeline_running from ANOTHER process
-# and is meant to outlive a server restart. The boot reset cleared the flag
-# regardless, so the in-app pipeline could start a duplicate pass over the
-# same library (2026-10-11 concurrency audit, Med). The runner records its
-# PID here; boot keeps the flag while that process is alive.
-EXTERNAL_HOLDER_KEY = "music_pipeline_holder_pid"
-
-
-def external_music_holder_alive() -> bool:
-    """True when the PID in EXTERNAL_HOLDER_KEY is a live music_enricher."""
-    pid = (get_state(EXTERNAL_HOLDER_KEY) or "").strip()
-    if not pid.isdigit():
-        return False
-    try:
-        import psutil
-        proc = psutil.Process(int(pid))
-        return any("music_enricher" in part for part in proc.cmdline())
-    except Exception:
-        # Gone, or not ours to inspect: a PID we cannot confirm as the
-        # runner is not a lease (a recycled PID must not pin the flag).
-        return False
 

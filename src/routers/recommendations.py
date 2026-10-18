@@ -2488,7 +2488,8 @@ async def _fetch_arr_candidates(category: str = None) -> list:
                 # deletion proposals never appeared. Generous read timeout, but
                 # a short connect timeout so a genuinely-down Lidarr still fails
                 # fast (→ stale-cache fallback below) instead of hanging.
-                _lidarr_timeout = httpx.Timeout(240.0, connect=10.0)
+                from src.services.arr_client import listing_timeout
+                _lidarr_timeout = httpx.Timeout(listing_timeout(), connect=10.0)
                 async with httpx.AsyncClient(timeout=_lidarr_timeout) as client:
                     r = await client.get(f"{settings.LIDARR_URL.rstrip('/')}/api/v1/artist",
                         headers={"X-Api-Key": settings.LIDARR_API_KEY})

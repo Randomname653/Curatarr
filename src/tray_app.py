@@ -15,8 +15,10 @@ Thread layout (deliberate):
     (thread-safe plain bool polled by uvicorn's tick), never via signals.
 
 Shutdown paths all converge on ``_initiate_stop()``:
-  tray menu Shutdown / Restart, and the web UI's /api/system/shutdown via
-  ``shutdown_bridge.register`` — each sets the SSE-release event
+  tray menu Shutdown / Restart, the web UI's /api/system/shutdown via
+  ``shutdown_bridge.register``, and a Windows logoff / shutdown via the
+  hidden session window (``_install_endsession_hook``, which also holds the
+  session open until the teardown is done) — each sets the SSE-release event
   (loop.call_soon_threadsafe) and flips ``server.should_exit``. uvicorn then
   drains connections and runs the FULL lifespan teardown (memory flush,
   scheduler stop, sync-guard release) before serve() returns; the worker's
@@ -169,6 +171,138 @@ def _preflight_ollama() -> str | None:
     return None
 
 
+# ── Windows logoff / shutdown ─────────────────────────────────────────────────
+#
+# pystray's window never answers WM_QUERYENDSESSION / WM_ENDSESSION, so a
+# Windows logoff, shutdown or update restart simply terminated pythonw: no
+# lifespan teardown, no WAL checkpoint, no Chroma pool shutdown — on the
+# install that starts with Windows, i.e. every evening. A hidden TOP-LEVEL
+# window (a message-only window never receives the session broadcasts) on
+# its own thread takes the same graceful path as the tray's Shutdown item and
+# holds the session open with a visible reason until the teardown is done.
+
+WM_QUERYENDSESSION = 0x0011
+WM_ENDSESSION = 0x0016
+_ENDSESSION_BUDGET_S = 20.0
+_ENDSESSION_REASON = "Curatarr is saving its database…"
+
+
+def _on_session_message(msg: int, wparam: int, *, stop, wait, block, unblock):
+    """What the hidden window does with a message; None = not ours (the
+    caller hands it to DefWindowProc). Pure, so it is testable off Windows.
+
+    QUERYENDSESSION: register the block reason, start the graceful stop,
+    and say yes — refusing would only make Windows nag the user.
+    ENDSESSION(wparam=TRUE): the session really ends once we return, so
+    wait (bounded) for the teardown first. ENDSESSION(FALSE): it was
+    cancelled; the stop already began, the tray winds down as from its menu.
+    """
+    if msg == WM_QUERYENDSESSION:
+        try:
+            block()
+        finally:
+            stop()
+        return 1
+    if msg == WM_ENDSESSION:
+        try:
+            if wparam:
+                wait()
+        finally:
+            unblock()
+        return 0
+    return None
+
+
+def _install_endsession_hook(initiate_stop, server_thread,
+                             budget_s: float = _ENDSESSION_BUDGET_S):
+    """Start the hidden session window's thread. Never raises: without it
+    the tray still works, it only loses the graceful logoff."""
+    try:
+        from ctypes import wintypes as W
+
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        LRESULT = ctypes.c_ssize_t
+        WNDPROC = ctypes.WINFUNCTYPE(LRESULT, W.HWND, W.UINT, W.WPARAM, W.LPARAM)
+
+        class WNDCLASSW(ctypes.Structure):
+            _fields_ = [("style", W.UINT), ("lpfnWndProc", WNDPROC),
+                        ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                        ("hInstance", W.HINSTANCE), ("hIcon", W.HICON),
+                        ("hCursor", W.HANDLE), ("hbrBackground", W.HBRUSH),
+                        ("lpszMenuName", W.LPCWSTR), ("lpszClassName", W.LPCWSTR)]
+
+        u32.DefWindowProcW.restype = LRESULT
+        u32.DefWindowProcW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
+        u32.RegisterClassW.restype = W.ATOM
+        u32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+        u32.CreateWindowExW.restype = W.HWND
+        u32.CreateWindowExW.argtypes = [W.DWORD, W.LPCWSTR, W.LPCWSTR, W.DWORD,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                        W.HWND, W.HMENU, W.HINSTANCE, W.LPVOID]
+        u32.ShutdownBlockReasonCreate.restype = W.BOOL
+        u32.ShutdownBlockReasonCreate.argtypes = [W.HWND, W.LPCWSTR]
+        u32.ShutdownBlockReasonDestroy.restype = W.BOOL
+        u32.ShutdownBlockReasonDestroy.argtypes = [W.HWND]
+        u32.GetMessageW.restype = W.BOOL
+        u32.GetMessageW.argtypes = [ctypes.POINTER(W.MSG), W.HWND, W.UINT, W.UINT]
+        u32.TranslateMessage.argtypes = [ctypes.POINTER(W.MSG)]
+        u32.DispatchMessageW.restype = LRESULT
+        u32.DispatchMessageW.argtypes = [ctypes.POINTER(W.MSG)]
+        k32.GetModuleHandleW.restype = W.HMODULE
+        k32.GetModuleHandleW.argtypes = [W.LPCWSTR]
+        k32.SetProcessShutdownParameters.restype = W.BOOL
+        k32.SetProcessShutdownParameters.argtypes = [W.DWORD, W.DWORD]
+    except Exception as e:  # noqa: BLE001 - not Windows, or an odd user32
+        logger.debug("Session hook unavailable: %s", e)
+        return None
+
+    def pump():
+        def wndproc(hwnd, msg, wparam, lparam):
+            try:
+                r = _on_session_message(
+                    msg, wparam,
+                    stop=initiate_stop,
+                    wait=lambda: server_thread.join(timeout=budget_s),
+                    block=lambda: u32.ShutdownBlockReasonCreate(hwnd, _ENDSESSION_REASON),
+                    unblock=lambda: u32.ShutdownBlockReasonDestroy(hwnd))
+                if r is not None:
+                    if msg == WM_QUERYENDSESSION:
+                        logger.info("Windows is ending the session — stopping gracefully.")
+                    return r
+            except Exception as e:  # noqa: BLE001 - never let an exception cross into Win32
+                logger.warning("Session message handling failed: %s", e)
+            return u32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        callback = WNDPROC(wndproc)          # referenced for the thread's lifetime
+        try:
+            # Asked early (0x3FF = first of the application range), so the
+            # teardown starts before the processes it talks to are gone.
+            k32.SetProcessShutdownParameters(0x3FF, 0)
+            hinst = k32.GetModuleHandleW(None)
+            wc = WNDCLASSW(lpfnWndProc=callback, hInstance=hinst,
+                           lpszClassName="CuratarrSessionWatch")
+            if not u32.RegisterClassW(ctypes.byref(wc)):
+                raise OSError(ctypes.get_last_error(), "RegisterClassW failed")
+            hwnd = u32.CreateWindowExW(0, wc.lpszClassName, "Curatarr", 0,
+                                       0, 0, 0, 0, None, None, hinst, None)
+            if not hwnd:
+                raise OSError(ctypes.get_last_error(), "CreateWindowExW failed")
+            msg = W.MSG()
+            while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                u32.TranslateMessage(ctypes.byref(msg))
+                u32.DispatchMessageW(ctypes.byref(msg))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Session hook failed — a Windows logoff will not stop "
+                           "Curatarr gracefully: %s", e)
+        finally:
+            del callback
+
+    t = threading.Thread(target=pump, name="curatarr-session-watch", daemon=True)
+    t.start()
+    return t
+
+
 # ── autostart shortcut ────────────────────────────────────────────────────────
 
 def _pythonw() -> str:
@@ -307,6 +441,7 @@ def main() -> None:
 
     server_thread = threading.Thread(target=_serve, name="curatarr-uvicorn")
     server_thread.start()
+    _install_endsession_hook(_initiate_stop, server_thread)
 
     if ollama_warning:
         # notify shortly after the icon is up (setup runs on icon.run)

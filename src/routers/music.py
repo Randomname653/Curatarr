@@ -76,12 +76,15 @@ def start_pipeline(
     # Audit #7: atomic acquire in the ENDPOINT — the old get_state check
     # here + set_state later in the background task left a window where two
     # fast starts (or a custodian tick) both passed the check.
-    from src.services.app_state import acquire_state_lock
+    # The lease, not a bare flag: the out-of-process music enricher holds the
+    # same key, and only a live holder blocks (state_lease).
+    import asyncio as _asyncio
+    from src.services import state_lease
     from src.services import rate_limit as _rl
     # Hours of MusicBrainz / Last.fm / Spotify spend per run — two starts per
     # ten minutes per user is plenty for a human, not for a loop.
     _rl.enforce("music-start", user.id, _rl.MUSIC_STARTS_PER_10MIN, 600)
-    if not acquire_state_lock("music_pipeline_running"):
+    if not await _asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
         raise HTTPException(status_code=409, detail="Music pipeline already running")
 
     set_state("music_pipeline_stop_requested", "0")
@@ -182,9 +185,9 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
     from datetime import datetime
     from src.services.task_monitor import task_monitor
 
-    # music_pipeline_running is already held: the endpoint (or custodian)
-    # acquired it atomically before this task was scheduled. The lock-release
-    # finally must cover the WHOLE body (mirrors Audit #4 in
+    # music_pipeline_running is already held: the endpoint (or the boot
+    # resume) acquired the lease before this task was scheduled. The
+    # lock-release finally must cover the WHOLE body (mirrors Audit #4 in
     # enrichment._run_enrichment): these set_state calls and
     # task_monitor.create used to run before the try, so a "database is
     # locked" here left music_pipeline_running stuck at "1" until restart.
@@ -343,5 +346,8 @@ async def _run_music_pipeline(user_id: int, batch: int) -> None:
             task_monitor.error(task, str(exc))
         # Keep interrupted="1" so startup auto-resumes
     finally:
-        set_state("music_pipeline_running",        "0")
-        set_state("music_pipeline_stop_requested", "0")
+        # Compare-and-clear: a blind "0" here released a lease the
+        # out-of-process enricher held whenever this run had not taken it.
+        from src.services import state_lease
+        if state_lease.release("music_pipeline_running"):
+            set_state("music_pipeline_stop_requested", "0")

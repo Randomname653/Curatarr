@@ -464,30 +464,21 @@ def test_reattribution_off_the_loop():
 
 
 def test_music_runner_lease():
-    real = app_state.get_state
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)",
-                             "music_enricher"])
-    try:
-        app_state.get_state = lambda k: str(proc.pid) if k == app_state.EXTERNAL_HOLDER_KEY else None
-        alive = app_state.external_music_holder_alive()
-        app_state.get_state = lambda k: str(os.getpid()) if k == app_state.EXTERNAL_HOLDER_KEY else None
-        not_runner = app_state.external_music_holder_alive()
-        app_state.get_state = lambda k: "" if k == app_state.EXTERNAL_HOLDER_KEY else None
-        empty = app_state.external_music_holder_alive()
-    finally:
-        app_state.get_state = real
-        proc.kill()
-        proc.wait()
-    check("a live music_enricher holds the lease", alive is True)
-    check("a PID that is not the runner (recycled) is no lease", not_runner is False)
-    check("no PID, no lease", empty is False)
+    # One mechanism since the #161/#162 integration (2026-10-18): the
+    # state_lease of #161 (host, PID, start time, heartbeat; atomic acquire)
+    # replaced this sweep's PID key. Its behaviour is tested in
+    # tests/test_music_lease.py; here the boot / shutdown / runner wiring.
     main = (ROOT / "src/main.py").read_text(encoding="utf-8")
     script = (ROOT / "scripts/music_enricher.py").read_text(encoding="utf-8")
-    check("boot and shutdown keep the runner's flag while it lives",
-          main.count("external_music_holder_alive()") == 2)
-    check("the runner records and clears its PID",
-          "set_state(EXTERNAL_HOLDER_KEY, str(os.getpid()))" in script
-          and 'force_set_state(EXTERNAL_HOLDER_KEY, "")' in script)
+    check("boot clears the music flag only when its holder is gone",
+          'state_lease.reclaim_if_stale("music_pipeline_running")' in main)
+    check("shutdown releases only the server's own lease",
+          'state_lease.release("music_pipeline_running")' in main)
+    check("the runner takes and releases the lease",
+          "state_lease.acquire(_LEASE_KEY)" in script and "state_lease.release(_LEASE_KEY)" in script)
+    check("no second (PID-key) mechanism is left",
+          "EXTERNAL_HOLDER_KEY" not in main + script
+          and "external_music_holder_alive" not in (ROOT / "src/services/app_state.py").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

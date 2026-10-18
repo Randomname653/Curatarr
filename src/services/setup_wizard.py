@@ -342,10 +342,11 @@ def _restrict_env_acl(path) -> None:
         return
     try:
         import subprocess
+        from src.winproc import NO_WINDOW
         user = os.environ.get("USERNAME") or os.getlogin()
         proc = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, path is ours
             ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
-            check=False, capture_output=True, timeout=10)
+            check=False, capture_output=True, timeout=10, **NO_WINDOW)
         if proc.returncode != 0:
             # icacls's own message (path / account, never the file content).
             out = proc.stderr or proc.stdout or b""
@@ -639,6 +640,7 @@ async def detect_gpu() -> dict:
     """
     import asyncio
     import subprocess
+    from src.winproc import NO_WINDOW
     try:
         # A thread, not asyncio.create_subprocess_exec: on Windows the event
         # loop uvicorn --reload runs is a SelectorEventLoop, which has no
@@ -648,7 +650,7 @@ async def detect_gpu() -> dict:
             subprocess.run,
             ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
              "--format=csv,noheader,nounits"],
-            capture_output=True, timeout=8)
+            capture_output=True, timeout=8, **NO_WINDOW)
         out, err = proc.stdout, proc.stderr
         if proc.returncode != 0:
             msg = (err or out).decode(errors="replace").strip()

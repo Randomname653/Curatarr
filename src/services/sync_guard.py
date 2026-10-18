@@ -30,9 +30,14 @@ Design notes:
     marker above the data dir decides then, else a WARNING says so.
   * Only the block between our BEGIN/END markers is ever touched, so any
     existing user patterns (e.g. ``/Rockstar Games``) are preserved.
-  * Crash-safe direction: if the process dies without running the shutdown
-    hook, the ignore entry simply stays — the DB stays *excluded* from
-    sync (the safe failure mode). The next clean shutdown removes it.
+  * Crash-safe direction: the entry is never removed (disable() is a
+    no-op), so a crash, kill or power loss leaves the DB *excluded* from
+    sync — the safe failure mode — with nothing to recover on the next boot.
+  * The file itself is replaced atomically (temp file, fsync, os.replace)
+    and only when the block is missing or different: rewriting it in place
+    at every boot left a window where a power loss truncated .stignore,
+    losing the user's patterns AND this block, so Syncthing would sync the
+    live DB; Syncthing could also read it half-written.
 """
 
 from __future__ import annotations
@@ -166,6 +171,70 @@ def _write_preserving(path: Path, content: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
+_FILE_ATTRIBUTE_NORMAL = 0x80
+_INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+
+def _win_attrs(path: Path) -> Optional[int]:
+    """Windows file attributes (Hidden, …) or None (not Windows / unknown)."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    get = ctypes.windll.kernel32.GetFileAttributesW
+    get.restype = wintypes.DWORD
+    get.argtypes = [wintypes.LPCWSTR]
+    attrs = get(str(path))
+    return None if attrs == _INVALID_FILE_ATTRIBUTES else int(attrs)
+
+
+def _set_win_attrs(path: Path, attrs: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+    setter = ctypes.windll.kernel32.SetFileAttributesW
+    setter.restype = wintypes.BOOL
+    setter.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+    setter(str(path), attrs)
+
+
+def _write_atomic(path: Path, content: str) -> None:
+    """Replace ``path`` with ``content`` in one step: a reader (or a power
+    loss) sees the old file or the new one, never a truncated mix. The
+    Hidden attribute Syncthing gives .stignore is cleared for the swap
+    (replacing a hidden file can be refused) and put back afterwards. Falls
+    back to the in-place write when the directory refuses a temp file."""
+    # Named like Syncthing's own temp files (".syncthing.*.tmp"), which it
+    # never syncs: the temp lives inside the synced folder for a moment.
+    tmp = path.with_name(".syncthing.stignore-curatarr.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        logger.debug("[sync-guard] temp file refused (%s) — writing in place", e)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        _write_preserving(path, content)
+        return
+    attrs = _win_attrs(path) if path.exists() else None
+    try:
+        if attrs is not None:
+            _set_win_attrs(path, _FILE_ATTRIBUTE_NORMAL)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        if attrs is not None:
+            _set_win_attrs(path, attrs)   # Hidden comes back on the new file
+
+
 def _strip_block(lines: list[str]) -> list[str]:
     """Drop any existing managed BEGIN..END block (inclusive)."""
     out: list[str] = []
@@ -199,10 +268,8 @@ def enable() -> None:
             return
         stignore, pattern = located
 
-        lines: list[str] = []
-        if stignore.exists():
-            lines = stignore.read_text(encoding="utf-8").splitlines()
-        lines = _strip_block(lines)  # idempotent: remove any stale block first
+        current = stignore.read_text(encoding="utf-8") if stignore.exists() else None
+        lines = _strip_block((current or "").splitlines())  # drop any stale block first
 
         # Exclude the directory AND everything beneath it (robust across
         # Syncthing ignore-match versions). PERMANENT — see disable().
@@ -211,9 +278,13 @@ def enable() -> None:
             lines.append("")  # blank separator from user's own patterns
         lines.extend(block)
 
-        _write_preserving(stignore, "\n".join(lines) + "\n")
+        content = "\n".join(lines) + "\n"
         _active_stignore = stignore
-        logger.info("[sync-guard] Excluded '%s' from Syncthing while running (%s)", pattern, stignore)
+        if current == content:
+            logger.info("[sync-guard] '%s' already excluded from Syncthing (%s)", pattern, stignore)
+            return
+        _write_atomic(stignore, content)
+        logger.info("[sync-guard] Excluded '%s' from Syncthing (%s)", pattern, stignore)
     except Exception as e:
         logger.warning("[sync-guard] could not update .stignore (continuing): %s", e)
 
