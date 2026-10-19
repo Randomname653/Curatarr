@@ -406,8 +406,8 @@ async def apply_reclassify(items: list) -> dict:
                 # thread where a fire-and-forget task has no loop).
                 try:
                     from src.services.facet_index import write_facets
-                    from src.vector_store.chromadb_wrapper import get_chroma_db
-                    _doc = get_chroma_db().get_by_id(f"sonarr:{sid}")
+                    from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
+                    _doc = await run_chroma(get_chroma_db().get_by_id, f"sonarr:{sid}")
                     _meta = (_doc or {}).get("metadata") or {}
                     await write_facets(f"sonarr:{sid}", _meta.get("title", ""),
                                        new_cat, _meta.get("genres", ""),

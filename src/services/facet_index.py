@@ -64,11 +64,11 @@ async def _write_facets(doc_id: str, title: str, domain: str,
     phrases = _phrases_from_themes(themes)
     try:
         from src.services.embed_service import embed_documents, get_profile
-        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
         chroma = get_chroma_db()
         # Delete-first even when the new theme set is empty: a re-enriched
         # title whose themes vanished must not keep stale facet points.
-        chroma.facets_delete_by_parent(str(doc_id))
+        await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
         if not phrases:
             return 0
         if vec_map is not None:
@@ -87,7 +87,8 @@ async def _write_facets(doc_id: str, title: str, domain: str,
         # rollback would probe v1 queries against v2 facet points with no
         # way to tell the spaces apart.
         emb_model = get_profile().get("model") or ""
-        ok = chroma.facets_add(
+        ok = await run_chroma(
+            chroma.facets_add,
             documents=[p for p, _ in pairs],
             embeddings=[v for _, v in pairs],
             metadatas=[{"parent": str(doc_id), "title": title or "",
@@ -108,14 +109,14 @@ async def facet_probe(constraint_vecs: list, domain: str = None,
                  "phrases": {c_idx: best_phrase}, "hits": n_constraints}}.
     A parent whose DIFFERENT facets hit DIFFERENT constraints is exactly
     the contrast-resolution stage 1 exists for."""
-    from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where
+    from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where, run_chroma
     chroma = get_chroma_db()
     out: dict = {}
     for ci, vec in enumerate(constraint_vecs):
         if not vec:
             continue
-        res = chroma.facets_query(
-            query_embeddings=[vec], n_results=k,
+        res = await run_chroma(
+            chroma.facets_query, query_embeddings=[vec], n_results=k,
             where=domain_where(domain))
         docs = (res.get("documents") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
@@ -156,7 +157,7 @@ async def run_facet_backfill(task=None) -> bool:
     progress goes there so the run is visible outside the console."""
     from src.services.app_state import get_state, set_state
     from src.database.runner import run_read, run_write
-    from src.vector_store.chromadb_wrapper import get_chroma_db
+    from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
 
     if await run_read(backfill_done):
         return True
@@ -165,7 +166,7 @@ async def run_facet_backfill(task=None) -> bool:
         offset = int(await run_read(get_state, _BACKFILL_CURSOR_KEY) or 0)
     except Exception:
         offset = 0
-    total = chroma.get_count()
+    total = await run_chroma(chroma.get_count)
 
     start_offset = offset
 
@@ -198,12 +199,12 @@ async def run_facet_backfill(task=None) -> bool:
         if offset >= total:
             await run_write(set_state, _BACKFILL_DONE_KEY, "1")
             logger.info("[facets] backfill COMPLETE — %d facet points",
-                        chroma.facets_count())
+                        await run_chroma(chroma.facets_count))
             _report()
             return True
         try:
-            page = chroma.collection.get(
-                include=["metadatas"], limit=_PAGE, offset=offset)
+            page = await run_chroma(
+                chroma.collection.get, include=["metadatas"], limit=_PAGE, offset=offset)
         except Exception as e:
             logger.warning("[facets] backfill page read failed at %d: %s",
                            offset, e)

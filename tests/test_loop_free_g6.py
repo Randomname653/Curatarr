@@ -296,14 +296,15 @@ with conn_mod.get_db_session() as _db:
 
 _embs = {"a": {"embedding": [1.0, 0.0]}, "b": {"embedding": [0.0, 1.0]},
          "bad": {"embedding": [1.0, 0.0]}}
-saved = reng.chroma_db
-reng.chroma_db = SimpleNamespace(get_by_ids=lambda ids: {i: _embs[i] for i in ids if i in _embs})
+import src.vector_store.chromadb_wrapper as cw  # noqa: E402
+saved = cw.get_chroma_db
+cw.get_chroma_db = lambda: SimpleNamespace(get_by_ids=lambda ids: {i: _embs[i] for i in ids if i in _embs})
 items = [{"title": "B", "plex_rating_key": "b"}, {"title": "Bad", "plex_rating_key": "bad"},
          {"title": "A", "plex_rating_key": "a"}]
 try:
     out, sites = guarded(reng.score_arr_items, 1, "movie", items)
 finally:
-    reng.chroma_db = saved
+    cw.get_chroma_db = saved
 check("no statement on the loop", sites == [])
 check("ranked by the stored taste vector, the recorded dislike last",
       isinstance(out, list) and [i["title"] for i in out] == ["A", "B", "Bad"])

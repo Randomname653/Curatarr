@@ -157,7 +157,7 @@ class _FakeChroma:
 
 
 chroma = _FakeChroma()
-eng.chroma_db = chroma
+cw.get_chroma_db = lambda: chroma
 
 
 async def _run_chroma(fn, *a, **k):

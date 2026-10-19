@@ -183,16 +183,16 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
     """
     try:
         from src.services.embed_service import embed_query
-        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma, domain_where as _domain_where
         # QUERY side of the Nomic prefix schema — the one place the missing
         # prefixes measurably hurt retrieval (asymmetric search).
         embedding = await embed_query(query)
         if not embedding:
             return []
         chroma = get_chroma_db()
-        results = chroma.query(query_embeddings=[embedding],
-                               n_results=n_results,
-                               where=_domain_where(domain))
+        results = await run_chroma(chroma.query, query_embeddings=[embedding],
+                                   n_results=n_results,
+                                   where=_domain_where(domain))
     except Exception as e:
         # Embedder / Chroma outage: chat answers without library context.
         _log_search_failure("semantic search", e)
@@ -341,20 +341,20 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
     """
     try:
         from src.services.embed_service import embed_query
-        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma, domain_where as _domain_where
         probe = await embed_query(anchor_title)
         if not probe:
             return None, None, ""
         chroma = get_chroma_db()
-        res = chroma.query(query_embeddings=[probe], n_results=3,
-                           where=_domain_where(domain))
+        res = await run_chroma(chroma.query, query_embeddings=[probe], n_results=3,
+                               where=_domain_where(domain))
         ids = (res.get("ids") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         want = _norm_title(anchor_title)
         for cid, meta in zip(ids, metas):
             got = _norm_title(meta.get("title", ""))
             if got and (got == want or want in got or got in want):
-                doc = chroma.get_by_id(str(cid))
+                doc = await run_chroma(chroma.get_by_id, str(cid))
                 emb = doc.get("embedding") if doc else None
                 if emb is not None and len(emb):
                     return (list(emb), meta.get("title", ""),
@@ -804,10 +804,10 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             vec = await embed_query((parsed or {}).get("search_text") or query)
         if not vec:
             return {"results": [], "mode": "vector", "anchor": None}
-        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma, domain_where as _domain_where
         fetch_n = min(40, max(3 * limit, 24))
-        results = get_chroma_db().query(
-            query_embeddings=[vec], n_results=fetch_n,
+        results = await run_chroma(
+            get_chroma_db().query, query_embeddings=[vec], n_results=fetch_n,
             where=_domain_where(domain))
         hits = _hits_from_results(results, user_id=user_id, domain=domain)
     except Exception as e:
@@ -844,7 +844,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 seen = {_norm_title(h["title"]) for h in hits}
                 if anchor_used:
                     seen.add(_norm_title(anchor_used))
-                from src.vector_store.chromadb_wrapper import get_chroma_db as _g
+                from src.vector_store.chromadb_wrapper import get_chroma_db as _g, run_chroma
                 chroma = _g()
                 ranked = sorted(probe.items(),
                                 key=lambda kv: -max(kv[1]["sims"].values(),
@@ -860,7 +860,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                           if g.strip()}
                     if ag and hg and not (hg & ag):
                         continue
-                    doc = chroma.get_by_id(parent)
+                    doc = await run_chroma(chroma.get_by_id, parent)
                     meta = (doc or {}).get("metadata") or {}
                     h = {
                         "title": rec.get("title") or meta.get("title", "?"),
@@ -906,8 +906,8 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             from src.services.embed_service import embed_query as _eq
             cvec = await _eq(", ".join(parsed["constraints"]))
             if cvec:
-                cres = get_chroma_db().query(
-                    query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
+                cres = await run_chroma(
+                    get_chroma_db().query, query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
                     where=_domain_where(domain))
                 extra = _hits_from_results(cres, user_id=user_id, domain=domain)
                 seen = {_norm_title(h["title"]) for h in hits}

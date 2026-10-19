@@ -4178,7 +4178,7 @@ async def store_profile_vector(profile: dict, *, media_type: str,
     gen = None
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
-        from src.vector_store.chromadb_wrapper import chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
 
         title = profile.get("title", fallback_title)
         text_to_embed = profile.get("embedding_text")
@@ -4212,7 +4212,8 @@ async def store_profile_vector(profile: dict, *, media_type: str,
         }
         # Upsert, not add: a re-enrich must replace the vector too
         # (add keeps the old one for an existing id — see the wrapper).
-        chroma_db.upsert_documents(
+        await run_chroma(
+            get_chroma_db().upsert_documents,
             documents=[text_to_embed],
             embeddings=[vec],
             metadatas=[chroma_meta],
@@ -4407,7 +4408,7 @@ async def enrich_media_item(
         # Generate embedding and store in ChromaDB
         try:
             from src.embeddings.embedding_generator import EmbeddingGenerator
-            from src.vector_store.chromadb_wrapper import chroma_db
+            from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
             text_to_embed = profile.get("embedding_text") or (
                 f"{title} — {', '.join(profile.get('genres', [])[:6])}. "
                 f"Tags: {', '.join(profile.get('keywords', [])[:8])}."
@@ -4425,7 +4426,8 @@ async def enrich_media_item(
                     "mood": ", ".join(profile.get("mood", [])),
                     "year": 0,
                 }
-                chroma_db.upsert_documents(
+                await run_chroma(
+                    get_chroma_db().upsert_documents,
                     documents=[text_to_embed],
                     embeddings=[vec],
                     metadatas=[chroma_meta],
@@ -4614,7 +4616,7 @@ async def enrich_media_item(
     # ─────────────────────────────────────────────────────────────────────────
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
-        from src.vector_store.chromadb_wrapper import chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
         
         text_to_embed = profile.get("embedding_text")
         
@@ -4643,7 +4645,8 @@ async def enrich_media_item(
                 # Upsert so a re-enrich replaces the embedding too. The old
                 # add → (except) delete+re-add never re-added: Chroma's `add`
                 # with an existing id does not raise, it keeps the old vector.
-                chroma_db.upsert_documents(
+                await run_chroma(
+                    get_chroma_db().upsert_documents,
                     documents=[text_to_embed],
                     embeddings=[embedding_vector],
                     metadatas=[chroma_metadata],

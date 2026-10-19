@@ -1,8 +1,8 @@
 """Synchronous database calls inside coroutines may only go down.
 
 A coroutine that opens ``get_db_session()``, calls ``get_state`` /
-``set_state`` or runs ``db.query(...)`` directly runs SQLite on the
-event-loop thread: every request waits for it, and up to busy_timeout when
+``set_state``, runs ``db.query(...)`` or calls the vector store directly
+runs SQLite on the event-loop thread: every request waits for it, and up to busy_timeout when
 another writer holds the lock. This counts such calls per file in ``src/``
 (not those inside a nested ``def`` / ``lambda``, and not those handed to
 ``run_read`` / ``run_write`` / ``asyncio.to_thread``) against
@@ -39,6 +39,17 @@ SESSION_METHODS = {
     "query", "execute", "commit", "add", "add_all", "flush", "delete", "get",
     "scalar", "scalars", "merge", "refresh", "rollback",
 }
+# ... and the vector store: a wrapper method on a handle held in one of these
+# names, or on get_chroma_db() / ChromaDBWrapper(...) directly. Each one is a
+# Chroma (SQLite + HNSW) round trip.
+CHROMA_NAMES = {"chroma", "chroma_db", "_chroma"}
+CHROMA_FACTORIES = {"get_chroma_db", "ChromaDBWrapper"}
+CHROMA_METHODS = {
+    "facets_add", "facets_query", "facets_delete_by_parent", "facets_count",
+    "add_documents", "upsert_documents", "query", "get_by_id", "get_by_ids",
+    "delete_by_id", "update_metadata", "embeddings_for_domain", "get_count",
+    "count_by_id_prefix", "all_ids", "get_all",
+}
 # A call nested in one of these runs on a worker, not the loop.
 OFFLOAD = {"to_thread", "run_read", "run_write", "run_chroma", "run_in_executor"}
 
@@ -47,9 +58,18 @@ def _name(func) -> str:
     return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
 
 
+def _is_chroma(call: ast.Call) -> bool:
+    f = call.func
+    if not (isinstance(f, ast.Attribute) and f.attr in CHROMA_METHODS):
+        return False
+    v = f.value
+    return ((isinstance(v, ast.Name) and v.id in CHROMA_NAMES)
+            or (isinstance(v, ast.Call) and _name(v.func) in CHROMA_FACTORIES))
+
+
 def _is_sync_db(call: ast.Call) -> bool:
     f = call.func
-    if _name(f) in SYNC_DB:
+    if _name(f) in SYNC_DB or _is_chroma(call):
         return True
     return (isinstance(f, ast.Attribute) and f.attr in SESSION_METHODS
             and isinstance(f.value, ast.Name) and f.value.id in SESSION_NAMES)
