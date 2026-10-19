@@ -39,7 +39,6 @@ UA = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
 from src.database.loop_guard import sqlite_connect
-from src.database.runner import run_read
 STYLES_DB_PATH = _REPO_ROOT / "data" / "cache" / "discogs_styles.db"
 MAX_AGE_DAYS = 30
 
@@ -272,6 +271,54 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
     masters: list[tuple] = []
     t0 = time.time()
     stopped = None
+
+    def _consume(chunk: bytes):
+        """Decompress one chunk and scan the complete <master> blocks it
+        finishes; None, or why the stream must stop. On a worker thread: the
+        whole dump is ~590 MB compressed, gigabytes of XML through these
+        regexes, and on the loop each chunk stalled every request. Chunks
+        are consumed strictly in order, one at a time."""
+        nonlocal buf
+        if _gaming():                   # app_state, read here off the loop
+            return "game"
+        try:
+            buf += decomp.decompress(chunk)
+        except zlib.error:
+            return "zlib"
+        # scan complete <master> blocks; carry the tail over
+        last_end = 0
+        for m in _MASTER_RE.finditer(buf):
+            last_end = m.end()
+            block = m.group(2)
+            am = _ARTIST_NAME_RE.search(block)
+            if not am:
+                continue
+            a_norm = _norm(_unescape(am.group(1)))
+            if a_norm not in wanted:
+                continue
+            tm = _TITLE_RE.search(block)
+            ym = _YEAR_RE.search(block)
+            styles = [_unescape(x) for x in _STYLE_RE.findall(block)]
+            genres = [_unescape(x) for x in _GENRE_RE.findall(block)]
+            # collision anchor: when we KNOW the artist's family and
+            # the master's Discogs genres name a DIFFERENT family,
+            # this is a same-name stranger — drop it
+            known_fams, _known_toks = wanted[a_norm]
+            if known_fams and genres:
+                m_fams = {g.lower() for g in genres}
+                if not (m_fams & known_fams):
+                    continue
+            masters.append((
+                a_norm, _unescape(am.group(1)),
+                _unescape(tm.group(1)) if tm else "",
+                int(ym.group(1)) if ym else None,
+                json.dumps(genres), json.dumps(styles)))
+        if last_end:
+            buf = buf[last_end:]
+        if len(buf) > 8 << 20:      # runaway guard
+            buf = buf[-(4 << 20):]
+        return None
+
     async with httpx.AsyncClient(timeout=120, headers=UA,
                                  follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
@@ -286,46 +333,9 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
                 if read_c >= _next_report:
                     _prog(read_c, total_bytes, len(masters))
                     _next_report = read_c + (16 << 20)   # every ~16 MB
-                if await run_read(_gaming):     # app_state, off the loop
-                    stopped = "game"
+                stopped = await asyncio.to_thread(_consume, chunk)
+                if stopped:
                     break
-                try:
-                    buf += decomp.decompress(chunk)
-                except zlib.error:
-                    stopped = "zlib"
-                    break
-                # scan complete <master> blocks; carry the tail over
-                last_end = 0
-                for m in _MASTER_RE.finditer(buf):
-                    last_end = m.end()
-                    block = m.group(2)
-                    am = _ARTIST_NAME_RE.search(block)
-                    if not am:
-                        continue
-                    a_norm = _norm(_unescape(am.group(1)))
-                    if a_norm not in wanted:
-                        continue
-                    tm = _TITLE_RE.search(block)
-                    ym = _YEAR_RE.search(block)
-                    styles = [_unescape(x) for x in _STYLE_RE.findall(block)]
-                    genres = [_unescape(x) for x in _GENRE_RE.findall(block)]
-                    # collision anchor: when we KNOW the artist's family and
-                    # the master's Discogs genres name a DIFFERENT family,
-                    # this is a same-name stranger — drop it
-                    known_fams, _known_toks = wanted[a_norm]
-                    if known_fams and genres:
-                        m_fams = {g.lower() for g in genres}
-                        if not (m_fams & known_fams):
-                            continue
-                    masters.append((
-                        a_norm, _unescape(am.group(1)),
-                        _unescape(tm.group(1)) if tm else "",
-                        int(ym.group(1)) if ym else None,
-                        json.dumps(genres), json.dumps(styles)))
-                if last_end:
-                    buf = buf[last_end:]
-                if len(buf) > 8 << 20:      # runaway guard
-                    buf = buf[-(4 << 20):]
                 if max_bytes and read_c >= max_bytes:
                     stopped = "test window"
                     break
