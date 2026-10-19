@@ -727,10 +727,11 @@ def main() -> None:
     p.add_argument("--quiet-cpu-pct", type=float, default=20.0,
                    help="wait (up to 2 min) for host CPU below this before each cell")
     p.add_argument("--remote", default="",
-                   help="Ollama URL of another host to measure (e.g. http://finalnas:30068)")
-    p.add_argument("--remote-host", default="finalnas", help="name recorded for that host")
+                   help="Ollama URL of another host to measure (e.g. http://nas:30068)")
+    p.add_argument("--remote-host", default="",
+                   help="name recorded for that host (default: the host of --remote)")
     p.add_argument("--remote-ssh", default="",
-                   help='ssh command reaching it, e.g. "ssh -i C:/Users/me/.ssh/key claude@finalnas"')
+                   help='ssh command reaching it, e.g. "ssh -i ~/.ssh/key user@nas"')
     p.add_argument("--remote-models-path", default="/mnt/nvme_apps/configurations/ai_stack/ollama",
                    help="where the remote Ollama keeps its models (disk guard)")
     sub.add_parser("status")
@@ -741,6 +742,10 @@ def main() -> None:
     p = sub.add_parser("record-scores")
     p.add_argument("--csv", nargs="+", required=True); p.add_argument("--scorer", default="claude")
     args = ap.parse_args()
+    if getattr(args, "remote", "") and not args.remote_host:
+        # Named after the host in its URL, so no machine name is baked in here
+        # and the cells of one remote stay under one name run after run.
+        args.remote_host = httpx.URL(args.remote).host or "remote"
     {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "matrix": cmd_matrix,
      "score-sheets": cmd_score_sheets, "record-scores": cmd_record_scores}[args.cmd](args)
 

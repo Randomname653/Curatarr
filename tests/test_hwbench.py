@@ -320,15 +320,15 @@ check("pending: ...and no re-pull once every server has one",
 # ── remote host (the NAS card) ─────────────────────────────────────────────
 from tests.benchmarks.hwbench import models as _models, server as _server  # noqa: E402
 local_fp = fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3))
-_run.REMOTE_HOST = "finalnas"
+_run.REMOTE_HOST = "nas"
 check("remote: perf and sweep fingerprints carry the host, so a NAS cell never hides a 4090 cell",
       fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3)) != local_fp
-      and _run.sweep_settings(_run.SERVERS["default"])["host"] == "finalnas")
+      and _run.sweep_settings(_run.SERVERS["default"])["host"] == "nas")
 _run.REMOTE_HOST = ""
 check("...and local fingerprints are unchanged without it",
       fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3)) == local_fp)
 check("remote: pull state is kept per host (a tag pulled here never marks the NAS copy as the bench's)",
-      _models.state_file("finalnas") != _models.state_file() and "finalnas" in _models.state_file("finalnas").name)
+      _models.state_file("nas") != _models.state_file() and "nas" in _models.state_file("nas").name)
 import threading as _th  # noqa: E402
 import time as _time  # noqa: E402
 order = []
