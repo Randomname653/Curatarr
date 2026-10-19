@@ -205,7 +205,7 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
         try:
             from src.services.task_monitor import task_monitor
             task_monitor.update(task, processed=checked + failed, total=len(batch), message=msg)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the sweep is unaffected
             pass
 
     _report(f"{len(series):,} series, {len(todo):,} to check")

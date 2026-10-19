@@ -33,6 +33,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def _norm_genres(raw, names: bool = False) -> list[str]:
             try:
                 out.extend(x for x in json.loads(g) if isinstance(x, str))
                 continue
-            except Exception:
+            except (ValueError, TypeError):
                 pass
         if isinstance(g, str):
             piece = _unfragment(g, names)
@@ -171,7 +172,7 @@ async def list_artists_page(page: int = 1, limit: int = 100) -> Optional[dict]:
         return {"artists": data.get("artists") or [],
                 "pagination": body.get("pagination") or {}}
     except Exception as e:
-        logger.debug("[soulsync] list_artists_page(%d) failed: %s", page, e)
+        log_topup_failure(logger, "[soulsync] list_artists_page", page, e)
         return None
 
 
@@ -286,7 +287,7 @@ async def liked_song_artists(max_pages: int = 25) -> Optional[list[str]]:
                 if not (body.get("pagination") or {}).get("has_next"):
                     break
     except Exception as e:
-        logger.debug("[soulsync] wishlist read failed: %s", e)
+        log_topup_failure(logger, "[soulsync] wishlist read", LIKED_SONGS, e)
         return None
     return names
 

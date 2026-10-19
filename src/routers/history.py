@@ -206,8 +206,8 @@ async def recent_history(
                                               tmdb_id=ids[0], mbid=ids[1])
                 return key, poster
             except Exception as _e:
-                logger.debug("[history] poster lookup failed for %r: %s",
-                             lookup_title, _e)
+                from src.services.enrichment_state import log_topup_failure
+                log_topup_failure(logger, "[history] poster", lookup_title, _e)
                 return key, None
 
         poster_by_key = dict(await asyncio.gather(

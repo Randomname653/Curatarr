@@ -266,7 +266,7 @@ async def _get_arr_counts() -> dict:
             ts = datetime.fromisoformat(cached_ts)
             if datetime.utcnow() - ts < timedelta(minutes=5):
                 return _json.loads(cached_raw)
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     counts = {}
@@ -275,7 +275,7 @@ async def _get_arr_counts() -> dict:
     if cached_raw:
         try:
             prev_cached = _json.loads(cached_raw)
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     from src.database.connection import get_db_session
@@ -403,7 +403,7 @@ async def _get_arr_counts() -> dict:
             if plex_counts:
                 counts["lidarr"] = plex_counts
         except Exception as e:
-            logger.debug("[kb] plex music counts failed: %s", e)
+            logger.warning("[kb] plex music counts failed: %s", e, exc_info=True)
     if settings.LIDARR_URL and settings.LIDARR_API_KEY:
         try:
             async with _httpx.AsyncClient(timeout=8) as client:
@@ -846,7 +846,7 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
             return
         try:
             task_monitor.update(task, message=msg)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the audit is unaffected
             pass
 
     # Arr ground-truth (doc-id → item) for the wrong-entity check. Best-effort:
@@ -1232,7 +1232,8 @@ def _derive_category(service: str, arr_id: int, hint: Optional[str] = None) -> s
             if e and e.media_category in _CATEGORIES:
                 return e.media_category
     except Exception as _e:
-        logger.debug("[match] category lookup failed for %s: %s", prk, _e)
+        logger.warning("[match] category lookup failed for %s - guessing from "
+                       "service: %s", prk, _e)
     return {"radarr": "movie", "lidarr": "music"}.get(service, "show")
 
 
@@ -1296,7 +1297,7 @@ async def match_candidates(
                     n["kind"] = service
                     out.append(n)
         except Exception as e:
-            logger.debug("[match] %s lookup failed for %r: %s", service, title, e)
+            _ES.log_topup_failure(logger, f"[match] {service} lookup", title, e)
     # 2. TMDB for movies and shows (anime too — many are on TMDB as tv).
     mt = "movie" if category == "movie" else "tv"
     if settings.TMDB_API_KEY and category != "music":
@@ -1325,7 +1326,7 @@ async def match_candidates(
             from src.services.media_enricher import anilist_candidates
             out += await anilist_candidates(title)
         except Exception as e:
-            logger.debug("[match] anilist candidates failed for %r: %s", title, e)
+            _ES.log_topup_failure(logger, "[match] anilist candidates", title, e)
     if not out and category != "music" and not settings.TMDB_API_KEY:
         return {"candidates": [], "category": category, "media_type": mt,
                 "error": "no TMDB key configured"}
@@ -2251,8 +2252,8 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
                     arr_match.enriched_at = datetime.utcnow() if arr_llm_ok else None
                     arr_match.error       = error
                     db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _ES.log_topup_failure(logger, "[enrich] arr status mirror", canonical_title, e)
 
     if not profile:
         return counted
@@ -2273,8 +2274,9 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
             ])
             if _sh:
                 profile["_source_hash"] = _sh
-        except Exception:
-            pass
+        except Exception as e:
+            # No anchor only means the next raw refresh re-polishes this item.
+            _ES.log_topup_failure(logger, "[enrich] source hash", canonical_title, e)
         # not_found sentinel: lives as long as the backoff wait (>= 3 days) so
         #   the cache and the DB row agree on when the item is due again.
         # Rule-based fallbacks: 1-day TTL so they are retried next run.
@@ -3199,7 +3201,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                 )
                 _c.close()
             except Exception as _ce:
-                logger.debug("Game-mode raw cache write failed: %s", _ce)
+                _ES.log_topup_failure(logger, "[game-mode] raw cache write", canonical, _ce)
 
             for _attempt in range(5):
                 try:
@@ -3266,7 +3268,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                                         if isinstance(remaining, dict) else remaining):
                                 try:
                                     _rt.cancel()
-                                except Exception:
+                                except Exception:  # noqa: BLE001 - cancel in teardown; task is abandoned anyway
                                     pass
                         game_skipped += 1
                         if game_skipped == 1:
@@ -3374,7 +3376,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             from src.services.verification_session import start_verification_session
             await start_verification_session(user_id)
         except Exception as e:
-            logger.debug("Post-enrichment verification failed: %s", e)
+            logger.warning("Post-enrichment verification failed: %s", e, exc_info=True)
 
         # Normal completion — clear interrupted flag
         set_state("enrichment_interrupted", "0")

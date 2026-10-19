@@ -128,8 +128,12 @@ async def _curator_json(system: str, user: str, schema: dict,
     try:
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
-    except Exception:
-        pass
+    except Exception as e:
+        # Fail closed: a broken yield gate must not let background learning
+        # take the GPU from a live chat. Every caller logs and skips this run.
+        logger.warning("[principles] curator yield gate failed - skipping this "
+                       "call: %r", e)
+        raise
     payload = {
         "model": settings.CURATOR_MODEL,
         "messages": [{"role": "system", "content": system},
@@ -196,7 +200,8 @@ def _existing_context(user_id: int) -> tuple[list[tuple[int, str]], str, list[st
             if tv and tv.summary_text:
                 taste = tv.summary_text[:3500]
     except Exception as e:
-        logger.debug("[principles] taste fetch failed: %s", e)
+        logger.warning("[principles] taste fetch failed - novelty check runs "
+                       "without the taste summary: %s", e)
     return existing, taste, rejected
 
 
@@ -296,7 +301,7 @@ def _reinforce_duplicate(user_id: int, related: str, related_id: int | None = No
                                 row.times_reinforced, (row.text or "")[:60])
                     return
         except Exception as e:
-            logger.debug("[principles] reinforce by id failed: %s", e)
+            logger.warning("[principles] reinforce by id failed: %s", e, exc_info=True)
     if not related or related.strip() in ("-", "—", ""):
         return
     key = related.strip().lower()[:40]
@@ -320,7 +325,7 @@ def _reinforce_duplicate(user_id: int, related: str, related_id: int | None = No
                                 row.id, row.times_reinforced, (row.text or "")[:60])
                     return
     except Exception as e:
-        logger.debug("[principles] reinforce failed: %s", e)
+        logger.warning("[principles] reinforce failed: %s", e, exc_info=True)
 
 
 # ── CAPTURE (P3) ─────────────────────────────────────────────────────────────
@@ -488,7 +493,7 @@ async def detect_and_apply_principle_verdict(user_id: int, principle_id: int,
                         emb = await _embed(revised)
                         if emb:
                             row.embedding_json = json.dumps(emb)
-                    except Exception:
+                    except (TypeError, ValueError):
                         pass
                 row.status = "active"
                 row.activated_at = datetime.utcnow()
@@ -540,7 +545,8 @@ async def retrieve_principles(user_id: int, category: str | None = None,
             scored.sort(key=lambda x: x[0], reverse=True)
             return [t for _, t in scored[:top_k]]
     except Exception as e:
-        logger.debug("[principles] retrieve ranking failed: %s", e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[principles] retrieve ranking", category, e)
     return [t for t, _ in rows[:top_k]]
 
 

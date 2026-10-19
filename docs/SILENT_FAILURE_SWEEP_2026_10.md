@@ -171,11 +171,44 @@ Updated pins, each pinning a contract this round changed:
 - `test_status_polling_cache` and `test_enrichment_vector_correctness`: handlers that are now plain `def`.
 - The direct handler calls in `test_member_visibility`, `test_music_wishes`, `test_deletion_safety`, `test_deletion_returns`, `test_keep_and_delete_feedback`, `test_principle_supersede` and `test_auth_hardening` no longer wrap a sync handler in `asyncio.run`.
 
+### Round 4 (follow-up PR): silent handlers to zero
+
+Every one of the 277 remaining silent broad handlers (`pass`, or a lone `logger.debug`) was
+read in context and given one disposition:
+
+| Disposition | Used for |
+| :--- | :--- |
+| `# noqa: BLE001 - <reason>` | Best-effort on purpose: progress cards, teardown closes and cancels, cosmetic hints. The reason has to be concrete. |
+| Narrowed | Parsing optional or external data: `ValueError`/`TypeError`/`KeyError`/`json.JSONDecodeError`; `ImportError` for optional modules. |
+| `log_topup_failure` / split | Network and optional evidence: outages stay at DEBUG, bugs log at WARNING (first tracebacks per walker). |
+| WARNING | Reads whose fallback looks like "no data": DB, cache, vector store. |
+| Fail closed | Handlers that guard a decision (below). |
+
+Fail-closed conversions, each with a check that fails on the old code
+(`tests/test_silent_handlers_g2.py`, `_g3.py`, `_g4.py`):
+- `embedding_migration._neighborhood_eval`: a pair that raised was skipped, so the
+  eval gate scored only the survivors and could flip a half-broken v2 corpus live. It
+  now counts as tried and missed.
+- `pillars._read_db_facts` taste read and `build_evidence`'s `_taste_section`: an
+  unreadable taste profile now sets `owner_signal_unknown` (deferred, not judged).
+- `pillars.build_evidence` form guards (spoken-word, documentary): a cache-read failure
+  (`_get_cached_rating(..., strict=True)`) defers the title. It reuses
+  `significance_unchecked`, so the banner says "significance unchecked".
+- `proactive_messages.get_disabled_triggers`: an unreadable opt-out list counts as
+  every trigger disabled; it used to switch all opt-outs back on.
+- `subtitle_signals._os_charge`: an unrecorded download pauses OpenSubtitles for the
+  day in-process, rather than overspending a shared daily budget.
+- `curator_principles._curator_json`: a failed curator-yield check skips the
+  background learning call instead of taking the GPU from a live chat.
+
+Ten older bare `# noqa: BLE001` annotations without a reason were resolved the same
+way. `tests/test_silent_except_ratchet.py` is now a rule, not a ratchet: no
+silent broad except in `src/` unless its line gives a concrete reason. The baseline
+file is gone.
+
 ### Still open
 
-- The 58 route handlers that do await keep their synchronous DB sections on the loop.
-  Moving those sections onto `run_read`/`run_write` is the remaining step before
-  `busy_timeout`/`pool_timeout` (60 s) can come down. `foreign_keys=ON` still needs a
-  `foreign_key_check` cleanup first.
-- The 277 silent broad excepts in the ratchet baseline. Each is a candidate for WARNING or a
-  narrower except; the ratchet only lets the count fall.
+- The 58 route handlers that do await keep their synchronous DB sections on the loop,
+  and about 213 synchronous DB call sites sit inside service coroutines. Moving both onto
+  `run_read`/`run_write` is the remaining step before `busy_timeout`/`pool_timeout`
+  (60 s) can come down. `foreign_keys=ON` still needs a `foreign_key_check` cleanup first.

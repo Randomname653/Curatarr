@@ -36,6 +36,25 @@ ARTIST_MBID = "artist_mbid"
 # Attempt number -> how long before we ask again. The last entry repeats.
 _BACKOFF_DAYS = (14, 30, 90)
 
+# record_miss / clear_miss run once per artist in the resolver loop: one
+# WARNING per failure streak, the rest at DEBUG until a write succeeds.
+_write_failing = False
+
+
+def _write_failed(what: str, name: str, e: Exception) -> None:
+    global _write_failing
+    if _write_failing:
+        logger.debug("[music-misses] %s failed for %r: %s", what, name, e)
+        return
+    _write_failing = True
+    logger.warning("[music-misses] %s failed for %r: %s (repeats at DEBUG "
+                   "until a write succeeds)", what, name, e, exc_info=True)
+
+
+def _write_ok() -> None:
+    global _write_failing
+    _write_failing = False
+
 
 def _wait_days(attempts: int) -> int:
     idx = min(max(attempts, 1), len(_BACKOFF_DAYS)) - 1
@@ -63,7 +82,7 @@ def due_filter(names: Iterable[str], *, kind: str = ARTIST_MBID,
             rows = (db.query(MusicLookupMiss.name, MusicLookupMiss.next_retry_at)
                     .filter(MusicLookupMiss.kind == kind).all())
     except Exception as e:                                   # pragma: no cover
-        logger.debug("[music-misses] read failed, querying everything: %s", e)
+        logger.warning("[music-misses] read failed, querying everything: %s", e)
         return names
     parked = {r[0] for r in rows
               if _norm(r[0]) in wanted and r[1] is not None and r[1] > now}
@@ -96,10 +115,11 @@ def record_miss(name: str, *, kind: str = ARTIST_MBID, reason: str = "",
             days = _wait_days(row.attempts)
             row.next_retry_at = now + timedelta(days=days)
             row.last_reason = (reason or "")[:200] or None
-            return days
     except Exception as e:                                   # pragma: no cover
-        logger.debug("[music-misses] write failed for %r: %s", name, e)
+        _write_failed("write", name, e)
         return 0
+    _write_ok()
+    return days
 
 
 def clear_miss(name: str, *, kind: str = ARTIST_MBID) -> None:
@@ -113,7 +133,9 @@ def clear_miss(name: str, *, kind: str = ARTIST_MBID) -> None:
              .filter(MusicLookupMiss.kind == kind, MusicLookupMiss.name == name)
              .delete(synchronize_session=False))
     except Exception as e:                                   # pragma: no cover
-        logger.debug("[music-misses] clear failed for %r: %s", name, e)
+        _write_failed("clear", name, e)
+        return
+    _write_ok()
 
 
 def stats(kind: str = ARTIST_MBID, *, now: Optional[datetime] = None) -> dict:
@@ -140,5 +162,5 @@ def stats(kind: str = ARTIST_MBID, *, now: Optional[datetime] = None) -> dict:
             return {"missed": total, "waiting": waiting, "due": total - waiting,
                     "next_retry_at": nxt[0].isoformat() if nxt else None}
     except Exception as e:                                   # pragma: no cover
-        logger.debug("[music-misses] stats failed: %s", e)
+        logger.warning("[music-misses] stats failed: %s", e)
         return {"missed": 0, "waiting": 0, "due": 0, "next_retry_at": None}

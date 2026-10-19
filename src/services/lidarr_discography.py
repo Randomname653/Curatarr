@@ -21,6 +21,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def plex_discography_summary(artist_mbid: str = None, artist_name: str = None) -
             return None
         albums = plex_artist_albums(a["artist_key"])
     except Exception as e:
-        logger.debug("[discography] plex index failed for %r: %s", artist_mbid or artist_name, e)
+        logger.warning("[discography] plex index failed for %r: %s", artist_mbid or artist_name, e)
         return None
     if not albums:
         return None
@@ -105,8 +106,8 @@ async def find_lidarr_artist(client, base: str, key: str, *, mbid: str = None,
                 hit = pick(data if isinstance(data, list) else [data])
                 if hit:
                     return hit
-        except Exception as e:  # noqa: BLE001
-            logger.debug("[lidarr] mbId lookup failed for %s: %s", mbid, e)
+        except Exception as e:  # noqa: BLE001 - outage vs bug split below
+            log_topup_failure(logger, "[lidarr] mbId lookup", mbid, e)
     if cached is not None:
         return None
     r = await client.get(f"{base}/api/v1/artist", params={"apikey": key},
@@ -142,8 +143,7 @@ async def discography_summary(artist_mbid: str = None,
                 return None
             albums = r2.json()
     except Exception as e:
-        logger.debug("[discography] lidarr fetch failed for %r: %s",
-                     artist_mbid or artist_name, e)
+        log_topup_failure(logger, "[discography] lidarr", artist_mbid or artist_name, e)
         return None
 
     on_disk = Counter()

@@ -59,6 +59,41 @@ def _preflight(live_collection: str, names: set) -> str | None:
     return None
 
 
+def _neighborhood_eval(src_collection, dst, sample) -> tuple[int, int]:
+    """(hits, tried) for the eval gate. A pair that RAISES counts as tried
+    and missed: skipping it let the gate pass on whichever pairs happened to
+    survive, so a half-broken v2 corpus could still be flipped live."""
+    hits = tried = errors = 0
+    for n, (doc_id, old_emb) in enumerate(sample):
+        counted = False
+        try:
+            nb = src_collection.query(query_embeddings=[list(old_emb)],
+                                      n_results=3)
+            nb_ids = [i for i in (nb.get("ids") or [[]])[0] if i != doc_id]
+            if not nb_ids:
+                continue
+            a = dst.get_by_id(doc_id)
+            b = dst.get_by_id(nb_ids[0])
+            r = dst.get_by_id(sample[(n + 7) % len(sample)][0])   # unrelated
+            if not (a and b and r) or a["embedding"] is None:
+                continue
+            tried += 1
+            counted = True
+            if _cos(a["embedding"], b["embedding"]) > _cos(a["embedding"],
+                                                           r["embedding"]):
+                hits += 1
+        except Exception as e:
+            if not counted:
+                tried += 1
+            errors += 1
+            if errors == 1:
+                logger.warning("[emb-migration] eval pair failed (counted as a "
+                               "miss): %r", e, exc_info=True)
+            else:
+                logger.debug("[emb-migration] eval pair failed: %s", e)
+    return hits, tried
+
+
 async def run_embedding_migration(task) -> dict:
     """Full migration under a task_monitor task. Honors cancellation
     (checked between batches — no flip happens on a cancelled run)."""
@@ -88,7 +123,7 @@ async def run_embedding_migration(task) -> dict:
     client = src.client
     try:
         client.delete_collection(V2_PROFILE["collection"])
-    except Exception:
+    except Exception:  # noqa: BLE001 - absent on a first run; create below fails loud
         pass
     dst_coll = client.create_collection(
         name=V2_PROFILE["collection"],
@@ -145,26 +180,8 @@ async def run_embedding_migration(task) -> dict:
             sample.append((page["ids"][i], page["embeddings"][i]))
         if len(sample) >= _EVAL_SAMPLE:
             break
-    hits = tried = 0
     dst = ChromaDBWrapper(V2_PROFILE["collection"])
-    for n, (doc_id, old_emb) in enumerate(sample):
-        try:
-            nb = src.collection.query(query_embeddings=[list(old_emb)],
-                                      n_results=3)
-            nb_ids = [i for i in (nb.get("ids") or [[]])[0] if i != doc_id]
-            if not nb_ids:
-                continue
-            a = dst.get_by_id(doc_id)
-            b = dst.get_by_id(nb_ids[0])
-            r = dst.get_by_id(sample[(n + 7) % len(sample)][0])   # unrelated
-            if not (a and b and r) or a["embedding"] is None:
-                continue
-            tried += 1
-            if _cos(a["embedding"], b["embedding"]) > _cos(a["embedding"],
-                                                           r["embedding"]):
-                hits += 1
-        except Exception as e:
-            logger.debug("[emb-migration] eval pair failed: %s", e)
+    hits, tried = _neighborhood_eval(src.collection, dst, sample)
     rate = (hits / tried) if tried else 0.0
     task_monitor.update(task, message=f"Eval gate: {hits}/{tried} "
                                       f"similar-beats-random ({rate:.0%})")

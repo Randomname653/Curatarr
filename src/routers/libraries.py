@@ -87,8 +87,9 @@ async def discover_libraries(user: User = Depends(get_current_user)):
             )
             if r.status_code == 200:
                 return r.json().get("MediaContainer", {}).get("totalSize", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[libraries] section count", key, e)
         return 0
 
     import asyncio as _asyncio

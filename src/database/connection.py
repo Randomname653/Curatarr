@@ -376,7 +376,7 @@ def _migrate_columns() -> None:
         except BaseException as e:
             try:
                 conn.exec_driver_sql("ROLLBACK")
-            except Exception:
+            except Exception:  # noqa: BLE001 - rollback in failure path; the error is raised below
                 pass
             # Was logged at DEBUG and swallowed: a column skipped because the
             # DB was locked (the music enricher writing) surfaced hours later
@@ -422,7 +422,9 @@ def _ensure_deletion_proposal_indexes() -> None:
             try:
                 conn.execute(text(ddl))
             except Exception as e:
-                _mig_log.debug("[migrate] deletion_proposals index repair failed: %s", e)
+                # Lookup indexes only (no uniqueness), so boot goes on — slowly.
+                _mig_log.error("[migrate] deletion_proposals index repair failed "
+                               "(%s): %s", ddl, e)
         conn.commit()
 
 
@@ -489,7 +491,7 @@ def _migrate_deletion_proposals_autoincrement() -> None:
         except Exception as e:
             try:
                 conn.exec_driver_sql("ROLLBACK")
-            except Exception:
+            except Exception:  # noqa: BLE001 - rollback in failure path; logged as ERROR below
                 pass
             _mig_log.error(
                 "[migrate] Pass 90c FAILED: %s — rolled back, table left in "
@@ -534,8 +536,8 @@ def _secure_db_files() -> None:
     if ENV_FILE.exists():
         try:
             os.chmod(ENV_FILE, stat.S_IRUSR | stat.S_IWUSR)
-        except Exception as e:
-            _mig_log.debug("Could not chmod %s (likely Windows): %s", ENV_FILE, e)
+        except OSError as e:
+            _mig_log.warning("Could not chmod %s to 0600: %s", ENV_FILE, e)
 
     if not DATA_DIR.exists():
         return
@@ -544,8 +546,10 @@ def _secure_db_files() -> None:
         for p in DATA_DIR.rglob(ext):
             try:
                 os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
-            except Exception as e:
-                _mig_log.debug("Could not chmod %s (likely Windows): %s", p, e)
+            except FileNotFoundError:
+                pass   # a -wal/-shm sidecar checkpointed away mid-scan
+            except OSError as e:
+                _mig_log.warning("Could not chmod %s to 0600: %s", p, e)
 
 
 def _drop_retired_tables() -> None:

@@ -186,7 +186,7 @@ async def run_facet_backfill(task=None) -> bool:
                 msg += f" (+{written} facet points)"
             task_monitor.update(task, processed=offset - start_offset + within,
                                 total=slice_total, message=msg)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the backfill is unaffected
             pass
     # Budget per custodian tick: one page batch keeps a tick short; the
     # 30-min custodian interval finishes ~27k titles in a few days, or
@@ -226,7 +226,9 @@ async def run_facet_backfill(task=None) -> bool:
                 vecs = await embed_documents(chunk)
                 vec_map.update({p: v for p, v in zip(chunk, vecs) if v})
             except Exception as e:
-                logger.debug("[facets] page embed chunk failed: %s", e)
+                # An empty vec_map stops the tick below with the cursor kept.
+                from src.services.enrichment_state import log_topup_failure
+                log_topup_failure(logger, "[facets] page embed chunk", offset, e)
         # The cursor used to advance past titles whose write failed (embedder
         # down, chroma error) and eventually stamp facet_backfill_done=1, so
         # they were never retried. Now a failed page stops the tick with the

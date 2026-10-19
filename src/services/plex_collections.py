@@ -103,8 +103,11 @@ async def push_collections(designs: list[dict]) -> dict:
         prev = json.loads(get_state("curatarr_collections") or "{}")
         sections |= {str(d.get("section_key")) for d in prev.get("designs", [])
                      if d.get("section_key")}
-    except Exception:
-        pass
+    except (ValueError, TypeError, AttributeError):
+        pass   # no usable snapshot: clean the sections passed in only
+    except Exception as e:
+        logger.warning("[collections] previous push snapshot unreadable - "
+                       "orphans in other sections may stay: %s", e)
 
     deleted = 0
     for sec in sections:

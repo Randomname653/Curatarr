@@ -6,6 +6,20 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**No silent error handlers left.** The last 277 handlers that swallowed an error
+(`pass`, or a DEBUG line nobody sees) now each do one of four things: narrow to the
+error they expect, log a real failure as a warning, keep outages quiet while bugs are
+logged, or say in the code why staying silent is safe. Where one guarded a decision it
+now fails closed:
+- a half-broken embedding migration can no longer pass its own quality gate;
+- the deletion judge defers a title when the owner's taste profile or its format check
+  can't be read;
+- a corrupt notification setting no longer switches every opt-out back on;
+- OpenSubtitles pauses when a download can't be counted against the daily budget;
+- background learning steps back when it can't check whether a chat needs the GPU.
+
+A test now refuses any new silent handler that doesn't give its reason.
+
 **The deletion judge fails closed.** When the judge could not read the
 watch history, its facts said "not watched", a made-up negative for the
 household pillar; such a title is now deferred. Verdicts are checked

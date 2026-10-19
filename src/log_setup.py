@@ -61,8 +61,12 @@ def init_logging(level: str = "INFO") -> None:
                                  backupCount=3, encoding="utf-8")
         fh.setFormatter(fmt)
         root.addHandler(fh)
-    except Exception:
-        pass  # a broken log dir must never block startup
+    except Exception as e:
+        # A broken log dir must never block startup; logging is not up yet,
+        # so say it on stderr (absent under pythonw).
+        if sys.stderr is not None:
+            print(f"[log_setup] file logging disabled ({LOG_DIR}): {e!r}",
+                  file=sys.stderr)
 
     if sys.stderr is not None:
         sh = logging.StreamHandler()

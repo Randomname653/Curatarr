@@ -34,6 +34,16 @@ logger = logging.getLogger(__name__)
 _SEARCH_KEEP_ALIVE = "5m"
 _PARSE_TIMEOUT = 12.0
 
+
+def _log_search_failure(what: str, e: BaseException) -> None:
+    """An embedder / network outage stays at DEBUG (search degrades, chat
+    answers); anything else is a bug and is logged so it can be found."""
+    from src.services.enrichment_state import is_transient_error
+    if is_transient_error(e):
+        logger.debug("[search] %s failed: %s", what, e)
+    else:
+        logger.warning("[search] %s failed: %r", what, e, exc_info=True)
+
 # ── Evidence-scoring constants — calibrated on tests/test_search_fixtures.py
 # (the owner's two live review rounds), do not tweak by feel. Constraint↔tag
 # comparison is SYMMETRIC document-side embedding: the asymmetric
@@ -184,7 +194,7 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
                                where=_domain_where(domain))
     except Exception as e:
         # Embedder / Chroma outage: chat answers without library context.
-        logger.debug("semantic search failed: %s", e)
+        _log_search_failure("semantic search", e)
         return []
     # Outside the outage try: a bug in watched_lookup / short_size_tag used
     # to empty chat's library context at DEBUG, indistinguishable from an
@@ -293,8 +303,12 @@ async def _summarizer_json(system: str, user: str, schema: dict,
                 continue
             raw = strip_think_tags(r.json().get("message", {}).get("content", "") or "")
             return json.loads(raw)
-        except Exception as e:
+        except (httpx.HTTPError, TimeoutError, ValueError) as e:
+            # down, slow, or not JSON: try the next model
             logger.debug("[search] summarizer json via %s failed: %s", model, e)
+        except Exception as e:
+            logger.warning("[search] summarizer json via %s failed: %r", model, e,
+                           exc_info=True)
     return None
 
 
@@ -345,7 +359,7 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
                     return (list(emb), meta.get("title", ""),
                             meta.get("genres", "") or "")
     except Exception as e:
-        logger.debug("[search] anchor resolve failed: %s", e)
+        _log_search_failure("anchor resolve", e)
     return None, None, ""
 
 
@@ -362,7 +376,7 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
     try:
         cache = MetadataCache()
     except Exception as e:
-        logger.debug("[search] cache open failed: %s", e)
+        logger.warning("[search] cache open failed - ranking without tags: %s", e)
     out = []
     for h in hits:
         tags, seen = [], set()
@@ -411,7 +425,7 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
     try:
         if cache is not None:
             cache.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 - releasing a handle; the tags are already read
         pass
     return out
 
@@ -456,6 +470,7 @@ async def _texts_to_vectors(texts: list) -> dict:
         cache = MetadataCache()
     except Exception:
         cache = None
+    cache_warned = False   # once per call: this runs per tag
     for k, orig in want.items():
         if k in _vec_memo:
             result[k] = _vec_memo[k]
@@ -469,8 +484,11 @@ async def _texts_to_vectors(texts: list) -> dict:
                     _vec_memo[k] = vec
                     result[k] = vec
                     continue
-            except Exception:
-                pass
+            except Exception as e:
+                # read as a miss: the tag is embedded afresh
+                if not cache_warned:
+                    cache_warned = True
+                    logger.warning("[search] tag-vector cache read failed: %s", e)
         misses.append((k, orig))
     if misses:
         prefix = "search_document: " if prof.get("prefixes") else ""
@@ -489,12 +507,15 @@ async def _texts_to_vectors(texts: list) -> dict:
                         try:
                             ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
                             cache.set_cache(ck, {"v": unit}, days=90)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            if not cache_warned:
+                                cache_warned = True
+                                logger.warning("[search] tag-vector cache write "
+                                               "failed: %s", e)
     try:
         if cache is not None:
             cache.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 - releasing a handle; the vectors are computed
         pass
     return result
 
@@ -754,7 +775,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             where=_domain_where(domain))
         hits = _hits_from_results(results, user_id=user_id, domain=domain)
     except Exception as e:
-        logger.debug("[search] curated retrieval failed: %s", e)
+        _log_search_failure("curated retrieval", e)
         return {"results": await semantic_hits(query, limit, domain, user_id),
                 "mode": "vector", "anchor": None}
 
@@ -834,9 +855,9 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                             h["watch_tag"] = watch_tag(watched.get(h["title"]))
                             h["size_tag"] = short_size_tag(title=h["title"])
                     except Exception as e:
-                        logger.debug("[search] facet hit decoration failed: %s", e)
+                        logger.warning("[search] facet hit decoration failed: %s", e)
         except Exception as e:
-            logger.debug("[search] facet probe failed: %s", e)
+            _log_search_failure("facet probe", e)
 
     # LEGACY constraint-text probe — transitional fallback while the facet
     # collection is empty/young: the anchor/search-text vector stays glued
@@ -883,7 +904,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 hits += [h for h in extra
                          if _norm_title(h["title"]) not in seen][:max(0, 40 - len(hits))]
         except Exception as e:
-            logger.debug("[search] constraint probe failed: %s", e)
+            _log_search_failure("constraint probe", e)
 
     if not hits:
         return {"results": [], "mode": "vector", "anchor": anchor_used}

@@ -138,6 +138,7 @@ async def classified_items() -> list[dict]:
     from src.database.connection import get_db_session
     from src.database.models import ArrEnrichmentStatus, EnrichmentStatus
     from src.routers.library import _fetch_arr_library
+    from fastapi import HTTPException
 
     mc = MetadataCache()
     try:
@@ -150,7 +151,7 @@ async def classified_items() -> list[dict]:
         from src.vector_store.chromadb_wrapper import ChromaDBWrapper
         chroma_ids = set(ChromaDBWrapper().all_ids())
     except Exception as e:
-        logger.debug("[kb-overview] chroma id fetch failed: %s", e)
+        logger.warning("[kb-overview] chroma id fetch failed: %s", e)
 
     with get_db_session() as db:
         arr_flags = {
@@ -175,8 +176,13 @@ async def classified_items() -> list[dict]:
     for svc in _SERVICES:
         try:
             items_raw, _tags, _ci = await _fetch_arr_library(svc)
+        except HTTPException as e:
+            # 400 not configured / 502 unreachable with no cached copy
+            logger.debug("[kb-overview] %s not available: %s", svc, e.detail)
+            continue
         except Exception as e:
-            logger.debug("[kb-overview] %s not available: %s", svc, e)
+            logger.warning("[kb-overview] %s library read failed: %s", svc, e,
+                           exc_info=True)
             continue
         for raw in items_raw:
             cat = _category_of(svc, raw)

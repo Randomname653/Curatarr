@@ -34,8 +34,9 @@ from src.schemas.chat import ChatMessage
 from src.config import settings
 from src.services.plex_sync import get_user_taste_context
 from src.services.media_enricher import enrich_media_item
+from src.services.enrichment_state import log_topup_failure
 
-logger = logging.getLogger(__name__)
+logger =logging.getLogger(__name__)
 router = APIRouter()
 
 CONVERSATION_WINDOW = 20            # last N messages to include as context
@@ -424,7 +425,8 @@ def _library_title_index() -> list:
         finally:
             mc.close()
     except Exception as e:
-        logger.debug("[chat] library title index failed: %s", e)
+        # The failed attempt is stamped below, so this logs once per TTL.
+        logger.warning("[chat] library title index failed: %s", e, exc_info=True)
     if items:
         _LIB_TITLE_INDEX.update(ts=_time.time(), items=items)
     else:
@@ -528,7 +530,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
             raw_output = r.json().get("message", {}).get("content", "").strip()
 
     except Exception as e:
-        logger.debug("[chat] entity extraction LLM error: %s", e)
+        log_topup_failure(logger, "[chat] entity extraction", normalized_query[:80], e)
 
     # Try to parse the LLM output. Accept several shapes the summarizer
     # might emit: bare {"title": "X"}, nested {"output": {"title": "X"}},
@@ -978,7 +980,7 @@ async def _enrich_with_cascade(
                         d, per_domain_timeout)
             continue
         except Exception as e:
-            logger.debug("[chat] cascade %s: error %s", d, e)
+            log_topup_failure(logger, f"[chat] cascade {d}", title, e)
             continue
         if data:
             # Pass 32: reject obviously-mismatched profiles. The music
@@ -1064,7 +1066,7 @@ def _verified_block_for(title: str, domain: str | None,
                 if fvb:
                     return "\n" + fvb + "\n"
     except Exception as e:
-        logger.debug("[chat] verified block for %r failed: %s", title, e)
+        logger.warning("[chat] verified block for %r failed: %s", title, e, exc_info=True)
     return ""
 
 
@@ -1261,7 +1263,7 @@ async def get_starters(user: User = Depends(get_current_user)):
 
             asyncio.create_task(_refill(user.id))
     except Exception as _e:
-        logger.debug("[starters] refill check failed: %s", _e)
+        logger.warning("[starters] refill check failed: %s", _e)
     return {"starters": picks}
 
 
@@ -1361,7 +1363,7 @@ def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | No
         if arr_row and arr_row.category:
             return arr_row.category
     except Exception as e:
-        logger.debug("[chat] _infer_category arr lookup failed: %s", e)
+        logger.warning("[chat] _infer_category arr lookup failed: %s", e)
 
     # 2. WatchHistoryEntry — most common media_type for this user+title
     try:
@@ -1382,7 +1384,7 @@ def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | No
         if row and row.media_type:
             return row.media_type
     except Exception as e:
-        logger.debug("[chat] _infer_category history lookup failed: %s", e)
+        logger.warning("[chat] _infer_category history lookup failed: %s", e)
 
     # 3. EnrichmentStatus — fallback cache
     try:
@@ -1393,7 +1395,7 @@ def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | No
         if es and es.media_category:
             return es.media_category
     except Exception as e:
-        logger.debug("[chat] _infer_category enrichment lookup failed: %s", e)
+        logger.warning("[chat] _infer_category enrichment lookup failed: %s", e)
 
     return None
 
@@ -1451,7 +1453,7 @@ def _find_state_bearing_title_in_message(
             if mentions > 0:
                 candidates.append((t, 2, mentions, p.category))
     except Exception as e:
-        logger.debug("[chat] state-bearing scan (deletion) failed: %s", e)
+        logger.warning("[chat] state-bearing scan (deletion) failed: %s", e)
 
     try:
         protected = db.query(ProtectedMedia).filter(
@@ -1467,7 +1469,7 @@ def _find_state_bearing_title_in_message(
                     continue
                 candidates.append((t, 1, mentions, None))  # protected → no category
     except Exception as e:
-        logger.debug("[chat] state-bearing scan (protected) failed: %s", e)
+        logger.warning("[chat] state-bearing scan (protected) failed: %s", e)
 
     if not candidates:
         return None
@@ -1827,7 +1829,7 @@ async def _build_discuss_context_block(
             if _size_ctx:
                 block += _size_ctx + "\n"
         except Exception as _e:
-            logger.debug("[chat] size context failed: %s", _e)
+            logger.warning("[chat] size context failed: %s", _e)
 
         # The measured DIALOGUE line — a pure DB read, so it rides on EVERY
         # discussion turn. The batch judge has carried it since the feature
@@ -1844,7 +1846,7 @@ async def _build_discuss_context_block(
             if _dline:
                 block += _dline if _dline.endswith("\n") else _dline + "\n"
         except Exception as _e:
-            logger.debug("[chat] dialogue line failed: %s", _e)
+            logger.warning("[chat] dialogue line failed: %s", _e)
 
         # Attach the FULL verified dataset (creator/writer, extended plot,
         # themes, keywords, awards) — assembled cache-only with NO LLM and no
@@ -1874,9 +1876,8 @@ async def _build_discuss_context_block(
                     proposal.title, proposal.category or "movie", **_ids), timeout=20.0)
                 await asyncio.wait_for(topup_reception(
                     proposal.title, proposal.category or "movie", **_ids), timeout=20.0)
-            except (asyncio.TimeoutError, Exception) as _e:
-                logger.debug("[chat] level-2 topups failed for %r: %s",
-                             proposal.title, _e)
+            except Exception as _e:
+                log_topup_failure(logger, "[chat] level-2 topups", proposal.title, _e)
             # THE WORK ITSELF, not metadata about it. A feature's dialogue is
             # ~13,000 tokens against a 16k context, so the batch judge only ever
             # sees the derived numbers — but here it is ONE title and the owner
@@ -1901,9 +1902,8 @@ async def _build_discuss_context_block(
                             f"condensed by design and possibly a translation — "
                             f"read it as evidence of REGISTER and TEXTURE, not "
                             f"as a transcript of record):\n{_tx}\n")
-            except (asyncio.TimeoutError, Exception) as _e:
-                logger.debug("[chat] level-2 transcript failed for %r: %s",
-                             proposal.title, _e)
+            except Exception as _e:
+                log_topup_failure(logger, "[chat] level-2 transcript", proposal.title, _e)
         verified_payload = await ensure_verified_data(
             proposal.title, proposal.category or "movie",
             tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,
@@ -1937,7 +1937,7 @@ async def _build_discuss_context_block(
                 if _disc:
                     block += f"DISCOGRAPHY of '{proposal.title}' {_disc}\n"
             except Exception as _e:
-                logger.debug("[chat] discography line failed: %s", _e)
+                log_topup_failure(logger, "[chat] discography line", proposal.title, _e)
         else:
             _st = _watched_lookup(proposal.user_id, [proposal.title],
                                   category=proposal.category).get(proposal.title)
@@ -1960,7 +1960,7 @@ async def _build_discuss_context_block(
                         if _spc:
                             block += f"STOP-POINT CONTEXT: {_spc}\n"
             except Exception as _e:
-                logger.debug("[chat] viewing pattern failed: %s", _e)
+                log_topup_failure(logger, "[chat] viewing pattern", proposal.title, _e)
             if proposal.category in ("show", "anime"):
                 try:
                     from src.services.episode_context import series_availability
@@ -1968,7 +1968,7 @@ async def _build_discuss_context_block(
                     if _av:
                         block += f"SERIES AVAILABILITY: {_av}\n"
                 except Exception as _e:
-                    logger.debug("[chat] availability failed: %s", _e)
+                    log_topup_failure(logger, "[chat] availability", proposal.title, _e)
         # Franchise reality-check: which typed relations actually sit in the
         # user's library RIGHT NOW — a review's "compared to its predecessors"
         # means something different when the predecessors are long gone.
@@ -2000,7 +2000,7 @@ async def _build_discuss_context_block(
                         block += ("\nFRANCHISE (typed relations vs the current library):\n"
                                   + "\n".join(_fl) + "\n")
             except Exception as _e:
-                logger.debug("[chat] franchise library check failed: %s", _e)
+                logger.warning("[chat] franchise library check failed: %s", _e)
         # Richer grounding for the discussion: the actual Wikipedia LEAD (entity-
         # matched, collision-guarded). The curator reasons far more precisely from
         # the real article than a thin synopsis — and a discussion is one title +
@@ -2013,8 +2013,8 @@ async def _build_discuss_context_block(
             if _wiki:
                 block += ("\nWIKIPEDIA (article excerpt — verified grounding; reason "
                           "from this and don't contradict it):\n" + _wiki + "\n")
-        except Exception:
-            pass
+        except Exception as _e:
+            log_topup_failure(logger, "[chat] wikipedia lead", proposal.title, _e)
         if verified_block:
             block += "\n" + verified_block + "\n"
         elif proposal.synopsis or proposal.genres:
@@ -2148,7 +2148,7 @@ async def _build_discuss_context_block(
                     if _vp:
                         block += f"VIEWING PATTERN: {_vp}\n"
             except Exception as _e:
-                logger.debug("[chat] starter watch stats failed: %s", _e)
+                logger.warning("[chat] starter watch stats failed: %s", _e)
             _svd = None
             try:
                 from src.services.media_enricher import (ensure_verified_data,
@@ -2158,7 +2158,7 @@ async def _build_discuss_context_block(
                 if _vb:
                     block += "\n" + _vb + "\n"
             except Exception as _e:
-                logger.debug("[chat] starter verified data failed: %s", _e)
+                log_topup_failure(logger, "[chat] starter verified data", active_title, _e)
             _set_thread_active_title(user_id, _thread_id_for(ctx),
                                      (active_title, _svd, domain or "movie"))
         return block, active_title, domain
@@ -2240,7 +2240,7 @@ async def _build_discuss_context_block(
                 if _vp:
                     block += f"VIEWING PATTERN: {_vp}\n"
         except Exception as _e:
-            logger.debug("[chat] watched-title watch stats failed: %s", _e)
+            logger.warning("[chat] watched-title watch stats failed: %s", _e)
 
         _vd_payload = None
         try:
@@ -2252,7 +2252,7 @@ async def _build_discuss_context_block(
             if _vb:
                 block += "\n" + _vb + "\n"
         except Exception as _e:
-            logger.debug("[chat] watched-title verified data failed: %s", _e)
+            log_topup_failure(logger, "[chat] watched-title verified data", series, _e)
 
         try:
             from src.services.subtitle_signals import subtitle_facts
@@ -2260,7 +2260,7 @@ async def _build_discuss_context_block(
             if _dl:
                 block += _dl if _dl.endswith("\n") else _dl + "\n"
         except Exception as _e:
-            logger.debug("[chat] watched-title dialogue line failed: %s", _e)
+            logger.warning("[chat] watched-title dialogue line failed: %s", _e)
 
         _set_thread_active_title(user_id, _thread_id_for(ctx),
                                  (series, _vd_payload, domain or "movie"))
@@ -2479,7 +2479,7 @@ async def _build_discuss_context_block(
                 block += ("CURRENT ACTIVE PRINCIPLES: none yet — any collision is "
                           "with the owner's taste profile shown above.\n")
         except Exception as e:
-            logger.debug("[chat] active-principles fetch failed: %s", e)
+            logger.warning("[chat] active-principles fetch failed: %s", e)
         block += PRINCIPLE_REVIEW_BLOCK
         logger.info("💉 [PRINCIPLE REVIEW CONTEXT] #%d (%s) injected",
                     prin.id, prin.novelty or "new")
@@ -2951,7 +2951,8 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                                 year=enrichment_data.get("year"),
                             )
                         except Exception as _e:
-                            logger.debug("[chat] significance pre-warm failed: %s", _e)
+                            log_topup_failure(logger, "[chat] significance pre-warm",
+                                              active_title, _e)
                         hidden_metadata_context = _build_hidden_context(
                             active_title, enrichment_data,
                             domain=matched_domain or "movie",
@@ -2969,7 +2970,8 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                                 if _fvb:
                                     hidden_metadata_context += "\n" + _fvb + "\n"
                             except Exception as _e:
-                                logger.debug("[chat] verified block append failed: %s", _e)
+                                logger.warning("[chat] verified block append failed: %s",
+                                               _e, exc_info=True)
                         # Cache the new active title + data for follow-up turns.
                         _set_thread_active_title(user.id, thread_id, (
                             active_title, enrichment_data, matched_domain or "movie",
@@ -3044,9 +3046,9 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                     if _av:
                         hidden_metadata_context += f"SERIES AVAILABILITY: {_av}\n"
                 except Exception as _e:
-                    logger.debug("[chat] availability failed: %s", _e)
+                    log_topup_failure(logger, "[chat] availability", active_title, _e)
             except Exception as _e:
-                logger.debug("[chat] viewing pattern failed: %s", _e)
+                log_topup_failure(logger, "[chat] viewing pattern", active_title, _e)
 
 
     # 2. Build context — infer domain for hard data-level quarantine
@@ -3075,7 +3077,7 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                         logger.info("[chat] album dossier attached: %r (%s)",
                                     _alb["title"], active_title)
         except Exception as _e:
-            logger.debug("[chat] album dossier failed: %s", _e)
+            log_topup_failure(logger, "[chat] album dossier", active_title, _e)
     # In an active discussion the item's category is known — scope the taste
     # profile to it instead of keyword-guessing from the user's reply (whose
     # fallback is ALL categories: that is how a movie discussion got the
@@ -3503,7 +3505,7 @@ FORMATTING RULES:
                                                         h.get("cpu_pct"),
                                                     )
                                                     yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
-                                            except Exception:
+                                            except Exception:  # noqa: BLE001 - VRAM hint is cosmetic; the reply streams anyway
                                                 pass
                                             health_warned = True
 

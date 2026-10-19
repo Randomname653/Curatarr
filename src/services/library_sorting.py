@@ -412,8 +412,9 @@ async def apply_reclassify(items: list) -> dict:
                                        new_cat, _meta.get("genres", ""),
                                        _meta.get("themes", ""))
                 except Exception as _fe:
-                    logger.debug("[lib-sort] facet re-categorize failed for %s: %s",
-                                 sid, _fe)
+                    # The facet points keep the old domain until the next re-index.
+                    logger.warning("[lib-sort] facet re-categorize failed for %s: %s",
+                                   sid, _fe)
                 row = {"sonarr_id": sid, "title": title, "ok": True, "moved": move,
                        "old_category": old_cat, "new_category": new_cat}
                 if local_errors:

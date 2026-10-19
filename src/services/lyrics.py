@@ -288,7 +288,7 @@ async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: Fetch
             try:
                 from src.services.task_monitor import task_monitor
                 task_monitor.update(task, processed=fetched + failed, total=len(batch), message=msg)
-            except Exception:
+            except Exception:  # noqa: BLE001 - progress card only; the scan is unaffected
                 pass
 
         async def _one(key, skey, fmt):
@@ -775,7 +775,7 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
         try:
             from src.services.task_monitor import task_monitor
             task_monitor.update(task, processed=made + failed, total=min(len(todo), budget), message=msg)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; profiling is unaffected
             pass
 
     try:
@@ -783,12 +783,17 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
             reattached += attach_profile(cache, p["artist"], p["artist_key"], p["profile"], p["based_on"])
         todo = eligible_artists(db_path)
         _report(f"{len(todo):,} artists eligible, {reattached} profiles re-attached")
+        yield_warned = False
         for a in todo[:budget]:
             try:
                 from src.services.llm_priority import wait_for_curator
                 await wait_for_curator()
-            except Exception:
-                pass
+            except Exception as e:
+                # wait_for_curator proceeds after its own timeout too: a
+                # courtesy yield, so carry on - but a broken one is a bug.
+                if not yield_warned:
+                    yield_warned = True
+                    logger.warning("[lyrics] curator yield failed: %r", e, exc_info=True)
             block, shown, used = _profile_input(a["artist_key"], db_path)
             if not shown:
                 continue
@@ -820,7 +825,7 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
         if owns:
             try:
                 cache.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 - teardown; the profiles are stored
                 pass
 
 
@@ -937,7 +942,8 @@ async def run_lyrics_sync(task=None) -> bool:
             try:
                 r = await client.get(f"{base}{stream_key}", headers={"X-Plex-Token": token})
             except Exception as e:
-                logger.debug("[lyrics] stream %s failed: %s", stream_key, e)
+                from src.services.enrichment_state import log_topup_failure
+                log_topup_failure(logger, "[lyrics] stream", stream_key, e)
                 return None
             return r.content if r.status_code == 200 else None
 

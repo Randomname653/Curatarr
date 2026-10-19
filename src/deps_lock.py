@@ -551,8 +551,8 @@ def uv_command() -> Optional[List[str]]:
                            timeout=30, **NO_WINDOW)
         if r.returncode == 0:
             return [sys.executable, "-m", "uv"]
-    except Exception:  # noqa: BLE001
-        pass
+    except (OSError, subprocess.SubprocessError):
+        pass                       # no uv module for this interpreter: try the binary
     exe = shutil.which("uv")
     return [exe] if exe else None
 

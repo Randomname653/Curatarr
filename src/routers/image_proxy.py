@@ -194,8 +194,9 @@ def _enforce_cache_budget() -> None:
             if total <= target:
                 break
         logger.info("[image_proxy] cache over budget - evicted down to %d MB", total // (1024 * 1024))
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[image_proxy] budget sweep failed: %s", e)
+    except Exception as e:  # noqa: BLE001 - reported; the next request sweeps again
+        # The sweep is the disk-budget defence of an unauthenticated endpoint.
+        logger.warning("[image_proxy] budget sweep failed: %s", e)
 
 
 def _cache_path(url: str, content_type: Optional[str] = None) -> Path:
