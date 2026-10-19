@@ -21,8 +21,11 @@ from datetime import datetime
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+from contextlib import contextmanager  # noqa: E402
+
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.routers.recommendations as recs  # noqa: E402
 import src.services.deletion_returns as dr  # noqa: E402
@@ -32,9 +35,33 @@ MAY14 = datetime(2026, 5, 14, 12, 0)
 
 
 def _db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    # StaticPool: the code under test opens its own sessions on worker threads
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
+
+
+@contextmanager
+def _bound(db):
+    """get_db_session (dr's lazy import and recs' module name) on db's engine."""
+    import src.database.connection as conn
+    make = sessionmaker(bind=db.get_bind())
+
+    @contextmanager
+    def session():
+        s = make()
+        try:
+            yield s
+            s.commit()
+        finally:
+            s.close()
+    real = (conn.get_db_session, recs.get_db_session)
+    conn.get_db_session = recs.get_db_session = session
+    try:
+        yield
+    finally:
+        conn.get_db_session, recs.get_db_session = real
 
 
 def _p(db, i, title, cat, service, **kw):
@@ -250,7 +277,8 @@ def test_retry_bans_sets_only_the_bans_that_never_held():
     db.commit()
     calls, real = _patch_ss()
     try:
-        out = asyncio.run(dr.retry_bans(db))
+        with _bound(db):
+            out = asyncio.run(dr.retry_bans())
     finally:
         _unpatch(real)
     assert out == {"tried": 2, "held": 2, "failed": []}, out
@@ -270,11 +298,11 @@ def test_the_daily_run_retries_the_bans_first_then_checks():
     def fake_session():
         yield "db"
 
-    async def bans(db):
+    async def bans():
         order.append("bans")
         return {"tried": 2, "held": 1, "failed": ["Mwk"]}
 
-    async def check(db):
+    async def check():
         order.append("check")
         return {"checked": 9, "open": 1, "new": [], "unreadable": []}
     real = (conn.get_db_session, dr.retry_bans, dr.check_returns, task_monitor.update)
@@ -307,16 +335,18 @@ def test_keep_and_delete_again_endpoints():
 
     seen = {}
 
-    async def fake_approve(proposal_id, user=None, db=None):
+    async def fake_approve(proposal_id, user=None):
         seen["id"] = proposal_id
         return {"ok": True, "limbo": False, "status": "deleted"}
     real = recs.approve_deletion
     recs.approve_deletion = fake_approve
     try:
-        out = asyncio.run(recs.delete_returned(1, user=user, db=db))
+        with _bound(db):
+            out = asyncio.run(recs.delete_returned(1, user=user))
     finally:
         recs.approve_deletion = real
     assert out["ok"]
+    db.expire_all()
     new = db.get(DeletionProposal, seen["id"])
     assert (new.media_id, new.service, new.title, new.status, new.tmdb_id) == \
         ("501", "radarr", "Dune", "pending", 438631)
@@ -350,7 +380,8 @@ def test_a_successful_music_delete_bans_and_warns_when_the_ban_failed():
     recs._probe_arr, recs._execute_arr_delete, dr.ban_deleted_artist = reachable, deleted, failed_ban
     recs._latest_curator_stance_for_proposal = lambda *a, **k: ("pitch", "CONFIRMED")
     try:
-        out = asyncio.run(recs.approve_deletion(1, user=types.SimpleNamespace(id=1), db=db))
+        with _bound(db):
+            out = asyncio.run(recs.approve_deletion(1, user=types.SimpleNamespace(id=1)))
     finally:
         (recs._probe_arr, recs._execute_arr_delete, dr.ban_deleted_artist,
          recs._latest_curator_stance_for_proposal) = real

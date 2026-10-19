@@ -34,6 +34,7 @@ from typing import Optional
 import httpx
 
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
@@ -202,24 +203,27 @@ async def write_memory(
     importance = compute_importance(memory_type, content, metadata or {})
     embedding = await _embed(content)
 
-    with get_db_session() as db:
-        mem = EpisodicMemory(
-            user_id=user_id,
-            memory_type=memory_type,
-            content=content,
-            metadata_json=json.dumps(metadata or {}),
-            media_category=media_category,
-            importance=importance,
-            embedding_json=json.dumps(embedding) if embedding else None,
-            created_at=datetime.utcnow(),
-            last_accessed=datetime.utcnow(),
-            access_count=0,
-        )
-        db.add(mem)
-        db.commit()
-        db.refresh(mem)
-        logger.debug("Wrote memory %d (type=%s importance=%.2f)", mem.id, memory_type, importance)
-        return mem.id
+    def _save() -> int:
+        with get_db_session() as db:
+            mem = EpisodicMemory(
+                user_id=user_id,
+                memory_type=memory_type,
+                content=content,
+                metadata_json=json.dumps(metadata or {}),
+                media_category=media_category,
+                importance=importance,
+                embedding_json=json.dumps(embedding) if embedding else None,
+                created_at=datetime.utcnow(),
+                last_accessed=datetime.utcnow(),
+                access_count=0,
+            )
+            db.add(mem)
+            db.commit()
+            db.refresh(mem)
+            logger.debug("Wrote memory %d (type=%s importance=%.2f)", mem.id, memory_type, importance)
+            return mem.id
+
+    return await run_write(_save)
     
 # ── CHECK MEMORIES FOR CONFLICTS ──────────────────────────────────────────────
 
@@ -396,6 +400,7 @@ async def resolve_memory_conflicts(user_id: int, new_memory_id: int, new_content
 
     # A title-less memory used to be framed as "regarding the title ''".
     subject = f"the title '{title}'" if title else "the user's general preferences"
+    crash_logged = False
     for old_id, old_content in target_memories:
         prompt = f"""[MODE: MEMORY CONFLICT RESOLUTION]
 Analyze how the NEW memory relates to the OLD memory regarding {subject}.
@@ -429,9 +434,16 @@ Output ONLY a JSON block:
                 continue
             text = r.json().get("message", {}).get("content", "").strip()
             status = parse_llm_json(text).get("status")
-        except Exception as e:
+        except (httpx.HTTPError, asyncio.TimeoutError, ValueError, AttributeError) as e:
             # LLM down / unparseable verdict: expected, best-effort.
             logger.debug(f"Memory conflict resolution failed: {e}")
+            continue
+        except Exception as e:
+            # Anything else is a bug that would hit every candidate: warn once.
+            if not crash_logged:
+                crash_logged = True
+                logger.warning("Memory conflict resolution crashed (memory %s): %s",
+                               new_memory_id, e, exc_info=True)
             continue
         if status not in ("CONTRADICTION", "REAFFIRMATION", "NUANCE"):
             continue
@@ -487,7 +499,7 @@ def _title_category(title: str) -> Optional[str]:
         if row and row[0] in _CATEGORY_VALUES:
             return row[0]
     except Exception as e:
-        logger.debug("[memory] proposal lookup failed for %r: %s", t, e)
+        logger.warning("[memory] proposal lookup failed for %r: %s", t, e)
     try:
         from src.routers.chat import _library_title_index, _norm_for_match
         want = _norm_for_match(t)
@@ -495,7 +507,7 @@ def _title_category(title: str) -> Optional[str]:
         if len(cats) == 1:
             return cats.pop()
     except Exception as e:
-        logger.debug("[memory] library lookup failed for %r: %s", t, e)
+        logger.warning("[memory] library lookup failed for %r: %s", t, e)
     return None
 
 
@@ -526,7 +538,7 @@ def classify_memory_category(content: str, title: str = None) -> Optional[str]:
         if m:
             return m[1]
     except Exception as e:
-        logger.debug("[memory] library classify failed: %s", e)
+        logger.warning("[memory] library classify failed: %s", e)
     return None
 
 
@@ -543,77 +555,82 @@ async def retrieve_memories(
     """
     query_embedding = await _embed(query, kind="query")
 
-    with get_db_session() as db:
-        q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
-        if media_category:
-            q = q.filter(
-                (EpisodicMemory.media_category == media_category) |
-                (EpisodicMemory.media_category.is_(None))
-            )
-        memories = q.all()
+    # Read, rank and stamp the access counters in one write call: the
+    # stamp is decided on the rows just read.
+    def _rank_and_touch() -> list:
+        with get_db_session() as db:
+            q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
+            if media_category:
+                q = q.filter(
+                    (EpisodicMemory.media_category == media_category) |
+                    (EpisodicMemory.media_category.is_(None))
+                )
+            memories = q.all()
 
-        if not memories:
-            return []
+            if not memories:
+                return []
 
-        now = datetime.utcnow()
-        scored = []
+            now = datetime.utcnow()
+            scored = []
 
-        for mem in memories:
-            if _is_superseded(mem.metadata_json):
-                continue   # contradicted by a newer memory — kept, not served
-            # Semantic score
-            if query_embedding and mem.embedding_json:
-                try:
-                    mem_emb = json.loads(mem.embedding_json)
-                    sem_score = _cosine_similarity(query_embedding, mem_emb)
-                except Exception:
-                    sem_score = 0.0
-                if sem_score is None:
-                    sem_score = _NEUTRAL_SEM   # other model's vector → as if none
-            else:
-                sem_score = _NEUTRAL_SEM  # no embedding → neutral
+            for mem in memories:
+                if _is_superseded(mem.metadata_json):
+                    continue   # contradicted by a newer memory — kept, not served
+                # Semantic score
+                if query_embedding and mem.embedding_json:
+                    try:
+                        mem_emb = json.loads(mem.embedding_json)
+                        sem_score = _cosine_similarity(query_embedding, mem_emb)
+                    except Exception:
+                        sem_score = 0.0
+                    if sem_score is None:
+                        sem_score = _NEUTRAL_SEM   # other model's vector → as if none
+                else:
+                    sem_score = _NEUTRAL_SEM  # no embedding → neutral
 
-            # Recency boost: memories from last N days get a boost
-            age_days = (now - mem.created_at).days if mem.created_at else 999
-            recency = max(0.0, 1.0 - (age_days / max(recency_boost_days, 1)))
-            recency_factor = 1.0 + (0.3 * recency)
+                # Recency boost: memories from last N days get a boost
+                age_days = (now - mem.created_at).days if mem.created_at else 999
+                recency = max(0.0, 1.0 - (age_days / max(recency_boost_days, 1)))
+                recency_factor = 1.0 + (0.3 * recency)
 
-            # Access boost, scaled by THIS query's semantic match: it was a
-            # flat +0.02 per past retrieval (up to +0.2), so a memory that had
-            # been retrieved often enough ranked on habit alone — and decayed
-            # memories (importance 0.1) ranked almost purely on it.
-            access_boost = min(0.2, (mem.access_count or 0) * 0.02) * max(0.0, sem_score)
+                # Access boost, scaled by THIS query's semantic match: it was a
+                # flat +0.02 per past retrieval (up to +0.2), so a memory that had
+                # been retrieved often enough ranked on habit alone — and decayed
+                # memories (importance 0.1) ranked almost purely on it.
+                access_boost = min(0.2, (mem.access_count or 0) * 0.02) * max(0.0, sem_score)
 
-            score = sem_score * (mem.importance or 0.0) * recency_factor + access_boost
+                score = sem_score * (mem.importance or 0.0) * recency_factor + access_boost
 
-            scored.append((score, mem))
+                scored.append((score, mem))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        # Minimum relevance BEFORE counting access: every top-k memory used to
-        # be counted as "accessed" even when the threshold then hid it, so
-        # irrelevant memories accrued the boost that later surfaced them.
-        top = [(s, m) for s, m in scored[:top_k] if s > 0.1]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            # Minimum relevance BEFORE counting access: every top-k memory used to
+            # be counted as "accessed" even when the threshold then hid it, so
+            # irrelevant memories accrued the boost that later surfaced them.
+            top = [(s, m) for s, m in scored[:top_k] if s > 0.1]
 
-        returned = {m.id for _, m in top}
-        for mem in memories:
-            if mem.id in returned:
-                mem.last_accessed = now
-                mem.access_count = (mem.access_count or 0) + 1
-        db.commit()
+            returned = {m.id for _, m in top}
+            for mem in memories:
+                if mem.id in returned:
+                    mem.last_accessed = now
+                    mem.access_count = (mem.access_count or 0) + 1
+            db.commit()
 
-        return [
-            {
-                "id": m.id,
-                "type": m.memory_type,
-                "content": m.content,
-                "metadata": json.loads(m.metadata_json or "{}"),
-                "media_category": m.media_category,
-                "importance": m.importance,
-                "age_days": (now - m.created_at).days if m.created_at else 0,
-                "score": round(score, 3),
-            }
-            for score, m in top
-        ]
+            return [
+                {
+                    "id": m.id,
+                    "type": m.memory_type,
+                    "content": m.content,
+                    "metadata": json.loads(m.metadata_json or "{}"),
+                    "media_category": m.media_category,
+                    "importance": m.importance,
+                    "age_days": (now - m.created_at).days if m.created_at else 0,
+                    "score": round(score, 3),
+                }
+                for score, m in top
+            ]
+
+    return await run_write(_rank_and_touch)
 
 
 # ── PER-ITEM "KEEP / VALUE" CONSIDERATIONS ────────────────────────────────────
@@ -714,20 +731,23 @@ async def retrieve_considerations(
     item_emb = await _embed(item_profile, kind="query")
     if not item_emb:
         return []
-    with get_db_session() as db:
-        q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
-        if media_category:
-            q = q.filter(
-                (EpisodicMemory.media_category == media_category) |
-                (EpisodicMemory.media_category.is_(None))
-            )
-        # Pull plain fields out before the session closes — the ORM instances
-        # would otherwise raise DetachedInstanceError on attribute access below.
-        rows = [
-            (m.id, m.content, m.importance, m.embedding_json, m.media_category,
-             m.metadata_json)
-            for m in q.all()
-        ]
+    def _load() -> list:
+        with get_db_session() as db:
+            q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
+            if media_category:
+                q = q.filter(
+                    (EpisodicMemory.media_category == media_category) |
+                    (EpisodicMemory.media_category.is_(None))
+                )
+            # Pull plain fields out before the session closes — the ORM instances
+            # would otherwise raise DetachedInstanceError on attribute access below.
+            return [
+                (m.id, m.content, m.importance, m.embedding_json, m.media_category,
+                 m.metadata_json)
+                for m in q.all()
+            ]
+
+    rows = await run_read(_load)
 
     sims = []
     for mid, content, importance, emb_json, mcat, meta in rows:
@@ -851,8 +871,10 @@ async def _run_memory_extraction(
     try:
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
-    except Exception:
-        pass
+    except Exception as e:
+        # wait_for_curator already proceeds after its own timeout; a raise
+        # here is a bug, so say so and carry on the same way.
+        logger.warning("[memory] curator priority wait failed: %s", e)
 
     try:
         # Timeout raised from 30s → 90s (Pass 14.13). With the curator
@@ -1096,25 +1118,28 @@ async def extract_memories_from_thread(
 
     cursor_key = f"mem_extract_cursor:{user_id}:{thread_id}"
     try:
-        since_id = int(get_state(cursor_key) or 0)
+        since_id = int(await run_read(get_state, cursor_key) or 0)
     except (TypeError, ValueError):
         since_id = 0
 
-    with get_db_session() as db:
-        q = db.query(ConversationMessage.id, ConversationMessage.content).filter(
-            ConversationMessage.user_id == user_id,
-            ConversationMessage.role == "user",
-            ConversationMessage.id > since_id,
-        )
-        # "general" also covers legacy rows written before thread_id existed.
-        if thread_id == "general":
-            q = q.filter(
-                (ConversationMessage.thread_id == "general")
-                | (ConversationMessage.thread_id.is_(None))
+    def _new_rows() -> list:
+        with get_db_session() as db:
+            q = db.query(ConversationMessage.id, ConversationMessage.content).filter(
+                ConversationMessage.user_id == user_id,
+                ConversationMessage.role == "user",
+                ConversationMessage.id > since_id,
             )
-        else:
-            q = q.filter(ConversationMessage.thread_id == thread_id)
-        rows = q.order_by(ConversationMessage.id.asc()).all()
+            # "general" also covers legacy rows written before thread_id existed.
+            if thread_id == "general":
+                q = q.filter(
+                    (ConversationMessage.thread_id == "general")
+                    | (ConversationMessage.thread_id.is_(None))
+                )
+            else:
+                q = q.filter(ConversationMessage.thread_id == thread_id)
+            return [(r[0], r[1]) for r in q.order_by(ConversationMessage.id.asc()).all()]
+
+    rows = await run_read(_new_rows)
 
     if not rows:
         logger.debug(
@@ -1127,7 +1152,7 @@ async def extract_memories_from_thread(
     if not user_msgs:
         # Rows existed but all empty — still advance the cursor so we don't
         # re-scan the same window every flush.
-        set_state(cursor_key, str(max_id))
+        await run_write(set_state, cursor_key, str(max_id))
         return True
 
     logger.info(
@@ -1154,14 +1179,18 @@ async def extract_memories_from_thread(
     try:
         if thread_id.startswith("proactive_message:"):
             from src.database.models import ProactiveMessage as _PM
-            with get_db_session() as db:
-                # user_id filter: the thread id comes from the client's
-                # discuss_context, so without it any user could anchor their
-                # extraction on (and have the summarizer read) another
-                # user's message.
-                pm = db.query(_PM.message, _PM.trigger_type, _PM.trigger_data).filter(
-                    _PM.id == int(thread_id.split(":", 1)[1]),
-                    _PM.user_id == user_id).first()
+
+            def _pm():
+                with get_db_session() as db:
+                    # user_id filter: the thread id comes from the client's
+                    # discuss_context, so without it any user could anchor their
+                    # extraction on (and have the summarizer read) another
+                    # user's message.
+                    return db.query(_PM.message, _PM.trigger_type, _PM.trigger_data).filter(
+                        _PM.id == int(thread_id.split(":", 1)[1]),
+                        _PM.user_id == user_id).first()
+
+            pm = await run_read(_pm)
             if pm and pm.message:
                 anchor_line = ("CONVERSATION SUBJECT (the assistant's opening that the "
                                "user is replying to — context ONLY, extract nothing "
@@ -1177,10 +1206,14 @@ async def extract_memories_from_thread(
                                    "for %s: %s", thread_id, e)
         elif thread_id.startswith("deletion_proposal:"):
             from src.database.models import DeletionProposal as _DP
-            with get_db_session() as db:
-                dp = db.query(_DP.title, _DP.category).filter(
-                    _DP.id == int(thread_id.split(":", 1)[1]),
-                    _DP.user_id == user_id).first()
+
+            def _dp():
+                with get_db_session() as db:
+                    return db.query(_DP.title, _DP.category).filter(
+                        _DP.id == int(thread_id.split(":", 1)[1]),
+                        _DP.user_id == user_id).first()
+
+            dp = await run_read(_dp)
             if dp and dp.title:
                 anchor_line = (f"CONVERSATION SUBJECT: the deletion of "
                                f"'{dp.title}' ({dp.category or 'title'}).\n\n")
@@ -1265,7 +1298,7 @@ JSON:"""
     # Advance the cursor only AFTER a successful run — a crash mid-extract
     # then re-tries the same window on the next flush instead of silently
     # dropping it.
-    set_state(cursor_key, str(max_id))
+    await run_write(set_state, cursor_key, str(max_id))
 
     # Autonomous self-learning (P3): mine this thread's DEBATE for lasting
     # curation principles. Gated to deletion discussions — that's where the
@@ -1400,20 +1433,23 @@ async def extract_catchup(min_quiet_minutes: int = 15) -> dict:
     from src.database.models import ConversationMessage
     from sqlalchemy import func
     cutoff = datetime.utcnow() - timedelta(minutes=min_quiet_minutes)
-    with get_db_session() as db:
-        rows = (db.query(ConversationMessage.user_id, ConversationMessage.thread_id,
-                         func.max(ConversationMessage.id).label("max_uid"),
-                         func.max(ConversationMessage.created_at).label("last"))
-                .filter(ConversationMessage.role == "user",
-                        ConversationMessage.thread_id.isnot(None))
-                .group_by(ConversationMessage.user_id, ConversationMessage.thread_id)
-                .all())
+    def _threads() -> list:
+        with get_db_session() as db:
+            return (db.query(ConversationMessage.user_id, ConversationMessage.thread_id,
+                             func.max(ConversationMessage.id).label("max_uid"),
+                             func.max(ConversationMessage.created_at).label("last"))
+                    .filter(ConversationMessage.role == "user",
+                            ConversationMessage.thread_id.isnot(None))
+                    .group_by(ConversationMessage.user_id, ConversationMessage.thread_id)
+                    .all())
+
+    rows = await run_read(_threads)
     done = 0
     for uid, tid, max_uid, last in rows:
         if last and last > cutoff:
             continue   # recent activity — the live debounce owns this thread
         try:
-            cur = int(get_state(f"mem_extract_cursor:{uid}:{tid}") or 0)
+            cur = int(await run_read(get_state, f"mem_extract_cursor:{uid}:{tid}") or 0)
         except (TypeError, ValueError):
             cur = 0
         if max_uid and max_uid > cur:
@@ -1514,186 +1550,192 @@ async def handle_protection_intent(
     watchlist_titles = []
     try:
         from src.database.models import ProtectedMedia, DeletionProposal, CuratorResolutionLog
-        with get_db_session() as db:
-            # Split on line breaks for multi-title support
-            lines = llm_output.strip().split("\n")
+        # The whole read-decide-write pass (protect, reject open proposals,
+        # resolution log) is one transaction on the writer thread.
+        def _protect() -> None:
+            with get_db_session() as db:
+                # Split on line breaks for multi-title support
+                lines = llm_output.strip().split("\n")
             
-            for line in lines:
-                line = line.strip()
-                if not line.startswith("ACTION: PROTECT_MEDIA"):
-                    continue
+                for line in lines:
+                    line = line.strip()
+                    if not line.startswith("ACTION: PROTECT_MEDIA"):
+                        continue
                     
-                parts = _split_action_line(line)
-                title = parts[1].replace("TITLE:", "").strip() if len(parts) > 1 else ""
-                reason = parts[2].replace("REASON:", "").strip() if len(parts) > 2 else "User requested"
+                    parts = _split_action_line(line)
+                    title = parts[1].replace("TITLE:", "").strip() if len(parts) > 1 else ""
+                    reason = parts[2].replace("REASON:", "").strip() if len(parts) > 2 else "User requested"
 
-                if not title:
-                    continue
+                    if not title:
+                        continue
 
-                # Pass 66: extended classification fields. Absent on synthetic
-                # callers — they stay empty and no resolution-log row is
-                # written for that title (see docstring).
-                resolution_type = ""
-                curator_stance = ""
-                override_reason = ""
-                watchlist_flag = False
-                for extra in parts[3:]:
-                    key, _, val = extra.partition(":")
-                    key = key.strip().upper()
-                    val = val.strip()
-                    if key == "RESOLUTION":
-                        resolution_type = val.lower()
-                    elif key == "CURATOR_STANCE":
-                        curator_stance = val
-                    elif key == "OVERRIDE_REASON":
-                        override_reason = val
-                    elif key == "WATCHLIST":
-                        watchlist_flag = val.lower() == "yes"
-                if resolution_type not in ("consensus", "override"):
-                    resolution_type = ""   # unrecognised → don't log a guess
-                # A curator that verdicted "delete" THIS turn did not concede —
-                # correct an over-eager "consensus" to "override".
-                if resolution_type == "consensus" and assistant_held_delete_line:
-                    logger.info(
-                        "[protection] '%s': assistant held delete-line this turn "
-                        "— correcting RESOLUTION consensus→override", title,
-                    )
-                    resolution_type = "override"
-                # "-" / "—" / empty sentinels → real NULLs.
-                if override_reason in ("-", "—", ""):
-                    override_reason = ""
-                if curator_stance in ("-", "—"):
+                    # Pass 66: extended classification fields. Absent on synthetic
+                    # callers — they stay empty and no resolution-log row is
+                    # written for that title (see docstring).
+                    resolution_type = ""
                     curator_stance = ""
-
-                # The downscale flag the curator ANNOUNCES in a discussion
-                # must be the flag the work list actually shows. Before
-                # this, discussion keeps wrote verdict=NULL and the
-                # /downscale list (KEEP_WITH_FLAG only) never saw them —
-                # "I am flagging X for a downscale" was pure prose.
-                # Deterministic: the tech profile decides, never the LLM.
-                bloated = False
-                try:
-                    from src.services.size_norms import is_bloated_by_title
-                    bloated = is_bloated_by_title(title, media_type=category)
-                except Exception as _be:
-                    logger.debug("[protection] bloat probe failed for %r: %s",
-                                 title, _be)
-
-                # Avoid duplicate entries — update reason if already protected
-                existing = db.query(ProtectedMedia).filter(
-                    ProtectedMedia.user_id == user_id,
-                    ProtectedMedia.identifier == title,
-                ).first()
-
-                if not existing:
-                    db.add(ProtectedMedia(
-                        user_id=user_id,
-                        identifier=title,
-                        title=title,
-                        category=category,
-                        reason=reason,
-                        source="discussion",
-                        verdict="KEEP_WITH_FLAG" if bloated else None,
-                    ))
-                    logger.info(f"🛡️ [PROTECTED MEDIA ADDED] User {user_id} protected '{title}'. Reason: {reason}")
-                else:
-                    existing.reason = reason
-                    if bloated and not existing.verdict:
-                        existing.verdict = "KEEP_WITH_FLAG"
-                    logger.info(f"🛡️ [PROTECTED MEDIA UPDATED] User {user_id} updated protection for '{title}'. New Reason: {reason}")
-
-                # Pass 35: mark pending deletion proposals as REJECTED
-                # instead of destructively deleting them. The proposals
-                # router already filters out protected titles at display
-                # time (recommendations.py line 277-283), so they don't
-                # clutter the UI either way — but keeping the rows lets
-                # the user recover state if a false-positive auto-protect
-                # ever happens. Pre-fix, a wrongly-fired protection-intent
-                # detector (rhetorical argument misread as keep-directive)
-                # wiped the proposal entirely — Pass 34 tightens the
-                # detector but legacy rows already destroyed data; this
-                # ensures it never happens again going forward.
-                # limbo too: a limbo row is still approvable (Retry Delete),
-                # so leaving it open let a protected title be deleted anyway.
-                rejected = (
-                    db.query(DeletionProposal)
-                    .filter(
-                        DeletionProposal.user_id == user_id,
-                        DeletionProposal.title == title,
-                        DeletionProposal.status.in_(["pending", "limbo"]),
-                    )
-                    .update({
-                        "status":      "rejected",
-                        "resolved_at": datetime.utcnow(),
-                        "user_comment": "Auto-rejected by ProtectedMedia entry",
-                    }, synchronize_session=False)
-                )
-                if rejected > 0:
-                    logger.info("🛡️ [PROTECTION] Marked %d open proposals as rejected for '%s' (non-destructive)",
-                                rejected, title)
-
-                # Pass 66: append a resolution-log row (history; distinct from
-                # the ProtectedMedia state row written above). Only when the
-                # detector actually classified the keep — synthetic callers
-                # (analyze_deletion_comment) omit RESOLUTION and get no row.
-                if resolution_type:
-                    # One debate = one history row. The detector fires on EVERY
-                    # turn of a keep-discussion, so a two-turn debate logged the
-                    # same keep twice (Agatha All Along: turn 1 "Sentimental/
-                    # Partner", turn 2 "Comfort"). A re-affirmation within 24h
-                    # UPDATES the existing row instead — the later turn's
-                    # classification is the settled one and should win.
-                    recent = (
-                        db.query(CuratorResolutionLog)
-                        .filter(
-                            CuratorResolutionLog.user_id == user_id,
-                            CuratorResolutionLog.title == title,
-                            CuratorResolutionLog.outcome == "kept",
-                            CuratorResolutionLog.created_at
-                            >= datetime.utcnow() - timedelta(hours=24),
-                        )
-                        .order_by(CuratorResolutionLog.created_at.desc())
-                        .first()
-                    )
-                    if recent:
-                        recent.resolution_type = resolution_type
-                        if curator_stance:
-                            recent.curator_stance = curator_stance
-                        recent.override_reason = (
-                            (override_reason or recent.override_reason)
-                            if resolution_type == "override" else None
-                        )
+                    override_reason = ""
+                    watchlist_flag = False
+                    for extra in parts[3:]:
+                        key, _, val = extra.partition(":")
+                        key = key.strip().upper()
+                        val = val.strip()
+                        if key == "RESOLUTION":
+                            resolution_type = val.lower()
+                        elif key == "CURATOR_STANCE":
+                            curator_stance = val
+                        elif key == "OVERRIDE_REASON":
+                            override_reason = val
+                        elif key == "WATCHLIST":
+                            watchlist_flag = val.lower() == "yes"
+                    if resolution_type not in ("consensus", "override"):
+                        resolution_type = ""   # unrecognised → don't log a guess
+                    # A curator that verdicted "delete" THIS turn did not concede —
+                    # correct an over-eager "consensus" to "override".
+                    if resolution_type == "consensus" and assistant_held_delete_line:
                         logger.info(
-                            "📒 [RESOLUTION LOG] user=%d '%s' kept (%s) — refreshed "
-                            "same-debate row instead of double-counting",
-                            user_id, title, resolution_type,
+                            "[protection] '%s': assistant held delete-line this turn "
+                            "— correcting RESOLUTION consensus→override", title,
                         )
-                    else:
-                        db.add(CuratorResolutionLog(
+                        resolution_type = "override"
+                    # "-" / "—" / empty sentinels → real NULLs.
+                    if override_reason in ("-", "—", ""):
+                        override_reason = ""
+                    if curator_stance in ("-", "—"):
+                        curator_stance = ""
+
+                    # The downscale flag the curator ANNOUNCES in a discussion
+                    # must be the flag the work list actually shows. Before
+                    # this, discussion keeps wrote verdict=NULL and the
+                    # /downscale list (KEEP_WITH_FLAG only) never saw them —
+                    # "I am flagging X for a downscale" was pure prose.
+                    # Deterministic: the tech profile decides, never the LLM.
+                    bloated = False
+                    try:
+                        from src.services.size_norms import is_bloated_by_title
+                        bloated = is_bloated_by_title(title, media_type=category)
+                    except Exception as _be:
+                        # Unflagged is the safe side: the keep stands, no downscale.
+                        logger.warning("[protection] bloat probe failed for %r: %s",
+                                       title, _be)
+
+                    # Avoid duplicate entries — update reason if already protected
+                    existing = db.query(ProtectedMedia).filter(
+                        ProtectedMedia.user_id == user_id,
+                        ProtectedMedia.identifier == title,
+                    ).first()
+
+                    if not existing:
+                        db.add(ProtectedMedia(
                             user_id=user_id,
+                            identifier=title,
                             title=title,
                             category=category,
-                            outcome="kept",
-                            resolution_type=resolution_type,
-                            curator_stance=curator_stance or None,
-                            override_reason=(
-                                (override_reason or None)
-                                if resolution_type == "override" else None
-                            ),
+                            reason=reason,
+                            source="discussion",
+                            verdict="KEEP_WITH_FLAG" if bloated else None,
                         ))
-                        logger.info(
-                            "📒 [RESOLUTION LOG] user=%d '%s' kept (%s)%s",
-                            user_id, title, resolution_type,
-                            f" — reason={override_reason}" if (
-                                resolution_type == "override" and override_reason
-                            ) else "",
+                        logger.info(f"🛡️ [PROTECTED MEDIA ADDED] User {user_id} protected '{title}'. Reason: {reason}")
+                    else:
+                        existing.reason = reason
+                        if bloated and not existing.verdict:
+                            existing.verdict = "KEEP_WITH_FLAG"
+                        logger.info(f"🛡️ [PROTECTED MEDIA UPDATED] User {user_id} updated protection for '{title}'. New Reason: {reason}")
+
+                    # Pass 35: mark pending deletion proposals as REJECTED
+                    # instead of destructively deleting them. The proposals
+                    # router already filters out protected titles at display
+                    # time (recommendations.py line 277-283), so they don't
+                    # clutter the UI either way — but keeping the rows lets
+                    # the user recover state if a false-positive auto-protect
+                    # ever happens. Pre-fix, a wrongly-fired protection-intent
+                    # detector (rhetorical argument misread as keep-directive)
+                    # wiped the proposal entirely — Pass 34 tightens the
+                    # detector but legacy rows already destroyed data; this
+                    # ensures it never happens again going forward.
+                    # limbo too: a limbo row is still approvable (Retry Delete),
+                    # so leaving it open let a protected title be deleted anyway.
+                    rejected = (
+                        db.query(DeletionProposal)
+                        .filter(
+                            DeletionProposal.user_id == user_id,
+                            DeletionProposal.title == title,
+                            DeletionProposal.status.in_(["pending", "limbo"]),
                         )
+                        .update({
+                            "status":      "rejected",
+                            "resolved_at": datetime.utcnow(),
+                            "user_comment": "Auto-rejected by ProtectedMedia entry",
+                        }, synchronize_session=False)
+                    )
+                    if rejected > 0:
+                        logger.info("🛡️ [PROTECTION] Marked %d open proposals as rejected for '%s' (non-destructive)",
+                                    rejected, title)
+
+                    # Pass 66: append a resolution-log row (history; distinct from
+                    # the ProtectedMedia state row written above). Only when the
+                    # detector actually classified the keep — synthetic callers
+                    # (analyze_deletion_comment) omit RESOLUTION and get no row.
+                    if resolution_type:
+                        # One debate = one history row. The detector fires on EVERY
+                        # turn of a keep-discussion, so a two-turn debate logged the
+                        # same keep twice (Agatha All Along: turn 1 "Sentimental/
+                        # Partner", turn 2 "Comfort"). A re-affirmation within 24h
+                        # UPDATES the existing row instead — the later turn's
+                        # classification is the settled one and should win.
+                        recent = (
+                            db.query(CuratorResolutionLog)
+                            .filter(
+                                CuratorResolutionLog.user_id == user_id,
+                                CuratorResolutionLog.title == title,
+                                CuratorResolutionLog.outcome == "kept",
+                                CuratorResolutionLog.created_at
+                                >= datetime.utcnow() - timedelta(hours=24),
+                            )
+                            .order_by(CuratorResolutionLog.created_at.desc())
+                            .first()
+                        )
+                        if recent:
+                            recent.resolution_type = resolution_type
+                            if curator_stance:
+                                recent.curator_stance = curator_stance
+                            recent.override_reason = (
+                                (override_reason or recent.override_reason)
+                                if resolution_type == "override" else None
+                            )
+                            logger.info(
+                                "📒 [RESOLUTION LOG] user=%d '%s' kept (%s) — refreshed "
+                                "same-debate row instead of double-counting",
+                                user_id, title, resolution_type,
+                            )
+                        else:
+                            db.add(CuratorResolutionLog(
+                                user_id=user_id,
+                                title=title,
+                                category=category,
+                                outcome="kept",
+                                resolution_type=resolution_type,
+                                curator_stance=curator_stance or None,
+                                override_reason=(
+                                    (override_reason or None)
+                                    if resolution_type == "override" else None
+                                ),
+                            ))
+                            logger.info(
+                                "📒 [RESOLUTION LOG] user=%d '%s' kept (%s)%s",
+                                user_id, title, resolution_type,
+                                f" — reason={override_reason}" if (
+                                    resolution_type == "override" and override_reason
+                                ) else "",
+                            )
                 
-                protected_titles.append(title)
-                if watchlist_flag:
-                    watchlist_titles.append(title)
+                    protected_titles.append(title)
+                    if watchlist_flag:
+                        watchlist_titles.append(title)
             
-            db.commit()
+                db.commit()
+
+        await run_write(_protect)
 
         # DECLARED intention to watch -> the title actually lands on THIS
         # user's plex.tv watchlist (their own OAuth token, so it shows in
@@ -1776,7 +1818,7 @@ def _fetch_recent_thread_turns(user_id: int, thread_id: str) -> str:
                 + "\n".join(turns) + "\n"
             )
     except Exception as e:
-        logger.debug("[protection] recent-thread fetch failed: %s", e)
+        logger.warning("[protection] recent-thread fetch failed: %s", e)
     return ""
 
 
@@ -1947,8 +1989,8 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
     try:
         from src.services.llm_priority import wait_for_curator
         await wait_for_curator()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[protection] curator priority wait failed: %s", e)
 
     try:
         # Timeout 20s → 90s (Pass 14.13).
@@ -2096,7 +2138,8 @@ async def detect_and_handle_protection(
 
     logger.info(f"🛡️ [PROTECTION CHECK] Scanning for protection intents (anchor=%r)...", anchor_title)
 
-    recent_block = _fetch_recent_thread_turns(user_id, thread_id) if thread_id else ""
+    recent_block = (await run_read(_fetch_recent_thread_turns, user_id, thread_id)
+                    if thread_id else "")
     prompt = _build_protection_prompt(user_message, assistant_response, anchor_title, recent_block)
 
     llm_output = await _call_protection_classifier(prompt)
@@ -2306,7 +2349,8 @@ async def analyze_deletion_comment(user_id: int, title: str, comment: str, media
                 # the year-in-review / stats.
                 await handle_protection_intent(
                     user_id,
-                    _build_protection_intent_line(user_id, title, short_circuit_reason),
+                    await run_read(_build_protection_intent_line,
+                                   user_id, title, short_circuit_reason),
                 )
         except Exception as e:
             # Mirror the Pass-82e logger contract — class + safe str.
@@ -2389,7 +2433,8 @@ Output ONLY valid JSON:
                 # gets written instead of being silently dropped.
                 await handle_protection_intent(
                     user_id,
-                    _build_protection_intent_line(user_id, title, reason_en),
+                    await run_read(_build_protection_intent_line,
+                                   user_id, title, reason_en),
                 )
 
             return is_kept
@@ -2514,60 +2559,64 @@ async def update_taste_profile_from_memory(user_id: int, title: str, sentiment: 
 
     from src.services.taste_vectors import cas_update_blob
 
-    with get_db_session() as db:
-        from src.database.models import EncryptedTasteVector
+    def _merge() -> None:
+        with get_db_session() as db:
+            from src.database.models import EncryptedTasteVector
 
-        try:
-            # Optimistic RMW (eval 1.4): re-read + re-merge when another
-            # writer (the minutes-long taste rebuild) got in between our
-            # read and our write — before this, whoever committed last
-            # silently clobbered the other side's changes.
-            for attempt in (1, 2):
-                etv = db.query(EncryptedTasteVector).filter(
-                    EncryptedTasteVector.user_id == user_id,
-                    EncryptedTasteVector.media_category == media_category
-                ).first()
-                if not etv:
+            try:
+                # Optimistic RMW (eval 1.4): re-read + re-merge when another
+                # writer (the minutes-long taste rebuild) got in between our
+                # read and our write — before this, whoever committed last
+                # silently clobbered the other side's changes.
+                for attempt in (1, 2):
+                    etv = db.query(EncryptedTasteVector).filter(
+                        EncryptedTasteVector.user_id == user_id,
+                        EncryptedTasteVector.media_category == media_category
+                    ).first()
+                    if not etv:
+                        return
+
+                    # We are in "Phase A" (unencrypted), so load the JSON directly.
+                    current_vector = json.loads(etv.encrypted_blob)
+
+                    # A legacy v1 (encrypted) blob cannot be merged into; the
+                    # passphrase feature that wrote them is gone (2026-10-10), and
+                    # the next taste rebuild replaces the blob with plain JSON.
+                    if current_vector.get("version") == 1:
+                        logger.warning("[TASTE VECTOR] %s vector is a legacy encrypted blob — "
+                                       "feedback not merged; the next taste rebuild replaces it",
+                                       media_category)
+                        return
+
+                    old_rev = int(current_vector.get("rev") or 0)
+                    # Merge the feedback (updates theme_aversion, disliked_titles, etc.)
+                    updated_vector = merge_feedback_into_vector(current_vector, feedback_data)
+
+                    if cas_update_blob(db, etv.id, old_rev, updated_vector):
+                        db.commit()
+                        break
+                    db.rollback()
+                    db.expire_all()
+                    logger.info("[TASTE VECTOR] blob rev moved underneath us — "
+                                "re-merging (attempt %d)", attempt)
+                else:
+                    logger.warning("⚠️ [TASTE VECTOR] feedback merge lost the CAS "
+                                   "race twice — giving up this entry")
                     return
 
-                # We are in "Phase A" (unencrypted), so load the JSON directly.
-                current_vector = json.loads(etv.encrypted_blob)
+                logger.info(f"🧠 [TASTE VECTOR UPDATED] Added {sentiment} feedback for '{title}'. Aspects: {aspects}")
 
-                # A legacy v1 (encrypted) blob cannot be merged into; the
-                # passphrase feature that wrote them is gone (2026-10-10), and
-                # the next taste rebuild replaces the blob with plain JSON.
-                if current_vector.get("version") == 1:
-                    logger.warning("[TASTE VECTOR] %s vector is a legacy encrypted blob — "
-                                   "feedback not merged; the next taste rebuild replaces it",
-                                   media_category)
-                    return
+            except Exception as e:
+                # Pass 82e: same fix as the sibling error handlers in this
+                # module — include exception class so the log line is useful
+                # when ``str(e)`` is empty.
+                logger.error(
+                    "💥 [TASTE VECTOR UPDATE ERROR]: %s: %s",
+                    type(e).__name__, e or "(no message)",
+                    exc_info=True,
+                )
 
-                old_rev = int(current_vector.get("rev") or 0)
-                # Merge the feedback (updates theme_aversion, disliked_titles, etc.)
-                updated_vector = merge_feedback_into_vector(current_vector, feedback_data)
+    await run_write(_merge)
 
-                if cas_update_blob(db, etv.id, old_rev, updated_vector):
-                    db.commit()
-                    break
-                db.rollback()
-                db.expire_all()
-                logger.info("[TASTE VECTOR] blob rev moved underneath us — "
-                            "re-merging (attempt %d)", attempt)
-            else:
-                logger.warning("⚠️ [TASTE VECTOR] feedback merge lost the CAS "
-                               "race twice — giving up this entry")
-                return
-
-            logger.info(f"🧠 [TASTE VECTOR UPDATED] Added {sentiment} feedback for '{title}'. Aspects: {aspects}")
-
-        except Exception as e:
-            # Pass 82e: same fix as the sibling error handlers in this
-            # module — include exception class so the log line is useful
-            # when ``str(e)`` is empty.
-            logger.error(
-                "💥 [TASTE VECTOR UPDATE ERROR]: %s: %s",
-                type(e).__name__, e or "(no message)",
-                exc_info=True,
-            )
 
 # ── MEMORY DECAY / CLEANUP ────────────────────────────────────────────────────

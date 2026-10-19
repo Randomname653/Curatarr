@@ -6,6 +6,43 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Searches and enrichment no longer pause the server.** Vector-store calls (search,
+recommendations, the facet index, every enriched title's write, the embedding
+migration) now run on their own thread instead of the one that serves every page. The
+vector store opens once at startup instead of on the first search. The monthly Discogs
+import unpacks and reads its multi-gigabyte download off that thread too.
+
+**Every database file off the event loop; foreign keys enforced.** The lyrics, cache
+and offline-index files are now watched by the same check as the main database. That
+turned up the lyrics sync, which held its file locked across every Plex request; it now
+holds the lock only while writing. The enrichment cache waits 15 seconds for another
+writer instead of 60. The database now enforces that every row belongs to an existing
+user. At startup, rows from the past that name a missing user are repaired: a link that
+can be empty is cleared, and anything else is kept in `fk_orphans` before removal.
+
+**The server no longer waits on the database.** Every page, stream and background job
+shares one event loop, and 561 database calls ran on it directly: while another program
+(the music enricher, a backup) held the database, the whole app could freeze for up to a
+minute. Those calls now run on worker threads. A built-in check logs any new one (and lists
+them at `GET /api/system/loop-guard`, admin only), and a test stops them coming back. The
+database now gives up waiting after 15 seconds instead of 60. Two crashes this turned
+up are fixed: the Deletions list failed when served from its cache, and proactive
+messages were never generated.
+
+**No silent error handlers left.** The last 277 handlers that swallowed an error
+(`pass`, or a DEBUG line nobody sees) now each do one of four things: narrow to the
+error they expect, log a real failure as a warning, keep outages quiet while bugs are
+logged, or say in the code why staying silent is safe. Where one guarded a decision it
+now fails closed:
+- a half-broken embedding migration can no longer pass its own quality gate;
+- the deletion judge defers a title when the owner's taste profile or its format check
+  can't be read;
+- a corrupt notification setting no longer switches every opt-out back on;
+- OpenSubtitles pauses when a download can't be counted against the daily budget;
+- background learning steps back when it can't check whether a chat needs the GPU.
+
+A test now refuses any new silent handler that doesn't give its reason.
+
 **The deletion judge fails closed.** When the judge could not read the
 watch history, its facts said "not watched", a made-up negative for the
 household pillar; such a title is now deferred. Verdicts are checked

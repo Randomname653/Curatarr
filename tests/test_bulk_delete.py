@@ -16,6 +16,7 @@ from tests.frontend_files import everything as _frontend_everything  # index.htm
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import src.routers.recommendations as recs
 import src.services.episodic_memory as em
@@ -36,16 +37,23 @@ def check(name, cond):
 
 # ── throwaway DB + patched boundaries ────────────────────────────────────────
 
+# StaticPool: one in-memory DB for every session, on every thread (the
+# delete path opens its own sessions on the DB worker threads)
 engine = create_engine("sqlite://",
-                       connect_args={"check_same_thread": False})
+                       connect_args={"check_same_thread": False}, poolclass=StaticPool)
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
-_shared = Session()   # single session so in-memory state is visible everywhere
+_shared = Session()   # seeds and reads back
 
 
 @contextmanager
 def fake_db_session():
-    yield _shared
+    s = Session()
+    try:
+        yield s
+        s.commit()
+    finally:
+        s.close()
 
 
 probe_calls = []
@@ -98,9 +106,9 @@ _shared.commit()
 
 # ── single-item helper ───────────────────────────────────────────────────────
 
-p1 = _shared.query(DeletionProposal).get(1)
-ok = asyncio.run(recs._delete_one_and_log(_shared, 1, p1))
-_shared.commit()
+p1 = recs._load_proposal(1, 1)
+ok = asyncio.run(recs._delete_one_and_log(1, p1))
+asyncio.run(recs._commit_outcome(p1))
 check("helper deletes + sets status", ok and p1.status == "deleted"
       and p1.resolved_at is not None)
 check("helper writes a resolution-log row",
@@ -113,6 +121,7 @@ from src.services.task_monitor import task_monitor
 probe_calls.clear()
 task = task_monitor.create(name="Bulk delete (test)", category="curation", total=3)
 asyncio.run(recs._run_bulk_delete_bg(task, 1, [2, 3, 4, 999], "seen it, boring"))
+_shared.expire_all()
 
 b = _shared.query(DeletionProposal).get(2)
 g = _shared.query(DeletionProposal).get(3)

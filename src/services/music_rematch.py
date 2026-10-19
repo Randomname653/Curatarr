@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from typing import Optional
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def _index_db_path() -> Optional[str]:
     try:
         from src.services.lyrics import PLEX_MUSIC_DB_PATH
         return str(PLEX_MUSIC_DB_PATH)
-    except Exception as e:                                   # pragma: no cover
+    except ImportError as e:                                 # pragma: no cover
         logger.debug("[rematch] no music index: %s", e)
         return None
 
@@ -55,8 +56,9 @@ def arrivals(since: int, *, db_path: Optional[str] = None) -> list:
     if not path:
         return []
     try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    except Exception as e:
+        con = sqlite_connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error as e:
+        # mode=ro: the collector has not built the index yet (normal early on).
         logger.debug("[rematch] index unreadable: %s", e)
         return []
     try:
@@ -66,7 +68,7 @@ def arrivals(since: int, *, db_path: Optional[str] = None) -> list:
             "and title is not null and title <> '' order by added_at",
             (int(since or 0),)))
     except Exception as e:
-        logger.debug("[rematch] index query failed: %s", e)
+        logger.warning("[rematch] index query failed — no arrivals this pass: %s", e)
         return []
     finally:
         con.close()

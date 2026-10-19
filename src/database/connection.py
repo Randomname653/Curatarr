@@ -8,6 +8,15 @@ from sqlalchemy.pool import StaticPool
 from src.config import settings
 from src.database.models import Base
 
+# How long a statement waits for another writer's lock before "database is
+# locked". It was 60 s while coroutines ran SQLite on the event loop: a lock
+# wait there froze the whole server, and a long timeout was the only way to
+# ride out a writer in another process. With the loop kept free of database
+# work (src/database/loop_guard.py, tests/test_loop_db_ratchet.py) a wait
+# blocks only its worker thread, so the timeout can be what a write should
+# actually tolerate.
+BUSY_TIMEOUT_S = 15
+
 # Check if we're using in-memory SQLite and adjust pool settings accordingly
 if "sqlite:///:memory:" in settings.DATABASE_URL:
     engine = create_engine(
@@ -15,7 +24,6 @@ if "sqlite:///:memory:" in settings.DATABASE_URL:
         connect_args={
             "check_same_thread": False,
         },
-        pool_pre_ping=True,
         poolclass=StaticPool,
     )
 else:
@@ -23,24 +31,35 @@ else:
         settings.DATABASE_URL,
         connect_args={
             "check_same_thread": False,
-            "timeout": 60,  # SQLite connection-level timeout (seconds)
+            "timeout": BUSY_TIMEOUT_S,  # SQLite connection-level timeout (seconds)
         } if "sqlite" in settings.DATABASE_URL else {},
-        pool_pre_ping=True,
-        pool_size=5,
+        # A local file needs no liveness ping per checkout. Ten connections:
+        # the worker threads that now carry every read, without a request
+        # queueing behind a background job for a pooled connection; a
+        # checkout that still waits 10 s points at a leak, not at load.
+        pool_size=10,
         max_overflow=10,
-        pool_timeout=60,
+        pool_timeout=10,
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+from src.database import loop_guard  # noqa: E402
+loop_guard.install(engine)
 
 
 def _apply_sqlite_pragmas(dbapi_connection) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=60000")
+    cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_S * 1000}")
     cursor.execute("PRAGMA wal_autocheckpoint=1000")
     cursor.execute("PRAGMA cache_size=-64000")
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    # Enforce the declared foreign keys (every one points at users.id).
+    # init_db repairs the rows an unenforced past left behind first
+    # (_repair_foreign_keys); table rebuilds switch it off for their copy.
+    cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
 
@@ -48,12 +67,6 @@ if "sqlite" in settings.DATABASE_URL:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         _apply_sqlite_pragmas(dbapi_connection)
-
-    @event.listens_for(engine, "checkout")
-    def on_checkout(dbapi_connection, connection_record, connection_proxy):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA busy_timeout=60000")
-        cursor.close()
 
 
 @contextmanager
@@ -102,10 +115,10 @@ _write_engine = None
 def _build_write_engine(url):
     eng = create_engine(
         url,
-        connect_args={"check_same_thread": False, "timeout": 60},
+        connect_args={"check_same_thread": False, "timeout": BUSY_TIMEOUT_S},
         pool_size=2,
         max_overflow=2,
-        pool_timeout=60,
+        pool_timeout=BUSY_TIMEOUT_S,
     )
 
     @event.listens_for(eng, "connect")
@@ -117,6 +130,7 @@ def _build_write_engine(url):
     def _begin(conn):
         conn.exec_driver_sql("BEGIN IMMEDIATE")
 
+    loop_guard.install(eng)
     return eng
 
 
@@ -376,7 +390,7 @@ def _migrate_columns() -> None:
         except BaseException as e:
             try:
                 conn.exec_driver_sql("ROLLBACK")
-            except Exception:
+            except Exception:  # noqa: BLE001 - rollback in failure path; the error is raised below
                 pass
             # Was logged at DEBUG and swallowed: a column skipped because the
             # DB was locked (the music enricher writing) surfaced hours later
@@ -422,7 +436,9 @@ def _ensure_deletion_proposal_indexes() -> None:
             try:
                 conn.execute(text(ddl))
             except Exception as e:
-                _mig_log.debug("[migrate] deletion_proposals index repair failed: %s", e)
+                # Lookup indexes only (no uniqueness), so boot goes on — slowly.
+                _mig_log.error("[migrate] deletion_proposals index repair failed "
+                               "(%s): %s", ddl, e)
         conn.commit()
 
 
@@ -478,23 +494,32 @@ def _migrate_deletion_proposals_autoincrement() -> None:
             return  # already migrated
 
         _mig_log.info("[migrate] Pass 90c: converting deletion_proposals.id → AUTOINCREMENT")
+        # SQLite's table-rebuild procedure: foreign keys off for the copy
+        # (the pragma is a no-op inside a transaction, so before BEGIN),
+        # checked before the commit, back on for the pooled connection.
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
         try:
             # IMMEDIATE holds the write lock for the duration, so a
             # concurrent writer can never see the half-migrated state; SQLite
             # DDL is transactional, so a failure rolls back to the old table.
             conn.exec_driver_sql("BEGIN IMMEDIATE")
             _rebuild_from_model(conn, DeletionProposal.__table__)
+            bad = conn.exec_driver_sql("PRAGMA foreign_key_check(deletion_proposals)").fetchall()
+            if bad:
+                raise RuntimeError(f"{len(bad)} row(s) would break a foreign key")
             conn.exec_driver_sql("COMMIT")
             _mig_log.info("[migrate] Pass 90c: AUTOINCREMENT migration complete")
         except Exception as e:
             try:
                 conn.exec_driver_sql("ROLLBACK")
-            except Exception:
+            except Exception:  # noqa: BLE001 - rollback in failure path; logged as ERROR below
                 pass
             _mig_log.error(
                 "[migrate] Pass 90c FAILED: %s — rolled back, table left in "
                 "its pre-migration state", e,
             )
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
 
 def _rebuild_from_model(conn, table) -> None:
@@ -534,8 +559,8 @@ def _secure_db_files() -> None:
     if ENV_FILE.exists():
         try:
             os.chmod(ENV_FILE, stat.S_IRUSR | stat.S_IWUSR)
-        except Exception as e:
-            _mig_log.debug("Could not chmod %s (likely Windows): %s", ENV_FILE, e)
+        except OSError as e:
+            _mig_log.warning("Could not chmod %s to 0600: %s", ENV_FILE, e)
 
     if not DATA_DIR.exists():
         return
@@ -544,8 +569,10 @@ def _secure_db_files() -> None:
         for p in DATA_DIR.rglob(ext):
             try:
                 os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
-            except Exception as e:
-                _mig_log.debug("Could not chmod %s (likely Windows): %s", p, e)
+            except FileNotFoundError:
+                pass   # a -wal/-shm sidecar checkpointed away mid-scan
+            except OSError as e:
+                _mig_log.warning("Could not chmod %s to 0600: %s", p, e)
 
 
 def _drop_retired_tables() -> None:
@@ -572,9 +599,77 @@ def _drop_retired_tables() -> None:
         _logging.getLogger(__name__).warning("[migrate] could not drop user_pin_hashes: %s", e)
 
 
+_FK_ORPHANS_DDL = """CREATE TABLE IF NOT EXISTS fk_orphans (
+    id INTEGER PRIMARY KEY, table_name TEXT NOT NULL, row_json TEXT NOT NULL,
+    reason TEXT, removed_at TEXT NOT NULL)"""
+
+
+def _repair_foreign_keys() -> dict:
+    """Make the database satisfy its foreign keys before they are enforced.
+
+    They were declared but never switched on, so a row could name a user
+    that no longer exists. ``PRAGMA foreign_key_check`` lists each such
+    row: a nullable reference (``configured_by``, ``created_by``,
+    ``resolved_by``) is set to NULL; a row that cannot exist without its
+    user is copied as JSON into ``fk_orphans`` and then removed, so nothing
+    disappears without a trace. One transaction, logged per table. Returns
+    {table: rows repaired}; a clean database costs one check and no write."""
+    import json as _json
+    import logging as _logging
+    from datetime import datetime as _dt
+    log = _logging.getLogger(__name__)
+    if engine.url.get_backend_name() != "sqlite":
+        return {}
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        if not conn.exec_driver_sql("PRAGMA foreign_key_check").first():
+            return {}
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        repaired: dict = {}
+        try:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            conn.exec_driver_sql(_FK_ORPHANS_DDL)
+            now = _dt.utcnow().isoformat()
+            for table, rowid, parent, fkid in conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall():
+                fk = {r[0]: r for r in conn.exec_driver_sql(f'PRAGMA foreign_key_list("{table}")')}[fkid]
+                col = fk[3]
+                info = {r[1]: r for r in conn.exec_driver_sql(f'PRAGMA table_info("{table}")')}
+                if not info[col][3]:          # notnull == 0: the reference may be empty
+                    conn.exec_driver_sql(f'UPDATE "{table}" SET "{col}" = NULL WHERE rowid = ?', (rowid,))  # nosec B608 - identifiers come from PRAGMA output, no input
+                else:
+                    cur = conn.exec_driver_sql(f'SELECT * FROM "{table}" WHERE rowid = ?', (rowid,))  # nosec B608 - identifiers come from PRAGMA output, no input
+                    row = cur.first()
+                    if row is None:
+                        continue
+                    data = {k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                            for k, v in row._mapping.items()}
+                    conn.exec_driver_sql(
+                        "INSERT INTO fk_orphans (table_name, row_json, reason, removed_at) VALUES (?,?,?,?)",
+                        (table, _json.dumps(data, default=str), f"{col} -> {parent}: no such row", now))
+                    conn.exec_driver_sql(f'DELETE FROM "{table}" WHERE rowid = ?', (rowid,))  # nosec B608 - identifiers come from PRAGMA output, no input
+                repaired[table] = repaired.get(table, 0) + 1
+            if conn.exec_driver_sql("PRAGMA foreign_key_check").first():
+                raise RuntimeError("violations left after the repair")
+            conn.exec_driver_sql("COMMIT")
+        except Exception as e:
+            try:
+                conn.exec_driver_sql("ROLLBACK")
+            except Exception:  # noqa: BLE001 - rollback in failure path; logged as ERROR below
+                pass
+            log.error("[migrate] foreign-key repair failed, nothing changed: %s - writes that "
+                      "touch those rows will be refused until it succeeds", e)
+            return {}
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+    for table, n in sorted(repaired.items()):
+        log.warning("[migrate] %s: %d row(s) named a user that no longer exists - "
+                    "nulled, or moved to fk_orphans", table, n)
+    return repaired
+
+
 def init_db():
     """Create all tables and migrate any new columns."""
     Base.metadata.create_all(bind=engine)
+    _repair_foreign_keys()
     _drop_retired_tables()
     _migrate_columns()
     _migrate_deletion_proposals_autoincrement()

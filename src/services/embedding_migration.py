@@ -59,23 +59,61 @@ def _preflight(live_collection: str, names: set) -> str | None:
     return None
 
 
+def _neighborhood_eval(src_collection, dst, sample) -> tuple[int, int]:
+    """(hits, tried) for the eval gate. A pair that RAISES counts as tried
+    and missed: skipping it let the gate pass on whichever pairs happened to
+    survive, so a half-broken v2 corpus could still be flipped live."""
+    hits = tried = errors = 0
+    for n, (doc_id, old_emb) in enumerate(sample):
+        counted = False
+        try:
+            nb = src_collection.query(query_embeddings=[list(old_emb)],
+                                      n_results=3)
+            nb_ids = [i for i in (nb.get("ids") or [[]])[0] if i != doc_id]
+            if not nb_ids:
+                continue
+            a = dst.get_by_id(doc_id)
+            b = dst.get_by_id(nb_ids[0])
+            r = dst.get_by_id(sample[(n + 7) % len(sample)][0])   # unrelated
+            if not (a and b and r) or a["embedding"] is None:
+                continue
+            tried += 1
+            counted = True
+            if _cos(a["embedding"], b["embedding"]) > _cos(a["embedding"],
+                                                           r["embedding"]):
+                hits += 1
+        except Exception as e:
+            if not counted:
+                tried += 1
+            errors += 1
+            if errors == 1:
+                logger.warning("[emb-migration] eval pair failed (counted as a "
+                               "miss): %r", e, exc_info=True)
+            else:
+                logger.debug("[emb-migration] eval pair failed: %s", e)
+    return hits, tried
+
+
 async def run_embedding_migration(task) -> dict:
     """Full migration under a task_monitor task. Honors cancellation
     (checked between batches — no flip happens on a cancelled run)."""
     from src.services.app_state import set_state
     from src.services.embed_service import embed_documents, get_profile, set_profile
     from src.services.task_monitor import task_monitor
-    from src.vector_store.chromadb_wrapper import ChromaDBWrapper, get_chroma_db
+    from src.vector_store.chromadb_wrapper import ChromaDBWrapper, get_chroma_db, run_chroma
 
+    # Every Chroma step below runs on the Chroma thread, between the embeds:
+    # a corpus of thousands of documents paged, written and evaluated on the
+    # event loop stalled every request for the whole migration.
     live = get_chroma_db()
-    refusal = _preflight(live.collection_name, _collection_names(live.client))
+    refusal = _preflight(live.collection_name, await run_chroma(_collection_names, live.client))
     if refusal:
         task_monitor.update(task, message=f"NOT migrating: {refusal} — nothing "
                                           "was created or deleted", level="error")
         return {"ok": False, "reason": refusal}
 
-    src = ChromaDBWrapper(LEGACY_COLLECTION)
-    total = src.get_count()
+    src = await run_chroma(ChromaDBWrapper, LEGACY_COLLECTION)
+    total = await run_chroma(src.get_count)
     if total == 0:
         task_monitor.update(task, message=f"NOT migrating: {LEGACY_COLLECTION} "
                                           "is empty — nothing was deleted",
@@ -85,19 +123,22 @@ async def run_embedding_migration(task) -> dict:
                         message=f"Source: {total} docs in {LEGACY_COLLECTION}")
 
     # ── target collection: fresh every run (re-runs must not mix states) ──
-    client = src.client
-    try:
-        client.delete_collection(V2_PROFILE["collection"])
-    except Exception:
-        pass
-    dst_coll = client.create_collection(
-        name=V2_PROFILE["collection"],
-        metadata={"hnsw:space": "cosine",
-                  "emb_model": V2_PROFILE["model"],
-                  "emb_dim": 768,
-                  "text_schema": V2_PROFILE["schema"],
-                  "migrated_from": LEGACY_COLLECTION},
-    )
+    def _fresh_target():
+        client = src.client
+        try:
+            client.delete_collection(V2_PROFILE["collection"])
+        except Exception:  # noqa: BLE001 - absent on a first run; create below fails loud
+            pass
+        return client.create_collection(
+            name=V2_PROFILE["collection"],
+            metadata={"hnsw:space": "cosine",
+                      "emb_model": V2_PROFILE["model"],
+                      "emb_dim": 768,
+                      "text_schema": V2_PROFILE["schema"],
+                      "migrated_from": LEGACY_COLLECTION},
+        )
+
+    dst_coll = await run_chroma(_fresh_target)
 
     # ── re-embed the corpus, page by page ────────────────────────────────
     done, failed = 0, 0
@@ -105,8 +146,8 @@ async def run_embedding_migration(task) -> dict:
     while True:
         if task.status.value == "skipped":
             return {"ok": False, "cancelled": True}
-        page = src.collection.get(include=["documents", "metadatas"],
-                                  limit=_BATCH, offset=offset)
+        page = await run_chroma(src.collection.get, include=["documents", "metadatas"],
+                                limit=_BATCH, offset=offset)
         ids = page.get("ids") or []
         if not ids:
             break
@@ -116,7 +157,8 @@ async def run_embedding_migration(task) -> dict:
         ok_idx = [i for i, v in enumerate(vecs) if v]
         failed += len(ids) - len(ok_idx)
         if ok_idx:
-            dst_coll.add(
+            await run_chroma(
+                dst_coll.add,
                 ids=[ids[i] for i in ok_idx],
                 documents=[docs[i] for i in ok_idx],
                 embeddings=[vecs[i] for i in ok_idx],
@@ -138,33 +180,15 @@ async def run_embedding_migration(task) -> dict:
     # than an unrelated doc in the NEW space. Sanity, not identity — the
     # new model may (should) re-rank, but similar must beat random.
     sample = []
-    page = src.collection.get(include=["documents", "embeddings"],
-                              limit=1000, offset=0)
+    page = await run_chroma(src.collection.get, include=["documents", "embeddings"],
+                            limit=1000, offset=0)
     for i, doc in enumerate(page.get("documents") or []):
         if doc and len(doc) > 80:
             sample.append((page["ids"][i], page["embeddings"][i]))
         if len(sample) >= _EVAL_SAMPLE:
             break
-    hits = tried = 0
-    dst = ChromaDBWrapper(V2_PROFILE["collection"])
-    for n, (doc_id, old_emb) in enumerate(sample):
-        try:
-            nb = src.collection.query(query_embeddings=[list(old_emb)],
-                                      n_results=3)
-            nb_ids = [i for i in (nb.get("ids") or [[]])[0] if i != doc_id]
-            if not nb_ids:
-                continue
-            a = dst.get_by_id(doc_id)
-            b = dst.get_by_id(nb_ids[0])
-            r = dst.get_by_id(sample[(n + 7) % len(sample)][0])   # unrelated
-            if not (a and b and r) or a["embedding"] is None:
-                continue
-            tried += 1
-            if _cos(a["embedding"], b["embedding"]) > _cos(a["embedding"],
-                                                           r["embedding"]):
-                hits += 1
-        except Exception as e:
-            logger.debug("[emb-migration] eval pair failed: %s", e)
+    dst = await run_chroma(ChromaDBWrapper, V2_PROFILE["collection"])
+    hits, tried = await run_chroma(_neighborhood_eval, src.collection, dst, sample)
     rate = (hits / tried) if tried else 0.0
     task_monitor.update(task, message=f"Eval gate: {hits}/{tried} "
                                       f"similar-beats-random ({rate:.0%})")
@@ -176,38 +200,56 @@ async def run_embedding_migration(task) -> dict:
     # ── DB-side vector spaces: memories + principles ─────────────────────
     from src.database.connection import get_db_session
     from src.database.models import CuratorPrinciple, EpisodicMemory
+    from src.database.runner import run_read, run_write
+
+    # Plain (id, text) pairs out, vectors back in by id: the session used to
+    # stay open across every embed call.
+    def _load(model_cls, text_attr):
+        with get_db_session() as db:
+            return [(r.id, getattr(r, text_attr) or "") for r in
+                    db.query(model_cls).filter(model_cls.embedding_json.isnot(None)).all()]
+
+    def _store(model_cls, vec_by_id: dict) -> None:
+        with get_db_session() as db:
+            for r in db.query(model_cls).filter(model_cls.id.in_(list(vec_by_id))).all():
+                r.embedding_json = json.dumps(vec_by_id[r.id])
+            db.commit()
+
     mem_n = 0
     for model_cls, text_attr, label in ((EpisodicMemory, "content", "memories"),
                                         (CuratorPrinciple, "text", "principles")):
-        with get_db_session() as db:
-            rows = (db.query(model_cls)
-                    .filter(model_cls.embedding_json.isnot(None)).all())
-            for i in range(0, len(rows), 32):
-                if task.status.value == "skipped":
-                    return {"ok": False, "cancelled": True}
-                chunk = rows[i:i + 32]
-                vecs = await embed_documents(
-                    [getattr(r, text_attr) or "" for r in chunk],
-                    profile=V2_PROFILE)
-                for r, v in zip(chunk, vecs):
-                    if v:
-                        r.embedding_json = json.dumps(v)
-                        mem_n += 1
-                db.commit()
-            task_monitor.update(task, message=f"Re-embedded {label} "
-                                              f"({len(rows)} rows)")
+        rows = await run_read(_load, model_cls, text_attr)
+        for i in range(0, len(rows), 32):
+            if task.status.value == "skipped":
+                return {"ok": False, "cancelled": True}
+            chunk = rows[i:i + 32]
+            vecs = await embed_documents([text for _, text in chunk],
+                                         profile=V2_PROFILE)
+            got = {rid: v for (rid, _), v in zip(chunk, vecs) if v}
+            mem_n += len(got)
+            await run_write(_store, model_cls, got)
+        task_monitor.update(task, message=f"Re-embedded {label} "
+                                          f"({len(rows)} rows)")
 
     # ── THE FLIP ─────────────────────────────────────────────────────────
-    set_state(PREV_PROFILE_KEY, json.dumps(get_profile()))
-    set_profile(V2_PROFILE)
+    # Both writes on the writer thread, in this order: the previous profile
+    # is on record before the switch.
+    def _flip():
+        set_state(PREV_PROFILE_KEY, json.dumps(get_profile()))
+        set_profile(V2_PROFILE)
+
+    await run_write(_flip)
     task_monitor.update(task, message="Profile flipped — app now runs on "
                                       "v2-moe + prefixes + new collection")
 
     # ── taste rebuild: lookups against the new corpus, no LLM ────────────
     from src.database.models import User
     from src.services.taste_engine import compute_all_taste_vectors
-    with get_db_session() as db:
-        user_ids = [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]  # noqa: E712
+    def _active_ids():
+        with get_db_session() as db:
+            return [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]  # noqa: E712
+
+    user_ids = await run_read(_active_ids)
     for uid in user_ids:
         try:
             await compute_all_taste_vectors(uid, skip_summaries=True)

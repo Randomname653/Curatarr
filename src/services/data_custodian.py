@@ -47,6 +47,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from src.database.runner import run_read, run_write
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,7 +124,7 @@ def _prog(task, message: str = None, processed: int = None,
         if total is not None:
             kw["total"] = total
         task_monitor.update(task, message=message, **kw)
-    except Exception:
+    except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
         pass
 
 
@@ -136,15 +138,15 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
     skipping. Respects the same lock as the manual /start endpoint."""
     from src.services.app_state import acquire_state_lock
     from src.routers.enrichment import _run_enrichment, CATEGORIES
-    if sprint_until() is not None:
+    if await run_read(sprint_until) is not None:
         # The sprint runs the pipeline beside the queue in chunks; in here a
         # chunk would only wait on its lock, or hold the queue for hours
         # behind MusicBrainz once only music is left.
         return False
-    uid = _admin_id()
+    uid = await run_read(_admin_id)
     if uid is None:
         return True
-    if not acquire_state_lock("enrichment_running"):
+    if not await run_write(acquire_state_lock, "enrichment_running"):
         logger.info("[custodian] enrichment already running — retry next tick")
         return False
     limit = 2000 if deep else 400
@@ -153,7 +155,7 @@ async def _run_enrichment_cycle(deep: bool = False) -> bool:
     # its limit stays due and the next tick carries on, like every other
     # partial task; it used to stamp 24 hours of silence after 400 of 2,300
     # items (2026-10-06).
-    return _enrichment_left() == 0
+    return await run_read(_enrichment_left) == 0
 
 
 async def _run_omdb(deep: bool = False, task=None) -> bool:
@@ -175,7 +177,7 @@ async def _run_significance(deep: bool = False, task=None) -> bool:
 
 async def _run_spotify(deep: bool = False, task=None) -> bool:
     from src.services.music_matcher import run_music_pipeline
-    uid = _admin_id()
+    uid = await run_read(_admin_id)
     if uid is None:
         return True
     # Audit #7: same lock as the manual /music/start endpoint — the two
@@ -187,7 +189,7 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
     if not await asyncio.to_thread(state_lease.acquire, "music_pipeline_running"):
         logger.info("[custodian] music pipeline already running — retry next tick")
         return False
-    set_state("music_pipeline_owner", "")          # no member's run: only an admin may stop it
+    await run_write(set_state, "music_pipeline_owner", "")   # no member's run: only an admin may stop it
     batch = 2000 if deep else 1000
     try:
         r = await run_music_pipeline(uid, batch=batch, task=task)
@@ -204,7 +206,7 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
         if warmed:
             logger.info("[custodian] top-track metadata warmed: %d", warmed)
     except Exception as e:
-        logger.debug("[custodian] track warm failed: %s", e)
+        logger.warning("[custodian] track warm failed: %s", e)
     # Heuristic done-check: every phase consumed less than its batch → the
     # queues are (near) drained; otherwise stay due and continue next tick.
     # Audit #1: the keys MUST match what the phases actually return
@@ -233,14 +235,18 @@ async def _run_taste_if_due(deep: bool = False) -> bool:
     from src.database.connection import get_db_session
     from src.database.models import EnrichmentStatus
     from src.services.scheduler import _last_job_run
-    last = _last_job_run("custodian_taste") or datetime(1970, 1, 1)
-    with get_db_session() as db:
-        fresh = (db.query(func.count(EnrichmentStatus.id))
-                 .filter(EnrichmentStatus.enriched == True,
-                         EnrichmentStatus.enriched_at > last).scalar())
+
+    def _fresh_profiles():
+        last = _last_job_run("custodian_taste") or datetime(1970, 1, 1)
+        with get_db_session() as db:
+            return (db.query(func.count(EnrichmentStatus.id))
+                    .filter(EnrichmentStatus.enriched == True,
+                            EnrichmentStatus.enriched_at > last).scalar())
+
+    fresh = await run_read(_fresh_profiles)
     if fresh < 100 and not deep:
         return True   # nothing meaningful to recompute — counts as done
-    uid = _admin_id()
+    uid = await run_read(_admin_id)
     if uid is None:
         return True
     from src.routers.enrichment import _run_taste_computation
@@ -262,7 +268,7 @@ async def _run_wikidata(deep: bool = False, task=None) -> bool:
     """Structured facts — no model, so this one never waits for the GPU."""
     from src.services.archive_backfill import coverage, run_source
     r = await run_source("wikidata", limit=400 if deep else 150, task=task)
-    left = next((s["missing"] for s in coverage()["sources"]
+    left = next((s["missing"] for s in (await run_read(coverage))["sources"]
                  if s["key"] == "wikidata"), 0)
     logger.info("[custodian] wikidata: +%d over %d title(s), %d remaining",
                 r.get("added", 0), r.get("visited", 0), left)
@@ -317,17 +323,24 @@ async def _run_recs(deep: bool = False) -> bool:
     from src.services.app_state import get_state, set_state
     from src.services import scheduler as sched
 
-    with get_db_session() as db:
-        users = [(u_id, uname) for u_id, uname in
-                 db.query(User.id, User.plex_username).filter(User.is_active == True).all()]
-    all_ok = True
-    for uid, uname in users:
+    def _users():
+        with get_db_session() as db:
+            return [(u_id, uname) for u_id, uname in
+                    db.query(User.id, User.plex_username).filter(User.is_active == True).all()]
+
+    def _user_cache_state(uid):
         sampled_flag = get_state(f"recs_all_sampled:user_id={uid}") or ""
         with get_db_session() as db:
             newest = (db.query(CachedRecommendation.cached_at)
                       .filter(CachedRecommendation.user_id == uid)
                       .order_by(CachedRecommendation.cached_at.desc())
                       .first())
+        return sampled_flag, (tuple(newest) if newest else None)
+
+    users = await run_read(_users)
+    all_ok = True
+    for uid, uname in users:
+        sampled_flag, newest = await run_read(_user_cache_state, uid)
         fresh = (newest and newest[0]
                  and datetime.utcnow() - newest[0] < timedelta(hours=_RECS_FRESH_HOURS))
         if fresh and not sampled_flag:
@@ -336,7 +349,7 @@ async def _run_recs(deep: bool = False) -> bool:
             logger.info("[custodian] refreshing recommendations for %s%s",
                         uname, " (all sampled)" if sampled_flag else "")
             await sched._cache_recommendations(uid)
-            set_state(f"recs_all_sampled:user_id={uid}", "")
+            await run_write(set_state, f"recs_all_sampled:user_id={uid}", "")
         except Exception as e:
             logger.warning("[custodian] rec refresh failed for %s: %s", uname, e)
             all_ok = False
@@ -351,11 +364,14 @@ async def _run_playlist_push(deep: bool = False, task=None) -> bool:
     from src.database.models import User
     from src.services.plex_playlists import push_user_playlists
 
-    with get_db_session() as db:
-        rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()
-        # detach the attributes we need before the session closes
-        users = [type("U", (), {"id": u_id, "plex_username": uname,
-                                "plex_token": token})() for u_id, uname, token in rows]
+    def _users():
+        with get_db_session() as db:
+            rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()
+            # detach the attributes we need before the session closes
+            return [type("U", (), {"id": u_id, "plex_username": uname,
+                                   "plex_token": token})() for u_id, uname, token in rows]
+
+    users = await run_read(_users)
     all_ok = True
     for i, u in enumerate(users):
         _prog(task, message=f"Pushing playlists for {u.plex_username}…",
@@ -378,10 +394,13 @@ async def _run_music_playlist_push(deep: bool = False, task=None) -> bool:
     from src.database.models import User
     from src.services.plex_playlists import push_user_music_playlist
 
-    with get_db_session() as db:
-        rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()  # noqa: E712
-        users = [type("U", (), {"id": u_id, "plex_username": uname,
-                                "plex_token": token})() for u_id, uname, token in rows]
+    def _users():
+        with get_db_session() as db:
+            rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()  # noqa: E712
+            return [type("U", (), {"id": u_id, "plex_username": uname,
+                                   "plex_token": token})() for u_id, uname, token in rows]
+
+    users = await run_read(_users)
     all_ok = True
     for i, u in enumerate(users):
         _prog(task, message=f"Pushing music playlist for {u.plex_username}…",
@@ -492,11 +511,16 @@ async def _run_cache_prune(task=None) -> bool:
     """
     from src.cache.metadata_cache import MetadataCache
     from src.services.task_monitor import task_monitor
-    cache = MetadataCache()
-    try:
-        removed = cache.prune_expired()
-    finally:
-        cache.close()
+
+    def _prune():
+        cache = MetadataCache()
+        try:
+            return cache.prune_expired()
+        finally:
+            cache.close()
+
+    # The cache is its own SQLite file: a worker thread, not the DB writer.
+    removed = await asyncio.to_thread(_prune)
     if task is not None:
         task_monitor.update(task, message=f"{removed} expired rows removed")
     logger.info("[custodian] pruned %d expired cache rows", removed)
@@ -516,13 +540,16 @@ async def _run_chat_starters(task=None) -> str:
                                             pool_fresh_count, POOL_TARGET)
     from src.services.task_monitor import task_monitor
 
-    with get_db_session() as db:
-        users = [u_id for (u_id,) in db.query(User.id).filter_by(is_active=True).all()]
+    def _users():
+        with get_db_session() as db:
+            return [u_id for (u_id,) in db.query(User.id).filter_by(is_active=True).all()]
+
+    users = await run_read(_users)
     if task:
         task_monitor.update(task, total=len(users))
     made = skipped = 0
     for i, uid in enumerate(users):
-        if pool_fresh_count(uid) >= POOL_TARGET:
+        if await run_read(pool_fresh_count, uid) >= POOL_TARGET:
             skipped += 1
         else:
             made += await generate_starters(uid)
@@ -555,19 +582,19 @@ async def _run_plex_followup() -> bool:
     recommendation cache and verification questions. A no-op unless the sync
     left the flag; stays due while a game holds the card."""
     from src.services.app_state import get_state, set_state
-    if get_state(_FOLLOWUP_FLAG) != "1":
+    if await run_read(get_state, _FOLLOWUP_FLAG) != "1":
         return True
     from src.services import scheduler as sched
-    if sched._gaming():
+    if await run_read(sched._gaming):
         return False
     from src.services.taste_engine import compute_all_taste_vectors
-    admin = _admin_id()
-    for uid in _active_user_ids():
+    admin = await run_read(_admin_id)
+    for uid in await run_read(_active_user_ids):
         if uid != admin:
             await compute_all_taste_vectors(uid)
     if admin is not None:
         await sched._recompute_and_cache_recs(admin)   # the admin's taste + recs + verification
-    set_state(_FOLLOWUP_FLAG, "0")
+    await run_write(set_state, _FOLLOWUP_FLAG, "0")
     return True
 
 
@@ -724,8 +751,8 @@ def custodian_status() -> dict:
     try:
         raw = get_state(_REPORT_KEY)
         report = json.loads(raw) if raw else None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[custodian] stored report unreadable: %s", e)
     tasks = []
     for t in _registry():
         last = _last_job_run(t.job_id)
@@ -801,8 +828,8 @@ def _store_report(queue: str, report: dict) -> None:
             if raw:
                 latest.append(json.loads(raw))
         set_state(_REPORT_KEY, json.dumps(_merge_reports(latest)))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[custodian] could not store the %s report: %s", queue, e)
 
 
 def _cancel_requested() -> bool:
@@ -826,12 +853,14 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
         for t in tasks:
             if _cancel_requested():
                 raise asyncio.CancelledError
-            _queue_pending[queue].discard(t.job_id)
             mon = None
+            # The task leaves the pending set only where it did when the reads
+            # below ran inline: while one waits on a worker thread, the other
+            # queue's after-check must still count the task as ahead.
             try:
                 if t.settle_only and _first_run_done[queue] and not force:
                     continue
-                if not force and not _job_overdue(t.job_id, t.cadence_h):
+                if not force and not await run_read(_job_overdue, t.job_id, t.cadence_h):
                     continue
                 blocking = set(t.after) & _ahead_in(other)
                 if blocking and queue == QUEUE_BACKGROUND:
@@ -842,8 +871,9 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                                     "result": f"deferred (after {', '.join(sorted(blocking))})"})
                     continue
                 if blocking:
+                    _queue_pending[queue].discard(t.job_id)
                     await _wait_for(other, t.after, t.job_id)
-                if t.needs_llm and _gaming():
+                if t.needs_llm and await run_read(_gaming):
                     # Not a stop any more: summariser-class work moves to the
                     # CPU while another program holds the card, curator-class
                     # work waits (its model cannot even load there).
@@ -855,6 +885,7 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                     logger.info("[custodian] %s runs on the CPU lane — the GPU is busy",
                                 t.job_id)
                 logger.info("[custodian] running %s …", t.job_id)
+                _queue_pending[queue].discard(t.job_id)
                 _queue_current[queue] = t.job_id
                 t0 = time.time()
                 # Activity card for every runner that doesn't card itself.
@@ -873,7 +904,7 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                 done = await t.runner(**kwargs)
                 done = True if done is None else bool(done)
                 if done:
-                    _record_job_run(t.job_id)
+                    await run_write(_record_job_run, t.job_id)
                 if mon is not None:
                     task_monitor.done(mon, "Complete" if done
                                       else "Partial — continues next tick")
@@ -888,6 +919,7 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                     task_monitor.error(mon, _short_error(e))
                 actions.append({"task": t.job_id, "result": f"error: {_short_error(e)}"})
             finally:
+                _queue_pending[queue].discard(t.job_id)
                 _queue_current[queue] = None
         _first_run_done[queue] = True
     finally:
@@ -901,7 +933,7 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
         "forced": force, "deep": deep,
         "actions": actions,
     }
-    _store_report(queue, report)
+    await run_write(_store_report, queue, report)
     if actions:
         logger.info("[custodian] %s queue done in %.0fs: %s", queue, report["duration_s"],
                     ", ".join(f"{a['task']}={a['result']}" for a in actions))
@@ -928,6 +960,21 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
         await asyncio.sleep(_SETTLE_SECONDS)
     from src.services.scheduler import _job_overdue, _track_task
     registry = _registry()
+
+    def _overdue_by_job() -> dict:
+        # A job whose stamp cannot be read is left out: the lookup below
+        # then fails for its queue, as the inline call used to.
+        out = {}
+        for t in registry:
+            try:
+                out[t.job_id] = _job_overdue(t.job_id, t.cadence_h)
+            except Exception:  # noqa: BLE001 — handled per queue below
+                pass
+        return out
+
+    # Read before the claim loop: between a queue's busy check and its claim
+    # there must be no await, or two ticks could both start it.
+    overdue = {} if force else await run_read(_overdue_by_job)
     started, busy = [], []
     for q in queues:
         if _queue_busy[q]:
@@ -936,7 +983,7 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
         tasks = [t for t in registry if queue_of(t) == q]
         try:
             due = {t.job_id for t in tasks
-                   if force or (_job_overdue(t.job_id, t.cadence_h)
+                   if force or (overdue[t.job_id]
                                 and not (t.settle_only and _first_run_done[q]))}
         except Exception:  # noqa: BLE001 — unknown due state: count them all as ahead
             due = {t.job_id for t in tasks}
@@ -1066,12 +1113,12 @@ async def _sprint_enrichment() -> None:
     from src.services.app_state import acquire_state_lock
     from src.routers.enrichment import CATEGORIES, _run_enrichment
     from src.services.scheduler import _record_job_run
-    uid = _admin_id()
-    if uid is None or not acquire_state_lock("enrichment_running"):
+    uid = await run_read(_admin_id)
+    if uid is None or not await run_write(acquire_state_lock, "enrichment_running"):
         return
     await _run_enrichment(uid, list(CATEGORIES), "both", _SPRINT_CHUNK)
-    if _enrichment_left() == 0:
-        _record_job_run("custodian_enrich")
+    if await run_read(_enrichment_left) == 0:
+        await run_write(_record_job_run, "custodian_enrich")
         logger.info("[sprint] enrichment backlog covered")
 
 
@@ -1106,7 +1153,7 @@ async def custodian_sprint_tick() -> dict:
     queue is idle, no model work is due and no enrichment holds its lock. It
     leaves the settle window after a start to the first tick."""
     global _sprint_seen
-    until = sprint_until()
+    until = await run_read(sprint_until)
     if until is None:
         _sprint_seen = None
         if _awake_stop is not None:
@@ -1120,16 +1167,18 @@ async def custodian_sprint_tick() -> dict:
     _keep_awake(True)
     if time.monotonic() - _STARTED < _SETTLE_SECONDS:
         return {"sprint": until.isoformat()}
-    left = _enrichment_left()
-    chunk = not _enrichment_running() and (left > 0 or _enrichment_due())
+    left = await run_read(_enrichment_left)
+    chunk = (not await run_read(_enrichment_running)
+             and (left > 0 or await run_read(_enrichment_due)))
     if chunk:
         logger.info("[sprint] enrichment chunk beside the model queue (%s)",
                     f"{left} item(s) left" if left else "the cycle is due")
         _launch_sprint_enrichment()
     if _queue_busy[QUEUE_MODEL]:
         return {"sprint": until.isoformat(), "enrichment": chunk}
-    if not (chunk or _enrichment_running() or _model_work_due()):
-        set_sprint(0, "no model work due, no enrichment running")
+    if not (chunk or await run_read(_enrichment_running)
+            or await run_read(_model_work_due)):
+        await run_write(set_sprint, 0, "no model work due, no enrichment running")
         return {"sprint": None, "done": True}
     return await custodian_tick(deep=True, wait=False, quiet=True, queues=(QUEUE_MODEL,))
 

@@ -68,16 +68,16 @@ def test_walker_attempts_send_failures_back():
     from src.services import reception
     src = inspect.getsource(reception.run_reception_backfill)
     check("the reception walker orders its queue by attempt stamps",
-          "load_walker_attempts(_RECEPTION_ATTEMPTS_KEY)" in src
+          "run_read(load_walker_attempts, _RECEPTION_ATTEMPTS_KEY)" in src
           and "key=lambda x: attempts.get(x[2], \"\")" in src)
     check("...stamps every attempt and stores them after the pass",
-          "attempts[id_key] = " in src and "save_walker_attempts(" in src)
+          "attempts[id_key] = " in src and "run_write(save_walker_attempts," in src)
 
     from src.services import media_enricher as me
     sig = inspect.getsource(me.run_significance_backfill)
     check("the significance walker orders, stamps and stores the same way",
-          "load_walker_attempts(_SIG_ATTEMPTS_KEY)" in sig
-          and "attempts[_row_key(row)] = " in sig and "save_walker_attempts(" in sig)
+          "run_read(load_walker_attempts, _SIG_ATTEMPTS_KEY)" in sig
+          and "attempts[_row_key(row)] = " in sig and "run_write(save_walker_attempts," in sig)
 
 
 # ── setup refuses metadata-resolving names ──────────────────────────────────

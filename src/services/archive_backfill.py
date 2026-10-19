@@ -164,7 +164,8 @@ def coverage(cache=None) -> dict:
             try:
                 done = sum(1 for raw in entries if spec["done"](raw))
             except Exception as e:
-                logger.debug("[backfill] coverage for %s failed: %s", key, e)
+                # The predicates are pure dict checks: raising here is a bug.
+                logger.warning("[backfill] coverage for %s failed: %r", key, e)
                 continue
             pct = (100.0 * done / total) if total else 100.0
             sources.append({
@@ -227,25 +228,26 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
     and the run is completely silent. A caller that prints cannot tell a slow
     job from a hung one; this lets it.
     """
-    from src.cache.metadata_cache import MetadataCache
     from src.services.media_enricher import topup_significance, topup_omdb
     from src.services.reception import topup_reception
     from src.services.wikidata import topup_wikidata
 
     owns = cache is None
-    if owns:
-        cache = MetadataCache()
     try:
         if source == "external_ids":
             # Bulk by nature: one library fetch answers thousands of titles,
             # so it does not walk the per-title path below.
             from src.services.external_ids import harvest
+            # Without a handle passed in, harvest opens its own on the
+            # worker thread its walk runs on.
             return await harvest(cache, limit=limit, task=task,
                                  should_stop=should_stop,
                                  on_progress=on_progress)
         if source not in ("significance", "reception", "wikidata", "omdb"):
             return {"error": f"unknown source {source!r}"}
-        todo = pending(source, cache=cache)
+        # Without a handle passed in, the scan and every top-up open their
+        # own on the worker thread their cache work runs on.
+        todo = await asyncio.to_thread(pending, source, cache=cache)
         if limit:
             todo = todo[:limit]
 
@@ -311,5 +313,5 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
         await asyncio.gather(*(_worker() for _ in range(max(1, width))))
         return {"source": source, "visited": seen, "added": added}
     finally:
-        if owns:
+        if owns and cache is not None:
             cache.close()

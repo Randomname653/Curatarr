@@ -74,6 +74,15 @@ recs._latest_curator_stance_for_proposal = (
 _next_id = [100]
 
 
+def delete_and_commit(pid):
+    """_delete_one_and_log + _commit_outcome on a fresh copy of the row, as
+    approve does (the delete path carries a copy, not a session-bound row)."""
+    p = recs._load_proposal(1, pid)
+    ok = asyncio.run(recs._delete_one_and_log(1, p))
+    asyncio.run(recs._commit_outcome(p))
+    return ok
+
+
 def seed(title, service="radarr", status="pending", tmdb_id=None, category="movie"):
     _next_id[0] += 1
     with fake_db_session() as s:
@@ -114,13 +123,9 @@ async def guard_then_keep(p):
 
 
 recs._lidarr_freshness_guard = guard_then_keep
-db = Session()
-p = db.get(DeletionProposal, pid)
-ok = asyncio.run(recs._delete_one_and_log(db, 1, p))
-db.commit()
+ok = delete_and_commit(pid)
 check("Keep during freshness guard -> NOT deleted, arr never called",
       ok is False and exec_calls == [] and status_of(pid) == "rejected")
-db.close()
 
 pid = seed("Guard Protect Band", service="lidarr", category="music")
 
@@ -136,13 +141,9 @@ async def guard_then_protect(p):
 
 
 recs._lidarr_freshness_guard = guard_then_protect
-db = Session()
-p = db.get(DeletionProposal, pid)
-ok = asyncio.run(recs._delete_one_and_log(db, 1, p))
-db.commit()
+ok = delete_and_commit(pid)
 check("protection added during guard -> NOT deleted, proposal closed as rejected",
       ok is False and exec_calls == [] and status_of(pid) == "rejected")
-db.close()
 
 # judge protections are keyed by TMDB id (per category)
 pid = seed("Judge Kept", tmdb_id=4242)
@@ -150,20 +151,14 @@ with fake_db_session() as s:
     s.add(ProtectedMedia(user_id=1, identifier="4242", category="movie",
                          source="judge", verdict="HARD_KEEP"))
     s.commit()
-db = Session()
-ok = asyncio.run(recs._delete_one_and_log(db, 1, db.get(DeletionProposal, pid)))
-db.commit()
+ok = delete_and_commit(pid)
 check("tmdb-id protection (judge) blocks the delete",
       ok is False and exec_calls == [] and status_of(pid) == "rejected")
-db.close()
 
 pid = seed("Other Type Same Id", tmdb_id=4242, category="show", service="sonarr")
-db = Session()
-ok = asyncio.run(recs._delete_one_and_log(db, 1, db.get(DeletionProposal, pid)))
-db.commit()
+ok = delete_and_commit(pid)
 check("tmdb-id protection does not leak across categories (movie 4242 != tv 4242)",
       ok is True and status_of(pid) == "deleted")
-db.close()
 exec_calls.clear()
 
 # ── 1b. two concurrent approvals -> exactly one DELETE ───────────────────────
@@ -182,19 +177,15 @@ recs._execute_arr_delete = slow_exec
 
 
 async def _two_approvals():
-    s1, s2 = Session(), Session()
-    try:
-        return await asyncio.gather(
-            recs._delete_one_and_log(s1, 1, s1.get(DeletionProposal, pid)),
-            recs._delete_one_and_log(s2, 1, s2.get(DeletionProposal, pid)),
-        ), s1, s2
-    except Exception:
-        s1.close(); s2.close()
-        raise
+    p1, p2 = recs._load_proposal(1, pid), recs._load_proposal(1, pid)
+    results = await asyncio.gather(recs._delete_one_and_log(1, p1),
+                                   recs._delete_one_and_log(1, p2))
+    await recs._commit_outcome(p1)
+    await recs._commit_outcome(p2)
+    return results
 
 
-(results, s1, s2) = asyncio.run(_two_approvals())
-s1.commit(); s2.commit(); s1.close(); s2.close()
+results = asyncio.run(_two_approvals())
 check("concurrent approvals: exactly one DELETE sent", slow_calls == ["Double Click"])
 check("...one wins, the loser reports failure without touching status",
       sorted(results) == [False, True] and status_of(pid) == "deleted")
@@ -220,15 +211,13 @@ class _U:
     id = 1
 
 
-db = Session()
 try:
-    asyncio.run(recs.approve_deletion(pid, user=_U(), db=db))
+    asyncio.run(recs.approve_deletion(pid, user=_U()))
     code = None
 except HTTPException as e:
     code = e.status_code
 check("approve on a row already being deleted -> 409, arr not probed",
       code == 409 and probed == [])
-db.close()
 
 # approve endpoint on a protected pending row -> not deleted, clear error
 pid = seed("Endpoint Protected")
@@ -236,12 +225,10 @@ with fake_db_session() as s:
     s.add(ProtectedMedia(user_id=1, identifier="endpoint protected",
                          title="Endpoint Protected", source="manual"))
     s.commit()
-db = Session()
-r = asyncio.run(recs.approve_deletion(pid, user=_U(), db=db))
+r = asyncio.run(recs.approve_deletion(pid, user=_U()))
 check("approve on a protected title -> ok False + error, nothing deleted",
       r["ok"] is False and r["status"] == "rejected" and "error" in r
       and exec_calls == [])
-db.close()
 
 # ── 2. chat protection closes LIMBO proposals too ────────────────────────────
 
@@ -369,10 +356,7 @@ with mock_http(ok204):
 # end to end: unknown outcome parks in limbo (listed + retryable), not error
 pid = seed("Unknown Outcome")
 with mock_http(timeout_still_there):
-    db = Session()
-    ok = asyncio.run(recs_fresh._delete_one_and_log(db, 1, db.get(DeletionProposal, pid)))
-    db.commit()
-    db.close()
+    ok = delete_and_commit(pid)
 check("unknown delete outcome -> limbo (retryable), not a dead-end error",
       ok is False and status_of(pid) == "limbo")
 
@@ -416,9 +400,7 @@ async def fake_analyze(*a, **kw):
 
 em.analyze_deletion_comment = fake_analyze
 pid = seed("Stale Comment", status="deleted")
-db = Session()
-r = asyncio.run(recs_fresh.update_comment(pid, "Keeping: love it", user=_U(), db=db))
-db.close()
+r = asyncio.run(recs_fresh.update_comment(pid, "Keeping: love it", user=_U()))
 check("Keeping-comment on a deleted proposal is not analysed (no false keep)",
       analyzed == [] and r["is_kept"] is False)
 

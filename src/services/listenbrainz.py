@@ -131,6 +131,16 @@ def _digest(artist_mbid: str, entries: list) -> dict:
     }
 
 
+def _on_cache(cache, fn):
+    """``fn(cache)`` on the caller's handle, or on one of its own when there
+    is none. Called through asyncio.to_thread: the cache file has its own
+    lock, and a coroutine must not wait on it on the event loop."""
+    if cache is not None:
+        return fn(cache)
+    with MetadataCache() as own:
+        return fn(own)
+
+
 async def fetch_artist_popularity(artist_mbid: str,
                                   cache: Optional[MetadataCache] = None):
     """Global popularity digest for one artist. Tri-state:
@@ -152,50 +162,48 @@ async def fetch_artist_popularity(artist_mbid: str,
         # the evidence appear without any cache surgery.
         logger.debug("[listenbrainz] no LISTENBRAINZ_TOKEN — skipping")
         return None
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
+    key = f"lb:artist:{artist_mbid}"
+
+    async def _set(value, days):
+        await asyncio.to_thread(_on_cache, cache,
+                                lambda c: c.set_cache(key, value, days=days))
+
+    hit = await asyncio.to_thread(_on_cache, cache, lambda c: c.get_cache(key))
+    if hit is not None:
+        resp = hit.get("response")
+        return resp if isinstance(resp, dict) else {}
+
     try:
-        key = f"lb:artist:{artist_mbid}"
-        hit = cache.get_cache(key)
-        if hit is not None:
-            resp = hit.get("response")
-            return resp if isinstance(resp, dict) else {}
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            r = await _lb_request(
+                client,
+                f"{LB_BASE}/popularity/top-release-groups-for-artist/{artist_mbid}",
+                headers,
+            )
+    except Exception as e:
+        log_topup_failure(logger, "[listenbrainz]", artist_mbid, e)
+        return None
 
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                r = await _lb_request(
-                    client,
-                    f"{LB_BASE}/popularity/top-release-groups-for-artist/{artist_mbid}",
-                    headers,
-                )
-        except Exception as e:
-            logger.debug("[listenbrainz] request failed for %s: %s", artist_mbid, e)
-            return None
+    if r.status_code == 404:
+        # Unknown MBID is a definitive answer, not an outage.
+        await _set({}, _NEGATIVE_TTL_DAYS)
+        return {}
+    if r.status_code != 200:
+        logger.debug("[listenbrainz] HTTP %s for %s", r.status_code, artist_mbid)
+        return None
+    try:
+        entries = r.json()
+    except Exception:
+        return None
+    if not isinstance(entries, list):
+        return None
+    if not entries:
+        await _set({}, _NEGATIVE_TTL_DAYS)
+        return {}
 
-        if r.status_code == 404:
-            # Unknown MBID is a definitive answer, not an outage.
-            cache.set_cache(key, {}, days=_NEGATIVE_TTL_DAYS)
-            return {}
-        if r.status_code != 200:
-            logger.debug("[listenbrainz] HTTP %s for %s", r.status_code, artist_mbid)
-            return None
-        try:
-            entries = r.json()
-        except Exception:
-            return None
-        if not isinstance(entries, list):
-            return None
-        if not entries:
-            cache.set_cache(key, {}, days=_NEGATIVE_TTL_DAYS)
-            return {}
-
-        digest = _digest(artist_mbid, entries)
-        cache.set_cache(key, digest, days=_POSITIVE_TTL_DAYS)
-        return digest
-    finally:
-        if owns:
-            cache.close()
+    digest = _digest(artist_mbid, entries)
+    await _set(digest, _POSITIVE_TTL_DAYS)
+    return digest
 
 
 # ── raw-doc top-up (mirrors reception.topup_reception) ───────────────────────
@@ -218,20 +226,18 @@ async def topup_listenbrainz(
     """
     if media_type != "music":
         return False
-    from src.cache.metadata_cache import MetadataCache, write_fields
+    from src.cache.metadata_cache import write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
     try:
         id_keys = [v for v in (anilist_id, anidb_id, tmdb_id, tvdb_id,
                                plex_rating_key) if v]
         t40 = (title or "")[:40]
         if t40:
             id_keys.append(t40)
+        hits = await asyncio.to_thread(_on_cache, cache, lambda c: [
+            c.get_cache(f"raw:{media_type}:{k}") for k in id_keys])
         targets = []
-        for k in id_keys:
-            hit = cache.get_cache(f"raw:{media_type}:{k}")
+        for k, hit in zip(id_keys, hits):
             if not hit or not isinstance(hit.get("response"), dict):
                 continue
             raw = hit["response"]
@@ -251,18 +257,22 @@ async def topup_listenbrainz(
             return False  # transient — nothing stamped, retried next debate
 
         added = False
+        writes = []
         for key, raw in targets:
             fields = {"lb_checked": True}
             if digest:
                 fields["lb_popularity"] = digest
                 added = True
+            writes.append((key, raw, fields))
+
+        def _write(c):
             # Only these fields — the entry was read before a slow fetch,
             # and another walker may have written to it since.
-            write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
+            for key, raw, fields in writes:
+                write_fields(c, key, raw, fields, days=_RAW_CACHE_DAYS)
+
+        await asyncio.to_thread(_on_cache, cache, _write)
         return added
     except Exception as e:
         log_topup_failure(logger, "[listenbrainz]", title, e)
         return False
-    finally:
-        if owns:
-            cache.close()

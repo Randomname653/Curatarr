@@ -26,6 +26,7 @@ import numpy as np
 from chromadb.config import Settings
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ def _startup_quick_check() -> None:
         db_file = Path(str(settings.CHROMADB_PATH)) / "chroma.sqlite3"
         if not db_file.exists():
             return   # fresh install — nothing to check
-        con = sqlite3.connect(str(db_file), timeout=30)
+        con = sqlite_connect(str(db_file), timeout=30)
         try:
             ok = (con.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0]
         finally:
@@ -313,8 +314,9 @@ class ChromaDBWrapper:
             self._facets_collection().delete(where={"parent": str(parent_id)})
             return True
         except Exception as e:
-            logger.debug("[chroma] facets_delete_by_parent(%s) failed: %s",
-                         parent_id, e)
+            # The old facets stay beside the re-added ones: stale points.
+            logger.warning("[chroma] facets_delete_by_parent(%s) failed: %s",
+                           parent_id, e)
             return False
 
     def facets_count(self) -> int:
@@ -556,7 +558,7 @@ class ChromaDBWrapper:
             ids = result.get("ids") or []
             return sum(1 for i in ids if str(i).startswith(prefix))
         except Exception as e:
-            logger.debug("count_by_id_prefix(%r) failed: %s", prefix, e)
+            logger.warning("count_by_id_prefix(%r) failed: %s", prefix, e)
             return 0
     
     def all_ids(self) -> List[str]:
@@ -567,7 +569,7 @@ class ChromaDBWrapper:
         try:
             return list((self.collection.get(include=[]) or {}).get("ids") or [])
         except Exception as e:
-            logger.debug("all_ids() failed: %s", e)
+            logger.warning("all_ids() failed: %s", e)
             return []
 
     def get_all(self, limit: int = 1000) -> List[Dict]:

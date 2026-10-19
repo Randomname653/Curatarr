@@ -40,6 +40,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from src.database.runner import run_read, run_write
+
 logger = logging.getLogger(__name__)
 
 STATE_KEY = "model_updates"
@@ -155,7 +157,8 @@ async def check_updates() -> list[dict]:
     """Refresh the notice state for every tracked model. Network only."""
     from src.config import settings
     endpoint = settings.effective_ollama
-    state = load_state()
+    # load_state may write (a corrupt value is set aside): the writer thread.
+    state = await run_write(load_state)
     out = []
     for t in tracked_models(settings):
         prev = state.get(t["role"], {})
@@ -168,7 +171,7 @@ async def check_updates() -> list[dict]:
             row.pop("comparison", None)
         state[t["role"]] = row
         out.append(row)
-    save_state(state)
+    await run_write(save_state, state)
     return out
 
 
@@ -322,9 +325,13 @@ async def sample_evidence(user_id: int, n: int = SAMPLE_TITLES, *,
     from src.routers.recommendations import _fetch_arr_candidates
     from src.services import pillars
     exclude = {t.lower() for t in (exclude or set())}
-    with get_db_session() as db:
-        recent = [(p.category, p.title) for p in db.query(DeletionProposal)
-                  .order_by(DeletionProposal.created_at.desc()).limit(40)]
+
+    def _recent():
+        with get_db_session() as db:
+            return [(p.category, p.title) for p in db.query(DeletionProposal)
+                    .order_by(DeletionProposal.created_at.desc()).limit(40)]
+
+    recent = await run_read(_recent)
     items = [i for i in await _fetch_arr_candidates()
              if (i.get("title") or "").lower() not in exclude]
     by_key = {((i.get("category") or ""), (i.get("title") or "").lower()): i for i in items}
@@ -567,17 +574,22 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
             task_monitor.update(task, message=text)
 
     endpoint = settings.effective_ollama
-    state = load_state()
-    row = state.get(role)
-    if not row or not row.get("comparable"):
-        raise ValueError(f"no comparison for the {role} role")
-    if row.get("status") != "update":
-        raise ValueError("no update pending for this model")
-    pinned = pin_name(row["base"], row["running"])
-    # Marked BEFORE anything changes in Ollama: a restart mid-test leaves this
-    # behind, and recover_interrupted rolls back from it.
-    state[role]["test_started"] = _now()
-    save_state(state)
+
+    def _mark_started():
+        state = load_state()
+        row = state.get(role)
+        if not row or not row.get("comparable"):
+            raise ValueError(f"no comparison for the {role} role")
+        if row.get("status") != "update":
+            raise ValueError("no update pending for this model")
+        pinned = pin_name(row["base"], row["running"])
+        # Marked BEFORE anything changes in Ollama: a restart mid-test leaves this
+        # behind, and recover_interrupted rolls back from it.
+        state[role]["test_started"] = _now()
+        save_state(state)
+        return row, pinned
+
+    row, pinned = await run_write(_mark_started)
     try:
         result = await _compare(role, row, endpoint, user_id, pinned, msg)
     except BaseException:
@@ -599,9 +611,9 @@ async def run_comparison(role: str, user_id: int, task=None) -> dict:
         finally:
             release_bulk_hold()
             if complete:
-                _clear_marker(role)
+                await run_write(_clear_marker, role)
         raise
-    _clear_marker(role)
+    await run_write(_clear_marker, role)
     return result
 
 
@@ -671,8 +683,12 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
     for past in row.get("history") or []:
         used |= set(past.get("titles") or [])
     sample = await sample_evidence(user_id, exclude=used)
-    with get_db_session() as db:
-        lang = language_directive(detect_user_language(user_id, db))
+
+    def _lang():
+        with get_db_session() as db:
+            return language_directive(detect_user_language(user_id, db))
+
+    lang = await run_read(_lang)
     async with curator_priority("model update test", exclusive_model=bake):
         msg(f"running the current {base} on {len(sample)} titles")
         old = await _run_side(endpoint, bake, sample, lang)
@@ -684,9 +700,13 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
               "at": _now(), "summary": summarize(old, new), "old": old, "new": new,
               # The judge (model_update_eval) checks both sides against these.
               "facts": {s["title"]: s["facts"] for s in sample}}
-    state = load_state()
-    state.setdefault(role, row)["comparison"] = result
-    save_state(state)
+
+    def _save_result():
+        state = load_state()
+        state.setdefault(role, row)["comparison"] = result
+        save_state(state)
+
+    await run_write(_save_result)
     return result
 
 
@@ -720,7 +740,7 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
     from src.services.model_update_eval import evaluate
     from src.services.task_monitor import task_monitor
     endpoint = settings.effective_ollama
-    state = load_state()
+    state = await run_write(load_state)
     row = state.get(role) or {}
     cmp_ = row.get("comparison")
     if not cmp_:
@@ -762,14 +782,18 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
     finally:
         release_bulk_hold()
     ev["at"] = _now()
-    state = load_state()
-    if state.get(role, {}).get("comparison"):
-        state[role]["comparison"]["evaluation"] = ev
-        state[role]["comparison"]["summary"] = cmp_["summary"]
-        if cmp_.get("facts_rebuilt"):
-            state[role]["comparison"]["facts"] = cmp_["facts"]
-            state[role]["comparison"]["facts_rebuilt"] = True
-        save_state(state)
+
+    def _save_review():
+        state = load_state()
+        if state.get(role, {}).get("comparison"):
+            state[role]["comparison"]["evaluation"] = ev
+            state[role]["comparison"]["summary"] = cmp_["summary"]
+            if cmp_.get("facts_rebuilt"):
+                state[role]["comparison"]["facts"] = cmp_["facts"]
+                state[role]["comparison"]["facts_rebuilt"] = True
+            save_state(state)
+
+    await run_write(_save_review)
     return ev
 
 
@@ -830,7 +854,7 @@ async def recover_interrupted() -> list[str]:
     """At startup: a test that a restart cut off (``test_started`` still set,
     no result) is rolled back, and the notice says what happened."""
     from src.config import settings
-    state = load_state()
+    state = await run_write(load_state)
     done = []
     for role, row in state.items():
         if isinstance(row, dict) and row.get("test_started") and not row.get("comparison"):
@@ -849,7 +873,7 @@ async def recover_interrupted() -> list[str]:
                 row["compare_error"] = "the test was cut off by a restart; everything was put back"
             done.append(role)
     if done:
-        save_state(state)
+        await run_write(save_state, state)
     return done
 
 
@@ -859,7 +883,7 @@ async def decide(role: str, action: str) -> dict:
     from src.config import settings
     from src.services.setup_wizard import build_ollama_models
     endpoint = settings.effective_ollama
-    state = load_state()
+    state = await run_write(load_state)
     row = state.get(role) or {}
     cmp_ = row.get("comparison")
     if not row.get("running"):
@@ -883,7 +907,7 @@ async def decide(role: str, action: str) -> dict:
             logger.error("[model update] %s: %s", role, err)
             row["compare_error"] = err
             state[role] = row
-            save_state(state)
+            await run_write(save_state, state)
             raise RuntimeError(err)
         row.update(running=cmp_["new_weights"], status="current", declined_remote=None)
         row.pop("compare_error", None)
@@ -910,7 +934,7 @@ async def decide(role: str, action: str) -> dict:
                       "summary": (cmp_ or {}).get("summary")}
     row.pop("comparison", None)
     state[role] = row
-    save_state(state)
+    await run_write(save_state, state)
     return row
 
 

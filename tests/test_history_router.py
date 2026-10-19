@@ -106,6 +106,19 @@ def get_mock_db_with_entries():
 
 client = TestClient(app)
 
+# /recent reads in a worker through its own get_db_session (off the event
+# loop), not the request's get_db; hand it the same mock the override names.
+import contextlib  # noqa: E402
+import src.routers.history as _history  # noqa: E402
+
+
+@contextlib.contextmanager
+def _override_session():
+    yield app.dependency_overrides[get_db]()
+
+
+_history.get_db_session = _override_session
+
 def test_recent_history_default():
     app.dependency_overrides[get_current_user] = get_mock_user
     app.dependency_overrides[get_db] = get_mock_db_with_entries

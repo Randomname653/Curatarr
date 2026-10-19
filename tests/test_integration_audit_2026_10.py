@@ -201,7 +201,7 @@ gen = src_eng.split("async def generate_deletion_proposals(")[1].split("\nasync 
 check("phase A's DB reads run in one worker-thread call",
       "await asyncio.to_thread(_load_phase_a)" in gen)
 check("the embedding prefetch runs on the Chroma thread",
-      "run_chroma(chroma_db.get_by_ids" in gen)
+      "run_chroma(_chroma_get_by_ids" in gen)
 check("the scoring loop no longer opens the cache per candidate",
       "_get_cached_rating(item, category)" not in gen.split("_load_phase_a)")[1].split(
           "Phase B")[0].split("rating_ctx, _, cached_genres")[0])
@@ -334,10 +334,14 @@ check("a worker-thread progress update wakes the SSE subscriber",
 
 # ── 6. memory conflicts: scan off the loop, short verdict writes ────────────
 import src.services.episodic_memory as em  # noqa: E402
-from src.database.models import EpisodicMemory  # noqa: E402
+from src.database.models import EpisodicMemory, User  # noqa: E402
 
 old_ts = datetime.utcnow() - timedelta(hours=1)
 with get_db_session() as db:
+    # foreign keys are enforced: the memories need their user
+    if db.get(User, 7) is None:
+        db.add(User(id=7, plex_user_id="u7", plex_username="seven"))
+        db.flush()
     twin = EpisodicMemory(user_id=7, memory_type="preference", content="I love slow cinema",
                           metadata_json="{}", embedding_json=json.dumps([1.0, 0.0, 0.0]),
                           importance=0.5, created_at=old_ts)
@@ -478,8 +482,8 @@ body = chat_src.split("async def _send_message_guarded(")[1].split("\ndef _relea
 after = body.split("_uid = user.id")[1]
 check("no ORM attribute read after the commit (it re-opened a transaction)",
       "user." not in after)
-check("the request session is handed back before the stream starts",
-      "db.close()\n    return StreamingResponse(stream" in after)
+check("the chat path holds no request session (its DB work runs on worker threads)",
+      "db: Session" not in body.split(")")[0] and "return StreamingResponse(stream" in after)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

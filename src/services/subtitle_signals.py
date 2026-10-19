@@ -47,6 +47,8 @@ import unicodedata
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+from src.services.enrichment_state import log_topup_failure  # noqa: E402
+from src.database.runner import run_read, run_write  # noqa: E402
 
 # Bump when a formula below changes, so stamped rows re-offer themselves.
 METRICS_VERSION = "1"
@@ -550,16 +552,21 @@ async def topup_subtitle_metrics(title: str, media_type: str, *,
         from src.database.connection import get_db_session
         from src.database.models import MediaSubtitleProfile
 
-        rk, _dur = _resolve_plex_key(media_type, tmdb_id, tvdb_id)
-        if not rk:
-            return False
-        rk = str(rk)
+        def _due():
+            # The plex key (None: nothing to fetch for), and whether the row
+            # already holds numbers under the current formula.
+            rk, _dur = _resolve_plex_key(media_type, tmdb_id, tvdb_id)
+            if not rk:
+                return None, False
+            rk = str(rk)
+            with get_db_session() as db:
+                row = (db.query(MediaSubtitleProfile)
+                       .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
+                return rk, bool(row and row.checked and row.metrics_v == METRICS_VERSION)
 
-        with get_db_session() as db:
-            row = (db.query(MediaSubtitleProfile)
-                   .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
-            if row and row.checked and row.metrics_v == METRICS_VERSION:
-                return False
+        rk, done = await run_read(_due)
+        if not rk or done:
+            return False
 
         m = await fetch_subtitle_metrics(rk, hints={
             "title_hint": title, "media_hint": media_type,
@@ -567,33 +574,36 @@ async def topup_subtitle_metrics(title: str, media_type: str, *,
         if m is None:
             return False                      # transient — do NOT stamp
 
-        with get_db_session() as db:
-            row = (db.query(MediaSubtitleProfile)
-                   .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
-            if not row:
-                row = MediaSubtitleProfile(plex_rating_key=rk,
-                                           media_type=media_type)
-                db.add(row)
-            row.title = title
-            row.tmdb_id = tmdb_id
-            row.tvdb_id = tvdb_id
-            row.checked = True
-            row.metrics_v = METRICS_VERSION
-            if m:
-                row.source = m.get("source")
-                row.language = m.get("language")
-                row.is_sdh = bool(m.get("is_sdh"))
-                row.words_per_min = m.get("words_per_min")
-                row.silent_min = m.get("silent_min")
-                row.silent_share = m.get("silent_share")
-                row.mattr = m.get("mattr")
-                row.total_words = m.get("total_words")
-                row.coverage = m.get("coverage")
-                row.duration_min = m.get("duration_min")
-            db.commit()
+        def _save():
+            with get_db_session() as db:
+                row = (db.query(MediaSubtitleProfile)
+                       .filter(MediaSubtitleProfile.plex_rating_key == rk).first())
+                if not row:
+                    row = MediaSubtitleProfile(plex_rating_key=rk,
+                                               media_type=media_type)
+                    db.add(row)
+                row.title = title
+                row.tmdb_id = tmdb_id
+                row.tvdb_id = tvdb_id
+                row.checked = True
+                row.metrics_v = METRICS_VERSION
+                if m:
+                    row.source = m.get("source")
+                    row.language = m.get("language")
+                    row.is_sdh = bool(m.get("is_sdh"))
+                    row.words_per_min = m.get("words_per_min")
+                    row.silent_min = m.get("silent_min")
+                    row.silent_share = m.get("silent_share")
+                    row.mattr = m.get("mattr")
+                    row.total_words = m.get("total_words")
+                    row.coverage = m.get("coverage")
+                    row.duration_min = m.get("duration_min")
+                db.commit()
+
+        await run_write(_save)
         return bool(m)
     except Exception as e:
-        logger.debug("[subtitles] top-up failed for %r: %s", title, e)
+        log_topup_failure(logger, "[subtitles]", title, e)
         return False
 
 
@@ -627,7 +637,8 @@ def subtitle_facts(item: dict, media_type: str) -> str:
                 "is_sdh": bool(row.is_sdh),
             }, lang=row.language or "")
     except Exception as e:
-        logger.debug("[subtitles] facts lookup failed: %s", e)
+        log_topup_failure(logger, "[subtitles] facts lookup",
+                          item.get("tmdb_id") or item.get("tvdb_id"), e)
         return ""
 
 
@@ -647,6 +658,9 @@ def subtitle_facts(item: dict, media_type: str) -> str:
 _OS_BASE = "https://api.opensubtitles.com/api/v1"
 _OS_UA = "Curatarr/1.0"
 _os_token: dict = {"jwt": None, "at": None}
+# Budget day on which a download could not be charged: this process stops
+# asking until that day ends, since the stored counter now undercounts.
+_os_uncharged: dict = {"day": None}
 
 
 def _os_conf():
@@ -682,6 +696,8 @@ def _os_blocked_key() -> str:
 
 
 def _os_blocked_today() -> bool:
+    if _os_uncharged["day"] == _os_budget_key():
+        return True
     try:
         from src.services import app_state
         return app_state.get_state(_os_blocked_key()) == "1"
@@ -707,7 +723,11 @@ def _os_charge() -> None:
         from src.services import app_state
         app_state.set_state(_os_budget_key(), str(os_spent_today() + 1))
     except Exception as e:
-        logger.debug("[subtitles] could not record quota use: %s", e)
+        # Fail closed: an unrecorded download would let the next titles
+        # overspend a (possibly shared) account's daily quota.
+        _os_uncharged["day"] = _os_budget_key()
+        logger.warning("[subtitles] could not record quota use - OpenSubtitles "
+                       "paused until tomorrow: %s", e)
 
 
 async def _os_login(client, api_key: str, user: str, pw: str):
@@ -729,7 +749,8 @@ async def _os_login(client, api_key: str, user: str, pw: str):
         _os_token["jwt"], _os_token["at"] = tok, time.time()
         return tok
     except Exception as e:
-        logger.debug("[subtitles] OpenSubtitles login failed: %s", e)
+        # Not fatal: the anonymous tier still answers.
+        log_topup_failure(logger, "[subtitles] OpenSubtitles login", "account", e)
         return None
 
 
@@ -744,10 +765,10 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
     api_key, user, pw, budget = _os_conf()
     if not api_key:
         return None                      # not configured — retry if it ever is
-    if budget and os_spent_today() >= budget:
+    if budget and await run_read(os_spent_today) >= budget:
         logger.info("[subtitles] OpenSubtitles daily budget (%d) reached", budget)
         return None                      # transient by design: tomorrow works
-    if _os_blocked_today():
+    if await run_read(_os_blocked_today):
         return None
 
     imdb = str(imdb_id or "").lower().replace("tt", "").lstrip("0")
@@ -799,7 +820,7 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
             link = (d.json() or {}).get("link")
             if not link:
                 return None
-            _os_charge()
+            await run_write(_os_charge)
             txt = await _bounded_text(c, link, {"User-Agent": _OS_UA})
             if txt is None:
                 return None
@@ -815,7 +836,7 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
         if code in (404, 410):
             return ""
         if code in (401, 403, 406):
-            _os_block_today(f"HTTP {code}")
+            await run_write(_os_block_today, f"HTTP {code}")
         else:
             logger.warning("[subtitles] OpenSubtitles HTTP %s for %s - retried later",
                            code, imdb_id)
@@ -963,7 +984,7 @@ async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
                 # could not answer. Neither is a reason to skip the public
                 # fallback, so we simply carry on.
     except Exception as e:
-        logger.debug("[subtitles] provider leg failed: %s", e)
+        log_topup_failure(logger, "[subtitles] provider leg", title_hint or plex_rating_key, e)
 
     if not imdb_id:
         return {}                        # no id to ask with — definitive

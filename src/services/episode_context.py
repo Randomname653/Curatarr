@@ -48,7 +48,7 @@ def _sonarr_series_id(series_title: str) -> Optional[int]:
             if isinstance(it, dict) and _norm(it.get("title")) == want:
                 return it.get("id")
     except Exception as e:
-        logger.debug("[episode-ctx] series id lookup failed: %s", e)
+        logger.warning("[episode-ctx] series id lookup failed: %s", e)
     return None
 
 
@@ -67,7 +67,8 @@ async def _fetch_episodes(series_title: str) -> Optional[list]:
                                  params={"seriesId": sid, "apikey": key})
         return r.json() if r.status_code == 200 else None
     except Exception as e:
-        logger.debug("[episode-ctx] fetch failed for %r: %s", series_title, e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[episode-ctx]", series_title, e)
         return None
 
 

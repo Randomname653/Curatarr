@@ -19,6 +19,7 @@ fit note. The only LLM left in the loop is the query parse, which
 proved reliable in every live round.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -33,6 +34,16 @@ logger = logging.getLogger(__name__)
 # session without squatting on VRAM (curator_start evicts it anyway).
 _SEARCH_KEEP_ALIVE = "5m"
 _PARSE_TIMEOUT = 12.0
+
+
+def _log_search_failure(what: str, e: BaseException) -> None:
+    """An embedder / network outage stays at DEBUG (search degrades, chat
+    answers); anything else is a bug and is logged so it can be found."""
+    from src.services.enrichment_state import is_transient_error
+    if is_transient_error(e):
+        logger.debug("[search] %s failed: %s", what, e)
+    else:
+        logger.warning("[search] %s failed: %r", what, e, exc_info=True)
 
 # ── Evidence-scoring constants — calibrated on tests/test_search_fixtures.py
 # (the owner's two live review rounds), do not tweak by feel. Constraint↔tag
@@ -172,19 +183,19 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
     """
     try:
         from src.services.embed_service import embed_query
-        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma, domain_where as _domain_where
         # QUERY side of the Nomic prefix schema — the one place the missing
         # prefixes measurably hurt retrieval (asymmetric search).
         embedding = await embed_query(query)
         if not embedding:
             return []
         chroma = get_chroma_db()
-        results = chroma.query(query_embeddings=[embedding],
-                               n_results=n_results,
-                               where=_domain_where(domain))
+        results = await run_chroma(chroma.query, query_embeddings=[embedding],
+                                   n_results=n_results,
+                                   where=_domain_where(domain))
     except Exception as e:
         # Embedder / Chroma outage: chat answers without library context.
-        logger.debug("semantic search failed: %s", e)
+        _log_search_failure("semantic search", e)
         return []
     # Outside the outage try: a bug in watched_lookup / short_size_tag used
     # to empty chat's library context at DEBUG, indistinguishable from an
@@ -293,8 +304,12 @@ async def _summarizer_json(system: str, user: str, schema: dict,
                 continue
             raw = strip_think_tags(r.json().get("message", {}).get("content", "") or "")
             return json.loads(raw)
-        except Exception as e:
+        except (httpx.HTTPError, TimeoutError, ValueError) as e:
+            # down, slow, or not JSON: try the next model
             logger.debug("[search] summarizer json via %s failed: %s", model, e)
+        except Exception as e:
+            logger.warning("[search] summarizer json via %s failed: %r", model, e,
+                           exc_info=True)
     return None
 
 
@@ -326,26 +341,26 @@ async def _anchor_vector(anchor_title: str, domain: str = None):
     """
     try:
         from src.services.embed_service import embed_query
-        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma, domain_where as _domain_where
         probe = await embed_query(anchor_title)
         if not probe:
             return None, None, ""
         chroma = get_chroma_db()
-        res = chroma.query(query_embeddings=[probe], n_results=3,
-                           where=_domain_where(domain))
+        res = await run_chroma(chroma.query, query_embeddings=[probe], n_results=3,
+                               where=_domain_where(domain))
         ids = (res.get("ids") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         want = _norm_title(anchor_title)
         for cid, meta in zip(ids, metas):
             got = _norm_title(meta.get("title", ""))
             if got and (got == want or want in got or got in want):
-                doc = chroma.get_by_id(str(cid))
+                doc = await run_chroma(chroma.get_by_id, str(cid))
                 emb = doc.get("embedding") if doc else None
                 if emb is not None and len(emb):
                     return (list(emb), meta.get("title", ""),
                             meta.get("genres", "") or "")
     except Exception as e:
-        logger.debug("[search] anchor resolve failed: %s", e)
+        _log_search_failure("anchor resolve", e)
     return None, None, ""
 
 
@@ -362,7 +377,7 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
     try:
         cache = MetadataCache()
     except Exception as e:
-        logger.debug("[search] cache open failed: %s", e)
+        logger.warning("[search] cache open failed - ranking without tags: %s", e)
     out = []
     for h in hits:
         tags, seen = [], set()
@@ -411,7 +426,7 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
     try:
         if cache is not None:
             cache.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 - releasing a handle; the tags are already read
         pass
     return out
 
@@ -450,27 +465,76 @@ async def _texts_to_vectors(texts: list) -> dict:
         if k:
             want.setdefault(k, t)
     result, misses = {}, []
-    cache = None
-    try:
-        from src.cache.metadata_cache import MetadataCache
-        cache = MetadataCache()
-    except Exception:
-        cache = None
+    warned: list = []     # once per call: this runs per tag
+
+    def _ck(k: str) -> str:
+        return f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
+
+    # The api_cache file has its own lock: both cache passes run on a worker
+    # thread, each with its own handle (handles are per thread).
+    def _open():
+        try:
+            from src.cache.metadata_cache import MetadataCache
+            return MetadataCache()
+        except Exception:
+            return None
+
+    def _release(cache) -> None:
+        try:
+            if cache is not None:
+                cache.close()
+        except Exception:  # noqa: BLE001 - releasing a handle; the vectors are computed
+            pass
+
+    def _read_cached(keys: list):
+        """(cache usable, {k: vec}) for the keys with a stored vector."""
+        cache = _open()
+        found: dict = {}
+        if cache is None:
+            return False, found
+        try:
+            for k in keys:
+                try:
+                    hit = cache.get_cache(_ck(k))
+                    vec = ((hit or {}).get("response") or {}).get("v")
+                    if vec:
+                        found[k] = vec
+                except Exception as e:
+                    # read as a miss: the tag is embedded afresh
+                    if not warned:
+                        warned.append(True)
+                        logger.warning("[search] tag-vector cache read failed: %s", e)
+        finally:
+            _release(cache)
+        return True, found
+
+    def _write_cached(items: list) -> None:
+        cache = _open()
+        if cache is None:
+            return
+        try:
+            for k, unit in items:
+                try:
+                    cache.set_cache(_ck(k), {"v": unit}, days=90)
+                except Exception as e:
+                    if not warned:
+                        warned.append(True)
+                        logger.warning("[search] tag-vector cache write "
+                                       "failed: %s", e)
+        finally:
+            _release(cache)
+
+    cache_ok, cached = await asyncio.to_thread(
+        _read_cached, [k for k in want if k not in _vec_memo])
     for k, orig in want.items():
         if k in _vec_memo:
             result[k] = _vec_memo[k]
             continue
-        if cache is not None:
-            try:
-                ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
-                hit = cache.get_cache(ck)
-                vec = ((hit or {}).get("response") or {}).get("v")
-                if vec:
-                    _vec_memo[k] = vec
-                    result[k] = vec
-                    continue
-            except Exception:
-                pass
+        vec = cached.get(k)
+        if vec:
+            _vec_memo[k] = vec
+            result[k] = vec
+            continue
         misses.append((k, orig))
     if misses:
         prefix = "search_document: " if prof.get("prefixes") else ""
@@ -480,22 +544,15 @@ async def _texts_to_vectors(texts: list) -> dict:
         for i in range(0, len(texts_in), 32):
             vecs.extend(await _post_embed(model, texts_in[i:i + 32], num_ctx))
         if len(vecs) == len(misses):
+            fresh = []
             for (k, _orig), v in zip(misses, vecs):
                 unit = _l2(v)
                 if unit:
                     _vec_memo[k] = unit
                     result[k] = unit
-                    if cache is not None:
-                        try:
-                            ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
-                            cache.set_cache(ck, {"v": unit}, days=90)
-                        except Exception:
-                            pass
-    try:
-        if cache is not None:
-            cache.close()
-    except Exception:
-        pass
+                    fresh.append((k, unit))
+            if cache_ok and fresh:
+                await asyncio.to_thread(_write_cached, fresh)
     return result
 
 
@@ -747,14 +804,14 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             vec = await embed_query((parsed or {}).get("search_text") or query)
         if not vec:
             return {"results": [], "mode": "vector", "anchor": None}
-        from src.vector_store.chromadb_wrapper import get_chroma_db, domain_where as _domain_where
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma, domain_where as _domain_where
         fetch_n = min(40, max(3 * limit, 24))
-        results = get_chroma_db().query(
-            query_embeddings=[vec], n_results=fetch_n,
+        results = await run_chroma(
+            get_chroma_db().query, query_embeddings=[vec], n_results=fetch_n,
             where=_domain_where(domain))
         hits = _hits_from_results(results, user_id=user_id, domain=domain)
     except Exception as e:
-        logger.debug("[search] curated retrieval failed: %s", e)
+        _log_search_failure("curated retrieval", e)
         return {"results": await semantic_hits(query, limit, domain, user_id),
                 "mode": "vector", "anchor": None}
 
@@ -787,7 +844,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 seen = {_norm_title(h["title"]) for h in hits}
                 if anchor_used:
                     seen.add(_norm_title(anchor_used))
-                from src.vector_store.chromadb_wrapper import get_chroma_db as _g
+                from src.vector_store.chromadb_wrapper import get_chroma_db as _g, run_chroma
                 chroma = _g()
                 ranked = sorted(probe.items(),
                                 key=lambda kv: -max(kv[1]["sims"].values(),
@@ -803,7 +860,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                           if g.strip()}
                     if ag and hg and not (hg & ag):
                         continue
-                    doc = chroma.get_by_id(parent)
+                    doc = await run_chroma(chroma.get_by_id, parent)
                     meta = (doc or {}).get("metadata") or {}
                     h = {
                         "title": rec.get("title") or meta.get("title", "?"),
@@ -834,9 +891,9 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                             h["watch_tag"] = watch_tag(watched.get(h["title"]))
                             h["size_tag"] = short_size_tag(title=h["title"])
                     except Exception as e:
-                        logger.debug("[search] facet hit decoration failed: %s", e)
+                        logger.warning("[search] facet hit decoration failed: %s", e)
         except Exception as e:
-            logger.debug("[search] facet probe failed: %s", e)
+            _log_search_failure("facet probe", e)
 
     # LEGACY constraint-text probe — transitional fallback while the facet
     # collection is empty/young: the anchor/search-text vector stays glued
@@ -849,8 +906,8 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             from src.services.embed_service import embed_query as _eq
             cvec = await _eq(", ".join(parsed["constraints"]))
             if cvec:
-                cres = get_chroma_db().query(
-                    query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
+                cres = await run_chroma(
+                    get_chroma_db().query, query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
                     where=_domain_where(domain))
                 extra = _hits_from_results(cres, user_id=user_id, domain=domain)
                 seen = {_norm_title(h["title"]) for h in hits}
@@ -883,14 +940,14 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 hits += [h for h in extra
                          if _norm_title(h["title"]) not in seen][:max(0, 40 - len(hits))]
         except Exception as e:
-            logger.debug("[search] constraint probe failed: %s", e)
+            _log_search_failure("constraint probe", e)
 
     if not hits:
         return {"results": [], "mode": "vector", "anchor": anchor_used}
 
     if parsed and parsed["constraints"]:
         try:
-            cand_tags = _candidate_tags(hits, domain)
+            cand_tags = await asyncio.to_thread(_candidate_tags, hits, domain)
             cons_core = [_split_negation(c)[0] for c in parsed["constraints"]]
             await _texts_to_vectors(
                 cons_core + [t for tags in cand_tags for t in tags])

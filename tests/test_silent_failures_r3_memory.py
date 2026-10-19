@@ -375,7 +375,7 @@ def test_cosine_mismatch_is_no_embedding():
           abs(em._cosine_similarity([1.0, 0.0], [1.0, 0.0]) - 1.0) < 1e-9)
     src = (ROOT / "src/services/episodic_memory.py").read_text(encoding="utf-8")
     check("retrieval scores a mismatch with the same neutral as no embedding",
-          "if sem_score is None:\n                    sem_score = _NEUTRAL_SEM" in src)
+          "if sem_score is None:\n                        sem_score = _NEUTRAL_SEM" in src)
 
 
 def test_embed_failure_warns():
@@ -615,39 +615,29 @@ def test_clear_history_refuses_when_flush_failed():
 
     user = SimpleNamespace(id=uid)
     status = None
-    with _patched(em, flush_thread_extraction=_flush), _logs(chat.__name__):
-        db = Session()
+    # clear_chat_history opens its own session (src.database.connection)
+    with _patched(em, flush_thread_extraction=_flush), _logs(chat.__name__), \
+            _patched(conn, get_db_session=_session):
         try:
-            try:
-                asyncio.run(chat.clear_chat_history(
-                    thread_id="deletion_proposal:7", force=False, user=user, db=db))
-            except HTTPException as e:
-                status, detail = e.status_code, e.detail
-        finally:
-            db.close()
+            asyncio.run(chat.clear_chat_history(
+                thread_id="deletion_proposal:7", force=False, user=user))
+        except HTTPException as e:
+            status, detail = e.status_code, e.detail
         check("failed memory flush → 409, nothing deleted",
               status == 409 and _count() == 3)
         check("409 explains and names the force escape",
               status == 409 and "could not be saved" in detail and "force=1" in detail)
 
-        db = Session()
-        try:
-            res = asyncio.run(chat.clear_chat_history(
-                thread_id="deletion_proposal:7", force=True, user=user, db=db))
-        finally:
-            db.close()
+        res = asyncio.run(chat.clear_chat_history(
+            thread_id="deletion_proposal:7", force=True, user=user))
         check("force=1 clears anyway", res["deleted"] == 3 and _count() == 0)
 
         with _session() as db2:
             db2.add(ConversationMessage(user_id=uid, role="user", content="x",
                                         thread_id="general"))
         flush_ok["v"] = True
-        db = Session()
-        try:
-            res = asyncio.run(chat.clear_chat_history(
-                thread_id="general", force=False, user=user, db=db))
-        finally:
-            db.close()
+        res = asyncio.run(chat.clear_chat_history(
+            thread_id="general", force=False, user=user))
         check("a successful flush clears without force", res["deleted"] == 1)
 
     js = (ROOT / "frontend/js/chat.js").read_text(encoding="utf-8")

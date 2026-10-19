@@ -29,12 +29,14 @@ Pillars (priority high -> low), enforced in the prompt:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Literal
 
 from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
                       ValidationError, field_validator, model_validator)
 
+from src.database.runner import run_read
 from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
 
 logger = logging.getLogger(__name__)
@@ -353,7 +355,8 @@ def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> d
     result: "nobody watched it" built from an exception is a fabricated fact,
     and on Pillar III it is the one that deletes a household member's show."""
     out = {"ow": None, "ow_unknown": False, "others": None,
-           "taste_summary": "", "fb_blob": None, "fb_unknown": False}
+           "taste_summary": "", "taste_unknown": False,
+           "fb_blob": None, "fb_unknown": False}
     try:
         out["ow"] = _owner_watch(db, user_id, item, category)
     except Exception as e:
@@ -368,7 +371,10 @@ def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> d
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
         out["taste_summary"] = (tv.summary_text or "") if tv else ""
     except Exception as e:
-        logger.debug("[pillars] taste failed for %r: %s", title, e)
+        # The taste line is the Ego pillar's only evidence: unreadable is not
+        # "no taste on file" (build_evidence defers it).
+        logger.warning("[pillars] taste read failed for %r: %s", title, e)
+        out["taste_unknown"] = True
     try:
         import json as _json
         from src.database.models import EncryptedTasteVector
@@ -476,8 +482,12 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
 
     if db is None:
         from src.database.connection import get_db_session
-        with get_db_session() as _db:
-            dbf = _read_db_facts(_db, item, user_id, category, title)
+
+        def _own_facts():
+            with get_db_session() as _db:
+                return _read_db_facts(_db, item, user_id, category, title)
+
+        dbf = await run_read(_own_facts)
     else:
         dbf = _read_db_facts(db, item, user_id, category, title)
 
@@ -504,11 +514,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         # abandon position, entry-loop rewatches, binge vs slow drip
         try:
             from src.services.watch_status import viewing_pattern
-            vp = viewing_pattern(user_id, title, category=category)
+            vp = await run_read(viewing_pattern, user_id, title, category=category)
             if vp:
                 owner_line += f". Pattern: {vp}"
         except Exception as e:
-            logger.debug("[pillars] viewing pattern failed for %r: %s", title, e)
+            logger.warning("[pillars] viewing pattern failed for %r: %s", title, e)
     if category in ("show", "anime"):
         # stock truth for the judge: episodes known/aired/monitored/on disk,
         # incl. whether any monitored+aired episode is missing
@@ -518,7 +528,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
             if av:
                 owner_line += f". Availability: {av}"
         except Exception as e:
-            logger.debug("[pillars] availability failed for %r: %s", title, e)
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[pillars] availability", title, e)
     if category == "music":
         # play-count DEPTH for artists — "watched 10931x" says less than
         # "10931 plays across 257 tracks, top: …" (and honest silence:
@@ -526,9 +537,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         try:
             from src.services.watch_status import (music_listening_stats,
                                                    format_listening_line)
-            ls = music_listening_stats(
+            ls = await run_read(lambda: music_listening_stats(
                 user_id, title, item.get("musicbrainz_id")
-                or item.get("artist_mbid") or item.get("mbid"))
+                or item.get("artist_mbid") or item.get("mbid")))
             owner_line = format_listening_line(ls)
             flags["owner_watched"] = bool(ls)
             # Its own read of the same history: if it answered, the owner's
@@ -549,7 +560,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
             if disc:
                 owner_line += f" Discography {disc}."
         except Exception as e:
-            logger.debug("[pillars] discography failed for %r: %s", title, e)
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[pillars] discography", title, e)
 
     # ── OTHER household users (PILLAR III) ──
     others = dbf["others"]
@@ -663,7 +675,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
             from src.services.media_enricher import fetch_wikipedia_summary
             wiki = await fetch_wikipedia_summary(title, media_type, max_chars=2000) or ""
         except Exception as e:
-            logger.debug("[pillars] wiki fallback failed for %r: %s", title, e)
+            # No article -> evidence_thin below, and the loop skips the title.
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[pillars] wiki fallback", title, e)
         if wiki:
             meta_block = ("WIKIPEDIA (no structured enrichment on file):\n"
                           + fence_untrusted("wikipedia", wiki, 2000))
@@ -688,12 +702,17 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
 
     # ── OWNER taste (category-scoped) ──
     taste = ""
+    if dbf.get("taste_unknown"):
+        flags["owner_signal_unknown"] = True
     try:
         from src.services.recommendations_engine import _taste_section
         if dbf["taste_summary"]:
             taste = _taste_section(dbf["taste_summary"], category)
     except Exception as e:
-        logger.debug("[pillars] taste failed for %r: %s", title, e)
+        # A taste profile on file that cannot be rendered is the same blind
+        # spot as one that cannot be read: defer, never judge without it.
+        logger.warning("[pillars] taste failed for %r: %s", title, e, exc_info=True)
+        flags["owner_signal_unknown"] = True
 
     # ── OWNER FEEDBACK (the taste blob's explicit_feedback/disliked_titles —
     # written for years, read by NOBODY until now). A recorded "delete,
@@ -795,7 +814,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
 
     # ── TECH / bitrate axis ──
     try:
-        tech_line, outlier = _tech_facts(item, media_type)
+        tech_line, outlier = await run_read(_tech_facts, item, media_type)
     except Exception as e:
         logger.debug("[pillars] tech failed for %r: %s", title, e)
         tech_line, outlier = "", False
@@ -811,7 +830,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         try:
             from src.services.recommendations_engine import (
                 _get_cached_rating, _is_spoken_word)
-            _, _, _cg = _get_cached_rating(item, category)
+            # The enrichment cache has its own lock: read it on a worker.
+            _, _, _cg = await asyncio.to_thread(
+                lambda: _get_cached_rating(item, category, strict=True))
             _gl = "" if genres_str == "Unknown" else genres_str
             if isinstance(_cg, list) and _cg:
                 _gl += " " + ", ".join(str(g) for g in _cg)
@@ -822,7 +843,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                     "owner's music sound are NOT valid evidence here; judge "
                     "linguistic craft, thematic bite, delivery, replay value.\n")
         except Exception as e:
-            logger.debug("[pillars] form guard failed for %r: %s", title, e)
+            # The FORM line is what stops a spoken-word artist being judged on
+            # sonic fit; without it the verdict would be built on the wrong
+            # yardstick. Defer like any other evidence we could not check.
+            logger.warning("[pillars] form guard failed for %r: %s", title, e)
+            flags["significance_unchecked"] = True
     elif category in ("movie", "show", "anime"):
         # The same category error in the other medium: a documentary measured
         # by the yardstick of prestige drama always loses. "Mayday" (genre:
@@ -833,7 +858,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         # evidence it reasons from.
         try:
             from src.services.recommendations_engine import _get_cached_rating
-            _, _, _cg = _get_cached_rating(item, category)
+            _, _, _cg = await asyncio.to_thread(
+                lambda: _get_cached_rating(item, category, strict=True))
             _gl = "" if genres_str == "Unknown" else genres_str
             if isinstance(_cg, list) and _cg:
                 _gl += " " + ", ".join(str(g) for g in _cg)
@@ -846,7 +872,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                     "here — a known outcome is the point, and a conventional "
                     "structure is craft, not a flaw.\n")
         except Exception as e:
-            logger.debug("[pillars] factual guard failed for %r: %s", title, e)
+            # Same footing for a documentary: no FORM line, no verdict.
+            logger.warning("[pillars] factual guard failed for %r: %s", title, e)
+            flags["significance_unchecked"] = True
 
     # Execution evidence from the work itself — the only signal here that is
     # not metadata ABOUT the title. Pure DB read (the fetch happens in the
@@ -855,10 +883,10 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     dialogue_line = ""
     try:
         from src.services.subtitle_signals import subtitle_facts
-        dialogue_line = subtitle_facts(item, media_type)
+        dialogue_line = await run_read(lambda: subtitle_facts(item, media_type))
         flags["dialogue_signal"] = bool(dialogue_line)
     except Exception as e:
-        logger.debug("[pillars] dialogue signal failed for %r: %s", title, e)
+        logger.warning("[pillars] dialogue signal failed for %r: %s", title, e)
 
     # Priority 0 is never cut: what the title is, who watched it, what the
     # owner said about it. The rest goes least-valuable first when the window

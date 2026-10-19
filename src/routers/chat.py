@@ -29,13 +29,15 @@ from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.database.models import ConversationMessage, User
+from src.database.runner import run_read, run_write
 from src.routers.auth import get_current_user
 from src.schemas.chat import ChatMessage
 from src.config import settings
 from src.services.plex_sync import get_user_taste_context
 from src.services.media_enricher import enrich_media_item
+from src.services.enrichment_state import log_topup_failure
 
-logger = logging.getLogger(__name__)
+logger =logging.getLogger(__name__)
 router = APIRouter()
 
 CONVERSATION_WINDOW = 20            # last N messages to include as context
@@ -49,6 +51,27 @@ _CHAT_PREDICT = min(4096, CURATOR_NUM_CTX // 4)
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
+
+def _in_session(fn, *args, **kwargs):
+    """``fn(*args, db=<a session of its own>, **kwargs)``, for run_read /
+    run_write. The chat path awaits Ollama, the cascade and the stream, so
+    it holds no session of its own across those awaits."""
+    from src.database.connection import get_db_session
+    with get_db_session() as db:
+        return fn(*args, db=db, **kwargs)
+
+
+def _row_copy(row):
+    """The columns of an ORM row as a plain object (None stays None): the
+    discuss builder awaits enrichment and the network between its reads, so
+    it carries no session-bound row across them."""
+    if row is None:
+        return None
+    from types import SimpleNamespace
+    from sqlalchemy import inspect as _sa_inspect
+    return SimpleNamespace(**{a.key: getattr(row, a.key)
+                              for a in _sa_inspect(row).mapper.column_attrs})
+
 
 async def _check_verification_response(user_id: int, user_message: str, thread_id: str):
     """Check if the user is answering a pending verification question.
@@ -90,40 +113,45 @@ async def _check_verification_response(user_id: int, user_message: str, thread_i
         from src.services.verification_session import process_verification_response
         from src.database.connection import get_db_session
         from src.database.models import ProactiveMessage
-        with get_db_session() as db:
-            # The question must BE this thread — a pending verification row
-            # with this exact id. A non-verification proactive message, or
-            # an already-answered one, finds nothing and returns.
-            pending = db.query(ProactiveMessage).filter(
-                ProactiveMessage.id == msg_id,
-                ProactiveMessage.user_id == user_id,
-                ProactiveMessage.trigger_type == "verification",
-                ProactiveMessage.read == False,
-            ).first()
-            if not pending:
-                return
 
-            # Atomic claim — UPDATE ... WHERE read=False returns rowcount=1 only
-            # for the first caller, 0 for any concurrent retry.
-            claimed = db.query(ProactiveMessage).filter(
-                ProactiveMessage.id == pending.id,
-                ProactiveMessage.read == False,
-            ).update({"read": True}, synchronize_session=False)
-            db.commit()
-            if not claimed:
-                return  # someone else got it
+        def _claim():
+            with get_db_session() as db:
+                # The question must BE this thread — a pending verification row
+                # with this exact id. A non-verification proactive message, or
+                # an already-answered one, finds nothing and returns.
+                pending = db.query(ProactiveMessage).filter(
+                    ProactiveMessage.id == msg_id,
+                    ProactiveMessage.user_id == user_id,
+                    ProactiveMessage.trigger_type == "verification",
+                    ProactiveMessage.read == False,
+                ).first()
+                if not pending:
+                    return None
 
-            pending_id = pending.id
-            import json as _json
-            question = _json.loads(pending.trigger_data or "{}")
+                # Atomic claim — UPDATE ... WHERE read=False returns rowcount=1 only
+                # for the first caller, 0 for any concurrent retry.
+                claimed = db.query(ProactiveMessage).filter(
+                    ProactiveMessage.id == pending.id,
+                    ProactiveMessage.read == False,
+                ).update({"read": True}, synchronize_session=False)
+                db.commit()
+                if not claimed:
+                    return None  # someone else got it
+                return pending.id, pending.trigger_data
+        claim = await run_write(_claim)
+        if claim is None:
+            return
+        pending_id = claim[0]
+        import json as _json
+        question = _json.loads(claim[1] or "{}")
 
         processed = await process_verification_response(user_id, user_message, question)
         if not processed:
-            _revert_verification_claim(pending_id)
+            await run_write(_revert_verification_claim, pending_id)
     except Exception as e:
         logger.debug("Verification response check failed: %s", e)
         if pending_id is not None:
-            _revert_verification_claim(pending_id)
+            await run_write(_revert_verification_claim, pending_id)
 
 
 def _revert_verification_claim(pending_id: int) -> None:
@@ -424,7 +452,8 @@ def _library_title_index() -> list:
         finally:
             mc.close()
     except Exception as e:
-        logger.debug("[chat] library title index failed: %s", e)
+        # The failed attempt is stamped below, so this logs once per TTL.
+        logger.warning("[chat] library title index failed: %s", e, exc_info=True)
     if items:
         _LIB_TITLE_INDEX.update(ts=_time.time(), items=items)
     else:
@@ -502,7 +531,8 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
     year = _extract_year_hint(normalized_query)
 
     # Pass 0: the user's own library is deterministic ground truth.
-    lib_hit = _match_library_title(normalized_query)
+    # the library index is rebuilt from the metadata cache file every 10 min
+    lib_hit = await asyncio.to_thread(_match_library_title, normalized_query)
     if lib_hit:
         logger.info("[chat] entity matched against library: %r (%s)",
                     lib_hit[0], lib_hit[1])
@@ -528,7 +558,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
             raw_output = r.json().get("message", {}).get("content", "").strip()
 
     except Exception as e:
-        logger.debug("[chat] entity extraction LLM error: %s", e)
+        log_topup_failure(logger, "[chat] entity extraction", normalized_query[:80], e)
 
     # Try to parse the LLM output. Accept several shapes the summarizer
     # might emit: bare {"title": "X"}, nested {"output": {"title": "X"}},
@@ -757,7 +787,8 @@ async def _check_protection_intent_bg(
     a missed log row is the acceptable failure mode (a calm follow-up turn
     re-affirming the keep will be logged normally).
     """
-    if anchor_title and _is_in_flipflop_loop(user_id, anchor_title, thread_id=thread_id):
+    if anchor_title and await run_read(_is_in_flipflop_loop, user_id, anchor_title,
+                                       thread_id=thread_id):
         logger.info(
             "[protection] flip-flop loop on %r — skipping detector for this turn",
             anchor_title,
@@ -781,11 +812,14 @@ async def _check_protection_intent_bg(
             try:
                 from src.database.connection import get_db_session as _gds
                 from src.database.models import ProactiveMessage
-                with _gds() as _db:
-                    _db.add(ProactiveMessage(user_id=user_id, trigger_type="protection_intent",
-                                             trigger_data=json.dumps({"anchor": anchor_title}),
-                                             message=result))
-                    _db.commit()
+
+                def _note():
+                    with _gds() as _db:
+                        _db.add(ProactiveMessage(user_id=user_id, trigger_type="protection_intent",
+                                                 trigger_data=json.dumps({"anchor": anchor_title}),
+                                                 message=result))
+                        _db.commit()
+                await run_write(_note)
             except Exception as _ne:  # noqa: BLE001
                 # The protection itself landed; only the bell note is lost.
                 logger.warning("protection note not stored: %s", _ne)
@@ -978,7 +1012,7 @@ async def _enrich_with_cascade(
                         d, per_domain_timeout)
             continue
         except Exception as e:
-            logger.debug("[chat] cascade %s: error %s", d, e)
+            log_topup_failure(logger, f"[chat] cascade {d}", title, e)
             continue
         if data:
             # Pass 32: reject obviously-mismatched profiles. The music
@@ -1064,7 +1098,7 @@ def _verified_block_for(title: str, domain: str | None,
                 if fvb:
                     return "\n" + fvb + "\n"
     except Exception as e:
-        logger.debug("[chat] verified block for %r failed: %s", title, e)
+        logger.warning("[chat] verified block for %r failed: %s", title, e, exc_info=True)
     return ""
 
 
@@ -1240,10 +1274,10 @@ _starter_gen_running: set[int] = set()
 async def get_starters(user: User = Depends(get_current_user)):
     from src.services.chat_starters import (pick_starters, pool_fresh_count,
                                             generate_starters, POOL_TARGET)
-    picks = pick_starters(user.id)
+    picks = await run_read(pick_starters, user.id)
     try:
         from src.services.process_monitor import is_game_running
-        if (pool_fresh_count(user.id) < POOL_TARGET // 2
+        if (await run_read(pool_fresh_count, user.id) < POOL_TARGET // 2
                 and user.id not in _starter_gen_running
                 and not is_game_running()):
             _starter_gen_running.add(user.id)
@@ -1261,7 +1295,7 @@ async def get_starters(user: User = Depends(get_current_user)):
 
             asyncio.create_task(_refill(user.id))
     except Exception as _e:
-        logger.debug("[starters] refill check failed: %s", _e)
+        logger.warning("[starters] refill check failed: %s", _e)
     return {"starters": picks}
 
 
@@ -1361,7 +1395,7 @@ def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | No
         if arr_row and arr_row.category:
             return arr_row.category
     except Exception as e:
-        logger.debug("[chat] _infer_category arr lookup failed: %s", e)
+        logger.warning("[chat] _infer_category arr lookup failed: %s", e)
 
     # 2. WatchHistoryEntry — most common media_type for this user+title
     try:
@@ -1382,7 +1416,7 @@ def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | No
         if row and row.media_type:
             return row.media_type
     except Exception as e:
-        logger.debug("[chat] _infer_category history lookup failed: %s", e)
+        logger.warning("[chat] _infer_category history lookup failed: %s", e)
 
     # 3. EnrichmentStatus — fallback cache
     try:
@@ -1393,7 +1427,7 @@ def _infer_category_for_title(user_id: int, title: str, db: Session) -> str | No
         if es and es.media_category:
             return es.media_category
     except Exception as e:
-        logger.debug("[chat] _infer_category enrichment lookup failed: %s", e)
+        logger.warning("[chat] _infer_category enrichment lookup failed: %s", e)
 
     return None
 
@@ -1451,7 +1485,7 @@ def _find_state_bearing_title_in_message(
             if mentions > 0:
                 candidates.append((t, 2, mentions, p.category))
     except Exception as e:
-        logger.debug("[chat] state-bearing scan (deletion) failed: %s", e)
+        logger.warning("[chat] state-bearing scan (deletion) failed: %s", e)
 
     try:
         protected = db.query(ProtectedMedia).filter(
@@ -1467,7 +1501,7 @@ def _find_state_bearing_title_in_message(
                     continue
                 candidates.append((t, 1, mentions, None))  # protected → no category
     except Exception as e:
-        logger.debug("[chat] state-bearing scan (protected) failed: %s", e)
+        logger.warning("[chat] state-bearing scan (protected) failed: %s", e)
 
     if not candidates:
         return None
@@ -1746,7 +1780,6 @@ Pillar-0 verdict, and you concede to them rather than audit them.
 async def _build_discuss_context_block(
     ctx,
     user_id: int,
-    db: Session,
 ) -> tuple[str, str, str | None]:
     """Build a RAG-style context block from a server-owned record.
 
@@ -1767,10 +1800,10 @@ async def _build_discuss_context_block(
 
     # ── Deletion-proposal discussion ─────────────────────────────────────────
     if (kind == "deletion_proposal" or kind == "deletion") and ctx.proposal_id:
-        proposal = db.query(DeletionProposal).filter(
+        proposal = await run_read(_in_session, lambda db: _row_copy(db.query(DeletionProposal).filter(
             DeletionProposal.id == ctx.proposal_id,
             DeletionProposal.user_id == user_id,
-        ).first()
+        ).first()))
         if not proposal:
             logger.info("Discuss context: deletion_proposal id=%s not found / not owned by user %d",
                         ctx.proposal_id, user_id)
@@ -1821,13 +1854,13 @@ async def _build_discuss_context_block(
         # answer a "70 GB for THIS?!" the way the data warrants instead of blanket.
         try:
             from src.services.size_norms import size_context_for
-            _size_ctx = size_context_for(tmdb_id=proposal.tmdb_id,
+            _size_ctx = await run_read(size_context_for, tmdb_id=proposal.tmdb_id,
                                          tvdb_id=proposal.tvdb_id,
                                          media_type=proposal.category)
             if _size_ctx:
                 block += _size_ctx + "\n"
         except Exception as _e:
-            logger.debug("[chat] size context failed: %s", _e)
+            logger.warning("[chat] size context failed: %s", _e)
 
         # The measured DIALOGUE line — a pure DB read, so it rides on EVERY
         # discussion turn. The batch judge has carried it since the feature
@@ -1838,13 +1871,13 @@ async def _build_discuss_context_block(
         # deduced the pacing from mood tags instead.
         try:
             from src.services.subtitle_signals import subtitle_facts
-            _dline = subtitle_facts(
+            _dline = await run_read(subtitle_facts,
                 {"tmdb_id": proposal.tmdb_id, "tvdb_id": proposal.tvdb_id},
                 proposal.category or "movie")
             if _dline:
                 block += _dline if _dline.endswith("\n") else _dline + "\n"
         except Exception as _e:
-            logger.debug("[chat] dialogue line failed: %s", _e)
+            logger.warning("[chat] dialogue line failed: %s", _e)
 
         # Attach the FULL verified dataset (creator/writer, extended plot,
         # themes, keywords, awards) — assembled cache-only with NO LLM and no
@@ -1874,9 +1907,8 @@ async def _build_discuss_context_block(
                     proposal.title, proposal.category or "movie", **_ids), timeout=20.0)
                 await asyncio.wait_for(topup_reception(
                     proposal.title, proposal.category or "movie", **_ids), timeout=20.0)
-            except (asyncio.TimeoutError, Exception) as _e:
-                logger.debug("[chat] level-2 topups failed for %r: %s",
-                             proposal.title, _e)
+            except Exception as _e:
+                log_topup_failure(logger, "[chat] level-2 topups", proposal.title, _e)
             # THE WORK ITSELF, not metadata about it. A feature's dialogue is
             # ~13,000 tokens against a 16k context, so the batch judge only ever
             # sees the derived numbers — but here it is ONE title and the owner
@@ -1887,7 +1919,7 @@ async def _build_discuss_context_block(
                 from src.services.subtitle_signals import (
                     fetch_subtitle_transcript)
                 from src.services.size_norms import tech_profile_for
-                _prof = tech_profile_for(tmdb_id=proposal.tmdb_id,
+                _prof = await run_read(tech_profile_for, tmdb_id=proposal.tmdb_id,
                                          tvdb_id=proposal.tvdb_id,
                                          media_type=proposal.category or "movie")
                 _rk = (_prof or {}).get("plex_rating_key")
@@ -1901,9 +1933,8 @@ async def _build_discuss_context_block(
                             f"condensed by design and possibly a translation — "
                             f"read it as evidence of REGISTER and TEXTURE, not "
                             f"as a transcript of record):\n{_tx}\n")
-            except (asyncio.TimeoutError, Exception) as _e:
-                logger.debug("[chat] level-2 transcript failed for %r: %s",
-                             proposal.title, _e)
+            except Exception as _e:
+                log_topup_failure(logger, "[chat] level-2 transcript", proposal.title, _e)
         verified_payload = await ensure_verified_data(
             proposal.title, proposal.category or "movie",
             tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,
@@ -1920,7 +1951,7 @@ async def _build_discuss_context_block(
                                                    format_listening_line)
             _mbid_m = _re.search(r"/artist/([0-9a-f\-]{36})", proposal.arr_url or "")
             try:
-                _ls_line = format_listening_line(music_listening_stats(
+                _ls_line = format_listening_line(await run_read(music_listening_stats,
                     proposal.user_id, proposal.title,
                     _mbid_m.group(1) if _mbid_m else None))
             except Exception as _e:
@@ -1937,10 +1968,10 @@ async def _build_discuss_context_block(
                 if _disc:
                     block += f"DISCOGRAPHY of '{proposal.title}' {_disc}\n"
             except Exception as _e:
-                logger.debug("[chat] discography line failed: %s", _e)
+                log_topup_failure(logger, "[chat] discography line", proposal.title, _e)
         else:
-            _st = _watched_lookup(proposal.user_id, [proposal.title],
-                                  category=proposal.category).get(proposal.title)
+            _st = (await run_read(_watched_lookup, proposal.user_id, [proposal.title],
+                                  category=proposal.category)).get(proposal.title)
             _ws = _watch_tag(_st)
             _eps_total = (verified_payload or {}).get("episodes_total")
             if _st and (_st.get("episodes") or 0) >= 2 and _eps_total:
@@ -1949,18 +1980,18 @@ async def _build_discuss_context_block(
             try:
                 from src.services.watch_status import (viewing_pattern,
                                                        viewing_stop_point)
-                _vp = viewing_pattern(proposal.user_id, proposal.title,
+                _vp = await run_read(viewing_pattern, proposal.user_id, proposal.title,
                                       category=proposal.category)
                 if _vp:
                     block += f"VIEWING PATTERN: {_vp}\n"
-                    _sp = viewing_stop_point(proposal.user_id, proposal.title)
+                    _sp = await run_read(viewing_stop_point, proposal.user_id, proposal.title)
                     if _sp and proposal.category in ("show", "anime"):
                         from src.services.episode_context import stop_point_context
                         _spc = await stop_point_context(proposal.title, *_sp)
                         if _spc:
                             block += f"STOP-POINT CONTEXT: {_spc}\n"
             except Exception as _e:
-                logger.debug("[chat] viewing pattern failed: %s", _e)
+                log_topup_failure(logger, "[chat] viewing pattern", proposal.title, _e)
             if proposal.category in ("show", "anime"):
                 try:
                     from src.services.episode_context import series_availability
@@ -1968,7 +1999,7 @@ async def _build_discuss_context_block(
                     if _av:
                         block += f"SERIES AVAILABILITY: {_av}\n"
                 except Exception as _e:
-                    logger.debug("[chat] availability failed: %s", _e)
+                    log_topup_failure(logger, "[chat] availability", proposal.title, _e)
         # Franchise reality-check: which typed relations actually sit in the
         # user's library RIGHT NOW — a review's "compared to its predecessors"
         # means something different when the predecessors are long gone.
@@ -1976,12 +2007,8 @@ async def _build_discuss_context_block(
         if _rels:
             try:
                 import re as _re
-                from src.cache.metadata_cache import MetadataCache as _MC
-                _mc = _MC()
-                try:
-                    _arr = _mc.get_cache("arr_library:sonarr")
-                finally:
-                    _mc.close()
+                from src.cache.metadata_cache import acache_get
+                _arr = await acache_get("arr_library:sonarr")
                 _resp = (_arr or {}).get("response")
                 _items = (_resp if isinstance(_resp, list)
                           else (_resp or {}).get("items_raw") or (_resp or {}).get("items") or [])
@@ -2000,7 +2027,7 @@ async def _build_discuss_context_block(
                         block += ("\nFRANCHISE (typed relations vs the current library):\n"
                                   + "\n".join(_fl) + "\n")
             except Exception as _e:
-                logger.debug("[chat] franchise library check failed: %s", _e)
+                logger.warning("[chat] franchise library check failed: %s", _e)
         # Richer grounding for the discussion: the actual Wikipedia LEAD (entity-
         # matched, collision-guarded). The curator reasons far more precisely from
         # the real article than a thin synopsis — and a discussion is one title +
@@ -2013,8 +2040,8 @@ async def _build_discuss_context_block(
             if _wiki:
                 block += ("\nWIKIPEDIA (article excerpt — verified grounding; reason "
                           "from this and don't contradict it):\n" + _wiki + "\n")
-        except Exception:
-            pass
+        except Exception as _e:
+            log_topup_failure(logger, "[chat] wikipedia lead", proposal.title, _e)
         if verified_block:
             block += "\n" + verified_block + "\n"
         elif proposal.synopsis or proposal.genres:
@@ -2109,9 +2136,9 @@ async def _build_discuss_context_block(
     # row (ownership-checked) on every turn of the thread.
     if kind == "starter" and getattr(ctx, "starter_id", None):
         from src.database.models import ChatStarter
-        srow = db.query(ChatStarter).filter(
+        srow = await run_read(_in_session, lambda db: _row_copy(db.query(ChatStarter).filter(
             ChatStarter.id == ctx.starter_id,
-            ChatStarter.user_id == user_id).first()
+            ChatStarter.user_id == user_id).first()))
         if not srow:
             logger.info("Discuss context: starter id=%s not found / not owned "
                         "by user %d", ctx.starter_id, user_id)
@@ -2134,21 +2161,21 @@ async def _build_discuss_context_block(
                 if domain == "music":
                     from src.services.watch_status import (
                         music_listening_stats, format_listening_line)
-                    _ls = music_listening_stats(user_id, active_title, None)
+                    _ls = await run_read(music_listening_stats, user_id, active_title, None)
                     block += (f"OWNER LISTENING RECORD for '{active_title}': "
                               f"{format_listening_line(_ls)}\n")
                 else:
-                    _st = _watched_lookup(user_id, [active_title],
-                                          category=domain).get(active_title)
+                    _st = (await run_read(_watched_lookup, user_id, [active_title],
+                                          category=domain)).get(active_title)
                     if _st:
                         block += (f"USER WATCH STATUS for '{active_title}': "
                                   f"{_watch_tag(_st)}\n")
                     from src.services.watch_status import viewing_pattern
-                    _vp = viewing_pattern(user_id, active_title, category=domain)
+                    _vp = await run_read(viewing_pattern, user_id, active_title, category=domain)
                     if _vp:
                         block += f"VIEWING PATTERN: {_vp}\n"
             except Exception as _e:
-                logger.debug("[chat] starter watch stats failed: %s", _e)
+                logger.warning("[chat] starter watch stats failed: %s", _e)
             _svd = None
             try:
                 from src.services.media_enricher import (ensure_verified_data,
@@ -2158,7 +2185,7 @@ async def _build_discuss_context_block(
                 if _vb:
                     block += "\n" + _vb + "\n"
             except Exception as _e:
-                logger.debug("[chat] starter verified data failed: %s", _e)
+                log_topup_failure(logger, "[chat] starter verified data", active_title, _e)
             _set_thread_active_title(user_id, _thread_id_for(ctx),
                                      (active_title, _svd, domain or "movie"))
         return block, active_title, domain
@@ -2171,10 +2198,9 @@ async def _build_discuss_context_block(
     if kind == "watched_title":
         from src.database.models import WatchHistoryEntry
 
-        q = db.query(WatchHistoryEntry).filter(
-            WatchHistoryEntry.user_id == user_id)
+        filters = [WatchHistoryEntry.user_id == user_id]
         if getattr(ctx, "history_id", None):
-            q = q.filter(WatchHistoryEntry.id == ctx.history_id)
+            filters.append(WatchHistoryEntry.id == ctx.history_id)
         else:
             names = [n for n in (ctx.series_title, ctx.title) if n]
             from sqlalchemy import or_
@@ -2186,10 +2212,12 @@ async def _build_discuss_context_block(
                 crit.append(WatchHistoryEntry.tmdb_id == ctx.tmdb_id)
             if not crit:
                 return "", "", domain
-            q = q.filter(or_(*crit))
+            filters.append(or_(*crit))
             if ctx.category:
-                q = q.filter(WatchHistoryEntry.media_type == ctx.category)
-        row = q.order_by(WatchHistoryEntry.viewed_at.desc()).first()
+                filters.append(WatchHistoryEntry.media_type == ctx.category)
+        row = await run_read(_in_session, lambda db: _row_copy(
+            db.query(WatchHistoryEntry).filter(*filters)
+            .order_by(WatchHistoryEntry.viewed_at.desc()).first()))
         if not row:
             logger.info("Discuss context: watched_title %r has no history row "
                         "for user %d", ctx.series_title or ctx.title, user_id)
@@ -2226,21 +2254,21 @@ async def _build_discuss_context_block(
             if domain == "music":
                 from src.services.watch_status import (music_listening_stats,
                                                        format_listening_line)
-                _ls = music_listening_stats(user_id, series, row.artist_mbid)
+                _ls = await run_read(music_listening_stats, user_id, series, row.artist_mbid)
                 block += (f"OWNER LISTENING RECORD for '{series}': "
                           f"{format_listening_line(_ls)}\n")
             else:
-                _st = _watched_lookup(user_id, [series],
-                                      category=domain).get(series)
+                _st = (await run_read(_watched_lookup, user_id, [series],
+                                      category=domain)).get(series)
                 if _st:
                     block += (f"USER WATCH STATUS for '{series}': "
                               f"{_watch_tag(_st)}\n")
                 from src.services.watch_status import viewing_pattern
-                _vp = viewing_pattern(user_id, series, category=domain)
+                _vp = await run_read(viewing_pattern, user_id, series, category=domain)
                 if _vp:
                     block += f"VIEWING PATTERN: {_vp}\n"
         except Exception as _e:
-            logger.debug("[chat] watched-title watch stats failed: %s", _e)
+            logger.warning("[chat] watched-title watch stats failed: %s", _e)
 
         _vd_payload = None
         try:
@@ -2252,15 +2280,15 @@ async def _build_discuss_context_block(
             if _vb:
                 block += "\n" + _vb + "\n"
         except Exception as _e:
-            logger.debug("[chat] watched-title verified data failed: %s", _e)
+            log_topup_failure(logger, "[chat] watched-title verified data", series, _e)
 
         try:
             from src.services.subtitle_signals import subtitle_facts
-            _dl = subtitle_facts({"tmdb_id": row.tmdb_id}, domain or "movie")
+            _dl = await run_read(subtitle_facts, {"tmdb_id": row.tmdb_id}, domain or "movie")
             if _dl:
                 block += _dl if _dl.endswith("\n") else _dl + "\n"
         except Exception as _e:
-            logger.debug("[chat] watched-title dialogue line failed: %s", _e)
+            logger.warning("[chat] watched-title dialogue line failed: %s", _e)
 
         _set_thread_active_title(user_id, _thread_id_for(ctx),
                                  (series, _vd_payload, domain or "movie"))
@@ -2268,10 +2296,10 @@ async def _build_discuss_context_block(
 
     # ── Proactive-message discussion ─────────────────────────────────────────
     if kind == "proactive_message" and ctx.message_id:
-        msg = db.query(ProactiveMessage).filter(
+        msg = await run_read(_in_session, lambda db: _row_copy(db.query(ProactiveMessage).filter(
             ProactiveMessage.id == ctx.message_id,
             ProactiveMessage.user_id == user_id,
-        ).first()
+        ).first()))
         if not msg:
             logger.info("Discuss context: proactive_message id=%s not found / not owned by user %d",
                         ctx.message_id, user_id)
@@ -2447,10 +2475,10 @@ async def _build_discuss_context_block(
     if kind == "principle" and getattr(ctx, "principle_id", None):
         from src.database.models import CuratorPrinciple
         from src.services.app_context import PRINCIPLE_REVIEW_BLOCK
-        prin = db.query(CuratorPrinciple).filter(
+        prin = await run_read(_in_session, lambda db: _row_copy(db.query(CuratorPrinciple).filter(
             CuratorPrinciple.id == ctx.principle_id,
             CuratorPrinciple.user_id == user_id,
-        ).first()
+        ).first()))
         if not prin:
             logger.info("Discuss context: principle id=%s not found / not owned by user %d",
                         ctx.principle_id, user_id)
@@ -2467,19 +2495,20 @@ async def _build_discuss_context_block(
             block += (f"It was flagged against this existing knowledge: "
                       f"\"{prin.related}\"\n")
         try:
-            actives = (db.query(CuratorPrinciple)
-                       .filter(CuratorPrinciple.user_id == user_id,
-                               CuratorPrinciple.status == "active")
-                       .order_by(CuratorPrinciple.created_at.asc())
-                       .all())
+            actives = await run_read(_in_session, lambda db: [
+                a.text for a in (db.query(CuratorPrinciple)
+                                 .filter(CuratorPrinciple.user_id == user_id,
+                                         CuratorPrinciple.status == "active")
+                                 .order_by(CuratorPrinciple.created_at.asc())
+                                 .all())])
             if actives:
                 block += "CURRENT ACTIVE PRINCIPLES (the rule-set it would join):\n" + "".join(
-                    f"  - {a.text}\n" for a in actives[:8])
+                    f"  - {a}\n" for a in actives[:8])
             else:
                 block += ("CURRENT ACTIVE PRINCIPLES: none yet — any collision is "
                           "with the owner's taste profile shown above.\n")
         except Exception as e:
-            logger.debug("[chat] active-principles fetch failed: %s", e)
+            logger.warning("[chat] active-principles fetch failed: %s", e)
         block += PRINCIPLE_REVIEW_BLOCK
         logger.info("💉 [PRINCIPLE REVIEW CONTEXT] #%d (%s) injected",
                     prin.id, prin.novelty or "new")
@@ -2695,7 +2724,6 @@ def _schedule_post_turn(user_id: int, thread_id: str, user_text: str, reply: str
 async def send_message(
     message: ChatMessage,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Send a message — returns streaming response word by word."""
     # Per-user budget: a human sends a few messages a minute; a script with a
@@ -2724,8 +2752,10 @@ async def send_message(
     _curator_ok, _curator_why = curator_available()
     if not _curator_ok:
         _busy_text = busy_message(_curator_why)   # promises background work only if the lane is open
-        _save_message(user.id, "user", message.message, db, thread_id=thread_id)
-        _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
+        def _save_both(db):
+            _save_message(user.id, "user", message.message, db, thread_id=thread_id)
+            _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
+        await run_write(_in_session, _save_both)
         logger.info("[chat] curator unavailable (%s) — answered with the GPU-busy notice",
                     _curator_why or "GPU held")
 
@@ -2746,13 +2776,13 @@ async def send_message(
     _rl.CHAT_IN_FLIGHT.enter_or_409(
         user.id, "Your previous reply is still streaming — wait for it to finish")
     try:
-        return await _send_message_guarded(message, user, db, _rl, thread_id)
+        return await _send_message_guarded(message, user, _rl, thread_id)
     except BaseException:
         _rl.CHAT_IN_FLIGHT.leave(user.id)
         raise
 
 
-async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
+async def _send_message_guarded(message: ChatMessage, user: User,
                                 _rl, thread_id: str) -> StreamingResponse:
     """send_message body, run while CHAT_IN_FLIGHT is held for the user.
     Returns a response whose generator releases the guard when it ends."""
@@ -2782,7 +2812,7 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
         #     the LLM gets the context via the system prompt instead.
         pre_stream_status.append("Loading discussion context…")
         discuss_block, active_title, discuss_domain = await _build_discuss_context_block(
-            message.discuss_context, user.id, db
+            message.discuss_context, user.id
         )
         if discuss_block:
             logger.info("💉 [DISCUSS CONTEXT INJECTED]: %s (thread=%s)",
@@ -2807,7 +2837,7 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
         # first contact" (all-lowercase, no hint pattern): the title sat
         # verbatim in the message while the detector never ran. The gate now
         # only saves the LLM/regex cost, never the deterministic pass.
-        _lib0 = _match_library_title(_normalize_typos(message.message))
+        _lib0 = await asyncio.to_thread(_match_library_title, _normalize_typos(message.message))
         title_hint = bool(_lib0) or _looks_like_title_introduction(message.message)
 
         if title_hint:
@@ -2820,18 +2850,21 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
             # our own words beats no anchor at all.
             if (not detected_title and not cached
                     and _re.search(r"\b(?:that|it|this|more)\b", message.message, _re.I)):
-                _last_a = (db.query(ConversationMessage)
-                           .filter(ConversationMessage.user_id == user.id,
-                                   ConversationMessage.role == "assistant",
-                                   (ConversationMessage.thread_id == thread_id)
-                                   | (ConversationMessage.thread_id.is_(None))
-                                   if thread_id == "general"
-                                   else ConversationMessage.thread_id == thread_id)
-                           .order_by(ConversationMessage.created_at.desc())
-                           .first())
-                if _last_a and _last_a.content:
+                def _last_assistant_text(db):
+                    m = (db.query(ConversationMessage)
+                         .filter(ConversationMessage.user_id == user.id,
+                                 ConversationMessage.role == "assistant",
+                                 (ConversationMessage.thread_id == thread_id)
+                                 | (ConversationMessage.thread_id.is_(None))
+                                 if thread_id == "general"
+                                 else ConversationMessage.thread_id == thread_id)
+                         .order_by(ConversationMessage.created_at.desc())
+                         .first())
+                    return m.content if m else None
+                _last_a = await run_read(_in_session, _last_assistant_text)
+                if _last_a:
                     detected_title, year_hint = await _detect_media_in_query(
-                        _last_a.content[-1500:])
+                        _last_a[-1500:])
                     if detected_title:
                         logger.info("[chat] anchor recovered from last assistant "
                                     "reply: %r", detected_title)
@@ -2853,10 +2886,12 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
             # potentially matching a MusicBrainz fuzzy entry at the end.
             forced_domain: str | None = None
             if detected_title:
-                detected_has_state = bool(_get_user_stance_block(user.id, detected_title, db))
+                detected_has_state = bool(await run_read(
+                    _in_session, _get_user_stance_block, user.id, detected_title))
                 if not detected_has_state:
-                    alt = _find_state_bearing_title_in_message(
-                        user.id, message.message, db, exclude_title=detected_title,
+                    alt = await run_read(
+                        _in_session, _find_state_bearing_title_in_message,
+                        user.id, message.message, exclude_title=detected_title,
                     )
                     if alt:
                         alt_title, alt_category = alt
@@ -2951,7 +2986,8 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                                 year=enrichment_data.get("year"),
                             )
                         except Exception as _e:
-                            logger.debug("[chat] significance pre-warm failed: %s", _e)
+                            log_topup_failure(logger, "[chat] significance pre-warm",
+                                              active_title, _e)
                         hidden_metadata_context = _build_hidden_context(
                             active_title, enrichment_data,
                             domain=matched_domain or "movie",
@@ -2969,7 +3005,8 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                                 if _fvb:
                                     hidden_metadata_context += "\n" + _fvb + "\n"
                             except Exception as _e:
-                                logger.debug("[chat] verified block append failed: %s", _e)
+                                logger.warning("[chat] verified block append failed: %s",
+                                               _e, exc_info=True)
                         # Cache the new active title + data for follow-up turns.
                         _set_thread_active_title(user.id, thread_id, (
                             active_title, enrichment_data, matched_domain or "movie",
@@ -3018,7 +3055,7 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
         # thread. Free-chat path only — discuss_context already injects
         # the proposal pitch via _build_discuss_context_block().
         if active_title:
-            stance = _get_user_stance_block(user.id, active_title, db)
+            stance = await run_read(_in_session, _get_user_stance_block, user.id, active_title)
             if stance:
                 hidden_metadata_context = (hidden_metadata_context or "") + stance
                 logger.info("[chat] stance injected for %r (%d chars)",
@@ -3028,11 +3065,11 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
             try:
                 from src.services.watch_status import (viewing_pattern,
                                                        viewing_stop_point)
-                _vp = viewing_pattern(user.id, active_title)
+                _vp = await run_read(viewing_pattern, user.id, active_title)
                 if _vp:
                     hidden_metadata_context = ((hidden_metadata_context or "")
                         + f"\nUSER VIEWING PATTERN for '{active_title}': {_vp}\n")
-                    _sp = viewing_stop_point(user.id, active_title)
+                    _sp = await run_read(viewing_stop_point, user.id, active_title)
                     if _sp:
                         from src.services.episode_context import stop_point_context
                         _spc = await stop_point_context(active_title, *_sp)
@@ -3044,9 +3081,9 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                     if _av:
                         hidden_metadata_context += f"SERIES AVAILABILITY: {_av}\n"
                 except Exception as _e:
-                    logger.debug("[chat] availability failed: %s", _e)
+                    log_topup_failure(logger, "[chat] availability", active_title, _e)
             except Exception as _e:
-                logger.debug("[chat] viewing pattern failed: %s", _e)
+                log_topup_failure(logger, "[chat] viewing pattern", active_title, _e)
 
 
     # 2. Build context — infer domain for hard data-level quarantine
@@ -3075,7 +3112,7 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
                         logger.info("[chat] album dossier attached: %r (%s)",
                                     _alb["title"], active_title)
         except Exception as _e:
-            logger.debug("[chat] album dossier failed: %s", _e)
+            log_topup_failure(logger, "[chat] album dossier", active_title, _e)
     # In an active discussion the item's category is known — scope the taste
     # profile to it instead of keyword-guessing from the user's reply (whose
     # fallback is ALL categories: that is how a movie discussion got the
@@ -3091,8 +3128,9 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
     )
     rag_context = await _get_rag_context(retrieval_query, domain=domain, user_id=user.id)
 
-    conversation = _load_conversation(
-        user.id, db, thread_id=thread_id, topic_changed=topic_changed,
+    conversation = await run_read(
+        _in_session, _load_conversation,
+        user.id, thread_id=thread_id, topic_changed=topic_changed,
     )
 
     # Retrieve relevant episodic memories — scoped to the same domain when known
@@ -3237,8 +3275,8 @@ async def _send_message_guarded(message: ChatMessage, user: User, db: Session,
     # frequently ignored, defaulting back to English. Use the same
     # ``detect_user_language`` heuristic as Proactive / Recs / Verification
     # so the four surfaces stay in sync.
-    user_lang  = detect_user_language(user.id, db, thread_id=thread_id,
-                                      current_message=message.message)
+    user_lang  = await run_read(_in_session, detect_user_language, user.id,
+                                thread_id=thread_id, current_message=message.message)
     lang_rule  = f"1. {language_directive(user_lang)}"
 
     # When discussing a specific title's fate, give the chat the SAME four-pillar
@@ -3503,7 +3541,7 @@ FORMATTING RULES:
                                                         h.get("cpu_pct"),
                                                     )
                                                     yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
-                                            except Exception:
+                                            except Exception:  # noqa: BLE001 - VRAM hint is cosmetic; the reply streams anyway
                                                 pass
                                             health_warned = True
 
@@ -3579,10 +3617,6 @@ FORMATTING RULES:
     stream = generate()
     weakref.finalize(stream, _release_unstarted_chat, _rl.CHAT_IN_FLIGHT,
                      _uid, stream_state)
-    # Nothing past this point uses the request session (the stream writes
-    # through the writer thread), so hand its connection back to the pool
-    # now rather than when the response finishes.
-    db.close()
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
@@ -3717,7 +3751,6 @@ async def clear_chat_history(
     thread_id: str = None,
     force: bool = False,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Clear conversation memory.
 
@@ -3768,22 +3801,27 @@ async def clear_chat_history(
             logger.warning("[chat] thread %s cleared with force=1 — its unsaved "
                            "memories are lost", thread_id)
 
-    q = db.query(ConversationMessage).filter(ConversationMessage.user_id == user.id)
+    filters = [ConversationMessage.user_id == user.id]
     if thread_id is not None:
         if thread_id == "general":
-            q = q.filter(
+            filters.append(
                 (ConversationMessage.thread_id == "general")
                 | (ConversationMessage.thread_id.is_(None))
             )
             _pop_thread_active_title(user.id, "general")
         else:
-            q = q.filter(ConversationMessage.thread_id == thread_id)
+            filters.append(ConversationMessage.thread_id == thread_id)
             _pop_thread_active_title(user.id, thread_id)
     else:
         # No thread filter → wipe everything
         _clear_thread_active_titles(user.id)
-    deleted = q.delete(synchronize_session=False)
-    db.commit()
+
+    def _clear(db):
+        deleted = db.query(ConversationMessage).filter(*filters).delete(
+            synchronize_session=False)
+        db.commit()
+        return deleted
+    deleted = await run_write(_in_session, _clear)
     return {"status": "cleared", "thread_id": thread_id, "deleted": deleted}
 
 

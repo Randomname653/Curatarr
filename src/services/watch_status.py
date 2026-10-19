@@ -172,7 +172,8 @@ def viewing_pattern(user_id: int, title: str, category: str = None) -> str | Non
             )
             rows = q.all()
     except Exception as e:
-        logger.debug("[watch] viewing_pattern failed for %r: %s", title, e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[watch] viewing_pattern", title, e)
         return None
     if not rows:
         return None
@@ -267,7 +268,8 @@ def viewing_stop_point(user_id: int, title: str) -> tuple[int, int] | None:
             return None
         return max((r.season or 1, r.episode) for r in rows)
     except Exception as e:
-        logger.debug("[watch] stop point failed for %r: %s", title, e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[watch] stop point", title, e)
         return None
 
 

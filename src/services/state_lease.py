@@ -28,6 +28,7 @@ import socket
 import sqlite3
 import time
 from typing import Callable, Optional
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def holder_alive(raw: Optional[str], now: Optional[float] = None) -> bool:
 def holder_pid(key: str, db_path: Optional[str] = None) -> Optional[int]:
     """The PID recorded for ``key``'s holder, for log lines. None when unset."""
     try:
-        conn = sqlite3.connect(db_path or _db_path(), timeout=5)
+        conn = sqlite_connect(db_path or _db_path(), timeout=5)
         try:
             row = conn.execute("SELECT value FROM app_state WHERE key=?",
                                (key + "_holder",)).fetchone()
@@ -101,7 +102,7 @@ def _put(conn, key, value):
 
 def _transact(db_path: Optional[str], fn: Callable) -> bool:
     """Run ``fn(conn)`` inside BEGIN IMMEDIATE; commit when it returns True."""
-    conn = sqlite3.connect(db_path or _db_path(), timeout=30, isolation_level=None)
+    conn = sqlite_connect(db_path or _db_path(), timeout=30, isolation_level=None)
     try:
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("BEGIN IMMEDIATE")

@@ -14,6 +14,7 @@ from pathlib import Path
 import logging
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,14 @@ def _file_ident(path: Path):
         return None
 
 
+# The same 15 s as the main database (src/database/connection.py). It was
+# 60 s while cache calls ran on the event loop. Every writer of this file
+# (top-ups, the walkers, the out-of-process scripts) commits per call, so
+# the lock is held for milliseconds; the weekly VACUUM holds it for minutes,
+# which no timeout here would ride out (it is postponed while long jobs run).
+BUSY_TIMEOUT_S = 15
+
+
 def _open(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Pass 29: the cache connection used to be created with all-default
@@ -92,17 +101,17 @@ def _open(path: Path) -> sqlite3.Connection:
     # surfaced as "database is locked" on every collision, because the
     # default busy_timeout is 0 ("fail immediately"). Match the pragma profile
     # the main DB uses in src/database/connection.py.
-    conn = sqlite3.connect(
+    conn = sqlite_connect(
         path,
         check_same_thread=False,
-        timeout=60.0,   # python-side wait when SQLite reports BUSY
+        timeout=float(BUSY_TIMEOUT_S),   # python-side wait when SQLite reports BUSY
     )
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
-        cur.execute("PRAGMA busy_timeout=60000")
+        cur.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_S * 1000}")
         cur.execute("PRAGMA wal_autocheckpoint=1000")
         cur.close()
     except Exception as e:
@@ -151,7 +160,7 @@ def _thread_slot(path: Path) -> _Slot:
     if slot is not None and (ident is None or slot.ident != ident):
         try:
             slot.conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - dropping a stale handle; a fresh one opens below
             pass
         slot = None
     if slot is None:
@@ -212,7 +221,7 @@ class MetadataCache:
     def __del__(self):
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - finalizer; raising here is only noise
             pass
 
     def _expires_at(self, days: int = 7) -> str:
@@ -494,5 +503,36 @@ class MetadataCache:
             try:
                 if slot.conn.in_transaction:
                     slot.conn.rollback()
-            except Exception:
-                pass
+            except Exception as e:
+                # The rollback is what releases a write lock left behind.
+                logger.warning("[cache] rollback on release failed - a write "
+                               "lock may linger: %s", e)
+
+
+# ── From a coroutine ────────────────────────────────────────────────────────
+# Each call opens a handle on a worker thread (connections are per thread),
+# so the event loop never waits on the cache file's lock.
+
+def _with_cache(method: str, *args, **kwargs):
+    with MetadataCache() as cache:
+        return getattr(cache, method)(*args, **kwargs)
+
+
+async def acache_get(cache_key: str) -> Optional[Dict[str, Any]]:
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "get_cache", cache_key)
+
+
+async def acache_get_many(cache_keys) -> Dict[str, Dict[str, Any]]:
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "get_cache_many", list(cache_keys))
+
+
+async def acache_set(cache_key: str, response: Dict[str, Any], days: int = 7):
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "set_cache", cache_key, response, days)
+
+
+async def acache_patch(cache_key: str, updates: Dict[str, Any], **kwargs):
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "patch_cache", cache_key, updates, **kwargs)

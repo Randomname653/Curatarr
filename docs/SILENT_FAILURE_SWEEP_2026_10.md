@@ -171,11 +171,146 @@ Updated pins, each pinning a contract this round changed:
 - `test_status_polling_cache` and `test_enrichment_vector_correctness`: handlers that are now plain `def`.
 - The direct handler calls in `test_member_visibility`, `test_music_wishes`, `test_deletion_safety`, `test_deletion_returns`, `test_keep_and_delete_feedback`, `test_principle_supersede` and `test_auth_hardening` no longer wrap a sync handler in `asyncio.run`.
 
+### Round 4 (follow-up PR): silent handlers to zero
+
+Every one of the 277 remaining silent broad handlers (`pass`, or a lone `logger.debug`) was
+read in context and given one disposition:
+
+| Disposition | Used for |
+| :--- | :--- |
+| `# noqa: BLE001 - <reason>` | Best-effort on purpose: progress cards, teardown closes and cancels, cosmetic hints. The reason has to be concrete. |
+| Narrowed | Parsing optional or external data: `ValueError`/`TypeError`/`KeyError`/`json.JSONDecodeError`; `ImportError` for optional modules. |
+| `log_topup_failure` / split | Network and optional evidence: outages stay at DEBUG, bugs log at WARNING (first tracebacks per walker). |
+| WARNING | Reads whose fallback looks like "no data": DB, cache, vector store. |
+| Fail closed | Handlers that guard a decision (below). |
+
+Fail-closed conversions, each with a check that fails on the old code
+(`tests/test_silent_handlers_g2.py`, `_g3.py`, `_g4.py`):
+- `embedding_migration._neighborhood_eval`: a pair that raised was skipped, so the
+  eval gate scored only the survivors and could flip a half-broken v2 corpus live. It
+  now counts as tried and missed.
+- `pillars._read_db_facts` taste read and `build_evidence`'s `_taste_section`: an
+  unreadable taste profile now sets `owner_signal_unknown` (deferred, not judged).
+- `pillars.build_evidence` form guards (spoken-word, documentary): a cache-read failure
+  (`_get_cached_rating(..., strict=True)`) defers the title. It reuses
+  `significance_unchecked`, so the banner says "significance unchecked".
+- `proactive_messages.get_disabled_triggers`: an unreadable opt-out list counts as
+  every trigger disabled; it used to switch all opt-outs back on.
+- `subtitle_signals._os_charge`: an unrecorded download pauses OpenSubtitles for the
+  day in-process, rather than overspending a shared daily budget.
+- `curator_principles._curator_json`: a failed curator-yield check skips the
+  background learning call instead of taking the GPU from a live chat.
+
+Ten older bare `# noqa: BLE001` annotations without a reason were resolved the same
+way. `tests/test_silent_except_ratchet.py` is now a rule, not a ratchet: no
+silent broad except in `src/` unless its line gives a concrete reason. The baseline
+file is gone.
+
+### Round 5 (follow-up PR): the event loop free of SQLite
+
+Every route and scheduler job is a coroutine. A synchronous SQLAlchemy call inside one
+ran SQLite on the event-loop thread, so every request and stream waited for it, and up
+to `busy_timeout` (60 s) when another process held the write lock. That is why both
+timeouts were 60 s.
+
+| Measure | Before | After |
+|---|---|---|
+| Sync DB calls inside coroutines (static, `tests/test_loop_db_ratchet.py`) | 561 in 48 files | 12 in 2 files |
+| Loop-side statements while running every suite (runtime, `loop_guard`) | 76 sites / 2397 statements | 0 |
+| `busy_timeout` / `pool_timeout` / `pool_size` | 60 s / 60 s / 5 | 15 s / 10 s / 10 |
+
+- **`src/database/loop_guard.py`**: an engine hook records each statement that runs
+  while a loop is running on its thread, under the innermost `src/` coroutine. It logs
+  each site once at WARNING; `GET /api/system/loop-guard` (admin) lists them.
+  `CURATARR_LOOP_GUARD=raise` turns a site into an error; the per-group suites
+  `tests/test_loop_free_g1..g6.py` use it.
+- **The conversion**: DB sections moved into sync helpers run by `run_read` (worker
+  pool) or `run_write` (the one writer thread). The helpers return plain values, never
+  ORM rows, because a row used after its session closes raises DetachedInstanceError.
+  Read-modify-write runs as one `run_write`. Route handlers no longer hold a request
+  `Session` across awaits; the deletion paths work on a plain copy of the proposal
+  and write back only what changed. The async wrappers are `aget_state`,
+  `aacquire_state_lock` / `arelease_state_lock`, `acache_get` / `acache_set` and
+  similar.
+- **Left on purpose**: the 11 statements of the lifespan's own startup and teardown,
+  which run while no request is served and are counted separately; and one cache
+  handle in `archive_backfill.run_source`, whose walk (`external_ids.harvest`) uses it
+  from the loop thread.
+- **Found on the way**: two existing crashes, caught by the new per-group tests.
+  - `GET /deletions` raised `UnboundLocalError` on its cached path, because a local
+    `import asyncio` later in the function shadowed the module's name (since
+    2026-10-15).
+  - `check_and_generate_messages` used `_func` before its local import, so no
+    proactive message was generated for anyone.
+- **Timeouts**: `busy_timeout` is now 15 s and `pool_timeout` 10 s. `pool_size` is 10,
+  for the worker threads that now carry every read. The per-checkout `busy_timeout`
+  reset and `pool_pre_ping` are gone, and `temp_store=MEMORY` is set.
+  `tests/test_loop_responsiveness.py` holds the write lock from another process:
+  the API answers in under 200 ms, the loop never stalls for more than 200 ms, and the
+  waiting writes land once the lock is released. A control run of the old pattern
+  stalls for the whole hold.
+
+### Round 6 (follow-up PR): the other SQLite files, and foreign keys
+
+- **The guard sees every SQLite file.** The enrichment cache, `plex_music.db` and the
+  offline indexes opened with plain `sqlite3.connect`, out of the guard's sight. They now
+  open through `loop_guard.sqlite_connect`, a trace callback that labels each loop-side
+  statement with its file. The ratchet refuses any other `sqlite3.connect` in `src/`.
+  The first run over every suite found 1,300+ statements on the loop.
+- **`sync_lyrics`** ran every statement on the loop. It also held `plex_music.db`'s write
+  lock across each Plex listing and each lyric fetch, so another writer waited out the
+  whole run. Each step now runs on a worker with its own connection and commits before
+  the next await.
+- Also moved to workers:
+  - the anime mapping's cache load and save, and its XML parse;
+  - the Discogs freshness check, its `game_active` read on every 512 KB chunk, and its
+    table rebuild;
+  - the Plex discography fallback;
+  - `external_ids.harvest`'s cache walk, which opens its own handle when none is passed.
+    So `archive_backfill` no longer opens a handle on the loop, and the static baseline
+    is down to the lifespan's 11.
+- **Enrichment cache timeout: 60 s → 15 s**, like the main database. Every writer
+  commits per call, the out-of-process scripts included, so the lock is held for
+  milliseconds. The weekly VACUUM holds it for minutes, which 60 s didn't ride out either.
+- **`foreign_keys=ON`.** The 18 declared keys, all pointing at `users.id`, were never
+  enforced.
+  - `_repair_foreign_keys` runs at boot, before any migration. It sets an orphaned
+    nullable reference to NULL. An orphaned row that needs its user is copied as JSON
+    into `fk_orphans`, then removed. A clean database costs one check.
+  - Both engines then enforce the keys on every connection.
+  - The `deletion_proposals` rebuild follows SQLite's procedure: keys off for the copy,
+    checked before the commit, then back on.
+- **Tests**: `tests/test_loop_free_raw.py` and `tests/test_foreign_keys.py`. Two fixtures
+  that wrote rows for a user they never created now create that user.
+
+### Round 7 (follow-up PR): the vector store and the Discogs scan
+
+- **Chroma built at startup, not on import.**
+  - `recommendations_engine` bound `chroma_db` at module level, so whichever coroutine
+    first imported it built Chroma's `PersistentClient` and ran its `quick_check` on the
+    loop. Importing `src.main` alone never did, so in the server this happened on the
+    first scoring or judging path.
+  - The lifespan now builds the client before serving, and no module binds it at import
+    any more.
+- **Chroma calls off the loop.** These now go through `run_chroma`, the existing single
+  Chroma thread:
+  - semantic search (queries and `get_by_id`);
+  - the facet index (delete, add, query, counts, backfill paging);
+  - the enricher's three upserts, once per enriched title;
+  - the scorer's embedding prefetch;
+  - reclassify, corpus repair;
+  - every step of the embedding migration.
+
+  The static ratchet now counts wrapper calls on a Chroma handle inside coroutines.
+- **The Discogs dump scan.** Each 512 KB chunk's game check, decompression and regex
+  scan now run in one worker-thread hop. The chunks are still consumed strictly in
+  order; the whole dump is gigabytes of XML.
+- **Tests**: `tests/test_loop_free_vector.py`. Three tests had pinned
+  `recommendations_engine.chroma_db` (the import-time binding); they now patch
+  `chromadb_wrapper.get_chroma_db`, as the other suites already do.
+
 ### Still open
 
-- The 58 route handlers that do await keep their synchronous DB sections on the loop.
-  Moving those sections onto `run_read`/`run_write` is the remaining step before
-  `busy_timeout`/`pool_timeout` (60 s) can come down. `foreign_keys=ON` still needs a
-  `foreign_key_check` cleanup first.
-- The 277 silent broad excepts in the ratchet baseline. Each is a candidate for WARNING or a
-  narrower except; the ratchet only lets the count fall.
+Nothing from this sweep. `GET /api/system/loop-guard` lists any loop-side statement that
+appears from now on, and the ratchets in `tests/test_loop_db_ratchet.py` and
+`tests/test_silent_except_ratchet.py` refuse new ones in code.

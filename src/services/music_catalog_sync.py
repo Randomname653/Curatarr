@@ -53,6 +53,7 @@ _STATE_KEY = "music_catalog_sync"
 async def sync_soulsync_to_lidarr(task=None) -> dict:
     from src.services import soulsync_client
     from src.services.app_state import set_state
+    from src.database.runner import run_read, run_write
 
     def _prog(message=None, processed=None, total=None):
         # Activity-card progress (the run takes ~10 min; without this it sat
@@ -67,7 +68,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
             if total is not None:
                 kw["total"] = total
             task_monitor.update(task, message=message, **kw)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the sync is unaffected
             pass
 
     if not soulsync_client._configured():
@@ -106,7 +107,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                    if a.get("foreignArtistId")}
 
         # ── 3. create missing, DISARMED ──────────────────────────────────
-        defaults = _read_defaults("lidarr")
+        defaults = await run_read(_read_defaults, "lidarr")
         added, added_ids, add_failed, no_mbid = [], [], 0, 0
         can_add = bool(defaults.get("root_folder_path")
                        and defaults.get("quality_profile_id")
@@ -181,7 +182,8 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                 await client.refresh_artist(aid)
                 refreshed += 1
             except Exception as e:
-                logger.debug("[catalog-sync] refresh %s failed: %s", aid, e)
+                from src.services.enrichment_state import log_topup_failure
+                log_topup_failure(logger, "[catalog-sync] refresh", aid, e)
 
     result = {
         "ok": True,
@@ -196,7 +198,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
         "path_mismatches": sorted(m for m in mismatches if m)[:40],
         "at": datetime.utcnow().isoformat(),
     }
-    set_state(_STATE_KEY, json.dumps(result))
+    await run_write(set_state, _STATE_KEY, json.dumps(result))
     if mismatches:
         logger.warning("[catalog-sync] %d artists indexed but FILE-LESS while "
                        "SoulSync knows albums — folder-name drift; fix the "

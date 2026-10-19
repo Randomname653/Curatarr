@@ -195,8 +195,12 @@ async def _evict_model(model_name: str, timeout: float = 8.0) -> bool:
                 f"{settings.effective_ollama}/api/generate",
                 json={"model": model_name, "keep_alive": 0},
             )
-    except Exception as e:
+    except httpx.HTTPError as e:
         logger.debug("Eviction request failed for %s: %s", model_name, e)
+        return False
+    except Exception as e:
+        logger.warning("Eviction request crashed for %s: %r", model_name, e,
+                       exc_info=True)
         return False
 
     # Poll /api/ps until the model is gone. Match by base name (without
@@ -424,8 +428,10 @@ async def resolve_pitcher_model() -> str:
             for n in names:
                 if pitcher == n or pitcher in n or n in pitcher:
                     return pitcher
-    except Exception as e:
+    except httpx.HTTPError as e:
         logger.debug("pitcher install probe failed: %s", e)
+    except Exception as e:
+        logger.warning("pitcher install probe crashed: %r", e, exc_info=True)
     logger.warning("PITCHER_MODEL=%s not installed — deletion run falls "
                    "back to %s (run `python build_models.py`)",
                    pitcher, fallback)
@@ -454,7 +460,7 @@ async def shutdown_evict() -> None:
             continue
         try:
             await asyncio.wait_for(_evict_model(model), timeout=5)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - shutdown teardown; Ollama unloads on its own TTL
             logger.debug("[shutdown] evict of %s skipped: %s", model, e)
 
 

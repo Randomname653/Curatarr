@@ -105,7 +105,7 @@ def test_reenrich_on_a_plex_artist_drops_the_right_cache_keys_and_queues():
             class Req:
                 service, arr_id, mode = "lidarr", 1, "summary"
             row = ly.plex_artist("a1")
-            res = lib._reenrich_plex_artist(Req, row)
+            res = asyncio.run(lib._reenrich_plex_artist(Req, row))
             assert res["queued"] and res["service"] == "plex" and res["title"] == "The Band"
             assert queued == ["library_reenrich:plex:a1"]
             cache = MetadataCache()
@@ -113,7 +113,7 @@ def test_reenrich_on_a_plex_artist_drops_the_right_cache_keys_and_queues():
                 assert cache.get_cache("enriched:music:The Band") is None, "summary mode drops the polished entry"
                 assert cache.get_cache("raw:music:The Band") is not None, "…and keeps the raw one"
                 Req.mode = "metadata"
-                lib._reenrich_plex_artist(Req, row)
+                asyncio.run(lib._reenrich_plex_artist(Req, row))
                 assert cache.get_cache("raw:music:The Band") is None, "metadata mode drops the raw entry too"
             finally:
                 cache.close()

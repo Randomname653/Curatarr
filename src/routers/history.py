@@ -10,6 +10,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.database import get_db
+from src.database.connection import get_db_session
+from src.database.runner import run_read
 from src.database.models import User, WatchHistoryEntry, TasteVectorEntry
 from src.routers.auth import get_current_user, require_admin
 from src.services.ttl_memo import ttl_response
@@ -162,7 +164,6 @@ async def recent_history(
     offset: int = Query(default=0, ge=0),
     category: str = None,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Return recent watch history, optionally filtered by category.
 
@@ -172,22 +173,30 @@ async def recent_history(
     franchise lesson). Deduped per series, so a binge of one show costs one
     lookup. Large pages skip resolution entirely and return ``None``.
     """
-    q = db.query(
-        WatchHistoryEntry.id,
-        WatchHistoryEntry.title,
-        WatchHistoryEntry.series_title,
-        WatchHistoryEntry.media_type,
-        WatchHistoryEntry.viewed_at,
-        WatchHistoryEntry.completed,
-        WatchHistoryEntry.genres,
-        WatchHistoryEntry.season,
-        WatchHistoryEntry.episode,
-        WatchHistoryEntry.tmdb_id,
-        WatchHistoryEntry.artist_mbid,
-    ).filter(WatchHistoryEntry.user_id == user.id)
-    if category and category != "all":
-        q = q.filter(WatchHistoryEntry.media_type == category)
-    entries = q.order_by(WatchHistoryEntry.viewed_at.desc()).offset(offset).limit(limit).all()
+    user_id = user.id
+
+    # Its own session in a worker: the poster lookups below await, so the
+    # query must not run on the loop (rows are column tuples, not ORM rows).
+    def _load():
+        with get_db_session() as db:
+            q = db.query(
+                WatchHistoryEntry.id,
+                WatchHistoryEntry.title,
+                WatchHistoryEntry.series_title,
+                WatchHistoryEntry.media_type,
+                WatchHistoryEntry.viewed_at,
+                WatchHistoryEntry.completed,
+                WatchHistoryEntry.genres,
+                WatchHistoryEntry.season,
+                WatchHistoryEntry.episode,
+                WatchHistoryEntry.tmdb_id,
+                WatchHistoryEntry.artist_mbid,
+            ).filter(WatchHistoryEntry.user_id == user_id)
+            if category and category != "all":
+                q = q.filter(WatchHistoryEntry.media_type == category)
+            return q.order_by(WatchHistoryEntry.viewed_at.desc()).offset(offset).limit(limit).all()
+
+    entries = await run_read(_load)
 
     poster_by_key: dict = {}
     if entries and limit <= _POSTER_PAGE_MAX:
@@ -206,8 +215,8 @@ async def recent_history(
                                               tmdb_id=ids[0], mbid=ids[1])
                 return key, poster
             except Exception as _e:
-                logger.debug("[history] poster lookup failed for %r: %s",
-                             lookup_title, _e)
+                from src.services.enrichment_state import log_topup_failure
+                log_topup_failure(logger, "[history] poster", lookup_title, _e)
                 return key, None
 
         poster_by_key = dict(await asyncio.gather(

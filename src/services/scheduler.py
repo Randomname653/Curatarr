@@ -26,6 +26,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ def _tracked(job_id: str):
         async def wrapped(*args, **kwargs):
             result = await fn(*args, **kwargs)
             if result is not False:
-                _record_job_run(job_id)
+                from src.database.runner import run_write
+                await run_write(_record_job_run, job_id)
             return result
         return wrapped
     return decorator
@@ -359,18 +361,26 @@ async def _startup_check():
     try:
         from src.database.connection import get_db_session
         from src.database.models import User, CachedRecommendation
+        from src.database.runner import run_read
         from src.services.app_state import get_state
         from datetime import datetime, timedelta
 
-        with get_db_session() as db:
-            admin = db.query(User).filter_by(is_admin=True).first()
-            if not admin:
-                return
-            user_id = admin.id
-            # ⚡ Bolt: Fast existence check avoiding full table counts
-            has_recs = db.query(CachedRecommendation.id).filter(
-                CachedRecommendation.user_id == user_id
-            ).first() is not None
+        def _admin_recs():
+            with get_db_session() as db:
+                admin = db.query(User).filter_by(is_admin=True).first()
+                if not admin:
+                    return None
+                user_id = admin.id
+                # ⚡ Bolt: Fast existence check avoiding full table counts
+                has_recs = db.query(CachedRecommendation.id).filter(
+                    CachedRecommendation.user_id == user_id
+                ).first() is not None
+                return user_id, has_recs
+
+        found = await run_read(_admin_recs)
+        if found is None:
+            return
+        user_id, has_recs = found
 
         # Cache recommendations if none exist
         if not has_recs:
@@ -397,15 +407,16 @@ async def _startup_check():
         await _resume_music_pipeline_if_needed(user_id)
 
     except Exception as e:
-        logger.debug("[startup] Startup check failed: %s", e)
+        logger.warning("[startup] Startup check failed: %s", e, exc_info=True)
 
 
 async def _resume_music_pipeline_if_needed(user_id: int):
     """Resume music pipeline if it was interrupted (e.g. server shutdown mid-run)."""
     import asyncio
     try:
+        from src.database.runner import run_read, run_write
         from src.services.app_state import get_state, set_state
-        if get_state("music_pipeline_interrupted") != "1":
+        if await run_read(get_state, "music_pipeline_interrupted") != "1":
             return
         logger.info("[startup] Music pipeline was interrupted — resuming automatically")
         await asyncio.sleep(15)  # give the API a moment to be fully ready
@@ -419,14 +430,14 @@ async def _resume_music_pipeline_if_needed(user_id: int):
             logger.info("[startup] Music pipeline held by another runner — not resuming")
             return
 
-        set_state("music_pipeline_stop_requested", "0")
-        set_state("music_pipeline_owner", str(user_id))
+        await run_write(set_state, "music_pipeline_stop_requested", "0")
+        await run_write(set_state, "music_pipeline_owner", str(user_id))
         _track_task(asyncio.create_task(
             _run_music_pipeline_bg(user_id),
             name=f"music_pipeline_resume_user_{user_id}",
         ))
     except Exception as e:
-        logger.debug("[startup] Music pipeline resume check failed: %s", e)
+        logger.warning("[startup] Music pipeline resume check failed: %s", e, exc_info=True)
 
 
 async def _run_music_pipeline_bg(user_id: int):
@@ -444,12 +455,13 @@ async def _resume_enrichment_if_needed(user_id: int):
     import asyncio
     import json as _json
     try:
+        from src.database.runner import run_read, run_write
         from src.services.app_state import get_state
 
-        if get_state("enrichment_interrupted") != "1":
+        if await run_read(get_state, "enrichment_interrupted") != "1":
             return  # last run finished normally — nothing to resume
 
-        raw_settings = get_state("enrichment_last_settings")
+        raw_settings = await run_read(get_state, "enrichment_last_settings")
         if not raw_settings:
             return
 
@@ -460,7 +472,7 @@ async def _resume_enrichment_if_needed(user_id: int):
         # resuming it as a full run silently changes semantics.
         if saved.get("specific") or saved.get("source") == "upgrade":
             from src.services.app_state import set_state as _ss
-            _ss("enrichment_interrupted", "0")
+            await run_write(_ss, "enrichment_interrupted", "0")
             logger.info("[startup] interrupted run was a targeted/upgrade pass — "
                         "not resuming (the hourly job re-picks its rows)")
             return
@@ -478,7 +490,7 @@ async def _resume_enrichment_if_needed(user_id: int):
         from src.routers.enrichment import _run_enrichment
         # Atomic compare-and-set: lose the race, return; win it, schedule.
         from src.services.app_state import acquire_state_lock, release_state_lock
-        if not acquire_state_lock("enrichment_running"):
+        if not await run_write(acquire_state_lock, "enrichment_running"):
             return  # already started by something else (route or another resume)
 
         # Pass 46 (Bug 3): release the lock if we crash BEFORE handing it
@@ -496,9 +508,9 @@ async def _resume_enrichment_if_needed(user_id: int):
             handed_off = True
         finally:
             if not handed_off:
-                release_state_lock("enrichment_running")
+                await run_write(release_state_lock, "enrichment_running")
     except Exception as e:
-        logger.debug("[startup] Enrichment resume check failed: %s", e)
+        logger.warning("[startup] Enrichment resume check failed: %s", e, exc_info=True)
 
 
 async def job_plex_sync(chain_llm: bool = True):
@@ -538,8 +550,9 @@ async def job_plex_sync(chain_llm: bool = True):
                 await _recompute_and_cache_recs()
             else:
                 # The model half runs in the custodian's model queue.
+                from src.database.runner import run_write
                 from src.services.app_state import set_state
-                set_state("plex_followup_pending", "1")
+                await run_write(set_state, "plex_followup_pending", "1")
     except Exception as e:
         logger.error("[scheduler] Plex sync failed: %s", e)
         ok = False
@@ -552,7 +565,8 @@ async def job_plex_sync(chain_llm: bool = True):
         from src.services.size_norms import compute_size_norms
         tech = await sync_tech_profiles(force=False)
         if not tech.get("skipped"):
-            compute_size_norms()
+            from src.database.runner import run_write
+            await run_write(compute_size_norms)
             logger.info("[scheduler] tech profiles: %s → size norms recomputed", tech)
     except Exception as e:
         logger.error("[scheduler] tech sync / norms failed: %s", e)
@@ -564,7 +578,8 @@ async def job_arr_sync():
     """Daily ARR sync — refreshes deletion proposal candidates."""
     logger.info("[scheduler] Starting daily ARR sync")
     from src.services.task_monitor import task_monitor
-    if _gaming():
+    from src.database.runner import run_read, run_write
+    if await run_read(_gaming):
         # Not run, so not done: False keeps the custodian task due. No card
         # for the wait — the custodian retries every tick, and a game
         # evening would otherwise leave one skipped card per 30 minutes.
@@ -580,12 +595,15 @@ async def job_arr_sync():
         from src.services.recommendations_engine import generate_deletion_proposals
         from src.services.app_state import set_state
 
-        with get_db_session() as db:
-            admin = db.query(User).filter_by(is_admin=True).first()
-            if not admin:
-                task_monitor.skip(task, "No admin user")
-                return
-            user_id = admin.id
+        def _admin_id():
+            with get_db_session() as db:
+                admin = db.query(User).filter_by(is_admin=True).first()
+                return admin.id if admin else None
+
+        user_id = await run_read(_admin_id)
+        if user_id is None:
+            task_monitor.skip(task, "No admin user")
+            return
 
         task_monitor.update(task, message="Fetching ARR library")
         arr_items = await _fetch_arr_candidates()
@@ -599,7 +617,7 @@ async def job_arr_sync():
         # other's proposals. Returning False keeps the custodian task due,
         # so the scan simply retries next tick once the manual run is done.
         from src.services.app_state import acquire_state_lock, release_state_lock
-        if not acquire_state_lock("deletion_run"):
+        if not await run_write(acquire_state_lock, "deletion_run"):
             task_monitor.skip(task, "Manual deletion analysis in progress — "
                                     "retrying next tick")
             return False
@@ -650,7 +668,7 @@ async def job_arr_sync():
             )
 
         if not all_proposals:
-            release_state_lock("deletion_run")
+            await run_write(release_state_lock, "deletion_run")
             _dr_locked = False
             task_monitor.done(task, "No deletion proposals generated")
             return
@@ -668,68 +686,74 @@ async def job_arr_sync():
         for p in all_proposals:
             by_cat.setdefault(p.get("category", "movie"), []).append(p)
 
-        with get_db_session() as db:
-            added = 0
-            # Proposals of an arr switched off since (Lidarr, 2026-10-06) can
-            # never be carried out; the step below only supersedes pending
-            # rows of re-proposed categories, so limbo ones stayed for good.
-            from src.routers.recommendations import _retire_switched_off
-            _retire_switched_off(db, user_id)
-            for cat, cat_proposals in by_cat.items():
-                svc = _CAT_TO_SVC.get(cat, "")
-                # Pass 90b: SUPERSEDE stale pending rows instead of
-                # hard-DELETE (handles both category-column match AND
-                # legacy NULL-category rows by service). The earlier
-                # hard-delete freed ROWIDs that SQLite (without
-                # AUTOINCREMENT) reused for the new INSERTs below; stale
-                # frontend caches holding old proposal_ids then resolved
-                # to the WRONG title on follow-up requests (see Pass 90a's
-                # commentary in chat.py). Soft-delete preserves IDs (no
-                # reuse possible for these rows), gives us a superseded-
-                # audit-trail, and is silently ignored by every status
-                # filter elsewhere in the codebase (all look for
-                # ``pending`` / ``limbo`` / ``rejected`` / ``deleted``).
-                db.query(DeletionProposal).filter(
-                    DeletionProposal.user_id == user_id,
-                    DeletionProposal.status == "pending",
-                    or_(
-                        DeletionProposal.category == cat,
-                        and_(
-                            DeletionProposal.category.is_(None),
-                            DeletionProposal.service == svc,
+        # One transaction on the writer thread: supersede + insert land
+        # together, as they did in the one session before.
+        def _write_proposals():
+            with get_db_session() as db:
+                added = 0
+                # Proposals of an arr switched off since (Lidarr, 2026-10-06) can
+                # never be carried out; the step below only supersedes pending
+                # rows of re-proposed categories, so limbo ones stayed for good.
+                from src.routers.recommendations import _retire_switched_off
+                _retire_switched_off(db, user_id)
+                for cat, cat_proposals in by_cat.items():
+                    svc = _CAT_TO_SVC.get(cat, "")
+                    # Pass 90b: SUPERSEDE stale pending rows instead of
+                    # hard-DELETE (handles both category-column match AND
+                    # legacy NULL-category rows by service). The earlier
+                    # hard-delete freed ROWIDs that SQLite (without
+                    # AUTOINCREMENT) reused for the new INSERTs below; stale
+                    # frontend caches holding old proposal_ids then resolved
+                    # to the WRONG title on follow-up requests (see Pass 90a's
+                    # commentary in chat.py). Soft-delete preserves IDs (no
+                    # reuse possible for these rows), gives us a superseded-
+                    # audit-trail, and is silently ignored by every status
+                    # filter elsewhere in the codebase (all look for
+                    # ``pending`` / ``limbo`` / ``rejected`` / ``deleted``).
+                    db.query(DeletionProposal).filter(
+                        DeletionProposal.user_id == user_id,
+                        DeletionProposal.status == "pending",
+                        or_(
+                            DeletionProposal.category == cat,
+                            and_(
+                                DeletionProposal.category.is_(None),
+                                DeletionProposal.service == svc,
+                            ),
                         ),
-                    ),
-                ).update(
-                    {"status": "superseded", "resolved_at": datetime.utcnow()},
-                    synchronize_session=False,
-                )
+                    ).update(
+                        {"status": "superseded", "resolved_at": datetime.utcnow()},
+                        synchronize_session=False,
+                    )
 
-                for p in cat_proposals:
-                    db.add(DeletionProposal(
-                        user_id=user_id,
-                        media_id=str(p.get("arr_id", "")),
-                        title=p["title"],
-                        service=p.get("service", ""),
-                        arr_url=p.get("arr_url", ""),
-                        reason=p["pitch"],
-                        confidence=p["confidence"],
-                        storage_mb=p.get("size_mb", 0),
-                        status="pending",
-                        category=cat,                    # ← was missing before
-                        poster_url=p.get("poster_url"),
-                        synopsis=p.get("synopsis"),
-                        genres=p.get("genres"),
-                        tvdb_id=p.get("tvdb_id"),
-                        tmdb_id=p.get("tmdb_id"),
-                        stagnant=p.get("stagnant", False),
-                        score_factors=(json.dumps(p["score_factors"])
-                                       if p.get("score_factors") else None),
-                    ))
-                    added += 1
-            db.commit()
+                    for p in cat_proposals:
+                        db.add(DeletionProposal(
+                            user_id=user_id,
+                            media_id=str(p.get("arr_id", "")),
+                            title=p["title"],
+                            service=p.get("service", ""),
+                            arr_url=p.get("arr_url", ""),
+                            reason=p["pitch"],
+                            confidence=p["confidence"],
+                            storage_mb=p.get("size_mb", 0),
+                            status="pending",
+                            category=cat,                    # ← was missing before
+                            poster_url=p.get("poster_url"),
+                            synopsis=p.get("synopsis"),
+                            genres=p.get("genres"),
+                            tvdb_id=p.get("tvdb_id"),
+                            tmdb_id=p.get("tmdb_id"),
+                            stagnant=p.get("stagnant", False),
+                            score_factors=(json.dumps(p["score_factors"])
+                                           if p.get("score_factors") else None),
+                        ))
+                        added += 1
+                db.commit()
+                return added
 
-        set_state("last_arr_sync_at", datetime.utcnow().isoformat())
-        release_state_lock("deletion_run")
+        added = await run_write(_write_proposals)
+
+        await run_write(set_state, "last_arr_sync_at", datetime.utcnow().isoformat())
+        await run_write(release_state_lock, "deletion_run")
         _dr_locked = False
         task_monitor.done(task, f"Complete: {added} proposals (replaced per category)")
         logger.info("[scheduler] ARR sync complete: %d proposals written", added)
@@ -737,9 +761,10 @@ async def job_arr_sync():
         if _dr_locked:
             try:
                 from src.services.app_state import release_state_lock as _rsl
-                _rsl("deletion_run")
-            except Exception:
-                pass
+                await run_write(_rsl, "deletion_run")
+            except Exception as _re:
+                # A lock left held blocks the next deletion run - say so.
+                logger.warning("[scheduler] could not release deletion_run: %s", _re)
         task_monitor.error(task, str(e))
         logger.error("[scheduler] ARR sync failed: %s", e)
         return False
@@ -751,7 +776,8 @@ async def job_proactive_messages():
     from src.services.task_monitor import task_monitor
     task = task_monitor.create(name="Proactive Messages", category="proactive")
     task_monitor.start(task)
-    if _gaming():
+    from src.database.runner import run_read
+    if await run_read(_gaming):
         task_monitor.skip(task, "Game running — skipping to leave VRAM for the game")
         return
     try:
@@ -759,8 +785,11 @@ async def job_proactive_messages():
         from src.database.models import User
         from src.services.proactive_messages import check_and_generate_messages
 
-        with get_db_session() as db:
-            users = [{"id": u_id} for (u_id,) in db.query(User.id).filter_by(is_active=True).all()]
+        def _active_users():
+            with get_db_session() as db:
+                return [{"id": u_id} for (u_id,) in db.query(User.id).filter_by(is_active=True).all()]
+
+        users = await run_read(_active_users)
 
         task_monitor.update(task, total=len(users))
         for i, u in enumerate(users):
@@ -786,19 +815,26 @@ async def job_memory_decay():
         from src.database.models import EpisodicMemory
         from datetime import timedelta
 
-        cutoff = datetime.utcnow() - timedelta(days=90)
-        decayed = 0
+        from src.database.runner import run_write
 
-        with get_db_session() as db:
-            old = db.query(EpisodicMemory).filter(
-                EpisodicMemory.created_at < cutoff,
-                EpisodicMemory.importance > 0.1,
-            ).all()
-            task_monitor.update(task, total=len(old))
-            for m in old:
-                m.importance = max(0.1, m.importance * 0.85)
-                decayed += 1
-            db.commit()
+        cutoff = datetime.utcnow() - timedelta(days=90)
+
+        # Read-modify-write: one helper on the writer thread.
+        def _decay():
+            decayed = 0
+            with get_db_session() as db:
+                old = db.query(EpisodicMemory).filter(
+                    EpisodicMemory.created_at < cutoff,
+                    EpisodicMemory.importance > 0.1,
+                ).all()
+                for m in old:
+                    m.importance = max(0.1, m.importance * 0.85)
+                    decayed += 1
+                db.commit()
+            return len(old), decayed
+
+        total, decayed = await run_write(_decay)
+        task_monitor.update(task, total=total)
 
         task_monitor.done(task, f"{decayed} memories decayed")
         logger.info("[scheduler] Memory decay: %d memories decayed", decayed)
@@ -824,27 +860,33 @@ async def job_orphan_check():
 
         from src.database.connection import get_db_session
         from src.database.models import User, ProactiveMessage
+        from src.database.runner import run_write
         import json
 
-        with get_db_session() as db:
-            admin = db.query(User).filter_by(is_admin=True).first()
-            if not admin:
-                task_monitor.skip(task, "No admin user")
-                return
-            summary = ", ".join(
-                f"section {o['section_id']} ({o['count']} items)" for o in orphans[:3]
-            )
-            db.add(ProactiveMessage(
-                user_id=admin.id,
-                trigger_type="orphan_sections",
-                trigger_data=json.dumps(orphans),
-                message=(
-                    f"Curatarr found {len(orphans)} orphaned Plex section(s) "
-                    f"({summary}) that are not mapped to a library category. "
-                    "Open Settings → Library to review and remap them."
-                ),
-            ))
-            db.commit()
+        def _notify_admin() -> bool:
+            with get_db_session() as db:
+                admin = db.query(User).filter_by(is_admin=True).first()
+                if not admin:
+                    return False
+                summary = ", ".join(
+                    f"section {o['section_id']} ({o['count']} items)" for o in orphans[:3]
+                )
+                db.add(ProactiveMessage(
+                    user_id=admin.id,
+                    trigger_type="orphan_sections",
+                    trigger_data=json.dumps(orphans),
+                    message=(
+                        f"Curatarr found {len(orphans)} orphaned Plex section(s) "
+                        f"({summary}) that are not mapped to a library category. "
+                        "Open Settings → Library to review and remap them."
+                    ),
+                ))
+                db.commit()
+                return True
+
+        if not await run_write(_notify_admin):
+            task_monitor.skip(task, "No admin user")
+            return
 
         task_monitor.done(task, f"{len(orphans)} orphaned section(s) found")
         logger.info("[scheduler] Orphan check: %d orphaned sections found, admin notified", len(orphans))
@@ -870,13 +912,14 @@ async def job_arr_pre_enrich():
     logger.info("[scheduler] Starting ARR pre-enrichment batch")
     from src.services.task_monitor import task_monitor
     from src.services.app_state import acquire_state_lock, release_state_lock
+    from src.database.runner import run_read, run_write
 
     # Don't start if full enrichment is already running. Atomic
     # compare-and-set so a /start POST coming in at the same moment can't
     # race past us. Checked BEFORE the Activity card exists: the custodian
     # retries a False return every tick, so an overnight enrichment pass
     # would otherwise leave one skipped card per 30 minutes.
-    if not acquire_state_lock("enrichment_running"):
+    if not await run_write(acquire_state_lock, "enrichment_running"):
         logger.info("[scheduler] ARR pre-enrichment waits: an enrichment pass is running")
         return False   # stays due: retry once the running pass is done
 
@@ -899,12 +942,15 @@ async def job_arr_pre_enrich():
             # touching ``admin.id`` afterwards tries to refresh it against a closed
             # session → DetachedInstanceError. Every other scheduler job resolves
             # the id inside the block; this one closed it a line too early.
-            with get_db_session() as db:
-                admin = db.query(User).filter(User.is_active == True).first()
-                if not admin:
-                    task_monitor.skip(task, "No active users — skipping ARR pre-enrichment")
-                    return
-                user_id = admin.id
+            def _active_id():
+                with get_db_session() as db:
+                    admin = db.query(User).filter(User.is_active == True).first()
+                    return admin.id if admin else None
+
+            user_id = await run_read(_active_id)
+            if user_id is None:
+                task_monitor.skip(task, "No active users — skipping ARR pre-enrichment")
+                return
 
             batch = int(getattr(settings, "ARR_PRE_ENRICH_BATCH", 80))
             task_monitor.update(task, message=f"Enriching up to {batch} ARR items (movie/show/anime/music)")
@@ -926,7 +972,7 @@ async def job_arr_pre_enrich():
             logger.info("[scheduler] ARR pre-enrichment done (batch=%d)", batch)
         finally:
             if not handed_off:
-                release_state_lock("enrichment_running")
+                await run_write(release_state_lock, "enrichment_running")
 
     except Exception as e:
         task_monitor.error(task, str(e))
@@ -971,30 +1017,37 @@ async def job_source_upgrade():
 
         from src.database.connection import get_db_session
         from src.database.models import User, EnrichmentStatus
+        from src.database.runner import run_read, run_write
 
-        with get_db_session() as db:
-            admin = db.query(User).filter(User.is_active == True).first()
-            if not admin:
-                task_monitor.skip(task, "No active users — skipping upgrade pass")
-                return
-            user_id = admin.id
+        def _pick():
+            with get_db_session() as db:
+                admin = db.query(User).filter(User.is_active == True).first()
+                if not admin:
+                    return None
+                user_id = admin.id
 
-            # Pick the oldest N provisional+fast items. enriched_at is
-            # what got stamped when the fast pass landed, so ASC =
-            # longest-waiting items go first.
-            BATCH = 30
-            rows = (
-                db.query(EnrichmentStatus.plex_rating_key)
-                .filter(
-                    EnrichmentStatus.fetch_tier == "fast",
-                    EnrichmentStatus.provisional == True,
-                    EnrichmentStatus.enriched == True,
+                # Pick the oldest N provisional+fast items. enriched_at is
+                # what got stamped when the fast pass landed, so ASC =
+                # longest-waiting items go first.
+                BATCH = 30
+                rows = (
+                    db.query(EnrichmentStatus.plex_rating_key)
+                    .filter(
+                        EnrichmentStatus.fetch_tier == "fast",
+                        EnrichmentStatus.provisional == True,
+                        EnrichmentStatus.enriched == True,
+                    )
+                    .order_by(EnrichmentStatus.enriched_at.asc())
+                    .limit(BATCH)
+                    .all()
                 )
-                .order_by(EnrichmentStatus.enriched_at.asc())
-                .limit(BATCH)
-                .all()
-            )
-            target_keys = [r.plex_rating_key for r in rows]
+                return user_id, [r.plex_rating_key for r in rows]
+
+        picked = await run_read(_pick)
+        if picked is None:
+            task_monitor.skip(task, "No active users — skipping upgrade pass")
+            return
+        user_id, target_keys = picked
 
         if not target_keys:
             task_monitor.done(task, "No provisional rows — nothing to upgrade")
@@ -1005,7 +1058,7 @@ async def job_source_upgrade():
         # moment can't race past us. The main run holds the same lock
         # for the duration of its pipeline.
         from src.services.app_state import acquire_state_lock, release_state_lock
-        if not acquire_state_lock("enrichment_running"):
+        if not await run_write(acquire_state_lock, "enrichment_running"):
             task_monitor.skip(task,
                 "Main enrichment already running — deferring upgrade pass")
             return
@@ -1033,7 +1086,7 @@ async def job_source_upgrade():
                         len(target_keys))
         finally:
             if not handed_off:
-                release_state_lock("enrichment_running")
+                await run_write(release_state_lock, "enrichment_running")
 
     except Exception as e:
         task_monitor.error(task, str(e))
@@ -1043,7 +1096,8 @@ async def job_source_upgrade():
 
 async def _recompute_and_cache_recs(user_id: int = None):
     """Recompute taste vectors then pre-cache recommendations."""
-    if _gaming():
+    from src.database.runner import run_read
+    if await run_read(_gaming):
         logger.info("[scheduler] Game running — skipping recompute + cache (VRAM)")
         return
     try:
@@ -1051,11 +1105,14 @@ async def _recompute_and_cache_recs(user_id: int = None):
         from src.database.models import User
 
         if not user_id:
-            with get_db_session() as db:
-                admin = db.query(User).filter_by(is_admin=True).first()
-                if not admin:
-                    return
-                user_id = admin.id
+            def _admin_id():
+                with get_db_session() as db:
+                    admin = db.query(User).filter_by(is_admin=True).first()
+                    return admin.id if admin else None
+
+            user_id = await run_read(_admin_id)
+            if user_id is None:
+                return
 
         # Step 1: Recompute taste vectors
         logger.info("[scheduler] Recomputing taste vectors for user %d", user_id)
@@ -1071,7 +1128,7 @@ async def _recompute_and_cache_recs(user_id: int = None):
             from src.services.verification_session import start_verification_session
             await start_verification_session(user_id)
         except Exception as e:
-            logger.debug("[scheduler] Verification session skipped: %s", e)
+            logger.warning("[scheduler] Verification session skipped: %s", e)
 
     except Exception as e:
         logger.error("[scheduler] Recompute+cache failed: %s", e)
@@ -1101,29 +1158,36 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
         from src.database.connection import get_db_session
         from src.database.models import WatchHistoryEntry
         from src.services.music_metadata import enrich_track
+        from src.services.enrichment_state import log_topup_failure
+
+        from src.database.runner import run_read
 
         cutoff = datetime.utcnow() - timedelta(days=days)
-        with get_db_session() as db:
-            rows = (
-                db.query(
-                    WatchHistoryEntry.title,
-                    WatchHistoryEntry.series_title,
-                    _func.count(WatchHistoryEntry.id).label("plays"),
+
+        def _top_tracks():
+            with get_db_session() as db:
+                rows = (
+                    db.query(
+                        WatchHistoryEntry.title,
+                        WatchHistoryEntry.series_title,
+                        _func.count(WatchHistoryEntry.id).label("plays"),
+                    )
+                    .filter(
+                        WatchHistoryEntry.user_id == user_id,
+                        WatchHistoryEntry.media_type == "music",
+                        WatchHistoryEntry.title.isnot(None),
+                        WatchHistoryEntry.viewed_at >= cutoff,
+                    )
+                    .group_by(WatchHistoryEntry.title, WatchHistoryEntry.series_title)
+                    .order_by(_func.count(WatchHistoryEntry.id).desc())
+                    .limit(limit)
+                    .all()
                 )
-                .filter(
-                    WatchHistoryEntry.user_id == user_id,
-                    WatchHistoryEntry.media_type == "music",
-                    WatchHistoryEntry.title.isnot(None),
-                    WatchHistoryEntry.viewed_at >= cutoff,
-                )
-                .group_by(WatchHistoryEntry.title, WatchHistoryEntry.series_title)
-                .order_by(_func.count(WatchHistoryEntry.id).desc())
-                .limit(limit)
-                .all()
-            )
-            # Extract to plain tuples INSIDE the session block — rows detach
-            # once it closes (cf. pass 67 DetachedInstanceError).
-            tracks = [(r.title, r.series_title or "") for r in rows]
+                # Extract to plain tuples INSIDE the session block — rows detach
+                # once it closes (cf. pass 67 DetachedInstanceError).
+                return [(r.title, r.series_title or "") for r in rows]
+
+        tracks = await run_read(_top_tracks)
 
         if not tracks:
             logger.info("[scheduler] track-metadata warm: no recent music plays")
@@ -1135,7 +1199,7 @@ async def _warm_top_track_metadata(user_id: int, limit: int = 100, days: int = 3
                 await enrich_track(track, artist)
                 warmed += 1
             except Exception as e:
-                logger.debug("[scheduler] warm track %r failed: %s", track, e)
+                log_topup_failure(logger, "[scheduler] warm track", track, e)
         logger.info("[scheduler] track-metadata warm: %d/%d tracks cached (last %dd, top %d)",
                     warmed, len(tracks), days, limit)
         return warmed
@@ -1155,7 +1219,7 @@ _VACUUM_BUSY_FLAGS = ("enrichment_running", "music_pipeline_running",
 def _free_page_ratio(path: str) -> float:
     """freelist_count / page_count of one SQLite file (read-only)."""
     import sqlite3
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    conn = sqlite_connect(f"file:{path}?mode=ro", uri=True, timeout=10)
     try:
         pages = conn.execute("PRAGMA page_count").fetchone()[0] or 0
         free = conn.execute("PRAGMA freelist_count").fetchone()[0] or 0
@@ -1168,12 +1232,12 @@ def _vacuum_sqlite_file(path: str) -> None:
     """Blocking VACUUM of one SQLite file — run it off the event loop.
 
     A dedicated connection, because VACUUM must NOT be in a transaction
-    (isolation_level=None → autocommit mode). The 60 s timeout matches the
-    app's busy_timeout: with the loop no longer frozen, a request may hold
-    the write lock at the moment VACUUM starts, and the default 5 s would
-    give up on the weekly pass."""
+    (isolation_level=None → autocommit mode). The 60 s wait (longer than
+    the app's 15 s busy timeout, on purpose): a request may hold the write
+    lock at the moment VACUUM starts, and the default 5 s would give up on
+    the weekly pass."""
     import sqlite3
-    conn = sqlite3.connect(path, isolation_level=None, timeout=60)
+    conn = sqlite_connect(path, isolation_level=None, timeout=60)
     try:
         # incremental_vacuum reclaims pages from the freelist when
         # auto_vacuum is enabled. Harmless when not.
@@ -1237,8 +1301,13 @@ async def job_db_vacuum():
     # A VACUUM holds the write lock for the whole rewrite: every writer that
     # comes along waits up to the busy timeout and then fails. Not while a
     # long job is writing - the task stays due and the next tick tries again.
+    from src.database.runner import run_read
     from src.services.app_state import get_state
-    busy = [k for k in _VACUUM_BUSY_FLAGS if get_state(k) == "1"]
+
+    def _busy_flags():
+        return [k for k in _VACUUM_BUSY_FLAGS if get_state(k) == "1"]
+
+    busy = await run_read(_busy_flags)
     if busy:
         task_monitor.skip(task, "Postponed - running: " + ", ".join(busy))
         logger.info("[scheduler] vacuum postponed: %s running", ", ".join(busy))
@@ -1279,8 +1348,8 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
     ``backup()`` in one step copies every page before returning."""
     import sqlite3
     # Online backup: page-by-page snapshot of the live DB (handles WAL).
-    src = sqlite3.connect(db_path, timeout=60)
-    dst = sqlite3.connect(dest)
+    src = sqlite_connect(db_path, timeout=60)
+    dst = sqlite_connect(dest)
     try:
         with dst:
             src.backup(dst)
@@ -1289,7 +1358,7 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
         src.close()
 
     # A backup that fails integrity_check is worse than none — verify it.
-    chk = sqlite3.connect(dest)
+    chk = sqlite_connect(dest)
     try:
         return (chk.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
     finally:
@@ -1437,6 +1506,36 @@ def _attach_rec_ids(recs: list, arr_lib: list, category: str) -> None:
         logger.warning("[scheduler] plex-key resolution failed: %s", e)
 
 
+def _write_rec_lane(user_id: int, cat: str, lane: str, recs: list) -> None:
+    """Replace one cached lane: a short, await-free transaction."""
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation
+    with get_db_session() as db:
+        db.query(CachedRecommendation).filter(
+            CachedRecommendation.user_id == user_id,
+            CachedRecommendation.category == cat,
+            CachedRecommendation.lane == lane,
+        ).delete()
+        for rec in recs:
+            db.add(CachedRecommendation(
+                user_id=user_id,
+                category=cat,
+                lane=lane,
+                title=rec.get("title", ""),
+                reason=rec.get("reason") or rec.get("pitch", ""),
+                confidence=rec.get("confidence", 0.7),
+                genres=rec.get("genres", ""),
+                poster_url=rec.get("poster_url"),
+                synopsis=rec.get("synopsis"),
+                tmdb_id=rec.get("tmdb_id"),
+                tvdb_id=rec.get("tvdb_id"),
+                year=rec.get("year"),
+                plex_rating_key=rec.get("plex_rating_key_real"),
+                cached_at=datetime.utcnow(),
+            ))
+        db.commit()
+
+
 async def _cache_recommendations(user_id: int):
     """Pre-generate and store BOTH recommendation lanes for every category:
     'library' (owned but unwatched — watch from your shelf) and 'discovery'
@@ -1452,6 +1551,7 @@ async def _cache_recommendations(user_id: int):
         from src.database.models import CachedRecommendation, User
         from src.services.app_state import set_state
         from src.services.task_monitor import task_monitor
+        from src.database.runner import run_read, run_write
 
         categories = ["movie", "show", "anime", "music"]
         total = 0
@@ -1460,9 +1560,12 @@ async def _cache_recommendations(user_id: int):
         # categories, LLM + TMDB each) that used to run with NO trace in the
         # UI, most visibly right after app start when the cache is empty.
         # task_id per user: a rerun replaces the old card instead of stacking.
-        with get_db_session() as db:
-            _u = db.query(User).filter(User.id == user_id).first()
-            uname = _u.plex_username if _u else f"user {user_id}"
+        def _uname():
+            with get_db_session() as db:
+                _u = db.query(User).filter(User.id == user_id).first()
+                return _u.plex_username if _u else f"user {user_id}"
+
+        uname = await run_read(_uname)
         task = task_monitor.create(
             name=f"Recommendations refresh: {uname}", category="recs",
             total=len(categories) * 2, task_id=f"recs-cache-{user_id}")
@@ -1515,33 +1618,10 @@ async def _cache_recommendations(user_id: int):
                     # the watched-a-rec follow-up both key on them. Discovery
                     # recs own nothing → columns stay NULL.
                     if arr_lib:
-                        _attach_rec_ids(recs, arr_lib, cat)
+                        await run_read(_attach_rec_ids, recs, arr_lib, cat)
 
                     # Lane-scoped write — short, await-free transaction.
-                    with get_db_session() as db:
-                        db.query(CachedRecommendation).filter(
-                            CachedRecommendation.user_id == user_id,
-                            CachedRecommendation.category == cat,
-                            CachedRecommendation.lane == lane,
-                        ).delete()
-                        for rec in recs:
-                            db.add(CachedRecommendation(
-                                user_id=user_id,
-                                category=cat,
-                                lane=lane,
-                                title=rec.get("title", ""),
-                                reason=rec.get("reason") or rec.get("pitch", ""),
-                                confidence=rec.get("confidence", 0.7),
-                                genres=rec.get("genres", ""),
-                                poster_url=rec.get("poster_url"),
-                                synopsis=rec.get("synopsis"),
-                                tmdb_id=rec.get("tmdb_id"),
-                                tvdb_id=rec.get("tvdb_id"),
-                                year=rec.get("year"),
-                                plex_rating_key=rec.get("plex_rating_key_real"),
-                                cached_at=datetime.utcnow(),
-                            ))
-                        db.commit()
+                    await run_write(_write_rec_lane, user_id, cat, lane, recs)
                     total += len(recs)
                     logger.info("[scheduler] Cached %d recs for %s/%s", len(recs), cat, lane)
                     task_monitor.update(task, message=f"{cat}/{lane}: {len(recs)} recs cached")
@@ -1550,7 +1630,7 @@ async def _cache_recommendations(user_id: int):
                     logger.warning("[scheduler] Rec cache failed for %s/%s: %s", cat, lane, e)
                     task_monitor.update(task, message=f"{cat}/{lane} failed: {e}", level="warn")
 
-        set_state("recs_cached_at", datetime.utcnow().isoformat())
+        await run_write(set_state, "recs_cached_at", datetime.utcnow().isoformat())
         logger.info("[scheduler] Recommendations cached: %d total", total)
         task_monitor.done(task, f"{total} recommendations cached")
 

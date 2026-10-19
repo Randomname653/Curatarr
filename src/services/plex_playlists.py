@@ -37,6 +37,8 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.database.runner import run_read, run_write
+from src.services.enrichment_state import log_topup_failure
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +74,7 @@ async def get_machine_identifier(force: bool = False) -> Optional[str]:
     create should re-fetch once with force=True and retry."""
     from src.services.app_state import get_state, set_state
     if not force:
-        cached = get_state("plex_machine_identifier")
+        cached = await run_read(get_state, "plex_machine_identifier")
         if cached:
             return cached
     token = _owner_token()
@@ -83,7 +85,7 @@ async def get_machine_identifier(force: bool = False) -> Optional[str]:
             r = await c.get(f"{_base()}/identity", headers=_headers(token))
         mid = (r.json().get("MediaContainer") or {}).get("machineIdentifier")
         if mid:
-            set_state("plex_machine_identifier", mid)
+            await run_write(set_state, "plex_machine_identifier", mid)
         return mid
     except Exception as e:
         logger.warning("[playlists] /identity failed: %s", e)
@@ -235,6 +237,16 @@ async def _search_sections(token: str, sections: list, params: dict, what: str) 
 _VIDEO_TYPE = {"movie": "1", "show": "2", "anime": "2"}
 
 
+def _section_keys(category: str) -> list[str]:
+    """The Plex section keys configured for one media category."""
+    from src.database.connection import get_db_session
+    from src.database.models import LibraryConfig
+    with get_db_session() as db:
+        return [r[0] for r in
+                db.query(LibraryConfig.plex_section_key)
+                .filter(LibraryConfig.media_category == category).all()]
+
+
 async def resolve_video_key(title: str, category: str, sections: Optional[list[str]] = None) -> Optional[str]:
     """Title → ratingKey via the category's sections (owner token — the
     video mirror of resolve_artist_key). The self-heal for keys Plex
@@ -244,12 +256,7 @@ async def resolve_video_key(title: str, category: str, sections: Optional[list[s
         return None
 
     if sections is None:
-        from src.database.connection import get_db_session
-        from src.database.models import LibraryConfig
-        with get_db_session() as db:
-            sections = [r[0] for r in
-                        db.query(LibraryConfig.plex_section_key)
-                        .filter(LibraryConfig.media_category == category).all()]
+        sections = await run_read(_section_keys, category)
 
     t = _VIDEO_TYPE.get(category, "1")
     return await _search_sections(token, sections, {"type": t, "title": title},
@@ -271,7 +278,7 @@ def _heal_rec_key(user_id: int, category: str, title: str, new_key: str) -> None
             ).update({"plex_rating_key": new_key}, synchronize_session=False)
             db.commit()
     except Exception as e:
-        logger.debug("[playlists] key heal failed for %r: %s", title, e)
+        logger.warning("[playlists] key heal failed for %r: %s", title, e)
 
 
 async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[str]:
@@ -292,7 +299,7 @@ async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[s
                 if leaves:
                     return str(leaves[0].get("ratingKey"))
             except Exception as e:
-                logger.debug("[playlists] allLeaves(%s) failed: %s", series_key, e)
+                log_topup_failure(logger, "[playlists] allLeaves", series_key, e)
     return None
 
 
@@ -313,30 +320,34 @@ def _save_snapshot(user_id: int, snap: dict) -> None:
     set_state(_push_snapshot_key(user_id), json.dumps(snap))
 
 
+def _library_recs(user_id: int, category: str, limit: int) -> list[dict]:
+    """The user's top library-lane recs for one category, as plain dicts."""
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation
+    with get_db_session() as db:
+        rows = (db.query(CachedRecommendation)
+                .filter(CachedRecommendation.user_id == user_id,
+                        CachedRecommendation.category == category,
+                        CachedRecommendation.lane == "library")
+                .order_by(CachedRecommendation.confidence.desc())
+                .limit(limit).all())
+        return [{"title": r.title, "key": r.plex_rating_key,
+                 "cached_at": r.cached_at} for r in rows]
+
+
 async def push_user_playlists(user) -> dict:
     """Refresh one user's Curatarr-Recommended playlists from their cached
     LIBRARY-lane recommendations. Returns {"pushed": [cat…], "skipped": str?}.
     Raises on transient Plex errors so the custodian task stays due."""
-    from src.database.connection import get_db_session
-    from src.database.models import CachedRecommendation
-
     if not user.plex_token:
         logger.info("[playlists] %s: no stored Plex token — playlist appears "
                     "after their next login; skipped.", user.plex_username)
         return {"pushed": [], "skipped": "no_token"}
 
-    snap = _load_snapshot(user.id)
+    snap = await run_read(_load_snapshot, user.id)
     pushed = []
     for category, title in PLAYLIST_TITLES.items():
-        with get_db_session() as db:
-            rows = (db.query(CachedRecommendation)
-                    .filter(CachedRecommendation.user_id == user.id,
-                            CachedRecommendation.category == category,
-                            CachedRecommendation.lane == "library")
-                    .order_by(CachedRecommendation.confidence.desc())
-                    .limit(10).all())
-            rows = [{"title": r.title, "key": r.plex_rating_key,
-                     "cached_at": r.cached_at} for r in rows]
+        rows = await run_read(_library_recs, user.id, category, 10)
         if not rows:
             continue
 
@@ -353,14 +364,10 @@ async def push_user_playlists(user) -> dict:
                 recent = (datetime.utcnow() - pushed_dt).total_seconds() < _REPUSH_HOURS * 3600
                 if fresh and recent:
                     continue
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
-        from src.database.models import LibraryConfig
-        with get_db_session() as db:
-            video_sections = [r[0] for r in
-                              db.query(LibraryConfig.plex_section_key)
-                              .filter(LibraryConfig.media_category == category).all()]
+        video_sections = await run_read(_section_keys, category)
 
         keys: list[str] = []
         titles: list[str] = []
@@ -378,7 +385,7 @@ async def push_user_playlists(user) -> dict:
                 if healed:
                     logger.info("[playlists] %r: stale key %s → %s (healed)",
                                 r["title"], key, healed)
-                    _heal_rec_key(user.id, category, r["title"], healed)
+                    await run_write(_heal_rec_key, user.id, category, r["title"], healed)
                     key = healed
                 else:
                     logger.info("[playlists] %r: key %s stale, no re-resolve "
@@ -418,7 +425,7 @@ async def push_user_playlists(user) -> dict:
                 try:
                     meta["leafCount"] = len(
                         await playlist_items(user.plex_token, keep_key))
-                except Exception:
+                except Exception:  # noqa: BLE001 - count only; falls back to the pushed key count
                     pass
             else:
                 logger.warning("[playlists] reconcile failed for '%s' — "
@@ -440,7 +447,7 @@ async def push_user_playlists(user) -> dict:
         logger.info("[playlists] %s: pushed '%s' (%d items)",
                     user.plex_username, title, len(keys))
 
-    _save_snapshot(user.id, snap)
+    await run_write(_save_snapshot, user.id, snap)
     return {"pushed": pushed}
 
 
@@ -460,12 +467,7 @@ async def resolve_artist_key(name: str, sections: Optional[list[str]] = None) ->
         return None
 
     if sections is None:
-        from src.database.connection import get_db_session
-        from src.database.models import LibraryConfig
-        with get_db_session() as db:
-            sections = [r[0] for r in
-                        db.query(LibraryConfig.plex_section_key)
-                        .filter(LibraryConfig.media_category == "music").all()]
+        sections = await run_read(_section_keys, "music")
 
     return await _search_sections(token, sections, {"type": "8", "title": name},
                                   f"artist {name!r}")
@@ -483,7 +485,7 @@ async def pick_album_key(user_token: str, artist_key: str,
                             headers=_headers(user_token))
             albums = (r.json().get("MediaContainer") or {}).get("Metadata") or []
         except Exception as e:
-            logger.debug("[playlists] albums of %s failed: %s", artist_key, e)
+            log_topup_failure(logger, "[playlists] albums", artist_key, e)
             return None
         if not albums:
             return None
@@ -508,26 +510,17 @@ async def push_user_music_playlist(user) -> dict:
     so a set-delta reconcile would compare tracks against albums and
     remove/re-add everything anyway — identity preservation buys nothing
     here."""
-    from src.database.connection import get_db_session
-    from src.database.models import CachedRecommendation
-
     if not user.plex_token:
         logger.info("[playlists] %s: no stored Plex token — music playlist "
                     "appears after their next login; skipped.", user.plex_username)
         return {"pushed": [], "skipped": "no_token"}
 
-    with get_db_session() as db:
-        rows = (db.query(CachedRecommendation)
-                .filter(CachedRecommendation.user_id == user.id,
-                        CachedRecommendation.category == "music",
-                        CachedRecommendation.lane == "library")
-                .order_by(CachedRecommendation.confidence.desc())
-                .limit(_MAX_MUSIC_ARTISTS).all())
-        artists = [{"title": r.title, "cached_at": r.cached_at} for r in rows]
+    artists = [{"title": r["title"], "cached_at": r["cached_at"]} for r in
+               await run_read(_library_recs, user.id, "music", _MAX_MUSIC_ARTISTS)]
     if not artists:
         return {"pushed": []}
 
-    snap = _load_snapshot(user.id)
+    snap = await run_read(_load_snapshot, user.id)
     prev = snap.get("music") or {}
     newest = max((a["cached_at"] for a in artists if a["cached_at"]), default=None)
     if prev.get("pushed_at"):
@@ -537,14 +530,10 @@ async def push_user_music_playlist(user) -> dict:
             recent = (datetime.utcnow() - pushed_dt).total_seconds() < _REPUSH_HOURS * 3600
             if fresh and recent:
                 return {"pushed": []}
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
-    from src.database.models import LibraryConfig
-    with get_db_session() as db:
-        music_sections = [r[0] for r in
-                          db.query(LibraryConfig.plex_section_key)
-                          .filter(LibraryConfig.media_category == "music").all()]
+    music_sections = await run_read(_section_keys, "music")
 
     keys, titles = [], []
     for a in artists:
@@ -573,7 +562,7 @@ async def push_user_music_playlist(user) -> dict:
     snap["music"] = {"pushed_at": datetime.utcnow().isoformat(),
                      "playlist_key": (meta or {}).get("ratingKey"),
                      "titles": titles}
-    _save_snapshot(user.id, snap)
+    await run_write(_save_snapshot, user.id, snap)
     logger.info("[playlists] %s: pushed '%s' (%d albums, %s tracks)",
                 user.plex_username, MUSIC_PLAYLIST_TITLE, len(keys),
                 (meta or {}).get("leafCount"))

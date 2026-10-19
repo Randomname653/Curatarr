@@ -22,6 +22,7 @@ Candidate order per tick (budgeted):
 Cursor in app_state; the custodian re-runs it daily.
 """
 
+import asyncio
 import json
 import re
 import logging
@@ -43,7 +44,7 @@ def _prog(task, message=None, processed=None, total=None):
         if total is not None:
             kw["total"] = total
         task_monitor.update(task, message=message, **kw)
-    except Exception:
+    except Exception:  # noqa: BLE001 - progress card only; the refresh is unaffected
         pass
 
 
@@ -130,15 +131,20 @@ async def _refresh_one(raw: dict, arr: dict = None) -> bool:
         return False   # no data (the not-found dict carries evidence, not a blob)
     if fresh.get("_already_enriched"):
         return False   # profile fresh — raw refresh unnecessary
-    mc = MetadataCache()
-    try:
-        key = fresh.get("_cache_key") or f"raw:{media_type}:{title[:40]}"
-        mc.set_cache(key, fresh, days=30)
-        prk = fresh.get("_plex_rating_key") or raw.get("_plex_rating_key")
-        if prk:
-            mc.set_cache(f"raw_prefetch:{prk}", fresh, days=30)
-    finally:
-        mc.close()
+
+    # The cache is its own SQLite file: written from a worker thread.
+    def _store():
+        mc = MetadataCache()
+        try:
+            key = fresh.get("_cache_key") or f"raw:{media_type}:{title[:40]}"
+            mc.set_cache(key, fresh, days=30)
+            prk = fresh.get("_plex_rating_key") or raw.get("_plex_rating_key")
+            if prk:
+                mc.set_cache(f"raw_prefetch:{prk}", fresh, days=30)
+        finally:
+            mc.close()
+
+    await asyncio.to_thread(_store)
     return True
 
 
@@ -147,6 +153,7 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
     (task stamps its cadence), False to continue next tick. ``deep`` triples
     the per-tick budget for owner-triggered catch-up sprints."""
     from src.cache.metadata_cache import MetadataCache
+    from src.database.runner import run_read, run_write
     from src.services.app_state import get_state, set_state
     from src.services.enrichment_state import log_topup_failure
 
@@ -157,32 +164,42 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
     try:
         from src.database.connection import get_db_session
         from src.database.models import CachedRecommendation
-        mc = MetadataCache()
-        try:
+
+        def _discovery_recs():
             with get_db_session() as db:
-                recs = (db.query(CachedRecommendation.title,
-                                 CachedRecommendation.category,
-                                 CachedRecommendation.tmdb_id)
-                        .filter(CachedRecommendation.tmdb_id.isnot(None))
-                        .limit(200).all())
-            for title, cat, tmdb_id in recs:
-                if done >= budget // 3:
-                    break   # discovery gets at most a third of the budget
-                if mc.get_cache(f"raw:{cat}:{tmdb_id}"):
-                    continue
-                _prog(task, message=f"Discovery raw: {title}", processed=done,
-                      total=budget)
-                # Per row: the whole pass used to sit in the one except below
-                # (DEBUG), so the first non-TMDB error ended it — and as the
-                # same 200 rows come first every day, it ended there daily.
-                try:
-                    if await _refresh_one({"title": title, "media_type": cat,
-                                           "tmdb_id": tmdb_id}):
-                        done += 1
-                except Exception as e:
-                    log_topup_failure(logger, "[raw-refresh] discovery", title, e)
-        finally:
-            mc.close()
+                return [tuple(r) for r in
+                        (db.query(CachedRecommendation.title,
+                                  CachedRecommendation.category,
+                                  CachedRecommendation.tmdb_id)
+                         .filter(CachedRecommendation.tmdb_id.isnot(None))
+                         .limit(200).all())]
+
+        def _has_raw(key):
+            mc = MetadataCache()
+            try:
+                return bool(mc.get_cache(key))
+            finally:
+                mc.close()
+
+        recs = await run_read(_discovery_recs)
+        for title, cat, tmdb_id in recs:
+            if done >= budget // 3:
+                break   # discovery gets at most a third of the budget
+            # Per rec, after the refresh before it: two recs of one title
+            # share a key, and the second must find the first one's row.
+            if await asyncio.to_thread(_has_raw, f"raw:{cat}:{tmdb_id}"):
+                continue
+            _prog(task, message=f"Discovery raw: {title}", processed=done,
+                  total=budget)
+            # Per row: the whole pass used to sit in the one except below
+            # (DEBUG), so the first non-TMDB error ended it — and as the
+            # same 200 rows come first every day, it ended there daily.
+            try:
+                if await _refresh_one({"title": title, "media_type": cat,
+                                       "tmdb_id": tmdb_id}):
+                    done += 1
+            except Exception as e:
+                log_topup_failure(logger, "[raw-refresh] discovery", title, e)
     except Exception as e:
         logger.warning("[raw-refresh] discovery pass failed: %r", e)
 
@@ -203,19 +220,23 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
                        "refreshing from stored ids only", e)
 
     try:
-        cursor = int(get_state(_CURSOR_KEY) or 0)
+        cursor = int(await run_read(get_state, _CURSOR_KEY) or 0)
     except Exception:
         cursor = 0
-    mc = MetadataCache()
-    try:
-        rows = mc.conn.execute(
-            "SELECT rowid, cache_key, response FROM api_cache "
-            "WHERE (cache_key LIKE '%raw_prefetch:%') "
-            "AND expires_at <= datetime('now') AND rowid > ? "
-            "ORDER BY rowid LIMIT ?", (cursor, max(budget - done, 0) * 3),
-        ).fetchall()
-    finally:
-        mc.close()
+
+    def _expired_rows(after: int, limit: int):
+        mc = MetadataCache()
+        try:
+            return mc.conn.execute(
+                "SELECT rowid, cache_key, response FROM api_cache "
+                "WHERE (cache_key LIKE '%raw_prefetch:%') "
+                "AND expires_at <= datetime('now') AND rowid > ? "
+                "ORDER BY rowid LIMIT ?", (after, limit),
+            ).fetchall()
+        finally:
+            mc.close()
+
+    rows = await asyncio.to_thread(_expired_rows, cursor, max(budget - done, 0) * 3)
     drained = True
     for rowid, key, resp in rows:
         if done >= budget:
@@ -234,10 +255,11 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
         if await _refresh_one(raw, truth.get(_prk)):
             done += 1
     try:
-        set_state(_CURSOR_KEY, "0" if drained and len(rows) < budget * 3
-                  else str(cursor))
-    except Exception:
-        pass
+        await run_write(set_state, _CURSOR_KEY, "0" if drained and len(rows) < budget * 3
+                        else str(cursor))
+    except Exception as e:
+        logger.warning("[raw-refresh] cursor not saved, next tick repeats "
+                       "this stretch: %s", e)
     _prog(task, message=f"{done} raw entries refreshed", processed=done,
           total=max(budget, 1))
     logger.info("[raw-refresh] %d entries refreshed (cursor %s)", done, cursor)

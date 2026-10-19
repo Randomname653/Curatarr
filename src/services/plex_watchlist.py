@@ -52,8 +52,8 @@ def _plex_error(resp) -> str:
     try:
         err = (resp.json() or {}).get("Error") or {}
         msg = str(err.get("message") or "")[:120]
-    except Exception:  # noqa: BLE001
-        pass
+    except (ValueError, TypeError, AttributeError):
+        pass                       # not a JSON error body: the status says enough
     return f"plex.tv returned {resp.status_code}" + (f": {msg}" if msg else "")
 
 # Curatarr category → Discover metadata type. Anime series live as "show".
@@ -113,9 +113,14 @@ async def add_to_watchlist(user_id: int, title: str,
     try:
         from src.database.connection import get_db_session
         from src.database.models import User
-        with get_db_session() as db:
-            user = db.query(User).filter(User.id == user_id).first()
-            token = (user.plex_token or "").strip() if user else ""
+        from src.database.runner import run_read
+
+        def _token() -> str:
+            with get_db_session() as db:
+                user = db.query(User).filter(User.id == user_id).first()
+                return (user.plex_token or "").strip() if user else ""
+
+        token = await run_read(_token)
         if not token:
             return {"ok": False, "error": "user has no plex.tv token on file"}
 

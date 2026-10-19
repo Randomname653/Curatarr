@@ -23,14 +23,21 @@ import numpy as np
 from src.config import settings
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE, seasonal_context
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.services.episodic_memory import retrieve_memories, format_memories_for_context
 from src.database.models import (
     TasteVectorEntry, User,
     EncryptedTasteVector, ProtectedMedia, EpisodicMemory
 )
-from src.vector_store.chromadb_wrapper import chroma_db
 
 logger = logging.getLogger(__name__)
+
+
+def _chroma_get_by_ids(ids: list) -> dict:
+    """Embeddings by id, for run_chroma. The wrapper is looked up here, on
+    the Chroma thread: importing this module no longer builds the client."""
+    from src.vector_store.chromadb_wrapper import get_chroma_db
+    return get_chroma_db().get_by_ids(ids)
 
 
 # Pass 42 (A4): single source of truth for the LLM-forbidden phrases.
@@ -326,8 +333,9 @@ def _score_factors(cand: dict) -> dict | None:
                     **terms, keep_value_pts=cand.get("keep_value_pts") or 0.0,
                     considerations=cand.get("considerations"))}
     except Exception as e:
-        logger.debug("[deletions] score factors failed for %r: %s",
-                     (cand.get("item") or {}).get("title"), e)
+        # The terms are our own numbers: a failure here is a bug, not data.
+        logger.warning("[deletions] score factors failed for %r: %s",
+                       (cand.get("item") or {}).get("title"), e, exc_info=True)
         return None
 
 
@@ -420,8 +428,17 @@ def _judge_lane() -> tuple:
         why = gpu_reason()
         return False, DESCRIPTIONS[LLMFailure.LANE_CLOSED] + (f" ({why})" if why else "")
     except Exception as e:
-        logger.debug("[deletions] lane check failed: %s", e)
+        # Runs before every verdict: say it once, not once per title.
+        if not _LANE_CHECK_WARNED:
+            _LANE_CHECK_WARNED.append(True)
+            logger.warning("[deletions] lane check failed - judging as if the "
+                           "GPU were free: %r", e, exc_info=True)
+        else:
+            logger.debug("[deletions] lane check failed: %s", e)
         return True, ""
+
+
+_LANE_CHECK_WARNED: list = []
 
 
 # Two outages in a row end the run: Ollama down, or a model that cannot load,
@@ -478,12 +495,15 @@ def _rating_from_cached(cached: dict | None) -> tuple:
     return None, None, genres_raw
 
 
-def _get_cached_rating(item: dict, category: str) -> tuple:
+def _get_cached_rating(item: dict, category: str, strict: bool = False) -> tuple:
     """
     Look up TMDB/AniList rating from the enrichment SQLite cache.
 
     Returns (rating_context_str, rating_float | None, cached_genres_list)
     rating_context_str is injected into the deletion prompt.
+
+    ``strict`` re-raises a failed cache read instead of answering "nothing
+    cached": the judge's form guards must tell the two apart.
 
     One title. A loop over candidates uses ``_bulk_cached_ratings`` — one
     query for the whole batch.
@@ -491,9 +511,18 @@ def _get_cached_rating(item: dict, category: str) -> tuple:
     try:
         from src.cache.metadata_cache import MetadataCache
         with MetadataCache() as cache:
-            return _rating_from_cached(cache.get_cache(_rating_cache_key(item, category)))
+            cached = cache.get_cache(_rating_cache_key(item, category))
     except Exception as exc:
-        logger.debug("Enrichment cache lookup failed for '%s': %s", item.get("title", ""), exc)
+        if strict:
+            raise
+        logger.warning("Enrichment cache lookup failed for '%s': %s", item.get("title", ""), exc)
+        return None, None, []
+    try:
+        return _rating_from_cached(cached)
+    except (TypeError, ValueError, AttributeError) as exc:
+        # An odd-shaped record is read as "nothing cached", as before; it
+        # is not an outage, so strict callers are not stopped by it.
+        logger.warning("Cached rating unreadable for '%s': %s", item.get("title", ""), exc)
     return None, None, []
 
 
@@ -661,11 +690,11 @@ async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
     from src.services.app_state import get_state, set_state
     key = f"soulsync_neighbors:{user_id}"
     try:
-        cached = json.loads(get_state(key) or "{}")
+        cached = json.loads(await run_read(get_state, key) or "{}")
         if _trending_fresh(cached, ttl_h=168):
             return cached.get("names") or []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[music-neighbors] cache unreadable - refetching: %s", e)
     names: list = []
     try:
         from src.services import soulsync_client
@@ -693,10 +722,11 @@ async def _get_music_neighbors(user_id: int, top_titles: list) -> list:
             logger.debug("[music-neighbors] %d/%d lookups failed — using "
                          "partial result without caching", failed, len(infos))
         elif names:
-            set_state(key, json.dumps(
+            await run_write(set_state, key, json.dumps(
                 {"fetched_at": datetime.utcnow().isoformat(), "names": names}))
     except Exception as e:
-        logger.debug("[music-neighbors] failed: %s", e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[music-neighbors]", user_id, e)
     return names
 
 
@@ -720,11 +750,11 @@ async def _get_trending(cat: str) -> list:
     from src.services.app_state import get_state, set_state
     key = f"tmdb_trending:{cat}"
     try:
-        cached = json.loads(get_state(key) or "{}")
+        cached = json.loads(await run_read(get_state, key) or "{}")
         if _trending_fresh(cached):
             return cached.get("titles") or []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[trending] cache unreadable for %s - refetching: %s", cat, e)
     api_key = settings.TMDB_API_KEY
     if not api_key:
         return []
@@ -755,10 +785,11 @@ async def _get_trending(cat: str) -> list:
                         titles.append(t)
         titles = titles[:10]
         if titles:
-            set_state(key, json.dumps(
+            await run_write(set_state, key, json.dumps(
                 {"fetched_at": datetime.utcnow().isoformat(), "titles": titles}))
     except Exception as e:
-        logger.debug("[trending] fetch failed for %s: %s", cat, e)
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[trending]", cat, e)
     return titles
 
 
@@ -802,8 +833,12 @@ async def generate_recommendations(
     # they chat in. One cheap SELECT; the directive is injected into every
     # prompt below.
     from src.services.llm_utils import detect_user_language, language_directive
-    with get_db_session() as _ld_db:
-        _lang_code = detect_user_language(user_id, _ld_db)
+
+    def _user_lang():
+        with get_db_session() as _ld_db:
+            return detect_user_language(user_id, _ld_db)
+
+    _lang_code = await run_read(_user_lang)
     lang_directive_str = language_directive(_lang_code)
 
     # LANE: "library" when the caller hands us an owned pool to pick from,
@@ -817,15 +852,19 @@ async def generate_recommendations(
 
     # Taste context. No cache read here — this function always generates fresh;
     # the scheduler/router persist results to CachedRecommendation.
-    with get_db_session() as db:
-        tv = db.query(TasteVectorEntry).filter(
-            TasteVectorEntry.user_id == user_id
-        ).first()
-        if not tv:
-            return []
+    def _taste():
+        with get_db_session() as db:
+            tv = db.query(TasteVectorEntry).filter(
+                TasteVectorEntry.user_id == user_id
+            ).first()
+            if not tv:
+                return None
+            return json.loads(tv.genre_affinity or "{}"), tv.summary_text or ""
 
-        type_data = json.loads(tv.genre_affinity or "{}")
-        summary_text = tv.summary_text or ""
+    _t = await run_read(_taste)
+    if _t is None:
+        return []
+    type_data, summary_text = _t
 
     # --- Generation ---
     cats = [category] if category else list(type_data.keys())
@@ -853,11 +892,14 @@ async def generate_recommendations(
         # hint from every prompt for months. Only an unreadable blob is
         # expected; anything else is a bug and is logged as one.
         _cl = []
-        try:
+        def _blob():
             with get_db_session() as _cdb:
-                _blob_raw = _cdb.query(EncryptedTasteVector.encrypted_blob).filter(
+                return _cdb.query(EncryptedTasteVector.encrypted_blob).filter(
                     EncryptedTasteVector.user_id == user_id,
                     EncryptedTasteVector.media_category == cat).limit(1).scalar()
+
+        try:
+            _blob_raw = await run_read(_blob)
             _cb = json.loads(_blob_raw) if _blob_raw else {}
             if isinstance(_cb, dict) and _cb.get("version") != 1:
                 _cl = [c for c in (_cb.get("cluster_centroids") or [])
@@ -882,7 +924,7 @@ async def generate_recommendations(
 
         # Both lanes need the user's FULL seen-set for this category (no [:15]
         # cap; matched by stable id + normalised title).
-        seen = seen_index(user_id, cat)
+        seen = await run_read(seen_index, user_id, cat)
 
         if arr_library:
             # LIBRARY LANE: owned items with already-watched dropped robustly.
@@ -1244,7 +1286,7 @@ async def generate_deletion_proposals(
         try:
             from src.services.task_monitor import task_monitor as _tm
             _tm.update(monitor_task, message=text)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the run is unaffected
             pass
 
     import math
@@ -1666,7 +1708,7 @@ async def generate_deletion_proposals(
     # connection, four PRAGMAs and the schema DDL per candidate, on the loop).
     from src.vector_store.chromadb_wrapper import run_chroma
     _prefetched_embeddings, _ratings_by_key = await asyncio.gather(
-        run_chroma(chroma_db.get_by_ids, [
+        run_chroma(_chroma_get_by_ids, [
             str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
             for it in arr_items
         ]),
@@ -2161,6 +2203,7 @@ async def generate_deletion_proposals(
         # arguing about. Reception costs no summarizer time (plain HTTP), so
         # there is no GPU reason to skip it here either.
         try:
+            from src.services.enrichment_state import log_topup_failure
             from src.services.media_enricher import topup_significance
             from src.services.reception import topup_reception
             from src.services.wikidata import topup_wikidata
@@ -2176,14 +2219,17 @@ async def generate_deletion_proposals(
                     if await asyncio.wait_for(topup_significance(
                             _it.get("title"), category, **_ids), timeout=20.0):
                         _warmed += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    # A miss stays unchecked and the judge defers the title.
+                    log_topup_failure(logger, "[deletions] warm-up significance",
+                                      _it.get("title"), _e)
                 try:
                     if await asyncio.wait_for(topup_reception(
                             _it.get("title"), category, **_ids), timeout=20.0):
                         _warmed_rec += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    log_topup_failure(logger, "[deletions] warm-up reception",
+                                      _it.get("title"), _e)
                 # Dialogue metrics: one Plex read per candidate, no LLM, no GPU.
                 # Cheap enough to sit here, and this is the only place that can
                 # fetch them — build_evidence runs inside the gate and may only
@@ -2194,8 +2240,9 @@ async def generate_deletion_proposals(
                             tmdb_id=_it.get("tmdb_id"),
                             tvdb_id=_it.get("tvdb_id")), timeout=25.0):
                         _warmed_sub += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    log_topup_failure(logger, "[deletions] warm-up dialogue",
+                                      _it.get("title"), _e)
                 try:
                     if await asyncio.wait_for(topup_wikidata(
                             _it.get("title"), category,
@@ -2203,8 +2250,9 @@ async def generate_deletion_proposals(
                             plex_rating_key=_it.get("plex_rating_key")),
                             timeout=25.0):
                         _warmed_wd += 1
-                except Exception:
-                    continue
+                except Exception as _e:
+                    log_topup_failure(logger, "[deletions] warm-up wikidata",
+                                      _it.get("title"), _e)
             if _warmed or _warmed_rec or _warmed_wd or _warmed_sub:
                 _msg(f"{category}: warmed {_warmed} significance, "
                      f"{_warmed_rec} reception, {_warmed_wd} on-record facts, "
@@ -2215,7 +2263,10 @@ async def generate_deletion_proposals(
                             category, _warmed, _warmed_rec, _warmed_wd,
                             _warmed_sub)
         except Exception as _e:
-            logger.debug("[deletions] pre-judge warm-up failed: %s", _e)
+            # Judging goes on with what is cached; the evidence gates defer
+            # anything the warm-up was meant to fill.
+            logger.warning("[deletions] pre-judge warm-up failed: %s", _e,
+                           exc_info=True)
         _gate_label = f"deletion scan: {category}"
         await curator_start(_gate_label, exclusive_model=pitch_model)
         # Whether THIS run currently owns a slot. The yield below drops it and
@@ -2429,7 +2480,8 @@ async def generate_deletion_proposals(
                     # scan, never persisted (persisting it would bury their picks).
                     if (verdict.get("protecting_pillar") or "").upper() in (
                             "HOUSEHOLD", "CUSTODIAN", "RESONANCE"):
-                        _persist_judge_protection(user_id, item, category, v, verdict)
+                        await run_write(_persist_judge_protection,
+                                        user_id, item, category, v, verdict)
                 # EVALUATE / bare-Ego keep / None → neither propose nor protect.
         finally:
             # Eager pitcher eviction BEFORE releasing the gate ("gate free ⇒
@@ -2442,7 +2494,7 @@ async def generate_deletion_proposals(
                 if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
                     try:
                         await evict_if_resident(pitch_model)
-                    except Exception as _ee:
+                    except Exception as _ee:  # noqa: BLE001 - teardown; keep_alive frees VRAM anyway
                         logger.debug("[deletions] pitcher evict failed: %s", _ee)
                 curator_done()
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
@@ -2545,7 +2597,8 @@ async def generate_deletion_proposals(
             cached_rating   = cand["cached_rating"]      # None if not enriched
             arr_rating_raw  = cand["arr_rating"]          # weighted-avg across all ARR sources
             rating_breakdown = cand["rating_breakdown"]   # per-source dict for the prompt
-            rating_ctx, _, cached_genres = _get_cached_rating(item, category)
+            rating_ctx, _, cached_genres = await asyncio.to_thread(
+                _get_cached_rating, item, category)
 
             genres_raw = cached_genres or item.get("genres", [])
             genres_str = ", ".join(genres_raw) if isinstance(genres_raw, list) else str(genres_raw)
@@ -2811,7 +2864,7 @@ CRITICAL RULES AND GUARDRAILS:
             try:
                 from src.services.llm_priority import evict_if_resident
                 await evict_if_resident(pitch_model)
-            except Exception as _ee:
+            except Exception as _ee:  # noqa: BLE001 - teardown; keep_alive frees VRAM anyway
                 logger.debug("[deletions] pitcher evict failed: %s", _ee)
         curator_done()
 
@@ -2870,32 +2923,36 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     libraries. ``generate_recommendations`` only feeds the LLM the first ~30
     items, so order matters even when every item survives the top_n cut.
     """
-    with get_db_session() as db:
-        tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
-        type_data = json.loads(tv.genre_affinity or "{}") if (tv and tv.genre_affinity) else {}
-        user_vector = None
-        # Assigned only inside the blob branch below — a category with genre
-        # stats but no blob yet (nothing embedded) raised UnboundLocalError.
-        user_clusters = None
-        disliked_lc: set = set()
-        encrypted = db.query(EncryptedTasteVector).filter(
-            EncryptedTasteVector.user_id == user_id,
-            EncryptedTasteVector.media_category == category,
-        ).first()
-        if encrypted and encrypted.encrypted_blob:
-            try:
-                _blob = json.loads(encrypted.encrypted_blob)
-                if _blob.get("version") == 1:
-                    logger.warning("[recs] %s taste blob is encrypted (v1) — "
-                                   "ranking without the taste vector", category)
-                    _blob = {}
-                user_vector = _blob.get("embedding")
-                user_clusters = _blob.get("cluster_centroids")
-                disliked_lc = {(t or "").lower()
-                               for t in _blob.get("disliked_titles") or []}
-            except Exception:
-                user_vector = None
-                user_clusters = None
+    def _taste():
+        with get_db_session() as db:
+            tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
+            type_data = json.loads(tv.genre_affinity or "{}") if (tv and tv.genre_affinity) else {}
+            user_vector = None
+            # Assigned only inside the blob branch below — a category with genre
+            # stats but no blob yet (nothing embedded) raised UnboundLocalError.
+            user_clusters = None
+            disliked_lc: set = set()
+            encrypted = db.query(EncryptedTasteVector).filter(
+                EncryptedTasteVector.user_id == user_id,
+                EncryptedTasteVector.media_category == category,
+            ).first()
+            if encrypted and encrypted.encrypted_blob:
+                try:
+                    _blob = json.loads(encrypted.encrypted_blob)
+                    if _blob.get("version") == 1:
+                        logger.warning("[recs] %s taste blob is encrypted (v1) — "
+                                       "ranking without the taste vector", category)
+                        _blob = {}
+                    user_vector = _blob.get("embedding")
+                    user_clusters = _blob.get("cluster_centroids")
+                    disliked_lc = {(t or "").lower()
+                                   for t in _blob.get("disliked_titles") or []}
+                except Exception:
+                    user_vector = None
+                    user_clusters = None
+        return type_data, user_vector, user_clusters, disliked_lc
+
+    type_data, user_vector, user_clusters, disliked_lc = await run_read(_taste)
 
     ts = type_data.get(category, {}) if isinstance(type_data, dict) else {}
     genre_affinity = {g.lower(): s for g, s in (ts.get("genre_affinity") or {}).items()}
@@ -2932,7 +2989,8 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         user_vecs_n = [_un] if _un is not None else []
 
     # Bulk-prefetch embeddings — same N+1 rationale as the deletion loop.
-    _prefetched_embeddings = chroma_db.get_by_ids([
+    from src.vector_store.chromadb_wrapper import run_chroma
+    _prefetched_embeddings = await run_chroma(_chroma_get_by_ids, [
         str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title") or "")
         for it in items
         if (it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))

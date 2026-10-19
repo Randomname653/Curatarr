@@ -166,5 +166,7 @@ async def evict_embedder(profile: dict = None) -> None:
             await c.post(f"{settings.effective_ollama}/api/embed",
                          json={"model": prof["model"], "input": "unload",
                                "keep_alive": 0})
-    except Exception as e:
+    except httpx.HTTPError as e:
         logger.debug("[embed] evict failed: %s", e)
+    except Exception as e:
+        logger.warning("[embed] evict failed: %s", e, exc_info=True)

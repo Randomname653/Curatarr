@@ -87,8 +87,9 @@ async def discover_libraries(user: User = Depends(get_current_user)):
             )
             if r.status_code == 200:
                 return r.json().get("MediaContainer", {}).get("totalSize", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[libraries] section count", key, e)
         return 0
 
     import asyncio as _asyncio
@@ -101,36 +102,41 @@ async def discover_libraries(user: User = Depends(get_current_user)):
     # DB counts per media category (WatchHistoryEntry has no section_id column)
     from src.database.connection import get_db_session
     from src.database.models import WatchHistoryEntry, EnrichmentStatus
+    from src.database.runner import run_read
     from sqlalchemy import func as _func
 
-    with get_db_session() as db:
-        db_counts = dict(
-            db.query(WatchHistoryEntry.media_type, _func.count(WatchHistoryEntry.id))
-            .group_by(WatchHistoryEntry.media_type)
-            .all()
-        )
-        # Pass 91b: exclude Spotify-imported rows (plex_rating_key prefix
-        # ``ext-script:``) from the music enriched count. The Plex denominator
-        # in this view (``plex_item_count``) only counts artists that live in
-        # the Plex section — but the numerator was including the much larger
-        # Spotify-history artist set, so the percentage blew past 100% (we saw
-        # 332% in production: 12,502 enriched / 3,768 Plex artists).
-        # ``ext-script:`` prefix is set by ``scripts/music_enricher.py::seed_missing``
-        # when seeding artists from Lidarr / Spotify watch-history that
-        # aren't tied to a real Plex item; filtering those keeps the metric
-        # honest as "% of your Plex library that's enriched". The aggregate
-        # cross-source count is still available on the /enrichment/status
-        # endpoint for users who want the bigger picture.
-        enriched_counts = dict(
-            db.query(EnrichmentStatus.media_category,
-                     _func.count(EnrichmentStatus.id))
-            .filter(
-                EnrichmentStatus.enriched == True,
-                ~EnrichmentStatus.plex_rating_key.like("ext-script:%"),
+    def _load_counts():
+        with get_db_session() as db:
+            db_counts = dict(
+                db.query(WatchHistoryEntry.media_type, _func.count(WatchHistoryEntry.id))
+                .group_by(WatchHistoryEntry.media_type)
+                .all()
             )
-            .group_by(EnrichmentStatus.media_category)
-            .all()
-        )
+            # Pass 91b: exclude Spotify-imported rows (plex_rating_key prefix
+            # ``ext-script:``) from the music enriched count. The Plex denominator
+            # in this view (``plex_item_count``) only counts artists that live in
+            # the Plex section — but the numerator was including the much larger
+            # Spotify-history artist set, so the percentage blew past 100% (we saw
+            # 332% in production: 12,502 enriched / 3,768 Plex artists).
+            # ``ext-script:`` prefix is set by ``scripts/music_enricher.py::seed_missing``
+            # when seeding artists from Lidarr / Spotify watch-history that
+            # aren't tied to a real Plex item; filtering those keeps the metric
+            # honest as "% of your Plex library that's enriched". The aggregate
+            # cross-source count is still available on the /enrichment/status
+            # endpoint for users who want the bigger picture.
+            enriched_counts = dict(
+                db.query(EnrichmentStatus.media_category,
+                         _func.count(EnrichmentStatus.id))
+                .filter(
+                    EnrichmentStatus.enriched == True,
+                    ~EnrichmentStatus.plex_rating_key.like("ext-script:%"),
+                )
+                .group_by(EnrichmentStatus.media_category)
+                .all()
+            )
+            return db_counts, enriched_counts
+
+    db_counts, enriched_counts = await run_read(_load_counts)
 
     result = []
     for i, s in enumerate(sections):

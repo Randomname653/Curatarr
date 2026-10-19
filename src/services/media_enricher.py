@@ -26,6 +26,7 @@ import httpx
 
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache, write_fields
+from src.database.runner import run_read, run_write
 from src.services.enrichment_state import (
     TRANSIENT, CONTEXT_KEY as _CONTEXT_KEY, RESOLVING_SOURCE as _RESOLVING_SOURCE,
     parse_rejected_ids as _parse_rejected, resolve_match_basis as _resolve_match_basis,
@@ -204,10 +205,24 @@ def _numbers_preserved_in_profile(numbers: list[str], profile: dict) -> bool:
 _RAW_CACHE_DAYS = 90
 
 
+def _with_handle(cache, fn):
+    """``fn(handle)`` on the caller's MetadataCache handle, or on a fresh one
+    opened and closed around it. For ``asyncio.to_thread``: the cache file has
+    its own write lock, and a coroutine must not wait on it on the loop."""
+    owns = cache is None
+    if owns:
+        cache = MetadataCache()
+    try:
+        return fn(cache)
+    finally:
+        if owns:
+            cache.close()
+
+
 def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DAYS) -> None:
     """Persist a fresh API fetch under raw:{cat}:{id_key} for reuse.
 
-    Best-effort: any cache failure is logged at debug and swallowed so a
+    Best-effort: any cache failure is logged at warning and swallowed so a
     flaky cache write can't break the producer's hand-off to the consumer.
     Strips underscore-prefixed transport fields before writing — those
     are caller-instance specific (plex_rating_key, _cache_key, etc.)
@@ -223,8 +238,8 @@ def _write_raw_cache(cat: str, id_key, raw_dict: dict, days: int = _RAW_CACHE_DA
         finally:
             c.close()
     except Exception as e:
-        logger.debug("[enricher] raw-cache write failed for raw:%s:%s — %s",
-                     cat, id_key, e)
+        logger.warning("[enricher] raw-cache write failed for raw:%s:%s — %s",
+                       cat, id_key, e)
 
 
 # ── Verified-data assembly (NO LLM) ───────────────────────────────────────────
@@ -446,8 +461,8 @@ def _studio_note_for(cache, studios) -> Optional[str]:
             note = get_studio_note_cached(s, cache)
             if note:
                 return note
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[enricher] studio-note cache read failed for %r: %s", studios, e)
     return None
 
 
@@ -623,8 +638,9 @@ def format_verified_block(data: Optional[dict], *, header: str = None) -> str:
             _edl = edition_line(edition_by_title(data.get("title"), _mt))
             if _edl:
                 add("Edition", _edl, cap=400)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[enricher] edition line failed for %r: %r",
+                           data.get("title"), e, exc_info=True)
     add("Plot", data.get("plot"), cap=700)
     lines.append("<<<END_UNTRUSTED_SOURCE>>>")
     return "\n".join(lines)
@@ -1000,7 +1016,7 @@ async def fetch_significance(
         out = _re.sub(r"\s*\bNONE\b.*$", "", out, flags=_re.I | _re.S)           # trailing echoed NONE
         out = _re.sub(r"\s{2,}", " ", out.replace("**", "")).strip()
     except Exception as e:
-        logger.debug("[significance] distillation failed for %r: %s", title, e)
+        log_topup_failure(logger, "[significance] distill", title, e)
         return None
     if not out or out.upper().startswith("NONE") or len(out) < 20:
         return ""              # definitive — the distiller read it and said NONE
@@ -1057,7 +1073,7 @@ async def fetch_wikipedia_summary(
                     return extract[:max_chars]
             return None
     except Exception as e:
-        logger.debug("[wiki-summary] fetch failed for %r: %s", title, e)
+        log_topup_failure(logger, "[wiki-summary]", title, e)
         return None
 
 
@@ -1097,14 +1113,12 @@ async def topup_omdb(
     box_office = omdb.get("box_office")
     _bad = ("", "N/A", None)
 
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
-    try:
-        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
-        t40 = (title or "")[:40]
-        if t40:
-            id_keys.append(t40)
+    id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id) if v]
+    t40 = (title or "")[:40]
+    if t40:
+        id_keys.append(t40)
+
+    def _merge(cache):
         added = False
         for k in id_keys:
             key = f"raw:{media_type}:{k}"
@@ -1146,9 +1160,8 @@ async def topup_omdb(
             if fields:
                 write_fields(cache, key, raw, fields, days=_RAW_CACHE_DAYS)
         return added
-    finally:
-        if owns:
-            cache.close()
+
+    return await asyncio.to_thread(_with_handle, cache, _merge)
 
 
 async def topup_significance(
@@ -1168,14 +1181,12 @@ async def topup_significance(
     ``build_verified_data`` so the curator gets the archive-pillar facts right
     before it reasons about a title — then cached, so at most one Wikipedia +
     summariser round per item, ever."""
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
-    try:
-        id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
-        t40 = (title or "")[:40]
-        if t40:
-            id_keys.append(t40)
+    id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id, plex_rating_key) if v]
+    t40 = (title or "")[:40]
+    if t40:
+        id_keys.append(t40)
+
+    def _targets(cache):
         targets = []
         for k in id_keys:
             hit = cache.get_cache(f"raw:{media_type}:{k}")
@@ -1184,28 +1195,35 @@ async def topup_significance(
             raw = hit["response"]
             if (raw.get("significance_checked")
                     and raw.get("significance_v") == _SIG_PROMPT_VERSION):
-                return False  # already done, under the rules in force today
+                return None  # already done, under the rules in force today
             targets.append((f"raw:{media_type}:{k}", raw))
-        if not targets:
-            return False  # nothing cached to attach to (rare after the R6 enrich)
-        # The cache id is the LIBRARY's name for the work — for anime usually
-        # the English one Wikipedia files the article under, while ``title`` is
-        # the enriched (often romanised) one. A numeric id is an id, not a name.
-        aka = ()
-        if cache_id and not str(cache_id).isdigit():
-            aka = (str(cache_id),)
-        # The raw entries themselves know the IMDb id (96% of the library
-        # since the *arr harvest) — the strongest article resolver there is.
-        imdb = next((raw.get("imdb_id") for _k, raw in targets
-                     if raw.get("imdb_id")), None)
-        sig = await fetch_significance(title, media_type, year=year,
-                                       also_known_as=aka, imdb_id=imdb)
-        if sig is None:
-            # TRANSIENT failure (Wikipedia/summarizer error) — do NOT stamp.
-            # The old code stamped checked=True here, which is how Panic Room
-            # and Wild Side sat permanently significance-less: one bad moment
-            # became forever. The walker simply retries next pass.
-            return False
+        return targets
+
+    # Read and write each on a worker thread: the fetch in between holds the
+    # summariser for seconds, and no cache handle is kept open across it.
+    targets = await asyncio.to_thread(_with_handle, cache, _targets)
+    if not targets:
+        return False  # already done, or nothing cached to attach to (rare after the R6 enrich)
+    # The cache id is the LIBRARY's name for the work — for anime usually
+    # the English one Wikipedia files the article under, while ``title`` is
+    # the enriched (often romanised) one. A numeric id is an id, not a name.
+    aka = ()
+    if cache_id and not str(cache_id).isdigit():
+        aka = (str(cache_id),)
+    # The raw entries themselves know the IMDb id (96% of the library
+    # since the *arr harvest) — the strongest article resolver there is.
+    imdb = next((raw.get("imdb_id") for _k, raw in targets
+                 if raw.get("imdb_id")), None)
+    sig = await fetch_significance(title, media_type, year=year,
+                                   also_known_as=aka, imdb_id=imdb)
+    if sig is None:
+        # TRANSIENT failure (Wikipedia/summarizer error) — do NOT stamp.
+        # The old code stamped checked=True here, which is how Panic Room
+        # and Wild Side sat permanently significance-less: one bad moment
+        # became forever. The walker simply retries next pass.
+        return False
+
+    def _stamp(cache):
         added = False
         for key, raw in targets:
             # "" = DEFINITIVE nothing — stamp so we never re-query a title
@@ -1232,9 +1250,8 @@ async def topup_significance(
             # added in the meantime.
             write_fields(cache, key, raw, fields, drop=drop, days=_RAW_CACHE_DAYS)
         return added
-    finally:
-        if owns:
-            cache.close()
+
+    return await asyncio.to_thread(_with_handle, cache, _stamp)
 
 
 async def ensure_verified_data(
@@ -1262,8 +1279,9 @@ async def ensure_verified_data(
     chat queued on the gate. The wait_for timebox does NOT prevent it (the
     request is already queued inside Ollama when the app-side wait gives up).
     Raw API top-ups (fast-enrich, OMDb) carry no model and always run."""
-    data = build_verified_data(
-        title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+    # Cache-only, but still SQLite reads: every rebuild below runs on a worker.
+    data = await asyncio.to_thread(
+        build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
         anilist_id=anilist_id, anidb_id=anidb_id,
         plex_rating_key=plex_rating_key, cache=cache,
     )
@@ -1302,8 +1320,8 @@ async def ensure_verified_data(
                 tvdb_id = fresh.get("tvdb_id") or tvdb_id
                 anilist_id = fresh.get("anilist_id") or anilist_id
                 anidb_id = fresh.get("anidb_id") or anidb_id
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1331,8 +1349,8 @@ async def ensure_verified_data(
                 anilist_id=anilist_id, anidb_id=anidb_id,
                 plex_rating_key=plex_rating_key, year=data.get("year"), cache=cache,
             ), timeout=14.0):
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1353,8 +1371,8 @@ async def ensure_verified_data(
                 anilist_id=anilist_id, anidb_id=anidb_id,
                 plex_rating_key=plex_rating_key, year=data.get("year"), cache=cache,
             ), timeout=45.0):
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1372,8 +1390,8 @@ async def ensure_verified_data(
             first = (studios if isinstance(studios, list) else [studios])[0]
             if await asyncio.wait_for(ensure_studio_note(first, cache=cache),
                                       timeout=30.0):
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1389,8 +1407,8 @@ async def ensure_verified_data(
             if await asyncio.wait_for(ensure_director_note(data["director"],
                                                            cache=cache),
                                       timeout=30.0):
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1409,8 +1427,8 @@ async def ensure_verified_data(
                 anilist_id=anilist_id, anidb_id=anidb_id,
                 plex_rating_key=plex_rating_key, year=data.get("year"), cache=cache,
             ), timeout=15.0):
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1431,8 +1449,8 @@ async def ensure_verified_data(
                 plex_rating_key=plex_rating_key, artist_mbid=artist_mbid,
                 cache=cache,
             ), timeout=15.0):
-                data = build_verified_data(
-                    title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+                data = await asyncio.to_thread(
+                    build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                     anilist_id=anilist_id, anidb_id=anidb_id,
                     plex_rating_key=plex_rating_key, cache=cache,
                 )
@@ -1453,8 +1471,8 @@ async def ensure_verified_data(
             tmdb_id=tmdb_id, tvdb_id=tvdb_id, anilist_id=anilist_id,
             anidb_id=anidb_id, cache=cache,
         ):
-            data = build_verified_data(
-                title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
+            data = await asyncio.to_thread(
+                build_verified_data, title, media_type, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
                 anilist_id=anilist_id, anidb_id=anidb_id,
                 plex_rating_key=plex_rating_key, cache=cache,
             )
@@ -1500,8 +1518,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
         except Exception:
             return False
 
-    cache = MetadataCache()
-    try:
+    def _scan(cache):
         cur = cache.conn.cursor()
         cur.execute(
             """
@@ -1522,8 +1539,9 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
         )
         rows = cur.fetchall()
         cur.close()
-    finally:
-        cache.close()
+        return rows
+
+    rows = await asyncio.to_thread(_with_handle, None, _scan)
 
     # Never-tried rows first, then the least recently tried: a fixed order
     # put the same failing rows at the front of every pass (see the
@@ -1534,13 +1552,13 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
         k = row["cache_key"]
         return k.split(":", 1)[1] if k.startswith("v2:") else k
 
-    attempts = load_walker_attempts(_SIG_ATTEMPTS_KEY)
+    attempts = await run_read(load_walker_attempts, _SIG_ATTEMPTS_KEY)
     rows = sorted(rows, key=lambda r: attempts.get(_row_key(r), ""))
 
     total = len(rows)
     checked = added = 0
     for row in rows[:limit]:
-        if _gaming():
+        if await run_read(_gaming):
             logger.info("[significance-backfill] game active — stopping early "
                         "(%d/%d this pass)", checked, min(limit, total))
             break
@@ -1559,7 +1577,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
                 task_monitor.update(
                     task, processed=checked, total=min(limit, total),
                     message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
-            except Exception:
+            except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
                 pass
         await wait_for_curator()
         try:
@@ -1572,7 +1590,8 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             log_topup_failure(logger, "[significance-backfill]", title, e)
         attempts[_row_key(row)] = datetime.now().isoformat(timespec="seconds")
         checked += 1
-    save_walker_attempts(_SIG_ATTEMPTS_KEY, attempts, keep={_row_key(r) for r in rows})
+    await run_write(save_walker_attempts, _SIG_ATTEMPTS_KEY, attempts,
+                    keep={_row_key(r) for r in rows})
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}
 
@@ -1587,17 +1606,16 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
 
     # 1. Gather candidates from the raw cache, deduped by (media_type, imdb_id)
     #    so we hit OMDb once per title even though it's cached under several keys.
-    mc = MetadataCache()
-    try:
+    def _scan(mc):
         cur = mc.conn.cursor()
         cur.execute(
             "SELECT cache_key, response FROM api_cache WHERE "
             "cache_key LIKE '%raw:movie:%' OR cache_key LIKE '%raw:show:%' "
             "OR cache_key LIKE '%raw:anime:%'"
         )
-        rows = cur.fetchall()
-    finally:
-        mc.close()
+        return cur.fetchall()
+
+    rows = await asyncio.to_thread(_with_handle, None, _scan)
 
     candidates: dict = {}
     for k, resp in rows:
@@ -1635,32 +1653,30 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         try:
             from src.services.task_monitor import task_monitor
             task_monitor.update(task, message=msg, **kw)
-        except Exception:
+        except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
             pass
 
     _tick(f"OMDb backfill: {total} candidates", total=total)
 
     state = {"updated": 0, "done": 0}
-    cache = MetadataCache()
-    try:
-        async def _one(title, cat, imdb, tmdb):
-            try:
-                if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb, cache=cache):
-                    state["updated"] += 1
-            except Exception as e:
-                logger.debug("[omdb-backfill] %r failed: %s", title, e)
-            state["done"] += 1
-            if state["done"] % 100 == 0:
-                _tick(f"OMDb backfill: {state['done']}/{total} "
-                      f"({state['updated']} enriched)", processed=state["done"])
 
-        # Fire in chunks (OMDb concurrency is capped inside fetch_omdb_data, but
-        # we don't want 15k coroutines alive at once).
-        CHUNK = 200
-        for i in range(0, total, CHUNK):
-            await asyncio.gather(*[_one(*c) for c in cand_list[i:i + CHUNK]])
-    finally:
-        cache.close()
+    # No shared handle: each top-up merges on a worker thread with its own.
+    async def _one(title, cat, imdb, tmdb):
+        try:
+            if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb):
+                state["updated"] += 1
+        except Exception as e:
+            log_topup_failure(logger, "[omdb-backfill]", title, e)
+        state["done"] += 1
+        if state["done"] % 100 == 0:
+            _tick(f"OMDb backfill: {state['done']}/{total} "
+                  f"({state['updated']} enriched)", processed=state["done"])
+
+    # Fire in chunks (OMDb concurrency is capped inside fetch_omdb_data, but
+    # we don't want 15k coroutines alive at once).
+    CHUNK = 200
+    for i in range(0, total, CHUNK):
+        await asyncio.gather(*[_one(*c) for c in cand_list[i:i + CHUNK]])
 
     logger.info("[omdb-backfill] done — %d/%d titles enriched", state["updated"], total)
     return {"candidates": total, "enriched": state["updated"]}
@@ -2114,21 +2130,25 @@ async def _finalize_streaming_merge(
         from src.database.connection import get_db_session
         from src.database.models import EnrichmentStatus
         import json as _json
-        with get_db_session() as db:
-            row = db.query(EnrichmentStatus).filter(
-                EnrichmentStatus.plex_rating_key == plex_rating_key,
-            ).first()
-            if row:
-                row.sources_state = _json.dumps(
-                    final_state, separators=(",", ":"), sort_keys=True,
-                )
-                row.fetch_tier = "full"
-                row.provisional = False
-                db.commit()
-                logger.debug(
-                    "[finalize] promoted %s to full (sources: %s)",
-                    plex_rating_key, sorted(final_state.keys()),
-                )
+
+        def _promote():
+            with get_db_session() as db:
+                row = db.query(EnrichmentStatus).filter(
+                    EnrichmentStatus.plex_rating_key == plex_rating_key,
+                ).first()
+                if row:
+                    row.sources_state = _json.dumps(
+                        final_state, separators=(",", ":"), sort_keys=True,
+                    )
+                    row.fetch_tier = "full"
+                    row.provisional = False
+                    db.commit()
+                    logger.debug(
+                        "[finalize] promoted %s to full (sources: %s)",
+                        plex_rating_key, sorted(final_state.keys()),
+                    )
+
+        await run_write(_promote)
     except Exception as _e:
         logger.warning("[finalize] DB update failed for %s: %s", plex_rating_key, _e)
 
@@ -2140,9 +2160,9 @@ async def _finalize_streaming_merge(
         live_raw["cache_tier"] = "full"
         live_raw["plex_rating_key"] = plex_rating_key
         if id_key:
-            _write_raw_cache(media_type, id_key, live_raw)
+            await asyncio.to_thread(_write_raw_cache, media_type, id_key, live_raw)
     except Exception as _e:
-        logger.debug("[finalize] raw-cache write failed for %s: %s", plex_rating_key, _e)
+        logger.warning("[finalize] raw-cache write failed for %s: %s", plex_rating_key, _e)
 
 
 # ── ANILIST RATE-LIMIT CIRCUIT BREAKER ────────────────────────────────────────
@@ -2362,6 +2382,22 @@ def _match_override_ids(plex_rating_key) -> dict:
     return pin
 
 
+def _identity_ids(plex_rating_key) -> Optional[dict]:
+    """The ids MediaIdentity holds for a library item (plain values), or
+    None. Runs on a worker (``run_read``); raises like the query it wraps."""
+    from src.database.connection import get_db_session
+    from src.database.models import MediaIdentity
+    with get_db_session() as db:
+        mi = db.query(MediaIdentity).filter(
+            MediaIdentity.plex_rating_key == plex_rating_key
+        ).first()
+        if not mi:
+            return None
+        return {"tmdb_id": mi.tmdb_id, "anilist_id": mi.anilist_id,
+                "anidb_id": mi.anidb_id, "tvdb_id": mi.tvdb_id,
+                "imdb_id": mi.imdb_id, "mal_id": mi.mal_id}
+
+
 # How long a tvdb -> tmdb mapping stays cached. The mapping is a fact about
 # two catalogue entries, not about the file, so it is stable for a long time;
 # a month keeps the nightly walk down to one lookup per series per month.
@@ -2398,40 +2434,38 @@ async def authoritative_tv_tmdb_id(tvdb_id, tmdb_id=None, *, cache=None):
     if not tvdb or not settings.TMDB_API_KEY:
         return tmdb_id
 
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
+    ck = f"tvdb2tmdb:{tvdb}"
+    hit = await asyncio.to_thread(_with_handle, cache, lambda c: c.get_cache(ck))
+    if hit:
+        return (hit.get("response") or {}).get("tmdb_id") or tmdb_id
     try:
-        ck = f"tvdb2tmdb:{tvdb}"
-        hit = cache.get_cache(ck)
-        if hit:
-            return (hit.get("response") or {}).get("tmdb_id") or tmdb_id
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                data = await _tmdb_get(client, f"/find/{tvdb}",
-                                       {"external_source": "tvdb_id"})
-        except Exception as e:
-            # Transient by contract — do NOT cache, do NOT re-point.
-            logger.debug("[enricher] tvdb->tmdb lookup deferred for %s: %s", tvdb, e)
-            return tmdb_id
-        results = (data or {}).get("tv_results") or []
-        found = results[0].get("id") if results else None
+        async with httpx.AsyncClient(timeout=10) as client:
+            data = await _tmdb_get(client, f"/find/{tvdb}",
+                                   {"external_source": "tvdb_id"})
+    except Exception as e:
+        # Transient by contract: the lookup deferred for now — do NOT
+        # cache, do NOT re-point.
+        log_topup_failure(logger, "[enricher] tvdb->tmdb", tvdb, e)
+        return tmdb_id
+    results = (data or {}).get("tv_results") or []
+    found = results[0].get("id") if results else None
+
+    def _remember(cache):
         cache.set_cache(ck, {"tmdb_id": found}, days=_TVDB2TMDB_TTL_DAYS)
-        if not found:
-            return tmdb_id
-        try:
-            disagrees = tmdb_id and int(tmdb_id) != int(found)
-        except (TypeError, ValueError):
-            disagrees = False
-        if disagrees:
-            logger.warning(
-                "[enricher] arr tmdb_id %s contradicts TMDB's own tvdb %s "
-                "mapping (-> %s %r) — trusting TMDB",
-                tmdb_id, tvdb, found, (results[0].get("name") or "")[:60])
-        return found
-    finally:
-        if owns:
-            cache.close()
+
+    await asyncio.to_thread(_with_handle, cache, _remember)
+    if not found:
+        return tmdb_id
+    try:
+        disagrees = tmdb_id and int(tmdb_id) != int(found)
+    except (TypeError, ValueError):
+        disagrees = False
+    if disagrees:
+        logger.warning(
+            "[enricher] arr tmdb_id %s contradicts TMDB's own tvdb %s "
+            "mapping (-> %s %r) — trusting TMDB",
+            tmdb_id, tvdb, found, (results[0].get("name") or "")[:60])
+    return found
 
 
 async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
@@ -2583,8 +2617,9 @@ def _omdb_note_call(spent: bool = False) -> None:
         if spent:
             n = max(n, int(getattr(settings, "OMDB_DAILY_LIMIT", 1000) or 0))
         set_state(key, str(n))
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[omdb] budget note failed: %s", e)
+    except Exception as e:  # noqa: BLE001 - reported; the call itself already happened
+        # An unrecorded call is budget the next check does not see.
+        logger.warning("[omdb] budget note failed: %s", e)
 
 
 async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
@@ -2597,7 +2632,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
     omdb_key = getattr(settings, "OMDB_API_KEY", None)
     if not omdb_key or not imdb_id:
         return None
-    if omdb_quota_left() <= 0:
+    if await run_read(omdb_quota_left) <= 0:
         logger.debug("[omdb] daily budget spent — %s waits for tomorrow", imdb_id)
         return None
     _ensure_concurrency_primitives()
@@ -2608,7 +2643,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
                 "i": imdb_id,
                 "plot": "full",
             })
-        _omdb_note_call()
+        await run_write(_omdb_note_call)
         if r.status_code != 200:
             return None
         d = r.json()
@@ -2624,7 +2659,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             if "not found" in err or "incorrect imdb" in err:
                 return {}          # definitive — this id has no OMDb record
             if "limit" in err:
-                _omdb_note_call(spent=True)   # the rest of today waits at once
+                await run_write(_omdb_note_call, spent=True)   # the rest of today waits at once
                 logger.info("[omdb] OMDb reports the daily limit — lookups resume tomorrow")
             return None            # transient — quota, bad key, anything else
 
@@ -2686,7 +2721,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
             "content_rating": _na(d.get("Rated")) or None,
         }
     except Exception as e:
-        logger.debug("OMDB error for %s: %s", imdb_id, e)
+        log_topup_failure(logger, "[omdb]", imdb_id, e)
         return None
 
 
@@ -2761,7 +2796,7 @@ async def _fetch_jikan(mal_id: int = None, title: str = None,
             else:
                 return None
     except Exception as e:
-        logger.debug("Jikan error for %s/%s: %s", mal_id, title, e)
+        log_topup_failure(logger, "[jikan]", f"{mal_id}/{title}", e)
         return TRANSIENT
 
     if r.status_code == 429:
@@ -3075,7 +3110,7 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
             if not media:
                 return {}
     except Exception as e:
-        logger.debug("AniList %s error: %s", anilist_id, e)
+        log_topup_failure(logger, "[anilist]", anilist_id, e)
         return TRANSIENT
 
     # Pass 56: AniList can return ``title: null`` on some entries. dict.get
@@ -3494,10 +3529,9 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                                 "keeping first attempt", raw_metadata.get("title", "?"),
                             )
                 except Exception as _re:
-                    logger.debug(
-                        "[summarize] number-retry call failed for %r: %s — "
-                        "keeping first attempt", raw_metadata.get("title", "?"), _re,
-                    )
+                    # Keeps the first attempt either way; outage → DEBUG, bug → WARNING.
+                    log_topup_failure(logger, "[summarize] number-retry",
+                                      raw_metadata.get("title", "?"), _re)
 
             logger.debug("Summarizer success for '%s': source=%s",
                          raw_metadata.get("title", "?"), result["source"])
@@ -3543,7 +3577,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
             except Exception as _e:
                 # Pass 47 (B3-rest): the suffix-loop is a recovery best-effort,
                 # but a silent miss here masks bugs in the recovery itself.
-                logger.debug("[enricher] truncated-JSON recovery failed: %s", _e)
+                logger.warning("[enricher] truncated-JSON recovery failed: %r", _e)
             if recovered:
                 return recovered
             logger.warning("LLM JSON parse failed for '%s': %s — raw: %s",
@@ -3664,7 +3698,6 @@ async def fetch_and_prepare_raw(
     not_found sentinel). After a bulk EnrichmentStatus reset this
     poisoned 200 rows in 3 seconds.
     """
-    cache = MetadataCache()
     # What the CALLER (the arr item) handed over — decides "arr_id" vs
     # "identity" for the match basis once every resolution step has run.
     _caller_ids = {"tmdb_id": tmdb_id, "tvdb_id": tvdb_id, "imdb_id": imdb_id,
@@ -3675,7 +3708,7 @@ async def fetch_and_prepare_raw(
     # title search below. This is what makes a "Fix match" click durable
     # across rescans and re-enrichments (the Good-Boy-twins class — ported
     # from SoulSync's match-override layer, MIT).
-    _pin = _match_override_ids(plex_rating_key)
+    _pin = await run_read(_match_override_ids, plex_rating_key)
     if _pin:
         tmdb_id = _pin.get("tmdb_id") or tmdb_id
         tvdb_id = _pin.get("tvdb_id") or tvdb_id
@@ -3687,23 +3720,18 @@ async def fetch_and_prepare_raw(
     # Resolve IDs from MediaIdentity
     if plex_rating_key and not all([tmdb_id, anilist_id]):
         try:
-            from src.database.connection import get_db_session
-            from src.database.models import MediaIdentity
-            with get_db_session() as db:
-                mi = db.query(MediaIdentity).filter(
-                    MediaIdentity.plex_rating_key == plex_rating_key
-                ).first()
-                if mi:
-                    tmdb_id    = tmdb_id    or mi.tmdb_id
-                    anilist_id = anilist_id or mi.anilist_id
-                    anidb_id   = anidb_id   or mi.anidb_id
-                    tvdb_id    = tvdb_id    or mi.tvdb_id
-                    imdb_id    = imdb_id    or mi.imdb_id
-                    # Pass 73: mal_id was written by plex_sync (from Plex Guid
-                    # tags) but never pulled here — so the deterministic Jikan
-                    # lookup below never fired from the stored ID, it fell back
-                    # to a fuzzy title search.
-                    mal_id     = mal_id     or mi.mal_id
+            mi = await run_read(_identity_ids, plex_rating_key)
+            if mi:
+                tmdb_id    = tmdb_id    or mi["tmdb_id"]
+                anilist_id = anilist_id or mi["anilist_id"]
+                anidb_id   = anidb_id   or mi["anidb_id"]
+                tvdb_id    = tvdb_id    or mi["tvdb_id"]
+                imdb_id    = imdb_id    or mi["imdb_id"]
+                # Pass 73: mal_id was written by plex_sync (from Plex Guid
+                # tags) but never pulled here — so the deterministic Jikan
+                # lookup below never fired from the stored ID, it fell back
+                # to a fuzzy title search.
+                mal_id     = mal_id     or mi["mal_id"]
         except Exception as _e:
             # Pass 43 (B3): MediaIdentity lookup is best-effort; the
             # caller fills missing IDs via direct API calls when this
@@ -3717,17 +3745,27 @@ async def fetch_and_prepare_raw(
     # of that cross-reference and overrules it. Not for a pinned entity — the
     # owner's word is above every catalogue.
     if media_type != "movie" and tvdb_id and not _pin.get("tmdb_id"):
-        tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id, cache=cache)
+        tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id)
 
     is_anime = _is_anime_item(media_type, sonarr_series_type)
 
     id_key = anilist_id or anidb_id or tmdb_id or tvdb_id or title[:40]
     cache_key = f"enriched:{media_type}:{id_key}"
 
+    raw_hit_key  = f"raw:{media_type}:{id_key}"
+
+    def _cached(cache):
+        pre = cache.get_cache(f"raw_prefetch:{plex_rating_key}") if plex_rating_key else None
+        if pre:
+            return pre, None, None
+        return None, cache.get_cache(cache_key), cache.get_cache(raw_hit_key)
+
+    # All three cache reads in one worker hop.
+    raw_cached, polished_hit, raw_hit = await asyncio.to_thread(_with_handle, None, _cached)
+
     # Check raw pre-fetch cache written by game-mode consumer.
     # If present, return it directly so no API call is needed.
     if plex_rating_key:
-        raw_cached = cache.get_cache(f"raw_prefetch:{plex_rating_key}")
         if raw_cached:
             raw_data = dict(raw_cached["response"])
             raw_data["_cache_key"]       = cache_key
@@ -3742,7 +3780,6 @@ async def fetch_and_prepare_raw(
             cached_tier = raw_data.get("cache_tier", "full")
             raw_data["_fetch_tier"]  = cached_tier
             raw_data["_provisional"] = (cached_tier == "fast")
-            cache.close()
             logger.debug("Raw prefetch cache hit for '%s' (%s)", title, plex_rating_key)
             return raw_data
 
@@ -3764,10 +3801,7 @@ async def fetch_and_prepare_raw(
     # multiplying the LLM-rebake cost by API rate limits and TMDB
     # outage risk. Splitting them keeps prompt-bumps to LLM-compute only.
 
-    polished_hit = cache.get_cache(cache_key)  # tier 1
-    raw_hit_key  = f"raw:{media_type}:{id_key}"
-    raw_hit      = cache.get_cache(raw_hit_key)  # tier 2
-    cache.close()
+    # polished_hit = tier 1, raw_hit = tier 2 (read above).
 
     if polished_hit:
         cached_profile = polished_hit.get("response", {})
@@ -3859,7 +3893,7 @@ async def fetch_and_prepare_raw(
             if ids.get("anilist_id"):
                 anilist_id = ids["anilist_id"]
         except Exception as e:
-            logger.debug("anime-lists lookup failed: %s", e)
+            log_topup_failure(logger, "[anime-lists]", tvdb_id, e)
 
     # Phase 2 #39: streaming-merge fetch.
     # All relevant per-source APIs fire IN PARALLEL via
@@ -4026,7 +4060,7 @@ async def fetch_and_prepare_raw(
     initial_raw_cache_blob["cache_tier"] = (
         "fast" if (fast_only or remaining_tasks) else "full"
     )
-    _write_raw_cache(media_type, id_key, initial_raw_cache_blob)
+    await asyncio.to_thread(_write_raw_cache, media_type, id_key, initial_raw_cache_blob)
 
     # Transport fields for the consumer (process_and_save pops these,
     # promotes them to public profile fields, and writes to the DB row
@@ -4127,9 +4161,8 @@ async def process_and_save(raw: dict) -> Optional[dict]:
                                       fallback_title=raw.get("title", "")):
         profile["vector_pending"] = True
     if cache_key:
-        cache = MetadataCache()
-        cache.set_cache(cache_key, profile, days=30)
-        cache.close()
+        await asyncio.to_thread(_with_handle, None,
+                                lambda cache: cache.set_cache(cache_key, profile, days=30))
 
     return profile
 
@@ -4145,7 +4178,7 @@ async def store_profile_vector(profile: dict, *, media_type: str,
     gen = None
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
-        from src.vector_store.chromadb_wrapper import chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
 
         title = profile.get("title", fallback_title)
         text_to_embed = profile.get("embedding_text")
@@ -4179,7 +4212,8 @@ async def store_profile_vector(profile: dict, *, media_type: str,
         }
         # Upsert, not add: a re-enrich must replace the vector too
         # (add keeps the old one for an existing id — see the wrapper).
-        chroma_db.upsert_documents(
+        await run_chroma(
+            get_chroma_db().upsert_documents,
             documents=[text_to_embed],
             embeddings=[vec],
             metadatas=[chroma_meta],
@@ -4193,7 +4227,7 @@ async def store_profile_vector(profile: dict, *, media_type: str,
                                chroma_meta["genres"],
                                profile.get("themes"))
         except Exception as _fe:
-            logger.debug("facet write failed for %r: %s", title, _fe)
+            logger.warning("facet write failed for %r: %s", title, _fe)
         return True
     except Exception:
         logger.exception("[enricher] ChromaDB store failed for %r - vector retried next run",
@@ -4203,7 +4237,7 @@ async def store_profile_vector(profile: dict, *, media_type: str,
         if gen is not None:
             try:
                 await gen.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 - teardown close; the store result is already set
                 pass
 
 
@@ -4242,13 +4276,11 @@ async def enrich_media_item(
     Cache is bypassed for save (the partial profile would mask future full
     enrichments) but cache lookup still works (full profiles get returned).
     """
-    cache = MetadataCache()
-
     # The owner's pin outranks everything here too. Without this the on-demand
     # path silently undid a "Fix match": the nightly walk resolved the pinned
     # entity, the next live enrich (judge, chat, re-eval) resolved the arr's
     # wrong id again, and whichever ran last won.
-    _pin = _match_override_ids(plex_rating_key)
+    _pin = await run_read(_match_override_ids, plex_rating_key)
     if _pin:
         tmdb_id = _pin.get("tmdb_id") or tmdb_id
         tvdb_id = _pin.get("tvdb_id") or tvdb_id
@@ -4260,23 +4292,18 @@ async def enrich_media_item(
     # If we have a plex_rating_key, look up all known IDs from MediaIdentity
     if plex_rating_key and not all([tmdb_id, anilist_id]):
         try:
-            from src.database.connection import get_db_session
-            from src.database.models import MediaIdentity
-            with get_db_session() as db:
-                mi = db.query(MediaIdentity).filter(
-                    MediaIdentity.plex_rating_key == plex_rating_key
-                ).first()
-                if mi:
-                    tmdb_id    = tmdb_id    or mi.tmdb_id
-                    anilist_id = anilist_id or mi.anilist_id
-                    anidb_id   = anidb_id   or mi.anidb_id
-                    tvdb_id    = tvdb_id    or mi.tvdb_id
-                    imdb_id    = imdb_id    or mi.imdb_id
-                    # Pass 73: mal_id was written by plex_sync (from Plex Guid
-                    # tags) but never pulled here — so the deterministic Jikan
-                    # lookup below never fired from the stored ID, it fell back
-                    # to a fuzzy title search.
-                    mal_id     = mal_id     or mi.mal_id
+            mi = await run_read(_identity_ids, plex_rating_key)
+            if mi:
+                tmdb_id    = tmdb_id    or mi["tmdb_id"]
+                anilist_id = anilist_id or mi["anilist_id"]
+                anidb_id   = anidb_id   or mi["anidb_id"]
+                tvdb_id    = tvdb_id    or mi["tvdb_id"]
+                imdb_id    = imdb_id    or mi["imdb_id"]
+                # Pass 73: mal_id was written by plex_sync (from Plex Guid
+                # tags) but never pulled here — so the deterministic Jikan
+                # lookup below never fired from the stored ID, it fell back
+                # to a fuzzy title search.
+                mal_id     = mal_id     or mi["mal_id"]
         except Exception as _e:
             # Pass 43 (B3): MediaIdentity lookup is best-effort; the
             # caller fills missing IDs via direct API calls when this
@@ -4289,7 +4316,7 @@ async def enrich_media_item(
     # Same id authority as the bulk path — otherwise the two disagree about
     # which work this is, and the cache key they write under disagrees with it.
     if media_type != "movie" and tvdb_id and not _pin.get("tmdb_id"):
-        tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id, cache=cache)
+        tmdb_id = await authoritative_tv_tmdb_id(tvdb_id, tmdb_id)
 
     # Cache key: prefer stable IDs, fall back to title
     # Determine if this is anime first — needed for cache key and routing
@@ -4297,7 +4324,7 @@ async def enrich_media_item(
 
     id_key = anilist_id or anidb_id or tmdb_id or tvdb_id or title[:40]
     cache_key = f"enriched:{media_type}:{id_key}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_with_handle, None, lambda c: c.get_cache(cache_key))
     if cached:
         cached_profile = cached.get("response", {})
         cached_source = cached_profile.get("source", "")
@@ -4311,12 +4338,11 @@ async def enrich_media_item(
             try:
                 cached_dt = datetime.fromisoformat(str(cached_at_str))
                 cache_age_days = (datetime.utcnow() - cached_dt).days
-            except Exception as _e:
+            except (ValueError, TypeError) as _e:
                 # Pass 43 (B3): timestamp parse fail leaves cache_age_days at
                 # the "very old" default — cache miss path takes over.
                 logger.debug("[enricher] cached_at parse failed (%r): %s", cached_at_str, _e)
         if "+llm" in cached_source or cached_source == "llm" or cache_age_days < 7:
-            cache.close()
             return cached_profile
 
     # For anime with tvdb_id: resolve via anime-lists crossref database
@@ -4333,14 +4359,13 @@ async def enrich_media_item(
                 anilist_id = ids["anilist_id"]
                 logger.debug("Resolved tvdb:%d → anilist:%d via anime-lists", tvdb_id, anilist_id)
         except Exception as e:
-            logger.debug("anime-lists lookup failed: %s", e)
+            log_topup_failure(logger, "[anime-lists]", tvdb_id, e)
 
     # ── MUSIC: fetch via MusicBrainz + Last.fm, then LLM-summarize ──────────
     if media_type == "music":
         from src.services.music_metadata import enrich_artist
         artist_raw = await enrich_artist(title, mbid=mbid)
         if not artist_raw:
-            cache.close()
             return None
         artist_raw["title"] = artist_raw.get("name", title)
         artist_raw["media_type"] = "music"
@@ -4354,7 +4379,6 @@ async def enrich_media_item(
         # MusicBrainz/Last.fm profile directly with the curator-relevant
         # fields.
         if skip_llm_summary:
-            cache.close()
             return {
                 "title":           artist_raw.get("title") or title,
                 "name":            artist_raw.get("name") or title,
@@ -4375,16 +4399,16 @@ async def enrich_media_item(
         # Run through LLM summarizer for structured genres/themes/mood/embedding_text
         profile = await summarize_with_small_llm(artist_raw)
         if not profile:
-            cache.close()
             return None
         profile["source"] = "musicbrainz+lastfm+llm"
         profile["plex_rating_key"] = plex_rating_key
         profile["prompt_version"] = _PROMPT_VERSION   # Pass 99-fu2
-        cache.set_cache(cache_key, profile, days=30)
+        await asyncio.to_thread(_with_handle, None,
+                                lambda c: c.set_cache(cache_key, profile, days=30))
         # Generate embedding and store in ChromaDB
         try:
             from src.embeddings.embedding_generator import EmbeddingGenerator
-            from src.vector_store.chromadb_wrapper import chroma_db
+            from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
             text_to_embed = profile.get("embedding_text") or (
                 f"{title} — {', '.join(profile.get('genres', [])[:6])}. "
                 f"Tags: {', '.join(profile.get('keywords', [])[:8])}."
@@ -4402,7 +4426,8 @@ async def enrich_media_item(
                     "mood": ", ".join(profile.get("mood", [])),
                     "year": 0,
                 }
-                chroma_db.upsert_documents(
+                await run_chroma(
+                    get_chroma_db().upsert_documents,
                     documents=[text_to_embed],
                     embeddings=[vec],
                     metadatas=[chroma_meta],
@@ -4414,11 +4439,11 @@ async def enrich_media_item(
                                        chroma_meta["genres"],
                                        profile.get("themes"))
                 except Exception as _fe:
-                    logger.debug("facet write failed for %r: %s", title, _fe)
+                    logger.warning("facet write failed for %r: %s", title, _fe)
             await gen.close()
         except Exception as e:
-            logger.debug("Music ChromaDB store failed for '%s': %s", title, e)
-        cache.close()
+            logger.warning("Music ChromaDB store failed for '%s': %s", title, e,
+                           exc_info=True)
         return profile
 
     raw = None
@@ -4437,11 +4462,11 @@ async def enrich_media_item(
             if raw.get("id") and anidb_id:
                 try:
                     from src.services.anime_mapping import update_anilist_id
-                    update_anilist_id(anidb_id, raw["id"])
+                    await asyncio.to_thread(update_anilist_id, anidb_id, raw["id"])
                 except Exception as _e:
                     # Pass 43 (B3): anime-mapping update is best-effort —
                     # log so failures don't silently rot the cross-ref DB.
-                    logger.debug("[enricher] update_anilist_id(%s) failed: %s", anidb_id, _e)
+                    logger.warning("[enricher] update_anilist_id(%s) failed: %s", anidb_id, _e)
     elif tmdb_id and media_type == "movie":
         # Movie with TMDB ID — direct fetch
         raw = await fetch_tmdb_full(tmdb_id, "movie")
@@ -4481,7 +4506,6 @@ async def enrich_media_item(
             raw = await _tmdb_search_and_fetch(title, endpoint, year=year)
 
     if not raw:
-        cache.close()
         return None
 
     # Entity-resolution safety net (Fix A): the arr gave a year, but the resolved
@@ -4500,7 +4524,6 @@ async def enrich_media_item(
             "— rejecting wrong-entity match",
             title, _ty, _ry, raw.get("title"),
         )
-        cache.close()
         return None
 
     # 1b. Supplement with additional sources
@@ -4549,7 +4572,6 @@ async def enrich_media_item(
     # enrichments). Cache misses repeat the API fetches but the API layer is
     # fast (1-3 s); the LLM step (3-8 s) was the timeout-killer.
     if skip_llm_summary:
-        cache.close()
         fast_profile = {
             "title":         raw.get("title") or title,
             "original_title": raw.get("original_title") or "",
@@ -4577,7 +4599,6 @@ async def enrich_media_item(
     # 2. Summarize with small LLM
     profile = await summarize_with_small_llm(raw)
     if not profile:
-        cache.close()
         return None
 
     # Merge in IDs
@@ -4587,14 +4608,15 @@ async def enrich_media_item(
     profile["prompt_version"] = _PROMPT_VERSION   # Pass 99-fu2
 
 # 3. Cache result (30 days)
-    cache.set_cache(cache_key, profile, days=30)
+    await asyncio.to_thread(_with_handle, None,
+                            lambda c: c.set_cache(cache_key, profile, days=30))
 
     # ─────────────────────────────────────────────────────────────────────────
     # 4 & 5. EMBEDDING GENERIEREN UND IN CHROMADB SPEICHERN
     # ─────────────────────────────────────────────────────────────────────────
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
-        from src.vector_store.chromadb_wrapper import chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
         
         text_to_embed = profile.get("embedding_text")
         
@@ -4623,7 +4645,8 @@ async def enrich_media_item(
                 # Upsert so a re-enrich replaces the embedding too. The old
                 # add → (except) delete+re-add never re-added: Chroma's `add`
                 # with an existing id does not raise, it keeps the old vector.
-                chroma_db.upsert_documents(
+                await run_chroma(
+                    get_chroma_db().upsert_documents,
                     documents=[text_to_embed],
                     embeddings=[embedding_vector],
                     metadatas=[chroma_metadata],
@@ -4636,13 +4659,13 @@ async def enrich_media_item(
                                        chroma_metadata.get("genres", ""),
                                        profile.get("themes"))
                 except Exception as _fe:
-                    logger.debug("facet write failed for %r: %s",
-                                 profile.get("title"), _fe)
+                    logger.warning("facet write failed for %r: %s",
+                                   profile.get("title"), _fe)
                 logger.debug("Successfully stored '%s' in ChromaDB.", profile.get("title"))
 
             try:
                 await generator.close()
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 - generator close is teardown; vector already stored
                 # Pass 47 (B3-rest): generator close is best-effort cleanup;
                 # logging at debug surfaces leak-pattern bugs without
                 # spamming the happy-path log.
@@ -4652,13 +4675,12 @@ async def enrich_media_item(
         # Best-effort: ensure we don't leak the embedding generator on failure.
         try:
             await generator.close()
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 - teardown close after the store error is logged
             # Pass 43 (B3): close-on-error is itself error-prone (HTTP client
             # already-closed, transport gone). Log at debug — a generator
             # leak is benign at process scope but worth seeing if it spikes.
             logger.debug("[enricher] generator close on error failed: %s", _e)
 
-    cache.close()
     return profile
 
 
@@ -4876,7 +4898,7 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None,
             if not media_list:
                 return None
     except Exception as e:
-        logger.debug("AniList search '%s' error: %s", title, e)
+        log_topup_failure(logger, "[anilist] search", title, e)
         return TRANSIENT
 
     # Iterate all returned candidates and pick the first one whose title is
@@ -4985,7 +5007,7 @@ async def anilist_candidates(title: str, limit: int = 6) -> list[dict]:
             return []
         media = r.json().get("data", {}).get("Page", {}).get("media") or []
     except Exception as e:
-        logger.debug("AniList candidates '%s' error: %s", title, e)
+        log_topup_failure(logger, "[anilist] candidates", title, e)
         return []
     out = []
     for m in media[:limit]:
@@ -5105,5 +5127,5 @@ async def _tmdb_fetch_by_external_id(imdb_id: str, media_type: str) -> Optional[
         fetch_type = "movie" if media_type == "movie" else "tv"
         return await fetch_tmdb_full(found_id, fetch_type)
     except Exception as e:
-        logger.debug("TMDB external ID lookup failed for %s: %s", imdb_id, e)
+        log_topup_failure(logger, "[tmdb] external-id", imdb_id, e)
         return None

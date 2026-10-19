@@ -94,7 +94,7 @@ pl = (root / "src/services/pillars.py").read_text(encoding="utf-8")
 check("judge evidence carries the FORM guard for spoken-word music",
       "FORM: spoken-word / cabaret" in pl and "+ form_line" in pl)
 check("form guard also reads ENRICHED genres (lidarr genres are often empty)",
-      "_get_cached_rating(item, category)" in pl)
+      "_get_cached_rating(item, category, strict=True)" in pl)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

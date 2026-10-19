@@ -289,21 +289,21 @@ def test_outcome_commit_and_plex_check():
         db.add(p)
         db.flush()
         pid = p.id
-    db = Session()
-    p = db.get(DeletionProposal, pid)
+    # The delete path carries a copy of the row and writes the outcome in a
+    # session of its own; the first (full) write fails here.
+    real = (recs.get_db_session, recs._write_outcome)
+    recs.get_db_session = _session
+    p = recs._load_proposal(1, pid)
     p.status, p.resolved_at = "deleted", datetime(2026, 10, 15, 12, 0)
-    real_commit = db.commit
-    calls = {"n": 0}
 
-    def flaky():
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("database is locked")
-        return real_commit()
+    def flaky(view):
+        raise RuntimeError("database is locked")
 
-    db.commit = flaky
-    asyncio.run(recs._commit_outcome(db, p))
-    db.close()
+    recs._write_outcome = flaky
+    try:
+        asyncio.run(recs._commit_outcome(p))
+    finally:
+        recs.get_db_session, recs._write_outcome = real
     with _session() as db2:
         st = db2.get(DeletionProposal, pid).status
         healthy = db2.query(DeletionProposal).count() >= 1

@@ -41,7 +41,11 @@ def _fresh_gate():
 
 
 def _db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    # StaticPool: one in-memory DB for every thread, since services now run
+    # their session work on run_read / run_write workers.
+    from sqlalchemy.pool import StaticPool
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
 
@@ -170,7 +174,7 @@ def _chat_call(guarded):
     rl.reset("chat")
     try:
         user = types.SimpleNamespace(id=424242)
-        return asyncio.run(chat.send_message(ChatMessage(message="hello"), user, None))
+        return asyncio.run(chat.send_message(ChatMessage(message="hello"), user))
     finally:
         chat._send_message_guarded, lane.curator_available = orig
 
@@ -179,7 +183,7 @@ def test_a_second_submit_gets_409_before_any_work():
     from src.services import rate_limit as rl
     calls = []
 
-    async def guarded(message, user, db, _rl, thread_id):
+    async def guarded(message, user, _rl, thread_id):
         calls.append(message.message)          # would save + build the context
         return "response"
 
@@ -202,7 +206,7 @@ def test_a_second_submit_gets_409_before_any_work():
 def test_a_failure_before_the_stream_releases_the_guard():
     from src.services import rate_limit as rl
 
-    async def guarded(message, user, db, _rl, thread_id):
+    async def guarded(message, user, _rl, thread_id):
         raise RuntimeError("RAG exploded")
 
     rl.CHAT_IN_FLIGHT.leave(424242)
@@ -573,7 +577,7 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
         rl.CHAT_IN_FLIGHT.enter_or_409(_UID)
         user = types.SimpleNamespace(id=_UID)
         return await chat._send_message_guarded(
-            ChatMessage(message=text), user, Session(), rl, "general")
+            ChatMessage(message=text), user, rl, "general")
 
     def rows():
         s = Session()
@@ -638,14 +642,15 @@ def test_an_ollama_error_is_shown_but_never_persisted():
 
 
 def test_a_failed_write_warns_and_still_finishes_the_turn():
-    import src.database.connection as conn
+    import src.routers.chat as chat
     with _stream_rig(_OK) as rig:
-        @contextmanager
-        def locked():
+        # Only the turn's write fails: the pre-stream reads open sessions of
+        # their own too, so a get_db_session that always raises would fail
+        # the turn before it streams.
+        def locked(*a, **k):
             raise RuntimeError("database is locked")
-            yield  # pragma: no cover
 
-        conn.get_db_session = locked          # restored by the rig
+        chat._persist_turn = locked           # restored by the rig
         _, frames = _frames(rig)
         assert _tokens(frames) == "Hello there", "the streamed reply stays intact"
         assert any("could not be saved" in f for f in frames)
