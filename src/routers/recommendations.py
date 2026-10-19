@@ -129,6 +129,8 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                          "lane": r.lane or "discovery",
                          "year": r.year,   # library lane only; helps [+ Add] disambiguate
                          "poster_url": r.poster_url, "synopsis": r.synopsis,
+                         # None on rows cached before the breakdown existed
+                         "score_factors": _load_score_factors(r.score_factors),
                          "cached_at": r.cached_at.isoformat() if r.cached_at else None}
                         for r in cached]
         recs = await run_read(_load_cached)
