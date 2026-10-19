@@ -227,6 +227,8 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
         if pts:
             footprints.setdefault(ref, {})[sw["settings"]["server"]] = {
                 "mib_by_ctx": pts, "max_resident_ctx": sw["metrics"].get("max_resident_ctx"),
+                # Sweeps cut by the pre-5b4ce76 stall rule: more context fits.
+                "max_resident_ctx_lower_bound": bool(sw["metrics"].get("max_resident_ctx_lower_bound")),
                 "measured_on": sw["env"].get("gpu"),
                 "kv_mib_per_1k_ctx": sw["metrics"].get("kv_mib_per_1k_ctx")}
     return {"generated": datetime.now().isoformat(timespec="seconds"),
