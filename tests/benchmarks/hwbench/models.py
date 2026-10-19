@@ -142,14 +142,38 @@ class Store:
         t = self._prefetch.pop(ref, None)
         if t:
             t.join()
-            if self._results.pop(ref, False):
+            if self._results.pop(ref, False) and self._known(ref):
                 return True
-        return self.pull(ref)
+        return self.pull(ref) and self._known(ref)
+
+    def _known(self, ref: str) -> bool:
+        """Ollama really knows the model: a pull that reported success
+        could still be gone a minute later (gemma4:e4b-it-qat on the NAS,
+        2026-10-19 - 404 'model not found' right after its prefetch)."""
+        try:
+            ok = httpx.post(f"{self.endpoint}/api/show", json={"model": ref}, timeout=30).status_code == 200
+        except httpx.HTTPError:
+            ok = False
+        if not ok:
+            self.log(f"  {ref}: pull reported success but Ollama does not know the model")
+            with self._lock:
+                self.pulled.discard(ref)
+                self._save()
+        return ok
 
     def cleanup(self, ref: str) -> None:
         ref = _norm(ref)
         if ref in self.preinstalled or ref not in self.pulled:
             return
+        # Never delete while a prefetch is running: models of one family
+        # share blobs (tokenizer, template, license), and a delete prunes
+        # blobs no manifest references YET - the half-pulled next model's.
+        # That is the likely cause of the e4b 404 above (gemma4:12b was
+        # deleted while gemma4:e4b-it-qat was being prefetched).
+        for other, t in list(self._prefetch.items()):
+            if t.is_alive():
+                self.log(f"  waiting for the {other} download before removing {ref}")
+                t.join()
         try:
             httpx.request("DELETE", f"{self.endpoint}/api/delete",
                           json={"model": ref}, timeout=60)

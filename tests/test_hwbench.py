@@ -329,6 +329,21 @@ check("...and local fingerprints are unchanged without it",
       fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3)) == local_fp)
 check("remote: pull state is kept per host (a tag pulled here never marks the NAS copy as the bench's)",
       _models.state_file("finalnas") != _models.state_file() and "finalnas" in _models.state_file("finalnas").name)
+import threading as _th  # noqa: E402
+import time as _time  # noqa: E402
+order = []
+st_ = object.__new__(_models.Store)
+st_.endpoint, st_.log, st_.preinstalled, st_.pulled = "http://x", (lambda *a: None), set(), {"a:1"}
+st_.state, st_._lock, st_._results = tmp / "pulled.json", _th.Lock(), {}
+st_._prefetch = {"b:1": _th.Thread(target=lambda: (_time.sleep(0.3), order.append("pull b done")))}
+st_._prefetch["b:1"].start()
+_saved_req = _models.httpx.request
+_models.httpx.request = lambda *a, **k: order.append("delete a")
+st_.cleanup("a:1")
+_models.httpx.request = _saved_req
+check("cleanup waits for a running prefetch before deleting (shared blobs)",
+      order == ["pull b done", "delete a"])
+
 rs = _server.RemoteServer("http://nas:30068/", "nas")
 try:
     rs.ensure(_run.SERVERS["q8"])
