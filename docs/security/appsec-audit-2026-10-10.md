@@ -24,8 +24,10 @@ literal addresses are refused. **Done since** (sweep follow-up #5, round 3, roun
 Plex/Ollama/arr tests, the library test and `/complete`, `/reconfigure`, `/warmup`
 connect, and refuses it when any address is link-local/metadata/unspecified/multicast,
 or when the lookup times out or errors (`setup_wizard._refused_target`,
-`setup._refuse_resolved`, `library.py`). Still not added: the optional TrustedHost
-middleware / `ALLOWED_HOSTS` setting from row 1.
+`setup._refuse_resolved`, `library.py`). The optional Host check from row 1 is
+there too since 2026-10-19: an opt-in `ALLOWED_HOSTS` setting
+(`middleware.HostAllowListMiddleware`; empty means no check, loopback names
+always pass).
 
 ## 1. Threat model & security posture summary
 
