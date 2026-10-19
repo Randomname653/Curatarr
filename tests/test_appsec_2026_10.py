@@ -256,9 +256,19 @@ class _FakeClient:
         return {"version": "5"}
 
 
-_real_lib = (lib._make_client, lib.set_state)
+_real_lib = (lib._make_client, lib.set_state, lib.resolved_refusal)
 lib._make_client = lambda svc, url, key: made.append((url, key)) or _FakeClient(key)
 lib.set_state = lambda *a, **k: None
+
+
+async def _resolves_fine(url):
+    # The fake hosts (radarr.lan) must not hit the machine's DNS: Windows
+    # takes ~11 s to give up on an unknown .lan name, past the 3 s bound, so
+    # the real check refused them there while Linux answered NXDOMAIN at once.
+    return None
+
+
+lib.resolved_refusal = _resolves_fine
 try:
     out = asyncio.run(lib.library_test(lib.ArrTestRequest(service="radarr", url="http://attacker.example:1"),
                                        _user=None))
@@ -278,7 +288,7 @@ try:
           out["ok"] is False and "HTTP 500" in out["error"]
           and "internal-page-body" not in out["error"])
 finally:
-    lib._make_client, lib.set_state = _real_lib
+    lib._make_client, lib.set_state, lib.resolved_refusal = _real_lib
     settings.RADARR_URL, settings.RADARR_API_KEY, settings.PLEX_URL, settings.PLEX_TOKEN = _saved
 
 
