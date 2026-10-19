@@ -39,6 +39,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -64,6 +65,10 @@ SERVERS = {
     "q4": server.ServerConfig("1", "q4_0"),
 }
 _LOG = None
+# Set by --remote: the host whose card is measured. It joins the perf and
+# sweep fingerprints (a NAS cell is not a 4090 cell) and is empty locally,
+# so every local fingerprint stays what it was.
+REMOTE_HOST = ""
 
 
 def log(*a):
@@ -117,16 +122,56 @@ def preflight(force_busy: bool, busy_mib: int) -> list[str]:
     return problems
 
 
-def environment(bench: server.BenchServer, reserve_mib: int, prefetching: bool) -> dict:
+def environment(bench, reserve_mib: int, prefetching: bool) -> dict:
     q = gpu.query()
-    try:
-        import psutil
-        ram = round(psutil.virtual_memory().total / 2**30, 1)
-    except ImportError:
-        ram = None
+    if gpu.is_remote():
+        try:
+            info = gpu.remote_run("grep MemTotal /proc/meminfo; nproc; uname -sr").splitlines()
+            ram = round(int(info[0].split()[1]) / 2**20, 1)
+            osname, cpus = info[2].strip(), int(info[1])
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            ram, osname, cpus = None, "", None
+    else:
+        try:
+            import psutil
+            ram = round(psutil.virtual_memory().total / 2**30, 1)
+        except ImportError:
+            ram = None
+        osname, cpus = platform.platform(), os.cpu_count()
     return {"gpu": q["name"], "gpu_total_mib": q["total_mib"], "driver": q["driver"],
-            "ollama": bench.version(), "host_ram_gb": ram, "os": platform.platform(),
+            "ollama": bench.version(), "host_ram_gb": ram, "os": osname, "cpus": cpus,
+            "host": REMOTE_HOST or platform.node(),
             "desktop_reserve_mib": reserve_mib, "prefetch_active": prefetching}
+
+
+def preflight_remote(bench, busy_mib: int) -> list[str]:
+    """The NAS card is shared (Plex transcoding, Immich ML): measure only
+    when nothing else holds it, and never unload someone else's model."""
+    if not bench.version():
+        return [f"remote Ollama at {bench.endpoint} does not answer"]
+    problems = []
+    loaded = server.loaded_models(bench.endpoint)
+    if loaded:
+        problems.append(f"remote Ollama holds {[m.get('name') for m in loaded]} - someone is using it")
+    apps = gpu.compute_apps()
+    if apps:
+        problems.append(f"GPU on {REMOTE_HOST} in use by {[a['name'] for a in apps]}")
+    q = gpu.query()
+    if q["used_mib"] > busy_mib:
+        problems.append(f"GPU on {REMOTE_HOST}: {q['used_mib']} MiB used")
+    return problems
+
+
+RUNNER_CMDLINE = "for p in $(pgrep -x llama-server); do tr '\\0' ' ' < /proc/$p/cmdline; echo; done"
+
+
+def runner_cmdline() -> str:
+    """The remote llama-server's arguments: which flash-attention / KV /
+    parallel settings the NAS app really runs (its env is not readable)."""
+    try:
+        return gpu.remote_run(RUNNER_CMDLINE).strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
 
 # ── plan ─────────────────────────────────────────────────────────────────
@@ -171,13 +216,17 @@ def _perf_facts(snap: dict, n: int = 4) -> list[str]:
     return facts[:n] or [i["facts"] for i in snap["items"][:n]]
 
 
+def _host() -> dict:
+    return {"host": REMOTE_HOST} if REMOTE_HOST else {}
+
+
 def sweep_settings(cfg) -> dict:
-    return {"server": cfg.label, "server_env": cfg.env(), "num_gpu": 99}
+    return {"server": cfg.label, "server_env": cfg.env(), "num_gpu": 99, **_host()}
 
 
 def perf_base(cfg, profile: str, snap_id: str, reps: int) -> dict:
     return {"num_ctx": PROFILE_CTX[profile], "profile": profile, "server": cfg.label,
-            "server_env": cfg.env(), "snapshot": snap_id, "reps": reps}
+            "server_env": cfg.env(), "snapshot": snap_id, "reps": reps, **_host()}
 
 
 def quality_settings(cfg, profile: str, snap_id: str, items: str, default: bool) -> dict:
@@ -341,7 +390,7 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                            "cuda_free_mib": info["free_mib"], "cuda_ctx_mib": info["ctx_mib"],
                            "fit_target_mib": target}
                 def attempt():
-                    quiet = gpu.wait_quiet_cpu()
+                    quiet = gpu.wait_quiet_cpu(max_pct=args.quiet_cpu_pct)
                     if quiet and not quiet["host_quiet"]:
                         log(f"  host CPU still at {quiet['host_cpu_idle_pct']} % after "
                             f"{quiet['host_quiet_wait_s']} s - measuring anyway")
@@ -349,6 +398,8 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                         a = perf.run_cell(bench.endpoint, ref, num_ctx=ctx, num_gpu=num_gpu,
                                           profile=profile, facts=facts, reps=args.reps, sampler=smp)
                     a.update(quiet)
+                    if gpu.is_remote():
+                        a["runner_cmdline"] = runner_cmdline()
                     return a
 
                 try:
@@ -490,9 +541,14 @@ class KeepAwake:
 def cmd_run(args) -> None:
     global _LOG
     DATA.mkdir(parents=True, exist_ok=True)
-    _LOG = DATA / f"run_{datetime.now():%Y-%m-%d_%H-%M}.log"
-    server.reap_orphan_runners(log)      # a Ctrl+C'd run can leave one holding the card
-    problems = preflight(args.force_busy, args.busy_mib)
+    _LOG = DATA / f"run_{datetime.now():%Y-%m-%d_%H-%M}{'_' + args.remote_host if args.remote else ''}.log"
+    if args.remote:
+        bench_cm = remote_setup(args)
+        problems = [] if args.force_busy else preflight_remote(bench_cm, args.busy_mib)
+    else:
+        server.reap_orphan_runners(log)      # a Ctrl+C'd run can leave one holding the card
+        bench_cm = server.BenchServer(log_dir=DATA / "logs")
+        problems = preflight(args.force_busy, args.busy_mib)
     if problems:
         for p in problems:
             log("REFUSED:", p)
@@ -503,9 +559,10 @@ def cmd_run(args) -> None:
     reserve = args.desktop_reserve or max(400, min(1536, idle["used_mib"]))
     log(f"bench {BENCH_VERSION} on {idle['name']} (driver {idle['driver']}), "
         f"desktop reserve {reserve} MiB, {len(cands)} candidates, phases {args.phases}")
-    with KeepAwake(), server.BenchServer(log_dir=DATA / "logs") as bench:
+    with KeepAwake(), bench_cm as bench:
         bench.ensure(SERVERS["default"])
-        store = models.Store(bench.endpoint, min_free_gb=args.min_free_gb, log=log)
+        store = models.Store(bench.endpoint, min_free_gb=args.min_free_gb, log=log, host=REMOTE_HOST,
+                             disk_free_gb=remote_disk_free(args) if args.remote else None)
         store.cleanup_leftovers(keep={c["ref"] for c in cands})
         for i, c in enumerate(cands):
             nxt_c = cands[i + 1] if i + 1 < len(cands) else None
@@ -520,6 +577,36 @@ def cmd_run(args) -> None:
                 except Exception:
                     pass
     log("done.")
+
+
+def remote_setup(args) -> server.RemoteServer:
+    """--remote: measure the card of another host through its Ollama, with
+    nvidia-smi / vmstat over ssh. Sweep and perf only - quality does not
+    depend on the card and is measured here - and no simulated tiers: the
+    remote card IS the tier."""
+    global REMOTE_HOST
+    if not args.remote_ssh:
+        raise SystemExit("--remote needs --remote-ssh (the ssh command that reaches that host)")
+    REMOTE_HOST = args.remote_host
+    gpu.set_remote(shlex.split(args.remote_ssh, posix=False) + ["-o", "BatchMode=yes"])
+    if set(args.phases.split(",")) - {"sweep", "perf"}:
+        kept = [p for p in args.phases.split(",") if p in ("sweep", "perf")]
+        log(f"remote: phases {args.phases} -> {','.join(kept)} (quality is measured locally)")
+        args.phases = ",".join(kept) or "sweep,perf"
+    if args.servers != "default":
+        log(f"remote: servers {args.servers} -> default (the remote Ollama cannot be reconfigured)")
+        args.servers = "default"
+    args.no_tiers = True
+    return server.RemoteServer(args.remote, REMOTE_HOST)
+
+
+def remote_disk_free(args):
+    path = args.remote_models_path
+
+    def free_gb() -> float:
+        out = gpu.remote_run(f"df -Pk '{path}' | tail -1").split()
+        return int(out[3]) * 1024 / 1e9
+    return free_gb
 
 
 # ── status / matrix / scoring ────────────────────────────────────────────
@@ -637,6 +724,15 @@ def main() -> None:
     p.add_argument("--force-busy", action="store_true")
     p.add_argument("--busy-mib", type=int, default=3500,
                    help="refuse when more VRAM than this is in use before the run")
+    p.add_argument("--quiet-cpu-pct", type=float, default=20.0,
+                   help="wait (up to 2 min) for host CPU below this before each cell")
+    p.add_argument("--remote", default="",
+                   help="Ollama URL of another host to measure (e.g. http://finalnas:30068)")
+    p.add_argument("--remote-host", default="finalnas", help="name recorded for that host")
+    p.add_argument("--remote-ssh", default="",
+                   help='ssh command reaching it, e.g. "ssh -i C:/Users/me/.ssh/key claude@finalnas"')
+    p.add_argument("--remote-models-path", default="/mnt/nvme_apps/configurations/ai_stack/ollama",
+                   help="where the remote Ollama keeps its models (disk guard)")
     sub.add_parser("status")
     p = sub.add_parser("matrix"); p.add_argument("--export", action="store_true")
     p = sub.add_parser("score-sheets")

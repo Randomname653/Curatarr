@@ -28,12 +28,51 @@ import time
 
 MIB = 1024 * 1024
 
+# The card under test can sit on another host (--remote: the NAS). Every
+# reading then goes through this ssh prefix; system RAM and CPU come from
+# that host's vmstat instead of the local psutil.
+_REMOTE: list[str] = []
+
+
+def set_remote(ssh_prefix: list[str]) -> None:
+    _REMOTE[:] = ssh_prefix
+
+
+def is_remote() -> bool:
+    return bool(_REMOTE)
+
+
+def _cmd(args: list[str]) -> list[str]:
+    return [*_REMOTE, *args] if _REMOTE else args
+
+
+def remote_run(command: str, timeout: float = 30) -> str:
+    """One shell command on the remote host (its login shell is zsh there)."""
+    return subprocess.check_output([*_REMOTE, command], text=True, timeout=timeout)
+
+
+def _vmstat_row(header: list[str], line: str) -> dict:
+    vals = line.split()
+    if len(vals) != len(header) or not vals[0].isdigit():
+        return {}
+    row = dict(zip(header, map(int, vals)))
+    # free + buffers + page cache: what the host could hand a model without
+    # swapping (ZFS ARC is not in it, so this reads low on TrueNAS).
+    return {"cpu_pct": 100 - row.get("id", 100),
+            "ram_avail_mib": (row.get("free", 0) + row.get("buff", 0) + row.get("cache", 0)) // 1024}
+
+
+def remote_cpu_mem(window_s: int = 3) -> dict:
+    out = remote_run(f"vmstat -n {window_s} 2", timeout=window_s * 2 + 30).strip().splitlines()
+    header = out[1].split() if len(out) > 1 else []
+    return _vmstat_row(header, out[-1]) if header else {}
+
 
 def query(index: int = 0) -> dict:
     out = subprocess.check_output(
-        ["nvidia-smi", f"--id={index}",
+        _cmd(["nvidia-smi", f"--id={index}",
          "--query-gpu=name,memory.total,memory.used,memory.free,driver_version",
-         "--format=csv,noheader,nounits"], text=True, timeout=15)
+         "--format=csv,noheader,nounits"]), text=True, timeout=30)
     name, total, used, free, driver = [s.strip() for s in out.strip().split(",")]
     return {"name": name, "total_mib": int(total), "used_mib": int(used),
             "free_mib": int(free), "driver": driver}
@@ -43,8 +82,8 @@ def compute_apps() -> list[dict]:
     """Processes holding CUDA memory right now (a game, a second Ollama)."""
     try:
         out = subprocess.check_output(
-            ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
-             "--format=csv,noheader,nounits"], text=True, timeout=15)
+            _cmd(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
+                  "--format=csv,noheader,nounits"]), text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return []
     apps = []
@@ -69,16 +108,32 @@ class Sampler:
         self._proc = None
         self._thread = None
         self._mark = 0
+        self._vm = None
+        self._host: dict = {}     # latest remote vmstat reading
 
     def __enter__(self):
+        if _REMOTE:
+            # One long-running stream per tool, not a call per sample.
+            self.interval_ms = max(self.interval_ms, 1000)
+            self._vm = subprocess.Popen(_cmd(["vmstat", "-n", "1"]), stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
+            threading.Thread(target=self._read_vmstat, daemon=True).start()
         self._proc = subprocess.Popen(
-            ["nvidia-smi", f"--id={self.index}",
-             "--query-gpu=memory.used,utilization.gpu,power.draw,temperature.gpu",
-             "--format=csv,noheader,nounits", f"-lms={self.interval_ms}"],
+            _cmd(["nvidia-smi", f"--id={self.index}",
+                  "--query-gpu=memory.used,utilization.gpu,power.draw,temperature.gpu",
+                  "--format=csv,noheader,nounits", f"-lms={self.interval_ms}"]),
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
         return self
+
+    def _read_vmstat(self):
+        header: list[str] = []
+        for line in self._vm.stdout:
+            if "us" in line.split() and "id" in line.split():
+                header = line.split()
+            elif header:
+                self._host = _vmstat_row(header, line) or self._host
 
     def _read(self):
         try:
@@ -95,20 +150,27 @@ class Sampler:
                 temp = int(parts[3])
             except ValueError:
                 continue
-            ram = psutil.virtual_memory().available // MIB if psutil else None
-            # Whole-host CPU since the previous sample: an offloaded model
-            # runs its CPU layers here, and anything else running steals
-            # from them (granite4.1:8b on 4 GB: 8.2 vs 4.7 tok/s, 2026-10-19).
-            cpu = psutil.cpu_percent(interval=None) if psutil else None
+            if _REMOTE:
+                ram, cpu = self._host.get("ram_avail_mib"), self._host.get("cpu_pct")
+            else:
+                ram = psutil.virtual_memory().available // MIB if psutil else None
+                # Whole-host CPU since the previous sample: an offloaded model
+                # runs its CPU layers here, and anything else running steals
+                # from them (granite4.1:8b on 4 GB: 8.2 vs 4.7 tok/s, 2026-10-19).
+                cpu = psutil.cpu_percent(interval=None) if psutil else None
             self.samples.append((time.monotonic(), used, util, power, temp, ram, cpu))
 
     def __exit__(self, *exc):
-        if self._proc:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+        # Terminating the local ssh client closes the channel; the remote
+        # nvidia-smi / vmstat end with it (no pkill -f on the NAS: that
+        # pattern once matched the ssh session itself).
+        for proc in (self._proc, self._vm):
+            if proc:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
         return False
 
     def mark(self) -> None:
@@ -143,14 +205,24 @@ def wait_quiet_cpu(max_pct: float = 20.0, window_s: float = 3.0, timeout_s: floa
     """Wait until the host CPU is quiet before a cell (Windows Update, an
     indexer, a browser tab). Returns the last reading and how long it took;
     after ``timeout_s`` it measures anyway and the reading says why."""
-    try:
-        import psutil
-    except ImportError:
-        return {}
+    if _REMOTE:
+        def reading():
+            try:
+                return remote_cpu_mem(int(max(1, window_s))).get("cpu_pct", 0)
+            except (OSError, subprocess.SubprocessError):
+                return 0
+    else:
+        try:
+            import psutil
+        except ImportError:
+            return {}
+
+        def reading():
+            return psutil.cpu_percent(interval=window_s)
     t0 = time.monotonic()
-    pct = psutil.cpu_percent(interval=window_s)
+    pct = reading()
     while pct > max_pct and time.monotonic() - t0 < timeout_s:
-        pct = psutil.cpu_percent(interval=window_s)
+        pct = reading()
     return {"host_cpu_idle_pct": pct, "host_quiet_wait_s": round(time.monotonic() - t0, 1),
             "host_quiet": pct <= max_pct}
 

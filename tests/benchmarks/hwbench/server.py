@@ -139,6 +139,41 @@ class BenchServer:
         return False
 
 
+class RemoteServer:
+    """An Ollama on another host (the NAS app), measured as it is: the bench
+    cannot restart it with other settings, so only the default server
+    config runs there, and what it really uses (flash attention, KV type,
+    parallel slots) is read off its llama-server command line per cell."""
+
+    def __init__(self, endpoint: str, host: str):
+        self.endpoint = endpoint.rstrip("/")
+        self.host = host
+        self.config: ServerConfig | None = None
+
+    def version(self) -> str:
+        try:
+            return httpx.get(f"{self.endpoint}/api/version", timeout=10).json().get("version", "")
+        except (httpx.HTTPError, ValueError):
+            return ""
+
+    def ensure(self, config: ServerConfig) -> None:
+        if config != ServerConfig():
+            raise SystemExit(f"remote Ollama on {self.host}: only the default server config can be "
+                             f"measured (asked for {config.label})")
+        if not self.version():
+            raise SystemExit(f"remote Ollama at {self.endpoint} does not answer")
+        self.config = config
+
+    def stop(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 def kill_tree(pid: int) -> None:
     """Terminate a process and every descendant (children first)."""
     try:

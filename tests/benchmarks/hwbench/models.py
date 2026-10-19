@@ -7,8 +7,10 @@
   the bench pulled itself. Models installed before the run (production,
   the owner's own) are never removed, and a tag that is installed is never
   re-pulled, because a pull replaces the installed weights (registry.py).
-  What the bench pulled is persisted in ``.hwbench_pulled.json`` so a
-  crashed run still cleans up on the next start.
+  What the bench pulled is persisted in ``.hwbench_pulled.json`` (one file
+  per remote host: ``.hwbench_pulled_<host>.json``) so a crashed run still
+  cleans up on the next start — and a tag the bench pulled HERE never
+  marks the owner's copy of that tag on the NAS as the bench's.
 * A disk guard keeps ``min_free_gb`` free beyond the model being pulled.
 * ``bake``/``unbake`` build a temporary ``hwbench-<slug>`` model carrying
   the production CURATOR_SYSTEM_PROMPT (imported, not copied) — the
@@ -42,13 +44,24 @@ def installed(endpoint: str) -> set[str]:
     return {_norm(m["name"]) for m in r.json().get("models") or []}
 
 
+def state_file(host: str = "") -> Path:
+    if not host:
+        return STATE
+    return STATE.with_name(f".hwbench_pulled_{re.sub(r'[^A-Za-z0-9.-]+', '-', host)}.json")
+
+
 class Store:
-    def __init__(self, endpoint: str, min_free_gb: float = 15.0, log=print):
+    def __init__(self, endpoint: str, min_free_gb: float = 15.0, log=print,
+                 host: str = "", disk_free_gb=None):
+        """``host`` names a remote Ollama (its own pull state); ``disk_free_gb``
+        reads the free space where THAT server keeps its models."""
         self.endpoint = endpoint
         self.min_free_gb = min_free_gb
         self.log = log
+        self.state = state_file(host)
+        self._disk_free_gb = disk_free_gb or (lambda: shutil.disk_usage(registry.models_dir()).free / 1e9)
         self.preinstalled = installed(endpoint)
-        self.pulled: set[str] = set(json.loads(STATE.read_text())) if STATE.exists() else set()
+        self.pulled: set[str] = set(json.loads(self.state.read_text())) if self.state.exists() else set()
         # A model the bench pulled in an earlier run counts as the bench's,
         # not as the owner's, even though it is installed right now.
         self.preinstalled -= self.pulled
@@ -57,7 +70,7 @@ class Store:
         self._lock = threading.Lock()
 
     def _save(self):
-        STATE.write_text(json.dumps(sorted(self.pulled)))
+        self.state.write_text(json.dumps(sorted(self.pulled)))
 
     def is_installed(self, ref: str) -> bool:
         return _norm(ref) in installed(self.endpoint)
@@ -65,7 +78,7 @@ class Store:
     def disk_ok(self, ref: str) -> tuple[bool, str]:
         remote = registry.remote_manifest(ref) or {}
         need = (remote.get("total_bytes") or 0) / 1e9
-        free = shutil.disk_usage(registry.models_dir()).free / 1e9
+        free = self._disk_free_gb()
         ok = free - need >= self.min_free_gb
         return ok, f"{free:.0f} GB free, {need:.1f} GB needed, keep {self.min_free_gb:.0f}"
 

@@ -317,5 +317,40 @@ for srv in ("default", "q8"):
 check("pending: ...and no re-pull once every server has one",
       not _run.pending_work(cand, AT, PL, kv=False))
 
+# ── remote host (the NAS card) ─────────────────────────────────────────────
+from tests.benchmarks.hwbench import models as _models, server as _server  # noqa: E402
+local_fp = fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3))
+_run.REMOTE_HOST = "finalnas"
+check("remote: perf and sweep fingerprints carry the host, so a NAS cell never hides a 4090 cell",
+      fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3)) != local_fp
+      and _run.sweep_settings(_run.SERVERS["default"])["host"] == "finalnas")
+_run.REMOTE_HOST = ""
+check("...and local fingerprints are unchanged without it",
+      fingerprint(pk, "perf", _run.perf_base(_run.SERVERS["default"], "large", "S1", 3)) == local_fp)
+check("remote: pull state is kept per host (a tag pulled here never marks the NAS copy as the bench's)",
+      _models.state_file("finalnas") != _models.state_file() and "finalnas" in _models.state_file("finalnas").name)
+rs = _server.RemoteServer("http://nas:30068/", "nas")
+try:
+    rs.ensure(_run.SERVERS["q8"])
+    refused = False
+except SystemExit:
+    refused = True
+check("remote: only the default server config can be measured", refused and rs.endpoint == "http://nas:30068")
+hdr = "r b swpd free buff cache si so bi bo in cs us sy id wa st gu".split()
+check("vmstat row -> CPU busy % and free+buff+cache",
+      _gpu._vmstat_row(hdr, "3 0 0 1048576 524288 524288 0 0 0 0 1 1 20 10 65 5 0 0")
+      == {"cpu_pct": 35, "ram_avail_mib": 2048}
+      and _gpu._vmstat_row(hdr, "procs ---memory---") == {})
+RA = _ap.Namespace(remote="http://nas:30068", remote_host="nas", remote_ssh="ssh nas",
+                   phases="sweep,perf,quality", servers="default,q8,q4", no_tiers=False)
+_saved_log, _run.log = _run.log, (lambda *a: None)
+_run.remote_setup(RA)
+_run.log = _saved_log
+check("remote setup: quality dropped, default server only, no simulated tiers",
+      RA.phases == "sweep,perf" and RA.servers == "default" and RA.no_tiers
+      and _gpu.is_remote() and _run.REMOTE_HOST == "nas")
+_gpu.set_remote([])
+_run.REMOTE_HOST = ""
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
