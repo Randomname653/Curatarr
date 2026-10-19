@@ -224,6 +224,9 @@ plex_user = {"id": 4242, "username": "owner"}
 
 
 class _FakeClient:
+    def __init__(self, **kw):   # verify=, timeout=: a real client's options
+        pass
+
     async def __aenter__(self):
         return self
 

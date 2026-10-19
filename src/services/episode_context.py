@@ -21,6 +21,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ async def _fetch_episodes(series_title: str) -> Optional[list]:
     if not sid:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(f"{base}/api/v3/episode",
                                  params={"seriesId": sid, "apikey": key})
         return r.json() if r.status_code == 200 else None

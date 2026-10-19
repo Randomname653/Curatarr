@@ -39,6 +39,7 @@ from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
 from src.services.llm_utils import clean_llm_text, parse_llm_json, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -418,7 +419,7 @@ Output ONLY a JSON block:
 {{"status": "CONTRADICTION" | "REAFFIRMATION" | "NUANCE" | "UNRELATED", "reason": "brief explanation"}}"""
 
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
                 r = await client.post(
                     f"{settings.effective_ollama}/api/chat",
                     json={
@@ -880,7 +881,7 @@ async def _run_memory_extraction(
         # Timeout raised from 30s → 90s (Pass 14.13). With the curator
         # potentially eviction-cycling and the summarizer cold-loading
         # 14GB, 30s clipped legitimate slow runs as ReadTimeout.
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -1994,7 +1995,7 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
 
     try:
         # Timeout 20s → 90s (Pass 14.13).
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -2379,7 +2380,7 @@ Output ONLY valid JSON:
 }}"""
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -2483,7 +2484,7 @@ Output ONLY valid JSON:
 USER MESSAGES:
 {joined}"""
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={

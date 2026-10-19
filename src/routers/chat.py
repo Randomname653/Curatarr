@@ -543,7 +543,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
 
     raw_output = ""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.post(
                 f"{_cfg.effective_ollama}/api/chat",
                 json={
@@ -1036,6 +1036,7 @@ from src.services.watch_status import (
     watched_lookup as _watched_lookup,
     watch_tag as _watch_tag,
 )
+from src.services.http_client import tls_context
 
 
 async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,
@@ -3483,7 +3484,7 @@ FORMATTING RULES:
                 # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
                 # the response can take 5-10 minutes. We'd rather wait it out
                 # than 504 the user mid-stream when their model has spilled.
-                async with httpx.AsyncClient(timeout=600) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=600) as client:
                     async with client.stream(
                         "POST",
                         f"{ollama_url}/api/chat",

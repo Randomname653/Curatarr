@@ -32,6 +32,7 @@ from src.services.llm_utils import (
     clean_llm_text, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE,
     detect_user_language, language_directive,
 )
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +404,7 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
     from src.services.llm_priority import wait_for_curator
     await wait_for_curator()
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -488,7 +489,7 @@ Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": 
     from src.services.llm_priority import wait_for_curator
     await wait_for_curator()
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={

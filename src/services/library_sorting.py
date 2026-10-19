@@ -37,6 +37,7 @@ from src.database.runner import run_read, run_write
 from src.services.anime_mapping import get_anime_mapping
 from src.services.app_state import get_state, set_state
 from src.services.enrichment_state import is_transient_error
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ async def scan_misclassified() -> dict:
 
     mapping = await get_anime_mapping()
     headers = {"X-Api-Key": key}
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
         try:
             series = (await client.get(f"{sonarr}/api/v3/series", headers=headers)).json()
             rootfolders = (await client.get(f"{sonarr}/api/v3/rootfolder", headers=headers)).json()
@@ -357,7 +358,7 @@ async def apply_reclassify(items: list) -> dict:
     from src.services.arr_client import classify_sonarr_category
     headers = {"X-Api-Key": key}
     results = []
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for it in items or []:
             sid = it.get("sonarr_id")
             fix = it.get("fix") or {}

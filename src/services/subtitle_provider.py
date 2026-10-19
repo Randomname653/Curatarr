@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT,
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT,
                                      follow_redirects=True) as c:
             # Streamed so an implausibly large file can be refused on its
             # headers rather than downloaded and then discarded.

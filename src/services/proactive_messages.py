@@ -49,6 +49,7 @@ from src.services.series_progress import (
     normalize_title,
 )
 from src.services.viewing_sessions import rhythm as _viewing_rhythm, utc_offset as _utc_offset
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -1637,7 +1638,7 @@ async def generate_proactive_message(
             if not model:
                 continue
             try:
-                async with httpx.AsyncClient(timeout=60) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
                     resp = await client.post(
                         f"{settings.effective_ollama}/api/chat",
                         json={

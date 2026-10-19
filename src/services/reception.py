@@ -98,6 +98,7 @@ def _extract_relations(al: dict) -> list[dict]:
     return rels[:_MAX_RELATIONS]
 
 from src.services.llm_utils import UNTRUSTED_RULE, fence_untrusted  # noqa: E402
+from src.services.http_client import tls_context
 
 _CONDENSE_SYS = (
     "You write a RECEPTION summary for a media curator's evidence file. "
@@ -222,7 +223,7 @@ async def _condense(prompt: str) -> Optional[str]:
         if not model:
             continue
         try:
-            async with httpx.AsyncClient(timeout=150) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=150) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system", "content": _CONDENSE_SYS},
@@ -269,7 +270,7 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
     prose comes from the summarizer. Returns (reception_text, typed_relations)
     — relations and staff ride along free on the same AniList call (anime
     only)."""
-    async with httpx.AsyncClient(timeout=25) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=25) as client:
         if media_type == "anime":
             al = await _anilist_media(client, anilist_id=anilist_id,
                                       search=title, year=year)
@@ -601,7 +602,7 @@ async def topup_franchise(
         rels, anidb_tags, staff = [], [], []
         if media_type == "anime":
             al_id = anilist_id or doc.get("anilist_id")
-            async with httpx.AsyncClient(timeout=25) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=25) as client:
                 al = await _anilist_media(client, anilist_id=al_id,
                                           search=title, year=year or doc.get("year"))
             if al is None:

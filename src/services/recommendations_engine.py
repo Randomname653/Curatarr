@@ -29,6 +29,7 @@ from src.database.models import (
     TasteVectorEntry, User,
     EncryptedTasteVector, ProtectedMedia, EpisodicMemory
 )
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -639,7 +640,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]
         for model in dict.fromkeys(m for m in chain if m):
             try:
-                async with httpx.AsyncClient(timeout=120) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
                     r = await client.post(
                         f"{settings.effective_ollama}/api/chat",
                         json={
@@ -769,7 +770,7 @@ async def _get_trending(cat: str) -> list:
         paths = [("/trending/tv/week", {}), ("/tv/on_the_air", {})]
     titles: list = []
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             for path, extra in paths:
                 r = await client.get(f"https://api.themoviedb.org/3{path}",
                                      params={"api_key": api_key, **extra})

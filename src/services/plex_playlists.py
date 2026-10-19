@@ -39,6 +39,7 @@ import httpx
 from src.config import settings
 from src.database.runner import run_read, run_write
 from src.services.enrichment_state import log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ async def get_machine_identifier(force: bool = False) -> Optional[str]:
     if not token:
         return None
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
             r = await c.get(f"{_base()}/identity", headers=_headers(token))
         mid = (r.json().get("MediaContainer") or {}).get("machineIdentifier")
         if mid:
@@ -93,7 +94,7 @@ async def get_machine_identifier(force: bool = False) -> Optional[str]:
 
 
 async def list_playlists(token: str, playlist_type: str = "video") -> list[dict]:
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         r = await c.get(f"{_base()}/playlists", headers=_headers(token),
                         params={"playlistType": playlist_type})
     if r.status_code != 200:
@@ -106,7 +107,7 @@ async def list_video_playlists(token: str) -> list[dict]:
 
 
 async def delete_playlist(token: str, rating_key: str) -> None:
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         await c.delete(f"{_base()}/playlists/{rating_key}", headers=_headers(token))
 
 
@@ -122,7 +123,7 @@ async def create_playlist(token: str, title: str, metadata_keys: list[str],
     mid = await get_machine_identifier()
     if not mid:
         raise RuntimeError("Plex machineIdentifier unavailable")
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         def params(m):
             uri = (f"server://{m}/com.plexapp.plugins.library"
                    f"/library/metadata/{','.join(metadata_keys)}")
@@ -145,7 +146,7 @@ async def create_playlist(token: str, title: str, metadata_keys: list[str],
 async def playlist_items(token: str, playlist_key: str) -> list[dict]:
     """The playlist's current entries: [{item_id, rating_key}] —
     playlistItemID is what the remove endpoint wants, NOT the ratingKey."""
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         r = await c.get(f"{_base()}/playlists/{playlist_key}/items",
                         headers=_headers(token))
     if r.status_code != 200:
@@ -168,7 +169,7 @@ async def reconcile_playlist(token: str, playlist_key: str,
         current = await playlist_items(token, playlist_key)
         have = {it["rating_key"] for it in current}
         want = set(wanted_keys)
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
             for it in current:
                 if it["rating_key"] not in want:
                     await c.delete(
@@ -198,7 +199,7 @@ async def key_exists(token: str, rating_key: str) -> bool:
     False, so with Plex down every item looked stale, the push came back
     {"pushed": []} and the custodian stamped the task done for a week.
     """
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         r = await c.get(f"{_base()}/library/metadata/{rating_key}",
                         headers=_headers(token))
     if r.status_code == 200:
@@ -216,7 +217,7 @@ async def _search_sections(token: str, sections: list, params: dict, what: str) 
     "not in Plex" (the old lookups returned None for both, at DEBUG).
     """
     err: Optional[Exception] = None
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         for sec in sections:
             try:
                 r = await c.get(f"{_base()}/library/sections/{sec}/all",
@@ -286,7 +287,7 @@ async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[s
     the USER token). Falls back to the plain first leaf, then to None —
     a None drops the series from this push rather than exploding the
     playlist into every episode (probe: a series key expands to ALL leaves)."""
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         for params in ({"unwatched": 1}, {}):
             try:
                 r = await c.get(
@@ -479,7 +480,7 @@ async def pick_album_key(user_token: str, artist_key: str,
     absent from the children listing, so the first few albums get a single
     metadata GET each with the USER token = their listen state). Falls back
     to the plain first album."""
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         try:
             r = await c.get(f"{_base()}/library/metadata/{artist_key}/children",
                             headers=_headers(user_token))

@@ -28,6 +28,7 @@ from src.database.models import (
 from src.routers.auth import get_current_user, require_admin
 from src.config import settings
 from src.services.enrichment_state import log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -295,7 +296,7 @@ async def _fetch_tmdb(
         return True
 
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
             if tmdb_id:
                 # Deterministic path — query the exact entry by ID.
                 r = await client.get(
@@ -364,7 +365,7 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
             from src.services.music_metadata import fetch_deezer_id_via_mbid
             deezer_id = await fetch_deezer_id_via_mbid(mbid)
             if deezer_id:
-                async with httpx.AsyncClient(timeout=8) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
                     r = await client.get(f"https://api.deezer.com/artist/{deezer_id}")
                 if r.status_code == 200:
                     d = r.json()
@@ -377,7 +378,7 @@ async def _fetch_deezer_artist(artist_name: str, mbid: str | None = None) -> Opt
 
     # Fallback path: name search (popularity-sorted — best-effort).
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
             r = await client.get(
                 "https://api.deezer.com/search/artist",
                 params={"q": artist_name, "limit": 1},
@@ -790,7 +791,7 @@ async def get_redundancy(_user: User = Depends(require_admin)):
                 if not key:
                     return
                 try:
-                    async with httpx.AsyncClient(timeout=10) as c:
+                    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as c:
                         r = await c.get(f"{_base()}/library/metadata/{key}",
                                         headers=_headers(tok))
                     meta = ((r.json().get("MediaContainer") or {}).get("Metadata")
@@ -1589,7 +1590,7 @@ async def _arr_recycle_bin(service: str, client=None) -> dict:
         return unknown
     _, api_key, base, ver = conf
     owns = client is None
-    client = client or httpx.AsyncClient(timeout=5)
+    client = client or httpx.AsyncClient(verify=tls_context(), timeout=5)
     try:
         r = await client.get(f"{str(base).rstrip('/')}/api/{ver}/config/mediamanagement",
                              headers={"X-Api-Key": api_key})
@@ -1825,7 +1826,7 @@ async def _lidarr_freshness_guard(p) -> Optional[str]:
     base = str(settings.effective_lidarr_url).rstrip("/")
     headers = {"X-Api-Key": settings.LIDARR_API_KEY}
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
             r = await client.post(f"{base}/api/v1/command", headers=headers,
                                   json={"name": "RefreshArtist",
                                         "artistId": int(p.media_id)})
@@ -2279,7 +2280,7 @@ async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
     # of typical-library imports without hitting per-call response caps.
     params = {"pageSize": 250, "page": 1, "eventType": event_type_int}
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.get(
                 f"{url_base.rstrip('/')}{path}",
                 params=params,
@@ -2444,7 +2445,7 @@ async def _fetch_arr_candidates(category: str = None) -> list:
             candidates.extend(hit["items"])
         else:
             try:
-                async with httpx.AsyncClient(timeout=15) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
                     r = await client.get(f"{settings.RADARR_URL.rstrip('/')}/api/v3/movie",
                         headers={"X-Api-Key": settings.RADARR_API_KEY})
                 if r.status_code == 200:
@@ -2504,7 +2505,7 @@ async def _fetch_arr_candidates(category: str = None) -> list:
             candidates.extend(hit["items"])
         else:
             try:
-                async with httpx.AsyncClient(timeout=15) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
                     r = await client.get(f"{settings.SONARR_URL.rstrip('/')}/api/v3/series",
                         headers={"X-Api-Key": settings.SONARR_API_KEY})
                 if r.status_code == 200:
@@ -2603,7 +2604,7 @@ async def _fetch_arr_candidates(category: str = None) -> list:
                 # fast (→ stale-cache fallback below) instead of hanging.
                 from src.services.arr_client import listing_timeout
                 _lidarr_timeout = httpx.Timeout(listing_timeout(), connect=10.0)
-                async with httpx.AsyncClient(timeout=_lidarr_timeout) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=_lidarr_timeout) as client:
                     r = await client.get(f"{settings.LIDARR_URL.rstrip('/')}/api/v1/artist",
                         headers={"X-Api-Key": settings.LIDARR_API_KEY})
                 if r.status_code == 200:
@@ -2735,7 +2736,7 @@ async def _probe_arr(service: str) -> bool:
         if not base or not token:
             return False
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
                 r = await client.get(f"{str(base).rstrip('/')}/identity",
                                      headers={"X-Plex-Token": token,
                                               "Accept": "application/json"})
@@ -2753,7 +2754,7 @@ async def _probe_arr(service: str) -> bool:
     if not base_url or not api_key:
         return False
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
             r = await client.get(
                 f"{base_url.rstrip('/')}/api/{ver}/system/status",
                 headers={"X-Api-Key": api_key},
@@ -2795,7 +2796,7 @@ async def _plex_delete_artist(key: str, client=None) -> Optional[bool]:
     key = checked
     headers = {"Accept": "application/json", "X-Plex-Token": token}
     owns = client is None
-    client = client or httpx.AsyncClient(timeout=30)
+    client = client or httpx.AsyncClient(verify=tls_context(), timeout=30)
     try:
         r = await client.delete(f"{base}/library/metadata/{key}", headers=headers)
         if r.status_code not in (200, 204):
@@ -2906,7 +2907,7 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
                 return False
             url = f"{base}/{path}/{media_id}"
             headers = {"X-Api-Key": api_key}
-            async with httpx.AsyncClient(timeout=_DELETE_TIMEOUT) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=_DELETE_TIMEOUT) as client:
                 try:
                     r = await client.delete(url, headers=headers, params=params)
                 except (httpx.ConnectError, httpx.ConnectTimeout) as e:

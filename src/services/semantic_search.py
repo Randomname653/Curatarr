@@ -26,6 +26,7 @@ import logging
 import re
 
 from src.services.watch_status import watched_lookup, watch_tag
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ async def _summarizer_json(system: str, user: str, schema: dict,
         if not model:
             continue
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=timeout) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system", "content": system},

@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ async def _get_token(client_id: str, client_secret: str) -> Optional[str]:
 
     credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.post(
                 _TOKEN_URL,
                 headers={
@@ -150,7 +151,7 @@ async def _batch_get(
 
         batch = ids[i:i + chunk]
         try:
-            async with httpx.AsyncClient(timeout=12) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=12) as client:
                 r = await client.get(url, headers=headers, params={"ids": ",".join(batch)})
             if r.status_code == 200:
                 consecutive_429 = 0
@@ -180,7 +181,7 @@ async def _batch_get(
                 await asyncio.sleep(retry_after)
                 # Retry this batch once after the backoff
                 try:
-                    async with httpx.AsyncClient(timeout=12) as client:
+                    async with httpx.AsyncClient(verify=tls_context(), timeout=12) as client:
                         r2 = await client.get(url, headers=headers, params={"ids": ",".join(batch)})
                     if r2.status_code == 200:
                         consecutive_429 = 0

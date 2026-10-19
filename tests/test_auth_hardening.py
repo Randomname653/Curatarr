@@ -172,6 +172,9 @@ class _Resp:
 
 
 class _FakeClient:
+    def __init__(self, **kw):   # verify=, timeout=: a real client's options
+        pass
+
     async def __aenter__(self):
         return self
 

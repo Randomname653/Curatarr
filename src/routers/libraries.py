@@ -18,6 +18,7 @@ from src.database import get_db
 from src.database.models import LibraryConfig, User
 from src.routers.auth import get_current_user, require_admin
 from src.services.ttl_memo import ttl_response
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -69,7 +70,7 @@ async def discover_libraries(user: User = Depends(get_current_user)):
         "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         resp = await client.get(f"{plex_url}/library/sections", headers=headers)
 
     if resp.status_code != 200:
@@ -93,7 +94,7 @@ async def discover_libraries(user: User = Depends(get_current_user)):
         return 0
 
     import asyncio as _asyncio
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         counts = await _asyncio.gather(
             *[_fetch_section_count(client, s.get("key", "")) for s in sections],
             return_exceptions=True,

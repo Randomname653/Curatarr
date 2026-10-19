@@ -158,6 +158,7 @@ async def _host_resolves_public(host: str, resolver=None) -> bool:
 # ── Disk cache ───────────────────────────────────────────────────────────────
 
 from src.paths import DATA_DIR
+from src.services.http_client import tls_context
 _CACHE_DIR = DATA_DIR / "cache" / "images"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -316,7 +317,7 @@ async def proxy_image(
             _inflight.pop(src, None)
             raise HTTPException(403, f"Host resolves to a non-public address: {parsed.host}")
         try:
-            async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=False) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=_FETCH_TIMEOUT, follow_redirects=False) as client:
                 next_url = str(parsed)
                 r = None
                 for hop in range(4):   # initial + up to 3 redirects

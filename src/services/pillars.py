@@ -38,6 +38,7 @@ from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
 
 from src.database.runner import run_read
 from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -1234,7 +1235,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
     }
 
     async def _post():
-        async with httpx.AsyncClient(timeout=_JUDGE_TIMEOUT) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_JUDGE_TIMEOUT) as client:
             resp = await client.post(
                 f"{settings.effective_ollama}/api/chat", json=payload)
         resp.raise_for_status()

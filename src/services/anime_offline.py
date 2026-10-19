@@ -37,6 +37,7 @@ DUMP_URL = ("https://github.com/manami-project/anime-offline-database"
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 OFFLINE_DB_PATH = _REPO_ROOT / "data" / "cache" / "anime_offline.db"
 MAX_AGE_DAYS = 7
 
@@ -92,7 +93,7 @@ async def ensure_offline_db(allow_download: bool = True) -> bool:
             return True
         try:
             t0 = time.time()
-            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=300, follow_redirects=True) as client:
                 r = await client.get(DUMP_URL)
             if r.status_code != 200:
                 logger.warning("[anime-offline] download HTTP %s", r.status_code)

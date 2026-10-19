@@ -34,6 +34,7 @@ import httpx
 from src.config import settings
 from src.services.enrichment_state import log_topup_failure
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ async def _lidarr_artist_albums(artist_name: str) -> tuple[Optional[dict], list]
         # The artist from the cached library, not a fresh full /artist list
         # (15-30 MB, ~2 min on a big Lidarr) per dossier (find_lidarr_artist).
         from src.services.lidarr_discography import find_lidarr_artist
-        async with httpx.AsyncClient(timeout=20) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20) as c:
             artist = await find_lidarr_artist(
                 c, base, key, name=artist_name,
                 same_name=lambda a, b: _norm(a) == _norm(b))
@@ -133,7 +134,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
     if not tnames and settings.LIDARR_URL:
         try:
             base = settings.LIDARR_URL.rstrip("/")
-            async with httpx.AsyncClient(timeout=15) as c:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=15) as c:
                 tracks = (await c.get(f"{base}/api/v1/track",
                                       params={"apikey": settings.LIDARR_API_KEY,
                                               "albumId": alb["id"]})).json()
@@ -181,7 +182,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
 
     if settings.LASTFM_API_KEY:
         try:
-            async with httpx.AsyncClient(timeout=15) as c:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=15) as c:
                 lf = (await c.get("https://ws.audioscrobbler.com/2.0/", params={
                     "method": "album.getinfo",
                     "api_key": settings.LASTFM_API_KEY,

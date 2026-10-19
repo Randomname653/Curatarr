@@ -39,6 +39,7 @@ from typing import Awaitable, Callable, Optional
 
 from src.config import settings
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -724,7 +725,7 @@ async def _call_summarizer(prompt: str) -> Optional[dict]:
     from src.services.llm_utils import ollama_options, parse_llm_json
     model = getattr(settings, "SUMMARIZER_MODEL", None) or settings.BASE_SUMMARIZER_MODEL
     try:
-        async with httpx.AsyncClient(timeout=180) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=180) as c:
             r = await c.post(f"{settings.effective_ollama}/api/chat",
                              json={"model": model, "messages": [{"role": "user", "content": prompt}],
                                    "stream": False, **ollama_options(temperature=0.1, num_predict=900)})
@@ -959,7 +960,7 @@ async def run_lyrics_sync(task=None) -> bool:
 
     from src.database.runner import run_read
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
         sections = await run_read(_music_sections)
         if not sections:
             sections = await _discover_music_sections(client, base, headers)

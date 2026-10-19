@@ -82,6 +82,10 @@ async def lifespan(app: FastAPI):
     # recommendations_engine; a corrupt store still stops the start loudly.
     from src.vector_store.chromadb_wrapper import get_chroma_db
     get_chroma_db()
+    # The TLS context every HTTP client shares (src/services/http_client.py):
+    # loading the CA bundle is ~50 ms of CPU, paid here instead of by a request.
+    from src.services.http_client import tls_context
+    tls_context()
 
     from src.services.scheduler import start_scheduler
     start_scheduler()
@@ -124,7 +128,7 @@ async def lifespan(app: FastAPI):
     # probe that fails counts as a game until the watcher knows better.
     try:
         from src.services.process_monitor import is_game_running as _igr
-        _game = _igr()
+        _game = await asyncio.to_thread(_igr)    # a real probe: on the loop it is cache-only
     except Exception as e:
         logger.warning("Boot: game probe failed - assuming a game until the "
                        "watcher's first tick: %s", e)

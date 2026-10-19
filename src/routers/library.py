@@ -544,6 +544,7 @@ _LOOKUP_WARNED: list = []
 # the freshness check survives process restarts (monotonic resets at
 # start-of-process and would mark every reloaded entry as 0s old).
 import time
+from src.services.http_client import tls_context
 
 _LIB_CACHE: dict[str, dict] = {}
 _LIB_CACHE_TTL = 900       # 15 min freshness window (after which we re-fetch)
@@ -1760,7 +1761,7 @@ async def library_breakdown(
         }
         # Section metadata (scanned_at + verify keys still exist) — single call
         try:
-            async with _httpx.AsyncClient(timeout=15) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
                 meta_resp = await client.get(f"{plex_url}/library/sections", headers=headers)
                 if meta_resp.status_code == 200:
                     for sec in (meta_resp.json()

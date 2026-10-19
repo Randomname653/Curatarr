@@ -35,6 +35,7 @@ from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
 from src.services.enrichment_state import TRANSIENT
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     # Key: (norm_artist, norm_title) → {"rating_key": str, "genres": list[str]}
     plex_index: dict[tuple, dict] = {}
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
         for sec_key in music_sections:
             if await run_read(_stop_requested):
                 break
@@ -751,7 +752,7 @@ async def enrich_music_genres_lastfm(
 
     iterations_done = 0
     transient_streak = 0
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         for i, (norm_key, (artist, title, _ids)) in enumerate(unique_tracks):
             # An outage is not "Last.fm has no tags": tracks it could not
             # answer for stay NULL (retried), and five in a row end the batch.

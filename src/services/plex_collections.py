@@ -27,6 +27,7 @@ import httpx
 
 from src.services.plex_playlists import (_base, _headers, _owner_token,
                                          get_machine_identifier)
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ COLLECTION_PREFIX = "Curatarr · "
 
 async def list_collections(section_key: str) -> list[dict]:
     token = _owner_token()
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         r = await c.get(f"{_base()}/library/sections/{section_key}/collections",
                         headers=_headers(token))
     if r.status_code != 200:
@@ -48,7 +49,7 @@ async def list_collections(section_key: str) -> list[dict]:
 
 async def delete_collection(rating_key: str) -> None:
     token = _owner_token()
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         await c.delete(f"{_base()}/library/collections/{rating_key}",
                        headers=_headers(token))
 
@@ -70,7 +71,7 @@ async def create_collection(section_key: str, plex_type: int, title: str,
         # Was a silent None (= "nothing created") after the cleanup had
         # already deleted the old shelves.
         raise RuntimeError("Plex machineIdentifier unavailable")
-    async with httpx.AsyncClient(timeout=60.0) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60.0) as c:
         def params(m):
             uri = (f"server://{m}/com.plexapp.plugins.library"
                    f"/library/metadata/{','.join(keys)}")

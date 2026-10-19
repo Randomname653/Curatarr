@@ -18,6 +18,7 @@ import httpx
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache
 from src.services.enrichment_state import TRANSIENT, log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
 
     deezer_id = None
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await _mb_request(
                 client, f"{MB_BASE}/artist/{mbid}",
                 {"inc": "url-rels", "fmt": "json"},
@@ -157,7 +158,7 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
         # The cached hit is the one the owner just excluded — search again.
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             if not mbid:
                 # No id from the arr — fall back to a name search (ambiguous:
                 # the first hit not excluded by the owner wins — the
@@ -232,7 +233,7 @@ async def fetch_musicbrainz_album(mbid: str, album_name: str, artist_name: str) 
         return cached["response"]
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             if mbid:
                 r = await _mb_request(client, f"{MB_BASE}/release-group/{mbid}",
                     {"inc": "tags+genres+ratings", "fmt": "json"})
@@ -293,7 +294,7 @@ async def enrich_album(album_name: str, artist_name: str, mbid: str = None) -> O
     lastfm_tags = []
     if lastfm_key:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
                 r = await client.get(LASTFM_BASE, params={
                     "method": "album.gettoptags",
                     "artist": artist_name,
@@ -347,7 +348,7 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
         return cached["response"]   # may legitimately be None (neg-cached)
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.get(
                 LASTFM_BASE,
                 params={
@@ -614,7 +615,7 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
         return fb
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(
                 LASTFM_BASE,
                 params={

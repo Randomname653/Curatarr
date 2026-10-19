@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 from src.services.task_monitor import task_monitor
 from src.services.ttl_memo import ttl_response
 from src.services import enrichment_state as _ES
+from src.services.http_client import tls_context
 router = APIRouter()
 
 CATEGORIES = ["music", "movie", "show", "anime"]
@@ -325,7 +326,7 @@ async def _get_arr_counts() -> dict:
 
     if settings.RADARR_URL and settings.RADARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=8) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
                 r = await client.get(
                     f"{settings.RADARR_URL.rstrip('/')}/api/v3/movie",
                     headers={"X-Api-Key": settings.RADARR_API_KEY},
@@ -367,7 +368,7 @@ async def _get_arr_counts() -> dict:
 
     if settings.SONARR_URL and settings.SONARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=8) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
                 r = await client.get(
                     f"{settings.SONARR_URL.rstrip('/')}/api/v3/series",
                     headers={"X-Api-Key": settings.SONARR_API_KEY},
@@ -414,7 +415,7 @@ async def _get_arr_counts() -> dict:
             logger.warning("[kb] plex music counts failed: %s", e, exc_info=True)
     if settings.LIDARR_URL and settings.LIDARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=8) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
                 r = await client.get(
                     f"{settings.LIDARR_URL.rstrip('/')}/api/v1/artist",
                     headers={"X-Api-Key": settings.LIDARR_API_KEY},
@@ -1354,7 +1355,7 @@ async def match_candidates(
         if year:
             params["year" if mt == "movie" else "first_air_date_year"] = year
         try:
-            async with _hx.AsyncClient(timeout=10) as c:
+            async with _hx.AsyncClient(verify=tls_context(), timeout=10) as c:
                 r = await c.get(f"https://api.themoviedb.org/3/search/{mt}", params=params)
             results = (r.json().get("results") or [])[:8] if r.status_code == 200 else []
         except Exception as e:
@@ -1970,7 +1971,7 @@ async def _collect_arr_items(categories: list) -> list:
     _ARR_TIMEOUT = _httpx.Timeout(_listing_timeout(), connect=10.0)
     if "movie" in categories and settings.RADARR_URL and settings.RADARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=_ARR_TIMEOUT) as client:
                 r = await client.get(
                     f"{settings.effective_radarr_url}/api/v3/movie",
                     headers={"X-Api-Key": settings.RADARR_API_KEY},
@@ -1996,7 +1997,7 @@ async def _collect_arr_items(categories: list) -> list:
 
     if any(c in categories for c in ("show", "anime")) and settings.SONARR_URL and settings.SONARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=_ARR_TIMEOUT) as client:
                 r = await client.get(
                     f"{settings.effective_sonarr_url}/api/v3/series",
                     headers={"X-Api-Key": settings.SONARR_API_KEY},
@@ -2036,7 +2037,7 @@ async def _collect_arr_items(categories: list) -> list:
 
     if "music" in categories and settings.LIDARR_URL and settings.LIDARR_API_KEY:
         try:
-            async with _httpx.AsyncClient(timeout=_ARR_TIMEOUT) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=_ARR_TIMEOUT) as client:
                 r = await client.get(
                     f"{settings.effective_lidarr_url}/api/v1/artist",
                     headers={"X-Api-Key": settings.LIDARR_API_KEY},
@@ -3641,7 +3642,7 @@ async def check_mapping_coverage(
         return {"error": "Sonarr not configured"}
 
     try:
-        async with _httpx.AsyncClient(timeout=15) as client:
+        async with _httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.get(f"{settings.SONARR_URL.rstrip('/')}/api/v3/series",
                 headers={"X-Api-Key": settings.SONARR_API_KEY})
         if r.status_code != 200:
