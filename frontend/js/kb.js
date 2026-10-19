@@ -5,6 +5,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
 import { openMatchPicker } from './picker.js';
+import { tabToHash } from './nav.js';
 export async function loadMappingStats(btn) {
   const el = document.getElementById('mapping-stats');
   btnBusy(btn, 'Loading…');
@@ -105,6 +106,7 @@ let _kbAtt = {offset: 0, reason: null};    // the Needs-attention page + filter 
 const _kbLoaded = new Set();
 export function showKbTab(name) {
   state._kbTab = name || 'overview';
+  tabToHash('enrich', state._kbTab);    // #enrich/attention survives a reload
   document.querySelectorAll('#kb-tabs .cat-tab').forEach(b => b.classList.toggle('active', b.dataset.kbtab === state._kbTab));
   document.querySelectorAll('#enrich-view .kb-tab').forEach(s => { s.hidden = s.dataset.kbtab !== state._kbTab; });
   if (state._kbTab === 'overview' || state._kbTab === 'maintenance') loadEnrichStatus();

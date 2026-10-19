@@ -10,6 +10,7 @@ import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
+import { tabToHash } from './nav.js';
 
 // Pass 17: small badge showing "added Xd ago" when the proposal has a
 // recent file-import timestamp. Threshold of 30 days keeps the badge
@@ -226,6 +227,7 @@ let _delLoadSeq = 0;
 export async function loadDeletions(category=null, btn=null, refresh=false) {
   const seq = ++_delLoadSeq;
   state.currentDelCategory = category;
+  tabToHash('deletions', category);     // #deletions/movie survives a reload
   // Restore the correct active tab whether called from a tab click, the Analyse
   // button, the Show Cached button, or a programmatic call like showView().
   document.querySelectorAll('#deletions-view .cat-tab').forEach(b => {

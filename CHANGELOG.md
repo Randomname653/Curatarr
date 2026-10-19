@@ -6,6 +6,19 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Easier to use with a keyboard and a screen reader, and recommendations say why.**
+- Chat replies are announced once they're finished, not word by word.
+- Keyboard focus stays inside an open dialog.
+- The tab you're on in Deletions, the Knowledge Base, the arr pages and Recommendations
+  is part of the link, so a reload or a bookmark opens the same tab.
+- Recommendation cards have a "Why?" that lists what each pick was based on: how close it
+  is to your taste, the genres you like, trending, your own stated values, and so on.
+- The thinking-status text is readable now, and an armed delete button is solid red.
+- New optional setting `ALLOWED_HOSTS`. Set it to the names you reach Curatarr by, and
+  requests for any other name are refused, which blocks DNS-rebinding pages. It is empty
+  by default, so nothing changes until you set it.
+- A music job that crashed can no longer leave the music pipeline marked as running.
+
 **Members can't overload the box or see the admin's network.**
 - Rebuilding a taste profile, forcing a live arr refresh and re-fetching metadata from chat
   now have small per-user budgets. Only one taste rebuild per user runs at a time.

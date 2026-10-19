@@ -1535,6 +1535,8 @@ def _write_rec_lane(user_id: int, cat: str, lane: str, recs: list) -> None:
                 tvdb_id=rec.get("tvdb_id"),
                 year=rec.get("year"),
                 plex_rating_key=rec.get("plex_rating_key_real"),
+                score_factors=(json.dumps(rec["score_factors"])
+                               if rec.get("score_factors") else None),
                 cached_at=datetime.utcnow(),
             ))
         db.commit()

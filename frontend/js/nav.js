@@ -1,12 +1,12 @@
 // ── SIDEBAR COLLAPSE ─────────────────────────────────────────────────────────
-import { loadRecs, searchLibrary } from './recs.js';
+import { REC_LANES, loadRecs, openRecLane, searchLibrary } from './recs.js';
 import { state } from './state.js';
 import { loadHistoryStatus } from './history.js';
 import { loadTaskHistory } from './activity.js';
 import { openSettingsPane } from './settings.js';
 import { showKbTab } from './kb.js';
 import { loadDeletions } from './deletions.js';
-import { loadArrPage } from './arr.js';
+import { arrActiveTab, loadArrPage } from './arr.js';
 import { loadReclassify } from './reclassify.js';
 import { loadReport } from './report.js';
 export function toggleSidebar() {
@@ -59,18 +59,66 @@ export function topbarSearch(ev) {
 // hashchange, so nothing renders twice.
 const ADMIN_VIEWS = ['deletions', 'curation', 'reclassify', 'report'];
 
-export function routeFromHash(o = {}) {
-  if (!state.currentUser) return;            // the login screen owns the page
-  const [view, pane] = decodeURIComponent(location.hash.replace(/^#\/?/, '')).split('/');
-  const name = view && document.getElementById(view + '-view') ? view : 'chat';
-  const current = document.querySelector('.view.active')?.id;
-  // Same view, same pane: nothing to do (a pushState echo, or a re-click).
-  if (current === name + '-view' && (name !== 'settings' || !pane || _activePane() === pane)) return;
-  showView(name, null, {push: false, focus: o.focus !== false, pane});
+// ── IN-VIEW TABS ──────────────────────────────────────────────────────────────
+// A tab inside a view is part of the address the same way a Settings pane
+// is: #<view>/<tab> (#deletions/movie, #enrich/attention, #arr-sonarr/anime).
+// A view opts in with registerTabRoute(view, {open, current, tabs, fallback}):
+//   open(tab)  shows that tab (also what showView runs for the view),
+//   current()  the tab on screen now,
+//   tabs()     the valid ids (omit it when open() validates them itself),
+//   fallback   the default tab: an unknown tab opens it, and the hash leaves
+//              it out (#deletions, not #deletions/null).
+// The view's tab setter then calls tabToHash(view, tab). A plain #view keeps
+// whatever tab was last open, as before.
+// `var` and function declarations, not `const`: a view module may register
+// from its own top level, which can run before this module's body (nav.js
+// and the views import each other), where a const is still uninitialised.
+var _tabRouteMap;
+function _tabRoutes() { return (_tabRouteMap ??= {}); }
+export function registerTabRoute(view, route) { _tabRoutes()[view] = route; }
+
+// Replaced, not pushed, so Back leaves the view instead of stepping through
+// its tabs. Only while that view is on screen: a background reload of a
+// view's data must not rewrite the address of another.
+export function tabToHash(view, tab) {
+  if (!document.getElementById(view + '-view')?.classList.contains('active')) return;
+  const r = _tabRoutes()[view];
+  const want = '#' + view + (tab && tab !== r?.fallback ? '/' + encodeURIComponent(tab) : '');
+  if (location.hash !== want) history.replaceState(null, '', want);
+}
+
+// undefined → the tab already open; a known tab → it; anything else → the default.
+function _openTab(view, tab) {
+  const r = _tabRoutes()[view];
+  if (!r) return;
+  if (tab === undefined || tab === '') tab = r.current();
+  else if (r.tabs && !r.tabs().includes(tab)) tab = r.fallback;
+  r.open(tab);
 }
 
 function _activePane() {
   return document.querySelector('.settings-pane:not([hidden])')?.dataset.pane;
+}
+const _domTabs = (sel, key) => () => [...document.querySelectorAll(sel)].map(b => b.dataset[key]).filter(Boolean);
+registerTabRoute('settings', {open: openSettingsPane, current: () => _activePane() || 'account', tabs: _domTabs('.settings-tab[data-pane]', 'pane'), fallback: 'account'});
+registerTabRoute('deletions', {open: tab => loadDeletions(tab || null), current: () => state.currentDelCategory, tabs: _domTabs('#deletions-view .cat-tab[data-cat]', 'cat'), fallback: null});
+registerTabRoute('enrich', {open: showKbTab, current: () => state._kbTab, tabs: _domTabs('#kb-tabs .cat-tab[data-kbtab]', 'kbtab'), fallback: 'overview'});
+// The arr tab list depends on the server's answer (Lidarr via Plex has its
+// own), so loadArrPage validates the tab once it knows the list.
+for (const svc of ['sonarr', 'radarr', 'lidarr']) {
+  registerTabRoute('arr-' + svc, {open: tab => loadArrPage(svc, tab), current: () => arrActiveTab(svc), fallback: 'all'});
+}
+registerTabRoute('recs', {open: openRecLane, current: () => state.currentRecsLane || 'all', tabs: () => REC_LANES, fallback: 'all'});
+
+export function routeFromHash(o = {}) {
+  if (!state.currentUser) return;            // the login screen owns the page
+  const [view, tab] = decodeURIComponent(location.hash.replace(/^#\/?/, '')).split('/');
+  const name = view && document.getElementById(view + '-view') ? view : 'chat';
+  const current = document.querySelector('.view.active')?.id;
+  const route = _tabRoutes()[name];
+  // Same view, same tab (or none named): nothing to do (a pushState echo, or a re-click).
+  if (current === name + '-view' && (!tab || !route || route.current() === tab)) return;
+  showView(name, null, {push: false, focus: o.focus !== false, tab});
 }
 
 export function showView(name, btn, o = {}) {
@@ -99,16 +147,13 @@ export function showView(name, btn, o = {}) {
   if (el) el.classList.add('active');
   if (name==='history') loadHistoryStatus();
   if (name==='tasks') loadTaskHistory();
-  if (name==='enrich') showKbTab(state._kbTab);
   if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(state.currentRecsCategory); } }
-  if (name==='deletions') loadDeletions(state.currentDelCategory);
-  // Pass 16c: Library Manager pages
-  if (name==='arr-sonarr') loadArrPage('sonarr');
-  if (name==='arr-radarr') loadArrPage('radarr');
-  if (name==='arr-lidarr') loadArrPage('lidarr');
   if (name==='reclassify') loadReclassify();
   if (name==='report') loadReport();
-  if (name==='settings') openSettingsPane(o.pane || _activePane() || 'account');
+  // Views with tabs (Settings, Deletions, Knowledge Base, the arr pages):
+  // the tab the hash names, or the one already open. o.pane is the older
+  // spelling showLibrariesForce uses.
+  _openTab(name, o.tab ?? o.pane);
   // tasks view uses live SSE, no manual load needed
   // Keyboard and screen-reader users land on the new view's heading, not
   // back at the top of the sidebar. Only for navigation the owner asked for;

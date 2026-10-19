@@ -11,7 +11,7 @@
 import { api } from './api.js';
 import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
 import { state } from './state.js';
-import { showView } from './nav.js';
+import { showView, tabToHash } from './nav.js';
 const ARR_TABS = {
   sonarr: [
     { id: 'all',    label: 'All series' },
@@ -34,15 +34,19 @@ const ARR_TABS = {
   ],
 };
 
-// Active tab per arr — survives tab switches but resets on page reload.
+// Active tab per arr — survives tab switches; a reload restores it from the
+// hash (#arr-sonarr/anime, nav.js › registerTabRoute).
 const _arrActiveTab = { sonarr: 'all', radarr: 'all', lidarr: 'all' };
+export const arrActiveTab = svc => _arrActiveTab[svc];
 // The tabs actually shown per arr: Lidarr's list shrinks to Library + Spotify
 // Backlog when the page runs on the Plex music index (no arr to add to).
 const _arrTabsEff = {};
 // 'lidarr' | 'plex' | null — what the Music page runs on (from /api/library/status).
 let _arrMusicSource = null;
 
-export async function loadArrPage(svc) {
+// `tab`: the one the address names (nav.js); omitted, the last one open.
+export async function loadArrPage(svc, tab) {
+  if (tab) _arrActiveTab[svc] = tab;
   const tabsEl = document.getElementById(`arr-tabs-${svc}`);
   const contentEl = document.getElementById(`arr-content-${svc}`);
   contentEl.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
@@ -96,8 +100,11 @@ export async function loadArrPage(svc) {
     return;
   }
 
-  // Render tabs
+  // Render tabs. A tab this page does not have (a stale bookmark, Lidarr
+  // switched to the Plex index) opens the first one instead.
   const tabs = _arrTabsEff[svc] || ARR_TABS[svc] || [];
+  if (tabs.length && !tabs.some(t => t.id === _arrActiveTab[svc])) _arrActiveTab[svc] = tabs[0].id;
+  tabToHash('arr-' + svc, _arrActiveTab[svc]);
   tabsEl.innerHTML = tabs.map(t =>
     `<button class="arr-tab ${_arrActiveTab[svc] === t.id ? 'active' : ''}" ${act('setArrTab', svc, t.id)}>${esc(t.label)}</button>`
   ).join('');
@@ -106,6 +113,7 @@ export async function loadArrPage(svc) {
 
 export function setArrTab(svc, tabId) {
   _arrActiveTab[svc] = tabId;
+  tabToHash('arr-' + svc, tabId);
   document.querySelectorAll(`#arr-tabs-${svc} .arr-tab`).forEach((b, i) => {
     b.classList.toggle('active', ((_arrTabsEff[svc] || ARR_TABS[svc])[i] || {}).id === tabId);
   });

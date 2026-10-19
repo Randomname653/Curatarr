@@ -71,7 +71,7 @@
 
 <!-- ONBOARDING OVERLAY -->
 <div id="onboarding-overlay" class="overlay-dim hidden">
-  <div class="dialog-box-520">
+  <div class="dialog-box-520" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
     <div class="box-head">
       <h1 class="fs-18 fw-700 t-amber" id="onboarding-title"></h1>
       <p class="fs-13 t2 mt-6 lh-15" id="onboarding-sub"></p>
@@ -210,13 +210,14 @@
         <button class="btn-ghost-danger" hidden id="discuss-delete-btn" data-action="deleteFromDiscussion">Delete &amp; exit</button>
         <button class="btn-ghost-amber" data-action="exitDiscussion">Exit discussion</button>
       </div>
-      <div id="messages">
+      <div id="messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
         <div class="msg assistant">
           Hey! I'm Curatarr — your personal media curator. Ask me what to watch, how to clean up your library, or anything about your taste.
         </div>
-        <div id="glance-panel"></div>
-        <div id="last-played-panel"></div>
-        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts">
+        <!-- landing panels: inside the live log, not conversation, so not read out -->
+        <div id="glance-panel" aria-live="off"></div>
+        <div id="last-played-panel" aria-live="off"></div>
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">
           <button class="sp-chip" data-action="fillPrompt" data-args='["What should I watch tonight?"]'>What should I watch tonight?</button>
           <button class="sp-chip" data-action="fillPrompt" data-args='["What can I clean up in my library?"]'>What can I clean up in my library?</button>
           <button class="sp-chip" data-action="fillPrompt" data-args='["What does my watch history say about my taste?"]'>What does my watch history say about my taste?</button>

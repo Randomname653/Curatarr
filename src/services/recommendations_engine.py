@@ -815,6 +815,55 @@ def _rhythm_line(ts: dict) -> str:
     return f"Viewing rhythm: {', '.join(parts)}." if parts else ""
 
 
+def recommendation_score_factors(*, lane: str, confidence=None, fit: dict | None = None,
+                                 values: list | None = None, trending: bool = False,
+                                 neighbour: bool = False, exploration: bool = False) -> dict:
+    """The signals one recommendation was picked on — what its card's "Why?"
+    shows. Same {"factors": [{key, label}]} shape as the deletion breakdown,
+    but without ``points``: a rec has no additive score (the curator picks
+    from a taste-ranked pool), so a number per factor would be invented.
+    Real numbers ride along as ``rank`` / ``of`` / ``cosine`` / ``value``.
+
+    Only the requesting user's own signals go in — never an arr address,
+    path or another user's data: members see their recs and this with them."""
+    out: list[dict] = []
+    fit = fit or {}
+    if fit.get("rank"):
+        rank, pool = fit["rank"], fit.get("pool") or fit["rank"]
+        basis = ("closeness to your watch history" if fit.get("basis") == "embedding"
+                 else "overlap with the genres you watch")
+        f = {"key": "taste", "rank": rank, "of": pool,
+             "label": f"#{rank} of {pool} unwatched titles in your library by {basis}"}
+        if fit.get("cosine") is not None:
+            f["cosine"] = fit["cosine"]
+        out.append(f)
+    if fit.get("genres"):
+        out.append({"key": "genres", "label": "Genres you watch: " + ", ".join(fit["genres"])})
+    if fit.get("disliked"):
+        out.append({"key": "disliked", "label": "You said you didn't like it"})
+    for text in values or []:
+        text = (text or "").strip()
+        if text:
+            out.append({"key": "values", "label": "Matches something you said you value: "
+                        f"“{text[:80]}{'…' if len(text) > 80 else ''}”"})
+            break
+    if trending:
+        out.append({"key": "trending", "label": "Trending or upcoming on TMDB right now"})
+    if neighbour:
+        out.append({"key": "neighbour", "label": "Next to artists you play most, in the listening graph"})
+    if exploration:
+        out.append({"key": "exploration",
+                    "label": "Picked as a deliberate stretch outside your usual taste"})
+    out.append({"key": "lane", "label": "In your library and still unwatched" if lane == "library"
+                else "Not in your library, and nothing you've watched or removed"})
+    if (isinstance(confidence, (int, float)) and not isinstance(confidence, bool)
+            and math.isfinite(confidence)):
+        pct = round(max(0.0, min(1.0, float(confidence))) * 100)
+        out.append({"key": "confidence", "value": pct,
+                    "label": f"The curator rated the fit {pct}%"})
+    return {"kind": "recommendation", "lane": lane, "factors": out}
+
+
 async def generate_recommendations(
     user_id: int,
     category: str = None,
@@ -852,7 +901,7 @@ async def generate_recommendations(
 
     # Shared memory layer for the watched/owned filters below.
     from src.services.library_memory import (
-        seen_index, owned_index, removed_index, is_seen, partition,
+        seen_index, owned_index, removed_index, is_seen, partition, normalize_title,
     )
 
     # Taste context. No cache read here — this function always generates fresh;
@@ -930,6 +979,10 @@ async def generate_recommendations(
         # Both lanes need the user's FULL seen-set for this category (no [:15]
         # cap; matched by stable id + normalised title).
         seen = await run_read(seen_index, user_id, cat)
+        # Per-lane evidence the "Why?" breakdown is built from after the pick.
+        _why_by_title: dict = {}
+        trend_titles: list = []
+        nb: list = []
 
         if arr_library:
             # LIBRARY LANE: owned items with already-watched dropped robustly.
@@ -1022,11 +1075,16 @@ async def generate_recommendations(
                 if cons:
                     line += " | ⭐ USER VALUES: " + "; ".join(
                         str(c.get("content") or "")[:80] for c in cons[:2])
-                return line
+                return line, [str(c.get("content") or "") for c in cons[:2]]
 
-            items_text = "\n".join(
-                await _asyncio.gather(*[_cand_line(i) for i in unwatched[:30]])
-            )
+            offered = unwatched[:30]
+            lines = await _asyncio.gather(*[_cand_line(i) for i in offered])
+            items_text = "\n".join(line for line, _ in lines)
+            # The pick is matched back to its candidate for "Why?": the fit
+            # score_arr_items ranked it on and the values shown beside it.
+            for i, (_, vals) in zip(offered, lines):
+                _why_by_title.setdefault(normalize_title(i.get("title") or ""),
+                                         (i.get("_rec_fit"), vals))
 
             prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.
@@ -1059,7 +1117,8 @@ Output format:
             # owned any more) or recorded as disliked: never re-pitched.
             removed = await asyncio.to_thread(removed_index, user_id, cat, disliked_titles)
             noun = "tracks/artists" if cat == "music" else "titles"
-            trend = _trending_line(await _get_trending(cat))
+            trend_titles = await _get_trending(cat)
+            trend = _trending_line(trend_titles)
             trend_block = f"\n{trend}" if trend else ""
             if cat == "music":
                 from src.services.library_memory import normalize_title as _nt
@@ -1133,10 +1192,19 @@ Output format:
                     "LLM suggestions", cat, len(recs) - len(kept), len(recs),
                 )
             recs = kept
+        trend_n = {normalize_title(t) for t in trend_titles}
+        nb_n = {normalize_title(n) for n in nb}
         for rec in recs:
             rec["category"] = cat
             rec["category_label"] = CATEGORY_LABELS.get(cat, cat)
             rec["lane"] = lane
+            t_n = normalize_title(rec.get("title") or "")
+            fit, vals = _why_by_title.get(t_n, (None, None))
+            rec["score_factors"] = recommendation_score_factors(
+                lane=lane, confidence=rec.get("confidence"), fit=fit, values=vals,
+                trending=t_n in trend_n, neighbour=t_n in nb_n,
+                exploration=(lane == "discovery" and str(rec.get("reason") or "")
+                             .lstrip().lower().startswith("exploration pick")))
             all_recs.append(rec)
 
     return all_recs
@@ -3039,6 +3107,13 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         genres = [g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()]
         return sum(genre_affinity.get(g, 0) for g in genres)
 
+    def _genres_matched(item: dict) -> list:
+        """The item's genres the user's affinity rates above zero, strongest
+        first — the overlap the genre fallback ranks on, named for "Why?"."""
+        genres = [g.strip() for g in (item.get("genres") or "").split(",") if g.strip()]
+        hits = [g for g in genres if (genre_affinity.get(g.lower()) or 0) > 0]
+        return sorted(hits, key=lambda g: -genre_affinity[g.lower()])[:3]
+
     # Multimodal pairs rank by MAX over cluster centroids (ComiRec) — one
     # strong interest match wins; a blend of unrelated interests can't
     # dilute it. Single-centroid pairs behave exactly as before.
@@ -3108,7 +3183,15 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         vectored.sort(key=lambda t: t[0], reverse=True)
         genre_only.sort(key=lambda t: t[0], reverse=True)
         # Enriched items first (real semantic taste-fit), genre-only fallback after.
-        return [it for _, it in vectored] + [it for _, it in genre_only]
+        ranked = ([("embedding", k, it) for k, it in vectored]
+                  + [("genres", k, it) for k, it in genre_only])
+        # Copies, not the arr dicts: those are the shared library cache, and
+        # the fit is this user's. "_rec_fit" feeds the rec card's "Why?".
+        return [{**it, "_rec_fit": {
+                    "basis": basis, "rank": n, "pool": len(ranked),
+                    "cosine": round(k[1], 4) if basis == "embedding" else None,
+                    "genres": _genres_matched(it), "disliked": k[0] == 0}}
+                for n, (basis, k, it) in enumerate(ranked, 1)]
 
     _dim_mismatch = [0]
     ranked = await asyncio.to_thread(_rank_all)

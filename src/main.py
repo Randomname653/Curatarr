@@ -410,13 +410,22 @@ app.add_middleware(
 # Slow-request telemetry: logs any endpoint taking >300ms to response
 # start, so "the page feels slow" can be answered from the log instead of
 # guessed at. Time-to-first-byte, so SSE streams don't count as slow.
-from src.middleware import (SecurityHeadersMiddleware, SlowRequestLogMiddleware,
-                            TokenRefreshMiddleware)
+from src.middleware import (HostAllowListMiddleware, SecurityHeadersMiddleware,
+                            SlowRequestLogMiddleware, TokenRefreshMiddleware,
+                            parse_allowed_hosts)
 app.add_middleware(SlowRequestLogMiddleware)
 
 # Sliding sessions: a used session never expires mid-click; an idle one
 # dies after 7 days. See TokenRefreshMiddleware.
 app.add_middleware(TokenRefreshMiddleware)
+
+# Opt-in ALLOWED_HOSTS (DNS rebinding): outside the token refresh, CORS and
+# every route, so a refused Host reaches neither auth nor the static files;
+# inside the security headers, so the 400 carries them too.
+app.add_middleware(HostAllowListMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
+if parse_allowed_hosts(settings.ALLOWED_HOSTS):
+    logger.info("ALLOWED_HOSTS: %s (plus localhost, 127.0.0.1, ::1)",
+                ", ".join(parse_allowed_hosts(settings.ALLOWED_HOSTS)))
 
 # Outermost (added last): stamps security headers on every response,
 # CORS preflights included. Pure ASGI — SSE-safe (see src/middleware.py).

@@ -140,9 +140,39 @@ export function openModal(o = {}) {
   root.onclick = ev => { if (ev.target === root) closeModal(); };
   const el = root.firstElementChild;
   state._modal = {el, onClose: o.onClose, opener};
-  const first = el.querySelector('.modal-body input:not([type=hidden]), .modal-body select, .modal-body textarea, .modal-foot button:not([disabled])');
+  // A body with nothing to fill and no enabled button (a countdown confirm)
+  // still takes focus: the X, so Tab starts inside the dialog.
+  const first = el.querySelector('.modal-body input:not([type=hidden]), .modal-body select, .modal-body textarea, .modal-foot button:not([disabled])')
+    || el.querySelector('.modal-close');
   if (first) setTimeout(() => first.focus(), 0);
   return {el, close: closeModal};
+}
+
+// Focus trap for whichever dialog is open: Tab and Shift+Tab cycle inside
+// it, and a Tab pressed while focus sits outside (on <body> after a click on
+// the backdrop, or a dialog that did not focus itself) lands on its first
+// control. The app's keydown listener calls it for every Tab.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+export function trapFocus(ev, box) {
+  if (ev.key !== 'Tab' || !box) return;
+  const items = [...box.querySelectorAll(FOCUSABLE)].filter(n => !n.hidden && n.getClientRects().length);
+  const at = document.activeElement;
+  if (!items.length) { ev.preventDefault(); return; }
+  const first = items[0], last = items[items.length - 1];
+  if (!box.contains(at)) { ev.preventDefault(); (ev.shiftKey ? last : first).focus(); }
+  else if (ev.shiftKey && at === first) { ev.preventDefault(); last.focus(); }
+  else if (!ev.shiftKey && at === last) { ev.preventDefault(); first.focus(); }
+}
+// The open dialog: openModal's, else a page-level one (the onboarding
+// overlay) — any visible role="dialog" aria-modal="true".
+export function activeDialog() {
+  if (state._modal?.el?.isConnected) return state._modal.el;
+  return [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find(d => d.getClientRects().length) || null;
+}
+// Focus into a page-level dialog when it opens (openModal does its own).
+export function focusDialog(box) {
+  const first = box && [...box.querySelectorAll(FOCUSABLE)].find(n => !n.hidden && n.getClientRects().length);
+  if (first) first.focus();
 }
 export function closeModal() { _closeModal(true); }
 function _closeModal(restoreFocus) {

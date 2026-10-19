@@ -92,6 +92,15 @@ are budgeted — ten per address and a hundred in all per fifteen minutes,
 then the gate answers 429 for the rest of the window — and a browser on the
 machine itself is never locked out (2026-09-25).
 
+`ALLOWED_HOSTS` in `.env` (comma-separated names, `*.example.com` wildcards)
+adds a second, opt-in line against DNS rebinding: a rebound page still sends
+its own name as `Host`, so every request whose Host is not listed is answered
+400 before auth or the UI see it. `localhost`, `127.0.0.1` and `::1` always
+pass, so a typo cannot lock the owner out locally. It is off by default
+because no default list can know the IP, hostname or proxy name an install
+is reached by — turning it on with the wrong list would cut off every LAN
+browser on upgrade.
+
 ## Connection tests and service addresses
 
 Plex, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:

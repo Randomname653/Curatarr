@@ -654,8 +654,12 @@ async def detect_gpu() -> dict:
             capture_output=True, timeout=8, **NO_WINDOW)
         out, err = proc.stdout, proc.stderr
         if proc.returncode != 0:
-            msg = (err or out).decode(errors="replace").strip()
-            return {"ok": False, "error": msg or "nvidia-smi failed"}
+            # The host's own output stays in the server log, not in the
+            # response (same rule as the connection tests).
+            logger.warning("[setup] nvidia-smi exited %s: %s", proc.returncode,
+                           (err or out).decode(errors="replace").strip()[:500])
+            return {"ok": False, "error": "nvidia-smi failed — see the server "
+                    "log. Pick the VRAM manually."}
         gpus = []
         for line in out.decode(errors="replace").splitlines():
             parts = line.rsplit(",", 2)
@@ -683,7 +687,10 @@ async def detect_gpu() -> dict:
                 "driver on this host (or a non-NVIDIA GPU). Pick the VRAM "
                 "manually."}
     except Exception as e:
-        return {"ok": False, "error": str(e) or type(e).__name__}
+        logger.warning("[setup] nvidia-smi could not be run: %s: %s",
+                       type(e).__name__, e)
+        return {"ok": False, "error": "nvidia-smi could not be run — see the "
+                "server log. Pick the VRAM manually."}
 
 
 async def warmup_check(ollama_endpoint: str, model: str) -> dict:

@@ -18,9 +18,10 @@ artists hit MB live (1.1 s/req gap enforced by ``_mb_request``).
 
 Coordination
 ------------
-Sets ``music_pipeline_running="1"`` in AppState while active so the
-in-app ``job_music_pipeline`` and ``music_enricher.py`` skip. Refuses
-to start if the flag is already set. Releases on clean exit AND on
+Holds the ``music_pipeline_running`` lease (src/services/state_lease.py)
+while active, so the in-app pipeline, the custodian and
+``music_enricher.py`` skip. Refuses to start while a LIVE runner holds
+it; a dead runner's lease is taken over. Releases on clean exit AND on
 Ctrl+C / SIGTERM, and clears the stop-request flag on exit so a
 trailing "1" can't block the next run.
 
@@ -57,10 +58,15 @@ os.chdir(_PROJECT_ROOT)
 from src.database.connection import get_db_session  # noqa: E402
 from src.database.models import User  # noqa: E402
 from src.services.app_state import get_state, set_state, force_set_state  # noqa: E402
+from src.services import state_lease  # noqa: E402
 from src.services.music_matcher import resolve_artist_mbids  # noqa: E402
 
 
 logger = logging.getLogger("mbid_speedrunner")
+
+# Shared with the in-app music pipeline, the custodian and music_enricher.py.
+_LEASE_KEY = "music_pipeline_running"
+_HEARTBEAT_S = 60
 
 
 # ── logging ──────────────────────────────────────────────────────────────────
@@ -83,7 +89,7 @@ def setup_logging(log_file: str | None) -> None:
 
 
 def acquire_lock() -> tuple[bool, "Optional[str]"]:
-    """Try to acquire the standalone-runner mutex.
+    """Take the cross-process music lease (src/services/state_lease.py).
 
     Returns ``(success, blocking_flag)`` — see music_enricher.py's
     matching helper for the full rationale and Pass 89 / 94 / 97 history.
@@ -92,28 +98,52 @@ def acquire_lock() -> tuple[bool, "Optional[str]"]:
     ``WatchHistoryEntry.artist_mbid`` rows, and the MusicBrainz
     1-req/s throttle makes DB contention with the in-app enrichment
     consumer negligible.
+
+    2026-10: the lease instead of get-then-``set_state``. Two runners could
+    both read "0" and both start, and a killed run left "1" behind for
+    good; the lease records this PID, so a dead holder is taken over.
     """
-    if get_state("music_pipeline_running") == "1":
-        return False, "music_pipeline_running"
-    set_state("music_pipeline_running", "1")
+    if not state_lease.acquire(_LEASE_KEY):
+        return False, _LEASE_KEY
+    # Not a member's run: only an admin may stop it from the web UI.
+    set_state("music_pipeline_owner", "")
+    set_state("music_pipeline_stop_requested", "0")
     return True, None
 
 
 def release_lock() -> None:
-    # Pass 89b: bypass SQLAlchemy for the cleanup write — see the matching
-    # comment in scripts/music_enricher.py::release_lock for the rationale.
-    # Under heavy write-lock contention the engine-routed ``set_state`` fails
-    # too, leaving stale flags that block every future pipeline run.
-    # ``force_set_state`` opens a fresh sqlite3 connection with a 120 s
-    # busy-wait and writes atomically.
-    ok_run  = force_set_state("music_pipeline_running", "0")
-    ok_stop = force_set_state("music_pipeline_stop_requested", "0")
-    if not (ok_run and ok_stop):
+    # Pass 89b: the release must go through even when the SQLAlchemy engine
+    # is in a contention-cascade state — the lease uses its own sqlite3
+    # connection with a busy-wait. Compare-and-clear: a lease that was
+    # taken over (this process stalled past it) is not ours to clear.
+    try:
+        released = state_lease.release(_LEASE_KEY)
+    except Exception as e:  # noqa: BLE001
         logger.error(
-            "[release_lock] FAILED to clear pipeline flags after 120 s busy-wait. "
-            "Manual reset: python -c \"from src.services.app_state import "
-            "force_set_state; force_set_state('music_pipeline_running', '0')\""
-        )
+            "[release_lock] FAILED to release the music lease: %s. It frees itself once "
+            "this process has exited (the next taker sees a dead PID).", e)
+        return
+    if not released:
+        logger.warning("[release_lock] the music lease was no longer ours - left to its holder")
+    elif not force_set_state("music_pipeline_stop_requested", "0"):
+        logger.error("[release_lock] lease released, but the stop flag could not be cleared")
+    else:
+        logger.info("Released the music_pipeline_running lease.")
+
+
+async def _keep_lease(work: "asyncio.Task") -> None:
+    """Heartbeat the lease while ``work`` runs. A holder on another host is
+    judged by its heartbeat alone; one lost lease cancels the run so two
+    runners never share the rows (each MBID write commits on its own)."""
+    while not work.done():
+        await asyncio.sleep(_HEARTBEAT_S)
+        if work.done():
+            return
+        if not await asyncio.to_thread(state_lease.heartbeat, _LEASE_KEY):
+            logger.error("The music lease is no longer ours (taken over after a stall) — "
+                         "stopping so two runners never share the rows.")
+            work.cancel()
+            return
 
 
 def _resolve_admin_user_id() -> int | None:
@@ -149,12 +179,11 @@ async def amain(argv: list[str] | None = None) -> int:
         # The cross-mutex with ``enrichment_running`` was removed so this
         # runner can coexist with the in-app movie/show/anime enrichment.
         logger.error(
-            "%s is '1' — another music runner is active (job_music_pipeline "
-            "or music_enricher.py). Wait for it to finish, OR clear the "
-            "stale flag with:\n"
-            "  python -c \"from src.services.app_state import "
-            "force_set_state; force_set_state('%s', '0')\"",
-            blocker, blocker,
+            "%s is held by a live music runner (pid %s: the in-app pipeline, "
+            "the custodian or music_enricher.py). Wait for it to finish or "
+            "stop it — a dead runner's lease is taken over automatically, "
+            "no manual reset needed.",
+            blocker, state_lease.holder_pid(blocker),
         )
         return 2
 
@@ -185,7 +214,17 @@ async def amain(argv: list[str] | None = None) -> int:
                     user_id, "∞" if args.batch == 0 else args.batch)
 
         t0 = _t_mod.monotonic()
-        result = await resolve_artist_mbids(user_id, batch=args.batch)
+        work = asyncio.ensure_future(resolve_artist_mbids(user_id, batch=args.batch))
+        keeper = asyncio.ensure_future(_keep_lease(work))
+        try:
+            result = await work
+        except asyncio.CancelledError:
+            if not keeper.done():
+                raise                       # cancelled from outside, not by the keeper
+            logger.error("Run stopped: the music lease was lost.")
+            return 3
+        finally:
+            keeper.cancel()
         elapsed = _t_mod.monotonic() - t0
 
         resolved     = result.get("resolved", 0)
@@ -205,7 +244,6 @@ async def amain(argv: list[str] | None = None) -> int:
             )
     finally:
         release_lock()
-        logger.info("Released music_pipeline_running flag.")
 
     return 0
 

@@ -1503,7 +1503,9 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                         res.get("cluster_centroids") or res.get("embedding"),
                         res.get("drop_embedding"), cat)
 
-                # Store vector stats (embedding stored separately when PIN available)
+                # Embedding and vector stats go into one plain-JSON blob
+                # (version 0). Nothing is encrypted: the PIN that was to key
+                # it is gone (2026-10), the column name is historical.
                 blob_dict = {
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "drop_embedding": res.get("drop_embedding"),
