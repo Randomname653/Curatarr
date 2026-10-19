@@ -228,5 +228,33 @@ check("subset covers flagged strata",
 check("buzzwords count whole words only", buzzwords("an epic epicentre, epic.") == 2)
 check("sentences split on terminal punctuation", sentences("One. Two! Three?") == 3)
 
+# ── no download when the ledger already has everything ─────────────────────
+import argparse as _ap  # noqa: E402
+from tests.benchmarks.hwbench import run as _run  # noqa: E402
+snapdir = tmp / "snaps"
+snapdir.mkdir()
+(snapdir / "evidence_2026-10-16-large.json").write_text(json.dumps({"id": "S1"}), encoding="utf-8")
+_run.DATA = snapdir
+_run.registry.remote_manifest = lambda ref: {"weights_digest": "sha256:feedface0000"}
+PL = Ledger(tmp / "pending.json")
+pk = PL.upsert_model("m:1b", "sha256:feedface0000")
+cand = {"ref": "m:1b", "role": "curator", "profiles": ["large"]}
+A = _ap.Namespace(no_tiers=True, phases="sweep,perf,quality", force=False, servers="default,q8",
+                  reps=3, items="sub40", repull_for_kv=False)
+check("pending: an empty ledger row means work", _run.pending_work(cand, A, PL))
+for srv, vram in (("default", 21000), ("q8", 19500)):
+    cfg = _run.SERVERS[srv]
+    PL.add_run(pk, "ctx_sweep", _run.sweep_settings(cfg), env={}, metrics={})
+    PL.add_run(pk, "perf", {**_run.perf_base(cfg, "large", "S1", 3), "tier_gb": "full", "num_gpu": 99},
+               env={}, metrics={"vram_model_mib": vram})
+PL.add_run(pk, "quality", _run.quality_settings(_run.SERVERS["default"], "large", "S1", "sub40", True),
+           env={}, metrics={})
+check("pending: everything but a KV pass known -> no re-pull by default",
+      not _run.pending_work(cand, A, PL, kv=False))
+check("pending: ...but the q8 pass (saves 1.5 GB) is still work when KV counts",
+      _run.pending_work(cand, A, PL, kv=True))
+check("pending: a run with tier cells always counts as pending",
+      _run.pending_work(cand, _ap.Namespace(**{**vars(A), "no_tiers": False}), PL, kv=False))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

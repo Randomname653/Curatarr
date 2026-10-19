@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -28,6 +29,7 @@ import httpx
 from . import registry
 
 STATE = Path(__file__).resolve().parent.parent / ".hwbench_pulled.json"
+PULL_ATTEMPTS = 3
 
 
 def _norm(ref: str) -> str:
@@ -75,30 +77,41 @@ class Store:
         if not ok:
             self.log(f"  disk guard: not pulling {ref} ({why})")
             return False
-        self.log(f"  pulling {ref} …")
-        try:
-            with httpx.stream("POST", f"{self.endpoint}/api/pull",
-                              json={"model": ref, "stream": True},
-                              timeout=httpx.Timeout(30, read=None)) as r:
-                if r.status_code != 200:
-                    self.log(f"  pull {ref}: HTTP {r.status_code}")
-                    return False
-                for line in r.iter_lines():
-                    if not line:
-                        continue
-                    d = json.loads(line)
-                    if d.get("error"):
-                        self.log(f"  pull {ref}: {d['error']}")
-                        return False
-                    if d.get("status") == "success":
-                        break
-        except (httpx.HTTPError, ValueError) as e:
-            self.log(f"  pull {ref}: {type(e).__name__}: {e}")
+        # Retried: a connection reset (WinError 10054, 2026-10-19) killed a
+        # 19 GB pull half-way; Ollama resumes a retried pull where it stopped.
+        for attempt in range(1, PULL_ATTEMPTS + 1):
+            self.log(f"  pulling {ref} …" + (f" (attempt {attempt})" if attempt > 1 else ""))
+            ok, why = self._pull_once(ref)
+            if ok:
+                break
+            self.log(f"  pull {ref}: {why}")
+            if attempt < PULL_ATTEMPTS:
+                time.sleep(15 * attempt)
+        else:
             return False
         with self._lock:
             self.pulled.add(ref)
             self._save()
         return True
+
+    def _pull_once(self, ref: str) -> tuple[bool, str]:
+        try:
+            with httpx.stream("POST", f"{self.endpoint}/api/pull",
+                              json={"model": ref, "stream": True},
+                              timeout=httpx.Timeout(30, read=None)) as r:
+                if r.status_code != 200:
+                    return False, f"HTTP {r.status_code}"
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    d = json.loads(line)
+                    if d.get("error"):
+                        return False, d["error"]
+                    if d.get("status") == "success":
+                        return True, ""
+            return False, "stream ended before success"
+        except (httpx.HTTPError, ValueError) as e:
+            return False, f"{type(e).__name__}: {e}"
 
     def prefetch(self, ref: str) -> None:
         """Start pulling ``ref`` in the background (no-op when installed)."""

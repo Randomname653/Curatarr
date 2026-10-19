@@ -43,7 +43,7 @@ from pathlib import Path
 import httpx
 
 from . import BENCH_VERSION, gpu, matrix, models, perf, quality, registry, server
-from .ledger import Ledger, fingerprint
+from .ledger import Ledger, fingerprint, model_key
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -165,6 +165,72 @@ def _perf_facts(snap: dict, n: int = 4) -> list[str]:
     return facts[:n] or [i["facts"] for i in snap["items"][:n]]
 
 
+def sweep_settings(cfg) -> dict:
+    return {"server": cfg.label, "server_env": cfg.env(), "num_gpu": 99}
+
+
+def perf_base(cfg, profile: str, snap_id: str, reps: int) -> dict:
+    return {"num_ctx": PROFILE_CTX[profile], "profile": profile, "server": cfg.label,
+            "server_env": cfg.env(), "snapshot": snap_id, "reps": reps}
+
+
+def quality_settings(cfg, profile: str, snap_id: str, items: str, default: bool) -> dict:
+    return {"profile": profile, "server": cfg.label, "server_env": cfg.env(), "items": items,
+            "snapshot": snap_id,
+            "phases": ["gate", "judge", "mono", "chat"] if default else ["gate", "judge"]}
+
+
+def pending_work(c: dict, args, led: Ledger, kv: bool = True) -> bool:
+    """Is anything of this model still unmeasured — decided from the ledger
+    alone, BEFORE a download? The 2026-10-19 --no-tiers restart re-pulled
+    19 GB for gemma4:31b-it-qat whose every cell was already recorded.
+    Identity comes from the registry's weights digest (what a pull would
+    install). Tier cells cannot be predicted, so a run with tiers always
+    counts as pending. ``kv`` False ignores the quantised-KV quality passes:
+    for a model the bench already removed, ~10 minutes of gate + judge do
+    not justify a 20 GB download (``--repull-for-kv`` turns them back on)."""
+    if not args.no_tiers and "perf" in args.phases or args.force:
+        return True
+    remote = registry.remote_manifest(c["ref"]) or {}
+    if not remote.get("weights_digest"):
+        return True
+    key = model_key(c["ref"], remote["weights_digest"])
+    if not led.model(key):
+        return True
+    phases = set(args.phases.split(","))
+    for sname in args.servers.split(","):
+        cfg = SERVERS[sname]
+        if "sweep" in phases and not led.has_run(fingerprint(key, "ctx_sweep", sweep_settings(cfg))):
+            return True
+        for profile in c["profiles"] or ["small"]:
+            snap = _snapshot_path(profile)
+            if not snap:
+                continue
+            snap_id = json.loads(snap.read_text(encoding="utf-8"))["id"]
+            if "perf" in phases and not led.has_run(fingerprint(
+                    key, "perf", {**perf_base(cfg, profile, snap_id, args.reps),
+                                  "tier_gb": "full", "num_gpu": 99})):
+                return True
+            if "quality" not in phases or c["role"] != "curator":
+                continue
+            if sname != "default":
+                if not kv:
+                    continue
+                vram = {}
+                for srv in (SERVERS["default"], cfg):
+                    fp = fingerprint(key, "perf", {**perf_base(srv, profile, snap_id, args.reps),
+                                                   "tier_gb": "full", "num_gpu": 99})
+                    row = next((r for r in led.runs(key, "perf") if r["fingerprint"] == fp), None)
+                    vram[srv.label] = (row or {}).get("metrics", {}).get("vram_model_mib")
+                f16, mine = vram.get(SERVERS["default"].label), vram.get(cfg.label)
+                if not (f16 and mine and f16 - mine >= KV_QUALITY_MIN_SAVING_MIB):
+                    continue
+            if not led.has_run(fingerprint(key, "quality", quality_settings(
+                    cfg, profile, snap_id, args.items, sname == "default"))):
+                return True
+    return False
+
+
 def tightest_tier(vram_model_mib: int, reserve_mib: int, total_mib: int) -> int | None:
     for t in matrix.TIERS_GB:
         if t * 1024 >= total_mib:
@@ -175,7 +241,8 @@ def tightest_tier(vram_model_mib: int, reserve_mib: int, total_mib: int) -> int 
 
 
 def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
-                store: models.Store, next_ref: str | None, reserve_mib: int) -> None:
+                store: models.Store, next_ref: str | None, reserve_mib: int,
+                next_c: dict | None = None) -> None:
     ref = c["ref"]
     log(f"\n=== {ref} ({c['role']}) — {c['why']}")
     if store.is_installed(ref):
@@ -184,6 +251,10 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
         if remote and local["weights_digest"] and remote["weights_digest"] != local["weights_digest"]:
             log("  installed copy differs from the registry — benching the INSTALLED weights; "
                 "the bench never re-pulls an installed tag (it would replace them)")
+    if not store.is_installed(ref) and not pending_work(c, args, led, kv=args.repull_for_kv):
+        log("  [ledger] everything that justifies a download is known — not pulling"
+            + ("" if args.repull_for_kv else " (KV-quality passes need --repull-for-kv)"))
+        return
     if not store.ready(ref):
         log(f"  SKIP: could not pull {ref}")
         return
@@ -210,7 +281,7 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
         cfg = SERVERS[sname]
         bench.ensure(cfg)
         if "sweep" in phases:
-            ss = {"server": cfg.label, "server_env": cfg.env(), "num_gpu": 99}
+            ss = sweep_settings(cfg)
             if led.has_run(fingerprint(key, "ctx_sweep", ss)) and not args.force:
                 log(f"  [ledger] ctx sweep {cfg.label}: known")
             else:
@@ -230,8 +301,7 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
             snap = json.loads(snap_path.read_text(encoding="utf-8"))
             facts = _perf_facts(snap)
             ctx = PROFILE_CTX[profile]
-            base = {"num_ctx": ctx, "profile": profile, "server": cfg.label,
-                    "server_env": cfg.env(), "snapshot": snap["id"], "reps": args.reps}
+            base = perf_base(cfg, profile, snap["id"], args.reps)
 
             def cell(tier, num_gpu):
                 s = {**base, "tier_gb": tier, "num_gpu": num_gpu}
@@ -262,7 +332,8 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                 full = cell("full", 99)
                 full_vram[(cfg.label, profile)] = full.get("vram_model_mib")
                 if next_ref and not prefetched:
-                    store.prefetch(next_ref)       # after the cold load: no disk contention there
+                    if next_c is None or pending_work(next_c, args, led, kv=args.repull_for_kv):
+                        store.prefetch(next_ref)   # after the cold load: no disk contention there
                     prefetched = True
                 total = gpu.query()["total_mib"]
             if "perf" in phases and not args.no_tiers:
@@ -310,9 +381,8 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                         this_fit and (default_fit is None or this_fit < default_fit)):
                     log(f"  {cfg.label} {profile}: no smaller tier than f16 — skipping KV quality")
                     continue
-                qphases = ["gate", "judge", "mono", "chat"] if sname == "default" else ["gate", "judge"]
-                qs = {"profile": profile, "server": cfg.label, "server_env": cfg.env(),
-                      "items": args.items, "snapshot": snap["id"], "phases": qphases}
+                qs = quality_settings(cfg, profile, snap["id"], args.items, sname == "default")
+                qphases = qs["phases"]
                 if led.has_run(fingerprint(key, "quality", qs)) and not args.force:
                     log(f"  [ledger] quality {profile} {cfg.label}: known")
                     continue
@@ -385,9 +455,10 @@ def cmd_run(args) -> None:
         store = models.Store(bench.endpoint, min_free_gb=args.min_free_gb, log=log)
         store.cleanup_leftovers(keep={c["ref"] for c in cands})
         for i, c in enumerate(cands):
-            nxt = cands[i + 1]["ref"] if i + 1 < len(cands) else None
+            nxt_c = cands[i + 1] if i + 1 < len(cands) else None
+            nxt = nxt_c["ref"] if nxt_c else None
             try:
-                bench_model(c, args, led, bench, store, nxt, reserve)
+                bench_model(c, args, led, bench, store, nxt, reserve, nxt_c)
             except Exception as e:   # one model's crash must not end the night
                 log(f"  CRASH on {c['ref']}: {type(e).__name__}: {e}")
                 try:
@@ -497,6 +568,8 @@ def main() -> None:
     p = sub.add_parser("run")
     p.add_argument("--only", default="", help="comma list of refs (default: all candidates)")
     p.add_argument("--phases", default="sweep,perf,quality")
+    p.add_argument("--repull-for-kv", action="store_true",
+                   help="re-download a removed model even when only its KV-quality passes are missing")
     p.add_argument("--no-tiers", action="store_true",
                    help="perf measures the full card only - no simulated smaller cards "
                         "(the CUDA ballast does not hold on Windows/WDDM, 2026-10-19)")
