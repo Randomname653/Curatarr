@@ -309,8 +309,86 @@ timeouts were 60 s.
   `recommendations_engine.chroma_db` (the import-time binding); they now patch
   `chromadb_wrapper.get_chroma_db`, as the other suites already do.
 
-### Still open
+## Sweep 2 (2026-10-19): what the first sweep's checks could not see
 
-Nothing from this sweep. `GET /api/system/loop-guard` lists any loop-side statement that
-appears from now on, and the ratchets in `tests/test_loop_db_ratchet.py` and
-`tests/test_silent_except_ratchet.py` refuse new ones in code.
+Method: every suite was run with the loop guard and asyncio's slow-callback detector, plus a
+5 ms stack sampler on the loop thread for the suites it flagged. Four read-only reviews ran
+alongside: silent patterns the ratchet misses, non-database loop blocking and task lifecycle,
+correctness of the offloading in rounds 5–7, and the API surface plus docs.
+
+"Still open: nothing" above was wrong. Two Chroma paths and a class of hidden blockers were
+left; the static ratchet only saw direct calls in a coroutine body.
+
+### Round 8 (PR 1 of sweep 2): the loop, part 2
+
+- **Game/GPU probes, cache-only on the loop.**
+  - `gpu_pressure()` (nvidia-smi up to 4 s, a sync `/api/ps` call) and
+    `game_process_running()` (a walk over every process) ran on the loop from every Ollama
+    request builder (~22 sites), every enrichment item, every judged deletion candidate
+    and every chat page load.
+  - On a loop thread they now return the last verdict. The game watcher probes on a worker
+    every 30 s, running both probes with no short circuit, so neither verdict goes stale.
+  - The lifespan seeds `game_active` with a real probe on a worker.
+- **One TLS context.** Each `httpx.AsyncClient()` loaded the CA bundle: 53 ms of CPU
+  measured, on the loop, 150 constructions, many per item. All now pass
+  `verify=tls_context()` (`src/services/http_client.py`), built once at startup the way httpx
+  builds its default.
+- **Large parses and file work in threads:**
+  - the arr listings, both their counts and the rows (15–30 MB of JSON;
+    `arr_client.request(parse_in_thread=True)`);
+  - the Plex all-tracks index for the Spotify matcher (2.4 s at 50k tracks);
+  - the Spotify upload unzip;
+  - the anime-offline dump parse and rebuild;
+  - the image cache write and budget sweep;
+  - the dependency report, which is now a plain `def`;
+  - `write_env` with its `icacls` subprocess.
+- **Hidden helpers offloaded:**
+  - the memory similarity scoring (in the read, not on the loop);
+  - `classify_memory_category`;
+  - the Sonarr series-id lookup, which now also has a memo;
+  - the verified-data block, in chat, the judge and the deletion pitches;
+  - `_hits_from_results` and evidence scoring in semantic search;
+  - the taste engine's Chroma lookup;
+  - the enrichment audit's Chroma walk;
+  - the arr vector counts, now one Chroma scan instead of three;
+  - the recommendation scoring loop;
+  - the deletion run's `size_outlier`, watched lookup and size context;
+  - the SSE task stream's admin check;
+  - the token-refresh middleware's user read;
+  - the Spotify backoff state.
+- **Tasks kept, not dropped:** the starters refill, the Spotify import and the UI shutdown
+  now go through `track_task`. A GC'd shutdown task meant "Shut down" did nothing.
+- **The Spotify import** stays on its own worker, not the single writer thread. It commits
+  per buffer, so other writers wait one buffer at most. On the writer thread, every write
+  in the app would queue behind the whole import.
+- **The ratchet now sees helpers.**
+  - `tests/test_loop_db_ratchet.py` follows sync functions that reach the database, across
+    modules: a coroutine calling one directly now counts. So does a nested `def` it calls
+    itself, and `.collection.*` on a Chroma handle.
+  - Functions that are safe on the loop by design are listed with the reason: the cached
+    probes and `get_profile`. The lifespan is exempt as lifecycle.
+  - Baseline: 1, the caller-supplied-session branch of `pillars.build_evidence`.
+- **The battery checks the loop at runtime.** `tests/run_all.py` runs every suite with
+  `CURATARR_LOOP_GUARD_DUMP` and fails the run on any database statement that a `src/`
+  coroutine ran on the loop, even when no suite asserts on it.
+- **Tests:** `tests/test_loop_free_probes.py` and `tests/test_loop_free_s2a.py` to
+  `tests/test_loop_free_s2d.py`. Every "off the loop" check fails on the previous code.
+
+### Still open (sweep 2, PRs 2 and 3)
+
+- **Fail-open guards:**
+  - four `_gaming()` copies treat an unreadable flag as "no game";
+  - `endpoint_policy.resolved_refusal` treats a DNS timeout as "no refusal";
+  - an unreadable arr history reads as "nothing imported";
+  - a corrupt taste blob silently drops the owner's taste from a deletion run.
+- **Silent handlers** whose body is a bare `return <default>`: the ratchet does not count
+  them yet.
+- **Correctness:** the enrichment-status memo is not keyed by user (a member sees another
+  user's numbers for 10 s). Also smaller races: chat-starter impressions written via
+  `run_read`, stale cache refills after an invalidation, and the first-admin race.
+- **API:** no budget on member taste rebuilds; no last-admin guard on deactivation; arr LAN
+  addresses, root folders and raw error text reach members.
+- **Docs drift** in ARCHITECTURE.md, the AppSec, POST_REFACTOR and SQLITE audits, README,
+  USAGE and ROADMAP.
+- **Not blocking-critical:** the Spotify genre top-up normalises up to 200k plays on the
+  loop before batching (~3 s, music pipeline only).
