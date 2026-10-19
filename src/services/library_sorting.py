@@ -333,6 +333,12 @@ def _recategorize_local(sonarr_id: int, new_cat: str,
             payload = prof.get("response") if isinstance(prof, dict) and "response" in prof else prof
             # No time expiry — change-based invalidation (see enrichment.py).
             mc.set_cache(f"enriched:{new_cat}:{key}", payload, days=3650)
+            # Then drop the old-category copy: left behind, it was an orphan
+            # profile the audit and the KB counted under the wrong category.
+            from src.cache.metadata_cache import _CACHE_VERSION
+            mc.conn.execute("DELETE FROM api_cache WHERE cache_key = ?",
+                            (f"{_CACHE_VERSION}:enriched:{old_cat}:{key}",))
+            mc.conn.commit()
     except Exception as e:
         logger.warning("[lib-sort] cache re-key failed for %s: %s", key, e)
         errors.append(f"cache: {e}"[:120])

@@ -574,6 +574,290 @@ try:
 finally:
     ssc.writes_allowed, ssc.artist_info, ssc.block_artist = _saved_ss
 
+# ══ Low findings ════════════════════════════════════════════════════════════
+
+# ── proactive messages: one run per user at a time, hourly cap applied ──────
+import src.services.proactive_messages as pm  # noqa: E402
+from src.database.models import EnrichmentFinding, MediaMatchOverride, ProactiveMessage  # noqa: E402
+
+_saved_gen = pm._generate_messages
+RUNS: list = []
+
+
+async def _slow_gen(uid):
+    RUNS.append(uid)
+    await asyncio.sleep(0.05)
+    return 3
+
+
+async def _twice():
+    return await asyncio.gather(pm.check_and_generate_messages(1),
+                                pm.check_and_generate_messages(1),
+                                pm.check_and_generate_messages(2))
+pm._generate_messages = _slow_gen
+try:
+    out = asyncio.run(_twice())
+finally:
+    pm._generate_messages = _saved_gen
+check("two overlapping runs for one user generate once; other users are not blocked",
+      sorted(out) == [0, 3, 3] and sorted(RUNS) == [1, 2], (out, RUNS))
+check("the guard is released after a run", 1 not in pm._GENERATING)
+
+pm.get_db_session = session
+TRIGGER_CALLS: list = []
+_saved_pm = (pm._run_all_triggers, pm._get_sonarr_index, pm.get_disabled_triggers,
+             pm._load_asked_subjects)
+
+
+async def _no_index():
+    return {}
+pm._run_all_triggers = lambda *a, **k: TRIGGER_CALLS.append(1) or None
+pm._get_sonarr_index = _no_index
+pm.get_disabled_triggers = lambda uid: set()
+pm._load_asked_subjects = lambda uid: {}
+try:
+    with session() as s:
+        s.add(WatchHistoryEntry(user_id=2, plex_user_id="222", plex_item_id="9",
+                                title="Ep", media_type="show", viewed_at=datetime.utcnow()))
+        now = datetime.utcnow()
+        for i in range(pm._MAX_PER_HOUR):
+            s.add(ProactiveMessage(user_id=2, trigger_type=f"t{i}", message="m", read=True,
+                                   created_at=now - timedelta(minutes=5)))
+        s.commit()
+    asyncio.run(pm._generate_messages(2))
+    check("a full hour's worth of messages stops generation (the cap was never applied)",
+          TRIGGER_CALLS == [])
+    with session() as s:
+        s.query(ProactiveMessage).filter(ProactiveMessage.user_id == 2).update(
+            {"created_at": datetime.utcnow() - timedelta(hours=2)})
+        s.commit()
+    asyncio.run(pm._generate_messages(2))
+    check("...and resumes once the hour has passed", TRIGGER_CALLS == [1])
+finally:
+    (pm._run_all_triggers, pm._get_sonarr_index, pm.get_disabled_triggers,
+     pm._load_asked_subjects) = _saved_pm
+
+# ── verification sessions: one at a time, re-checked at write, they expire ──
+vs.get_db_session = session
+_saved_vs = (vs.generate_verification_questions, vs.write_memory, vs.httpx.AsyncClient,
+             lp.wait_for_curator, vs.detect_user_language)
+
+
+async def _questions(uid):
+    return [{"type": "abandoned", "title": "Dark", "question": "Why did you stop Dark?"}]
+
+
+async def _wm(**kw):
+    return 1
+
+
+def _llm_down(req):
+    return httpx.Response(500)
+vs.generate_verification_questions = _questions
+vs.write_memory = _wm
+vs.httpx.AsyncClient = _with(_llm_down)
+lp.wait_for_curator = _no_wait
+vs.detect_user_language = lambda uid, db: "en"
+try:
+    async def _both():
+        return await asyncio.gather(vs.start_verification_session(1),
+                                    vs.start_verification_session(1))
+    a, b = asyncio.run(_both())
+    with session() as s:
+        qs = s.query(ProactiveMessage).filter(ProactiveMessage.user_id == 1,
+                                              ProactiveMessage.trigger_type == "verification").all()
+    check("two concurrent starts store ONE verification question",
+          len(qs) == 1 and sorted([bool(a), bool(b)]) == [False, True], (a, b, len(qs)))
+    check("a verification question expires (7 days), it no longer blocks the bell forever",
+          qs and qs[0].expires_at is not None
+          and timedelta(days=6) < qs[0].expires_at - qs[0].created_at <= timedelta(days=7))
+    # The write-time re-check: another process stored one during the LLM call.
+    vsrc = (ROOT / "src/services/verification_session.py").read_text(encoding="utf-8")
+    _st = vsrc[vsrc.index("    def _store() -> bool:"):vsrc.index("if not await run_write(_store):")]
+    check("the store re-checks the 12-hour window before writing",
+          "if _asked_recently(db, user_id):" in _st)
+finally:
+    (vs.generate_verification_questions, vs.write_memory, vs.httpx.AsyncClient,
+     lp.wait_for_curator, vs.detect_user_language) = _saved_vs
+
+# ── external-id harvest leaves pinned entries to the pin ────────────────────
+import sqlite3  # noqa: E402
+import src.services.external_ids as ei  # noqa: E402
+
+with session() as s:
+    s.add(MediaMatchOverride(service="radarr", arr_id=1, tmdb_id=5, title="Pinned Film"))
+    s.commit()
+cdb = sqlite3.connect(":memory:", check_same_thread=False)
+cdb.execute("CREATE TABLE api_cache (cache_key TEXT, response TEXT, expires_at TEXT)")
+for k, raw in (("v2:raw:movie:5", {"title": "Wrong Name", "tmdb_id": 5, "media_type": "movie"}),
+               ("v2:raw:movie:pf", {"title": "pinned film", "media_type": "movie"}),
+               ("v2:raw:movie:9", {"title": "Free Film", "tmdb_id": 9, "media_type": "movie"})):
+    cdb.execute("INSERT INTO api_cache VALUES (?,?,?)", (k, json.dumps(raw), "2999-01-01"))
+HARVEST_WRITES: list = []
+
+
+async def _index(failed=None):
+    return {"tv": {"by_name": {}, "by_id": {}},
+            "movie": {"by_name": {"x": 1}, "by_id": {}}}
+_saved_ei = (ei.build_arr_id_index, ei._match, ei._recheck, mcache.write_fields)
+ei.build_arr_id_index = _index
+ei._match = lambda raw, index, fams: ({"imdb_id": "tt9"}, "title")
+ei._recheck = lambda cache, index, rows: 0
+mcache.write_fields = lambda cache, key, raw, fields, **k: HARVEST_WRITES.append(key)
+try:
+    hres = asyncio.run(ei.harvest(SimpleNamespace(conn=cdb)))
+finally:
+    ei.build_arr_id_index, ei._match, ei._recheck, mcache.write_fields = _saved_ei
+check("harvest skips entries a match pin covers (by tmdb id and by title)",
+      HARVEST_WRITES == ["raw:movie:9"] and hres.get("added") == 1, (HARVEST_WRITES, hres))
+
+# ── music misses: one row per name whatever its case; errors park ───────────
+import src.services.music_misses as mm  # noqa: E402
+from src.database.models import MusicLookupMiss  # noqa: E402
+
+
+@contextmanager
+def _committing():
+    s = make()
+    try:
+        yield s
+        s.commit()
+    finally:
+        s.close()
+conn.get_db_session = _committing
+try:
+    mm.record_miss("Foo Fighters ")
+    mm.record_miss("foo fighters")
+    with session() as s:
+        rows = s.query(MusicLookupMiss).all()
+    check("a case variant updates the same miss row (backoff keeps growing)",
+          len(rows) == 1 and rows[0].attempts == 2, [(r.name, r.attempts) for r in rows])
+    mm.clear_miss("FOO FIGHTERS")
+    with session() as s:
+        check("clearing matches case-insensitively", s.query(MusicLookupMiss).count() == 0)
+    for _ in range(mm._ERROR_PARK_AFTER - 1):
+        mm.record_error("Raiser", error="KeyError")
+    check("a lookup that raised stays due below the threshold",
+          mm.due_filter(["Raiser"]) == ["Raiser"])
+    mm.record_error("raiser", error="KeyError")
+    check("...and is parked once it raised that many times in a row",
+          mm.due_filter(["Raiser"]) == [])
+finally:
+    conn.get_db_session = session
+mmsrc = (ROOT / "src/services/music_matcher.py").read_text(encoding="utf-8")
+check("the MusicBrainz resolver counts lookups that raise",
+      "music_misses.record_error(" in mmsrc)
+
+# ── reclassify drops the old-category profile ───────────────────────────────
+DELETED_KEYS: list = []
+
+
+class _Conn:
+    def execute(self, sql, params=()):
+        if sql.startswith("DELETE"):
+            DELETED_KEYS.append(params[0])
+
+    def commit(self):
+        pass
+
+
+class _ProfileCache(_NoCache):
+    conn = _Conn()
+
+    def get_cache(self, k):
+        return {"response": {"plot_summary": "x"}} if k == "enriched:anime:sonarr:42" else None
+mcache.MetadataCache = _ProfileCache
+cw.get_chroma_db = lambda: _NoChroma()
+try:
+    errs = []
+    ls._recategorize_local(42, "show", errs)
+finally:
+    mcache.MetadataCache, cw.get_chroma_db = _saved
+check("re-filing copies the profile and deletes the old-category key",
+      DELETED_KEYS == ["v2:enriched:anime:sonarr:42"] and not errs, (DELETED_KEYS, errs))
+
+# ── audit: a failed requeue gives the finding its automatic chance back ─────
+from src.services import enrichment_state as es_mod  # noqa: E402
+
+with session() as s:
+    s.add(EnrichmentFinding(plex_rating_key="sonarr:7", kind="wrong_entity", status="pending",
+                            severity="warn", detail=json.dumps({"requeued_at": "2026-10-19Z",
+                                                                "x": 1})))
+    s.commit()
+    n = es_mod.unmark_requeued(s, [("sonarr:7", "wrong_entity"), ("nope", "wrong_entity")])
+    s.commit()
+    row = s.query(EnrichmentFinding).filter_by(plex_rating_key="sonarr:7").first()
+    check("unmark_requeued removes requeued_at and keeps the rest of the detail",
+          n == 1 and json.loads(row.detail) == {"x": 1} and not es_mod.was_requeued(row))
+en_src = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
+check("the audit restores the chance when the purge or the status flip fails",
+      en_src.count("await _undo_triage_requeues(e)") == 2)
+
+# ── anime mapping: every AniDB entry survives a save + load ─────────────────
+import tempfile  # noqa: E402
+import src.services.anime_mapping as am  # noqa: E402
+
+_saved_path = am.MAPPING_DB_PATH
+with tempfile.TemporaryDirectory() as td:
+    am.MAPPING_DB_PATH = Path(td) / "anime_mapping.db"
+    try:
+        m = am.AnimeMapping()
+        for anidb in (100, 101, 102):         # three seasons, one TVDB series
+            m.anidb_to_tvdb[anidb] = 5000
+        m.tvdb_to_anidb[5000] = 100           # the parse's own pick
+        m.anidb_to_tvdb[200] = 6000
+        m.tvdb_to_anidb[6000] = 200
+        m.anidb_to_anilist[100] = 7
+        m.anidb_to_anilist[101] = 8
+        m.total_entries = 4
+        am._save_to_db(m)
+        back = am._load_from_db()
+        check("every season's AniDB entry is kept (one row per AniDB id)",
+              set(back.anidb_to_tvdb) == {100, 101, 102, 200}, back.anidb_to_tvdb)
+        check("the series lookup resolves to the same entry the parse chose",
+              back.tvdb_to_anidb == {5000: 100, 6000: 200}
+              and back.tvdb_to_anilist == {5000: 7}, (back.tvdb_to_anidb, back.tvdb_to_anilist))
+        # A cache written before is_primary still loads.
+        c = sqlite3.connect(am.MAPPING_DB_PATH)
+        c.execute("DROP TABLE anime_mapping")
+        c.execute("CREATE TABLE anime_mapping (anidb_id INTEGER PRIMARY KEY, tvdb_id INTEGER, "
+                  "anilist_id INTEGER)")
+        c.execute("INSERT INTO anime_mapping VALUES (100, 5000, 7)")
+        c.commit()
+        c.close()
+        old = am._load_from_db()
+        check("an old-format cache still loads", old.tvdb_to_anidb == {5000: 100})
+    finally:
+        am.MAPPING_DB_PATH = _saved_path
+
+# ── backlog and wish list flag artists the owner deleted ────────────────────
+import src.routers.library as lib  # noqa: E402
+
+_saved_tomb = mcs.music_tombstones
+mcs.music_tombstones = lambda: ({"mb-nb"}, {norm_name("Beatles, The")})
+try:
+    is_dead = lib._deleted_artist_check()
+    check("deleted-artist check matches by MBID and by normalised name",
+          is_dead("Anyone", "mb-nb") and is_dead("beatles, the") and not is_dead("Heat", "mb-x"))
+
+    def _boom():
+        raise RuntimeError("db locked")
+    mcs.music_tombstones = _boom
+    check("an unreadable table flags nothing", lib._deleted_artist_check()("Nickelback") is False)
+finally:
+    mcs.music_tombstones = _saved_tomb
+arr_js = (ROOT / "frontend/js/arr.js").read_text(encoding="utf-8")
+lib_src = (ROOT / "src/routers/library.py").read_text(encoding="utf-8")
+check("backlog cards and wishes show a 'deleted' badge",
+      arr_js.count("DELETED_BADGE : ''") == 2
+      and '"deleted":     is_deleted(r.series_title, r.mbid)' in lib_src
+      and '"deleted": is_deleted(w.title, w.mbid)' in lib_src)
+
+# ── recommendations say when THIS user's cache was built ────────────────────
+rsrc = (ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
+check("cached_at comes from the user's own rows, not the household-wide stamp",
+      'own = max((r["cached_at"] for r in recs if r.get("cached_at")), default=None)' in rsrc)
+
 conn.get_db_session = _real_session
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

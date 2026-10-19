@@ -135,9 +135,13 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                         for r in cached]
         recs = await run_read(_load_cached)
         if recs:
+            # This user's own newest row: the shared app_state stamp is the
+            # last household-wide refresh, which is another member's time
+            # whenever only their recs were rebuilt.
+            own = max((r["cached_at"] for r in recs if r.get("cached_at")), default=None)
             return {"recommendations": recs, "category": category,
                     "from_cache": True, "source": "cache",
-                    "cached_at": await run_read(get_state, "recs_cached_at")}
+                    "cached_at": own or await run_read(get_state, "recs_cached_at")}
 
     # Generate on the fly
     import asyncio

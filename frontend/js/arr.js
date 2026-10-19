@@ -523,6 +523,10 @@ export async function renderSpotifyBacklog(svc) {
   contentEl.innerHTML = header + artists.map((a, idx) => renderBacklogCard(svc, a, idx)).join('');
 }
 
+// An artist the owner deleted can still be streamed on Spotify; adding it
+// again is allowed, but never by accident.
+const DELETED_BADGE = '<span class="badge amber badge-sm" title="You deleted this artist. Adding it brings it back.">deleted</span>';
+
 export function renderBacklogCard(svc, a, idx) {
   const tracks = (a.top_tracks || []).slice(0, 3);
   const tracksHTML = tracks.length
@@ -552,7 +556,7 @@ export function renderBacklogCard(svc, a, idx) {
   return `
     <div class="panel-item">
       <div class="panel-item-head">
-        <div class="fs-14 panel-item-title">${esc(a.artist_name || '(unknown)')}<span class="fs-11 t3">${a.play_count} plays</span>${mbidBadge}</div>
+        <div class="fs-14 panel-item-title">${esc(a.artist_name || '(unknown)')}<span class="fs-11 t3">${a.play_count} plays</span>${mbidBadge}${a.deleted ? DELETED_BADGE : ''}</div>
         <div class="panel-actions">${addBtn}</div>
       </div>
       ${tracksHTML}
@@ -632,7 +636,7 @@ export async function renderWanted(svc) {
   const body = rows.length ? rows.map(w => `
     <div class="panel-item">
       <div class="panel-item-head">
-        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? '<span class="badge success badge-sm" title="Plex has the artist now">in library</span>' : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
+        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? '<span class="badge success badge-sm" title="Plex has the artist now">in library</span>' : ''}${w.deleted ? DELETED_BADGE : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
         <div class="panel-actions">${isAdmin ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>Remove</button>` : ''}</div>
       </div>
       <div class="panel-item-meta">wished ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>

@@ -1020,6 +1020,22 @@ def _wish_in_library(title: str, mbid: Optional[str]) -> Optional[bool]:
         return None
 
 
+def _deleted_artist_check():
+    """``(name, mbid) -> bool``: did the owner delete this artist? The
+    backlog and the wish list offer an add for streamed-but-not-owned
+    artists, deleted ones included; the flag lets the page say so before
+    the click brings it back. An unreadable table flags nothing."""
+    try:
+        from src.services.music_catalog_sync import music_tombstones
+        from src.services.soulsync_client import norm_name
+        dead_mb, dead_names = music_tombstones()
+    except Exception as e:
+        logger.warning("[library] deleted-artist lookup failed: %s", e)
+        return lambda name, mbid=None: False
+    return lambda name, mbid=None: bool(
+        (mbid and mbid in dead_mb) or (name and norm_name(name) in dead_names))
+
+
 @router.get("/wishes")
 def list_wishes(user: User = Depends(get_current_user)):
     """The wanted list: artists asked for while no arr is configured. Each
@@ -1027,12 +1043,14 @@ def list_wishes(user: User = Depends(get_current_user)):
     wishes in SoulSync and the daily walk sees the result."""
     from src.database.connection import get_db_session
     from src.database.models import MusicWish
+    is_deleted = _deleted_artist_check()
     with get_db_session() as db:
         rows = (db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
                 .order_by(MusicWish.created_at.desc()).all())
         wishes = [{"id": w.id, "title": w.title, "mbid": w.mbid, "source": w.source, "note": w.note,
                    "created_at": w.created_at.isoformat() if w.created_at else None,
-                   "in_library": _wish_in_library(w.title, w.mbid)} for w in rows]
+                   "in_library": _wish_in_library(w.title, w.mbid),
+                   "deleted": is_deleted(w.title, w.mbid)} for w in rows]
     return {"wishes": wishes, "total": len(wishes)}
 
 
@@ -1638,6 +1656,7 @@ def spotify_backlog(
             )
             top_by_artist = _top_tracks_by_artist(track_rows)
 
+        is_deleted = _deleted_artist_check()
         artists = []
         for r in rows:
             artists.append({
@@ -1647,6 +1666,7 @@ def spotify_backlog(
                 "mbid_resolved":   bool(r.mbid),
                 "in_lidarr":       bool(r.mbid) and r.mbid in in_lidarr,  # 16o
                 "in_library":      bool(r.mbid) and r.mbid in in_lidarr,  # Lidarr ∪ Plex
+                "deleted":     is_deleted(r.series_title, r.mbid),
                 "top_tracks":  top_by_artist.get(r.series_title, []),
             })
 

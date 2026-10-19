@@ -605,6 +605,25 @@ def mark_requeued(row, now: Optional[datetime] = None) -> None:
     row.detail = _merge_detail(row.detail, {"requeued_at": (now or datetime.utcnow()).isoformat() + "Z"})
 
 
+def unmark_requeued(db, keys) -> int:
+    """Take the one automatic requeue back from findings whose requeue never
+    happened (the purge or the status flip failed after triage committed).
+    Without this the next audit saw "already requeued" and escalated a
+    finding the pipeline never got to retry. ``keys`` = [(plex_rating_key,
+    kind)]. Returns how many were restored."""
+    from src.database.models import EnrichmentFinding as F
+    n = 0
+    for prk, kind in keys:
+        row = db.query(F).filter(F.plex_rating_key == prk, F.kind == kind).first()
+        if row is None:
+            continue
+        d = _parse_detail(row.detail)
+        if d.pop("requeued_at", None) is not None:
+            row.detail = json.dumps(d, default=str, sort_keys=True)
+            n += 1
+    return n
+
+
 def resolve_stale_findings(db, seen: set, kinds, now: Optional[datetime] = None) -> int:
     """Pending findings of the scanned ``kinds`` that this pass did NOT detect
     → resolved ("no longer detected"). ``seen`` = {(plex_rating_key, kind)}."""

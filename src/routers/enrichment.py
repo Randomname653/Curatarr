@@ -1067,17 +1067,42 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 db.commit()
 
         await run_write(_triage)
-        if to_requeue:
-            def _purge():
-                mc2 = MetadataCache()
-                try:
-                    for cache_key, *_ in to_requeue:
-                        mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
-                    mc2.conn.commit()
-                finally:
-                    mc2.close()
 
+    def _finding_keys(hits: list) -> list:
+        return [(prk or f"title:{category}:{(title or '')[:40]}", reason)
+                for _ck, prk, title, category, reason, _detail in hits]
+
+    async def _undo_triage_requeues(e: Exception) -> None:
+        # Triage committed "requeued" before the purge and the flip ran; if
+        # either failed, that one automatic chance was spent on nothing.
+        logger.warning("[audit] requeue of %d finding(s) failed (%s) — their "
+                       "automatic retry is kept for the next audit", len(to_requeue), e)
+
+        def _undo():
+            with get_db_session() as db:
+                n = _ES.unmark_requeued(db, _finding_keys(to_requeue))
+                db.commit()
+                return n
+        try:
+            await run_write(_undo)
+        except Exception as ue:  # noqa: BLE001 — logged; next audit escalates at worst
+            logger.warning("[audit] could not restore the requeue chance: %s", ue)
+
+    if not dry_run and to_requeue:
+        def _purge():
+            mc2 = MetadataCache()
+            try:
+                for cache_key, *_ in to_requeue:
+                    mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
+                mc2.conn.commit()
+            finally:
+                mc2.close()
+
+        try:
             await asyncio.to_thread(_purge)
+        except Exception as e:
+            await _undo_triage_requeues(e)
+            raise
 
     requeued = 0
     if not dry_run and to_requeue:
@@ -1124,7 +1149,11 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 db.commit()
             return requeued
 
-        requeued = await run_write(_requeue)
+        try:
+            requeued = await run_write(_requeue)
+        except Exception as e:
+            await _undo_triage_requeues(e)
+            raise
 
     logger.info(
         "[audit-requeue] scanned=%d incomplete=%d requeued=%d dry_run=%s by_reason=%s",

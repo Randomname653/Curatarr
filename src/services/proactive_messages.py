@@ -1678,12 +1678,33 @@ async def generate_proactive_message(
 
 # ── MAIN SCHEDULER FUNCTION ───────────────────────────────────────────────────
 
+# Users whose generation is running right now. The boot-time run and the
+# 30-minute interval job are separate entry points; both read the same
+# cooldowns and asked-subject index before several slow LLM calls, so two
+# overlapping runs could each add a full batch — on the same subjects. The
+# check-and-add has no await between, so it is atomic on the event loop.
+_GENERATING: set = set()
+
+
 async def check_and_generate_messages(user_id: int) -> int:
     """
     Fill the unread message cache up to _CACHE_TARGET.
     Called by the background scheduler every 30 min.
-    Returns number of new messages generated.
+    Returns number of new messages generated (0 when a run for this user is
+    already in progress — that run fills the cache).
     """
+    if user_id in _GENERATING:
+        logger.info("[proactive] generation already running for user %d — skipped",
+                    user_id)
+        return 0
+    _GENERATING.add(user_id)
+    try:
+        return await _generate_messages(user_id)
+    finally:
+        _GENERATING.discard(user_id)
+
+
+async def _generate_messages(user_id: int) -> int:
     now = datetime.utcnow()
 
     def _load():
@@ -1701,6 +1722,14 @@ async def check_and_generate_messages(user_id: int) -> int:
 
             if unread_count >= _CACHE_TARGET:
                 logger.debug("[proactive] Cache full (%d unread), skipping generation", unread_count)
+                return None
+            # The hourly cap was declared and never applied.
+            last_hour = db.query(_func.count(ProactiveMessage.id)).filter(
+                ProactiveMessage.user_id == user_id,
+                ProactiveMessage.created_at >= now - timedelta(hours=1),
+            ).scalar() or 0
+            if last_hour >= _MAX_PER_HOUR:
+                logger.debug("[proactive] %d message(s) in the last hour, skipping", last_hour)
                 return None
 
             # Which trigger types fired recently (avoid same trigger repeating)?
@@ -1755,13 +1784,13 @@ async def check_and_generate_messages(user_id: int) -> int:
             )
             entries = _to_dicts(entries_raw)
         return (unread_count, recent_triggers, last_fired, taste_blurb,
-                prev_register, entries)
+                prev_register, entries, last_hour)
 
     loaded = await run_read(_load)
     if loaded is None:
         return 0
     (unread_count, recent_triggers, last_fired, taste_blurb,
-     prev_register, entries) = loaded
+     prev_register, entries, last_hour) = loaded
 
     if not entries:
         return 0
@@ -1781,7 +1810,7 @@ async def check_and_generate_messages(user_id: int) -> int:
     # Y" framing. Empty on any failure -> watch-data-only framing.
     sonarr_index = await _get_sonarr_index()
 
-    slots = min(_CACHE_TARGET - unread_count, _MAX_PER_RUN)
+    slots = min(_CACHE_TARGET - unread_count, _MAX_PER_RUN, _MAX_PER_HOUR - last_hour)
     generated = 0
 
     for _ in range(slots):

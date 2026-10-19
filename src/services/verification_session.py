@@ -320,21 +320,47 @@ def _verification_questions(user_id: int) -> list:
     return questions[:10]
 
 
+# Users with a verification question being composed right now. The
+# custodian's recompute and the end of an enrichment run can both start a
+# session; both passed the 12-hour check before either stored its question,
+# and the bell showed the same question twice.
+_STARTING: set = set()
+
+# An unanswered verification question leaves the bell after this long. It
+# had no expiry: opening it leaves it unread on purpose (so it can still be
+# answered), and an ignored one stayed at the front of the queue.
+_VERIFICATION_TTL = timedelta(days=7)
+
+
+def _asked_recently(db, user_id: int) -> bool:
+    return db.query(ProactiveMessage).filter(
+        ProactiveMessage.user_id == user_id,
+        ProactiveMessage.trigger_type == "verification",
+        ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
+    ).first() is not None
+
+
 async def start_verification_session(user_id: int) -> Optional[str]:
     """
     Pick the highest-priority unasked question and send it as a proactive message.
     Returns the question text or None if nothing to ask.
     """
-    # Check we haven't already started a verification session recently
-    def _asked_recently() -> bool:
-        with get_db_session() as db:
-            return db.query(ProactiveMessage).filter(
-                ProactiveMessage.user_id == user_id,
-                ProactiveMessage.trigger_type == "verification",
-                ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
-            ).first() is not None
+    if user_id in _STARTING:
+        return None
+    _STARTING.add(user_id)
+    try:
+        return await _start_verification_session(user_id)
+    finally:
+        _STARTING.discard(user_id)
 
-    if await run_read(_asked_recently):
+
+async def _start_verification_session(user_id: int) -> Optional[str]:
+    # Check we haven't already started a verification session recently
+    def _recent() -> bool:
+        with get_db_session() as db:
+            return _asked_recently(db, user_id)
+
+    if await run_read(_recent):
         return None  # don't spam
 
     questions = await generate_verification_questions(user_id)
@@ -428,19 +454,27 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
         logger.warning("Question rephrase failed: %r", e, exc_info=True)
 
     # Store the message and mark the question as asked
-    def _store():
+    def _store() -> bool:
         with get_db_session() as db:
+            # Re-checked at write time: another process (a second worker)
+            # may have stored one during the LLM call above.
+            if _asked_recently(db, user_id):
+                return False
+            now = datetime.utcnow()
             db.add(ProactiveMessage(
                 user_id=user_id,
                 trigger_type="verification",
                 trigger_data=json.dumps(question),
                 message=rephrased,
                 read=False,
-                created_at=datetime.utcnow(),
+                created_at=now,
+                expires_at=now + _VERIFICATION_TTL,
             ))
             db.commit()
+            return True
 
-    await run_write(_store)
+    if not await run_write(_store):
+        return None
 
     await write_memory(
         user_id=user_id,

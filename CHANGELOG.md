@@ -38,6 +38,17 @@ Condensed release history, newest first.
 - The weekly audit no longer rebuilds the same orphaned vectors every week.
 - The OMDb top-up keeps going until its backlog is empty, and anime rows are no longer
   fetched again every day.
+- Two overlapping runs can no longer fill the notification bell with duplicate curator
+  messages, and the hourly message cap is now applied. Verification questions are asked
+  once, even when two jobs start at the same moment, and they expire after a week.
+- Filling in missing external ids skips titles whose match you pinned.
+- Music lookups treat "Foo" and "foo" as the same name, and a name whose lookup keeps
+  failing is parked like one that was not found.
+- Re-filing a show also removes its profile under the old category. If the weekly audit
+  fails partway through a requeue, the finding keeps its one automatic retry.
+- The anime mapping cache keeps every season's AniDB entry.
+- The Spotify backlog and the wish list mark artists you deleted.
+- Each person's Recommendations page shows when their own recommendations were built.
 
 **Members can't overload the box or see the admin's network.**
 - Rebuilding a taste profile, forcing a live arr refresh and re-fetching metadata from chat
