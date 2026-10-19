@@ -75,7 +75,7 @@ write-ups in §3. Line numbers are from `df4bfc9`.
 | `services/media_enricher.py:4094` (`process_and_save`) | `except Exception` → DEBUG after the cache write | Two-store half-write: the profile is cached and the item marked enriched, but the Chroma upsert failed, so the item is **never** embedded (the "already enriched" exit). | **High** | Not applied. Mark `vector_pending` and re-embed on the next pass; log with `logger.exception`. **Fixed (follow-up #3).** |
 | `reception.py:522/604/714`, `media_enricher.py:964/1551`, `wikidata.py:252`, `listenbrainz.py:262`, `archive_backfill.py:305` | Walker top-ups: `except Exception` → DEBUG, "transient, try later" | This is exactly how the reception 2-vs-4 unpacking bug hid for months (`reception.py:337-343`). The walkers take `items[:limit]` in a fixed order, so failing rows come back to the front every pass. | **High** | Not applied. Separate transient errors (`HTTPError`, timeouts) from crashes; `logger.exception` crashes; stop after 5 consecutive; add a cursor or attempt stamp. **Fixed (follow-up #3: `log_topup_failure`; round 3: attempt stamps).** |
 | `services/pillars.py:619` (+ `381/723/755/771`) | `except Exception` → DEBUG in `build_evidence` | If `ensure_verified_data` raises, `significance_unchecked` is never set, so the thin-evidence, misfiled and unchecked-significance gates are skipped and the judge sees no acclaim (biased toward CUT). Owner feedback (priority 0), considerations and principles silently drop out of the judge prompt. | **High** | Not applied. On exception set `flags["significance_unchecked"]=True` (deferred); add `owner_signal_unknown` for the others and defer on it in the loop. **Fixed (follow-up #2).** |
-| `services/taste_engine.py:1144` | `gather(return_exceptions=True)` → `continue`, no log | A deterministic `embed_entry` bug produces 0 embeddings, and the taste vector freezes at its old value. The only trace is "Got 0/N embeddings" at INFO. | **High** | Not applied. Count failures, warn with the first 3 tracebacks, and fail the task above 20 %. *Still open 2026-10-19: `taste_engine.py:1190` still drops an exception with `continue` and no log.* |
+| `services/taste_engine.py:1144` | `gather(return_exceptions=True)` → `continue`, no log | A deterministic `embed_entry` bug produces 0 embeddings, and the taste vector freezes at its old value. The only trace is "Got 0/N embeddings" at INFO. | **High** | Fixed (round 10): failures counted, the first 3 logged with a traceback; above 20 % the task fails and the stored vector stays. |
 | `frontend/js/deletions.js:592-604` (`bulkDelete`) | `setInterval` poll with `catch {}` | On a 401/500 or network loss the "Deleting N…" button never reset and no outcome came, **on the irreversible action**. A missing task (server restarted) toasted "finished". | **High** | **Fixed.** A 401 or 5 misses stop the poll, reset the button and show a sticky "outcome unknown"; a missing task says unknown. |
 | `frontend/js/app.js:39` | `.catch(()=>({first_run:true}))` | Any 500 or restart at page load showed a configured install the Setup wizard, whose Finish rewrites the config. | **High** | **Fixed.** Toast "Can't reach Curatarr", continue to sign-in. |
 | `frontend/js/api.js:37` | No 401 handling (throws only) | "Session revoked" / "Account deactivated" mid-session: every view shows a Retry that can never work, and every poller below fails forever. | **High** | Not applied (patch in §3). **Fixed (follow-up #1).** |
@@ -441,12 +441,47 @@ left; the static ratchet only saw direct calls in a coroutine body.
 - **Tests:** `tests/test_fail_closed_s2.py` and `tests/test_fail_closed_s2_g1.py` to
   `tests/test_fail_closed_s2_g4.py`. Each behavioural check fails on the previous code.
 
-### Still open (sweep 2, PR 3)
+### Round 10 (PR 3 of sweep 2): what members reach, and the leftovers
 
-- **API:** no budget on member taste rebuilds; no last-admin guard on deactivation; arr
-  LAN addresses, root folders and raw error text reach members.
-- **Docs drift** in ARCHITECTURE.md, the AppSec, POST_REFACTOR and SQLITE audits, README,
-  USAGE and ROADMAP.
-- **Not blocking-critical:** the Spotify genre top-up normalises up to 200k plays on the
-  loop before batching (~3 s, music pipeline only). The settings view does not show the
-  model-eval `unreadable` count yet.
+- **Member budgets and guards:**
+  - **Taste rebuild** (`POST /history/recompute-taste`): three per ten minutes per user,
+    one at a time (409 while one runs). Each run is embeddings, an LLM summary per
+    category and a calibration pass on the shared GPU, and a member could stack them.
+  - **Forced arr refresh** (`/library/items/{service}?refresh=true`) for members: three
+    per ten minutes. Each one is a full live pull from the arr.
+  - **Metadata re-fetch in chat** (`/chat/correct-anchor`): five per ten minutes. Each
+    drops a row of the shared enrichment cache.
+- **Last admin:** `PATCH /users/{id}` refuses to deactivate yourself or the last active
+  admin, as DELETE already did. A deactivated sole admin could not sign in, and setup
+  stayed closed because an admin row still existed.
+- **What members no longer get:**
+  - the saved arr defaults (root folders, profile ids) and the Plex section list with
+    its filesystem paths: both are admin-only now, and only admin screens read them;
+  - each arr item's `root_folder` and the cache's `stale_error`;
+  - the `arr_url` (LAN address) on library recommendations;
+  - exception text in the `/library/search` 502 and the `/chat/flush-memories` error.
+    The detail goes to the log; admins get the same fixed sentence.
+- **Leftovers:**
+  - **Spotify genre top-up:** the plays without genres are grouped on the read worker
+    with the query. Up to 200k plays were normalised on the loop (~3 s).
+  - **Model-update review:** the settings view shows the unreadable judgements and the
+    "no verdict" outcome.
+  - **Taste gather** (§2 row `taste_engine.py:1144`): a failed embedding was dropped with
+    `continue` and no log. Failures are now logged (traceback for the first three). Above
+    a fifth, the run keeps the stored vector instead of writing one from a skewed rest.
+- **Docs drift:** README, ARCHITECTURE, USAGE, ROADMAP, SECURITY and the AppSec,
+  POST_REFACTOR and SQLITE audits brought in line with the code (status notes on rows
+  fixed since, figures, timeouts, flags).
+- **Tests:** `tests/test_api_gating_s2.py` and `tests/test_sweep2_leftovers.py`. Each
+  behavioural check fails on the previous code.
+
+### Still open after sweep 2
+
+These need code changes and were out of scope:
+- **UI/accessibility:** `#messages` has no `aria-live`; modals don't trap focus; only the
+  Settings panes are in the URL hash; `--danger-fill` is unused; no "Why?" on
+  recommendation cards.
+- **Middleware:** no TrustedHost / `ALLOWED_HOSTS`.
+- **Small:** the PIN comment at `taste_engine.py:1490`; `setup_wizard.py:686` returns the
+  local nvidia-smi error text; `mbid_speedrunner.py` sets the music flag without a lease;
+  a member can probe folder names through `root_filter` on `/library/items`.

@@ -823,7 +823,11 @@ enrichment pipeline only does API pre-fetch (`_write_game_mode_db` writes the
 `api_cached` marker, no LLM). Resumes automatically on game exit.
 `is_game_running()` is the union of two causes that `llm_lane` tells apart:
 `game_process_running()` (a game owns the whole box) and `gpu_pressure()`
-(something else owns only the card). The "is this a game?" toast asks only
+(something else owns only the card). Called on the event-loop thread, both
+answer with the last verdict instead of probing (nvidia-smi, a process
+walk); the watcher probes on a worker every 30 s. Jobs read the flag
+through `app_state.game_active()`, where an unreadable flag counts as a
+game. The "is this a game?" toast asks only
 about programs that hold at least `PROMPT_MIN_RSS_MB` (500) of memory, are
 no installer, updater or crash handler, and are no version of a program
 already answered "not a game" (`process_family` folds version numbers and

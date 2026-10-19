@@ -6,6 +6,20 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Members can't overload the box or see the admin's network.**
+- Rebuilding a taste profile, forcing a live arr refresh and re-fetching metadata from chat
+  now have small per-user budgets. Only one taste rebuild per user runs at a time.
+- An admin can no longer deactivate themselves or the last active admin. Before, that
+  locked everyone out of the admin side until someone edited the database.
+- Members no longer get root folders, Plex library paths, arr addresses or raw error
+  text. The detail goes to the server log.
+- The model-update review shows judgements the judge didn't answer, and says "no verdict"
+  when most of them failed.
+- A taste rebuild where most embeddings fail now keeps the old profile and says so,
+  instead of quietly writing a skewed one.
+- Large Spotify histories no longer freeze the app for a few seconds during the Last.fm
+  genre top-up.
+
 **When something can't be read, Curatarr now says so.** Several checks used to read an
 unreadable value as "all clear". Now:
 - an unreadable game flag counts as a game;
