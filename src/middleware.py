@@ -109,7 +109,10 @@ class TokenRefreshMiddleware:
                     # Re-issue from the DB row, not the token's own claims:
                     # a deactivated or logged-out user must not be handed a
                     # fresh week by the very token that should have died.
-                    subject = _load_refresh_subject(int(payload["sub"]))
+                    # On the read pool: a sync User query here stalled the
+                    # loop on every request a day-old token makes.
+                    from src.database.runner import run_read
+                    subject = await run_read(_load_refresh_subject, int(payload["sub"]))
                     if subject and subject["is_active"] \
                             and int(payload.get("ver", 0) or 0) == subject["token_version"]:
                         from src.routers.auth import _create_jwt

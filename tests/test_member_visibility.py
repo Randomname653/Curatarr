@@ -65,7 +65,7 @@ check("the stream applies the same filter to each snapshot",
 src = (_ROOT / "src/routers/tasks.py").read_text(encoding="utf-8")
 gen = src[src.index("async def stream_tasks"):]
 check("wiring: the SSE generator filters both the first snapshot and every event",
-      gen.count("_visible(") == 2 and "is_admin = _is_admin(user_id)" in gen)
+      gen.count("_visible(") == 2 and "is_admin = await run_read(_is_admin, user_id)" in gen)
 
 # ── library status ───────────────────────────────────────────────────────────
 lib.get_state = lambda k: "2026-09-25T10:00:00" if k.endswith(":last") else None

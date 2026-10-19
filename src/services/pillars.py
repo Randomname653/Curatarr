@@ -624,7 +624,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                 "[pillars] %r (%s) carries the profile of %r (%s) — refusing "
                 "to judge on a misfiled record",
                 title, item.get("year"), vd.get("title"), vd.get("year"))
-        verified_text = format_verified_block(vd) or ""
+        # It also looks the edition up in the DB (editions.edition_by_title).
+        verified_text = await run_read(format_verified_block, vd) or ""
         # "9 episodes played" means something different for a 12- vs a
         # 100-episode series — join the two data sources for the judge.
         if (ow and (ow.get("episodes") or 0) >= 2

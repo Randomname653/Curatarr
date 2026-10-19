@@ -349,7 +349,9 @@ async def _startup_check():
     # watcher pick all of this up once the game exits.
     try:
         from src.services.process_monitor import is_game_running
-        if is_game_running():
+        # On a worker: on the loop it answers from the probe cache, which
+        # 5 s after boot may not have been filled yet.
+        if await asyncio.to_thread(is_game_running):
             logger.info("[startup] Game running — skipping rec-cache + overdue catch-ups")
             return
     except Exception as _e:
@@ -680,8 +682,10 @@ async def job_arr_sync():
         #   • no stale duplicates survive across scheduler runs
         from sqlalchemy import or_, and_
         from src.services.music_source import music_service
+        # music_service opens a SQLite file - keep it off the loop.
+        _music_svc = await asyncio.to_thread(music_service)
         _CAT_TO_SVC = {"movie": "radarr", "show": "sonarr", "anime": "sonarr",
-                       "music": music_service() or "lidarr"}
+                       "music": _music_svc or "lidarr"}
         by_cat: dict[str, list] = {}
         for p in all_proposals:
             by_cat.setdefault(p.get("category", "movie"), []).append(p)

@@ -1979,9 +1979,10 @@ async def generate_deletion_proposals(
         _it = p["item"]
         _tp = (_tech_idx.get(("tmdb", _it.get("tmdb_id")))
                or _tech_idx.get(("tvdb", _it.get("tvdb_id"))))
-        _so = size_outlier(_tp["media_type"], _tp["resolution"], _tp["codec"],
-                           _tp["mb_per_min"],
-                           is_remux=_tp.get("is_remux", False)) if _tp else None
+        # The first call loads the norms table (main DB), the rest hit its cache.
+        _so = await run_read(size_outlier, _tp["media_type"], _tp["resolution"], _tp["codec"],
+                             _tp["mb_per_min"],
+                             is_remux=_tp.get("is_remux", False)) if _tp else None
         if _so:
             size_pts = (min(SIZE_PTS_CAP, (_so["ratio"] - 1.0) * 12.0)
                         if _so["verdict"] == "bloated" else 0.0)
@@ -2571,8 +2572,8 @@ async def generate_deletion_proposals(
     # done" / "re-watched and loved". Injected as neutral context (no score
     # nudge — see _watch_pitch_line), so the curator weighs it like a memory.
     from src.services.watch_status import watched_lookup as _watched_lookup
-    watch_status_map = _watched_lookup(
-        user_id, [c["item"].get("title") for c in top_pitch_set],
+    watch_status_map = await run_read(
+        _watched_lookup, user_id, [c["item"].get("title") for c in top_pitch_set],
         category=category)
     _msg(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
@@ -2686,7 +2687,9 @@ async def generate_deletion_proposals(
             # cold-read / plot-inversion (the Skate-Leading bug). tvdb_id alone
             # reaches the cached anime/show data; plex_rating_key adds the
             # prefetch overview.
-            verified_block = format_verified_block(
+            # format_verified_block also reads the edition from the DB.
+            verified_block = await run_read(
+                format_verified_block,
                 # Legacy pitch loop holds the curator gate — no summarizer here
                 # (VRAM churn; see ensure_verified_data docstring).
                 await ensure_verified_data(
@@ -2729,7 +2732,8 @@ async def generate_deletion_proposals(
             # resolution/codec class (don't flag) or genuine bitrate bloat (size
             # is a fair argument)? Stops the blanket "70 GB is too big" complaint.
             from src.services.size_norms import size_context_for
-            size_ctx_block = "" if category == "music" else size_context_for(
+            size_ctx_block = "" if category == "music" else await run_read(
+                size_context_for,
                 tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
                 plex_rating_key=item.get("plex_rating_key"),
                 media_type=category)
@@ -3033,23 +3037,27 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
             return None
         return max(float(np.dot(u, emb_n)) for u in user_vecs_n)
 
-    _dim_mismatch = [0]
-    vectored: list = []
-    genre_only: list = []
-    for item in items:
-        vs = _vector_score(item)
-        if vs is not None:
-            vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
-        else:
-            genre_only.append(((_dislike_rank(item), _genre_score(item),
-                                _monitored_rank(item)), item))
+    # Pure CPU (normalize + dot per item, ~100 ms per 5k items) in one worker
+    # thread; everything it reads was fetched above — no DB/Chroma in here.
+    def _rank_all() -> list:
+        vectored: list = []
+        genre_only: list = []
+        for item in items:
+            vs = _vector_score(item)
+            if vs is not None:
+                vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
+            else:
+                genre_only.append(((_dislike_rank(item), _genre_score(item),
+                                    _monitored_rank(item)), item))
+        vectored.sort(key=lambda t: t[0], reverse=True)
+        genre_only.sort(key=lambda t: t[0], reverse=True)
+        # Enriched items first (real semantic taste-fit), genre-only fallback after.
+        return [it for _, it in vectored] + [it for _, it in genre_only]
 
+    _dim_mismatch = [0]
+    ranked = await asyncio.to_thread(_rank_all)
     if _dim_mismatch[0]:
         logger.warning("[recs] %d item embedding(s) have another dimension than "
                        "the taste vector (embedding model changed?) — ranked by "
                        "genre until the next taste rebuild", _dim_mismatch[0])
-    vectored.sort(key=lambda t: t[0], reverse=True)
-    genre_only.sort(key=lambda t: t[0], reverse=True)
-    # Enriched items first (real semantic taste-fit), genre-only fallback after.
-    ranked = [it for _, it in vectored] + [it for _, it in genre_only]
     return ranked[:top_n]

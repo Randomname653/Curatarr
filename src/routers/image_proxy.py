@@ -58,6 +58,7 @@ import asyncio
 import hashlib
 import ipaddress
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -166,6 +167,11 @@ _MAX_BYTES = 5 * 1024 * 1024   # 5 MB per image — posters are 10-80 KB typical
 _FETCH_TIMEOUT = 10             # seconds — upstream CDNs are fast
 _writes_since_sweep = 0
 _SWEEP_EVERY = 25               # writes between budget checks (a dir scan each)
+# Cache writes run in worker threads, several at once when requests miss
+# together: the counter is claimed under a lock (one sweep per _SWEEP_EVERY
+# writes), and sweeps run one at a time so two never unlink the same files.
+_sweep_count_lock = threading.Lock()
+_sweep_running = threading.Lock()
 
 
 def _enforce_cache_budget() -> None:
@@ -176,10 +182,17 @@ def _enforce_cache_budget() -> None:
     with ever-new query strings. Checked every _SWEEP_EVERY writes.
     """
     global _writes_since_sweep
-    _writes_since_sweep += 1
-    if _writes_since_sweep < _SWEEP_EVERY:
-        return
-    _writes_since_sweep = 0
+    with _sweep_count_lock:
+        _writes_since_sweep += 1
+        if _writes_since_sweep < _SWEEP_EVERY:
+            return
+        _writes_since_sweep = 0
+    with _sweep_running:
+        _sweep_cache()
+
+
+def _sweep_cache() -> None:
+    """One budget sweep (the oldest files go first)."""
     try:
         from src.config import settings
         budget = int(getattr(settings, "IMAGE_CACHE_MAX_MB", 1024)) * 1024 * 1024
@@ -198,6 +211,14 @@ def _enforce_cache_budget() -> None:
     except Exception as e:  # noqa: BLE001 - reported; the next request sweeps again
         # The sweep is the disk-budget defence of an unauthenticated endpoint.
         logger.warning("[image_proxy] budget sweep failed: %s", e)
+
+
+def _store_and_sweep(path: Path, body: bytes) -> None:
+    """Write one cache file and run the budget check: a file write plus, every
+    _SWEEP_EVERY writes, a stat of every file in a dir of up to 1 GB. Worker
+    thread."""
+    path.write_bytes(body)
+    _enforce_cache_budget()
 
 
 def _cache_path(url: str, content_type: Optional[str] = None) -> Path:
@@ -383,8 +404,7 @@ async def proxy_image(
         # 5. Write cache
         path = _cache_path(src, ct)
         try:
-            path.write_bytes(body)
-            _enforce_cache_budget()
+            await asyncio.to_thread(_store_and_sweep, path, body)
         except Exception as e:
             # Cache write failed — still serve the body in-memory so the
             # user sees the image. Subsequent requests will retry the

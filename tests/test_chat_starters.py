@@ -243,7 +243,7 @@ def test_the_custodian_owns_generation_and_the_gpu_gate():
     assert entry.cadence_h == 12.0
     # and the request path never generates inline
     chat = _src("routers/chat.py")
-    assert "asyncio.create_task(_refill(user.id))" in chat
+    assert "track_task(_refill(user.id)" in chat      # kept, not a bare create_task
     assert "is_game_running()" in chat
 
 

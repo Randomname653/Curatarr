@@ -106,7 +106,8 @@ async def stream_tasks(ticket: str = Query(None)):
         # behavior) made the failure look like a successful stream.
         raise HTTPException(status_code=401, detail="missing_or_invalid_ticket")
 
-    is_admin = _is_admin(user_id)
+    from src.database.runner import run_read
+    is_admin = await run_read(_is_admin, user_id)
     queue = task_monitor.subscribe()
 
     async def generate():

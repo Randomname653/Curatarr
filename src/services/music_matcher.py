@@ -62,6 +62,27 @@ def _normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
+def _index_tracks(resp, sec_key, plex_index: dict) -> None:
+    """Parse one section's all-tracks answer and add it to ``plex_index``.
+    Runs in a worker thread: the unpaginated listing measured 64 MB / 1.6 s
+    to parse plus ~0.8 s of normalising at 50k tracks, all of which froze the
+    loop. The caller awaits it, so nothing else touches the dict meanwhile."""
+    items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
+    logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
+
+    for item in items:
+        # originalTitle = track artist (differs from album artist for features)
+        artist = item.get("originalTitle") or item.get("grandparentTitle", "")
+        title  = item.get("title", "")
+        key    = (_normalize(artist), _normalize(title))
+        if key[0] and key[1]:
+            genres = [g["tag"] for g in (item.get("Genre") or [])]
+            plex_index[key] = {
+                "rating_key": str(item["ratingKey"]),
+                "genres":     genres,
+            }
+
+
 def _stop_requested() -> bool:
     """Return True when the GUI/API has requested a pipeline stop."""
     try:
@@ -195,20 +216,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                                    sec_key, resp.status_code)
                     continue
 
-                items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
-                logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
-
-                for item in items:
-                    # originalTitle = track artist (differs from album artist for features)
-                    artist = item.get("originalTitle") or item.get("grandparentTitle", "")
-                    title  = item.get("title", "")
-                    key    = (_normalize(artist), _normalize(title))
-                    if key[0] and key[1]:
-                        genres = [g["tag"] for g in (item.get("Genre") or [])]
-                        plex_index[key] = {
-                            "rating_key": str(item["ratingKey"]),
-                            "genres":     genres,
-                        }
+                await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
             except Exception as exc:
                 logger.error("[music_matcher] Failed to fetch section %s: %s", sec_key, exc)
 

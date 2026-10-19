@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from src.routers.auth import require_admin, require_admin_or_first_run
 from src.services import spotify_import
+from src.services.bg_tasks import track_task
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,15 @@ async def spotify_upload(files: list[UploadFile] = File(...),
         if len(content) > cap:
             rejected.append((up.filename, f"larger than {_MAX_FILE_MB} MB"))
             continue
-        result = spotify_import.save_upload(up.filename or "upload", content)
+        # Unzipping (up to 400 MB) and writing the files is blocking disk
+        # work; on the loop it froze every request for the whole upload.
+        result = await asyncio.to_thread(
+            spotify_import.save_upload, up.filename or "upload", content)
         saved += result["saved"]
         rejected += result["rejected"]
     return {"saved": saved,
             "rejected": [{"name": n, "reason": r} for n, r in rejected],
-            "pending": spotify_import.pending_files()}
+            "pending": await asyncio.to_thread(spotify_import.pending_files)}
 
 
 @router.delete("/spotify/files")
@@ -73,8 +77,10 @@ async def spotify_run(payload: dict, _admin=Depends(require_admin)):
     user_id = payload.get("user_id")
     if not isinstance(user_id, int):
         raise HTTPException(422, "user_id (int) is required")
-    if not spotify_import.pending_files():
+    if not await asyncio.to_thread(spotify_import.pending_files):
         raise HTTPException(400, "no pending files — upload first")
+    if _running:   # a second request may have started one during the await
+        raise HTTPException(409, "an import is already running")
 
     from src.services.task_monitor import task_monitor
     card = task_monitor.create(name="Spotify history import",
@@ -86,8 +92,11 @@ async def spotify_run(payload: dict, _admin=Depends(require_admin)):
         try:
             # The importer is synchronous SQLAlchemy work; keep it off the
             # event loop so the UI stays responsive during a 100k-row insert.
-            stats = await asyncio.to_thread(
-                spotify_import.run_import, user_id, None, card)
+            # Its own worker, not the one writer thread: it commits per
+            # buffer, so other writers wait one buffer at most, where on the
+            # writer thread every write in the app would queue behind the
+            # whole import (file reads and JSON parsing included).
+            stats = await asyncio.to_thread(spotify_import.run_import, user_id, None, card)
             _last_result.clear()
             _last_result.update(stats)
             if stats.get("error"):
@@ -103,5 +112,7 @@ async def spotify_run(payload: dict, _admin=Depends(require_admin)):
         finally:
             _running.clear()
 
-    asyncio.create_task(_job())
+    # A bare create_task is only weakly referenced: the import could be
+    # collected mid-run and vanish without a result or an error.
+    track_task(_job(), name="spotify_import")
     return {"started": True}

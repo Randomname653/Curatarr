@@ -12,6 +12,7 @@ Auth model:
     arbitrary callers).
 """
 
+import asyncio
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -305,7 +306,9 @@ async def complete_setup(
     cfg = req.dict()
     await _refuse_resolved(cfg)
     cfg["pitcher_model"] = "curatarr-pitcher" if req.enable_pitcher else ""
-    _write_env_or_400(cfg)
+    # On a worker: write_env does file I/O and, on Windows, two icacls
+    # subprocesses (up to 10 s each). The 400 mapping travels with it.
+    await asyncio.to_thread(_write_env_or_400, cfg)
 
     # Build Ollama models in background (takes a moment). The pitcher bake
     # used to be unreachable from here - only the post-setup rebuild built it.
@@ -384,7 +387,7 @@ async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
     await _refuse_resolved(changes)
     before = current_env_config()
     merged = merge_env_config(before, changes)
-    _write_env_or_400(merged)
+    await asyncio.to_thread(_write_env_or_400, merged)   # file I/O + icacls, as above
     settings.__init__()   # live reload, same as the library panel does
     models_changed = any(before.get(k) != merged.get(k) for k in _MODEL_KEYS)
     endpoints_changed = any(before.get(k) != merged.get(k)

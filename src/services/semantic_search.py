@@ -25,6 +25,7 @@ import json
 import logging
 import re
 
+from src.database.runner import run_read
 from src.services.watch_status import watched_lookup, watch_tag
 from src.services.http_client import tls_context
 
@@ -202,7 +203,8 @@ async def semantic_hits(query: str, n_results: int = 5, domain: str = None,
     # to empty chat's library context at DEBUG, indistinguishable from an
     # outage. Still [] (chat must answer), but visible.
     try:
-        return _hits_from_results(results, user_id=user_id, domain=domain)
+        return await run_read(_hits_from_results, results,
+                              user_id=user_id, domain=domain)
     except Exception as e:
         logger.warning("semantic search: building hits failed: %s", e, exc_info=True)
         return []
@@ -216,6 +218,9 @@ def _hits_from_results(results: dict, user_id: int = None,
     the arr doc-id ("sonarr:1694"), and title-keyed lookups only hit 3-4%
     of titles — the original cause of the search judging candidates with
     empty tag lists.
+
+    Sync: watched_lookup plus one tech-profile query per hit read the main
+    DB, so async callers run it via run_read.
     """
     ids = (results.get("ids") or [[]])[0]
     docs = results.get("documents", [[]])[0]
@@ -250,6 +255,18 @@ def _hits_from_results(results: dict, user_id: int = None,
             "score": round(1.0 - dist, 4) if isinstance(dist, (int, float)) else None,
         })
     return hits
+
+
+def _decorate_hits(new_hits: list, user_id: int = None,
+                   domain: str = None) -> None:
+    """Watched + size tags onto facet-probe hits, in place (main-DB reads:
+    run it via run_read). The dicts are this search's own, not shared."""
+    titles_new = [h["title"] for h in new_hits]
+    watched = watched_lookup(user_id, titles_new, category=domain)
+    from src.services.size_norms import short_size_tag
+    for h in new_hits:
+        h["watch_tag"] = watch_tag(watched.get(h["title"]))
+        h["size_tag"] = short_size_tag(title=h["title"])
 
 
 def format_rag_context(hits: list) -> str:
@@ -810,7 +827,8 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
         results = await run_chroma(
             get_chroma_db().query, query_embeddings=[vec], n_results=fetch_n,
             where=_domain_where(domain))
-        hits = _hits_from_results(results, user_id=user_id, domain=domain)
+        hits = await run_read(_hits_from_results, results,
+                              user_id=user_id, domain=domain)
     except Exception as e:
         _log_search_failure("curated retrieval", e)
         return {"results": await semantic_hits(query, limit, domain, user_id),
@@ -884,13 +902,8 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                     added += 1
                 if added:
                     try:
-                        titles_new = [h["title"] for h in hits[-added:]]
-                        watched = watched_lookup(user_id, titles_new,
-                                                 category=domain)
-                        from src.services.size_norms import short_size_tag
-                        for h in hits[-added:]:
-                            h["watch_tag"] = watch_tag(watched.get(h["title"]))
-                            h["size_tag"] = short_size_tag(title=h["title"])
+                        await run_read(_decorate_hits, hits[-added:],
+                                       user_id, domain)
                     except Exception as e:
                         logger.warning("[search] facet hit decoration failed: %s", e)
         except Exception as e:
@@ -910,7 +923,8 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
                 cres = await run_chroma(
                     get_chroma_db().query, query_embeddings=[cvec], n_results=max(12, fetch_n // 2),
                     where=_domain_where(domain))
-                extra = _hits_from_results(cres, user_id=user_id, domain=domain)
+                extra = await run_read(_hits_from_results, cres,
+                                       user_id=user_id, domain=domain)
                 seen = {_norm_title(h["title"]) for h in hits}
                 if anchor_used:
                     seen.add(_norm_title(anchor_used))
@@ -952,7 +966,9 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
             cons_core = [_split_negation(c)[0] for c in parsed["constraints"]]
             await _texts_to_vectors(
                 cons_core + [t for tags in cand_tags for t in tags])
-            scored = _evidence_scores(parsed["constraints"], cand_tags, hits)
+            # pure-Python cosine over every constraint × candidate tag
+            scored = await asyncio.to_thread(
+                _evidence_scores, parsed["constraints"], cand_tags, hits)
             order = sorted(range(len(hits)),
                            key=lambda i: (-scored[i][0], i))
             out = []

@@ -267,6 +267,49 @@ def _arr_enriched_ids(service: str) -> set:
         ).all()}
 
 
+def _vector_counts_by_service() -> dict:
+    """Chroma doc count per arr service ({svc: n}) from ONE id scan; {} when
+    Chroma is unavailable (the panel shows 0, as before). Chroma thread."""
+    try:
+        from src.vector_store.chromadb_wrapper import get_chroma_db
+        ids = get_chroma_db().all_ids()
+    except Exception:
+        return {}
+    out = {"radarr": 0, "sonarr": 0, "lidarr": 0}
+    for i in ids:
+        svc, sep, _ = str(i).partition(":")
+        if sep and svc in out:
+            out[svc] += 1
+    return out
+
+
+# The full arr listings are 15-30 MB of JSON (Lidarr the largest): parsed and
+# reduced to the counts in a worker thread, so the loop never holds the list.
+def _radarr_count_summary(body: bytes) -> tuple:
+    movies = json.loads(body)
+    return (len(movies), sum(1 for m in movies if m.get("hasFile")),
+            sum(1 for m in movies if m.get("monitored")),
+            {m.get("id") for m in movies})
+
+
+def _sonarr_count_summary(body: bytes) -> tuple:
+    series = json.loads(body)
+    downloaded = sum(1 for s in series
+                     if s.get("statistics", {}).get("episodeFileCount", 0) > 0)
+    return (len(series), downloaded, sum(1 for s in series if s.get("monitored")),
+            {s.get("id") for s in series})
+
+
+def _lidarr_count_summary(body: bytes) -> tuple:
+    artists = json.loads(body)
+    downloaded = sum(1 for a in artists
+                     if a.get("statistics", {}).get("trackFileCount", 0) > 0)
+    total_albums = sum(a.get("statistics", {}).get("albumCount", 0) for a in artists)
+    names = {(a.get("artistName") or "").lower() for a in artists}
+    return (len(artists), total_albums, downloaded,
+            sum(1 for a in artists if a.get("monitored")), names)
+
+
 async def _get_arr_counts() -> dict:
     """
     Fetch item counts from ARR services.
@@ -317,12 +360,13 @@ async def _get_arr_counts() -> dict:
     #    doc per library item, keyed "{service}:{arr_id}". It tracks
     #    "Enriched" closely (e.g. radarr ~5488 vs ~5403) because both are
     #    per-library-item.
+    # One id scan on the Chroma thread for all three services: each
+    # count_by_id_prefix call fetched EVERY id again, on the loop.
+    from src.vector_store.chromadb_wrapper import run_chroma
+    vec_counts = await run_chroma(_vector_counts_by_service)
+
     def _count_vectors(svc: str) -> int:
-        try:
-            from src.vector_store.chromadb_wrapper import get_chroma_db
-            return get_chroma_db().count_by_id_prefix(f"{svc}:")
-        except Exception:
-            return 0
+        return vec_counts.get(svc, 0)
 
     if settings.RADARR_URL and settings.RADARR_API_KEY:
         try:
@@ -332,10 +376,8 @@ async def _get_arr_counts() -> dict:
                     headers={"X-Api-Key": settings.RADARR_API_KEY},
                 )
             if r.status_code == 200:
-                movies = r.json()
-                total = len(movies)
-                downloaded = sum(1 for m in movies if m.get("hasFile"))
-                live_ids = {m.get("id") for m in movies}
+                total, downloaded, monitored, live_ids = await asyncio.to_thread(
+                    _radarr_count_summary, r.content)
                 enriched_ids = await run_read(_arr_enriched_ids, "radarr")
                 # Split enriched rows into still-present vs ORPHANED (enriched but
                 # the movie is gone from Radarr). Orphans inflated the old count
@@ -346,7 +388,7 @@ async def _get_arr_counts() -> dict:
                 counts["radarr"] = {
                     "total": total,
                     "downloaded": downloaded,
-                    "monitored": sum(1 for m in movies if m.get("monitored")),
+                    "monitored": monitored,
                     "enriched": enriched,
                     "orphaned": orphaned,
                     "vector_count": _count_vectors("radarr"),
@@ -374,19 +416,17 @@ async def _get_arr_counts() -> dict:
                     headers={"X-Api-Key": settings.SONARR_API_KEY},
                 )
             if r.status_code == 200:
-                series = r.json()
-                downloaded = sum(1 for s in series
-                                 if s.get("statistics", {}).get("episodeFileCount", 0) > 0)
-                live_ids = {s.get("id") for s in series}
+                total, downloaded, monitored, live_ids = await asyncio.to_thread(
+                    _sonarr_count_summary, r.content)
                 enriched_ids = await run_read(_arr_enriched_ids, "sonarr")
                 # Still-present vs ORPHANED (enriched but the series is gone from
                 # Sonarr) — orphans were the main source of the >100% sonarr bar.
                 enriched = len(enriched_ids & live_ids)
                 orphaned = len(enriched_ids - live_ids)
                 counts["sonarr"] = {
-                    "total": len(series),
+                    "total": total,
                     "downloaded": downloaded,
-                    "monitored": sum(1 for s in series if s.get("monitored")),
+                    "monitored": monitored,
                     "enriched": enriched,
                     "orphaned": orphaned,
                     "vector_count": _count_vectors("sonarr"),
@@ -421,12 +461,8 @@ async def _get_arr_counts() -> dict:
                     headers={"X-Api-Key": settings.LIDARR_API_KEY},
                 )
             if r.status_code == 200:
-                artists = r.json()
-                downloaded = sum(1 for a in artists
-                                 if a.get("statistics", {}).get("trackFileCount", 0) > 0)
-                total_albums = sum(
-                    a.get("statistics", {}).get("albumCount", 0) for a in artists
-                )
+                (total, total_albums, downloaded, monitored,
+                 lidarr_names) = await asyncio.to_thread(_lidarr_count_summary, r.content)
                 # Pass 91c: Lidarr always showed 0% enriched because
                 # ``ArrEnrichmentStatus`` never gets music rows — the
                 # music pipeline (custodian music task + standalone
@@ -459,19 +495,16 @@ async def _get_arr_counts() -> dict:
                     return enriched_music_titles, enriched_albums
 
                 enriched_music_titles, enriched_albums = await run_read(_load_music)
-                lidarr_names = {
-                    (a.get("artistName") or "").lower() for a in artists
-                }
                 enriched_artists = len(lidarr_names & enriched_music_titles)
                 counts["lidarr"] = {
-                    "total": len(artists),
+                    "total": total,
                     "total_albums": total_albums,
                     "downloaded": downloaded,
-                    "monitored": sum(1 for a in artists if a.get("monitored")),
+                    "monitored": monitored,
                     "enriched": enriched_artists,
                     "enriched_albums": enriched_albums,
                     "vector_count": _count_vectors("lidarr"),
-                    "pct": min(100, round(100 * enriched_artists / max(len(artists), 1))),
+                    "pct": min(100, round(100 * enriched_artists / max(total, 1))),
                     "stale": False,
                 }
             else:
@@ -1098,7 +1131,7 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     zstats = {"docs_walked": 0, "arr_live_requeued": 0, "arr_gone": 0,
               "rebuilt": 0, "no_prefetch": 0}
     try:
-        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
         from src.services.corpus_repair import rebuild_doc_from_prefetch
         if not truth:
             # No ARR ground truth → cannot tell live from gone; skip rather
@@ -1118,7 +1151,6 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 mc3.close()
 
         await asyncio.to_thread(_load_live_keys)
-        chroma = get_chroma_db()
         _prog("Walking chroma docs for zombies (missing profiles)…")
         # Two-phase: CLASSIFY everything first, then act — so the stale guard
         # can veto a whole service whose "gone" share is implausible (an arr
@@ -1126,36 +1158,44 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
         # docs would classify as gone; SoulSync's #828 lesson, ported).
         from src.services.stale_guard import is_implausible_mass_stale
         _cand: dict = {}          # service -> {"total": n, "live": [ids], "gone": [(id, dom)]}
-        offset = 0
-        while True:
-            page = chroma.collection.get(include=["metadatas"],
-                                         limit=500, offset=offset)
-            ids = page.get("ids") or []
-            if not ids:
-                break
-            for doc_id, md in zip(ids, page.get("metadatas") or []):
-                d = str(doc_id)
-                md = md or {}
-                if "::" in d or not d.startswith(("sonarr:", "radarr:", "lidarr:")):
-                    continue
-                svc = d.split(":", 1)[0]
-                bucket = _cand.setdefault(svc, {"total": 0, "live": [], "gone": []})
-                bucket["total"] += 1
-                dom = md.get("domain") or md.get("media_type") or ""
-                t40 = (md.get("title") or "")[:40]
-                # A profile can live under the svc:id key OR the title key
-                # (music is title-keyed) — either counts as alive.
-                cands = {f"enriched:{dom}:{d}"}
-                if t40:
-                    cands.add(f"enriched:{dom}:{t40}")
-                if cands & live_keys:
-                    continue
-                zstats["docs_walked"] += 1
-                if d in truth:
-                    bucket["live"].append(d)
-                else:
-                    bucket["gone"].append((d, dom))
-            offset += len(ids)
+
+        def _classify_docs():
+            # The full collection walk (every doc's metadata, 500 per page)
+            # runs on the Chroma thread. Fills the coroutine-local _cand /
+            # zstats, which nothing touches until it returns.
+            chroma = get_chroma_db()
+            offset = 0
+            while True:
+                page = chroma.collection.get(include=["metadatas"],
+                                             limit=500, offset=offset)
+                ids = page.get("ids") or []
+                if not ids:
+                    break
+                for doc_id, md in zip(ids, page.get("metadatas") or []):
+                    d = str(doc_id)
+                    md = md or {}
+                    if "::" in d or not d.startswith(("sonarr:", "radarr:", "lidarr:")):
+                        continue
+                    svc = d.split(":", 1)[0]
+                    bucket = _cand.setdefault(svc, {"total": 0, "live": [], "gone": []})
+                    bucket["total"] += 1
+                    dom = md.get("domain") or md.get("media_type") or ""
+                    t40 = (md.get("title") or "")[:40]
+                    # A profile can live under the svc:id key OR the title key
+                    # (music is title-keyed) — either counts as alive.
+                    cands = {f"enriched:{dom}:{d}"}
+                    if t40:
+                        cands.add(f"enriched:{dom}:{t40}")
+                    if cands & live_keys:
+                        continue
+                    zstats["docs_walked"] += 1
+                    if d in truth:
+                        bucket["live"].append(d)
+                    else:
+                        bucket["gone"].append((d, dom))
+                offset += len(ids)
+
+        await run_chroma(_classify_docs)
 
         requeue_ids: list = []
         for svc, bucket in _cand.items():
@@ -1944,6 +1984,80 @@ async def audit_requeue_enrichments(
 # ---- BACKGROUND TASKS -------------------------------------------------------
 
 
+# _collect_arr_items' listing parsers. A full listing is 15-30 MB of JSON;
+# parsed AND reduced to the item rows in a worker thread. They append to the
+# caller's (coroutine-local) list, so a bad entry mid-list keeps the rows
+# before it, as the inline loops did.
+def _collect_radarr_rows(body: bytes, items: list) -> None:
+    for m in json.loads(body):
+        if not m.get("hasFile"):
+            continue
+        items.append({
+            "plex_rating_key": f"radarr:{m['id']}",
+            "title": m.get("title", ""),
+            "series_title": None,
+            "media_type": "movie",
+            "tmdb_id": m.get("tmdbId"),
+            "tvdb_id": None,
+            "imdb_id": m.get("imdbId"),
+            "year": m.get("year"),          # disambiguate same-name films
+            "arr_id": m["id"],
+            "service": "radarr",
+        })
+
+
+def _collect_sonarr_rows(body: bytes, categories: list, items: list) -> None:
+    from src.services.arr_client import classify_sonarr_category
+    for s in json.loads(body):
+        # Pass 59: ``or {}`` — Sonarr returns "statistics": null
+        # for file-less series; the .get default doesn't cover
+        # a present-null value (same class as the Pass-58 fix).
+        if not (s.get("statistics") or {}).get("episodeFileCount", 0):
+            continue
+        series_type = s.get("seriesType", "standard")
+        # Pass 59: shared classifier — was ``"anime" if
+        # seriesType == "anime" else "show"`` here, but the
+        # deletion-proposal pipeline ALSO checked the genre
+        # tag. The drift cached the same series under two
+        # different category keys. One source of truth now.
+        cat = classify_sonarr_category(s)
+        if cat not in categories:
+            continue
+        items.append({
+            "plex_rating_key": f"sonarr:{s['id']}",
+            "title": s.get("title", ""),
+            "series_title": s.get("title", ""),
+            "media_type": cat,
+            "tmdb_id": s.get("tmdbId"),
+            "tvdb_id": s.get("tvdbId"),
+            "imdb_id": None,
+            "year": s.get("year"),          # disambiguate franchise entries
+            "arr_id": s["id"],
+            "service": "sonarr",
+            "sonarr_series_type": series_type,
+        })
+
+
+def _collect_lidarr_rows(body: bytes, items: list) -> None:
+    for a in json.loads(body):
+        items.append({
+            "plex_rating_key": f"lidarr:{a['id']}",
+            "title": a.get("artistName", ""),
+            "series_title": a.get("artistName", ""),
+            "media_type": "music",
+            "tmdb_id": None,
+            "tvdb_id": None,
+            "imdb_id": None,
+            # Lidarr's foreignArtistId IS the MusicBrainz artist id —
+            # the only reliable disambiguator for name-colliding bands
+            # (five different "Solstice"s). Name-only lookup picked the
+            # wrong artist (doom metal vs the hardstyle act).
+            "mbid": a.get("foreignArtistId"),
+            "arr_id": a["id"],
+            "service": "lidarr",
+        })
+
+
 async def _collect_arr_items(categories: list) -> list:
     """Fetch downloaded items from configured ARR services."""
     import httpx as _httpx
@@ -1977,21 +2091,7 @@ async def _collect_arr_items(categories: list) -> list:
                     headers={"X-Api-Key": settings.RADARR_API_KEY},
                 )
             if r.status_code == 200:
-                for m in r.json():
-                    if not m.get("hasFile"):
-                        continue
-                    items.append({
-                        "plex_rating_key": f"radarr:{m['id']}",
-                        "title": m.get("title", ""),
-                        "series_title": None,
-                        "media_type": "movie",
-                        "tmdb_id": m.get("tmdbId"),
-                        "tvdb_id": None,
-                        "imdb_id": m.get("imdbId"),
-                        "year": m.get("year"),          # disambiguate same-name films
-                        "arr_id": m["id"],
-                        "service": "radarr",
-                    })
+                await asyncio.to_thread(_collect_radarr_rows, r.content, items)
         except Exception as e:
             logger.warning("ARR collect (radarr) failed: %s", _format_arr_error("radarr", e))
 
@@ -2003,35 +2103,7 @@ async def _collect_arr_items(categories: list) -> list:
                     headers={"X-Api-Key": settings.SONARR_API_KEY},
                 )
             if r.status_code == 200:
-                from src.services.arr_client import classify_sonarr_category
-                for s in r.json():
-                    # Pass 59: ``or {}`` — Sonarr returns "statistics": null
-                    # for file-less series; the .get default doesn't cover
-                    # a present-null value (same class as the Pass-58 fix).
-                    if not (s.get("statistics") or {}).get("episodeFileCount", 0):
-                        continue
-                    series_type = s.get("seriesType", "standard")
-                    # Pass 59: shared classifier — was ``"anime" if
-                    # seriesType == "anime" else "show"`` here, but the
-                    # deletion-proposal pipeline ALSO checked the genre
-                    # tag. The drift cached the same series under two
-                    # different category keys. One source of truth now.
-                    cat = classify_sonarr_category(s)
-                    if cat not in categories:
-                        continue
-                    items.append({
-                        "plex_rating_key": f"sonarr:{s['id']}",
-                        "title": s.get("title", ""),
-                        "series_title": s.get("title", ""),
-                        "media_type": cat,
-                        "tmdb_id": s.get("tmdbId"),
-                        "tvdb_id": s.get("tvdbId"),
-                        "imdb_id": None,
-                        "year": s.get("year"),          # disambiguate franchise entries
-                        "arr_id": s["id"],
-                        "service": "sonarr",
-                        "sonarr_series_type": series_type,
-                    })
+                await asyncio.to_thread(_collect_sonarr_rows, r.content, categories, items)
         except Exception as e:
             logger.warning("ARR collect (sonarr) failed: %s", _format_arr_error("sonarr", e))
 
@@ -2043,23 +2115,7 @@ async def _collect_arr_items(categories: list) -> list:
                     headers={"X-Api-Key": settings.LIDARR_API_KEY},
                 )
             if r.status_code == 200:
-                for a in r.json():
-                    items.append({
-                        "plex_rating_key": f"lidarr:{a['id']}",
-                        "title": a.get("artistName", ""),
-                        "series_title": a.get("artistName", ""),
-                        "media_type": "music",
-                        "tmdb_id": None,
-                        "tvdb_id": None,
-                        "imdb_id": None,
-                        # Lidarr's foreignArtistId IS the MusicBrainz artist id —
-                        # the only reliable disambiguator for name-colliding bands
-                        # (five different "Solstice"s). Name-only lookup picked the
-                        # wrong artist (doom metal vs the hardstyle act).
-                        "mbid": a.get("foreignArtistId"),
-                        "arr_id": a["id"],
-                        "service": "lidarr",
-                    })
+                await asyncio.to_thread(_collect_lidarr_rows, r.content, items)
         except Exception as e:
             logger.warning("ARR collect (lidarr) failed: %s", _format_arr_error("lidarr", e))
 
@@ -3647,7 +3703,8 @@ async def check_mapping_coverage(
                 headers={"X-Api-Key": settings.SONARR_API_KEY})
         if r.status_code != 200:
             return {"error": f"Sonarr HTTP {r.status_code}"}
-        series = r.json()
+        # The full series listing: parsed off the loop.
+        series = await asyncio.to_thread(json.loads, r.content)
     except Exception as e:
         return {"error": str(e)}
 

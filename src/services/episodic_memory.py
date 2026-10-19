@@ -732,7 +732,7 @@ async def retrieve_considerations(
     item_emb = await _embed(item_profile, kind="query")
     if not item_emb:
         return []
-    def _load() -> list:
+    def _load_scored() -> list:
         with get_db_session() as db:
             q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
             if media_category:
@@ -742,25 +742,27 @@ async def retrieve_considerations(
                 )
             # Pull plain fields out before the session closes — the ORM instances
             # would otherwise raise DetachedInstanceError on attribute access below.
-            return [
+            rows = [
                 (m.id, m.content, m.importance, m.embedding_json, m.media_category,
                  m.metadata_json)
                 for m in q.all()
             ]
+        # Scored here, in the worker: a json.loads + 768-d pure-Python cosine
+        # per memory (~0.3 ms each) ran on the loop once per judged title.
+        sims = []
+        for mid, content, importance, emb_json, mcat, meta in rows:
+            if not emb_json or _is_superseded(meta):
+                continue
+            try:
+                sem = _cosine_similarity(item_emb, json.loads(emb_json))
+            except Exception:
+                continue
+            if sem is None:
+                continue   # other model's vector — same as no embedding
+            sims.append((sem, mid, content, importance, mcat))
+        return sims
 
-    rows = await run_read(_load)
-
-    sims = []
-    for mid, content, importance, emb_json, mcat, meta in rows:
-        if not emb_json or _is_superseded(meta):
-            continue
-        try:
-            sem = _cosine_similarity(item_emb, json.loads(emb_json))
-        except Exception:
-            continue
-        if sem is None:
-            continue   # other model's vector — same as no embedding
-        sims.append((sem, mid, content, importance, mcat))
+    sims = await run_read(_load_scored)
     if len(sims) < 3:
         return []
 
@@ -1027,8 +1029,11 @@ async def _run_memory_extraction(
                     metadata={"title": fact.get("title", ""), "source": "chat"},
                     # domain-less chats used to mint NULL memories that leak
                     # into every taste profile — classify from the content
+                    # (in a thread: a DB lookup plus the 25k-name library
+                    # index rebuild per fact)
                     media_category=media_category
-                    or classify_memory_category(fact["content"], title_field),
+                    or await asyncio.to_thread(classify_memory_category,
+                                               fact["content"], title_field),
                 )
                 if mem_id:
                     wrote_any = True
