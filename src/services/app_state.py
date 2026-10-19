@@ -18,8 +18,7 @@ from src.database.models import AppState
 
 def get_state(key: str) -> Optional[str]:
     with get_db_session() as db:
-        row = db.query(AppState).filter(AppState.key == key).first()
-        return row.value if row else None
+        return db.query(AppState.value).filter(AppState.key == key).scalar()
 
 
 _UPSERT_SQL = (
