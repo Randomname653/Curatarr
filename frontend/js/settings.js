@@ -418,7 +418,9 @@ const _short = d => (d || '').replace('sha256:', '').slice(0, 12);
 
 // The current model's blind review (services/model_update_eval.py).
 const MU_REC = {update: ['ok', 'recommends the update'], stay: ['warn', 'recommends staying'],
-                either: ['', 'sees no clear winner']};
+                either: ['', 'sees no clear winner'],
+                // The judge did not answer most pairs: no recommendation, not a draw.
+                'no verdict': ['warn', 'gave no verdict']};
 function _muEval(role, ev, facts_rebuilt, run, err, summary) {
   if (run?.role === role && run.kind === 'review')
     return `<div class="banner mt-8"><span class="banner-icon">…</span><div class="banner-text">The current model is reviewing — started ${esc(_muTime(run.since))}; this section updates by itself, progress in Activity.</div></div>`;
@@ -431,9 +433,10 @@ function _muEval(role, ev, facts_rebuilt, run, err, summary) {
   const rules = ev.guards.length
     ? `<p class="fs-12 mt-4">Hard rules: ${esc(ev.guards.join('; '))}${ev.overruled ? ' — these overrule the model’s “update”.' : '.'}</p>` : '';
   const per = ev.titles.map(r => `<li>${esc(r.key)}: <b>${esc(r.winner)}</b>${r.position_flip ? ' (flipped with the order → tie)' : ''} — ${esc(r.reasons[0] || '')}</li>`).join('');
-  return `<div class="banner ${kind} mt-8"><span class="banner-icon">✓</span><div class="banner-text">
+  return `<div class="banner ${kind} mt-8"><span class="banner-icon">${ev.recommendation === 'no verdict' ? '!' : '✓'}</span><div class="banner-text">
       <b>${esc(ev.judge_model)}</b> ${esc(label)}: ${esc(ev.model_reason)}
-      <p class="fs-12 mt-4">Titles: new better ${t.new}, old better ${t.old}, tie ${t.tie} · chat: new ${c.new}, old ${c.old}, tie ${c.tie}</p>${rules}
+      <p class="fs-12 mt-4">Titles: new better ${t.new}, old better ${t.old}, tie ${t.tie}${t.unreadable ? `, unreadable ${t.unreadable}` : ''} · chat: new ${c.new}, old ${c.old}, tie ${c.tie}${c.unreadable ? `, unreadable ${c.unreadable}` : ''}</p>${rules}
+      ${(t.unreadable || c.unreadable) ? `<p class="fs-12 t-amber mt-4">${(t.unreadable || 0) + (c.unreadable || 0)} judgement(s) got no readable answer from the judge — those pairs count for neither side.</p>` : ''}
       <p class="fs-12 t3 mt-4">The current model judged blind, each pair in both orders; it is reviewing its own successor, so it may prefer its own style${facts_rebuilt ? '; facts were rebuilt after the test' : ''}.</p>
       <details class="mt-4"><summary class="fs-12">Reason per title</summary><ul class="fs-12">${per}</ul></details>
       ${stale ? `<p class="fs-12 t-amber mt-4">This review was made before VRAM was measured with nvidia-smi — its VRAM figure may be Ollama's misreport. Review again for clean numbers.</p>` : ''}

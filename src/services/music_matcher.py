@@ -692,9 +692,9 @@ async def enrich_music_genres_lastfm(
     # ── Collect Spotify-source rows missing genres ───────────────────────────
     # Query only the columns we need as plain tuples — avoids DetachedInstanceError
     # when accessing attributes outside the session context.
-    def _load_rows():
+    def _load_groups():
         with get_db_session() as db:
-            return [tuple(r) for r in (
+            rows = [tuple(r) for r in (
                 db.query(
                     WatchHistoryEntry.id,
                     WatchHistoryEntry.series_title,
@@ -708,26 +708,27 @@ async def enrich_music_genres_lastfm(
                 )
                 .all()
             )]
+        # Group by normalised (artist, title) — store original strings for API call
+        # groups: norm_key → (original_artist, original_title, [play_id, ...])
+        # Here, on the read worker: a history of 200k plays without genres
+        # took ~3 s of normalising, and on the loop that froze every request.
+        groups: dict[tuple, tuple] = {}
+        for play_id, series_title, title in rows:
+            norm_key = (_normalize(series_title or ""), _normalize(title or ""))
+            if norm_key not in groups:
+                groups[norm_key] = (series_title or "", title or "", [])
+            groups[norm_key][2].append(play_id)
+        return groups, len(rows)
 
-    rows = await run_read(_load_rows)
-    # rows is a list of (id, series_title, title) tuples — session-independent
+    groups, n_plays = await run_read(_load_groups)
 
-    if not rows:
+    if not n_plays:
         return {"enriched_plays": 0, "tracks_queried": 0, "failed": 0}
-
-    # Group by normalised (artist, title) — store original strings for API call
-    # groups: norm_key → (original_artist, original_title, [play_id, ...])
-    groups: dict[tuple, tuple] = {}
-    for play_id, series_title, title in rows:
-        norm_key = (_normalize(series_title or ""), _normalize(title or ""))
-        if norm_key not in groups:
-            groups[norm_key] = (series_title or "", title or "", [])
-        groups[norm_key][2].append(play_id)
 
     logger.info(
         "[music_matcher] Phase 2 starting: %d unique Spotify-source tracks to enrich "
         "via Last.fm (%d plays), batch=%d",
-        len(groups), len(rows), batch,
+        len(groups), n_plays, batch,
     )
 
     # Limit to `batch` unique tracks per run
