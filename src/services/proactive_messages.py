@@ -942,7 +942,9 @@ def detect_recommendation_followup(user_id: int,
     from src.services.app_state import get_state
     try:
         queue = json.loads(get_state(f"rec_watch_hits:user_id={user_id}") or "[]")
-    except Exception:
+    except Exception as e:
+        logger.warning("[proactive] rec_watch_hits for user %d unreadable - "
+                       "no follow-up this pass: %s", user_id, e)
         return None
     asked = asked_subjects or {}
     asked_titles = asked.get("titles") or set()
@@ -1804,7 +1806,7 @@ async def check_and_generate_messages(user_id: int) -> int:
         prev_register = trigger["register"]
         try:
             trigger["prior"] = await run_read(_prior_exchange, user_id, trigger, asked_subjects)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - the prior answer only flavours the nudge; None sends it without the callback
             logger.debug("[proactive] prior exchange lookup failed: %s", e)
             trigger["prior"] = None
 

@@ -96,6 +96,16 @@ export async function loadArrProfiles(svc, btn) {
       api('/api/library/defaults'),
     ]);
     const cur = (defaults || {})[svc] || {};
+    // A failed read comes back as [] plus "<field>_error": say so and keep
+    // the dropdown disabled, instead of "(none configured)" as if it were fact.
+    const arrName = ARR_LABELS[svc] || svc;
+    const readErr = (field) => profiles[`${field}_error`];
+    const errOption = (field) => `<option value="">couldn't read from ${esc(arrName)}: ${esc(readErr(field))}</option>`;
+    const dis = (field) => (readErr(field) ? 'disabled' : '');
+    const failed = ['root_folders', 'quality_profiles', 'metadata_profiles'].filter(readErr);
+    const errBanner = failed.length
+      ? `<p class="load-err">Couldn't read ${failed.map(f => esc(f.replace('_', ' '))).join(', ')} from ${esc(arrName)} — the lists below are incomplete. <button type="button" class="btn btn-secondary btn-sm" ${act('loadArrProfiles', svc, EL)}>Retry</button></p>`
+      : '';
     const rootFolderOptions = (profiles.root_folders || []).map(rf =>
       `<option value="${esc(rf.path)}" ${cur.root_folder_path === rf.path ? 'selected' : ''}>${esc(rf.path)}</option>`
     ).join('');
@@ -117,8 +127,8 @@ export async function loadArrProfiles(svc, btn) {
     if (svc === 'lidarr' && profiles.metadata_profiles) {
       extra += `
         <label for="arr-meta-${svc}" class="t3">Metadata profile</label>
-        <select id="arr-meta-${svc}" class="input">
-          ${(profiles.metadata_profiles || []).map(m => `<option value="${m.id}" ${cur.metadata_profile_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+        <select id="arr-meta-${svc}" class="input" ${dis('metadata_profiles')}>
+          ${readErr('metadata_profiles') ? errOption('metadata_profiles') : (profiles.metadata_profiles || []).map(m => `<option value="${m.id}" ${cur.metadata_profile_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
         <label for="arr-monitor-${svc}" class="t3">Monitor option</label>
         <select id="arr-monitor-${svc}" class="input">
@@ -127,14 +137,15 @@ export async function loadArrProfiles(svc, btn) {
       `;
     }
     target.innerHTML = `
+      ${errBanner}
       <div id="arr-defaults-form-${svc}" class="grid-form-140 fs-12 mb-8">
         <label for="arr-root-${svc}" class="t3">Root folder</label>
-        <select id="arr-root-${svc}" class="input">
-          ${rootFolderOptions || '<option value="">(none configured in arr)</option>'}
+        <select id="arr-root-${svc}" class="input" ${dis('root_folders')}>
+          ${readErr('root_folders') ? errOption('root_folders') : (rootFolderOptions || '<option value="">(none configured in arr)</option>')}
         </select>
         <label for="arr-quality-${svc}" class="t3">Quality profile</label>
-        <select id="arr-quality-${svc}" class="input">
-          ${qualityOptions || '<option value="">(none configured)</option>'}
+        <select id="arr-quality-${svc}" class="input" ${dis('quality_profiles')}>
+          ${readErr('quality_profiles') ? errOption('quality_profiles') : (qualityOptions || '<option value="">(none configured)</option>')}
         </select>
         ${extra}
       </div>

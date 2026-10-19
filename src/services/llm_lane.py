@@ -101,6 +101,7 @@ def _game() -> bool:
 
 
 _ram_cache = {"at": 0.0, "free_mb": None}
+_ram_warned = {"at": float("-inf")}
 _RAM_CACHE_S = 30
 
 
@@ -120,7 +121,11 @@ def ram_free_mb(*, now: "float | None" = None, reader=None) -> "int | None":
             free = reader()
             free = None if free is None else int(free)
     except Exception as e:                                   # pragma: no cover
-        logger.debug("[lane] memory read failed: %s", e)
+        # Open on purpose (the lane trusts the operator), but the RAM gate is
+        # off while this fails: say so, at most every 10 minutes.
+        if now - _ram_warned["at"] > 600:
+            _ram_warned["at"] = now
+            logger.warning("[lane] memory read failed - RAM gate off: %s", e)
         free = None
     if reader is None:
         _ram_cache.update(at=now, free_mb=free)
@@ -214,7 +219,7 @@ def gpu_reason() -> str:
     try:
         from src.services.process_monitor import gpu_pressure_reason
         return gpu_pressure_reason()
-    except Exception:                                        # pragma: no cover
+    except Exception:  # noqa: BLE001 - display text for the busy message; the gate itself does not read it  # pragma: no cover
         return ""
 
 

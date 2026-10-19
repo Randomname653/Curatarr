@@ -261,7 +261,10 @@ def _vd_first(cache, keys: list):
     for k in keys:
         try:
             hit = cache.get_cache(k)
-        except Exception:
+        except Exception as e:
+            # A cache that cannot be read is not "no profile" - the prompt
+            # then goes out without the verified facts.
+            logger.warning("[enricher] verified-data cache read failed for %s: %s", k, e)
             hit = None
         if hit:
             resp = hit.get("response")
@@ -436,7 +439,9 @@ def _discogs_styles_for(raw: dict) -> Optional[list]:
     try:
         from src.services.discogs_offline import artist_styles
         return artist_styles(raw.get("name") or raw.get("title")) or None
-    except Exception:
+    except Exception as e:
+        logger.warning("[enricher] Discogs styles read failed for %r: %s",
+                       raw.get("name") or raw.get("title"), e)
         return None
 
 
@@ -447,7 +452,8 @@ def _director_note_for(cache, director) -> Optional[str]:
     try:
         from src.services.studio_notes import get_director_note_cached
         return get_director_note_cached(director.split(",")[0].strip(), cache)
-    except Exception:
+    except Exception as e:
+        logger.warning("[enricher] director-note cache read failed for %r: %s", director, e)
         return None
 
 
@@ -1513,11 +1519,9 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     from src.services.llm_priority import wait_for_curator
 
     def _gaming() -> bool:
-        try:
-            from src.services.app_state import get_state
-            return get_state("game_active") == "1"
-        except Exception:
-            return False
+        # Fails closed: an unreadable flag counts as a game (app_state.game_active).
+        from src.services.app_state import game_active
+        return game_active()
 
     def _scan(cache):
         cur = cache.conn.cursor()
@@ -1570,8 +1574,8 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             resp = _json.loads(row["response"]) if isinstance(row["response"], str) else row["response"]
             title = (resp or {}).get("title") or id_key
             year = (resp or {}).get("year")
-        except Exception:
-            continue
+        except (ValueError, TypeError, AttributeError):
+            continue   # unparseable cache row - not a backfill candidate
         if task is not None:
             try:
                 from src.services.task_monitor import task_monitor
@@ -1622,7 +1626,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     for k, resp in rows:
         try:
             b = _json.loads(resp)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         if not isinstance(b, dict):
             continue
@@ -1638,7 +1642,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         # through: they get exactly ONE more fetch to pick up RT/Metacritic
         try:
             cat = k.split("raw:", 1)[1].split(":", 1)[0]
-        except Exception:
+        except (IndexError, AttributeError):
             continue
         candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb, b.get("tmdb_id")))
 
@@ -2058,8 +2062,10 @@ async def _streaming_fetch_runner(
             try:
                 data = t.result()
             except Exception as _e:
+                # A crashing fetcher is not "no data from that source": a
+                # bug must show (log_topup_failure keeps outages at DEBUG).
                 data = None
-                logger.debug("[stream] %s task error: %s", src, _e)
+                log_topup_failure(logger, f"[stream] {src}", ctx.get("title"), _e)
             _merge_source_into_raw(raw, src, data, media_type, is_anime)
         # Now check sufficiency post-merge.
         if not sufficient and _has_enough_data_for_polish(raw, media_type):
@@ -2119,7 +2125,7 @@ async def _finalize_streaming_merge(
             data = await task
         except Exception as _e:
             data = None
-            logger.debug("[finalize] %s task error for %s: %s", src, plex_rating_key, _e)
+            log_topup_failure(logger, f"[stream] {src}", plex_rating_key, _e)
         _merge_source_into_raw(live_raw, src, data, media_type, is_anime)
 
     # Update the DB row.
@@ -2594,12 +2600,34 @@ def _omdb_day() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
+_omdb_count_warned_at = 0.0
+
+
 def omdb_calls_today() -> int:
+    """Calls spent today. A missing key/table (fresh DB) is zero; any other
+    read failure counts the day as spent - reading it as 0 let a locked or
+    broken app_state hand out calls past OMDB_DAILY_LIMIT."""
+    from sqlalchemy.exc import OperationalError
     from src.services.app_state import get_state
     try:
         return int(get_state(f"omdb_calls:{_omdb_day()}") or 0)
-    except Exception:  # noqa: BLE001 - no app_state yet (fresh DB): count from zero
-        return 0
+    except OperationalError as e:
+        if "no such table" in str(e).lower():
+            return 0   # no app_state yet (fresh DB): count from zero
+        return _omdb_count_unreadable(e)
+    except Exception as e:
+        return _omdb_count_unreadable(e)
+
+
+def _omdb_count_unreadable(err: BaseException) -> int:
+    """The day's count could not be read: report the budget as spent."""
+    global _omdb_count_warned_at
+    now = time.monotonic()
+    if now - _omdb_count_warned_at > 60:     # checked per title: once a minute
+        _omdb_count_warned_at = now
+        logger.warning("[omdb] calls-used-today unreadable - treating today's budget "
+                       "as spent: %s", err)
+    return int(getattr(settings, "OMDB_DAILY_LIMIT", 1000) or 0)
 
 
 def omdb_quota_left() -> int:

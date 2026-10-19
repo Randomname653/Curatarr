@@ -345,7 +345,8 @@ async def _fetch_tmdb(
         poster, synopsis = _from_entry(results[0])
         _TMDB_CACHE[cache_key] = (poster, synopsis, time.monotonic())
         return poster, synopsis
-    except Exception:
+    except Exception as e:
+        log_topup_failure(logger, "[recs] tmdb poster", title, e)
         return None, None
 
 
@@ -710,7 +711,8 @@ def list_downscale_candidates(
                     "size_gb": round((prof.size_mb or 0) / 1024.0, 1),
                     "mb_per_min": round(prof.mb_per_min, 0) if prof.mb_per_min else None,
                 }
-        except Exception:
+        except (TypeError, ValueError, AttributeError):
+            # one odd profile row only loses its tech line, not the list
             tech = None
         # the Bitrate line of the pillar reasoning is the one this list is about
         bitrate_note = next(
@@ -908,6 +910,12 @@ async def get_deletion_proposals(
         # Always return on non-refresh — never fall through to a live ARR fetch.
         # An empty result just shows the "Analyse library" prompt; it never
         # triggers a network call that can fail and wipe the loading state.
+        # Rows whose arr history was unreadable at the last analysis carry
+        # no stamp; the Just-arrived filter above drops them, so say why.
+        unavailable = await _load_activity_unavailable(category) if recent_only else []
+        if not cached:
+            message = (_activity_unavailable_message(unavailable) if unavailable
+                       else "No proposals yet. Select 'Run analysis' to generate them.")
         from src.services.display_tags import attach_tags
         return {
             "proposals": await asyncio.to_thread(attach_tags, cached),
@@ -915,8 +923,10 @@ async def get_deletion_proposals(
             "enrichment_coverage": await run_read(_arr_enrichment_coverage, category),
             "stale": cache_stale,
             "last_run": deletion_run_summary(category),
-            **({"message": "No proposals yet. Select 'Run analysis' to generate them."}
-               if not cached else {}),
+            **({"message": message} if not cached else {}),
+            **({"activity_unavailable": unavailable,
+                "activity_note": _activity_unavailable_message(unavailable)}
+               if unavailable else {}),
         }
 
     arr_items = await _fetch_arr_candidates(category)
@@ -946,12 +956,17 @@ async def get_deletion_proposals(
         _fetch_arr_recent_imports(svc) for svc in services_needed
     ])
     activity_by_svc = dict(zip(services_needed, activity_maps))
+    # A None map is an unreadable history: its items' activity is UNKNOWN,
+    # not "nothing imported" — they must not read as old to the Just-arrived
+    # filter, and must not overwrite a known stamp with NULL on save.
+    activity_unavailable = sorted(s for s, m in activity_by_svc.items() if m is None)
+    await _store_activity_unavailable(services_needed, activity_unavailable)
     activity_hits = 0
     for item in arr_items:
         svc = item.get("service")
         arr_id = item.get("arr_id")
         if svc and arr_id:
-            item["latest_activity_at"] = activity_by_svc.get(svc, {}).get(arr_id)
+            item["latest_activity_at"] = (activity_by_svc.get(svc) or {}).get(arr_id)
             if item["latest_activity_at"]:
                 activity_hits += 1
     logger.info(
@@ -959,6 +974,10 @@ async def get_deletion_proposals(
         "(others NULL — won't survive recent_only filter)",
         activity_hits, len(arr_items),
     )
+    if activity_unavailable:
+        logger.warning(
+            "[deletions] import history unreadable for %s — their candidates' "
+            "activity is unknown this run", ", ".join(activity_unavailable))
 
     # Pass 26: when "🆕 Just-arrived only" is ON, narrow the candidate pool
     # to recent-import items BEFORE scoring/pitch-generation. Without this,
@@ -979,7 +998,7 @@ async def get_deletion_proposals(
                 if dt.tzinfo is not None:
                     dt = dt.replace(tzinfo=None)
                 return dt >= _cutoff
-            except Exception:
+            except (TypeError, ValueError):
                 return False
         _pre = len(arr_items)
         arr_items = [it for it in arr_items if _is_recent(it)]
@@ -989,6 +1008,12 @@ async def get_deletion_proposals(
             _pre, len(arr_items), recent_days,
         )
         if not arr_items:
+            if activity_unavailable:
+                return {
+                    "proposals": [], "total_gb": 0,
+                    "activity_unavailable": activity_unavailable,
+                    "message": _activity_unavailable_message(activity_unavailable),
+                }
             return {
                 "proposals": [], "total_gb": 0,
                 "message": (
@@ -1088,6 +1113,15 @@ async def get_deletion_proposals(
                             ),
                         )
                     )
+                prev_activity = {}
+                if activity_unavailable:
+                    prev_activity = {
+                        (svc_, mid): la_
+                        for svc_, mid, la_ in old_q.with_entities(
+                            DeletionProposal.service, DeletionProposal.media_id,
+                            DeletionProposal.latest_activity_at)
+                        if la_ is not None
+                    }
                 # Pass 90b: SOFT delete via status='superseded' instead of hard
                 # ``DELETE``. The hard-delete freed ROWIDs that SQLite (without
                 # AUTOINCREMENT) reused for the new rows below — and stale
@@ -1117,8 +1151,14 @@ async def get_deletion_proposals(
                             la_dt = datetime.fromisoformat(str(la).replace("Z", "+00:00"))
                             if la_dt.tzinfo is not None:
                                 la_dt = la_dt.replace(tzinfo=None)
-                        except Exception:
+                        except (TypeError, ValueError):
                             la_dt = None
+                    elif p.get("service") in activity_unavailable:
+                        # unreadable history: keep the last KNOWN stamp
+                        # rather than writing NULL ("no activity") over it
+                        la_dt = prev_activity.get((p.get("service"), str(p.get("arr_id", ""))))
+                        if la_dt:
+                            p["latest_activity_at"] = la_dt.isoformat()
                     row = DeletionProposal(
                         user_id=user.id, media_id=str(p.get("arr_id", "")),
                         title=p["title"], service=p.get("service", ""),
@@ -1173,7 +1213,7 @@ async def get_deletion_proposals(
                 if dt.tzinfo is not None:
                     dt = dt.replace(tzinfo=None)
                 return dt >= cutoff
-            except Exception:
+            except (TypeError, ValueError):
                 return False
 
         proposals_with_ids = sorted(
@@ -1195,6 +1235,9 @@ async def get_deletion_proposals(
         "total_gb":            round(sum(p.get("size_mb", 0) for p in proposals_with_ids) / 1024, 1),
         "enrichment_coverage": await run_read(_arr_enrichment_coverage, category),
         "last_run":            deletion_run_summary(category),
+        **({"activity_unavailable": activity_unavailable,
+            "activity_note": _activity_unavailable_message(activity_unavailable)}
+           if recent_only and activity_unavailable else {}),
     }
 
 
@@ -1856,6 +1899,9 @@ async def _lidarr_freshness_guard(p) -> Optional[str]:
             if true_mb > 0:
                 p.storage_mb = true_mb
     except Exception as e:
+        # fails closed: the reason string blocks the delete
+        logger.warning("[deletions] lidarr freshness check failed for %r: %r",
+                       p.title, e)
         return f"freshness check failed: {e}"
     return None
 
@@ -2185,6 +2231,11 @@ def _arr_enrichment_coverage(category: Optional[str] = None) -> dict:
           "low":      bool,     # True when pct < 50 — show warning
           "never_run": bool,    # True when total == 0 (enrichment never ran)
         }
+
+    When the status table can't be read the answer is ``{"unknown": True,
+    "error": ...}`` — never the old invented zeros, which put a red
+    "enrichment has never run" banner over a library that may be fully
+    enriched.
     """
     try:
         from src.database.connection import get_db_session
@@ -2223,11 +2274,49 @@ def _arr_enrichment_coverage(category: Optional[str] = None) -> dict:
             "low":        pct < 50,
             "never_run":  total == 0,
         }
-    except Exception:
-        return {"enriched": 0, "total": 0, "pct": 0, "low": True, "never_run": True}
+    except Exception as e:
+        logger.warning("[deletions] enrichment coverage unreadable: %r", e, exc_info=True)
+        return {"unknown": True, "error": str(e) or type(e).__name__}
 
 
-async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
+_ACTIVITY_UNAVAILABLE_KEY = "deletion_activity_unavailable"
+
+
+def _activity_unavailable_message(services) -> str:
+    names = ", ".join(s.capitalize() for s in services)
+    return (f"Couldn't read the {names} import history, so 'Just-arrived only' "
+            f"can't tell which of those titles arrived recently — they are left "
+            f"out of this list. Try again once {names} is reachable, or turn off "
+            f"'Just-arrived only' to see the full library.")
+
+
+async def _store_activity_unavailable(checked, unavailable) -> None:
+    """Remember which arrs' history the last analysis could not read, so the
+    cached Just-arrived view can say so instead of showing "nothing new"."""
+    import json
+    from src.services.app_state import aget_state, aset_state
+    try:
+        prev = set(json.loads(await aget_state(_ACTIVITY_UNAVAILABLE_KEY) or "[]"))
+    except (TypeError, ValueError):
+        prev = set()
+    now = (prev - set(checked)) | set(unavailable)
+    if now != prev:
+        await aset_state(_ACTIVITY_UNAVAILABLE_KEY, json.dumps(sorted(now)))
+
+
+async def _load_activity_unavailable(category: Optional[str]) -> list:
+    import json
+    from src.services.app_state import aget_state
+    try:
+        svcs = json.loads(await aget_state(_ACTIVITY_UNAVAILABLE_KEY) or "[]")
+    except (TypeError, ValueError):
+        return []
+    if category in _CATEGORY_TO_SERVICE:
+        svcs = [s for s in svcs if s == _CATEGORY_TO_SERVICE[category]]
+    return sorted(svcs)
+
+
+async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> Optional[dict[int, str]]:
     """Return ``{arr_item_id: latest_imported_iso}`` from arr ``/history``.
 
     Pass 20 (after Sonarr/Radarr/Lidarr OpenAPI sweep):
@@ -2247,8 +2336,10 @@ async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
       version drift (some installs return eventType as enum-int in the
       response body, others as the enum-string name).
 
-    Returns ``{}`` on any failure — proposals still get generated, just
-    without the activity timestamp (filter shows them under "All").
+    Returns ``None`` when the history could not be read (HTTP error,
+    unreachable, unparseable) — "unknown", which callers must not treat as
+    "nothing imported recently" — and ``{}`` only when the service is not
+    configured or the history really holds no recent imports.
     """
     from datetime import timedelta
     # event_type_int is what we send; event_type_name is the per-service
@@ -2287,13 +2378,14 @@ async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
                 headers={"X-Api-Key": api_key},
             )
         if r.status_code != 200:
-            logger.info("[deletions] %s history → HTTP %d (skipping activity timestamps)",
-                        svc, r.status_code)
-            return {}
+            logger.warning("[deletions] %s history → HTTP %d — activity timestamps "
+                           "unknown this run", svc, r.status_code)
+            return None
         records = (r.json() or {}).get("records") or []
     except Exception as e:
-        logger.info("[deletions] %s history fetch failed: %s", svc, e)
-        return {}
+        logger.warning("[deletions] %s history unreadable — activity timestamps "
+                       "unknown this run: %r", svc, e)
+        return None
 
     cutoff = datetime.utcnow() - timedelta(days=days)
     result: dict[int, str] = {}
@@ -2317,7 +2409,7 @@ async def _fetch_arr_recent_imports(svc: str, days: int = 60) -> dict[int, str]:
             dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
             if dt.tzinfo is not None:
                 dt = dt.replace(tzinfo=None)
-        except Exception:
+        except (TypeError, ValueError, AttributeError):
             continue
         if dt < cutoff:
             continue
@@ -2741,7 +2833,9 @@ async def _probe_arr(service: str) -> bool:
                                      headers={"X-Plex-Token": token,
                                               "Accept": "application/json"})
             return r.status_code == 200
-        except Exception:
+        except Exception as e:
+            # unreachable reads as "down": the delete is deferred to limbo
+            log_topup_failure(logger, "[deletions] probe", service, e)
             return False
     _STATUS = {
         "radarr": (settings.RADARR_URL,  settings.RADARR_API_KEY,  "v3"),
@@ -2760,7 +2854,8 @@ async def _probe_arr(service: str) -> bool:
                 headers={"X-Api-Key": api_key},
             )
         return r.status_code == 200
-    except Exception:
+    except Exception as e:
+        log_topup_failure(logger, "[deletions] probe", service, e)
         return False
 
 

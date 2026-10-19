@@ -397,6 +397,7 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
     except Exception as e:
         logger.warning("[search] cache open failed - ranking without tags: %s", e)
     out = []
+    read_warned: list = []     # once per call: this runs per hit, per key
     for h in hits:
         tags, seen = [], set()
 
@@ -412,7 +413,11 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
             def _read(key):
                 try:
                     hit = cache.get_cache(key)
-                except Exception:
+                except Exception as e:
+                    # read as a miss: the hit ranks on its Chroma themes alone
+                    if not read_warned:
+                        read_warned.append(True)
+                        logger.warning("[search] tag cache read failed: %s", e)
                     hit = None
                 return (hit or {}).get("response") or {}
 
@@ -494,7 +499,11 @@ async def _texts_to_vectors(texts: list) -> dict:
         try:
             from src.cache.metadata_cache import MetadataCache
             return MetadataCache()
-        except Exception:
+        except Exception as e:
+            # no cache pass: every tag is embedded afresh, nothing stored
+            if not warned:
+                warned.append(True)
+                logger.warning("[search] tag-vector cache open failed: %s", e)
             return None
 
     def _release(cache) -> None:

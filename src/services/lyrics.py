@@ -625,7 +625,9 @@ def _listen_counts(keys: list) -> dict:
                     .filter(WatchHistoryEntry.plex_item_id.in_([str(k) for k in keys]))
                     .group_by(WatchHistoryEntry.plex_item_id).all())
         return {str(k): int(n) for k, n in rows}
-    except Exception:
+    except Exception as e:
+        # The sample then loses its listened-first order, nothing else.
+        logger.warning("[lyrics] listen counts unavailable: %s", e)
         return {}
 
 

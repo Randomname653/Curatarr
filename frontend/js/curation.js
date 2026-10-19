@@ -1,7 +1,7 @@
 // ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 import { api } from './api.js';
 import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
-import { stopTaskStream } from './activity.js';
+import { startTaskStream, stopTaskStream } from './activity.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
   if (!el) return;
@@ -131,7 +131,16 @@ export async function shutdownServer() {
   // Release this tab's SSE stream BEFORE asking — open streams are exactly
   // what used to pin "Waiting for connections to close".
   stopTaskStream();
-  try { await api('/api/system/shutdown', 'POST'); } catch (e) { /* server may die before replying */ }
+  try { await api('/api/system/shutdown', 'POST'); } catch (e) {
+    // A network error is the server dying before it replied: expected. An
+    // HTTP error (e.status set) is the server refusing and still running, so
+    // "close this tab" would be a lie.
+    if (e && e.status) {
+      toast(`Shutdown refused: ${_errMsg(e)}`, 'danger');
+      startTaskStream();
+      return;
+    }
+  }
   const ov = document.createElement('div');
   ov.className = 'sd-overlay';
   ov.innerHTML =

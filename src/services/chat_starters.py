@@ -411,8 +411,11 @@ def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
                 break
             if row not in picked:
                 picked.append(row)
+        # SQL-side increment: two tabs loading starters at once both read
+        # the same count, and a Python-side +1 kept only one impression.
+        from sqlalchemy import func
         for row in picked:
-            row.impressions = (row.impressions or 0) + 1
+            row.impressions = func.coalesce(ChatStarter.impressions, 0) + 1
         db.commit()
         return [{"id": r.id, "text": r.text} for r in picked]
 

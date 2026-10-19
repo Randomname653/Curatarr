@@ -211,8 +211,24 @@ def _ollama_loaded_models() -> "list | None":
         r = httpx.get(f"{settings.effective_ollama}/api/ps", timeout=2)
         r.raise_for_status()
         return [m.get("name") for m in (r.json().get("models") or [])]
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None   # Ollama down or an odd reply: "unknown", the callers handle None
     except Exception:
+        _warn_rate_limited("ollama_ps", "[gpu] /api/ps probe crashed - read as unknown")
         return None
+
+
+_warned_at: dict = {}
+
+
+def _warn_rate_limited(key: str, msg: str, every_s: float = 600.0) -> None:
+    """WARNING with traceback at most every ``every_s`` per key: the game
+    watcher probes every 30 s, so a persistent bug must not flood the log."""
+    import time
+    now = time.monotonic()
+    if now - _warned_at.get(key, -every_s - 1) > every_s:
+        _warned_at[key] = now
+        logger.warning(msg, exc_info=True)
 
 
 def _on_loop() -> bool:
@@ -363,7 +379,7 @@ def _probe_game_process() -> bool:
             if name and name.lower() in targets:
                 _cached_game_pid = proc.pid
                 return True
-        except Exception:
+        except (psutil.Error, AttributeError):
             continue
 
     return False
@@ -377,6 +393,27 @@ def is_game_running() -> bool:
     pressed = gpu_pressure()
     game = game_process_running()
     return pressed or game
+
+
+async def _our_models() -> list[str]:
+    """Every model Curatarr may hold in VRAM, for unload_llm_models."""
+    try:
+        from src.database.runner import run_read
+        from src.services.embed_service import effective_embedding_model
+        embs = [await run_read(effective_embedding_model)]   # reads app_state
+    except Exception:
+        # Which embedder is active is unknown: unload the default profile's
+        # model AND the legacy one, or a game may start beside the real one.
+        _warn_rate_limited("embedding_model", "[gpu] active embedding model unreadable - "
+                           "unloading the default profile model and the legacy one")
+        from src.services.embedding_migration import V2_PROFILE
+        embs = [V2_PROFILE.get("model"), settings.EMBEDDING_MODEL]
+    return list(dict.fromkeys(m for m in (
+        settings.CURATOR_MODEL,
+        settings.SUMMARIZER_MODEL,
+        *embs,   # the ACTIVE profile model, not the legacy v1 default
+        (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
+    ) if m))
 
 
 async def unload_llm_models() -> list[str]:
@@ -396,18 +433,7 @@ async def unload_llm_models() -> list[str]:
     """
     import httpx
     ollama_url = settings.effective_ollama
-    try:
-        from src.database.runner import run_read
-        from src.services.embed_service import effective_embedding_model
-        _emb = await run_read(effective_embedding_model)   # reads app_state
-    except Exception:
-        _emb = settings.EMBEDDING_MODEL
-    ours = [m for m in (
-        settings.CURATOR_MODEL,
-        settings.SUMMARIZER_MODEL,
-        _emb,   # the ACTIVE profile model, not the legacy v1 default
-        (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
-    ) if m]
+    ours = await _our_models()
     unloaded: list[str] = []
     async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         # Which of our models are currently loaded?
@@ -538,7 +564,7 @@ def get_unknown_processes() -> list[dict]:
                 continue
             try:
                 mem = proc.memory_info()    # None when access is denied
-            except Exception:
+            except psutil.Error:
                 mem = None
             if mem is None or mem.rss < min_rss:
                 continue                          # another instance may be bigger

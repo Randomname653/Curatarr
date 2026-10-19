@@ -120,7 +120,7 @@ def _live_raw_entries(cache) -> list[dict]:
     for cache_key, resp in cur.fetchall():
         try:
             raw = json.loads(resp)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         title = raw.get("title")
         # raw entries carry TMDB's vocabulary ("tv"); the rest of the app says

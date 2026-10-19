@@ -59,17 +59,35 @@ _backoff_until: float = 0.0
 _PERSIST_THRESHOLD = 300   # seconds; retry-after above this = a "come back much later" ban
 
 
+# Last persisted ban end this process read successfully: the fallback when
+# the stored one cannot be read.
+_last_known_until: Optional[datetime] = None
+
+
 def _persisted_backoff_remaining() -> float:
-    """Seconds left on a persisted Spotify backoff (0 if none/expired/error)."""
+    """Seconds left on a persisted Spotify backoff (0 if none/expired).
+
+    An unreadable value is not "no ban": calling Spotify during a 24 h ban
+    can restart the window, so a read error keeps the last known ban, or
+    backs off _PERSIST_THRESHOLD seconds when none is known."""
+    global _last_known_until
     try:
         from src.services.app_state import get_state
         raw = get_state("spotify_backoff_until")
         if not raw:
+            _last_known_until = None
             return 0.0
         until = datetime.fromisoformat(raw)
+        _last_known_until = until
         return max(0.0, (until - datetime.utcnow()).total_seconds())
-    except Exception:
-        return 0.0
+    except Exception as e:
+        left = 0.0
+        if _last_known_until is not None:
+            left = (_last_known_until - datetime.utcnow()).total_seconds()
+        left = max(left, float(_PERSIST_THRESHOLD))
+        logger.warning("[spotify] persisted backoff unreadable - backing off %.0fs: %s",
+                       left, e)
+        return left
 
 
 def _persist_backoff(seconds: float) -> None:

@@ -223,7 +223,7 @@ def test_selection_decays_and_respects_the_daypart():
     assert "impressions < MAX_IMPRESSIONS" in src
     assert "ChatStarter.expires_at > now" in src
     assert 'in_((dp, "any"))' in src
-    assert "row.impressions = (row.impressions or 0) + 1" in src
+    assert "row.impressions = func.coalesce(ChatStarter.impressions, 0) + 1" in src
 
 
 def test_proactive_messages_gained_the_same_mortality():

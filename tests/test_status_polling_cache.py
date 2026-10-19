@@ -101,7 +101,8 @@ def test_the_polled_endpoints_are_actually_memoized():
     # purpose — and the shared ones carry a trailing comment saying why,
     # so match the decorator head and the function separately.
     for anchor in ('@ttl_response(10, shared=True)', '@ttl_response(15, shared=True)',
-                   '@ttl_response(10, key=lambda **kw: bool(kw.get("quick")))'):
+                   # per user: the status counts the caller's own watch history
+                   '@ttl_response(10, key=lambda **kw: (kw["user"].id, bool(kw.get("quick"))))'):
         assert anchor in en, anchor
     # async when the body awaits, a plain def (memo runs it on a worker
     # thread) when it only reads the database.

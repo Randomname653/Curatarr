@@ -47,7 +47,7 @@ CLOSED_STATES = ("kept", "deleted_again")
 def _json(raw) -> dict:
     try:
         return json.loads(raw) if raw else {}
-    except Exception:
+    except (ValueError, TypeError):
         return {}
 
 

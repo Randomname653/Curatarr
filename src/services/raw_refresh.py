@@ -221,7 +221,10 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
 
     try:
         cursor = int(await run_read(get_state, _CURSOR_KEY) or 0)
-    except Exception:
+    except (ValueError, TypeError):
+        cursor = 0        # a garbled cursor: start the sweep over
+    except Exception as e:
+        logger.warning("[raw-refresh] cursor unreadable - starting from the top: %s", e)
         cursor = 0
 
     def _expired_rows(after: int, limit: int):
@@ -245,7 +248,7 @@ async def run_raw_refresh(task=None, deep: bool = False) -> bool:
         cursor = rowid
         try:
             raw = json.loads(resp)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         if not isinstance(raw, dict):
             continue

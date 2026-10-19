@@ -151,7 +151,7 @@ async def discover_libraries(user: User = Depends(get_current_user)):
                 return None
             try:
                 return datetime.utcfromtimestamp(int(unix)).isoformat() + "Z"
-            except Exception:
+            except (ValueError, TypeError, OverflowError, OSError):
                 return None
 
         locations = [loc.get("path", "") for loc in (s.get("Location") or [])]

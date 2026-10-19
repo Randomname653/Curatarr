@@ -291,7 +291,7 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
     # matches, as before.
     try:
         new_emb = json.loads(new_emb_raw) if new_emb_raw else None
-    except Exception:
+    except (ValueError, TypeError):
         new_emb = None
     if not new_emb:
         return []
@@ -301,7 +301,7 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
             continue
         try:
             v = json.loads(emb)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         if isinstance(v, list) and len(v) == len(new_emb):
             ids.append(mid)
@@ -582,7 +582,7 @@ async def retrieve_memories(
                     try:
                         mem_emb = json.loads(mem.embedding_json)
                         sem_score = _cosine_similarity(query_embedding, mem_emb)
-                    except Exception:
+                    except (ValueError, TypeError):
                         sem_score = 0.0
                     if sem_score is None:
                         sem_score = _NEUTRAL_SEM   # other model's vector → as if none
@@ -755,7 +755,7 @@ async def retrieve_considerations(
                 continue
             try:
                 sem = _cosine_similarity(item_emb, json.loads(emb_json))
-            except Exception:
+            except (ValueError, TypeError):
                 continue
             if sem is None:
                 continue   # other model's vector — same as no embedding

@@ -106,8 +106,8 @@ def _collect_love_signals() -> dict:
                         by_title[(cat, normalize_title(fb["title"]))] = (
                             "loved a Curatarr recommendation: "
                             f"{(fb.get('reason') or '')[:80]}")
-            except Exception:
-                continue
+            except (ValueError, TypeError, AttributeError):
+                continue   # unparseable blob - its feedback is left out
     return {"tmdb": by_tmdb, "title": by_title}
 
 

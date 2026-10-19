@@ -194,8 +194,8 @@ async def fetch_artist_popularity(artist_mbid: str,
         return None
     try:
         entries = r.json()
-    except Exception:
-        return None
+    except ValueError:
+        return None   # non-JSON body: no verdict, nothing cached
     if not isinstance(entries, list):
         return None
     if not entries:

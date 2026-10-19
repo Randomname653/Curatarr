@@ -452,7 +452,8 @@ export async function loadStarters() {
 export async function useStarter(id, btn) {
   if (_busyStreaming()) return;
   const text = btn.textContent;
-  api(`/api/chat/starters/${encodeURIComponent(id)}/used`, 'POST').catch(() => {});
+  api(`/api/chat/starters/${encodeURIComponent(id)}/used`, 'POST')
+    .catch(e => console.warn('[chat] starter mark-used failed', id, e));
   if (!await enterThread({ kind: 'starter', starter_id: id }, 'Curator opened this thread', text)) return;
   const inp = document.getElementById('chat-input');
   inp.value = '';
@@ -531,9 +532,24 @@ async function _loadThread(tid) {
   try {
     const r = await api(`/api/chat/history?thread_id=${encodeURIComponent(tid)}&limit=${HISTORY_LIMIT}`);
     return r.messages || [];
-  } catch {
-    return [];                // the pane still switches; the server keeps the history
+  } catch (e) {
+    // null, not []: an empty thread would claim there is no history
+    console.warn('[chat] history load failed', tid, e);
+    return null;
   }
+}
+
+function _historyErrorRow(onRetry) {
+  const row = document.createElement('div');
+  row.className = 'msg system load-err';
+  row.textContent = "Couldn't load this conversation's history — it is still saved on the server. ";
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'btn btn-secondary btn-sm';
+  retry.textContent = 'Retry';
+  retry.addEventListener('click', () => { if (!_busyStreaming()) onRetry(); });
+  row.appendChild(retry);
+  return row;
 }
 
 // Repaint #messages with thread `tid`: the curator's opener first (UI-only —
@@ -546,7 +562,8 @@ async function _showThread(tid, opener) {
   if (seq !== _threadSeq || !msgs) return false;
   msgs.replaceChildren();
   if (opener) addMsg(opener, 'assistant');
-  for (const m of history) msgs.appendChild(_historyBubble(m));
+  if (history === null) msgs.appendChild(_historyErrorRow(() => _showThread(tid, opener)));
+  else for (const m of history) msgs.appendChild(_historyBubble(m));
   msgs.scrollTop = msgs.scrollHeight;
   return true;
 }
@@ -567,10 +584,18 @@ export async function restoreChatHistory() {
   const seq = ++_threadSeq;
   const history = await _loadThread('general');
   const msgs = document.getElementById('messages');
-  if (seq !== _threadSeq || !msgs || !history.length || state.pendingDiscussContext
+  if (seq !== _threadSeq || !msgs || state.pendingDiscussContext
       || msgs.querySelector('.msg.user')) return;
-  msgs.querySelector('.msg.assistant')?.remove();
   const anchor = document.getElementById('glance-panel');
+  if (history === null) {
+    // keep the greeting and the landing panels, but say the history is missing
+    msgs.querySelector('.msg.load-err')?.remove();
+    msgs.insertBefore(_historyErrorRow(restoreChatHistory), anchor);
+    return;
+  }
+  if (!history.length) return;
+  msgs.querySelector('.msg.load-err')?.remove();
+  msgs.querySelector('.msg.assistant')?.remove();
   for (const m of history) msgs.insertBefore(_historyBubble(m), anchor);
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -715,6 +740,18 @@ export function _threadIdForContext(ctx) {
   return 'general';
 }
 
+// Fire-and-forget on an explicit end of conversation. A failure gets a toast:
+// it is what the owner said in this thread not being remembered yet. The
+// endpoint answers {ok: false} (HTTP 200) when the extraction itself failed.
+function _flushThreadMemories(tid) {
+  api('/api/chat/flush-memories', 'POST', { thread_id: tid })
+    .then(r => { if (r && r.ok === false) throw new Error(r.error || 'memory extraction failed'); })
+    .catch(e => {
+      console.warn('[chat] flush-memories failed', tid, e);
+      toast("Couldn't save this conversation's memories yet: " + _errMsg(e), 'amber');
+    });
+}
+
 export async function exitDiscussion() {
   if (_busyStreaming()) return;
   // Pass 61: "Exit discussion" is an explicit end-of-conversation signal —
@@ -724,7 +761,7 @@ export async function exitDiscussion() {
   // read the thread id BEFORE we null state.pendingDiscussContext below.
   const tid = _threadIdForContext(state.pendingDiscussContext);
   if (tid && tid !== 'general') {
-    api('/api/chat/flush-memories', 'POST', { thread_id: tid }).catch(() => {});
+    _flushThreadMemories(tid);
   }
   // Drops the sticky discuss_context so the next message is plain free chat.
   // Doesn't wipe chat history — that's what the "+ New" button is for.
@@ -770,7 +807,7 @@ export async function deleteFromDiscussion() {
     await api(
       `/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent('Deleted after in-chat discussion')}`,
       'POST',
-    ).catch(() => {});
+    ).catch(e => console.warn('[chat] deletion audit comment failed', id, e));
 
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
 
@@ -792,7 +829,7 @@ export async function deleteFromDiscussion() {
       // state.pendingDiscussContext is nulled below.
       const tid = _threadIdForContext(state.pendingDiscussContext);
       if (tid && tid !== 'general') {
-        api('/api/chat/flush-memories', 'POST', { thread_id: tid }).catch(() => {});
+        _flushThreadMemories(tid);
       }
       // Close the discussion — same end-state as exitDiscussion(), minus
       // its "exited thread" note (a more specific one follows). A reply

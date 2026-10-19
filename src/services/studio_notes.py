@@ -111,7 +111,8 @@ async def _wiki_studio_lead(studio: str) -> str:
                 hits = (sr.json().get("query", {}).get("search", [])
                         if sr.status_code == 200 else [])
                 answered = answered or sr.status_code == 200
-            except Exception:
+            except Exception as e:
+                log_topup_failure(logger, "[studio-notes] wiki search", studio, e)
                 hits = []
             for h in hits[:4]:
                 t = h.get("title") or ""
@@ -123,7 +124,8 @@ async def _wiki_studio_lead(studio: str) -> str:
                         "titles": t, "exintro": 1, "explaintext": 1, "redirects": 1})
                     pages = (ex.json().get("query") or {}).get("pages") or {}
                     extract = next(iter(pages.values()), {}).get("extract") or ""
-                except Exception:
+                except Exception as e:
+                    log_topup_failure(logger, "[studio-notes] wiki extract", t, e)
                     continue
                 low = extract.lower()
                 if ("studio" in low or "animation" in low) and len(extract) > 200:
@@ -188,7 +190,8 @@ async def _wiki_person_lead(name: str) -> str:
                 hits = (sr.json().get("query", {}).get("search", [])
                         if sr.status_code == 200 else [])
                 answered = answered or sr.status_code == 200
-            except Exception:
+            except Exception as e:
+                log_topup_failure(logger, "[studio-notes] wiki search", name, e)
                 hits = []
             for h in hits[:4]:
                 t = h.get("title") or ""
@@ -204,7 +207,8 @@ async def _wiki_person_lead(name: str) -> str:
                         "titles": t, "exintro": 1, "explaintext": 1, "redirects": 1})
                     pages = (ex.json().get("query") or {}).get("pages") or {}
                     extract = next(iter(pages.values()), {}).get("extract") or ""
-                except Exception:
+                except Exception as e:
+                    log_topup_failure(logger, "[studio-notes] wiki extract", t, e)
                     continue
                 if _PERSON_HINT.search(extract) and len(extract) > 200:
                     return extract

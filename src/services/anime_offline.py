@@ -76,7 +76,9 @@ def _fresh() -> bool:
         n = con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0]
         con.close()
         return n > 10000
-    except Exception:
+    except sqlite3.Error as e:
+        # corrupt file / dropped table: not fresh, so the caller rebuilds it
+        logger.debug("[anime-offline] snapshot unreadable, treating as stale: %s", e)
         return False
 
 
@@ -134,7 +136,8 @@ def _usable() -> bool:
             return con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0] > 0
         finally:
             con.close()
-    except Exception:
+    except sqlite3.Error as e:
+        logger.warning("[anime-offline] snapshot unusable: %s", e)
         return False
 
 

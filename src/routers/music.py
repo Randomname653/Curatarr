@@ -28,6 +28,7 @@ from src.routers.auth import get_current_user
 from src.services.app_state import get_state, set_state
 
 logger = logging.getLogger(__name__)
+_lyrics_warned_at = 0.0
 router = APIRouter()
 
 
@@ -119,6 +120,7 @@ def pipeline_status(user: User = Depends(get_current_user)):
     """
     Return current pipeline state + enrichment statistics.
     """
+    global _lyrics_warned_at
     import json as _json
     from src.database.connection import get_db_session
     from src.database.models import WatchHistoryEntry
@@ -154,7 +156,11 @@ def pipeline_status(user: User = Depends(get_current_user)):
         from src.services.lyrics import lyrics_coverage
         lyrics = lyrics_coverage()
     except Exception as e:
-        logger.debug("[music] lyrics coverage unavailable: %s", e)
+        import time as _t
+        # once a minute: this endpoint is polled every 4 s during a run
+        if _t.monotonic() - _lyrics_warned_at > 60:
+            _lyrics_warned_at = _t.monotonic()
+            logger.warning("[music] lyrics coverage unavailable: %s", e)
         lyrics = None
 
     return {

@@ -249,7 +249,7 @@ def _recheck(cache, index, rows) -> int:
     for key, resp in rows:
         try:
             raw = json.loads(resp)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         if not raw.get("ids_from_arr"):
             continue
@@ -330,7 +330,7 @@ async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
                 break
             try:
                 raw = json.loads(resp)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
             if raw.get("imdb_id") or not raw.get("title"):
                 continue

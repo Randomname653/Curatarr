@@ -68,7 +68,8 @@ export async function _pollGameProcesses() {
     _renderLaneBadge(statusR);
 
     // Check for unknown processes — show one toast per unknown exe
-    const r = await api('/api/processes/unknown').catch(() => null);
+    const r = await api('/api/processes/unknown')
+      .catch(e => { console.warn('[game] unknown-process poll failed', e); return null; });
     if (!r || !r.processes) return;
     for (const proc of r.processes) {
       const nl = proc.name.toLowerCase();
@@ -76,7 +77,9 @@ export async function _pollGameProcesses() {
       _shownProcesses.add(nl);
       _showProcessToast(proc.name);
     }
-  } catch(_) {}
+  } catch (e) {
+    console.warn('[game] process poll failed', e);   // the next 30 s tick retries
+  }
 }
 
 export function startProcessMonitor() {
