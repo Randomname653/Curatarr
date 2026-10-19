@@ -86,6 +86,14 @@ def _file_ident(path: Path):
         return None
 
 
+# The same 15 s as the main database (src/database/connection.py). It was
+# 60 s while cache calls ran on the event loop. Every writer of this file
+# (top-ups, the walkers, the out-of-process scripts) commits per call, so
+# the lock is held for milliseconds; the weekly VACUUM holds it for minutes,
+# which no timeout here would ride out (it is postponed while long jobs run).
+BUSY_TIMEOUT_S = 15
+
+
 def _open(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Pass 29: the cache connection used to be created with all-default
@@ -96,14 +104,14 @@ def _open(path: Path) -> sqlite3.Connection:
     conn = sqlite_connect(
         path,
         check_same_thread=False,
-        timeout=60.0,   # python-side wait when SQLite reports BUSY
+        timeout=float(BUSY_TIMEOUT_S),   # python-side wait when SQLite reports BUSY
     )
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
-        cur.execute("PRAGMA busy_timeout=60000")
+        cur.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_S * 1000}")
         cur.execute("PRAGMA wal_autocheckpoint=1000")
         cur.close()
     except Exception as e:

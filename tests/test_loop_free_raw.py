@@ -12,6 +12,9 @@ plex_music.db and the offline indexes were opened with plain
     discography fallback read their files on a worker
   * external_ids.harvest walks the cache on a worker, with its own handle
     when none is passed (archive_backfill no longer opens one on the loop)
+  * the enrichment cache waits 15 s for another writer, like the main
+    database, and a cache write waiting on another process's lock leaves
+    the loop ticking
 
 Each check fails on the code before this change.
 
@@ -202,6 +205,51 @@ src_ab = (ROOT / "src" / "services" / "archive_backfill.py").read_text(encoding=
 check("archive_backfill no longer opens a cache handle on the loop for harvest",
       "return await harvest(cache, limit=limit" in src_ab
       and "cache = MetadataCache()\n            return await harvest" not in src_ab)
+
+# ── 4. the enrichment cache's timeout ───────────────────────────────────────
+print("enrichment cache timeout")
+import subprocess  # noqa: E402
+import time  # noqa: E402
+from src.cache import metadata_cache as mcm  # noqa: E402
+
+with MetadataCache() as mc:
+    busy = mc.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+check(f"the cache waits 15 s for a writer, like the main database (was 60 s): {busy} ms",
+      busy == 15000 and mcm.BUSY_TIMEOUT_S == conn_mod.BUSY_TIMEOUT_S)
+
+holder = subprocess.Popen([sys.executable, "-c", f"""
+import sqlite3, time
+c = sqlite3.connect({str(settings.ENRICHMENT_CACHE)!r}, isolation_level=None, timeout=5)
+c.execute("BEGIN IMMEDIATE")
+print("locked", flush=True)
+time.sleep(1.5)
+c.execute("COMMIT")
+"""], stdout=subprocess.PIPE, text=True)
+assert holder.stdout.readline().strip() == "locked"
+
+
+async def _write_while_locked():
+    gaps, stop = [], asyncio.Event()
+
+    async def beat():
+        last = time.monotonic()
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            gaps.append(time.monotonic() - last)
+            last = time.monotonic()
+
+    b = asyncio.create_task(beat())
+    await mcm.acache_set("loop:probe", {"ok": 1})
+    stop.set()
+    await b
+    return max(gaps), await mcm.acache_get("loop:probe")
+
+
+gap, got = asyncio.run(_write_while_locked())
+holder.wait()
+check(f"a cache write from a coroutine waits out another process's lock off the loop "
+      f"(max loop gap {gap * 1000:.0f} ms) and lands",
+      gap < 0.2 and got and got["response"] == {"ok": 1})
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
