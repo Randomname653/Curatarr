@@ -29,6 +29,7 @@ import asyncio
 import inspect
 import logging
 import os
+import sqlite3
 import sys
 import threading
 from pathlib import Path
@@ -66,8 +67,8 @@ def _fmt(f) -> str:
     return f"{rel}:{f.f_lineno} ({f.f_code.co_name})"
 
 
-def _call_site() -> str:
-    f, first = sys._getframe(2), None
+def _call_site(depth: int = 3) -> str:
+    f, first = sys._getframe(depth), None
     while f is not None:
         path = f.f_code.co_filename
         if path.startswith(_SRC) and not path.startswith(_DB_DIR):
@@ -78,25 +79,47 @@ def _call_site() -> str:
     return _fmt(first) if first is not None else "<outside src>"
 
 
-def _on_execute(conn, cursor, statement, parameters, context, executemany):
+def _record(label: str = "") -> str | None:
+    """Count one statement if it runs on the loop thread; the site, or None.
+    Called directly from a hook: the caller's caller is the driver."""
     global _lifecycle
     if asyncio._get_running_loop() is None:
-        return
+        return None
     if not _serving:
         with _lock:
             _lifecycle += 1
-        return
-    site = _call_site()
+        return None
+    site = _call_site() + label
     with _lock:
         first = site not in _sites
         _sites[site] = _sites.get(site, 0) + 1
-    if mode() == "raise":
-        raise LoopBlockingQuery(f"database statement on the event loop at {site}")
     if first:
         logger.warning(
             "Database statement on the event-loop thread at %s - the server "
             "waits for it; move it to run_read/run_write or a def handler",
             site)
+    return site
+
+
+def _on_execute(conn, cursor, statement, parameters, context, executemany):
+    site = _record()
+    if site is not None and mode() == "raise":
+        raise LoopBlockingQuery(f"database statement on the event loop at {site}")
+
+
+def sqlite_connect(database, *args, **kwargs) -> sqlite3.Connection:
+    """``sqlite3.connect`` for the app's other SQLite files (the enrichment
+    cache, plex_music.db, the offline indexes, ...). Their statements are
+    counted like the engine's, labelled with the file name. A trace callback
+    cannot abort a statement, so raise mode does not apply here: tests read
+    ``snapshot()`` instead. src/ opens no SQLite file any other way
+    (tests/test_loop_db_ratchet.py)."""
+    con = sqlite3.connect(database, *args, **kwargs)
+    if mode() != "off":
+        name = str(database).rsplit("?", 1)[0].replace("\\", "/").rsplit("/", 1)[-1]
+        label = f" [{name}]"
+        con.set_trace_callback(lambda _stmt: _record(label))
+    return con
 
 
 def install(engine) -> None:

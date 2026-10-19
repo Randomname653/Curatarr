@@ -26,6 +26,7 @@ import numpy as np
 from chromadb.config import Settings
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ def _startup_quick_check() -> None:
         db_file = Path(str(settings.CHROMADB_PATH)) / "chroma.sqlite3"
         if not db_file.exists():
             return   # fresh install — nothing to check
-        con = sqlite3.connect(str(db_file), timeout=30)
+        con = sqlite_connect(str(db_file), timeout=30)
         try:
             ok = (con.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0]
         finally:

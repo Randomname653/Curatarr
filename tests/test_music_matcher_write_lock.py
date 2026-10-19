@@ -30,7 +30,7 @@ DB_FILE = (_tmp / "curatarr.db").resolve()
 os.environ["DATABASE_URL"] = f"sqlite:///{DB_FILE.as_posix()}"
 
 from src.database.connection import get_db_session, init_db  # noqa: E402
-from src.database.models import LibraryConfig, WatchHistoryEntry  # noqa: E402
+from src.database.models import LibraryConfig, User, WatchHistoryEntry  # noqa: E402
 from src.services import music_matcher as mm  # noqa: E402
 from src.services.app_state import get_state, set_state  # noqa: E402
 
@@ -53,6 +53,8 @@ check("test DB is the temp file, not the real one",
 init_db()
 N_PLAYS = 60
 with get_db_session() as db:
+    db.add(User(id=1, plex_user_id="1", plex_username="owner"))   # foreign keys are enforced
+    db.flush()
     db.add(LibraryConfig(plex_section_key="5", plex_section_title="Music",
                          plex_section_type="artist", media_category="music"))
     for i in range(N_PLAYS):

@@ -18,7 +18,7 @@ against rate-limited services, and GPU minutes on a card that is also the
 household's games machine. A backfill run with four walkers going at once can
 spend a large share of both on results it throws away.
 
-WAL and a 60s busy_timeout do not help here. They serialise writers and stop
+WAL and a busy_timeout do not help here. They serialise writers and stop
 "database is locked"; they do nothing about a writer whose in-memory copy is
 older than the row it is about to replace.
 """

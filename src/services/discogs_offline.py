@@ -38,6 +38,8 @@ UA = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                     "personal media curator) python-httpx"}
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
+from src.database.loop_guard import sqlite_connect
+from src.database.runner import run_read
 STYLES_DB_PATH = _REPO_ROOT / "data" / "cache" / "discogs_styles.db"
 MAX_AGE_DAYS = 30
 
@@ -165,7 +167,7 @@ def _library_artists() -> dict[str, tuple[set[str], set[str]]]:
         p = Path(str(_s.ENRICHMENT_CACHE))
         if not p.is_absolute():
             p = _REPO_ROOT / p
-        con = sqlite3.connect(str(p))
+        con = sqlite_connect(str(p))
         for (resp,) in con.execute(
                 "SELECT response FROM api_cache WHERE cache_key LIKE '%raw:music:%'"):
             try:
@@ -213,7 +215,7 @@ def _fresh() -> bool:
     if age >= timedelta(days=MAX_AGE_DAYS):
         return False
     try:
-        con = sqlite3.connect(STYLES_DB_PATH)
+        con = sqlite_connect(STYLES_DB_PATH)
         n = con.execute("SELECT COUNT(*) FROM artist_styles").fetchone()[0]
         con.close()
         return n > 0
@@ -235,7 +237,7 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
     rebuild the styles DB. ``max_bytes`` caps the compressed read (test
     windows); production runs read the whole ~590 MB once a month. ``task``
     = the custodian's Activity card (MB progress for the long stream)."""
-    if _fresh() and not force and max_bytes is None:
+    if await asyncio.to_thread(_fresh) and not force and max_bytes is None:
         return {"skipped": "fresh"}
     # Both are blocking (a synchronous httpx GET each, 30 s and up to the
     # arr listing budget): run on the event loop they froze every request
@@ -284,7 +286,7 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
                 if read_c >= _next_report:
                     _prog(read_c, total_bytes, len(masters))
                     _next_report = read_c + (16 << 20)   # every ~16 MB
-                if _gaming():
+                if await run_read(_gaming):     # app_state, off the loop
                     stopped = "game"
                     break
                 try:
@@ -336,57 +338,62 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
                        "styles DB kept", stopped, read_c / 1e6)
         return {"error": f"stopped: {stopped}", "read_mb": round(read_c / 1e6, 1)}
 
-    STYLES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(STYLES_DB_PATH)
-    try:
-        cur = con.cursor()
-        cur.executescript("""
-            DROP TABLE IF EXISTS master_styles;
-            DROP TABLE IF EXISTS artist_styles;
-            CREATE TABLE master_styles (
-                artist_norm TEXT, artist TEXT, title TEXT, year INTEGER,
-                genres TEXT, styles TEXT);
-            CREATE TABLE artist_styles (artist_norm TEXT PRIMARY KEY, styles TEXT);
-        """)
-        cur.executemany("INSERT INTO master_styles VALUES (?,?,?,?,?,?)", masters)
-        # Aggregation with a KNOWN-STYLE boost: within-family same-name
-        # collisions survive the genre anchor (Discogs files Disco under
-        # Electronic, so the frenchcore Crypton still absorbed a Disco act).
-        # Styles whose tokens match the artist's own Last.fm tags count 4x,
-        # so the artist's real core outranks a stranger's output; unmatched
-        # styles also need >=2 masters to make the top list at all.
-        agg: dict[str, Counter] = {}
-        boosted: dict[str, set] = {}
-        for a_norm, _a, _t, _y, _g, styles_json in masters:
-            c = agg.setdefault(a_norm, Counter())
-            _fams, toks = wanted.get(a_norm, (set(), set()))
-            for s in json.loads(styles_json):
-                s_toks = set(re.split(r"[^a-z]+", s.lower())) - {""}
-                if toks and (s_toks & toks):
-                    c[s] += 4
-                    boosted.setdefault(a_norm, set()).add(s)
-                else:
-                    c[s] += 1
-        rows_out = []
-        for a, c in agg.items():
-            _fams, toks = wanted.get(a, (set(), set()))
-            if toks and not boosted.get(a):
-                # the artist HAS a known style vocabulary and NONE of the
-                # matched masters fit it -> everything here belongs to a
-                # same-name stranger (Crypton case: the real frenchcore act
-                # has no masters in the dump, only the Disco homonym does).
-                # No line beats a wrong line.
-                continue
-            keep = [(s, n) for s, n in c.most_common()
-                    if s in boosted.get(a, ()) or n >= 2]
-            rows_out.append((a, json.dumps([s for s, _ in keep[:8]])))
-        cur.executemany("INSERT INTO artist_styles VALUES (?,?)", rows_out)
-        cur.executescript("""
-            CREATE INDEX idx_ms_artist ON master_styles(artist_norm);
-        """)
-        con.commit()
-    finally:
-        con.close()
+    def _rebuild() -> None:
+        # Drop, refill and index the styles DB: seconds of SQLite and JSON
+        # work over every matched master, on a worker thread.
+        STYLES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite_connect(STYLES_DB_PATH)
+        try:
+            cur = con.cursor()
+            cur.executescript("""
+                DROP TABLE IF EXISTS master_styles;
+                DROP TABLE IF EXISTS artist_styles;
+                CREATE TABLE master_styles (
+                    artist_norm TEXT, artist TEXT, title TEXT, year INTEGER,
+                    genres TEXT, styles TEXT);
+                CREATE TABLE artist_styles (artist_norm TEXT PRIMARY KEY, styles TEXT);
+            """)
+            cur.executemany("INSERT INTO master_styles VALUES (?,?,?,?,?,?)", masters)
+            # Aggregation with a KNOWN-STYLE boost: within-family same-name
+            # collisions survive the genre anchor (Discogs files Disco under
+            # Electronic, so the frenchcore Crypton still absorbed a Disco act).
+            # Styles whose tokens match the artist's own Last.fm tags count 4x,
+            # so the artist's real core outranks a stranger's output; unmatched
+            # styles also need >=2 masters to make the top list at all.
+            agg: dict[str, Counter] = {}
+            boosted: dict[str, set] = {}
+            for a_norm, _a, _t, _y, _g, styles_json in masters:
+                c = agg.setdefault(a_norm, Counter())
+                _fams, toks = wanted.get(a_norm, (set(), set()))
+                for s in json.loads(styles_json):
+                    s_toks = set(re.split(r"[^a-z]+", s.lower())) - {""}
+                    if toks and (s_toks & toks):
+                        c[s] += 4
+                        boosted.setdefault(a_norm, set()).add(s)
+                    else:
+                        c[s] += 1
+            rows_out = []
+            for a, c in agg.items():
+                _fams, toks = wanted.get(a, (set(), set()))
+                if toks and not boosted.get(a):
+                    # the artist HAS a known style vocabulary and NONE of the
+                    # matched masters fit it -> everything here belongs to a
+                    # same-name stranger (Crypton case: the real frenchcore act
+                    # has no masters in the dump, only the Disco homonym does).
+                    # No line beats a wrong line.
+                    continue
+                keep = [(s, n) for s, n in c.most_common()
+                        if s in boosted.get(a, ()) or n >= 2]
+                rows_out.append((a, json.dumps([s for s, _ in keep[:8]])))
+            cur.executemany("INSERT INTO artist_styles VALUES (?,?)", rows_out)
+            cur.executescript("""
+                CREATE INDEX idx_ms_artist ON master_styles(artist_norm);
+            """)
+            con.commit()
+        finally:
+            con.close()
+
+    await asyncio.to_thread(_rebuild)
     result = {"read_mb": round(read_c / 1e6, 1),
               "matched_masters": len(masters),
               "artists_with_styles": len({m[0] for m in masters}),
@@ -402,7 +409,7 @@ def artist_styles(artist: str) -> list[str]:
     if not artist or not STYLES_DB_PATH.exists():
         return []
     try:
-        con = sqlite3.connect(STYLES_DB_PATH)
+        con = sqlite_connect(STYLES_DB_PATH)
         row = con.execute("SELECT styles FROM artist_styles WHERE artist_norm=?",
                           (_norm(artist),)).fetchone()
         con.close()
