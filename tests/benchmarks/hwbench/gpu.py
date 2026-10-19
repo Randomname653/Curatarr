@@ -142,8 +142,50 @@ def _driver():
     return ctypes.CDLL("libcuda.so.1")
 
 
+def cuda_free(index: int = 0) -> dict:
+    """Free device memory as CUDA reports it, and what one CUDA context
+    costs. llama.cpp fits its layers against cuMemGetInfo, which on WDDM
+    reads ~1 GB more than nvidia-smi's free figure (2026-10-19) — a card
+    simulation sized from nvidia-smi gives every model that much extra."""
+    cu = _driver()
+    ctx = ctypes.c_void_p()
+    if cu.cuInit(0) != 0:
+        raise CudaError("cuInit failed")
+    dev = ctypes.c_int()
+    before = query(index)["used_mib"]
+    if cu.cuDeviceGet(ctypes.byref(dev), index) != 0 or \
+            cu.cuCtxCreate_v2(ctypes.byref(ctx), 0, dev) != 0:
+        raise CudaError("no CUDA context")
+    try:
+        free, total = ctypes.c_size_t(), ctypes.c_size_t()
+        if cu.cuMemGetInfo_v2(ctypes.byref(free), ctypes.byref(total)) != 0:
+            raise CudaError("cuMemGetInfo failed")
+        ctx_mib = max(0, query(index)["used_mib"] - before)
+    finally:
+        cu.cuCtxDestroy_v2(ctx)
+    return {"free_mib": free.value // MIB, "total_mib": total.value // MIB, "ctx_mib": ctx_mib}
+
+
+# llama.cpp's own --fit margin (``common_params_fit``: "will leave N >= 1024
+# MiB of free device memory"); a real card gets it too.
+LLAMA_FIT_MARGIN_MIB = 1024
+
+
+def fit_target_for(card_mib: int, desktop_mib: int, info: dict) -> int:
+    """LLAMA_ARG_FIT_TARGET (MiB llama.cpp leaves free) that makes this card
+    look like a ``card_mib`` card with ``desktop_mib`` taken by the desktop.
+    On that card llama-server would see card - desktop - its own context
+    free and keep the default margin; here it sees ``info['free_mib']``.
+    Since Ollama 0.40 llama-server places the layers itself, so
+    OLLAMA_GPU_OVERHEAD is computed but has no effect (probe 2026-10-19)."""
+    seen_on_real = card_mib - desktop_mib - info["ctx_mib"]
+    return max(LLAMA_FIT_MARGIN_MIB, info["free_mib"] - seen_on_real + LLAMA_FIT_MARGIN_MIB)
+
+
 class Ballast:
-    """Holds device memory so the card looks smaller. One per process."""
+    """Holds device memory so the card looks smaller. One per process.
+    Unreliable on Windows/WDDM, which pages the ballast out (2026-10-19);
+    the tier cells use ``fit_target_for`` instead."""
 
     def __init__(self, index: int = 0):
         self.index = index

@@ -16,10 +16,15 @@ Per model, per Ollama server config (flash attention / KV cache type):
   sweep    load at every context window from 2k to the model's maximum and
            read the VRAM it really takes — the footprint the setup uses,
            instead of the download size;
-  perf     full card -> tightest tier it fits (ballast spot check, so
-           Ollama's own estimator agrees) -> offload descent with
-           num_gpu auto until too slow, plus one forced num_gpu=99 cell
-           below the fit (the trap a small card hits with the default).
+  perf     full card -> tightest tier it fits -> offload descent with
+           num_gpu auto until too slow. A smaller card is simulated through
+           llama.cpp's --fit target (gpu.fit_target_for): since Ollama 0.40
+           llama-server places the layers itself against CUDA's free memory,
+           so it splits exactly as on that card. The CUDA ballast and
+           OLLAMA_GPU_OVERHEAD do not work for this (WDDM pages the ballast
+           out; the overhead is computed but ignored — probes 2026-10-19).
+           No forced num_gpu=99 cell any more: -ngl 99 bypasses the fit and
+           would load onto the real 24 GB.
   quality  on the default server: gate + judge + monologue + chat over the
            frozen evidence; on a quantised-KV server only gate + judge, and
            only when that KV setting lets the model fit a smaller tier.
@@ -37,6 +42,7 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -185,11 +191,13 @@ def pending_work(c: dict, args, led: Ledger, kv: bool = True) -> bool:
     alone, BEFORE a download? The 2026-10-19 --no-tiers restart re-pulled
     19 GB for gemma4:31b-it-qat whose every cell was already recorded.
     Identity comes from the registry's weights digest (what a pull would
-    install). Tier cells cannot be predicted, so a run with tiers always
-    counts as pending. ``kv`` False ignores the quantised-KV quality passes:
-    for a model the bench already removed, ~10 minutes of gate + judge do
-    not justify a 20 GB download (``--repull-for-kv`` turns them back on)."""
-    if not args.no_tiers and "perf" in args.phases or args.force:
+    install). Which tier cells a model gets depends on what the first one
+    measures, so a (server, profile) counts as done once ANY tier cell of
+    the current method is recorded. ``kv`` False ignores the quantised-KV
+    quality passes: for a model the bench already removed, ~10 minutes of
+    gate + judge do not justify a 20 GB download (``--repull-for-kv`` turns
+    them back on)."""
+    if args.force:
         return True
     remote = registry.remote_manifest(c["ref"]) or {}
     if not remote.get("weights_digest"):
@@ -210,6 +218,12 @@ def pending_work(c: dict, args, led: Ledger, kv: bool = True) -> bool:
             if "perf" in phases and not led.has_run(fingerprint(
                     key, "perf", {**perf_base(cfg, profile, snap_id, args.reps),
                                   "tier_gb": "full", "num_gpu": 99})):
+                return True
+            if "perf" in phases and not args.no_tiers and not any(
+                    r["settings"].get("tier_method") == matrix.TIER_METHOD
+                    and r["settings"].get("server") == cfg.label
+                    and r["settings"].get("profile") == profile
+                    for r in led.runs(key, "perf")):
                 return True
             if "quality" not in phases or c["role"] != "curator":
                 continue
@@ -305,27 +319,48 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
 
             def cell(tier, num_gpu):
                 s = {**base, "tier_gb": tier, "num_gpu": num_gpu}
+                if tier != "full":
+                    # Settings stay those of the real server: the fit target
+                    # depends on what is free at that moment, so it goes into
+                    # the metrics, not the fingerprint.
+                    s["tier_method"] = matrix.TIER_METHOD
                 fp = fingerprint(key, "perf", s)
                 if led.has_run(fp) and not args.force:
                     row = next(r for r in led.runs(key, "perf") if r["fingerprint"] == fp)
                     log(f"  [ledger] {cfg.label} {profile} tier {tier} gpu {num_gpu}: known")
                     return row["metrics"]
                 started = datetime.now().astimezone().isoformat(timespec="seconds")
-                with gpu.Ballast() as ballast, gpu.Sampler() as smp:
-                    held = {}
-                    if tier != "full":
-                        server.unload_all(bench.endpoint)
-                        held = ballast.to_free(tier * 1024 - reserve_mib)
-                    m = perf.run_cell(bench.endpoint, ref, num_ctx=ctx, num_gpu=num_gpu,
-                                      profile=profile, facts=facts, reps=args.reps, sampler=smp)
-                    m["ballast"] = held
-                server.unload_all(bench.endpoint)
+                sim = {}
+                if tier != "full":
+                    server.unload_all(bench.endpoint)
+                    info = gpu.cuda_free()
+                    target = gpu.fit_target_for(tier * 1024, reserve_mib, info)
+                    bench.ensure(replace(cfg, fit_target_mib=target))
+                    sim = {"method": matrix.TIER_METHOD, "card_mib": tier * 1024,
+                           "desktop_mib": reserve_mib, "budget_mib": tier * 1024 - reserve_mib,
+                           "cuda_free_mib": info["free_mib"], "cuda_ctx_mib": info["ctx_mib"],
+                           "fit_target_mib": target}
+                try:
+                    with gpu.Sampler() as smp:
+                        m = perf.run_cell(bench.endpoint, ref, num_ctx=ctx, num_gpu=num_gpu,
+                                          profile=profile, facts=facts, reps=args.reps, sampler=smp)
+                finally:
+                    server.unload_all(bench.endpoint)
+                    if sim:
+                        bench.ensure(cfg)
+                if sim:
+                    m["tier_sim"] = sim
+                    # What a real card of that size would NOT have had: on
+                    # Windows the driver spills it into shared RAM, on Linux
+                    # the load fails.
+                    m["tier_overrun_mib"] = max(0, (m.get("vram_model_mib") or 0) - sim["budget_mib"])
                 led.add_run(key, "perf", s, env=environment(bench, reserve_mib, prefetched),
                             metrics=m, started=started)   # a failed load IS the result
+                over = m.get("tier_overrun_mib")
                 log(f"  {cfg.label} {profile} ctx {ctx} tier {tier} gpu {num_gpu}: "
                     f"{m.get('status')} share {matrix.share(m)} %{' (SYSMEM FALLBACK)' if m.get('sysmem_fallback') else ''} "
-                    f"vram {m.get('vram_model_mib')} MiB gen {m.get('mono_gen_tok_s_median')} t/s "
-                    f"judge {m.get('judge_wall_s_median')} s")
+                    f"vram {m.get('vram_model_mib')} MiB{f' (OVER the card by {over})' if over else ''} "
+                    f"gen {m.get('mono_gen_tok_s_median')} t/s judge {m.get('judge_wall_s_median')} s")
                 return m
 
             if "perf" in phases:
@@ -338,21 +373,19 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                 total = gpu.query()["total_mib"]
             if "perf" in phases and not args.no_tiers:
                 fit = None
+                card = [x for x in matrix.TIERS_GB if x * 1024 < total]
                 if matrix.share(full) == 100:
                     t = tightest_tier(full.get("vram_model_mib") or 0, reserve_mib, total)
                     for _ in range(2):
                         if t is None:
                             break
-                        spot = cell(t, 99)
-                        if matrix.share(spot) == 100 and spot.get("status") == "ok":
+                        if matrix.tier_fits(cell(t, None)):
                             fit = t
                             break
-                        ups = [x for x in matrix.TIERS_GB if x > t and x * 1024 < total]
+                        ups = [x for x in card if x > t]
                         t = ups[0] if ups else None
                 tier_by_server[(cfg.label, profile)] = fit
-                below = [t for t in matrix.TIERS_GB if t * 1024 < total and (fit is None or t < fit)]
-                if below:
-                    cell(below[-1], 99)              # forced full-GPU on a too-small card
+                below = [t for t in card if fit is None or t < fit]
                 misses = 0
                 for t in reversed(below):
                     m = cell(t, None)
@@ -571,8 +604,9 @@ def main() -> None:
     p.add_argument("--repull-for-kv", action="store_true",
                    help="re-download a removed model even when only its KV-quality passes are missing")
     p.add_argument("--no-tiers", action="store_true",
-                   help="perf measures the full card only - no simulated smaller cards "
-                        "(the CUDA ballast does not hold on Windows/WDDM, 2026-10-19)")
+                   help="perf measures the full card only - no simulated smaller cards. "
+                        "A tier-only pass is the opposite: --phases perf (known full-card "
+                        "cells are skipped by the ledger)")
     p.add_argument("--servers", default="default,q8,q4")
     p.add_argument("--items", default="sub40", choices=["sub40", "full"])
     p.add_argument("--reps", type=int, default=3)

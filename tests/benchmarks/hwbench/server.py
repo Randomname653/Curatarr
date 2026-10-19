@@ -32,6 +32,10 @@ class ServerConfig:
     kv_cache_type: str = "f16"        # f16 | q8_0 | q4_0 (needs flash attention)
     num_parallel: int = 1             # production serialises curator calls
     max_loaded: int = 1
+    # MiB llama.cpp's --fit leaves free (LLAMA_ARG_FIT_TARGET, passed through
+    # by Ollama 0.40): set by a tier cell to make the 4090 look like a
+    # smaller card (gpu.fit_target_for). 0 = llama.cpp's own default.
+    fit_target_mib: int = 0
 
     def env(self) -> dict:
         e = {"OLLAMA_NUM_PARALLEL": str(self.num_parallel),
@@ -39,11 +43,17 @@ class ServerConfig:
              "OLLAMA_KV_CACHE_TYPE": self.kv_cache_type}
         if self.flash_attention != "auto":
             e["OLLAMA_FLASH_ATTENTION"] = self.flash_attention
+        if self.fit_target_mib:
+            e["LLAMA_ARG_FIT_TARGET"] = str(self.fit_target_mib)
         return e
 
     @property
     def label(self) -> str:
         return f"fa-{self.flash_attention}_kv-{self.kv_cache_type}"
+
+    @property
+    def log_label(self) -> str:
+        return self.label + ("_tiers" if self.fit_target_mib else "")
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -84,10 +94,12 @@ class BenchServer:
                "OLLAMA_KEEP_ALIVE": "10m"}
         if config.flash_attention == "auto":
             env.pop("OLLAMA_FLASH_ATTENTION", None)   # no inherited override
+        if not config.fit_target_mib:
+            env.pop("LLAMA_ARG_FIT_TARGET", None)
         log = None
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-            log = open(self.log_dir / f"ollama-serve_{config.label}.log", "ab")
+            log = open(self.log_dir / f"ollama-serve_{config.log_label}.log", "ab")
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         self._proc = subprocess.Popen([ollama_exe(), "serve"], env=env,
                                       stdout=log or subprocess.DEVNULL,

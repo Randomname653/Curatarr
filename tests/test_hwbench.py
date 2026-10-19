@@ -173,7 +173,8 @@ L.add_run(ref, "perf", {"profile": "large", "server": matrix.DEFAULT_SERVER, "nu
           metrics={**ok, "vram_model_mib": 21000})
 for tier, srv in ((6, matrix.DEFAULT_SERVER), (4, "fa-1_kv-q8_0")):
     L.add_run(small, "perf", {"profile": "small", "server": srv, "num_ctx": 8192,
-                              "tier_gb": tier, "num_gpu": 99}, env=env,
+                              "tier_gb": tier, "num_gpu": None,
+                              "tier_method": matrix.TIER_METHOD}, env=env,
               metrics={**ok, "vram_model_mib": 3000})
 L.add_run(small, "perf", {"profile": "small", "server": matrix.DEFAULT_SERVER, "num_ctx": 8192,
                           "tier_gb": "full", "num_gpu": 99}, env=env,
@@ -182,7 +183,7 @@ mx = matrix.build(L, reference_ref="gemma4:31b")
 check("24 GB: the reference's full-card cell counts as measured at 24 GB",
       mx["tiers"]["24"]["recommended"]["model"] == "gemma4:31b"
       and not mx["tiers"]["24"]["recommended"]["derived"])
-check("a model with no ballast spot check is NOT derived onto smaller tiers",
+check("a model with no tier spot check is NOT derived onto smaller tiers",
       mx["tiers"]["20"]["recommended"] is None or
       mx["tiers"]["20"]["recommended"]["model"] != "gemma4:31b")
 check("small model: agreement with the reference is the provisional quality",
@@ -217,9 +218,37 @@ L2.add_run(m2, "quality", {"profile": "small", "server": matrix.DEFAULT_SERVER},
 L2.add_run(m2, "quality", {"profile": "small", "server": "fa-1_kv-q4_0"}, env=env,
            metrics=qm, artifacts=[judge_file("t2q4", ["HARD_KEEP"] * 5)])
 L2.add_run(m2, "perf", {"profile": "small", "server": "fa-1_kv-q4_0", "num_ctx": 8192,
-                        "tier_gb": 4, "num_gpu": 99}, env=env, metrics={**ok, "vram_model_mib": 2000})
+                        "tier_gb": 4, "num_gpu": None, "tier_method": matrix.TIER_METHOD},
+           env=env, metrics={**ok, "vram_model_mib": 2000})
 check("KV quantisation that changes verdicts is a K.O.",
       matrix.build(L2, reference_ref="none")["tiers"]["4"]["recommended"] is None)
+
+# ── simulated cards: llama.cpp fit target, not ballast ─────────────────────
+from tests.benchmarks.hwbench import gpu as _gpu  # noqa: E402
+info = {"free_mib": 23036, "ctx_mib": 336}
+check("fit target: an 8 GB card with 1 GB desktop leaves llama-server what that card would",
+      _gpu.fit_target_for(8192, 1024, info) == 23036 - (8192 - 1024 - 336) + 1024)
+check("fit target never drops below llama.cpp's own margin",
+      _gpu.fit_target_for(32768, 0, info) == _gpu.LLAMA_FIT_MARGIN_MIB)
+check("fit target reaches the server env; the real server's env stays as it was",
+      ServerConfig(fit_target_mib=9000).env()["LLAMA_ARG_FIT_TARGET"] == "9000"
+      and "LLAMA_ARG_FIT_TARGET" not in ServerConfig().env()
+      and ServerConfig(fit_target_mib=9000).label == ServerConfig().label)
+L3 = Ledger(tmp / "mx3.json")
+m3 = L3.upsert_model("t:2b", "sha256:ddd")
+L3.add_run(m3, "quality", {"profile": "small", "server": matrix.DEFAULT_SERVER}, env=env,
+           metrics=qm, artifacts=[judge_file("t3", V)])
+L3.add_run(m3, "perf", {"profile": "small", "server": matrix.DEFAULT_SERVER, "num_ctx": 8192,
+                        "tier_gb": 6, "num_gpu": 99}, env=env, metrics={**ok, "vram_model_mib": 3000})
+check("a ballast-era tier cell (no tier_method) is void",
+      matrix.build(L3, reference_ref="none")["tiers"]["6"]["recommended"] is None)
+L3.add_run(m3, "perf", {"profile": "small", "server": matrix.DEFAULT_SERVER, "num_ctx": 8192,
+                        "tier_gb": 8, "num_gpu": None, "tier_method": matrix.TIER_METHOD}, env=env,
+           metrics={**ok, "vram_model_mib": 7600, "tier_overrun_mib": 432})
+check("a cell that took more than the simulated card has is a K.O.",
+      matrix.build(L3, reference_ref="none")["tiers"]["8"]["recommended"] is None
+      and not matrix.tier_fits({**ok, "tier_overrun_mib": 432})
+      and matrix.tier_fits({**ok, "tier_overrun_mib": 200}))
 
 # ── subset + text helpers ──────────────────────────────────────────────────
 items = [{"key": f"{c}:{i}", "category": c, "title": f"T{i}",
@@ -258,8 +287,15 @@ check("pending: everything but a KV pass known -> no re-pull by default",
       not _run.pending_work(cand, A, PL, kv=False))
 check("pending: ...but the q8 pass (saves 1.5 GB) is still work when KV counts",
       _run.pending_work(cand, A, PL, kv=True))
-check("pending: a run with tier cells always counts as pending",
-      _run.pending_work(cand, _ap.Namespace(**{**vars(A), "no_tiers": False}), PL, kv=False))
+AT = _ap.Namespace(**{**vars(A), "no_tiers": False})
+check("pending: a tier pass is work until the model has a tier cell",
+      _run.pending_work(cand, AT, PL, kv=False))
+for srv in ("default", "q8"):
+    PL.add_run(pk, "perf", {**_run.perf_base(_run.SERVERS[srv], "large", "S1", 3), "tier_gb": 16,
+                            "num_gpu": None, "tier_method": matrix.TIER_METHOD},
+               env={}, metrics={"status": "ok"})
+check("pending: ...and no re-pull once every server has one",
+      not _run.pending_work(cand, AT, PL, kv=False))
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

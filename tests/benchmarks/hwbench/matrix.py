@@ -15,9 +15,13 @@ Rules, in order:
    escalation beyond MAX_ESCALATION; the long-context probe did not fail.
 3. A tier is served by a measured cell at that tier, or DERIVED from a
    full-card cell when the model's measured VRAM plus the desktop reserve
-   fits the tier with margin AND a ballast spot check at or below that tier
-   confirmed Ollama agrees (its own estimator decides, not our arithmetic).
+   fits the tier with margin AND a spot check at or below that tier
+   confirmed llama.cpp agrees (its own fit decides, not our arithmetic).
    A full-card cell counts as measured at the bench card's own tier.
+   Tier cells count only when simulated with TIER_METHOD: the earlier
+   CUDA-ballast cells are void (WDDM paged the ballast out), and a cell
+   that took more than the simulated card had (TIER_OVERRUN_TOL_MIB) is a
+   performance K.O. — that card would spill or fail the load.
 4. A quantised KV cache (q8_0 / q4_0) is only judged, not re-scored: it
    inherits the default server's quality when >= MIN_KV_AGREEMENT % of its
    verdicts are unchanged, and is a K.O. when fewer are.
@@ -48,6 +52,8 @@ MAX_ESCALATION = 3.0
 FIT_MARGIN_MIB = 512
 MIN_KV_AGREEMENT = 90.0     # % of verdicts a quantised KV cache must leave unchanged
 DEFAULT_SERVER = "fa-auto_kv-f16"
+TIER_METHOD = "llama_fit_target"
+TIER_OVERRUN_TOL_MIB = 256
 EXPORT = Path(__file__).resolve().parents[3] / "src" / "services" / "model_matrix.json"
 
 
@@ -98,6 +104,8 @@ def perf_ok(m: dict) -> tuple[bool, str]:
         return False, "Ollama's residency figure is implausible (ps << nvidia-smi)"
     if m.get("long_error"):
         return False, f"long-context probe: {m['long_error'][:80]}"
+    if (m.get("tier_overrun_mib") or 0) > TIER_OVERRUN_TOL_MIB:
+        return False, f"took {m['tier_overrun_mib']} MiB more than the simulated card has"
     if (m.get("judge_escalation_ratio") or 1) > MAX_ESCALATION:
         return False, f"latency escalation x{m['judge_escalation_ratio']}"
     if (share(m) or 0) < 100:
@@ -108,6 +116,17 @@ def perf_ok(m: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def tier_fits(m: dict) -> bool:
+    """A simulated-card cell that ran fully on the GPU within the card."""
+    return (m.get("status") == "ok" and share(m) == 100
+            and (m.get("tier_overrun_mib") or 0) <= TIER_OVERRUN_TOL_MIB)
+
+
+def valid_tier_cell(run: dict) -> bool:
+    """Tier cells of a method that really shrank the card."""
+    return run["settings"].get("tier_method") == TIER_METHOD
+
+
 def _tier_fit_derived(cell: dict, tier_gb: int, reserve_mib: int) -> bool:
     need = (cell.get("vram_model_mib") or 0) + reserve_mib + FIT_MARGIN_MIB
     return share(cell) == 100 and need <= tier_gb * 1024
@@ -116,7 +135,8 @@ def _tier_fit_derived(cell: dict, tier_gb: int, reserve_mib: int) -> bool:
 def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     runs = ledger.runs()
     quality = [r for r in runs if r["phase"] == "quality"]
-    perf = [r for r in runs if r["phase"] == "perf"]
+    perf = [r for r in runs if r["phase"] == "perf"
+            and (not isinstance(r["settings"].get("tier_gb"), int) or valid_tier_cell(r))]
     ref_run = next((q for q in quality if ledger.model(q["model_key"])["ref"] == reference_ref
                     and q["settings"].get("profile") == "large"
                     and q["settings"].get("items") == "sub40"), None)
@@ -151,7 +171,7 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     confirmed = defaultdict(lambda: 99)
     for p in perf:
         s = p["settings"]
-        if isinstance(s.get("tier_gb"), int) and share(p["metrics"]) == 100:
+        if isinstance(s.get("tier_gb"), int) and tier_fits(p["metrics"]):
             k = (p["model_key"], s["num_ctx"], s["server"])
             confirmed[k] = min(confirmed[k], s["tier_gb"])
 
