@@ -623,6 +623,9 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # run inline it held the event loop for the whole walk, freezing every
     # request and the Activity stream on a large initial sync. The session
     # is opened and closed inside the thread, never shared with the loop.
+    # Deliberately NOT run_write: a backlog walk is minutes long and commits
+    # per chunk, so on the single writer every other write in the app would
+    # queue behind it; SQLite's lock serialises the chunk commits anyway.
     synced = 0
     skipped = 0
     resumed = 0   # unfinished rows promoted to the finished view
@@ -1044,8 +1047,15 @@ def _process_rec_watch_hits(hits: list[dict]) -> None:
         key = f"rec_watch_hits:user_id={uid}"
         try:
             queue = _json.loads(get_state(key) or "[]")
-        except Exception:
-            queue = []
+            if not isinstance(queue, list):
+                raise ValueError(f"not a list: {type(queue).__name__}")
+        except Exception as e:
+            # Rewriting from [] would drop up to 50 queued follow-ups; this
+            # pass's hits are the smaller loss.
+            logger.warning("[rec-hits] %s unreadable, left as is - %d new hit(s) "
+                           "for user %d not queued: %s", key,
+                           sum(1 for m in matches if m["user_id"] == uid), uid, e)
+            continue
         known = {(q.get("title"), q.get("category")) for q in queue}
         for m in matches:
             if m["user_id"] == uid and (m["title"], m["category"]) not in known:

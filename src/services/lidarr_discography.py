@@ -65,8 +65,8 @@ def cached_lidarr_artists() -> Optional[list]:
     try:
         from src.routers.library import _LIB_CACHE
         items = (_LIB_CACHE.get("lidarr") or {}).get("items_raw")
-    except Exception:  # noqa: BLE001
-        return None
+    except (ImportError, AttributeError, TypeError):
+        return None   # no library router loaded / cache not shaped as expected
     return items if isinstance(items, list) and items else None
 
 

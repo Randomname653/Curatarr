@@ -34,7 +34,7 @@ from sqlalchemy import update
 from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
-from src.services.enrichment_state import TRANSIENT
+from src.services.enrichment_state import TRANSIENT, log_topup_failure
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -84,12 +84,15 @@ def _index_tracks(resp, sec_key, plex_index: dict) -> None:
 
 
 def _stop_requested() -> bool:
-    """Return True when the GUI/API has requested a pipeline stop."""
+    """Return True when the GUI/API has requested a pipeline stop. An
+    unreadable flag counts as a stop: reading it as "keep going" ignored the
+    user's Stop for the rest of the run."""
     try:
         from src.services.app_state import get_state
         return get_state("music_pipeline_stop_requested") == "1"
-    except Exception:
-        return False
+    except Exception as e:
+        logger.warning("[music_matcher] stop flag unreadable - stopping: %s", e)
+        return True
 
 
 def _load_unmatched_plays(user_id: int, since_id: int) -> list[tuple]:
@@ -394,7 +397,7 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
             profile = await fetch_musicbrainz_artist(name)
             queried += 1
         except Exception as exc:
-            logger.debug("[music_matcher] MB lookup failed for %r: %s", name, exc)
+            log_topup_failure(logger, "[music_matcher] MB lookup", name, exc)
             failed += 1
             continue
 

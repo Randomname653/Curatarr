@@ -56,7 +56,7 @@ def listing_timeout() -> float:
     try:
         from src.config import settings
         return float(getattr(settings, "ARR_LISTING_TIMEOUT_S", 240) or 240)
-    except Exception:  # noqa: BLE001
+    except (ValueError, TypeError):   # a non-numeric override in .env
         return 240.0
 
 
@@ -664,7 +664,7 @@ class SonarrClient(MediaService):
                 "GET", "/api/v3/languageprofile",
                 use_cache=True, cache_key="sonarr_language_profiles",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - Sonarr v4 dropped this endpoint; [] = no language profiles, nothing calls it
             return []
 
     async def list_tags(self) -> List[Dict]:

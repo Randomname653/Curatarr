@@ -116,10 +116,24 @@ export async function _swrRun(key, fetchFn, renderFn, opts = {}) {
   if (hadCache) renderFn(cached);
   let fresh;
   try { fresh = await fetchFn(); }
-  catch (e) { if (!hadCache) throw e; return cached; } // stale-but-shown beats an error screen
+  catch (e) {
+    if (!hadCache) throw e;
+    // Stale-but-shown beats an error screen, but it must not pass for
+    // current: logged, flagged (_swrIsStale) and announced ('swr-stale') so a
+    // view can say "last refresh failed". The value itself stays untouched -
+    // callers compare and render it.
+    console.warn(`[swr] refresh of ${key} failed - showing the cached copy`, e);
+    _swrStale.add(key);
+    window.dispatchEvent(new CustomEvent('swr-stale', { detail: { key, error: e } }));
+    return cached;
+  }
+  _swrStale.delete(key);
   const changed = !hadCache || JSON.stringify(fresh) !== JSON.stringify(cached);
   _swrCache.set(key, fresh);
   if (!hadCache || changed) renderFn(fresh);
   return fresh;
 }
-export function _swrInvalidate(key) { _swrCache.delete(key); }
+export function _swrInvalidate(key) { _swrCache.delete(key); _swrStale.delete(key); }
+// Keys whose last background refresh failed (their view shows the cached copy).
+const _swrStale = new Set();
+export function _swrIsStale(key) { return _swrStale.has(key); }

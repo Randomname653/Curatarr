@@ -130,7 +130,7 @@ try:
     from chromadb.errors import InvalidArgumentError as _ChromaInvalidArg
     from chromadb.errors import InvalidDimensionException as _ChromaInvalidDim
     _CALLER_ERRORS: tuple = (ValueError, TypeError, _ChromaInvalidArg, _ChromaInvalidDim)
-except Exception:   # pragma: no cover — older chromadb without these names
+except ImportError:   # pragma: no cover — older chromadb without these names
     _CALLER_ERRORS = (ValueError, TypeError)
 _caller_error_counts: Dict[str, int] = {}
 
@@ -186,7 +186,9 @@ class ChromaDBWrapper:
             try:
                 from src.services.embed_service import get_profile
                 collection_name = get_profile().get("collection") or "media_knowledge_v2"
-            except Exception:
+            except Exception as e:
+                logger.warning("[chroma] embedding profile unreadable - serving "
+                               "media_knowledge_v2: %s", e)
                 collection_name = "media_knowledge_v2"
 
         # Ops hardening (eval package 4): the known Chroma corruption
@@ -322,7 +324,8 @@ class ChromaDBWrapper:
     def facets_count(self) -> int:
         try:
             return self._facets_collection().count()
-        except Exception:
+        except Exception as e:
+            logger.warning("[chroma] facets_count failed: %s", e)
             return 0
     
     def add_documents(

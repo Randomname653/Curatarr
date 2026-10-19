@@ -167,7 +167,7 @@ def get_datetime(key: str) -> Optional[datetime]:
         return None
     try:
         return datetime.fromisoformat(val)
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 

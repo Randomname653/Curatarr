@@ -7,6 +7,7 @@ Category-specific metadata enrichment with progress tracking.
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import List, Optional
 
@@ -269,13 +270,23 @@ def _arr_enriched_ids(service: str) -> set:
         ).all()}
 
 
+_vec_count_warned_at = 0.0
+
+
 def _vector_counts_by_service() -> dict:
     """Chroma doc count per arr service ({svc: n}) from ONE id scan; {} when
     Chroma is unavailable (the panel shows 0, as before). Chroma thread."""
+    global _vec_count_warned_at
     try:
         from src.vector_store.chromadb_wrapper import get_chroma_db
         ids = get_chroma_db().all_ids()
-    except Exception:
+    except Exception as e:
+        # The panel's 0 then means "unreadable", not "nothing vectorised";
+        # the status endpoint is polled, so at most once a minute.
+        now = time.monotonic()
+        if now - _vec_count_warned_at > 60:
+            _vec_count_warned_at = now
+            logger.warning("[enrichment] vector counts unavailable (panel shows 0): %s", e)
         return {}
     out = {"radarr": 0, "sonarr": 0, "lidarr": 0}
     for i in ids:
@@ -947,7 +958,7 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 cache_key = row["cache_key"]
                 try:
                     profile = _json.loads(row["response"])
-                except Exception:
+                except (ValueError, TypeError):
                     profile = None
                 # Cache key shape: "{_CACHE_VERSION}:enriched:{category}:{id_key}"
                 # — category is the 3rd colon-segment. id_key may itself
@@ -1636,7 +1647,7 @@ def _arr_link(item: dict) -> Optional[str]:
         base = {"radarr": settings.effective_radarr_url,
                 "sonarr": settings.effective_sonarr_url,
                 "lidarr": settings.effective_lidarr_url}.get(item["service"])
-    except Exception:
+    except (KeyError, TypeError, AttributeError):
         return None
     if not base:
         return None
@@ -2468,7 +2479,8 @@ def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
             continue
         try:
             row = cache.get_cache(f"raw:{cat}:{k}")
-        except Exception:
+        except Exception as e:
+            _ES.log_topup_failure(logger, "[enrich] raw hash read", k, e)
             continue
         resp = (row or {}).get("response")
         if isinstance(resp, dict) and resp:
@@ -2476,8 +2488,8 @@ def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
                 blob = json.dumps(resp, sort_keys=True, default=str)
                 return hashlib.sha1(blob.encode("utf-8", "replace"),
                                     usedforsecurity=False).hexdigest()
-            except Exception:
-                return None
+            except (TypeError, ValueError):
+                return None   # not serialisable - no anchor, no verdict
     return None
 
 

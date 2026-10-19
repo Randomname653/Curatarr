@@ -156,7 +156,7 @@ async def fetch_best(*, anidb_id=None, anilist_id=None, tvdb_id=None,
             if r.status_code >= 400 and "json" in ctype:
                 try:
                     err = r.json()
-                except Exception:
+                except ValueError:
                     err = {}
                 if isinstance(err, dict) and "permanent" in err:
                     if err.get("permanent"):

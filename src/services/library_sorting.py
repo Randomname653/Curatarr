@@ -333,7 +333,7 @@ def _recategorize_local(sonarr_id: int, new_cat: str,
             meta["media_type"] = new_cat
             chroma.update_metadata(key, meta)
             # Facet re-write happens in the ASYNC caller (apply_reclassify)
-            # after the to_thread hop: this helper runs in a worker thread
+            # after the run_write hop: this helper runs on the writer thread
             # where create_task has no loop — an external eval caught the
             # original fire-and-forget here as a silent no-op.
     except Exception as e:
@@ -397,8 +397,10 @@ async def apply_reclassify(items: list) -> dict:
                 # category with nothing telling the owner.
                 local_errors: list = []
                 try:
-                    old_cat = await asyncio.to_thread(_recategorize_local, sid,
-                                                      new_cat, local_errors)
+                    # a read-update-commit of three tables: the single writer,
+                    # not a free worker racing it
+                    old_cat = await run_write(_recategorize_local, sid,
+                                              new_cat, local_errors)
                 except Exception as _le:
                     old_cat = None
                     local_errors.append(f"local: {_le}"[:120])

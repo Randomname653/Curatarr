@@ -16,11 +16,15 @@ asks ``music_service()`` instead:
 """
 from __future__ import annotations
 
+import logging
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
 from src.config import settings
 from src.database.loop_guard import sqlite_connect
+
+logger = logging.getLogger(__name__)
 
 
 def lidarr_configured() -> bool:
@@ -43,7 +47,14 @@ def plex_music_indexed() -> bool:
                 "SELECT 1 FROM plex_artists WHERE tracks > 0 LIMIT 1").fetchone() is not None
         finally:
             con.close()
-    except Exception:
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():   # not walked yet is a real "no"
+            logger.warning("[music-source] Plex music index unreadable: %s", e)
+        return False
+    except Exception as e:
+        # "Unreadable" answers as "no Plex music" - say so, or music curation
+        # just disappears.
+        logger.warning("[music-source] Plex music index unreadable: %s", e)
         return False
 
 

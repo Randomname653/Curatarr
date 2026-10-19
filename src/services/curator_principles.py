@@ -233,7 +233,10 @@ async def _embed(text: str):
     try:
         from src.services.episodic_memory import _embed as em_embed
         return await em_embed(text)
-    except Exception:
+    except Exception as e:
+        # em_embed already logs and returns None on an embed outage, so
+        # anything landing here is a bug, not a transient.
+        logger.warning("[principles] embedding crashed: %s", e, exc_info=True)
         return None
 
 
@@ -561,7 +564,7 @@ async def retrieve_principles(user_id: int, category: str | None = None,
             for text, emb_json in rows:
                 try:
                     sem = _cosine_similarity(qe, json.loads(emb_json)) if emb_json else 0.0
-                except Exception:
+                except (ValueError, TypeError):
                     sem = 0.0
                 if sem is None:
                     sem = 0.0   # dimension mismatch ranks like "no embedding"

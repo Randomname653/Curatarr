@@ -374,21 +374,78 @@ left; the static ratchet only saw direct calls in a coroutine body.
 - **Tests:** `tests/test_loop_free_probes.py` and `tests/test_loop_free_s2a.py` to
   `tests/test_loop_free_s2d.py`. Every "off the loop" check fails on the previous code.
 
-### Still open (sweep 2, PRs 2 and 3)
+### Round 9 (PR 2 of sweep 2): fail-open guards and silent defaults
 
-- **Fail-open guards:**
-  - four `_gaming()` copies treat an unreadable flag as "no game";
-  - `endpoint_policy.resolved_refusal` treats a DNS timeout as "no refusal";
-  - an unreadable arr history reads as "nothing imported";
-  - a corrupt taste blob silently drops the owner's taste from a deletion run.
-- **Silent handlers** whose body is a bare `return <default>`: the ratchet does not count
-  them yet.
-- **Correctness:** the enrichment-status memo is not keyed by user (a member sees another
-  user's numbers for 10 s). Also smaller races: chat-starter impressions written via
-  `run_read`, stale cache refills after an invalidation, and the first-admin race.
-- **API:** no budget on member taste rebuilds; no last-admin guard on deactivation; arr LAN
-  addresses, root folders and raw error text reach members.
+- **Fail closed where a guard couldn't decide:**
+  - **Game flag:** four `_gaming()` copies read an unreadable flag as "no game". All now
+    go through `app_state.game_active()`: unreadable counts as a game, logged at most once
+    a minute.
+  - **DNS check:** `resolved_refusal` answered "no refusal" on a DNS timeout or error, so
+    a slow resolver walked past the check. Both are now refusals.
+  - **OMDb budget:** an unreadable usage count read as 0 calls used. It now reads as the
+    whole day spent.
+  - **Music pipeline Stop:** an unreadable stop flag ignored the user's Stop. It now
+    stops.
+  - **Enrichment sprint:** an unreadable enrichment lock now counts as running.
+  - **First login:** two simultaneous first logins could both become admin. Admin is now
+    decided inside the inserting transaction.
+- **"Unknown" no longer reads as "none":**
+  - **Arr history:** when it can't be read, the deletions page says so instead of "No
+    items imported in the last N days". It no longer overwrites the last known activity
+    with NULL.
+  - **Enrichment coverage:** an error shows "coverage unknown", not "enrichment has never
+    run".
+  - **Arr profile dropdowns:** a read failure shows "couldn't read from <arr>" with Retry,
+    not "(none configured)".
+  - **Wishes:** a crashed Plex lookup is unknown, not "not in library".
+  - **Vector counts:** an unreadable count is shown as unknown, not as zero.
+  - **Model-update eval:** a dead judge gives "no verdict" (unreadable pairs are counted),
+    not a tie.
+- **No silent degradation:**
+  - **Taste blob:** a corrupt one logs a WARNING and is recorded on the deletion run
+    ("degraded"). With nothing readable left, the run says so instead of "no taste profile
+    yet".
+  - **Recommendations:** one bad `disliked_titles` entry no longer wipes the taste vector.
+  - **Deletion cosine:** failures are counted, with one WARNING per run.
+  - **Lidarr adds:** failures appear in the summary, and the run reports `ok=False` when
+    every add failed.
+  - **Rate limiter:** still fails open by design, but now logs.
+  - **Embedding model:** if the active model can't be read, game start unloads both the
+    profile model and the legacy one.
+- **Races:**
+  - **Status memo:** it is now keyed per user. A member saw another user's watched-titles
+    numbers for 10 s.
+  - **Starter impressions:** written on the writer thread, with an atomic increment.
+  - **Local recategorize:** runs on the writer thread.
+  - **Caches:** size norms and the embedding profile use a generation counter, so a read
+    that started before an invalidation is not stored after it.
+  - **Prewarm:** the startup restore skips a service whose in-memory entry is newer.
+  - **Follow-up flags:** they hold a timestamp and are cleared only if unchanged, so a
+    flag set during the run is not lost.
+  - **Rec-hits queue / taste CAS:** an unreadable queue or CAS blob is skipped, not
+    overwritten.
+- **Frontend:**
+  - **Chat history:** a failed load shows an error with Retry, not an empty thread.
+  - **Activity:** render bugs are no longer hidden behind the `JSON.parse` guard.
+  - **Bell:** principles keep their last known state when a fetch fails.
+  - **Stale data:** `_swrRun` marks a failed refresh as stale (`swr-stale` event).
+  - **Shutdown:** an HTTP error no longer shows the "shutting down" overlay.
+  - **Background calls:** they log instead of `.catch(() => {})`.
+- **The silent-handler rule widened:**
+  - `tests/test_silent_except_ratchet.py` now also counts a broad handler whose body makes
+    no call: `return False`, `return {}`, `x = None`, `continue`.
+  - That widening found 129 more handlers. Each one got one of the dispositions above, a
+    narrower exception, a WARNING, `log_topup_failure`, or `# noqa: BLE001 - <reason>`.
+    The count is back to 0.
+- **Tests:** `tests/test_fail_closed_s2.py` and `tests/test_fail_closed_s2_g1.py` to
+  `tests/test_fail_closed_s2_g4.py`. Each behavioural check fails on the previous code.
+
+### Still open (sweep 2, PR 3)
+
+- **API:** no budget on member taste rebuilds; no last-admin guard on deactivation; arr
+  LAN addresses, root folders and raw error text reach members.
 - **Docs drift** in ARCHITECTURE.md, the AppSec, POST_REFACTOR and SQLITE audits, README,
   USAGE and ROADMAP.
 - **Not blocking-critical:** the Spotify genre top-up normalises up to 200k plays on the
-  loop before batching (~3 s, music pipeline only).
+  loop before batching (~3 s, music pipeline only). The settings view does not show the
+  model-eval `unreadable` count yet.

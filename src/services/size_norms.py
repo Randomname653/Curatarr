@@ -11,6 +11,7 @@ outlier detector tries the finest class that has enough samples, then falls back
     movie|4k|hevc   →   movie|4k|*   →   movie|*|*
 """
 import logging
+import threading
 from datetime import datetime
 
 import numpy as np
@@ -108,22 +109,39 @@ def compute_size_norms() -> dict:
 
 # Norms are a few dozen rows — cache them in-memory, refresh on recompute.
 _NORMS_CACHE = {"data": None}
+# Bumped by every invalidation. A worker-thread read that began before an
+# invalidating commit would otherwise store its stale result AFTER the clear
+# and serve it until the next recompute; a reader stores only when the
+# generation it captured before querying is still current.
+_CACHE_GEN = [0]
+_CACHE_LOCK = threading.Lock()
 
 
 def invalidate_norms_cache() -> None:
-    _NORMS_CACHE["data"] = None
-    _CROSS_DUP["data"] = None
+    with _CACHE_LOCK:
+        _CACHE_GEN[0] += 1
+        _NORMS_CACHE["data"] = None
+        _CROSS_DUP["data"] = None
+
+
+def _store_if_current(cache: dict, gen: int, data) -> None:
+    with _CACHE_LOCK:
+        if _CACHE_GEN[0] == gen:
+            cache["data"] = data
 
 
 def _load_norms() -> dict:
-    if _NORMS_CACHE["data"] is None:
+    data = _NORMS_CACHE["data"]
+    if data is None:
+        gen = _CACHE_GEN[0]
         with get_db_session() as db:
-            _NORMS_CACHE["data"] = {
+            data = {
                 n.class_key: {"median": n.median, "p75": n.p75, "p90": n.p90,
                               "std": n.std, "count": n.sample_count}
                 for n in db.query(MediaSizeNorm).all()
             }
-    return _NORMS_CACHE["data"]
+        _store_if_current(_NORMS_CACHE, gen, data)
+    return data
 
 
 def size_outlier(media_type: str, resolution, codec, mb_per_min,
@@ -353,8 +371,10 @@ def _load_cross_dup() -> dict:
     rows; this keeps the note honest until it has run. The case: "two
     separate library copies, 2.7 GB redundant" for a series that existed once.
     """
-    if _CROSS_DUP["data"] is None:
+    idx = _CROSS_DUP["data"]
+    if idx is None:
         from collections import defaultdict
+        gen = _CACHE_GEN[0]
         by = defaultdict(dict)   # key -> {fingerprint: size_mb}
         with get_db_session() as db:
             rows = db.query(MediaTechProfile.tmdb_id, MediaTechProfile.tvdb_id,
@@ -374,8 +394,8 @@ def _load_cross_dup() -> dict:
             if len(copies) > 1:
                 sizes = sorted(copies.values(), reverse=True)
                 idx[k] = (len(sizes), round(sum(sizes[1:]), 1))   # copies, redundant_mb
-        _CROSS_DUP["data"] = idx
-    return _CROSS_DUP["data"]
+        _store_if_current(_CROSS_DUP, gen, idx)
+    return idx
 
 
 def _cross_dup_note(tmdb_id, tvdb_id, media_type: str = None) -> str:

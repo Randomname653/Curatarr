@@ -96,7 +96,10 @@ async def soulsync_signals() -> dict:
     try:
         cached = json.loads(await run_read(get_state, _SIGNALS_KEY) or "{}")
         fresh = datetime.utcnow() - datetime.fromisoformat(cached["at"]) < _SIGNALS_TTL
-    except Exception:
+    except (ValueError, TypeError, KeyError):
+        cached, fresh = {}, False          # none stored yet, or unreadable: refetch
+    except Exception as e:
+        logger.warning("[taste] SoulSync signal cache unreadable, refetching: %s", e)
         cached, fresh = {}, False
     if not fresh:
         followed, liked = await ss.watchlist_artists(), await ss.liked_song_artists()
@@ -1376,7 +1379,7 @@ def _update_plain_taste_stats(user_id: int, all_results: dict, summary_parts: li
             def _merged(old_json: str, new: dict) -> dict:
                 try:
                     old = json.loads(old_json or "{}")
-                except Exception:
+                except (TypeError, ValueError):
                     old = {}
                 if not isinstance(old, dict):
                     old = {}
@@ -1517,9 +1520,16 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                         fresh = db.query(EncryptedTasteVector).filter(
                             EncryptedTasteVector.id == existing_etv.id).first()
                         try:
-                            fd = json.loads(fresh.encrypted_blob) if fresh else {}
-                        except Exception:
-                            fd = {}
+                            fd = json.loads(fresh.encrypted_blob) if fresh else None
+                        except (TypeError, ValueError):
+                            fd = None
+                        if not isinstance(fd, dict):
+                            # {} here meant rev 0 and a force-write of our
+                            # stale carry-over over whatever the merger wrote.
+                            logger.warning("[taste] %s blob unreadable after a CAS "
+                                           "miss - recompute result not written, "
+                                           "stored blob kept", cat)
+                            continue
                         for k in ("explicit_feedback", "disliked_titles",
                                   "theme_aversion"):
                             if fd.get(k) is not None:

@@ -10,6 +10,9 @@ import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 // Consecutive failed polls. The whole poll sat in `catch {}`: the badge and
 // list froze at their last values for as long as the server failed.
 let _bellFails = 0;
+// Last principles list read: a failed read keeps it (as sysOk keeps the
+// Settings count) instead of emptying the review queue from the bell.
+let _lastPrinciples = [];
 
 export async function loadUnreadMessages(seen) {
   try {
@@ -20,8 +23,11 @@ export async function loadUnreadMessages(seen) {
     if (state.currentUser?.is_admin) {
       try {
         const pr = await api('/api/recommendations/principles');
-        principles = (pr.principles || []).filter(p => p.status === 'shadow');
-      } catch {}
+        principles = _lastPrinciples = (pr.principles || []).filter(p => p.status === 'shadow');
+      } catch (e) {
+        console.warn('[bell] principles read failed - showing the last known list', e);
+        principles = _lastPrinciples;
+      }
     }
     // System notifications (services/notifications.py): model updates today,
     // more kinds later — one list, rendered the same way. The server names an
@@ -119,7 +125,8 @@ export async function respondToMessage(id, msgText, triggerType) {
   // processed, and only matches unread questions. Marking it read here, before
   // the user has typed a word, meant no answer was ever recorded.
   if (triggerType !== 'verification') {
-    await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST').catch(()=>{});
+    await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST')
+      .catch(e => console.warn('[bell] mark-read failed', id, e));
   }
   toggleMsgPanel();
 
@@ -141,7 +148,8 @@ export async function respondToMessage(id, msgText, triggerType) {
 export async function skipMessage(id, btn) {
   btn.disabled = true;
   btn.textContent = '…';
-  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST').catch(()=>{});
+  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST')
+    .catch(e => console.warn('[bell] skip (mark-read) failed', id, e));
   await loadUnreadMessages(true);   // panel still open: the next one is shown
 }
 

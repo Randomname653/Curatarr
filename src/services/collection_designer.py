@@ -114,7 +114,10 @@ async def design_collections() -> list:
         prev = json.loads(await run_read(get_state, "curatarr_collections") or "{}")
         prev_names = [d.get("title", "").removeprefix(COLLECTION_PREFIX)
                       for d in prev.get("designs", [])]
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
+        prev_names = []   # unparseable earlier run: nothing to avoid repeating
+    except Exception as e:
+        logger.warning("[collections] previous designs unreadable - names may repeat: %s", e)
         prev_names = []
 
     from src.services.library_memory import normalize_title

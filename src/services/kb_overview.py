@@ -82,7 +82,7 @@ def _dir_size_mb(path: str) -> float:
                     total += os.path.getsize(os.path.join(root, f))
                 except OSError:
                     pass
-    except Exception:
+    except Exception:  # noqa: BLE001 - os.walk swallows its own errors; a size on the overview card only
         return 0.0
     return round(total / (1024 * 1024), 1)
 
@@ -267,7 +267,8 @@ def _mbid_parked() -> dict:
     try:
         from src.services.music_misses import stats
         return stats()
-    except Exception:                                        # pragma: no cover
+    except Exception as e:                                   # pragma: no cover
+        logger.warning("[kb-overview] music miss stats unreadable - shown as 0: %s", e)
         return {"missed": 0, "waiting": 0, "due": 0, "next_retry_at": None}
 
 

@@ -227,7 +227,7 @@ async def _search_sections(token: str, sections: list, params: dict, what: str) 
                 meta = (r.json().get("MediaContainer") or {}).get("Metadata") or []
                 if meta:
                     return str(meta[0].get("ratingKey"))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - kept in err and re-raised below when no section matched
                 logger.debug("[playlists] %s lookup in %s failed: %s", what, sec, e)
                 err = e
     if err is not None:
@@ -311,8 +311,14 @@ def _push_snapshot_key(user_id: int) -> str:
 def _load_snapshot(user_id: int) -> dict:
     from src.services.app_state import get_state
     try:
-        return json.loads(get_state(_push_snapshot_key(user_id)) or "{}")
-    except Exception:
+        snap = json.loads(get_state(_push_snapshot_key(user_id)) or "{}")
+        if not isinstance(snap, dict):
+            raise ValueError(f"not an object: {type(snap).__name__}")
+        return snap
+    except Exception as e:
+        # {} only costs a re-push the freshness guard would have skipped
+        logger.warning("[playlists] push snapshot for user %d unreadable - "
+                       "re-pushing: %s", user_id, e)
         return {}
 
 
@@ -498,7 +504,8 @@ async def pick_album_key(user_token: str, artist_key: str,
                 m = ((r.json().get("MediaContainer") or {}).get("Metadata") or [{}])[0]
                 if int(m.get("viewedLeafCount") or 0) == 0:
                     return key
-            except Exception:
+            except Exception as e:
+                log_topup_failure(logger, "[playlists] album", key, e)
                 continue
         return str(albums[0].get("ratingKey"))
 

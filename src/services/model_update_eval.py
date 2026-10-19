@@ -103,7 +103,7 @@ async def judge_pair(endpoint: str, model: str, key: str, system: str, context: 
     """Both orders; the winner is NEW/OLD only when both reads agree."""
     from src.services.llm_priority import extend_bulk_hold
     extend_bulk_hold(900)     # a long review must not let enrichment in
-    picks, reasons = [], []
+    picks, reasons, unreadable = [], [], 0
     first_new_a = _new_is_a(key)
     for new_is_a in (first_new_a, not first_new_a):
         a, b = (new, old) if new_is_a else (old, new)
@@ -112,14 +112,20 @@ async def judge_pair(endpoint: str, model: str, key: str, system: str, context: 
                            f"{context}\n\nANSWER A:\n{a}\n\nANSWER B:\n{b}", PAIR_SCHEMA)
         except Exception as e:   # one unreadable answer is a tie, not a crash
             logger.info("[model eval] %s: %s", key, e)
+            unreadable += 1
             r = {"better": "tie", "reason": f"unreadable ({type(e).__name__})"}
         better = r.get("better")
         picks.append("tie" if better not in ("A", "B") else
                      ("new" if (better == "A") == new_is_a else "old"))
         reasons.append(r.get("reason", "")[:300])
     winner = picks[0] if picks[0] == picks[1] else "tie"
+    if unreadable:
+        # Not a draw: a dead judge made every pair a "tie" and the verdict
+        # "either", which read exactly like two equally good models.
+        winner = "unreadable"
     return {"key": key, "winner": winner, "reads": picks, "reasons": reasons,
-            "position_flip": picks[0] != picks[1] and "tie" not in picks}
+            "position_flip": picks[0] != picks[1] and "tie" not in picks,
+            "unreadable": unreadable}
 
 
 def _gb(v) -> str:
@@ -140,9 +146,9 @@ def _numbers(s: dict, t: dict, c: dict, hard: list[str], titles: list[dict]) -> 
     judge = s.get("judge_s") or {}
     fails = s.get("failures") or {}
     return [
-        f"Titles: NEW better {t['new']}, OLD better {t['old']}, tie {t['tie']} "
-        f"({t['position_flips']} flipped with the order).",
-        f"Chat: NEW {c['new']}, OLD {c['old']}, tie {c['tie']}.",
+        f"Titles: NEW better {t['new']}, OLD better {t['old']}, tie {t['tie']}, "
+        f"unreadable {t.get('unreadable', 0)} ({t['position_flips']} flipped with the order).",
+        f"Chat: NEW {c['new']}, OLD {c['old']}, tie {c['tie']}, unreadable {c.get('unreadable', 0)}.",
         f"Verdicts unchanged {s.get('verdicts_same')}/{s.get('verdicts_compared')}.",
         ("Per-title times: not comparable (taken while another model shared the card)."
          if s.get("timings_contaminated") else
@@ -176,17 +182,27 @@ async def evaluate(comparison: dict, endpoint: str, judge_model: str) -> dict:
                                       f"QUESTION: {a['prompt']}", a["text"], b["text"]))
 
     def tally(rows):
-        return {k: sum(r["winner"] == k for r in rows) for k in ("new", "old", "tie")} | {
+        return {k: sum(r["winner"] == k for r in rows)
+                for k in ("new", "old", "tie", "unreadable")} | {
             "position_flips": sum(r["position_flip"] for r in rows)}
 
     t, c = tally(titles), tally(chats)
     hard = guards(comparison["summary"])
     s = comparison["summary"]
     numbers = "\n".join(_numbers(s, t, c, hard, titles))
-    try:
-        final = await _ask(endpoint, judge_model, FINAL_SYSTEM, numbers, FINAL_SCHEMA)
-    except Exception as e:
-        final = {"recommendation": "either", "reason": f"no recommendation ({type(e).__name__})"}
+    judged = len(titles) + len(chats)
+    dead = t["unreadable"] + c["unreadable"]
+    if judged and dead * 2 > judged:
+        logger.warning("[model eval] %d of %d judgements unreadable - no verdict", dead, judged)
+        final = {"recommendation": "no verdict",
+                 "reason": f"{dead} of {judged} judgements were unreadable - the judge did not answer"}
+    else:
+        try:
+            final = await _ask(endpoint, judge_model, FINAL_SYSTEM, numbers, FINAL_SCHEMA)
+        except Exception as e:
+            logger.warning("[model eval] final recommendation failed: %s", e, exc_info=True)
+            final = {"recommendation": "no verdict",
+                     "reason": f"no recommendation ({type(e).__name__})"}
     rec = final.get("recommendation")
     overruled = bool(hard) and rec == "update"
     return {

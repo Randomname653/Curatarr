@@ -79,13 +79,17 @@ async function _openTaskStream() {
   };
 
   es.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      const tasks = Array.isArray(data) ? data : [];
-      renderTasks(tasks);
-      updateTaskBadge(tasks);
-      updateEnrichLiveSection(tasks);
-    } catch {}
+    let data;
+    try { data = JSON.parse(e.data); } catch (err) {
+      console.warn('[activity] unparseable task event', err);   // the next event repaints
+      return;
+    }
+    const tasks = Array.isArray(data) ? data : [];
+    // Only the parse is expected to fail; a render bug must be seen, and one
+    // broken renderer must not stop the other two.
+    for (const render of [renderTasks, updateTaskBadge, updateEnrichLiveSection]) {
+      try { render(tasks); } catch (err) { console.error(`[activity] ${render.name} failed`, err); }
+    }
   };
 
   // A ticket is single-use: the browser's own reconnect would replay the

@@ -28,7 +28,7 @@ class _Proc:
 
     def memory_info(self):
         if self._mem is None:
-            raise Exception("Access denied")
+            raise pm.psutil.AccessDenied(self.pid)
         return self._mem
 
 

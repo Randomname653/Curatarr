@@ -69,8 +69,17 @@ def _load_refresh_subject(user_id: int):
             return {"id": u.id, "is_admin": bool(u.is_admin),
                     "is_active": bool(u.is_active),
                     "token_version": int(u.token_version or 0)}
-    except Exception:  # noqa: BLE001
+    except Exception as e:
+        # Fails closed (no refresh; the token runs to its expiry), but a dead
+        # DB here would otherwise be silent. Per request: rate-limited.
+        now = time.monotonic()
+        if now - _refresh_warned["at"] > 60:
+            _refresh_warned["at"] = now
+            logger.warning("[auth] token refresh skipped - account unreadable: %s", e)
         return None
+
+
+_refresh_warned = {"at": float("-inf")}
 
 
 class TokenRefreshMiddleware:

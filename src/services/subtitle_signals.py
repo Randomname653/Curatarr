@@ -702,7 +702,8 @@ def _os_blocked_today() -> bool:
     try:
         from src.services import app_state
         return app_state.get_state(_os_blocked_key()) == "1"
-    except Exception:
+    except Exception as e:
+        logger.warning("[subtitles] day-block flag unreadable - pausing for now: %s", e)
         return True
 
 

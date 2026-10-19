@@ -241,7 +241,7 @@ def closure(roots: Dict[str, Tuple[str, List[str]]],
         for r in reqs:
             try:
                 req = Requirement(r)
-            except Exception:  # noqa: BLE001
+            except ValueError:   # InvalidRequirement: a metadata line we cannot parse
                 continue
             if req.marker is None:
                 if "" in wanted:
@@ -261,7 +261,7 @@ def _applies_here(entry: Entry, packaging=None) -> bool:
         return True
     try:
         return bool(pk[2](entry.marker).evaluate())
-    except Exception:  # noqa: BLE001
+    except (ValueError, KeyError):   # InvalidMarker / UndefinedComparison / UndefinedEnvironmentName
         return True
 
 
@@ -332,7 +332,7 @@ def _lower(Version, a: str, b: str) -> bool:
         return a != b
     try:
         return Version(a) < Version(b)
-    except Exception:  # noqa: BLE001
+    except (ValueError, TypeError):   # InvalidVersion
         return a != b
 
 
@@ -397,7 +397,7 @@ def pypi_hashes(name: str, version: str, fetch=None) -> List[str]:
         return r.json()
     try:
         data = (fetch or _default)(f"https://pypi.org/pypi/{name}/{version}/json")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - [] makes merged() print 'PyPI unreachable' and keep the lock line as it is
         return []
     out = []
     for f in data.get("urls") or []:

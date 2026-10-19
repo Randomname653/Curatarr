@@ -396,7 +396,8 @@ def _tech_facts(item: dict, media_type: str) -> tuple[str, bool]:
     """Raw tech line + bitrate-outlier flag. ('', False) when no profile on file."""
     try:
         from src.services.size_norms import tech_profile_for, size_outlier
-    except Exception:
+    except ImportError as e:
+        logger.warning("[pillars] size_norms unavailable — no Bitrate line: %r", e)
         return "", False
     # media_type scopes the TMDB lookup: film and series ids are separate
     # sequences, so the bare number can otherwise return another work's profile.
@@ -818,7 +819,10 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     try:
         tech_line, outlier = await run_read(_tech_facts, item, media_type)
     except Exception as e:
-        logger.debug("[pillars] tech failed for %r: %s", title, e)
+        # a locked DB is transient; anything else is a bug that silently
+        # drops the Bitrate line from every verdict
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[pillars] tech", title, e)
         tech_line, outlier = "", False
     flags["bitrate_outlier"] = outlier
 

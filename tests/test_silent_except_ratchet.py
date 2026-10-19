@@ -44,12 +44,24 @@ def _is_debug_call(stmt) -> bool:
             and stmt.value.func.attr == "debug")
 
 
+def _calls_other_than_debug(stmts) -> bool:
+    for s in stmts:
+        for n in ast.walk(s):
+            if isinstance(n, ast.Call) and not (
+                    isinstance(n.func, ast.Attribute) and n.func.attr == "debug"):
+                return True
+            if isinstance(n, (ast.Raise, ast.Yield, ast.YieldFrom, ast.Await)):
+                return True
+    return False
+
+
 def _is_silent(body: list) -> bool:
-    if all(isinstance(s, ast.Pass) for s in body):
-        return True
-    if not _is_debug_call(body[0]):
-        return False
-    return all(isinstance(s, (ast.Pass, ast.Continue, ast.Return)) for s in body[1:])
+    """Nothing a normal log level shows and no call at all: ``pass``, a lone
+    DEBUG line, or only a default - ``return False`` / ``return {}`` /
+    ``x = None`` / ``continue`` / ``n += 1``. A body that records the error
+    somewhere (``errors.append(str(e))``, ``info["error"] = str(e)``) makes a
+    call and is not counted."""
+    return not _calls_other_than_debug(body)
 
 
 def _annotation(line: str):

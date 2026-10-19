@@ -511,10 +511,13 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
 
     def _create_user(first_ever):
         with get_db_session() as db:
+            # Admin is decided HERE, in the inserting transaction: first_ever
+            # was read in an earlier one, and two first logins racing past it
+            # both became admin. The loser of the race is a regular user.
             user = User(
                 plex_user_id=plex_id,
                 plex_username=plex_username,
-                is_admin=first_ever,
+                is_admin=bool(first_ever) and _no_admin_exists(db),
                 is_active=True,
                 created_at=datetime.now(timezone.utc),
                 # Store the user's OWN plex.tv token — per-account Plex writes
@@ -533,12 +536,12 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
         if settings.PLEX_LOGIN_REQUIRE_MEMBERSHIP:
             await _assert_plex_membership(plex_id, first_ever)
         info = await run_write(_create_user, first_ever)
-        logger.info("New user: %s (admin=%s)", plex_username, first_ever)
+        logger.info("New user: %s (admin=%s)", plex_username, info[1])
         # A secondary user just arrived → set up their data automatically:
         # re-attribute their Plex plays off the admin + build their taste
         # vector in the background. No admin button, no manual step. (The
         # first-ever user is the admin / data source, so they're skipped.)
-        if not first_ever:
+        if not info[1]:
             background_tasks.add_task(_bootstrap_user_data, info[0])
     user_id, is_admin, token_version, username = info
 

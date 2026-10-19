@@ -6,6 +6,24 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**When something can't be read, Curatarr now says so.** Several checks used to read an
+unreadable value as "all clear". Now:
+- an unreadable game flag counts as a game;
+- a server-address check whose name lookup times out is refused;
+- an unreadable OMDb usage count leaves no budget for the day;
+- the music pipeline's Stop button works even when its flag can't be read.
+
+Screens that showed a failure as if it were real data now say what couldn't be loaded:
+- Sonarr/Radarr history on the deletions page;
+- enrichment coverage;
+- arr profiles in library settings;
+- chat history.
+
+A corrupt taste profile is flagged on the deletion run instead of being quietly
+ignored. The enrichment status counts are no longer shown to another user for a few
+seconds. Two people logging in for the first time at the same moment can no longer
+both become admin.
+
 **Fewer pauses from game checks, web requests and large imports.** The "is a game
 running?" check (`nvidia-smi` plus a scan of every process) ran before every AI request
 and for every enriched or judged title. It now answers from the last result, refreshed in

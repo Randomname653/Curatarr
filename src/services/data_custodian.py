@@ -318,7 +318,7 @@ async def _run_recs(deep: bool = False) -> bool:
     from datetime import datetime, timedelta
     from src.database.connection import get_db_session
     from src.database.models import CachedRecommendation, User
-    from src.services.app_state import get_state, set_state
+    from src.services.app_state import get_state
     from src.services import scheduler as sched
 
     def _users():
@@ -347,7 +347,11 @@ async def _run_recs(deep: bool = False) -> bool:
             logger.info("[custodian] refreshing recommendations for %s%s",
                         uname, " (all sampled)" if sampled_flag else "")
             await sched._cache_recommendations(uid)
-            await run_write(set_state, f"recs_all_sampled:user_id={uid}", "")
+            if not await run_write(_clear_flag_if_unchanged,
+                                   f"recs_all_sampled:user_id={uid}", sampled_flag, ""):
+                logger.info("[custodian] %s sampled more recommendations during the "
+                            "refresh - another early refresh follows", uname)
+                all_ok = False
         except Exception as e:
             logger.warning("[custodian] rec refresh failed for %s: %s", uname, e)
             all_ok = False
@@ -574,13 +578,25 @@ async def _run_plex_sync() -> bool:
     return await sched.job_plex_sync(chain_llm=False)
 
 
+def _clear_flag_if_unchanged(key: str, seen, cleared: str) -> bool:
+    """Compare-and-clear, called through ONE run_write. The work behind a
+    flag runs for minutes; clearing it unconditionally lost a flag set again
+    meanwhile (new plays, more recs sampled). False = it changed, kept."""
+    from src.services.app_state import get_state, set_state
+    if (get_state(key) or "") != (seen or ""):
+        return False
+    set_state(key, cleared)
+    return True
+
+
 async def _run_plex_followup() -> bool:
     """What a sync with new plays used to run inline: taste vectors for every
     active user (the curator writes the taste summary), then the admin's
     recommendation cache and verification questions. A no-op unless the sync
     left the flag; stays due while a game holds the card."""
-    from src.services.app_state import get_state, set_state
-    if await run_read(get_state, _FOLLOWUP_FLAG) != "1":
+    from src.services.app_state import get_state
+    flag = await run_read(get_state, _FOLLOWUP_FLAG)
+    if flag in (None, "", "0"):
         return True
     from src.services import scheduler as sched
     if await run_read(sched._gaming):
@@ -592,7 +608,9 @@ async def _run_plex_followup() -> bool:
             await compute_all_taste_vectors(uid)
     if admin is not None:
         await sched._recompute_and_cache_recs(admin)   # the admin's taste + recs + verification
-    await run_write(set_state, _FOLLOWUP_FLAG, "0")
+    if not await run_write(_clear_flag_if_unchanged, _FOLLOWUP_FLAG, flag, "0"):
+        logger.info("[custodian] new plays arrived during the follow-up - it runs again next tick")
+        return False
     return True
 
 
@@ -1084,11 +1102,14 @@ def _keep_awake(on: bool) -> None:
 
 
 def _enrichment_running() -> bool:
+    """An unreadable lock reads as RUNNING: the sprint then neither starts a
+    second enrichment beside it nor ends itself on a guess."""
     from src.services.app_state import get_state
     try:
         return get_state("enrichment_running") == "1"
-    except Exception:  # noqa: BLE001
-        return False
+    except Exception as e:
+        logger.warning("[sprint] enrichment lock unreadable - treated as running: %s", e)
+        return True
 
 
 def _enrichment_left() -> int:
@@ -1125,7 +1146,9 @@ def _enrichment_due() -> bool:
     try:
         t = next(t for t in _registry() if t.job_id == "custodian_enrich")
         return _job_overdue(t.job_id, t.cadence_h)
-    except Exception:  # noqa: BLE001
+    except Exception as e:
+        # Not due = no sprint chunk: the safe side, but never a silent one.
+        logger.warning("[sprint] enrichment due check failed - no chunk this tick: %s", e)
         return False
 
 

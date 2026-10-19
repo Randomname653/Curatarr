@@ -189,7 +189,10 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
     series = sorted((s for s in series or [] if isinstance(s, dict) and s.get("id")), key=lambda s: int(s["id"]))
     try:
         cursor = int(await run_read(get_state, _CURSOR_KEY) or 0)
-    except Exception:
+    except (ValueError, TypeError):
+        cursor = 0        # a garbled cursor: start over (fresh rows are skipped)
+    except Exception as e:
+        logger.warning("[editions] cursor unreadable - starting from the first series: %s", e)
         cursor = 0
     fresh_before = now - timedelta(days=_RECHECK_DAYS)
 
@@ -221,7 +224,8 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
             files = await client.get_episode_files(sid)
         except Exception as e:
             failed += 1
-            logger.debug("[editions] episodefile %s failed: %s", sid, e)
+            from src.services.enrichment_state import log_topup_failure
+            log_topup_failure(logger, "[editions] episodefile", sid, e)
             last_id = sid
             continue
         row = classify_files(files)

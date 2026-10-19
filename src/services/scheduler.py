@@ -58,7 +58,7 @@ def _last_job_run(job_id: str) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(raw)
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -550,7 +550,11 @@ async def job_plex_sync(chain_llm: bool = True):
                 # The model half runs in the custodian's model queue.
                 from src.database.runner import run_write
                 from src.services.app_state import set_state
-                await run_write(set_state, "plex_followup_pending", "1")
+                # A fresh value per sync, not "1": the follow-up clears the
+                # flag only if it still holds what it read, so plays that
+                # arrive while it runs are not lost.
+                await run_write(set_state, "plex_followup_pending",
+                                datetime.utcnow().isoformat())
     except Exception as e:
         logger.error("[scheduler] Plex sync failed: %s", e)
         ok = False
@@ -1608,7 +1612,9 @@ async def _cache_recommendations(user_id: int):
                         try:
                             rec["poster_url"], rec["synopsis"] = await _fetch_tmdb(
                                 rec.get("title", ""), cat)
-                        except Exception:
+                        except Exception as e:
+                            from src.services.enrichment_state import log_topup_failure
+                            log_topup_failure(logger, "[recs] poster", rec.get("title", ""), e)
                             rec["poster_url"] = None
                             rec["synopsis"] = None
 

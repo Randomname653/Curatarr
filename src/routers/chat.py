@@ -149,7 +149,8 @@ async def _check_verification_response(user_id: int, user_message: str, thread_i
         if not processed:
             await run_write(_revert_verification_claim, pending_id)
     except Exception as e:
-        logger.debug("Verification response check failed: %s", e)
+        # The user's answer is dropped and the question re-armed: visible.
+        logger.warning("Verification response check failed: %s", e, exc_info=True)
         if pending_id is not None:
             await run_write(_revert_verification_claim, pending_id)
 
@@ -1275,7 +1276,8 @@ _starter_gen_running: set[int] = set()
 async def get_starters(user: User = Depends(get_current_user)):
     from src.services.chat_starters import (pick_starters, pool_fresh_count,
                                             generate_starters, POOL_TARGET)
-    picks = await run_read(pick_starters, user.id)
+    # pick_starters writes (impressions, retired day-named rows): the writer
+    picks = await run_write(pick_starters, user.id)
     try:
         from src.services.process_monitor import is_game_running
         if (await run_read(pool_fresh_count, user.id) < POOL_TARGET // 2
@@ -2362,8 +2364,9 @@ async def _build_discuss_context_block(
                 try:
                     from src.services.music_metadata import enrich_track
                     enr = await asyncio.wait_for(enrich_track(track, artist), timeout=4.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.debug("[chat] enrich_track(%r) failed/timed out: %s", track, e)
+                except Exception as e:
+                    # timeout / Last.fm outage stays at DEBUG, a bug is a WARNING
+                    log_topup_failure(logger, "[chat] enrich_track", track, e)
                     enr = None
                 if enr:
                     anchor_payload = enr

@@ -74,7 +74,7 @@ def is_private_endpoint(url: str) -> bool:
         return False
     try:
         host = (httpx.URL(url).host or "").lower().strip()
-    except Exception:
+    except (httpx.InvalidURL, ValueError, TypeError):
         return False
     if not host:
         return False
@@ -102,7 +102,7 @@ def endpoint_privacy_note(url: str) -> Optional[str]:
         return None
     try:
         host = httpx.URL(url).host or "?"
-    except Exception:
+    except (httpx.InvalidURL, ValueError, TypeError):
         host = "?"
     return (
         f"This endpoint ({host}) does not look like a private address. "
@@ -805,7 +805,7 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
                         continue
                     try:
                         data = _json.loads(line)
-                    except Exception:
+                    except ValueError:   # a partial / non-JSON progress line
                         continue
 
                     if data.get("error"):
@@ -939,7 +939,7 @@ async def build_ollama_models(ollama_endpoint: str,
                                 return False
                             if data.get("status") == "success":
                                 return True
-                        except Exception:
+                        except (ValueError, AttributeError):   # non-JSON / non-object line
                             continue
             # The stream ended without Ollama ever saying "success" — a dropped
             # connection, not a finished build. build_models.py used to print

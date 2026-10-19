@@ -193,7 +193,9 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
 
             data = r2.json()
 
-    except Exception as e:  # noqa: BLE001 - an outage; TRANSIENT tells the caller, nothing is cached
+    except (httpx.HTTPError, ValueError) as e:
+        # An outage or a non-JSON body: TRANSIENT tells the caller, nothing is
+        # cached. A response-shape bug propagates - the caller logs it.
         logger.debug("MusicBrainz error for %s: %s", artist_name, e)
         # No neg-cache on exception (timeout, DNS, etc.) — transient.
         return TRANSIENT
@@ -394,7 +396,8 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
                     for a in r2.json().get("similarartists", {}).get("artist", [])
                 ]
 
-    except Exception as e:  # noqa: BLE001 - an outage; TRANSIENT tells the caller, nothing is cached
+    except (httpx.HTTPError, ValueError) as e:
+        # An outage or a non-JSON body (see the MusicBrainz fetch above).
         logger.debug("Last.fm error for %s: %s", artist_name, e)
         return TRANSIENT
 
@@ -479,8 +482,10 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         )
         # An exception is an upstream that did not answer, not "no record".
         if isinstance(mb, Exception):
+            log_topup_failure(logger, "[music] MusicBrainz", artist_name, mb)
             mb = TRANSIENT
         if isinstance(lfm, Exception):
+            log_topup_failure(logger, "[music] Last.fm", artist_name, lfm)
             lfm = TRANSIENT
     else:
         # Fast mode: skip MB entirely + skip the artist_profile cache
@@ -491,7 +496,8 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         ss = None
         try:
             lfm = await fetch_lastfm_artist(artist_name)
-        except Exception:
+        except Exception as e:
+            log_topup_failure(logger, "[music] Last.fm", artist_name, e)
             lfm = TRANSIENT
 
     # TRANSIENT is falsy, so the test below used to read "MusicBrainz and

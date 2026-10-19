@@ -317,32 +317,27 @@ async def library_profiles(
 
     client = _make_client(service, url, api_key)
     out: dict = {"service": service}
+
+    async def _field(name: str, fetch) -> None:
+        # An empty list plus ``<name>_error``: the Settings dropdown says the
+        # read failed instead of "(none configured)".
+        try:
+            out[name] = await fetch()
+        except Exception as e:
+            logger.warning("[library] %s %s fetch failed: %s", service, name, e)
+            out[name] = []
+            out[f"{name}_error"] = str(e)
+
     try:
         async with client:
-            try:
-                out["root_folders"]       = await client.list_root_folders()
-            except Exception as e:
-                out["root_folders"] = []
-                out["root_folders_error"] = str(e)
-            try:
-                out["quality_profiles"]   = await client.list_quality_profiles()
-            except Exception as e:
-                out["quality_profiles"] = []
-                out["quality_profiles_error"] = str(e)
+            await _field("root_folders", client.list_root_folders)
+            await _field("quality_profiles", client.list_quality_profiles)
             # Pass 16b.1: language_profiles removed — Sonarr v4 dropped them.
             # The arr_client method still exists (defensive) but the UI
             # doesn't need them anymore.
             if service == "lidarr":
-                try:
-                    out["metadata_profiles"] = await client.list_metadata_profiles()
-                except Exception as e:
-                    out["metadata_profiles"] = []
-                    out["metadata_profiles_error"] = str(e)
-            try:
-                out["tags"] = await client.list_tags()
-            except Exception as e:
-                out["tags"] = []
-                out["tags_error"] = str(e)
+                await _field("metadata_profiles", client.list_metadata_profiles)
+            await _field("tags", client.list_tags)
     except Exception as e:
         raise HTTPException(502, f"{service} unreachable: {e}")
     return out
@@ -616,6 +611,11 @@ def _load_lib_cache_from_db() -> int:
                 tags      = payload.get("tags", [])
                 at        = payload.get("at")
                 if items_raw is None or at is None:
+                    continue
+                # This runs in a thread while requests are already served: a
+                # live fetch that landed first is fresher than the DB copy.
+                cur = _LIB_CACHE.get(svc)
+                if cur is not None and (cur.get("at") or 0) >= at:
                     continue
                 _LIB_CACHE[svc] = {"items_raw": items_raw, "tags": tags, "at": at}
                 restored += 1
@@ -969,12 +969,24 @@ class WishRequest(BaseModel):
     note: Optional[str] = None
 
 
-def _wish_in_library(title: str, mbid: Optional[str]) -> bool:
+_wish_lookup_warned_at = 0.0
+
+
+def _wish_in_library(title: str, mbid: Optional[str]) -> Optional[bool]:
+    """True/False from the Plex artist index; None when the index could not
+    be read - "unknown", which the UI must not show as "not in library"."""
+    global _wish_lookup_warned_at
     try:
         from src.services.lyrics import plex_artist_lookup
         return plex_artist_lookup(name=title, mbid=mbid) is not None
-    except Exception:
-        return False
+    except Exception as e:
+        import time as _t
+        # once a minute: list_wishes looks up every row
+        if _t.monotonic() - _wish_lookup_warned_at > 60:
+            _wish_lookup_warned_at = _t.monotonic()
+            logger.warning("[wishes] Plex artist lookup failed for %r - "
+                           "in_library unknown: %s", title, e)
+        return None
 
 
 @router.get("/wishes")
@@ -1775,7 +1787,7 @@ async def library_breakdown(
                                 datetime.utcfromtimestamp(int(ts)).isoformat() + "Z"
                                 if ts else None
                             )
-                        except Exception:
+                        except (ValueError, TypeError, OverflowError, OSError):
                             plex_scanned_at[skey] = None
 
                 async def _count(client_, key):
@@ -1979,12 +1991,13 @@ async def library_breakdown(
 
     # ── 5. Vector-store counts (ChromaDB, per-service prefix) ───────────────
     # Lazy import so the endpoint still loads when Chroma is misconfigured.
-    def _vector_count(svc: str) -> int:
+    def _vector_count(svc: str) -> Optional[int]:
         try:
             from src.vector_store.chromadb_wrapper import get_chroma_db
             return get_chroma_db().count_by_id_prefix(f"{svc}:")
-        except Exception:
-            return 0
+        except Exception as e:
+            logger.warning("[library] ChromaDB count for %s: failed: %s", svc, e)
+            return None
 
     _vector_counts: dict = {}   # svc -> count, filled on first need
 
@@ -2127,7 +2140,12 @@ async def library_breakdown(
                 from src.vector_store.chromadb_wrapper import run_chroma
                 _vector_counts[svc] = await run_chroma(_vector_count, svc)
             chroma_n = _vector_counts[svc]
-            if chroma_n:
+            if chroma_n is None:
+                vector_basis = (
+                    f"ChromaDB could not be read for ``{svc}:`` - the vector "
+                    f"count is unknown, not zero."
+                )
+            elif chroma_n:
                 vector_indexed = chroma_n
                 vector_basis = (
                     f"ChromaDB doc count with id prefix ``{svc}:`` — "
