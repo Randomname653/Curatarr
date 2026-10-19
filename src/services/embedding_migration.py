@@ -100,17 +100,20 @@ async def run_embedding_migration(task) -> dict:
     from src.services.app_state import set_state
     from src.services.embed_service import embed_documents, get_profile, set_profile
     from src.services.task_monitor import task_monitor
-    from src.vector_store.chromadb_wrapper import ChromaDBWrapper, get_chroma_db
+    from src.vector_store.chromadb_wrapper import ChromaDBWrapper, get_chroma_db, run_chroma
 
+    # Every Chroma step below runs on the Chroma thread, between the embeds:
+    # a corpus of thousands of documents paged, written and evaluated on the
+    # event loop stalled every request for the whole migration.
     live = get_chroma_db()
-    refusal = _preflight(live.collection_name, _collection_names(live.client))
+    refusal = _preflight(live.collection_name, await run_chroma(_collection_names, live.client))
     if refusal:
         task_monitor.update(task, message=f"NOT migrating: {refusal} — nothing "
                                           "was created or deleted", level="error")
         return {"ok": False, "reason": refusal}
 
-    src = ChromaDBWrapper(LEGACY_COLLECTION)
-    total = src.get_count()
+    src = await run_chroma(ChromaDBWrapper, LEGACY_COLLECTION)
+    total = await run_chroma(src.get_count)
     if total == 0:
         task_monitor.update(task, message=f"NOT migrating: {LEGACY_COLLECTION} "
                                           "is empty — nothing was deleted",
@@ -120,19 +123,22 @@ async def run_embedding_migration(task) -> dict:
                         message=f"Source: {total} docs in {LEGACY_COLLECTION}")
 
     # ── target collection: fresh every run (re-runs must not mix states) ──
-    client = src.client
-    try:
-        client.delete_collection(V2_PROFILE["collection"])
-    except Exception:  # noqa: BLE001 - absent on a first run; create below fails loud
-        pass
-    dst_coll = client.create_collection(
-        name=V2_PROFILE["collection"],
-        metadata={"hnsw:space": "cosine",
-                  "emb_model": V2_PROFILE["model"],
-                  "emb_dim": 768,
-                  "text_schema": V2_PROFILE["schema"],
-                  "migrated_from": LEGACY_COLLECTION},
-    )
+    def _fresh_target():
+        client = src.client
+        try:
+            client.delete_collection(V2_PROFILE["collection"])
+        except Exception:  # noqa: BLE001 - absent on a first run; create below fails loud
+            pass
+        return client.create_collection(
+            name=V2_PROFILE["collection"],
+            metadata={"hnsw:space": "cosine",
+                      "emb_model": V2_PROFILE["model"],
+                      "emb_dim": 768,
+                      "text_schema": V2_PROFILE["schema"],
+                      "migrated_from": LEGACY_COLLECTION},
+        )
+
+    dst_coll = await run_chroma(_fresh_target)
 
     # ── re-embed the corpus, page by page ────────────────────────────────
     done, failed = 0, 0
@@ -140,8 +146,8 @@ async def run_embedding_migration(task) -> dict:
     while True:
         if task.status.value == "skipped":
             return {"ok": False, "cancelled": True}
-        page = src.collection.get(include=["documents", "metadatas"],
-                                  limit=_BATCH, offset=offset)
+        page = await run_chroma(src.collection.get, include=["documents", "metadatas"],
+                                limit=_BATCH, offset=offset)
         ids = page.get("ids") or []
         if not ids:
             break
@@ -151,7 +157,8 @@ async def run_embedding_migration(task) -> dict:
         ok_idx = [i for i, v in enumerate(vecs) if v]
         failed += len(ids) - len(ok_idx)
         if ok_idx:
-            dst_coll.add(
+            await run_chroma(
+                dst_coll.add,
                 ids=[ids[i] for i in ok_idx],
                 documents=[docs[i] for i in ok_idx],
                 embeddings=[vecs[i] for i in ok_idx],
@@ -173,15 +180,15 @@ async def run_embedding_migration(task) -> dict:
     # than an unrelated doc in the NEW space. Sanity, not identity — the
     # new model may (should) re-rank, but similar must beat random.
     sample = []
-    page = src.collection.get(include=["documents", "embeddings"],
-                              limit=1000, offset=0)
+    page = await run_chroma(src.collection.get, include=["documents", "embeddings"],
+                            limit=1000, offset=0)
     for i, doc in enumerate(page.get("documents") or []):
         if doc and len(doc) > 80:
             sample.append((page["ids"][i], page["embeddings"][i]))
         if len(sample) >= _EVAL_SAMPLE:
             break
-    dst = ChromaDBWrapper(V2_PROFILE["collection"])
-    hits, tried = _neighborhood_eval(src.collection, dst, sample)
+    dst = await run_chroma(ChromaDBWrapper, V2_PROFILE["collection"])
+    hits, tried = await run_chroma(_neighborhood_eval, src.collection, dst, sample)
     rate = (hits / tried) if tried else 0.0
     task_monitor.update(task, message=f"Eval gate: {hits}/{tried} "
                                       f"similar-beats-random ({rate:.0%})")

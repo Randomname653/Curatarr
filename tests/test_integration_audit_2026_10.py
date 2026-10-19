@@ -201,7 +201,7 @@ gen = src_eng.split("async def generate_deletion_proposals(")[1].split("\nasync 
 check("phase A's DB reads run in one worker-thread call",
       "await asyncio.to_thread(_load_phase_a)" in gen)
 check("the embedding prefetch runs on the Chroma thread",
-      "run_chroma(chroma_db.get_by_ids" in gen)
+      "run_chroma(_chroma_get_by_ids" in gen)
 check("the scoring loop no longer opens the cache per candidate",
       "_get_cached_rating(item, category)" not in gen.split("_load_phase_a)")[1].split(
           "Phase B")[0].split("rating_ctx, _, cached_genres")[0])

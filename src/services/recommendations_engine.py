@@ -29,9 +29,15 @@ from src.database.models import (
     TasteVectorEntry, User,
     EncryptedTasteVector, ProtectedMedia, EpisodicMemory
 )
-from src.vector_store.chromadb_wrapper import chroma_db
 
 logger = logging.getLogger(__name__)
+
+
+def _chroma_get_by_ids(ids: list) -> dict:
+    """Embeddings by id, for run_chroma. The wrapper is looked up here, on
+    the Chroma thread: importing this module no longer builds the client."""
+    from src.vector_store.chromadb_wrapper import get_chroma_db
+    return get_chroma_db().get_by_ids(ids)
 
 
 # Pass 42 (A4): single source of truth for the LLM-forbidden phrases.
@@ -1702,7 +1708,7 @@ async def generate_deletion_proposals(
     # connection, four PRAGMAs and the schema DDL per candidate, on the loop).
     from src.vector_store.chromadb_wrapper import run_chroma
     _prefetched_embeddings, _ratings_by_key = await asyncio.gather(
-        run_chroma(chroma_db.get_by_ids, [
+        run_chroma(_chroma_get_by_ids, [
             str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))
             for it in arr_items
         ]),
@@ -2983,7 +2989,8 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
         user_vecs_n = [_un] if _un is not None else []
 
     # Bulk-prefetch embeddings — same N+1 rationale as the deletion loop.
-    _prefetched_embeddings = chroma_db.get_by_ids([
+    from src.vector_store.chromadb_wrapper import run_chroma
+    _prefetched_embeddings = await run_chroma(_chroma_get_by_ids, [
         str(it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title") or "")
         for it in items
         if (it.get("plex_rating_key") or it.get("tmdb_id") or it.get("title"))

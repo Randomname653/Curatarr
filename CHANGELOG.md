@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Searches and enrichment no longer pause the server.** Vector-store calls (search,
+recommendations, the facet index, every enriched title's write, the embedding
+migration) now run on their own thread instead of the one that serves every page. The
+vector store opens once at startup instead of on the first search. The monthly Discogs
+import unpacks and reads its multi-gigabyte download off that thread too.
+
 **Every database file off the event loop; foreign keys enforced.** The lyrics, cache
 and offline-index files are now watched by the same check as the main database. That
 turned up the lyrics sync, which held its file locked across every Plex request; it now

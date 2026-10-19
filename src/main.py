@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
     from src.database.connection import init_db
     init_db()
 
+    # The vector store, built here while no request is served: its first
+    # use opens Chroma's PersistentClient and runs quick_check, seconds on a
+    # big store. It used to happen as a side effect of importing
+    # recommendations_engine; a corrupt store still stops the start loudly.
+    from src.vector_store.chromadb_wrapper import get_chroma_db
+    get_chroma_db()
+
     from src.services.scheduler import start_scheduler
     start_scheduler()
 

@@ -283,10 +283,34 @@ timeouts were 60 s.
 - **Tests**: `tests/test_loop_free_raw.py` and `tests/test_foreign_keys.py`. Two fixtures
   that wrote rows for a user they never created now create that user.
 
+### Round 7 (follow-up PR): the vector store and the Discogs scan
+
+- **Chroma built at startup, not on import.**
+  - `recommendations_engine` bound `chroma_db` at module level, so whichever coroutine
+    first imported it built Chroma's `PersistentClient` and ran its `quick_check` on the
+    loop. Importing `src.main` alone never did, so in the server this happened on the
+    first scoring or judging path.
+  - The lifespan now builds the client before serving, and no module binds it at import
+    any more.
+- **Chroma calls off the loop.** These now go through `run_chroma`, the existing single
+  Chroma thread:
+  - semantic search (queries and `get_by_id`);
+  - the facet index (delete, add, query, counts, backfill paging);
+  - the enricher's three upserts, once per enriched title;
+  - the scorer's embedding prefetch;
+  - reclassify, corpus repair;
+  - every step of the embedding migration.
+
+  The static ratchet now counts wrapper calls on a Chroma handle inside coroutines.
+- **The Discogs dump scan.** Each 512 KB chunk's game check, decompression and regex
+  scan now run in one worker-thread hop. The chunks are still consumed strictly in
+  order; the whole dump is gigabytes of XML.
+- **Tests**: `tests/test_loop_free_vector.py`. Three tests had pinned
+  `recommendations_engine.chroma_db` (the import-time binding); they now patch
+  `chromadb_wrapper.get_chroma_db`, as the other suites already do.
+
 ### Still open
 
-- The Discogs dump's decompression and regex scan (CPU, not SQLite) still run on the
-  loop, in slices of one 512 KB chunk each. The guard doesn't measure CPU.
-- `recommendations_engine` builds the Chroma singleton when it is first imported. In the
-  server that happens at startup, but a first import from a coroutine would run Chroma's
-  `quick_check` on the loop.
+Nothing from this sweep. `GET /api/system/loop-guard` lists any loop-side statement that
+appears from now on, and the ratchets in `tests/test_loop_db_ratchet.py` and
+`tests/test_silent_except_ratchet.py` refuse new ones in code.

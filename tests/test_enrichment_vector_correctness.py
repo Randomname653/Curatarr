@@ -79,8 +79,11 @@ check("an import-time binding follows the flip (was: stuck on the old collection
 check("get_chroma_db still returns that same object", cw.get_chroma_db() is held)
 try:
     import src.services.recommendations_engine as recs
-    check("recommendations_engine's chroma_db sees the new collection",
-          recs.chroma_db.collection_name == "test_coll_b")
+    # No import-time binding any more: the lookup runs per call (on the
+    # Chroma thread), so it follows the flip by construction.
+    check("recommendations_engine's embedding lookup sees the new collection",
+          "only-in-b" in recs._chroma_get_by_ids(["only-in-b"])
+          and not hasattr(recs, "chroma_db"))
 except Exception as e:   # heavy import — the identity checks above still pin it
     print(f"  (skipped recommendations_engine import: {e})")
 

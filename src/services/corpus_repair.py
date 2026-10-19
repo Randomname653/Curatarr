@@ -85,7 +85,7 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
         if not vecs or not vecs[0]:
             return False
 
-        from src.vector_store.chromadb_wrapper import get_chroma_db
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
         chroma = get_chroma_db()
         meta = {"title": f"{title} ({year})" if year else title,
                 "media_type": domain, "domain": domain,
@@ -97,8 +97,8 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
         # item never re-enriches — the knowledge this module exists to keep
         # was lost. An upsert either replaces the doc or leaves the old one.
         try:
-            chroma.upsert_documents(documents=[doc_text], embeddings=[vecs[0]],
-                                    metadatas=[meta], ids=[str(doc_id)])
+            await run_chroma(chroma.upsert_documents, documents=[doc_text],
+                             embeddings=[vecs[0]], metadatas=[meta], ids=[str(doc_id)])
         except Exception as e:
             logger.warning("[repair] write failed for %s (old doc kept): %s",
                            doc_id, e, exc_info=True)
