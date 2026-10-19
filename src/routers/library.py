@@ -804,6 +804,10 @@ async def _fetch_arr_library(service: str, *, force_refresh: bool = False) -> tu
         raise HTTPException(502, _format_arr_error(service, e))
 
 
+# The values frontend/js/arr.js sends for the TV and Anime tabs.
+_MEMBER_ROOT_FILTERS = frozenset({"tv", "anime"})
+
+
 @router.get("/items/{service}")
 async def library_items(
     service: str,
@@ -833,6 +837,11 @@ async def library_items(
     if service not in ("sonarr", "radarr", "lidarr"):
         raise HTTPException(400, "unknown service")
     admin = bool(getattr(_user, "is_admin", False))
+    if root_filter and not admin and root_filter.lower() not in _MEMBER_ROOT_FILTERS:
+        # A member never sees root_folder, but an arbitrary substring would
+        # let them binary-search the arr's folder names through the result
+        # counts. Members get exactly the TV/Anime tab keywords.
+        raise HTTPException(400, "root_filter must be 'tv' or 'anime'")
     if refresh and not admin:
         # The Refresh button is a member's too, but each one is a full live
         # pull from the arr (minutes for Lidarr) — budget it per user.
