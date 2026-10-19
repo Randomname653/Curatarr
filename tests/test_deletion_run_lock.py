@@ -9,10 +9,16 @@ enrichment_running / music_pipeline_running).
 
     python tests/test_deletion_run_lock.py
 """
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Its own database: the run reads app_state (the activity-unavailable
+# flag), and on the default path that table exists only if some earlier
+# suite or a dev install happened to create it.
+os.environ["DATABASE_URL"] = f"sqlite:///{(Path(tempfile.mkdtemp()) / 'curatarr.db').as_posix()}"
 
 PASS = FAIL = 0
 
@@ -45,8 +51,12 @@ check("manual path releases in a finally (covers every exit)",
 # ── functional: an exception AFTER generation still frees the lock ──────────
 import asyncio
 
+import src.database.connection as conn_mod  # noqa: E402
+from src.database.models import Base  # noqa: E402
 import src.routers.recommendations as recs
 import src.services.app_state as app_state
+
+Base.metadata.create_all(conn_mod.engine)
 import src.services.recommendations_engine as engine
 
 _lock = {"held": False, "released": 0}
