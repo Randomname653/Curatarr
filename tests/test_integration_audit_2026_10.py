@@ -334,10 +334,14 @@ check("a worker-thread progress update wakes the SSE subscriber",
 
 # ── 6. memory conflicts: scan off the loop, short verdict writes ────────────
 import src.services.episodic_memory as em  # noqa: E402
-from src.database.models import EpisodicMemory  # noqa: E402
+from src.database.models import EpisodicMemory, User  # noqa: E402
 
 old_ts = datetime.utcnow() - timedelta(hours=1)
 with get_db_session() as db:
+    # foreign keys are enforced: the memories need their user
+    if db.get(User, 7) is None:
+        db.add(User(id=7, plex_user_id="u7", plex_username="seven"))
+        db.flush()
     twin = EpisodicMemory(user_id=7, memory_type="preference", content="I love slow cinema",
                           metadata_json="{}", embedding_json=json.dumps([1.0, 0.0, 0.0]),
                           importance=0.5, created_at=old_ts)

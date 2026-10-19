@@ -6,6 +6,14 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Every database file off the event loop; foreign keys enforced.** The lyrics, cache
+and offline-index files are now watched by the same check as the main database. That
+turned up the lyrics sync, which held its file locked across every Plex request; it now
+holds the lock only while writing. The enrichment cache waits 15 seconds for another
+writer instead of 60. The database now enforces that every row belongs to an existing
+user. At startup, rows from the past that name a missing user are repaired: a link that
+can be empty is cleared, and anything else is kept in `fk_orphans` before removal.
+
 **The server no longer waits on the database.** Every page, stream and background job
 shares one event loop, and 561 database calls ran on it directly: while another program
 (the music enricher, a backup) held the database, the whole app could freeze for up to a

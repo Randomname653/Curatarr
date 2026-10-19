@@ -250,11 +250,43 @@ timeouts were 60 s.
   waiting writes land once the lock is released. A control run of the old pattern
   stalls for the whole hold.
 
+### Round 6 (follow-up PR): the other SQLite files, and foreign keys
+
+- **The guard sees every SQLite file.** The enrichment cache, `plex_music.db` and the
+  offline indexes opened with plain `sqlite3.connect`, out of the guard's sight. They now
+  open through `loop_guard.sqlite_connect`, a trace callback that labels each loop-side
+  statement with its file. The ratchet refuses any other `sqlite3.connect` in `src/`.
+  The first run over every suite found 1,300+ statements on the loop.
+- **`sync_lyrics`** ran every statement on the loop. It also held `plex_music.db`'s write
+  lock across each Plex listing and each lyric fetch, so another writer waited out the
+  whole run. Each step now runs on a worker with its own connection and commits before
+  the next await.
+- Also moved to workers:
+  - the anime mapping's cache load and save, and its XML parse;
+  - the Discogs freshness check, its `game_active` read on every 512 KB chunk, and its
+    table rebuild;
+  - the Plex discography fallback;
+  - `external_ids.harvest`'s cache walk, which opens its own handle when none is passed.
+    So `archive_backfill` no longer opens a handle on the loop, and the static baseline
+    is down to the lifespan's 11.
+- **Enrichment cache timeout: 60 s → 15 s**, like the main database. Every writer
+  commits per call, the out-of-process scripts included, so the lock is held for
+  milliseconds. The weekly VACUUM holds it for minutes, which 60 s didn't ride out either.
+- **`foreign_keys=ON`.** The 18 declared keys, all pointing at `users.id`, were never
+  enforced.
+  - `_repair_foreign_keys` runs at boot, before any migration. It sets an orphaned
+    nullable reference to NULL. An orphaned row that needs its user is copied as JSON
+    into `fk_orphans`, then removed. A clean database costs one check.
+  - Both engines then enforce the keys on every connection.
+  - The `deletion_proposals` rebuild follows SQLite's procedure: keys off for the copy,
+    checked before the commit, then back on.
+- **Tests**: `tests/test_loop_free_raw.py` and `tests/test_foreign_keys.py`. Two fixtures
+  that wrote rows for a user they never created now create that user.
+
 ### Still open
 
-- `sync_lyrics` reads `plex_music.db` with raw `sqlite3` on the loop, once per track.
-  It goes through neither engine, so neither the ratchet nor the guard sees it.
-- The enrichment cache (`src/cache/metadata_cache.py`) keeps its own 60 s timeout. It
-  is a separate file shared with the out-of-process music enricher, and its calls from
-  coroutines now run on worker threads.
-- `foreign_keys=ON` still needs a `foreign_key_check` cleanup first.
+- The Discogs dump's decompression and regex scan (CPU, not SQLite) still run on the
+  loop, in slices of one 512 KB chunk each. The guard doesn't measure CPU.
+- `recommendations_engine` builds the Chroma singleton when it is first imported. In the
+  server that happens at startup, but a first import from a coroutine would run Chroma's
+  `quick_check` on the loop.

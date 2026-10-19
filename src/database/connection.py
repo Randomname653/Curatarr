@@ -56,6 +56,10 @@ def _apply_sqlite_pragmas(dbapi_connection) -> None:
     cursor.execute("PRAGMA wal_autocheckpoint=1000")
     cursor.execute("PRAGMA cache_size=-64000")
     cursor.execute("PRAGMA temp_store=MEMORY")
+    # Enforce the declared foreign keys (every one points at users.id).
+    # init_db repairs the rows an unenforced past left behind first
+    # (_repair_foreign_keys); table rebuilds switch it off for their copy.
+    cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
 
@@ -490,12 +494,19 @@ def _migrate_deletion_proposals_autoincrement() -> None:
             return  # already migrated
 
         _mig_log.info("[migrate] Pass 90c: converting deletion_proposals.id → AUTOINCREMENT")
+        # SQLite's table-rebuild procedure: foreign keys off for the copy
+        # (the pragma is a no-op inside a transaction, so before BEGIN),
+        # checked before the commit, back on for the pooled connection.
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
         try:
             # IMMEDIATE holds the write lock for the duration, so a
             # concurrent writer can never see the half-migrated state; SQLite
             # DDL is transactional, so a failure rolls back to the old table.
             conn.exec_driver_sql("BEGIN IMMEDIATE")
             _rebuild_from_model(conn, DeletionProposal.__table__)
+            bad = conn.exec_driver_sql("PRAGMA foreign_key_check(deletion_proposals)").fetchall()
+            if bad:
+                raise RuntimeError(f"{len(bad)} row(s) would break a foreign key")
             conn.exec_driver_sql("COMMIT")
             _mig_log.info("[migrate] Pass 90c: AUTOINCREMENT migration complete")
         except Exception as e:
@@ -507,6 +518,8 @@ def _migrate_deletion_proposals_autoincrement() -> None:
                 "[migrate] Pass 90c FAILED: %s — rolled back, table left in "
                 "its pre-migration state", e,
             )
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
 
 def _rebuild_from_model(conn, table) -> None:
@@ -586,9 +599,77 @@ def _drop_retired_tables() -> None:
         _logging.getLogger(__name__).warning("[migrate] could not drop user_pin_hashes: %s", e)
 
 
+_FK_ORPHANS_DDL = """CREATE TABLE IF NOT EXISTS fk_orphans (
+    id INTEGER PRIMARY KEY, table_name TEXT NOT NULL, row_json TEXT NOT NULL,
+    reason TEXT, removed_at TEXT NOT NULL)"""
+
+
+def _repair_foreign_keys() -> dict:
+    """Make the database satisfy its foreign keys before they are enforced.
+
+    They were declared but never switched on, so a row could name a user
+    that no longer exists. ``PRAGMA foreign_key_check`` lists each such
+    row: a nullable reference (``configured_by``, ``created_by``,
+    ``resolved_by``) is set to NULL; a row that cannot exist without its
+    user is copied as JSON into ``fk_orphans`` and then removed, so nothing
+    disappears without a trace. One transaction, logged per table. Returns
+    {table: rows repaired}; a clean database costs one check and no write."""
+    import json as _json
+    import logging as _logging
+    from datetime import datetime as _dt
+    log = _logging.getLogger(__name__)
+    if engine.url.get_backend_name() != "sqlite":
+        return {}
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        if not conn.exec_driver_sql("PRAGMA foreign_key_check").first():
+            return {}
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        repaired: dict = {}
+        try:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            conn.exec_driver_sql(_FK_ORPHANS_DDL)
+            now = _dt.utcnow().isoformat()
+            for table, rowid, parent, fkid in conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall():
+                fk = {r[0]: r for r in conn.exec_driver_sql(f'PRAGMA foreign_key_list("{table}")')}[fkid]
+                col = fk[3]
+                info = {r[1]: r for r in conn.exec_driver_sql(f'PRAGMA table_info("{table}")')}
+                if not info[col][3]:          # notnull == 0: the reference may be empty
+                    conn.exec_driver_sql(f'UPDATE "{table}" SET "{col}" = NULL WHERE rowid = ?', (rowid,))  # nosec B608 - identifiers come from PRAGMA output, no input
+                else:
+                    cur = conn.exec_driver_sql(f'SELECT * FROM "{table}" WHERE rowid = ?', (rowid,))  # nosec B608 - identifiers come from PRAGMA output, no input
+                    row = cur.first()
+                    if row is None:
+                        continue
+                    data = {k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                            for k, v in row._mapping.items()}
+                    conn.exec_driver_sql(
+                        "INSERT INTO fk_orphans (table_name, row_json, reason, removed_at) VALUES (?,?,?,?)",
+                        (table, _json.dumps(data, default=str), f"{col} -> {parent}: no such row", now))
+                    conn.exec_driver_sql(f'DELETE FROM "{table}" WHERE rowid = ?', (rowid,))  # nosec B608 - identifiers come from PRAGMA output, no input
+                repaired[table] = repaired.get(table, 0) + 1
+            if conn.exec_driver_sql("PRAGMA foreign_key_check").first():
+                raise RuntimeError("violations left after the repair")
+            conn.exec_driver_sql("COMMIT")
+        except Exception as e:
+            try:
+                conn.exec_driver_sql("ROLLBACK")
+            except Exception:  # noqa: BLE001 - rollback in failure path; logged as ERROR below
+                pass
+            log.error("[migrate] foreign-key repair failed, nothing changed: %s - writes that "
+                      "touch those rows will be refused until it succeeds", e)
+            return {}
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+    for table, n in sorted(repaired.items()):
+        log.warning("[migrate] %s: %d row(s) named a user that no longer exists - "
+                    "nulled, or moved to fk_orphans", table, n)
+    return repaired
+
+
 def init_db():
     """Create all tables and migrate any new columns."""
     Base.metadata.create_all(bind=engine)
+    _repair_foreign_keys()
     _drop_retired_tables()
     _migrate_columns()
     _migrate_deletion_proposals_autoincrement()
