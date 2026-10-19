@@ -134,7 +134,10 @@ def sysmem_fallback(cell: dict, idle_free_mib: int | None = None) -> dict:
             "gpu_share_effective_pct": min(99, eff) if eff is not None else 99}
 
 
-def stalled(points: list[dict], ctx: int, vram: int) -> bool:
+STALL_NEAR_FULL_MIB = 2048
+
+
+def stalled(points: list[dict], ctx: int, vram: int, free_after_mib: int | None = None) -> bool:
     """The sweep's second sign: the footprint stops growing with the window.
     The KV slope of the first windows (2k..8k) predicts the next point; a
     real growth under a quarter of that means the KV cache went elsewhere
@@ -147,7 +150,13 @@ def stalled(points: list[dict], ctx: int, vram: int) -> bool:
     slope = (third["vram_model_mib"] - first["vram_model_mib"]) / max(1, third["num_ctx"] - first["num_ctx"])
     prev = base[-1]
     expected = slope * (ctx - prev["num_ctx"])
-    return expected > 64 and (vram - prev["vram_model_mib"]) < 0.25 * expected
+    flat = expected > 64 and (vram - prev["vram_model_mib"]) < 0.25 * expected
+    # Flat growth alone is not a spill: gemma4's sliding-window layers stop
+    # growing once the window is covered (gemma4:12b: 9.5 GB at 16k on a 24 GB
+    # card, flagged "stalled" on 2026-10-19). Only near a full card does a
+    # stall mean the KV cache went to system RAM.
+    near_full = free_after_mib is None or free_after_mib < STALL_NEAR_FULL_MIB
+    return flat and near_full
 
 
 def _agg(rows: list[dict], key: str) -> dict:
@@ -196,7 +205,8 @@ def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
         point = {"num_ctx": ctx, "vram_model_mib": vram, "load_s": r.get("load_s"),
                  "ps_implausible": ps_implausible(res, vram), **res}
         point.update(sysmem_fallback(point, idle_free))
-        if not point["sysmem_fallback"] and stalled(points, ctx, vram):
+        point["free_after_mib"] = idle_free - vram
+        if not point["sysmem_fallback"] and stalled(points, ctx, vram, idle_free - vram):
             point.update(sysmem_fallback=True, stalled=True, gpu_share_effective_pct=99)
         # A window that spilled into shared memory does not fit either, even
         # when Ollama reports it resident.

@@ -136,6 +136,11 @@ _pts = [{"num_ctx": c, "vram_model_mib": v} for c, v in
 check("sweep: growth that stalls (32k -> 48k: +48 MiB, ~1.2 GB expected) means spilled",
       stalled(_pts, 49152, 23322))
 check("sweep: normal KV growth does not", not stalled(_pts[:5], 32768, 23274))
+_g12 = [{"num_ctx": c, "vram_model_mib": v} for c, v in ((2048, 8900), (4096, 8936), (8192, 9374), (12288, 9459))]
+check("sweep: flat growth with a half-empty card is sliding-window KV, not a spill (gemma4:12b)",
+      not stalled(_g12, 16384, 9534, free_after_mib=14000))
+check("...the same flat growth with 300 MiB left is a spill",
+      stalled(_g12, 16384, 9534, free_after_mib=300))
 check("a spilled cell counts as offloaded in the matrix (effective share wins)",
       matrix.share({"gpu_share_pct": 100, "gpu_share_effective_pct": 78}) == 78
       and not matrix._tier_fit_derived({**ok, "gpu_share_effective_pct": 78, "vram_model_mib": 2000}, 8, 1024))
