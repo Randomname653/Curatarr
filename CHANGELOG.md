@@ -224,6 +224,11 @@ genre that is rarest in your library first, and add up to two short
 themes in a quieter chip ("Anthropomorphic warships", "Drug heist"). Music
 cards, which showed none, get theirs from the artist profile.
 
+**Dependencies.** aiohttp 3.14.5 for GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3
+and GHSA-494j-54xm-rwp3 (fixed in 3.14.4). Curatarr uses aiohttp only as the
+client for the arrs, never as a server, so the request-timeout and request
+flooding findings did not reach it; the update keeps the dependency scan green.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex
