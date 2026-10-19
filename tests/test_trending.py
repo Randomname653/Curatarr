@@ -46,8 +46,10 @@ check("single line, no availability wording",
 
 root = Path(__file__).resolve().parents[1]
 src = (root / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
+# The titles are kept (the rec "Why?" marks a pick that was on the list).
 check("discovery branch fetches trending",
-      "_trending_line(await _get_trending(cat))" in src)
+      "trend_titles = await _get_trending(cat)" in src
+      and "_trending_line(trend_titles)" in src)
 check("prompt carries the optional trend block",
       "{context_line}{trend_block}" in src)
 check("music is excluded", 'if cat == "music":\n        return []' in src)
