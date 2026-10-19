@@ -49,11 +49,13 @@ export async function newChat() {
       // panels back -- they only die on send (see sendMessage()), not on
       // every view switch, so without this a user would see them exactly
       // once per page load and never again for the rest of the session.
+      // The landing panels sit inside the live log but are not conversation:
+      // aria-live="off" keeps their late-loading tiles from being read out.
       msgs.innerHTML = `
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
-        <div id="glance-panel"></div>
-        <div id="last-played-panel"></div>
-        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts">
+        <div id="glance-panel" aria-live="off"></div>
+        <div id="last-played-panel" aria-live="off"></div>
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">
           <button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?')}>What should I watch tonight?</button>
           <button class="sp-chip" ${act('fillPrompt', 'What can I clean up in my library?')}>What can I clean up in my library?</button>
           <button class="sp-chip" ${act('fillPrompt', 'What does my watch history say about my taste?')}>What does my watch history say about my taste?</button>
@@ -226,6 +228,10 @@ export async function sendMessage() {
     // accepted the turn — a 409 used to burn it before anything ran.
     if (ctx?.reevaluate && state.pendingDiscussContext === ctx) ctx.reevaluate = false;
 
+    // #messages is a live log (role="log", additions): without this a screen
+    // reader would read every status line and every repainted frame of the
+    // reply. Busy until the reply is complete, then it is read once.
+    bubble.setAttribute('aria-busy', 'true');
     // The animated dots stay until the first real token, otherwise the
     // bubble flashes empty between the spinner and the first character.
     const reader = resp.body.getReader();
@@ -281,6 +287,7 @@ export async function sendMessage() {
     } else if (gotDone && !full) {
       bubble.textContent = '(no response)';
     }
+    bubble.setAttribute('aria-busy', 'false');
     if (_stream === me) _stream = null;
     inp.disabled = btn.disabled = false;
     if (bubble.isConnected) inp.focus();
@@ -501,7 +508,7 @@ export function addMsg(text,role) {
 export function addThinkingMsg() {
   const div = document.createElement('div');
   div.className = 'msg assistant';
-  div.innerHTML = '<div class="thinking-dots" aria-label="Thinking"><span></span><span></span><span></span></div>';
+  div.innerHTML = '<div class="thinking-dots" role="img" aria-label="Thinking"><span></span><span></span><span></span></div>';
   const msgs = document.getElementById('messages');
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
@@ -515,6 +522,20 @@ export function addThinkingMsg() {
 // previous thread left in it, and showed nothing at all after F5.
 const HISTORY_LIMIT = 50;
 let _threadSeq = 0;           // a newer switch (or + New) overtakes an older load
+
+// A repaint (a thread switch, the history restored at boot) is not
+// news: with the log live, a screen reader would read every restored message
+// aloud. The region goes quiet for the repaint and comes back once the
+// browser has taken the new content in (a frame or so; a fixed short delay,
+// because animation frames stop in a background tab).
+let _quietTimer = 0;
+function _quietRepaint(msgs, paint) {
+  msgs.setAttribute('aria-live', 'off');
+  try { paint(); } finally {
+    clearTimeout(_quietTimer);
+    _quietTimer = setTimeout(() => msgs.setAttribute('aria-live', 'polite'), 150);
+  }
+}
 
 function _historyBubble(m) {
   const div = document.createElement('div');
@@ -560,10 +581,12 @@ async function _showThread(tid, opener) {
   const history = await _loadThread(tid);
   const msgs = document.getElementById('messages');
   if (seq !== _threadSeq || !msgs) return false;
-  msgs.replaceChildren();
-  if (opener) addMsg(opener, 'assistant');
-  if (history === null) msgs.appendChild(_historyErrorRow(() => _showThread(tid, opener)));
-  else for (const m of history) msgs.appendChild(_historyBubble(m));
+  _quietRepaint(msgs, () => {
+    msgs.replaceChildren();
+    if (opener) addMsg(opener, 'assistant');
+    if (history === null) msgs.appendChild(_historyErrorRow(() => _showThread(tid, opener)));
+    else for (const m of history) msgs.appendChild(_historyBubble(m));
+  });
   msgs.scrollTop = msgs.scrollHeight;
   return true;
 }
@@ -594,9 +617,11 @@ export async function restoreChatHistory() {
     return;
   }
   if (!history.length) return;
-  msgs.querySelector('.msg.load-err')?.remove();
-  msgs.querySelector('.msg.assistant')?.remove();
-  for (const m of history) msgs.insertBefore(_historyBubble(m), anchor);
+  _quietRepaint(msgs, () => {
+    msgs.querySelector('.msg.load-err')?.remove();
+    msgs.querySelector('.msg.assistant')?.remove();
+    for (const m of history) msgs.insertBefore(_historyBubble(m), anchor);
+  });
   msgs.scrollTop = msgs.scrollHeight;
 }
 

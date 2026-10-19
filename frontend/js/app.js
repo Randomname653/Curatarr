@@ -6,7 +6,7 @@ import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelR
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { _errMsg, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, toast } from './ui.js';
+import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -76,6 +76,7 @@ window.onload = async () => {
 // Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
 window.addEventListener('hashchange', () => routeFromHash());
 document.addEventListener('keydown', ev => {
+  if (ev.key === 'Tab') { trapFocus(ev, activeDialog()); return; }
   if (ev.key !== 'Escape') return;
   const menu = document.querySelector('.menu.open');
   if (menu) {   // innermost layer first; focus back on its button
