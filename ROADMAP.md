@@ -1,6 +1,6 @@
 # Curatarr — Roadmap
 
-_Last updated: 2026-08-20. This is the working plan, not a promise — items
+_Last updated: 2026-10-19. This is the working plan, not a promise — items
 move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.md)._
 
 ---
@@ -18,9 +18,10 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
   walkers (movies were at 45/6304 checked when a David Fincher film got
   pitched with zero reception on file) — the mass is just no longer
   waiting on them.
-- **Wikidata awards** — structured Oscars/Grammys/BAFTA data via SPARQL and
-  IMDb/TMDB id mapping, hardening the significance pillar with facts
-  instead of prose distillation.
+- **Wikidata awards** — DONE for films and series: `src/services/wikidata.py`
+  (custodian task `custodian_wikidata`) asks SPARQL by IMDb id for named
+  awards and adaptation sources as archive-pillar evidence, beside OMDb's
+  win/nomination counts. Music awards (Grammys) are not covered.
 - **ListenBrainz global popularity** — DONE 2026-09: release-group
   listen/listener counts (MBID-aligned; needs a free account token in
   `LISTENBRAINZ_TOKEN` — LB auth-locked these endpoints against scrapers)
@@ -76,9 +77,6 @@ move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.
 - **Enrichment vocabulary expansion** — the tag vocabulary is the truth
   layer of search; register cases keep a running fixture list.
 - **German locale** as a global UI/curator language setting.
-- **Encryption at rest (PIN)** — the flow registers a hash today but
-  encrypts nothing yet; needs an architectural pass (server-side vs.
-  client-side key derivation), deliberately parked.
 - **Movie-night ballot** — household nomination/vote/watch flow
   (SoulSync-inspired), a project of its own.
 - **Tautulli importer** — full historical watch attribution for setups

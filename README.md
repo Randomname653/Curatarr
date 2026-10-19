@@ -111,7 +111,7 @@ and it speaks up when it notices a pattern worth asking about.*
   (updated in place, not recreated) and rotating collection shelves.
 - **Proactive messages** — a new season for something you binged, a
   strong pick for tonight, a check-in after a long break.
-- **A data custodian instead of a button zoo** — ~20 maintenance tasks
+- **A data custodian instead of a button zoo** — ~30 maintenance tasks
   each carry a cadence and catch up whenever the machine is on. Every job
   reports live progress in the Activity view.
 - **Self-healing library knowledge** — the profile audit requeues stale
