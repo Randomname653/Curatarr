@@ -64,7 +64,7 @@ yet. Until those sections are rewritten, this is the map:
 
 | Subsystem | Files | One-liner |
 |---|---|---|
-| Data Custodian | `src/services/data_custodian.py` | Debt-based maintenance: ~20 tasks with cadences + persisted last-run stamps; a 30-min tick runs whatever is overdue in two queues side by side (2026-09-27): tasks that drive a model one at a time in the model queue, everything else one at a time in the background queue, so a deletion scan holding the GPU for hours no longer stops the syncs and walkers. `Task.after` orders the few cross-queue dependencies: a model task waits (bounded) for the Plex sync it needs, a background task that needs model work defers instead of waiting. The Plex sync's model half (taste vectors with the curator summary, the recs cache) runs as `plex_followup` in the model queue. **Keep working** (2026-10-06): a sprint until a set time (`custodian_sprint_until` in app_state, `POST /api/enrichment/custodian/sprint?hours=`, or `python -m src.services.data_custodian --sprint HOURS`) restarts the idle model queue every two minutes with the deep budgets (the background walkers keep the 30-minute rhythm, they pace themselves against outside APIs) and holds a Windows power request (`SetThreadExecutionState`, its own thread) so the PC does not idle-sleep; it ends at that time, on Stop, or once no model work is due and no enrichment runs. Beside the queue the sprint keeps the enrichment pipeline going in 2,000-item chunks of every category (beside the queue, music's one MusicBrainz request a second holds no other GPU work up) while the cycle is due or the last run left items behind (`enrichment_left`); the queue's own cycle steps aside for the whole sprint, and a chunk that leaves nothing behind stamps it. Replaces most cron-shaped scheduler jobs. Every runner either creates its own Activity card or gets the tick's wrapper card (tested invariant). |
+| Data Custodian | `src/services/data_custodian.py` | Debt-based maintenance: 31 tasks (`_registry`) with cadences + persisted last-run stamps; a 30-min tick runs whatever is overdue in two queues side by side (2026-09-27): tasks that drive a model one at a time in the model queue, everything else one at a time in the background queue, so a deletion scan holding the GPU for hours no longer stops the syncs and walkers. `Task.after` orders the few cross-queue dependencies: a model task waits (bounded) for the Plex sync it needs, a background task that needs model work defers instead of waiting. The Plex sync's model half (taste vectors with the curator summary, the recs cache) runs as `plex_followup` in the model queue. **Keep working** (2026-10-06): a sprint until a set time (`custodian_sprint_until` in app_state, `POST /api/enrichment/custodian/sprint?hours=`, or `python -m src.services.data_custodian --sprint HOURS`) restarts the idle model queue every two minutes with the deep budgets (the background walkers keep the 30-minute rhythm, they pace themselves against outside APIs) and holds a Windows power request (`SetThreadExecutionState`, its own thread) so the PC does not idle-sleep; it ends at that time, on Stop, or once no model work is due and no enrichment runs. Beside the queue the sprint keeps the enrichment pipeline going in 2,000-item chunks of every category (beside the queue, music's one MusicBrainz request a second holds no other GPU work up) while the cycle is due or the last run left items behind (`enrichment_left`); the queue's own cycle steps aside for the whole sprint, and a chunk that leaves nothing behind stamps it. Replaces most cron-shaped scheduler jobs. Every runner either creates its own Activity card or gets the tick's wrapper card (tested invariant). |
 | Curated search v3 | `src/services/semantic_search.py` | LLM parses the query once (anchor/constraints); scoring is deterministic over raw enrichment tags (lexical-first, concept/tone families, negation, guards) with per-constraint evidence notes + coverage honesty. |
 | Multi-vector facets | `src/services/facet_index.py`, collection `media_facets_v1` | Each title's theme phrases are individual vector points (separate collection — mixing into `media_knowledge_v2` breaks n_results math, the anchor resolver, and taste calibration). Gives contrast queries resolution. |
 | 4-pillar judge | `src/services/pillars.py` | Deletion verdicts (HARD_KEEP/KEEP_WITH_FLAG/CUT/STAGNANT/EVALUATE) from assembled evidence facts; KEEPs persist to ProtectedMedia; thin evidence skips the judge. `del_score` only pre-ranks. |
@@ -87,7 +87,7 @@ yet. Until those sections are rewritten, this is the map:
 | Chat output sanitization | `frontend/vendor/purify.min.js` | All LLM markdown renders via `DOMPurify.sanitize(marked.parse(…))` — marked passes raw HTML through by design, and curator output can echo text fetched from external metadata sources. Single sink, wrapped once. |
 | Login membership + owner-first | `auth._assert_plex_membership`, `PLEX_LOGIN_REQUIRE_MEMBERSHIP` | Any plex.tv account used to become a user (the first one admin). New accounts must now appear in the server's `/accounts`; the first must be the token owner (`plex.tv/api/v2/user` with the server token). Fails closed for new accounts only. |
 | Session revocation | `User.token_version`, JWT `ver` claim, `TokenRefreshMiddleware._load_refresh_subject` | `get_current_user` enforces `is_active` and a version match; logout/deactivation bump the version, and since 2026-09-25 so does `DELETE /api/users/{id}`, so re-enabling a deleted account does not revive its old tokens; the setup gate (`require_admin_or_first_run`) goes through the same `_user_from_bearer` instead of decoding the JWT itself. The rolling refresh re-issues from the DB row, never from stale claims. Pre-2026-09 tokens read as version 0 and stay valid. |
-| First-run setup code | `auth.SETUP_CODE`, `_require_setup_code`, printed by `main.lifespan` | Pre-admin setup mutations require a console-printed one-time code unless the caller is localhost; the frontend `api()` prompts for it on a 401 from `/api/setup/*` and replays. Wrong codes are budgeted per address and globally (10 / 100 per 15 minutes, then 429; localhost exempt) (2026-09-25). |
+| First-run setup code | `auth.SETUP_CODE`, `_require_setup_code`, printed by `main.lifespan` | Pre-admin setup mutations require a console-printed one-time code unless the caller is the machine itself (`_is_local_browser`: loopback peer, loopback Host, no proxy headers, loopback or absent Origin; 2026-10-10); the frontend `api()` prompts for it on a 401 from `/api/setup/*` and replays. Wrong codes are budgeted per address and globally (10 / 100 per 15 minutes, then 429; localhost exempt) (2026-09-25). |
 | .env write discipline | `setup_wizard._plain`, `write_env` | Unwraps `SecretStr` and refuses `**********` (library_configure once passed the raw objects — a forgeable JWT secret waiting to happen); carries the live JWT secret and tuned SYNC/BINGE values forward; atomic temp+replace; Windows ACL narrowed via icacls. |
 | Per-user anchor cache | `chat._tkey` and friends | `_thread_active_title` was keyed by thread id alone while every user's free chat is thread `general` — a housemate could read and clear another's current topic via `/correct-anchor`. Keys are now `user_id:thread_id`. |
 | Setup coverage | `setup_wizard.current_env_config/merge_env_config/mask_secrets`, `GET /api/setup/integrations`, `POST /api/setup/reconfigure`, Settings → Integrations | One source for the .env shape with secrets unwrapped; the wizard and the post-setup panel both overlay on it. The two-bake pitcher is a first-run choice (built by `complete_setup`, recommended by `model_catalog.PITCHER_MODELS` with a VRAM verdict); ListenBrainz and OpenSubtitles are managed keys; every connection is changeable after setup. Secrets never travel back to the browser (`{set: bool}`); `/test` falls back to stored secrets so the panel can test without re-typing. |
@@ -139,11 +139,15 @@ vector and anything typed stay on the machine.
 2. `init_db()` — creates tables + runs idempotent column/table migrations
    (`src/database/connection.py`).
 3. `start_scheduler()` — registers APScheduler cron jobs (see §13).
-4. **Resets stuck runtime flags** — `enrichment_running`,
-   `music_pipeline_running`, `music_pipeline_stop_requested` → `"0"`, and
-   seeds `game_active` with the *actual* current game state (not a blind 0,
-   which left a race window). This is the recovery path for a crash that
-   left a flag set.
+4. **Resets stuck runtime flags** — `enrichment_running`, `deletion_run`,
+   `plex_sync_running` → `"0"`, each on its own and read back (ERROR when
+   one stays set). `music_pipeline_running` is a cross-process lease
+   (`src/services/state_lease.py`): `reclaim_if_stale` clears it, and then
+   `music_pipeline_stop_requested`, only when its holder (e.g.
+   `scripts/music_enricher.py`) is no longer running. Seeds `game_active`
+   with the *actual* current game state, probed on a worker (not a blind 0,
+   which left a race window; a failed probe counts as a game). This is the
+   recovery path for a crash that left a flag set.
 5. `prewarm_arr_caches()` — loads the ARR library cache from disk (L2→L1)
    and fires background refreshes (see §12).
 6. Mounts routers (each under `/api/<name>`).
@@ -186,11 +190,22 @@ historical bugs.
 
 1. **Main DB** — `data/curatarr.db` (SQLite WAL). All tables above.
    Connection pragmas: `journal_mode=WAL`, `synchronous=NORMAL`,
-   `busy_timeout=60000`. `get_db_session()` context manager commits on exit.
+   `busy_timeout=15000` (`connection.BUSY_TIMEOUT_S`), `temp_store=MEMORY`,
+   `foreign_keys=ON` (`_repair_foreign_keys` cleans orphans at boot first).
+   Pool: 10 + 10 overflow, `pool_timeout=10`. `get_db_session()` context
+   manager commits on exit. The event loop never waits on SQLite:
+   coroutines run DB work through `run_read` (worker pool) or `run_write`
+   (the one writer thread, `write_session()` = `BEGIN IMMEDIATE`) in
+   `src/database/runner.py`; `src/database/loop_guard.py` logs any statement
+   that runs on the loop thread (`GET /api/system/loop-guard`;
+   `CURATARR_LOOP_GUARD=raise` in tests), and `tests/test_loop_db_ratchet.py`
+   checks it statically. That is why the timeout can be 15 s instead of 60 s:
+   a lock wait blocks one worker thread, not the server.
 
 2. **Enrichment / API cache** — `data/cache/enrichment.db`, separate SQLite,
    wrapped by `src/cache/metadata_cache.py` (`MetadataCache`). Single table
-   `api_cache(cache_key, response, created_at, expires_at)`. Every key is
+   `api_cache(cache_key, response, created_at, expires_at)`, WAL with the
+   same 15 s busy timeout as the main DB. Every key is
    auto-prefixed with `_CACHE_VERSION` (currently `"v2"`). Bump
    `_CACHE_VERSION` only when the *meaning* of cached values changes — old
    rows then become invisible (read-time `expires_at` filter + version
@@ -569,7 +584,10 @@ via the standalone scripts.
   only). Both LLM-free by default — they write the `api_cached — LLM pending`
   marker so the in-app enrichment consumer does the LLM polish later.
 - **Coordination**: both set `music_pipeline_running="1"` in AppState while
-  active. As of Pass 97 they do NOT also block on `enrichment_running` —
+  active (`music_enricher.py` and the in-app pipeline take it as a lease,
+  `src/services/state_lease.py`: the holder's host/PID/heartbeat sit in
+  `music_pipeline_running_holder`, so a server restart leaves a live
+  enricher's flag alone; `mbid_speedrunner.py` still sets the bare flag). As of Pass 97 they do NOT also block on `enrichment_running` —
   the cross-mutex was removed (chunked commits + disjoint DB rows make the
   two safe to run concurrently). They self-check `music_pipeline_running`
   only (two music runners would collide).
@@ -805,7 +823,11 @@ enrichment pipeline only does API pre-fetch (`_write_game_mode_db` writes the
 `api_cached` marker, no LLM). Resumes automatically on game exit.
 `is_game_running()` is the union of two causes that `llm_lane` tells apart:
 `game_process_running()` (a game owns the whole box) and `gpu_pressure()`
-(something else owns only the card). The "is this a game?" toast asks only
+(something else owns only the card). Called on the event-loop thread, both
+answer with the last verdict instead of probing (nvidia-smi, a process
+walk); the watcher probes on a worker every 30 s. Jobs read the flag
+through `app_state.game_active()`, where an unreadable flag counts as a
+game. The "is this a game?" toast asks only
 about programs that hold at least `PROMPT_MIN_RSS_MB` (500) of memory, are
 no installer, updater or crash handler, and are no version of a program
 already answered "not a game" (`process_family` folds version numbers and
@@ -885,7 +907,7 @@ APScheduler. Defaults:
 | ARR library cache refresh | 30 min | |
 | Memory decay | weekly | |
 | Orphaned-section check | weekly | |
-| DB vacuum | weekly | |
+| DB vacuum | weekly | postponed (stays due) while `enrichment_running`, `music_pipeline_running`, `plex_sync_running` or `deletion_run` is set; a file with < 20 % free pages is not rewritten |
 | Game-mode VRAM watcher | 30 s | |
 
 **Startup catch-up gotcha**: a fresh server start fires the overdue ARR-sync
@@ -977,15 +999,18 @@ without understanding why they exist.
   the entire ARR item set.
 - **numpy embeddings**: `is not None`, never truthiness (Pass 74).
 - **Syncthing `.stignore` is Hidden on Windows** (`fc5b5ce`). `sync_guard`
-  excludes `data/` from Syncthing while the app runs so the live WAL DB isn't
-  hashed (→ `database is locked`, and worse, a half-synced WAL can corrupt the
-  DB). Syncthing creates `.stignore` with the **Hidden** attribute, and
+  excludes `data/` from Syncthing so the live WAL DB isn't hashed (→
+  `database is locked`, and worse, a half-synced WAL can corrupt the DB). The
+  entry is never removed (`disable()` is a no-op), so a crash leaves the DB
+  excluded. Syncthing creates `.stignore` with the **Hidden** attribute, and
   `Path.write_text` (open `'w'` → `CREATE_ALWAYS`) raises `[Errno 13]
-  Permission denied` on a hidden/system file. Always write that file in place
-  with `r+` (`OPEN_EXISTING`) — see `sync_guard._write_preserving`. A silent
-  failure here re-enables the DB-lock storm; the main DB's `busy_timeout=60s`
-  means any lock outlasting 60 s is an *external* holder (Syncthing), not
-  internal contention.
+  Permission denied` on a hidden/system file. `sync_guard._write_atomic`
+  writes a temp file, clears Hidden for the `os.replace` and sets it again;
+  where the directory refuses a temp file it falls back to the in-place
+  `r+` (`OPEN_EXISTING`) write in `_write_preserving`. A silent failure here
+  re-enables the DB-lock storm. With the main DB's 15 s `busy_timeout` and
+  writers that commit per call, a lock held past 15 s is usually an
+  *external* holder (Syncthing) or the weekly VACUUM, not request traffic.
 - **Moving a Sonarr series between root folders needs `/series/editor`, not
   `PUT /series/{id}`** (`891aa8e`). A series has an authoritative `path` field
   separate from `rootFolderPath`; a plain PUT updates the latter but leaves

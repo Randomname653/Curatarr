@@ -608,6 +608,20 @@ Fixed on this branch, each with a regression test that fails on the old code:
 | `force_set_state` POSIX path | `engine.url.database` | `tests/test_force_set_state_path.py` |
 | Shutdown order (§3.5) | `bg_tasks.drain()` → flags → `shutdown_writer()` → `checkpoint_and_dispose()` (`wal_checkpoint(TRUNCATE)`) → Syncthing | `tests/test_shutdown_release.py` |
 
+Shipped later (2026-10-15 to 2026-10-19), see `docs/POST_REFACTOR_INTEGRATION_AUDIT.md` and
+`docs/SILENT_FAILURE_SWEEP_2026_10.md` §3:
+
+| Finding | Fix | Test |
+| :--- | :--- | :--- |
+| `set_state` race, game watcher on the loop (§3.4) | Single-statement upsert; probes in `to_thread`, flags through `set_states_if_changed` (integration audit) | `tests/test_integration_audit_2026_10.py` |
+| Deletion scoring and taste rebuild on the loop (§3.6) | Phase A in one worker hop, Chroma on its own thread (`run_chroma`) (integration audit; sweep rounds 7–8) | `tests/test_integration_audit_2026_10.py`, `tests/test_loop_free_vector.py` |
+| Migration safety (§3.7) | `_migrate_columns` in one `BEGIN IMMEDIATE` with `user_version`; `update_db.py` backup (integration audit) | `tests/test_integration_audit_2026_10.py` |
+| Route handlers and jobs on the loop (§3.2) | DB work in sync helpers run by `run_read` / `run_write` (`src/database/runner.py`); `src/database/loop_guard.py` reports any statement on the loop thread (sweep rounds 3, 5, 6, 8) | `tests/test_loop_db_ratchet.py`, `tests/test_loop_free_g1.py` … |
+| Engine settings (§3.1) | `busy_timeout` 15 s (`connection.BUSY_TIMEOUT_S`; the enrichment cache too), `pool_size` 10, `pool_timeout` 10 s, no pre-ping, `temp_store=MEMORY` (sweep rounds 5–6) | `tests/test_loop_responsiveness.py` |
+| Foreign keys not enforced (§3.1) | `_repair_foreign_keys` at boot, then `foreign_keys=ON` on both engines (sweep round 6) | `tests/test_foreign_keys.py` |
+| `MetadataCache` connection per construction, `resolve_memory_conflicts`, `get_db_session` rollback | One connection per (thread, file); conflict scan in `run_read`, no session across LLM calls; `except BaseException` (integration audit) | `tests/test_integration_audit_2026_10.py` |
+| `_write_entries` one transaction, re-attribution session across `await`, VACUUM on a busy DB, boot reset of `music_pipeline_running` | Commits per 2,000 rows; no session across the `/accounts` call; VACUUM postponed while long jobs run and skipped below 20 % free pages; the music flag is a cross-process lease (`src/services/state_lease.py`) (sweep follow-up #6) | `tests/test_silent_failures_followup.py`, `tests/test_custodian_job_contract.py` |
+
 `write_session()` differs from the §3.1 sketch. It runs on a dedicated small engine with
 pysqlite in driver-level autocommit (`isolation_level=None`), and a SQLAlchemy `begin`
 listener emits `BEGIN IMMEDIATE`, so the driver never opens an implicit transaction that a
@@ -623,3 +637,5 @@ read session, including a chat stream's held for minutes, would take the write l
 4. §3.4: `force_set_state` path, `set_state` upsert, and moving the game watcher off the loop.
 5. §3.1/§3.2: the `run_read` / `run_write` foundation, then move the High
    event-loop-blocking paths onto it (§3.6, taste engine), endpoint by endpoint.
+
+*Status 2026-10-19: all five steps shipped (see the second table under Implementation status).*

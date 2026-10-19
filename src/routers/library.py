@@ -344,8 +344,9 @@ async def library_profiles(
 
 
 @router.get("/defaults")
-def library_defaults_all(_user: User = Depends(get_current_user)):
-    """All saved defaults for all configured arrs."""
+def library_defaults_all(_user: User = Depends(require_admin)):
+    """All saved defaults for all configured arrs. Admin-only: root folder
+    paths and profile ids are the admin's (only Library settings reads it)."""
     return {svc: _read_defaults(svc) for svc in ("sonarr", "radarr", "lidarr")}
 
 
@@ -831,8 +832,21 @@ async def library_items(
     """
     if service not in ("sonarr", "radarr", "lidarr"):
         raise HTTPException(400, "unknown service")
+    admin = bool(getattr(_user, "is_admin", False))
+    if refresh and not admin:
+        # The Refresh button is a member's too, but each one is a full live
+        # pull from the arr (minutes for Lidarr) — budget it per user.
+        from src.services import rate_limit as _rl
+        _rl.enforce("arr-refresh", _user.id, _rl.ARR_REFRESHES_PER_10MIN, 600,
+                    f"{service} was refreshed recently — try again in a few minutes")
 
-    items_raw, tags, cache_info = await _fetch_arr_library(service, force_refresh=refresh)
+    try:
+        items_raw, tags, cache_info = await _fetch_arr_library(service, force_refresh=refresh)
+    except HTTPException as e:
+        # The 502 carries the connector's text (host:port of the arr).
+        if admin or e.status_code != 502:
+            raise
+        raise HTTPException(502, f"{service} unreachable") from None
 
     curatarr_tag_id = None
     if curatarr_only:
@@ -885,10 +899,18 @@ async def library_items(
     else:
         items.sort(key=key_fn)
 
+    page = items[:limit]
+    if not admin:
+        # Members don't get the arr's filesystem layout or raw connector
+        # errors (SECURITY.md); root_filter above already ran on the path.
+        page = [{k: v for k, v in i.items() if k != "root_folder"} for i in page]
+        if "stale_error" in cache_info:
+            cache_info = {k: v for k, v in cache_info.items() if k != "stale_error"}
+
     return {
         "service": service,
         "total":   len(items),
-        "items":   items[:limit],
+        "items":   page,
         "limit":   limit,
         "filters": {
             "sort":              sort,
@@ -1310,7 +1332,9 @@ async def library_search(
             else:
                 raw = await client.lookup_artist(q)
     except Exception as e:
-        raise HTTPException(502, f"{service} lookup failed: {e}")
+        # The exception text names the arr's LAN address — log it, don't send it.
+        logger.warning("[library] %s lookup failed: %s", service, _format_arr_error(service, e))
+        raise HTTPException(502, f"{service} lookup failed — see the server log")
 
     matches = [_normalise_lookup_result(service, m) for m in (raw or [])][:25]
     return {"service": service, "matches": matches}

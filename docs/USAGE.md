@@ -272,9 +272,13 @@ is never safe to file-sync, running or not. If locks persist, confirm
 
 **A pipeline flag is stuck (`enrichment_running`, `music_pipeline_running`)**
 
-This happens when the process was killed mid-run. The next sync usually
-clears it. To clear it yourself, run this from the Curatarr folder with
-the venv active (replace the key with the stuck
+This happens when the process was killed mid-run. Restarting Curatarr
+clears it: the start resets `enrichment_running`, `deletion_run` and
+`plex_sync_running`, and `music_pipeline_running` unless the process that
+holds it (`scripts/music_enricher.py`) is still running. If a flag stays
+stuck after a restart, the log has a `stale flag … could not be cleared`
+error. To clear it yourself, run this from the
+Curatarr folder with the venv active (replace the key with the stuck
 flag):
 
 ```bash

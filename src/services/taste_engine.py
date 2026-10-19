@@ -1178,6 +1178,7 @@ async def compute_taste_vector_for_user(
 
     # Process in chunks so we can check for cancellation and send progress updates
     CHUNK = 10
+    embed_failed = 0
     for i in range(0, len(tasks), CHUNK):
         if _tv_task.status.value == "skipped":
             logger.info("Taste vector computation cancelled at %d/%d", i, len(tasks))
@@ -1188,6 +1189,13 @@ async def compute_taste_vector_for_user(
         chunk_hits = 0
         for result in chunk_results:
             if isinstance(result, Exception):
+                # Dropped without a word, a bug in embed_entry left the taste
+                # vector frozen at its old value behind "Got 0/N" at INFO.
+                embed_failed += 1
+                if embed_failed <= 3:
+                    logger.warning("[taste] %s/%s: embedding an entry failed",
+                                   user_id, category or "all",
+                                   exc_info=(type(result), result, result.__traceback__))
                 continue
             emb, w, t = result
             if emb:
@@ -1217,6 +1225,14 @@ async def compute_taste_vector_for_user(
                 enriched_titles_for_vr.add(t)
 
     logger.info("Got %d/%d embeddings successfully", len(embeddings_weights), len(top_entries))
+    if tasks and embed_failed * 5 > len(tasks):
+        # More than a fifth broke: a vector from the rest is a skewed sample,
+        # and writing it would replace a good one. Keep the stored vector.
+        msg = (f"{embed_failed} of {len(tasks)} embeddings failed - "
+               "taste vector left as it was")
+        logger.warning("[taste] %s/%s: %s", user_id, category or "all", msg)
+        task_monitor.error(_tv_task, msg)
+        return {}
 
     # Mark enriched titles as vector_ready — match by (title, media_category) so the
     # single EnrichmentStatus row per series/artist is found regardless of which

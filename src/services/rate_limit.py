@@ -46,6 +46,9 @@ RECS_REFRESH_PER_10MIN = 2
 MEMORY_FLUSHES_PER_MIN = 20
 MUSIC_STARTS_PER_10MIN = 2
 SYNC_TRIGGERS_PER_10MIN = 3
+TASTE_RECOMPUTES_PER_10MIN = 3
+ARR_REFRESHES_PER_10MIN = 3        # member-forced live arr pulls (Lidarr's takes minutes)
+ANCHOR_CORRECTIONS_PER_10MIN = 5   # each drops a SHARED enrichment row → a re-fetch cascade
 
 
 def enforce(scope: str, key: Hashable, limit: int, window_s: float,
@@ -143,3 +146,4 @@ class InFlight:
 # Shared guards (module singletons; one process, one loop).
 CHAT_IN_FLIGHT = InFlight("A chat reply")
 RECS_REFRESH_IN_FLIGHT = InFlight("A recommendation refresh")
+TASTE_RECOMPUTE_IN_FLIGHT = InFlight("A taste-profile recompute")

@@ -15,11 +15,17 @@ frontend was checked only where it bears on token theft.
 | PIN (Fix E) | **Removed, not hardened** (owner decision): endpoints, schemas, model and Settings form deleted, and `user_pin_hashes` dropped at boot with `secure_delete` | `users.py`, `connection._drop_retired_tables` |
 | `/library/profiles` | `require_admin` | `library.py` |
 | Image proxy | Raster types only, plus `Content-Security-Policy: sandbox` on every proxied body | `image_proxy.py` |
-| Spotify upload bounds, error-text items | Not done in this pass | — |
+| Spotify upload bounds, error-text items | Not done in this pass. **Done since** (silent-failure sweep, follow-up #5): at most 20 files per upload, each read with `read(cap + 1)`; `_decode_jwt` answers "Session expired or invalid"; the plex.tv PIN failure no longer returns plex.tv's body | `imports.py › _MAX_FILES`, `spotify_upload`; `auth.py › _decode_jwt`, `request_plex_pin` |
 
 Regression suite: `tests/test_appsec_2026_10.py`. Fix C does not resolve DNS
 names, so a hostname that resolves to a link-local address still passes. Only
-literal addresses are refused.
+literal addresses are refused. **Done since** (sweep follow-up #5, round 3, round 9):
+`endpoint_policy.resolved_refusal` resolves the name (3 s bound) right before the
+Plex/Ollama/arr tests, the library test and `/complete`, `/reconfigure`, `/warmup`
+connect, and refuses it when any address is link-local/metadata/unspecified/multicast,
+or when the lookup times out or errors (`setup_wizard._refused_target`,
+`setup._refuse_resolved`, `library.py`). Still not added: the optional TrustedHost
+middleware / `ALLOWED_HOSTS` setting from row 1.
 
 ## 1. Threat model & security posture summary
 
