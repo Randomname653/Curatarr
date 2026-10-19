@@ -498,3 +498,32 @@ class MetadataCache:
                 # The rollback is what releases a write lock left behind.
                 logger.warning("[cache] rollback on release failed - a write "
                                "lock may linger: %s", e)
+
+
+# ── From a coroutine ────────────────────────────────────────────────────────
+# Each call opens a handle on a worker thread (connections are per thread),
+# so the event loop never waits on the cache file's lock.
+
+def _with_cache(method: str, *args, **kwargs):
+    with MetadataCache() as cache:
+        return getattr(cache, method)(*args, **kwargs)
+
+
+async def acache_get(cache_key: str) -> Optional[Dict[str, Any]]:
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "get_cache", cache_key)
+
+
+async def acache_get_many(cache_keys) -> Dict[str, Dict[str, Any]]:
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "get_cache_many", list(cache_keys))
+
+
+async def acache_set(cache_key: str, response: Dict[str, Any], days: int = 7):
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "set_cache", cache_key, response, days)
+
+
+async def acache_patch(cache_key: str, updates: Dict[str, Any], **kwargs):
+    import asyncio
+    return await asyncio.to_thread(_with_cache, "patch_cache", cache_key, updates, **kwargs)

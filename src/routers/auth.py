@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 
 from src.config import settings
 from src.database import get_db
+from src.database.connection import get_db_session
+from src.database.runner import run_write
 from src.database.models import User
 
 logger = logging.getLogger(__name__)
@@ -443,8 +445,7 @@ async def _assert_plex_membership(plex_id: str, first_ever: bool) -> None:
 
 
 @router.get("/plex/poll/{pin_id}")
-async def poll_plex_pin(pin_id: int, request: Request, background_tasks: BackgroundTasks,
-                        db: Session = Depends(get_db)):
+async def poll_plex_pin(pin_id: int, request: Request, background_tasks: BackgroundTasks):
     """Step 2 – Poll until the user has authenticated; returns JWT on success.
 
     The ``X-Plex-Pin-Nonce`` header carries the value /plex/pin returned to
@@ -488,48 +489,64 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
     plex_id = str(plex_user.get("id", ""))
     plex_username = plex_user.get("username") or plex_user.get("email", "unknown")
 
-    # Upsert user
-    user = db.query(User).filter(User.plex_user_id == plex_id).first()
-    if not user:
-        # ⚡ Bolt: Fast existence check avoiding full ORM object instantiation
-        first_ever = db.query(User.id).first() is None
+    # Upsert user. The handler awaits plex.tv, so every statement runs on the
+    # DB writer thread with its own session; helpers hand back plain values.
+    def _user_info(user):
+        return user.id, user.is_admin, user.token_version or 0, user.plex_username
+
+    def _login_existing():
+        with get_db_session() as db:
+            user = db.query(User).filter(User.plex_user_id == plex_id).first()
+            if not user:
+                # ⚡ Bolt: Fast existence check avoiding full ORM object instantiation
+                return None, db.query(User.id).first() is None
+            if not user.is_active:
+                raise HTTPException(status_code=403, detail="Account deactivated")
+            user.last_login = datetime.now(timezone.utc)
+            user.plex_token = auth_token   # refresh on every login (see below)
+            info = _user_info(user)
+            db.commit()
+            return info, False
+
+    def _create_user(first_ever):
+        with get_db_session() as db:
+            user = User(
+                plex_user_id=plex_id,
+                plex_username=plex_username,
+                is_admin=first_ever,
+                is_active=True,
+                created_at=datetime.now(timezone.utc),
+                # Store the user's OWN plex.tv token — per-account Plex writes
+                # ("Curatarr Recommended" playlists) are impossible with the
+                # owner token alone. Every login re-stores the newest token,
+                # which self-heals tokens revoked via plex.tv sign-out.
+                plex_token=auth_token,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            return _user_info(user)
+
+    info, first_ever = await run_write(_login_existing)
+    if info is None:
         if settings.PLEX_LOGIN_REQUIRE_MEMBERSHIP:
             await _assert_plex_membership(plex_id, first_ever)
-        user = User(
-            plex_user_id=plex_id,
-            plex_username=plex_username,
-            is_admin=first_ever,
-            is_active=True,
-            created_at=datetime.now(timezone.utc),
-            # Store the user's OWN plex.tv token — per-account Plex writes
-            # ("Curatarr Recommended" playlists) are impossible with the
-            # owner token alone. Every login re-stores the newest token,
-            # which self-heals tokens revoked via plex.tv sign-out.
-            plex_token=auth_token,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        info = await run_write(_create_user, first_ever)
         logger.info("New user: %s (admin=%s)", plex_username, first_ever)
         # A secondary user just arrived → set up their data automatically:
         # re-attribute their Plex plays off the admin + build their taste
         # vector in the background. No admin button, no manual step. (The
         # first-ever user is the admin / data source, so they're skipped.)
         if not first_ever:
-            background_tasks.add_task(_bootstrap_user_data, user.id)
-    else:
-        if not user.is_active:
-            raise HTTPException(status_code=403, detail="Account deactivated")
-        user.last_login = datetime.now(timezone.utc)
-        user.plex_token = auth_token   # refresh on every login (see above)
-        db.commit()
+            background_tasks.add_task(_bootstrap_user_data, info[0])
+    user_id, is_admin, token_version, username = info
 
-    token = _create_jwt(user.id, user.is_admin, user.token_version or 0)
+    token = _create_jwt(user_id, is_admin, token_version)
     _pin_bindings.pop(int(pin_id), None)   # one PIN, one session
     return {
         "status": "ok",
         "token": token,
-        "user": {"id": user.id, "username": user.plex_username, "is_admin": user.is_admin},
+        "user": {"id": user_id, "username": username, "is_admin": is_admin},
     }
 
 

@@ -320,7 +320,7 @@ def test_the_wiring():
     assert "custodian_sprint_tick,\n        IntervalTrigger(minutes=SPRINT_TICK_MINUTES)" in src
     router = (_ROOT / "src" / "routers" / "enrichment.py").read_text(encoding="utf-8")
     assert '@router.post("/custodian/sprint")' in router
-    cut = router.index('set_state("enrichment_left", str(max(0, len(items) - limit) if limit else 0))')
+    cut = router.index('set_state, "enrichment_left", str(max(0, len(items) - limit) if limit else 0))')
     assert cut < router.index("items = items[:limit]", cut)
     kb = (_ROOT / "frontend" / "js" / "kb.js").read_text(encoding="utf-8")
     assert "act('startSprint', EL)" in kb and "act('stopSprint', EL)" in kb

@@ -20,6 +20,7 @@ sys.path.insert(0, str(_ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.routers.recommendations as recs  # noqa: E402
 from src.database.models import Base, DeletionProposal  # noqa: E402
@@ -32,7 +33,9 @@ _LIVE = types.SimpleNamespace(
 
 
 def _db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    # StaticPool: approve_deletion opens its own sessions on worker threads
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
     for i, (svc, status) in enumerate((("lidarr", "pending"), ("lidarr", "limbo"),
@@ -46,13 +49,27 @@ def _db():
     return db
 
 
-def _with_settings(fn):
-    real = recs.settings
+def _with_settings(fn, db=None):
+    """fn under the test settings; with db, recs' own sessions open on its engine."""
+    from contextlib import contextmanager
+    make = sessionmaker(bind=db.get_bind()) if db is not None else None
+
+    @contextmanager
+    def session():
+        s = make()
+        try:
+            yield s
+            s.commit()
+        finally:
+            s.close()
+    real = (recs.settings, recs.get_db_session)
     recs.settings = _LIVE
+    if make is not None:
+        recs.get_db_session = session
     try:
         return fn()
     finally:
-        recs.settings = real
+        recs.settings, recs.get_db_session = real
 
 
 def test_which_services_are_set_up():
@@ -86,7 +103,7 @@ def test_a_delete_says_switched_off_and_retires_the_proposal():
     recs._probe_arr, recs._delete_one_and_log = unreachable, never
     try:
         out = _with_settings(lambda: asyncio.run(recs.approve_deletion(
-            2, user=types.SimpleNamespace(id=1), db=db)))
+            2, user=types.SimpleNamespace(id=1))), db)
     finally:
         recs._probe_arr, recs._delete_one_and_log = real
     p = db.query(DeletionProposal).get(2)
@@ -106,7 +123,7 @@ def test_a_set_up_but_unreachable_arr_still_parks_in_limbo():
     recs._probe_arr = unreachable
     try:
         out = _with_settings(lambda: asyncio.run(recs.approve_deletion(
-            4, user=types.SimpleNamespace(id=1), db=db)))
+            4, user=types.SimpleNamespace(id=1))), db)
     finally:
         recs._probe_arr = real
     assert out["ok"] is False and out["limbo"] is True and out["status"] == "limbo"

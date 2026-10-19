@@ -42,11 +42,12 @@ def curation_stats(months: int = 12,
 async def write_narrative(user: User = Depends(require_admin)):
     """The curator writes ONE paragraph over this year's numbers (cached per
     user+year in app_state; regenerating overwrites)."""
+    from src.database.runner import run_read, run_write
     from src.services.app_state import set_state
     from src.services.curation_stats import build_curation_stats
     from src.services.recommendations_engine import _call_llm
 
-    data = build_curation_stats(user.id, months=12)
+    data = await run_read(build_curation_stats, user.id, months=12)
     t = data["totals"]
     stubborn_titles = ", ".join(s["title"] for s in data["stubbornness"][:5]) or "none"
     prompt = f"""[MODE: YEARLY CURATION REVIEW]
@@ -59,7 +60,7 @@ Write ONE paragraph (4-6 sentences, English, dry wit allowed): what the numbers 
     if not text:
         return {"ok": False, "error": "curator unavailable"}
     text = text.strip()
-    set_state(_narrative_key(user.id, datetime.utcnow().year),
-              json.dumps({"text": text,
-                          "written_at": datetime.utcnow().isoformat()}))
+    await run_write(set_state, _narrative_key(user.id, datetime.utcnow().year),
+                    json.dumps({"text": text,
+                                "written_at": datetime.utcnow().isoformat()}))
     return {"ok": True, "narrative": text}

@@ -201,13 +201,13 @@ try:
 
     def poll(nonce, host="192.168.1.20"):
         return auth.poll_plex_pin(pin["pin_id"], _Req(host, {"X-Plex-Pin-Nonce": nonce}),
-                                  BackgroundTasks(), db=db)
+                                  BackgroundTasks())
 
     check("poll: no nonce is refused", status_of(poll, "") == 403)
     check("poll: a wrong nonce is refused", status_of(poll, "x" * 32, host="192.168.1.66") == 403)
     check("poll: an unknown pin is refused",
           status_of(auth.poll_plex_pin, 999, _Req(headers={"X-Plex-Pin-Nonce": pin["nonce"]}),
-                    BackgroundTasks(), db=db) == 403)
+                    BackgroundTasks()) == 403)
     settings.PLEX_CLIENT_ID = "changed-by-a-reload"
     out = asyncio.run(poll(pin["nonce"]))
     check("poll: the creator's nonce polls it", out == {"status": "pending"})
@@ -217,7 +217,7 @@ try:
     # Per-IP budget: across pin ids, not just per pin.
     rate_limit.reset("plex-poll-ip")
     codes = [status_of(auth.poll_plex_pin, 1000 + i, _Req("192.168.1.77", {"X-Plex-Pin-Nonce": "guess"}),
-                       BackgroundTasks(), db=db)
+                       BackgroundTasks())
              for i in range(auth.MAX_POLLS_PER_IP_PER_MINUTE + 1)]
     check("poll: one client walking pin ids hits the per-IP budget", codes[-1] == 429 and codes[0] == 403)
     check("poll: other clients are unaffected", status_of(poll, pin["nonce"]) == 200)

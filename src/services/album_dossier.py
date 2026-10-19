@@ -24,6 +24,7 @@ artist.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Optional
@@ -107,7 +108,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
         alb = find_album(albums, album_title)
     else:
         # Lidarr optional (2026-09-15): the Plex music index in the same shape
-        artist, alb, tnames_plex = _plex_album(artist_name, album_title)
+        artist, alb, tnames_plex = await asyncio.to_thread(_plex_album, artist_name, album_title)
     if not artist or not alb:
         return None
 
@@ -139,16 +140,20 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
         except Exception as e:
             log_topup_failure(logger, "[album] tracklist", album_title, e)
     if tnames:
-        try:
+        def _plays():
             from sqlalchemy import func
             from src.database.connection import get_db_session
             from src.database.models import WatchHistoryEntry as W
             with get_db_session() as db:
-                rows = (db.query(W.title, func.count(W.id))
+                return [tuple(r) for r in (db.query(W.title, func.count(W.id))
                         .filter(W.media_type == "music",
                                 W.series_title == artist.get("artistName"),
                                 W.title.in_(tnames))
-                        .group_by(W.title).all())
+                        .group_by(W.title).all())]
+
+        try:
+            from src.database.runner import run_read
+            rows = await run_read(_plays)
             played = {t: n for t, n in rows}
             if played:
                 top = sorted(played.items(), key=lambda x: -x[1])[:3]
@@ -166,7 +171,8 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
     # the artist's profile sentence: the one place the curator may quote a line.
     try:
         from src.services.lyrics import album_lyrics_line
-        ll = album_lyrics_line(artist.get("artistName") or artist_name, alb.get("title") or album_title)
+        ll = await asyncio.to_thread(album_lyrics_line, artist.get("artistName") or artist_name,
+                                     alb.get("title") or album_title)
         if ll:
             lines.append(ll)
     except Exception as e:
@@ -201,12 +207,16 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
     # own 30 d cache keeps repeat dossiers to one network call per artist.
     mbid = artist.get("foreignArtistId")
     if not mbid:
-        try:
+        def _cached_artist():
             from src.cache.metadata_cache import MetadataCache
             _c = MetadataCache()
             _hit = _c.get_cache(
                 f"mb:artist:{(artist.get('artistName') or '')[:60].lower()}")
             _c.close()
+            return _hit
+
+        try:
+            _hit = await asyncio.to_thread(_cached_artist)
             if _hit and isinstance(_hit.get("response"), dict):
                 mbid = _hit["response"].get("mbid")
         except Exception as e:
@@ -242,21 +252,26 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
             log_topup_failure(logger, "[album] listenbrainz rank", album_title, e)
 
     # per-work Discogs styles from the offline snapshot
-    try:
-        import json as _json
+    def _styles_row():
         import sqlite3
         from src.services.discogs_offline import STYLES_DB_PATH
-        if STYLES_DB_PATH.exists():
-            con = sqlite3.connect(str(STYLES_DB_PATH))
-            row = con.execute(
-                "SELECT styles, year FROM master_styles WHERE artist_norm=? "
-                "AND title LIKE ? LIMIT 1",
-                (_norm(artist.get("artistName")), alb.get("title"))).fetchone()
-            con.close()
-            if row and row[0]:
-                styles = _json.loads(row[0])
-                if styles:
-                    lines.append(f"Styles (Discogs): {', '.join(styles[:8])}")
+        if not STYLES_DB_PATH.exists():
+            return None
+        con = sqlite3.connect(str(STYLES_DB_PATH))
+        row = con.execute(
+            "SELECT styles, year FROM master_styles WHERE artist_norm=? "
+            "AND title LIKE ? LIMIT 1",
+            (_norm(artist.get("artistName")), alb.get("title"))).fetchone()
+        con.close()
+        return row
+
+    try:
+        import json as _json
+        row = await asyncio.to_thread(_styles_row)
+        if row and row[0]:
+            styles = _json.loads(row[0])
+            if styles:
+                lines.append(f"Styles (Discogs): {', '.join(styles[:8])}")
     except Exception as e:
         logger.warning("[album] discogs styles failed: %s", e)
 

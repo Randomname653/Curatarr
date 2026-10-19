@@ -101,22 +101,55 @@ def ban_warning(p) -> Optional[str]:
             f"the artist in SoulSync settles it now.")
 
 
-async def retry_bans(db) -> dict:
+async def retry_bans() -> dict:
     """Ban every deleted artist whose ban never held. Returns counts."""
+    from src.database.runner import run_read, run_write
     from src.services import soulsync_client as ss
     if not ss.writes_allowed():
         return {"tried": 0, "held": 0, "failed": []}
-    rows = (db.query(DeletionProposal)
-            .filter(DeletionProposal.status == "deleted")
-            .all())
+    rows = await run_read(_deleted_proposals)
     todo = [p for p in rows if _category(p) == "music" and not ban_held(p)]
     failed = []
     for p in todo:
         await ban_deleted_artist(p)
         if not ban_held(p):
             failed.append(p.title)
-    db.commit()
+    await run_write(_save, todo, ("soulsync_ban",))
     return {"tried": len(todo), "held": len(todo) - len(failed), "failed": failed}
+
+
+# Both jobs await the network between reading the proposals and writing
+# them back, so they work on plain copies: no session stays open across
+# an await, and the reads and the write run off the event loop. Only the
+# values a job changed are written, as the ORM did, so a Keep that landed
+# in between is not overwritten with what was read.
+_COPY_COLS = ("id", "title", "category", "service", "soulsync_ban", "tmdb_id", "tvdb_id",
+              "resolved_at", "returned_at", "returned_info")
+
+
+def _deleted_proposals() -> list:
+    from types import SimpleNamespace
+    from src.database.connection import get_db_session
+    with get_db_session() as db:
+        rows = db.query(DeletionProposal).filter(DeletionProposal.status == "deleted").all()
+        out = []
+        for p in rows:
+            vals = {c: getattr(p, c) for c in _COPY_COLS}
+            out.append(SimpleNamespace(**vals, _read=dict(vals)))
+        return out
+
+
+def _save(copies: list, cols: tuple) -> None:
+    from src.database.connection import get_db_session
+    with get_db_session() as db:
+        for c in copies:
+            changed = {col: getattr(c, col) for col in cols
+                       if getattr(c, col) != c._read.get(col)}
+            row = db.get(DeletionProposal, c.id) if changed else None
+            if row is not None:
+                for col, val in changed.items():
+                    setattr(row, col, val)
+        db.commit()
 
 
 # ── Returns ───────────────────────────────────────────────────────────────────
@@ -238,14 +271,15 @@ def apply_matches(rows: list, indexes: dict) -> list:
     return new
 
 
-async def check_returns(db) -> dict:
+async def check_returns() -> dict:
     """Look every deleted proposal up in its library. Returns counts and the
     titles that came back since the last check."""
-    rows = db.query(DeletionProposal).filter(DeletionProposal.status == "deleted").all()
+    from src.database.runner import run_read, run_write
+    rows = await run_read(_deleted_proposals)
     wanted = {_LIBRARY_OF.get(_category(p) or "") for p in rows} - {None}
     indexes = {svc: await _library_index(svc) for svc in sorted(wanted)}
     new = apply_matches(rows, indexes)
-    db.commit()
+    await run_write(_save, rows, ("returned_at", "returned_info"))
     open_n = sum(1 for p in rows if _json(p.returned_info).get("state") == "open")
     return {"checked": len(rows), "open": open_n, "new": new,
             "unreadable": sorted(s for s, i in indexes.items() if i is None)}
@@ -255,11 +289,9 @@ async def run_daily(task=None) -> dict:
     """The custodian's deletion_returns task: SoulSync bans that never held
     first (a fresh ban can stop a download the check would only report
     later), then the returns check."""
-    from src.database.connection import get_db_session
     from src.services.task_monitor import task_monitor
-    with get_db_session() as db:
-        bans = await retry_bans(db)
-        res = await check_returns(db)
+    bans = await retry_bans()
+    res = await check_returns()
     parts = []
     if bans["tried"]:
         parts.append(f"SoulSync bans: {bans['held']}/{bans['tried']} set")
@@ -322,12 +354,11 @@ def _cli(argv: list) -> int:
         python -m src.services.deletion_returns --retry-bans   (bans that never held)
         python -m src.services.deletion_returns --check        (the daily returns check)"""
     import asyncio
-    from src.database.connection import get_db_session, init_db
+    from src.database.connection import init_db
     if argv[:1] in (["--retry-bans"], ["--check"]):
         init_db()            # the new columns, when the app has not started on this code yet
     if argv[:1] == ["--retry-bans"]:
-        with get_db_session() as db:
-            out = asyncio.run(retry_bans(db))
+        out = asyncio.run(retry_bans())
         print(f"SoulSync bans: {out['held']}/{out['tried']} set"
               + (f"; not blocked: {', '.join(out['failed'])}" if out["failed"] else ""))
         return 0 if not out["failed"] else 1

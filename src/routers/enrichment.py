@@ -12,11 +12,10 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from src.config import settings
-from src.database import get_db
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.database.models import User, WatchHistoryEntry, EnrichmentStatus
 from src.routers.auth import get_current_user, require_admin
 from src.services.app_state import get_state, set_state
@@ -110,7 +109,6 @@ def custodian_sprint(
 @ttl_response(10, key=lambda **kw: bool(kw.get("quick")))
 async def enrichment_status(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
     quick: bool = False,
 ):
     """Return enrichment progress per category. quick=true skips live ARR API calls."""
@@ -118,104 +116,113 @@ async def enrichment_status(
 
     from sqlalchemy import case as _case
 
-    # One grouped query for every category instead of two per category
-    # (#106). total_raw is the row count, shown as "X plays tracked".
-    # total_unique is a DISTINCT count on the canonical title — series_title
-    # for shows / anime / music, title for movies — and it must stay one:
-    # Pass 91a found the movie branch counting rows, so a user who re-watched
-    # films read "6 pending" with one title actually unenriched, because the
-    # downstream not_enriched = total_unique - enriched math ran on plays.
-    # COUNT(DISTINCT …) ignores NULLs, so the old series_title IS NOT NULL
-    # filter is implied.
-    stats_query = db.query(
-        WatchHistoryEntry.media_type,
-        _func.count(WatchHistoryEntry.id).label("total_raw"),
-        _func.count(_func.distinct(
-            _case(
-                ((WatchHistoryEntry.media_type == "movie", WatchHistoryEntry.title)),
-                else_=WatchHistoryEntry.series_title
-            )
-        )).label("total_unique")
-    ).filter(
-        WatchHistoryEntry.user_id == user.id,
-        WatchHistoryEntry.media_type.in_(CATEGORIES)
-    ).group_by(WatchHistoryEntry.media_type).all()
+    user_id = user.id
 
-    stats_by_cat = {
-        row.media_type: {"total_raw": row.total_raw, "total_unique": row.total_unique}
-        for row in stats_query
-    }
-
-    result = {}
-    for cat in CATEGORIES:
-        cat_stats = stats_by_cat.get(cat, {"total_raw": 0, "total_unique": 0})
-        total_unique = cat_stats["total_unique"]
-        total_raw = cat_stats["total_raw"]
-
-        # canonical_col: the WatchHistoryEntry column that maps to EnrichmentStatus.title
-        if cat in ("show", "anime", "music"):
-            # series/artist-level: canonical = series_title (artist name for music)
-            # Subquery: canonical titles this user has in their history
-            user_titles_sq = db.query(
-                _func.distinct(WatchHistoryEntry.series_title)
+    # Its own session in a worker: the non-quick path awaits the arrs, so
+    # none of this may run on the event loop.
+    def _count():
+        with get_db_session() as db:
+            # One grouped query for every category instead of two per category
+            # (#106). total_raw is the row count, shown as "X plays tracked".
+            # total_unique is a DISTINCT count on the canonical title — series_title
+            # for shows / anime / music, title for movies — and it must stay one:
+            # Pass 91a found the movie branch counting rows, so a user who re-watched
+            # films read "6 pending" with one title actually unenriched, because the
+            # downstream not_enriched = total_unique - enriched math ran on plays.
+            # COUNT(DISTINCT …) ignores NULLs, so the old series_title IS NOT NULL
+            # filter is implied.
+            stats_query = db.query(
+                WatchHistoryEntry.media_type,
+                _func.count(WatchHistoryEntry.id).label("total_raw"),
+                _func.count(_func.distinct(
+                    _case(
+                        ((WatchHistoryEntry.media_type == "movie", WatchHistoryEntry.title)),
+                        else_=WatchHistoryEntry.series_title
+                    )
+                )).label("total_unique")
             ).filter(
-                WatchHistoryEntry.user_id == user.id,
-                WatchHistoryEntry.media_type == cat,
-                WatchHistoryEntry.series_title != None,
-            ).scalar_subquery()
-        else:
-            # movie: canonical = title
-            user_titles_sq = db.query(
-                _func.distinct(WatchHistoryEntry.title)
-            ).filter(
-                WatchHistoryEntry.user_id == user.id,
-                WatchHistoryEntry.media_type == cat,
-            ).scalar_subquery()
+                WatchHistoryEntry.user_id == user_id,
+                WatchHistoryEntry.media_type.in_(CATEGORIES)
+            ).group_by(WatchHistoryEntry.media_type).all()
 
-        # Count only titles this user actually has in their watch history
-        enriched = db.query(
-            _func.count(_func.distinct(EnrichmentStatus.title))
-        ).filter(
-            EnrichmentStatus.media_category == cat,
-            EnrichmentStatus.enriched == True,
-            EnrichmentStatus.title.in_(user_titles_sq),
-        ).scalar() or 0
+            stats_by_cat = {
+                row.media_type: {"total_raw": row.total_raw, "total_unique": row.total_unique}
+                for row in stats_query
+            }
 
-        vector_ready = db.query(
-            _func.count(_func.distinct(EnrichmentStatus.title))
-        ).filter(
-            EnrichmentStatus.media_category == cat,
-            EnrichmentStatus.vector_ready == True,
-            EnrichmentStatus.title.in_(user_titles_sq),
-        ).scalar() or 0
+            result = {}
+            for cat in CATEGORIES:
+                cat_stats = stats_by_cat.get(cat, {"total_raw": 0, "total_unique": 0})
+                total_unique = cat_stats["total_unique"]
+                total_raw = cat_stats["total_raw"]
 
-        result[cat] = {
-            "total_in_history": total_raw,
-            "total_unique": total_unique,
-            "enriched": enriched,
-            "not_enriched": max(0, total_unique - enriched),
-            "vector_ready": vector_ready,
-            # Clamp: a reclassified title (EnrichmentStatus.media_category moved
-            # to anime while WatchHistoryEntry.media_type stays show) can put the
-            # enriched count above this category's watch-history denominator.
-            "pct": min(100, round(100 * enriched / max(total_unique, 1))),
-            "unit": "series" if cat in ("show","anime") else "artists" if cat=="music" else "items",
-        }
+                # canonical_col: the WatchHistoryEntry column that maps to EnrichmentStatus.title
+                if cat in ("show", "anime", "music"):
+                    # series/artist-level: canonical = series_title (artist name for music)
+                    # Subquery: canonical titles this user has in their history
+                    user_titles_sq = db.query(
+                        _func.distinct(WatchHistoryEntry.series_title)
+                    ).filter(
+                        WatchHistoryEntry.user_id == user_id,
+                        WatchHistoryEntry.media_type == cat,
+                        WatchHistoryEntry.series_title != None,
+                    ).scalar_subquery()
+                else:
+                    # movie: canonical = title
+                    user_titles_sq = db.query(
+                        _func.distinct(WatchHistoryEntry.title)
+                    ).filter(
+                        WatchHistoryEntry.user_id == user_id,
+                        WatchHistoryEntry.media_type == cat,
+                    ).scalar_subquery()
+
+                # Count only titles this user actually has in their watch history
+                enriched = db.query(
+                    _func.count(_func.distinct(EnrichmentStatus.title))
+                ).filter(
+                    EnrichmentStatus.media_category == cat,
+                    EnrichmentStatus.enriched == True,
+                    EnrichmentStatus.title.in_(user_titles_sq),
+                ).scalar() or 0
+
+                vector_ready = db.query(
+                    _func.count(_func.distinct(EnrichmentStatus.title))
+                ).filter(
+                    EnrichmentStatus.media_category == cat,
+                    EnrichmentStatus.vector_ready == True,
+                    EnrichmentStatus.title.in_(user_titles_sq),
+                ).scalar() or 0
+
+                result[cat] = {
+                    "total_in_history": total_raw,
+                    "total_unique": total_unique,
+                    "enriched": enriched,
+                    "not_enriched": max(0, total_unique - enriched),
+                    "vector_ready": vector_ready,
+                    # Clamp: a reclassified title (EnrichmentStatus.media_category moved
+                    # to anime while WatchHistoryEntry.media_type stays show) can put the
+                    # enriched count above this category's watch-history denominator.
+                    "pct": min(100, round(100 * enriched / max(total_unique, 1))),
+                    "unit": "series" if cat in ("show","anime") else "artists" if cat=="music" else "items",
+                }
+        return result
+
+    result = await run_read(_count)
 
     if quick:
         import json as _json
         from src.services.app_state import get_state as _gs
-        cached_raw = _gs("arr_counts_cache")
+        cached_raw = await run_read(_gs, "arr_counts_cache")
         arr_counts = _json.loads(cached_raw) if cached_raw else {}
     else:
         arr_counts = await _get_arr_counts()
 
-    last_run = get_state("last_enrichment_at")
+    last_run = await run_read(get_state, "last_enrichment_at")
     return {
         "categories": result,
         "arr": arr_counts,
         "last_run": last_run,
-        "running": get_state("enrichment_running") == "1",
+        "running": await run_read(get_state, "enrichment_running") == "1",
     }
 
 
@@ -248,6 +255,17 @@ def _plex_music_counts(count_vectors=None) -> dict:
     }
 
 
+def _arr_enriched_ids(service: str) -> set:
+    """arr ids of this service's enriched ArrEnrichmentStatus rows."""
+    from src.database.models import ArrEnrichmentStatus
+    with get_db_session() as db:
+        return {aid for (aid,) in db.query(
+            ArrEnrichmentStatus.arr_id).filter(
+            ArrEnrichmentStatus.service == service,
+            ArrEnrichmentStatus.enriched == True,
+        ).all()}
+
+
 async def _get_arr_counts() -> dict:
     """
     Fetch item counts from ARR services.
@@ -259,8 +277,8 @@ async def _get_arr_counts() -> dict:
     from src.services.app_state import get_state, set_state
     from datetime import datetime, timedelta
 
-    cached_raw = get_state("arr_counts_cache")
-    cached_ts  = get_state("arr_counts_ts")
+    cached_raw = await run_read(get_state, "arr_counts_cache")
+    cached_ts  = await run_read(get_state, "arr_counts_ts")
     if cached_raw and cached_ts:
         try:
             ts = datetime.fromisoformat(cached_ts)
@@ -317,12 +335,7 @@ async def _get_arr_counts() -> dict:
                 total = len(movies)
                 downloaded = sum(1 for m in movies if m.get("hasFile"))
                 live_ids = {m.get("id") for m in movies}
-                with get_db_session() as db:
-                    enriched_ids = {aid for (aid,) in db.query(
-                        ArrEnrichmentStatus.arr_id).filter(
-                        ArrEnrichmentStatus.service == "radarr",
-                        ArrEnrichmentStatus.enriched == True,
-                    ).all()}
+                enriched_ids = await run_read(_arr_enriched_ids, "radarr")
                 # Split enriched rows into still-present vs ORPHANED (enriched but
                 # the movie is gone from Radarr). Orphans inflated the old count
                 # past 100%; surfacing them separately keeps the % honest and
@@ -364,12 +377,7 @@ async def _get_arr_counts() -> dict:
                 downloaded = sum(1 for s in series
                                  if s.get("statistics", {}).get("episodeFileCount", 0) > 0)
                 live_ids = {s.get("id") for s in series}
-                with get_db_session() as db:
-                    enriched_ids = {aid for (aid,) in db.query(
-                        ArrEnrichmentStatus.arr_id).filter(
-                        ArrEnrichmentStatus.service == "sonarr",
-                        ArrEnrichmentStatus.enriched == True,
-                    ).all()}
+                enriched_ids = await run_read(_arr_enriched_ids, "sonarr")
                 # Still-present vs ORPHANED (enriched but the series is gone from
                 # Sonarr) — orphans were the main source of the >100% sonarr bar.
                 enriched = len(enriched_ids & live_ids)
@@ -399,7 +407,7 @@ async def _get_arr_counts() -> dict:
 
     if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
         try:
-            plex_counts = _plex_music_counts(_count_vectors)
+            plex_counts = await run_read(_plex_music_counts, _count_vectors)
             if plex_counts:
                 counts["lidarr"] = plex_counts
         except Exception as e:
@@ -430,21 +438,26 @@ async def _get_arr_counts() -> dict:
                 # normalises through different paths (e.g. the
                 # ``ext-script`` seed lowercases).
                 from src.database.models import EnrichmentStatus as _ES
-                with get_db_session() as db:
-                    enriched_music_titles = {
-                        (t or "").lower()
-                        for (t,) in db.query(_ES.title)
-                        .filter(
-                            _ES.media_category == "music",
-                            _ES.enriched == True,
-                        ).all()
-                    }
-                    from sqlalchemy import func
-                    enriched_albums = db.query(func.count(ArrEnrichmentStatus.id)).filter(
-                        ArrEnrichmentStatus.service == "lidarr",
-                        ArrEnrichmentStatus.enriched == True,
-                        ArrEnrichmentStatus.category == "album",
-                    ).scalar()
+
+                def _load_music():
+                    with get_db_session() as db:
+                        enriched_music_titles = {
+                            (t or "").lower()
+                            for (t,) in db.query(_ES.title)
+                            .filter(
+                                _ES.media_category == "music",
+                                _ES.enriched == True,
+                            ).all()
+                        }
+                        from sqlalchemy import func
+                        enriched_albums = db.query(func.count(ArrEnrichmentStatus.id)).filter(
+                            ArrEnrichmentStatus.service == "lidarr",
+                            ArrEnrichmentStatus.enriched == True,
+                            ArrEnrichmentStatus.category == "album",
+                        ).scalar()
+                    return enriched_music_titles, enriched_albums
+
+                enriched_music_titles, enriched_albums = await run_read(_load_music)
                 lidarr_names = {
                     (a.get("artistName") or "").lower() for a in artists
                 }
@@ -471,8 +484,8 @@ async def _get_arr_counts() -> dict:
 
     import json as _json2
     from src.services.app_state import set_state as _set
-    _set("arr_counts_cache", _json2.dumps(counts))
-    _set("arr_counts_ts", datetime.utcnow().isoformat())
+    await run_write(_set, "arr_counts_cache", _json2.dumps(counts))
+    await run_write(_set, "arr_counts_ts", datetime.utcnow().isoformat())
     return counts
 
 
@@ -481,7 +494,7 @@ async def _get_arr_counts() -> dict:
 async def refresh_arr_counts(user: User = Depends(get_current_user)):
     """Force-refresh ARR library counts (bypass 5-min cache)."""
     from src.services.app_state import set_state
-    set_state("arr_counts_ts", "")
+    await run_write(set_state, "arr_counts_ts", "")
     counts = await _get_arr_counts()
     return {"arr": counts}
 
@@ -867,10 +880,14 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     pins: dict = {}
     try:
         from src.database.models import MediaMatchOverride
-        with get_db_session() as db:
-            for ov in db.query(MediaMatchOverride).all():
-                pins[f"{ov.service}:{ov.arr_id}"] = {
-                    "tmdb_id": ov.tmdb_id, "anilist_id": ov.anilist_id, "mbid": ov.mbid}
+
+        def _load_pins():
+            with get_db_session() as db:
+                for ov in db.query(MediaMatchOverride).all():
+                    pins[f"{ov.service}:{ov.arr_id}"] = {
+                        "tmdb_id": ov.tmdb_id, "anilist_id": ov.anilist_id, "mbid": ov.mbid}
+
+        await run_read(_load_pins)
     except Exception as e:
         # With the pins unreadable every pinned item looked unpinned, so the
         # entity check flagged the owner's deliberate match as wrong and
@@ -878,99 +895,105 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
         logger.warning("[audit] pin lookup failed — skipping entity check this run: %r", e)
         truth = {}
 
-    mc = MetadataCache()
-    try:
-        rows = mc.conn.execute(
-            "SELECT cache_key, response FROM api_cache WHERE cache_key LIKE ?",
-            (prefix + "%",),
-        ).fetchall()
-        _prog(f"Auditing {len(rows):,} cached profiles…")
-        for row in rows:
-            scanned += 1
-            cache_key = row["cache_key"]
-            try:
-                profile = _json.loads(row["response"])
-            except Exception:
-                profile = None
-            # Cache key shape: "{_CACHE_VERSION}:enriched:{category}:{id_key}"
-            # — category is the 3rd colon-segment. id_key may itself
-            # contain colons, hence the maxsplit=3. Resolved BEFORE the
-            # incompleteness check so music can be exempted from zero_rating.
-            parts = cache_key.split(":", 3)
-            category = parts[2] if len(parts) > 2 else (
-                (profile or {}).get("media_type")
-            )
-            # Corrupt-source-id clusters (SoulSync dedupe_source_ids port,
-            # MIT): the SAME external id held by differently-named entities
-            # is poison — one wrong resolution leaked onto another item.
-            # Collected for every row; evaluated after the scan.
-            if profile:
-                for _src in ("tmdb_id", "anilist_id"):
-                    _v = profile.get(_src)
-                    if _v:
-                        _id_rows.setdefault((category, _src, str(_v)), []).append(
-                            (cache_key, profile.get("plex_rating_key"),
-                             profile.get("title") or ""))
+    # The whole cache scan runs in a worker: thousands of profile rows read
+    # and parsed would otherwise hold the event loop for seconds.
+    def _scan():
+        nonlocal scanned
+        mc = MetadataCache()
+        try:
+            rows = mc.conn.execute(
+                "SELECT cache_key, response FROM api_cache WHERE cache_key LIKE ?",
+                (prefix + "%",),
+            ).fetchall()
+            _prog(f"Auditing {len(rows):,} cached profiles…")
+            for row in rows:
+                scanned += 1
+                cache_key = row["cache_key"]
+                try:
+                    profile = _json.loads(row["response"])
+                except Exception:
+                    profile = None
+                # Cache key shape: "{_CACHE_VERSION}:enriched:{category}:{id_key}"
+                # — category is the 3rd colon-segment. id_key may itself
+                # contain colons, hence the maxsplit=3. Resolved BEFORE the
+                # incompleteness check so music can be exempted from zero_rating.
+                parts = cache_key.split(":", 3)
+                category = parts[2] if len(parts) > 2 else (
+                    (profile or {}).get("media_type")
+                )
+                # Corrupt-source-id clusters (SoulSync dedupe_source_ids port,
+                # MIT): the SAME external id held by differently-named entities
+                # is poison — one wrong resolution leaked onto another item.
+                # Collected for every row; evaluated after the scan.
+                if profile:
+                    for _src in ("tmdb_id", "anilist_id"):
+                        _v = profile.get(_src)
+                        if _v:
+                            _id_rows.setdefault((category, _src, str(_v)), []).append(
+                                (cache_key, profile.get("plex_rating_key"),
+                                 profile.get("title") or ""))
 
-            _prof = profile or {}
-            _prk = _prof.get("plex_rating_key")
-            detail: dict = {}
-            reason = _enrichment_incomplete_reason(_prof, category)
-            if reason:
-                detail = {"rating": _prof.get("rating"), "source": _prof.get("source")}
-            elif truth:
-                _arr = truth.get(_prk)
-                _pin = pins.get(_prk) if _prk else None
-                if _arr and _pin:
-                    for _k in ("tmdb_id", "anilist_id", "mbid"):
-                        if _pin.get(_k) and _prof.get(_k) and str(_pin[_k]) != str(_prof[_k]):
-                            reason = "pin_violated"
-                            detail = {"id": _k, "pinned": _pin[_k], "profile": _prof[_k]}
-                            break
-                elif _arr:
-                    reason = _entity_divergence_reason(_prof, category, _arr)
-                    if reason:
-                        detail = {
-                            "arr_title": _arr.get("title"), "arr_year": _arr.get("year"),
-                            "arr_mbid": _arr.get("mbid"),
-                            "profile_title": _prof.get("title"), "profile_year": _prof.get("year"),
-                            "profile_mbid": _prof.get("mbid"),
-                            "profile_tmdb_id": _prof.get("tmdb_id"),
-                            "profile_anilist_id": _prof.get("anilist_id"),
-                        }
-            if not reason:
-                continue
-            by_reason[reason] = by_reason.get(reason, 0) + 1
-            hits.append((cache_key, _prk, _prof.get("title"), category, reason, detail))
-
-        # Resolve the id clusters: >1 genuinely different normalized title on
-        # one external id → requeue EVERY row of the cluster (re-resolution
-        # runs with today's guards + any owner pin). Similar titles (year
-        # suffixes, US/UK variants) are NOT conflicts.
-        import difflib as _dl
-        import re as _re
-
-        def _norm_ct(t: str) -> str:
-            t = _re.sub(r"\s*\(\d{4}\)\s*$", "", (t or "").lower())
-            return _re.sub(r"[^a-z0-9]+", " ", t).strip()
-
-        for (_cat, _src, _v), _rows in _id_rows.items():
-            titles = [_norm_ct(t) for _, _, t in _rows if t]
-            distinct = list(dict.fromkeys(t for t in titles if t))
-            if len(distinct) < 2:
-                continue
-            if all(_dl.SequenceMatcher(None, distinct[0], t).ratio() >= 0.8
-                   for t in distinct[1:]):
-                continue   # same-ish name — alternate forms, not a leak
-            reason = f"id_conflict:{_src}"
-            for cache_key, prk, title in _rows:
+                _prof = profile or {}
+                _prk = _prof.get("plex_rating_key")
+                detail: dict = {}
+                reason = _enrichment_incomplete_reason(_prof, category)
+                if reason:
+                    detail = {"rating": _prof.get("rating"), "source": _prof.get("source")}
+                elif truth:
+                    _arr = truth.get(_prk)
+                    _pin = pins.get(_prk) if _prk else None
+                    if _arr and _pin:
+                        for _k in ("tmdb_id", "anilist_id", "mbid"):
+                            if _pin.get(_k) and _prof.get(_k) and str(_pin[_k]) != str(_prof[_k]):
+                                reason = "pin_violated"
+                                detail = {"id": _k, "pinned": _pin[_k], "profile": _prof[_k]}
+                                break
+                    elif _arr:
+                        reason = _entity_divergence_reason(_prof, category, _arr)
+                        if reason:
+                            detail = {
+                                "arr_title": _arr.get("title"), "arr_year": _arr.get("year"),
+                                "arr_mbid": _arr.get("mbid"),
+                                "profile_title": _prof.get("title"), "profile_year": _prof.get("year"),
+                                "profile_mbid": _prof.get("mbid"),
+                                "profile_tmdb_id": _prof.get("tmdb_id"),
+                                "profile_anilist_id": _prof.get("anilist_id"),
+                            }
+                if not reason:
+                    continue
                 by_reason[reason] = by_reason.get(reason, 0) + 1
-                hits.append((cache_key, prk, title, _cat, reason,
-                             {"source": _src, "value": _v, "titles": distinct[:4]}))
-            logger.warning("[audit] corrupt source id %s=%s (%s) held by %s",
-                           _src, _v, _cat, distinct[:4])
-    finally:
-        mc.close()
+                hits.append((cache_key, _prk, _prof.get("title"), category, reason, detail))
+
+            # Resolve the id clusters: >1 genuinely different normalized title on
+            # one external id → requeue EVERY row of the cluster (re-resolution
+            # runs with today's guards + any owner pin). Similar titles (year
+            # suffixes, US/UK variants) are NOT conflicts.
+            import difflib as _dl
+            import re as _re
+
+            def _norm_ct(t: str) -> str:
+                t = _re.sub(r"\s*\(\d{4}\)\s*$", "", (t or "").lower())
+                return _re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+            for (_cat, _src, _v), _rows in _id_rows.items():
+                titles = [_norm_ct(t) for _, _, t in _rows if t]
+                distinct = list(dict.fromkeys(t for t in titles if t))
+                if len(distinct) < 2:
+                    continue
+                if all(_dl.SequenceMatcher(None, distinct[0], t).ratio() >= 0.8
+                       for t in distinct[1:]):
+                    continue   # same-ish name — alternate forms, not a leak
+                reason = f"id_conflict:{_src}"
+                for cache_key, prk, title in _rows:
+                    by_reason[reason] = by_reason.get(reason, 0) + 1
+                    hits.append((cache_key, prk, title, _cat, reason,
+                                 {"source": _src, "value": _v, "titles": distinct[:4]}))
+                logger.warning("[audit] corrupt source id %s=%s (%s) held by %s",
+                               _src, _v, _cat, distinct[:4])
+        finally:
+            mc.close()
+
+    await asyncio.to_thread(_scan)
 
     # ── findings inbox: persist every verdict, requeue each finding ONCE ─────
     # (SoulSync repair_findings contract, MIT). A pending finding is refreshed
@@ -985,63 +1008,76 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     if not dry_run:
         _now = datetime.utcnow()
         seen: set = set()
-        with get_db_session() as db:
-            for hit in hits:
-                seen.add((hit[1] or f"title:{hit[3]}:{(hit[2] or '')[:40]}", hit[4]))
-                if _triage_audit_hit(db, hit, _now, fstats):
-                    to_requeue.append(hit)
-            fstats["resolved_stale"] = _ES.resolve_stale_findings(
-                db, seen, set(_ES.FINDING_KINDS), _now)
-            db.commit()
+
+        def _triage():
+            with get_db_session() as db:
+                for hit in hits:
+                    seen.add((hit[1] or f"title:{hit[3]}:{(hit[2] or '')[:40]}", hit[4]))
+                    if _triage_audit_hit(db, hit, _now, fstats):
+                        to_requeue.append(hit)
+                fstats["resolved_stale"] = _ES.resolve_stale_findings(
+                    db, seen, set(_ES.FINDING_KINDS), _now)
+                db.commit()
+
+        await run_write(_triage)
         if to_requeue:
-            mc2 = MetadataCache()
-            try:
-                for cache_key, *_ in to_requeue:
-                    mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
-                mc2.conn.commit()
-            finally:
-                mc2.close()
+            def _purge():
+                mc2 = MetadataCache()
+                try:
+                    for cache_key, *_ in to_requeue:
+                        mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
+                    mc2.conn.commit()
+                finally:
+                    mc2.close()
+
+            await asyncio.to_thread(_purge)
 
     requeued = 0
     if not dry_run and to_requeue:
         _prog(f"Requeuing {len(to_requeue):,} flagged profiles…")
-        with get_db_session() as db:
-            for _ck, prk, title, category, _reason, _detail in to_requeue:
-                if prk:
-                    # Precise path — plex_rating_key is EnrichmentStatus's
-                    # UNIQUE column, immune to AniList title normalisation.
-                    es = db.query(EnrichmentStatus).filter(
-                        EnrichmentStatus.plex_rating_key == prk,
-                    ).first()
-                    if es:
-                        es.enriched = False
-                        es.enriched_at = None
-                        es.error = None
-                        requeued += 1
-                    # plex_rating_key shape from _collect_arr_items is
-                    # "{service}:{arr_id}" — flip the ArrEnrichmentStatus row too.
-                    svc, _, aid = (prk or "").partition(":")
-                    if aid.isdigit():
-                        arr_s = db.query(ArrEnrichmentStatus).filter(
-                            ArrEnrichmentStatus.service == svc,
-                            ArrEnrichmentStatus.arr_id == int(aid),
+
+        def _requeue():
+            requeued = 0
+            with get_db_session() as db:
+                for _ck, prk, title, category, _reason, _detail in to_requeue:
+                    if prk:
+                        # Precise path — plex_rating_key is EnrichmentStatus's
+                        # UNIQUE column, immune to AniList title normalisation.
+                        es = db.query(EnrichmentStatus).filter(
+                            EnrichmentStatus.plex_rating_key == prk,
                         ).first()
-                        if arr_s:
-                            arr_s.enriched = False
-                            arr_s.enriched_at = None
-                elif title and category:
-                    # Legacy / chat-cascade cache entry with no
-                    # plex_rating_key — best-effort title+category match.
-                    matched = db.query(EnrichmentStatus).filter(
-                        EnrichmentStatus.title == title,
-                        EnrichmentStatus.media_category == category,
-                    ).all()
-                    for es in matched:
-                        es.enriched = False
-                        es.enriched_at = None
-                        es.error = None
-                        requeued += 1
-            db.commit()
+                        if es:
+                            es.enriched = False
+                            es.enriched_at = None
+                            es.error = None
+                            requeued += 1
+                        # plex_rating_key shape from _collect_arr_items is
+                        # "{service}:{arr_id}" — flip the ArrEnrichmentStatus row too.
+                        svc, _, aid = (prk or "").partition(":")
+                        if aid.isdigit():
+                            arr_s = db.query(ArrEnrichmentStatus).filter(
+                                ArrEnrichmentStatus.service == svc,
+                                ArrEnrichmentStatus.arr_id == int(aid),
+                            ).first()
+                            if arr_s:
+                                arr_s.enriched = False
+                                arr_s.enriched_at = None
+                    elif title and category:
+                        # Legacy / chat-cascade cache entry with no
+                        # plex_rating_key — best-effort title+category match.
+                        matched = db.query(EnrichmentStatus).filter(
+                            EnrichmentStatus.title == title,
+                            EnrichmentStatus.media_category == category,
+                        ).all()
+                        for es in matched:
+                            es.enriched = False
+                            es.enriched_at = None
+                            es.error = None
+                            requeued += 1
+                db.commit()
+            return requeued
+
+        requeued = await run_write(_requeue)
 
     logger.info(
         "[audit-requeue] scanned=%d incomplete=%d requeued=%d dry_run=%s by_reason=%s",
@@ -1069,14 +1105,18 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
             _prog("Zombie walk skipped — no ARR ground truth this run")
             raise _SkipZombieWalk
         live_keys: set = set()
-        mc3 = MetadataCache()
-        try:
-            for (k,) in mc3.conn.execute(
-                "SELECT cache_key FROM api_cache WHERE cache_key LIKE ? "
-                "AND expires_at > datetime('now')", (prefix + "%",)):
-                live_keys.add(k[len(_CACHE_VERSION) + 1:])   # strip "v2:"
-        finally:
-            mc3.close()
+
+        def _load_live_keys():
+            mc3 = MetadataCache()
+            try:
+                for (k,) in mc3.conn.execute(
+                    "SELECT cache_key FROM api_cache WHERE cache_key LIKE ? "
+                    "AND expires_at > datetime('now')", (prefix + "%",)):
+                    live_keys.add(k[len(_CACHE_VERSION) + 1:])   # strip "v2:"
+            finally:
+                mc3.close()
+
+        await asyncio.to_thread(_load_live_keys)
         chroma = get_chroma_db()
         _prog("Walking chroma docs for zombies (missing profiles)…")
         # Two-phase: CLASSIFY everything first, then act — so the stale guard
@@ -1137,20 +1177,23 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                     else:
                         zstats["no_prefetch"] += 1
         if requeue_ids:
-            with get_db_session() as db:
-                db.query(EnrichmentStatus).filter(
-                    EnrichmentStatus.plex_rating_key.in_(requeue_ids),
-                ).update({"enriched": False, "enriched_at": None, "error": None},
-                         synchronize_session=False)
-                for d in requeue_ids:
-                    svc, _, aid = d.partition(":")
-                    if aid.isdigit():
-                        db.query(ArrEnrichmentStatus).filter(
-                            ArrEnrichmentStatus.service == svc,
-                            ArrEnrichmentStatus.arr_id == int(aid),
-                        ).update({"enriched": False, "enriched_at": None},
-                                 synchronize_session=False)
-                db.commit()
+            def _requeue_zombies():
+                with get_db_session() as db:
+                    db.query(EnrichmentStatus).filter(
+                        EnrichmentStatus.plex_rating_key.in_(requeue_ids),
+                    ).update({"enriched": False, "enriched_at": None, "error": None},
+                             synchronize_session=False)
+                    for d in requeue_ids:
+                        svc, _, aid = d.partition(":")
+                        if aid.isdigit():
+                            db.query(ArrEnrichmentStatus).filter(
+                                ArrEnrichmentStatus.service == svc,
+                                ArrEnrichmentStatus.arr_id == int(aid),
+                            ).update({"enriched": False, "enriched_at": None},
+                                     synchronize_session=False)
+                    db.commit()
+
+            await run_write(_requeue_zombies)
         _prog(f"Zombie walk: {zstats['docs_walked']} found, "
               f"{zstats['arr_live_requeued']} requeued, {zstats['rebuilt']} rebuilt")
     except _SkipZombieWalk:
@@ -1259,14 +1302,20 @@ async def match_candidates(
     if service and arr_id is not None:
         if service not in _SERVICES:
             return {"candidates": [], "error": "service must be radarr|sonarr|lidarr"}
-        category = _derive_category(service, arr_id, category or None)
+        category = await run_read(_derive_category, service, arr_id, category or None)
         if not title or year is None:
             prk = f"{service}:{arr_id}"
-            with get_db_session() as db:
-                a = db.query(_AES.title).filter(
-                    _AES.service == service, _AES.arr_id == arr_id).first()
-                e = db.query(EnrichmentStatus.title, EnrichmentStatus.sources_state).filter(
-                    EnrichmentStatus.plex_rating_key == prk).first()
+
+            # Column rows, not ORM instances: safe to read after the session.
+            def _load_item():
+                with get_db_session() as db:
+                    a = db.query(_AES.title).filter(
+                        _AES.service == service, _AES.arr_id == arr_id).first()
+                    e = db.query(EnrichmentStatus.title, EnrichmentStatus.sources_state).filter(
+                        EnrichmentStatus.plex_rating_key == prk).first()
+                return a, e
+
+            a, e = await run_read(_load_item)
             title = title or (a.title if a else None) or (e.title if e else "") or ""
             if year is None and e:
                 _ctx = _ES.parse_sources_state(e.sources_state).get(_ES.CONTEXT_KEY) or {}
@@ -1625,8 +1674,8 @@ async def enrichment_items(
     limit = max(1, min(int(limit or 50), 200))
     offset = max(0, int(offset or 0))
     page = items[offset:offset + limit]
-    det = _row_details([i["plex_rating_key"] for i in page])
-    pins = _pins_for(page)
+    det = await run_read(_row_details, [i["plex_rating_key"] for i in page])
+    pins = await run_read(_pins_for, page)
     now = datetime.utcnow()
     return {
         "category": category, "states": states,
@@ -1653,13 +1702,18 @@ async def enrichment_unmatched(
     ``total_all`` always describe the whole set."""
     from collections import Counter
     from src.services import kb_overview as _kb
-    with get_db_session() as db:
-        pend = _ES.pending_findings(db)
-        pend_dicts = {k: [_ES.finding_to_dict(f) for f in v] for k, v in pend.items()}
-        # Inside the session on purpose: the rows expire when it closes, and
-        # reading f.kind afterwards raised DetachedInstanceError the moment a
-        # single pending finding existed (500 on the whole page).
-        findings_summary = Counter(_ES.finding_base(f.kind) for v in pend.values() for f in v)
+
+    def _load_findings():
+        with get_db_session() as db:
+            pend = _ES.pending_findings(db)
+            pend_dicts = {k: [_ES.finding_to_dict(f) for f in v] for k, v in pend.items()}
+            # Inside the session on purpose: the rows expire when it closes, and
+            # reading f.kind afterwards raised DetachedInstanceError the moment a
+            # single pending finding existed (500 on the whole page).
+            findings_summary = Counter(_ES.finding_base(f.kind) for v in pend.values() for f in v)
+        return pend_dicts, findings_summary
+
+    pend_dicts, findings_summary = await run_read(_load_findings)
     rows = []
     for i in await _kb.classified_items():
         if not i["downloaded"] or (category and i["category"] != category):
@@ -1683,8 +1737,8 @@ async def enrichment_unmatched(
     limit = max(1, min(int(limit or 100), 500))
     offset = max(0, int(offset or 0))
     page = rows[offset:offset + limit]
-    det = _row_details([i["plex_rating_key"] for _, i in page])
-    pins = _pins_for([i for _, i in page])
+    det = await run_read(_row_details, [i["plex_rating_key"] for _, i in page])
+    pins = await run_read(_pins_for, [i for _, i in page])
     now = datetime.utcnow()
     return {
         "total": len(rows), "total_all": total_all, "offset": offset, "limit": limit,
@@ -2122,94 +2176,101 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
     counted = False
     attempts_after = 0
 
+    # On the DB writer thread; the helper hands back what the code below
+    # needs (the attempt bookkeeping) as plain values.
+    def _write_status():
+        counted, attempts_after = False, 0
+        with get_db_session() as db:
+            # Pass 29: look up by plex_rating_key — that's the UNIQUE
+            # column on the table. The previous (title, media_category)
+            # lookup missed rows whose plex_rating_key was already taken
+            # but whose stored title had drifted (arr renamed the series,
+            # or category changed) → db.add() then crashed on
+            #   UNIQUE constraint failed: enrichment_status.plex_rating_key
+            # Looking up by the actual unique key fixes that AND lets us
+            # update the title/category in place when they've shifted.
+            status = db.query(EnrichmentStatus).filter(
+                EnrichmentStatus.plex_rating_key == item["plex_rating_key"],
+            ).first()
+            if not status:
+                status = EnrichmentStatus(
+                    plex_rating_key=item["plex_rating_key"],
+                    title=canonical_title,
+                    media_category=cat,
+                )
+                db.add(status)
+            else:
+                # Existing row — refresh descriptive fields in case the
+                # arr renamed the series or the category was re-derived.
+                status.title          = canonical_title
+                status.media_category = cat
+            status.enriched    = has_data
+            status.enriched_at = datetime.utcnow() if has_data else None
+            status.error       = error
+            # Healing: the attempt counter behind the not-found backoff.
+            # A fresh miss counts and schedules the next try; a reconcile
+            # leaves the counter alone; a real profile resets it.
+            _now = datetime.utcnow()
+            if is_not_found:
+                if fresh_attempt:
+                    status.attempt_count   = (status.attempt_count or 0) + 1
+                    status.last_attempt_at = _now
+                    status.next_retry_at   = _ES.next_retry_at(status.attempt_count, _now)
+                    counted = True
+                attempts_after = status.attempt_count or 0
+            elif llm_ok:
+                status.attempt_count = 0
+                status.next_retry_at = None
+            if profile is not None:
+                if profile.get("match_basis"):
+                    status.match_basis = str(profile["match_basis"])[:16]
+                if profile.get("match_confidence") is not None:
+                    try:
+                        status.match_confidence = float(profile["match_confidence"])
+                    except (TypeError, ValueError):
+                        pass
+            # Phase 2 #38a: persist per-item source-state + tier when
+            # the profile carries them. Only writes the columns when
+            # the profile actually has the keys — keeps legacy paths
+            # (not_found sentinels, rule-based fallbacks, chat-cascade
+            # raw saves) leaving the columns NULL so #41's scheduler
+            # query (``WHERE fetch_tier='fast' AND provisional=1``)
+            # still selects exactly the items we mean.
+            #
+            # Phase 2 #39 step 3: the consumer is now ALWAYS the
+            # FIRST writer for streamed items — the finalizer is
+            # spawned in ``_consume_entry`` only AFTER this
+            # _write_enrichment_db commits. So the consumer writes
+            # the initial fast/provisional=True snapshot, and the
+            # finalizer's later UPDATE flips it to full/False once
+            # slow sources are back. This is what makes the UI's
+            # 🌗 provisional bucket actually light up as items
+            # pass through — the previous "race-skip if already
+            # full" guard prevented re-enrichment runs from
+            # overwriting stale rows AND hid the provisional state.
+            if profile is not None:
+                if "fetch_tier" in profile:
+                    status.fetch_tier = profile["fetch_tier"]
+                if "sources_state" in profile:
+                    try:
+                        status.sources_state = json.dumps(
+                            profile["sources_state"],
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                    except (TypeError, ValueError) as _je:
+                        logger.debug(
+                            "[enrichment] sources_state JSON encode failed for "
+                            "'%s': %s — skipping", canonical_title, _je,
+                        )
+                if "provisional" in profile:
+                    status.provisional = bool(profile["provisional"])
+            db.commit()
+        return counted, attempts_after
+
     for _attempt in range(5):
         try:
-            with get_db_session() as db:
-                # Pass 29: look up by plex_rating_key — that's the UNIQUE
-                # column on the table. The previous (title, media_category)
-                # lookup missed rows whose plex_rating_key was already taken
-                # but whose stored title had drifted (arr renamed the series,
-                # or category changed) → db.add() then crashed on
-                #   UNIQUE constraint failed: enrichment_status.plex_rating_key
-                # Looking up by the actual unique key fixes that AND lets us
-                # update the title/category in place when they've shifted.
-                status = db.query(EnrichmentStatus).filter(
-                    EnrichmentStatus.plex_rating_key == item["plex_rating_key"],
-                ).first()
-                if not status:
-                    status = EnrichmentStatus(
-                        plex_rating_key=item["plex_rating_key"],
-                        title=canonical_title,
-                        media_category=cat,
-                    )
-                    db.add(status)
-                else:
-                    # Existing row — refresh descriptive fields in case the
-                    # arr renamed the series or the category was re-derived.
-                    status.title          = canonical_title
-                    status.media_category = cat
-                status.enriched    = has_data
-                status.enriched_at = datetime.utcnow() if has_data else None
-                status.error       = error
-                # Healing: the attempt counter behind the not-found backoff.
-                # A fresh miss counts and schedules the next try; a reconcile
-                # leaves the counter alone; a real profile resets it.
-                _now = datetime.utcnow()
-                if is_not_found:
-                    if fresh_attempt:
-                        status.attempt_count   = (status.attempt_count or 0) + 1
-                        status.last_attempt_at = _now
-                        status.next_retry_at   = _ES.next_retry_at(status.attempt_count, _now)
-                        counted = True
-                    attempts_after = status.attempt_count or 0
-                elif llm_ok:
-                    status.attempt_count = 0
-                    status.next_retry_at = None
-                if profile is not None:
-                    if profile.get("match_basis"):
-                        status.match_basis = str(profile["match_basis"])[:16]
-                    if profile.get("match_confidence") is not None:
-                        try:
-                            status.match_confidence = float(profile["match_confidence"])
-                        except (TypeError, ValueError):
-                            pass
-                # Phase 2 #38a: persist per-item source-state + tier when
-                # the profile carries them. Only writes the columns when
-                # the profile actually has the keys — keeps legacy paths
-                # (not_found sentinels, rule-based fallbacks, chat-cascade
-                # raw saves) leaving the columns NULL so #41's scheduler
-                # query (``WHERE fetch_tier='fast' AND provisional=1``)
-                # still selects exactly the items we mean.
-                #
-                # Phase 2 #39 step 3: the consumer is now ALWAYS the
-                # FIRST writer for streamed items — the finalizer is
-                # spawned in ``_consume_entry`` only AFTER this
-                # _write_enrichment_db commits. So the consumer writes
-                # the initial fast/provisional=True snapshot, and the
-                # finalizer's later UPDATE flips it to full/False once
-                # slow sources are back. This is what makes the UI's
-                # 🌗 provisional bucket actually light up as items
-                # pass through — the previous "race-skip if already
-                # full" guard prevented re-enrichment runs from
-                # overwriting stale rows AND hid the provisional state.
-                if profile is not None:
-                    if "fetch_tier" in profile:
-                        status.fetch_tier = profile["fetch_tier"]
-                    if "sources_state" in profile:
-                        try:
-                            status.sources_state = json.dumps(
-                                profile["sources_state"],
-                                separators=(",", ":"),
-                                sort_keys=True,
-                            )
-                        except (TypeError, ValueError) as _je:
-                            logger.debug(
-                                "[enrichment] sources_state JSON encode failed for "
-                                "'%s': %s — skipping", canonical_title, _je,
-                            )
-                    if "provisional" in profile:
-                        status.provisional = bool(profile["provisional"])
-                db.commit()
+            counted, attempts_after = await run_write(_write_status)
             break
         except Exception as _e:
             if "database is locked" in str(_e) and _attempt < 4:
@@ -2218,28 +2279,31 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
                 raise
 
     if profile and item.get("arr_id") and item.get("service"):
-        with get_db_session() as db:
-            arr_s = db.query(ArrEnrichmentStatus).filter(
-                ArrEnrichmentStatus.service == item["service"],
-                ArrEnrichmentStatus.arr_id == item["arr_id"],
-            ).first()
-            if not arr_s:
-                arr_s = ArrEnrichmentStatus(
-                    service=item["service"],
-                    arr_id=item["arr_id"],
-                    category=cat,
-                    title=canonical_title,
-                    tmdb_id=item.get("tmdb_id"),
-                    tvdb_id=item.get("tvdb_id"),
-                )
-                db.add(arr_s)
-            arr_llm_ok = not _is_rule_based(profile)
-            arr_s.enriched    = arr_llm_ok
-            arr_s.enriched_at = datetime.utcnow() if arr_llm_ok else None
-            arr_s.error       = error          # mirrored: the arr-keyed view used to lie
-            db.commit()
+        def _write_arr_status():
+            with get_db_session() as db:
+                arr_s = db.query(ArrEnrichmentStatus).filter(
+                    ArrEnrichmentStatus.service == item["service"],
+                    ArrEnrichmentStatus.arr_id == item["arr_id"],
+                ).first()
+                if not arr_s:
+                    arr_s = ArrEnrichmentStatus(
+                        service=item["service"],
+                        arr_id=item["arr_id"],
+                        category=cat,
+                        title=canonical_title,
+                        tmdb_id=item.get("tmdb_id"),
+                        tvdb_id=item.get("tvdb_id"),
+                    )
+                    db.add(arr_s)
+                arr_llm_ok = not _is_rule_based(profile)
+                arr_s.enriched    = arr_llm_ok
+                arr_s.enriched_at = datetime.utcnow() if arr_llm_ok else None
+                arr_s.error       = error          # mirrored: the arr-keyed view used to lie
+                db.commit()
+
+        await run_write(_write_arr_status)
     elif profile and canonical_title:
-        try:
+        def _mirror_arr_status():
             with get_db_session() as db:
                 arr_match = db.query(ArrEnrichmentStatus).filter(
                     ArrEnrichmentStatus.title == canonical_title,
@@ -2252,6 +2316,9 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
                     arr_match.enriched_at = datetime.utcnow() if arr_llm_ok else None
                     arr_match.error       = error
                     db.commit()
+
+        try:
+            await run_write(_mirror_arr_status)
         except Exception as e:
             _ES.log_topup_failure(logger, "[enrich] arr status mirror", canonical_title, e)
 
@@ -2261,22 +2328,6 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
     if profile:
         from src.cache.metadata_cache import MetadataCache as _MC
         is_not_found = profile.get("source") == "not_found"
-        _c = _MC()
-        # Change-based invalidation anchor: remember which raw payload this
-        # polish was built from. Profiles no longer age out by TIME — the
-        # pre-filter re-enriches when a future raw refresh changes this hash
-        # (metadata actually changed) or when the cache entry is dead.
-        try:
-            _sh = _raw_source_hash(_c, cat, [
-                item.get("plex_rating_key"), item.get("tmdb_id"),
-                item.get("tvdb_id"), item.get("anilist_id"),
-                (item.get("series_title") or item.get("title") or "")[:40],
-            ])
-            if _sh:
-                profile["_source_hash"] = _sh
-        except Exception as e:
-            # No anchor only means the next raw refresh re-polishes this item.
-            _ES.log_topup_failure(logger, "[enrich] source hash", canonical_title, e)
         # not_found sentinel: lives as long as the backoff wait (>= 3 days) so
         #   the cache and the DB row agree on when the item is due again.
         # Rule-based fallbacks: 1-day TTL so they are retried next run.
@@ -2287,21 +2338,42 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
         #   the items whose cache had rotted (The Simpsons class).
         cache_days = (_ES.sentinel_cache_days(attempts_after) if is_not_found
                       else (1 if _is_rule_based(profile) else 3650))
-        _c.set_cache(f"enriched:{cat}:{item['plex_rating_key']}", profile, days=cache_days)
+        # The series' other play rows share the profile (episodes / tracks).
+        related_pids: list = []
         if cat in ("show", "anime") and item.get("series_title"):
-            with get_db_session() as _db:
-                related_pids = [
-                    r.plex_item_id
-                    for r in _db.query(WatchHistoryEntry).filter(
-                        WatchHistoryEntry.series_title == item["series_title"],
-                        WatchHistoryEntry.media_type == cat,
-                    ).with_entities(WatchHistoryEntry.plex_item_id).limit(1000).all()
-                ]
+            related_pids = await run_read(_related_play_keys, item["series_title"], cat, 1000)
+        elif cat == "music" and item.get("series_title"):
+            related_pids = await run_read(_related_play_keys, item["series_title"], "music", 5000)
+
+        # The metadata cache is its own SQLite file: written from a worker,
+        # never from the loop and never on the DB writer thread.
+        def _write_cache():
+            _c = _MC()
+            # Change-based invalidation anchor: remember which raw payload this
+            # polish was built from. Profiles no longer age out by TIME — the
+            # pre-filter re-enriches when a future raw refresh changes this hash
+            # (metadata actually changed) or when the cache entry is dead.
+            try:
+                _sh = _raw_source_hash(_c, cat, [
+                    item.get("plex_rating_key"), item.get("tmdb_id"),
+                    item.get("tvdb_id"), item.get("anilist_id"),
+                    (item.get("series_title") or item.get("title") or "")[:40],
+                ])
+                if _sh:
+                    profile["_source_hash"] = _sh
+            except Exception as e:
+                # No anchor only means the next raw refresh re-polishes this item.
+                _ES.log_topup_failure(logger, "[enrich] source hash", canonical_title, e)
+            _c.set_cache(f"enriched:{cat}:{item['plex_rating_key']}", profile, days=cache_days)
             for rpid in related_pids:
                 if rpid != item["plex_rating_key"]:
                     _c.set_cache(f"enriched:{cat}:{rpid}", profile, days=cache_days)
-            # Only mark related episodes as enriched when LLM succeeded
-            if not _is_rule_based(profile):
+            _c.close()
+
+        await asyncio.to_thread(_write_cache)
+        # Only mark related episodes as enriched when LLM succeeded
+        if cat in ("show", "anime") and item.get("series_title") and not _is_rule_based(profile):
+            def _mark_related():
                 with get_db_session() as _db:
                     _db.query(EnrichmentStatus).filter(
                         EnrichmentStatus.media_category == cat,
@@ -2309,20 +2381,21 @@ async def _write_enrichment_db(item: dict, profile, cat: str, *,
                     ).update({"enriched": True, "enriched_at": datetime.utcnow()},
                              synchronize_session=False)
                     _db.commit()
-        elif cat == "music" and item.get("series_title"):
-            with get_db_session() as _db:
-                related_pids = [
-                    r.plex_item_id
-                    for r in _db.query(WatchHistoryEntry).filter(
-                        WatchHistoryEntry.series_title == item["series_title"],
-                        WatchHistoryEntry.media_type == "music",
-                    ).with_entities(WatchHistoryEntry.plex_item_id).limit(5000).all()
-                ]
-            for rpid in related_pids:
-                if rpid != item["plex_rating_key"]:
-                    _c.set_cache(f"enriched:music:{rpid}", profile, days=cache_days)
-        _c.close()
+
+            await run_write(_mark_related)
     return counted
+
+
+def _related_play_keys(series_title: str, media_type: str, cap: int) -> list:
+    """plex_item_ids of the watch-history rows of one series / artist."""
+    with get_db_session() as _db:
+        return [
+            r.plex_item_id
+            for r in _db.query(WatchHistoryEntry).filter(
+                WatchHistoryEntry.series_title == series_title,
+                WatchHistoryEntry.media_type == media_type,
+            ).with_entities(WatchHistoryEntry.plex_item_id).limit(cap).all()
+        ]
 
 
 def _raw_source_hash(cache, cat: str, keys: list) -> Optional[str]:
@@ -2459,70 +2532,79 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             try:
                 from src.cache.metadata_cache import MetadataCache
                 from src.database.models import ArrEnrichmentStatus
-                # One sqlite3 handle (MetadataCache.conn) instead of two pointed
-                # at the same file — concurrent writers used to deadlock here.
-                _mc = MetadataCache()
-                try:
-                    # Phase 2 #39 fix: every key in api_cache is prefixed with the
-                    # ``_CACHE_VERSION`` (currently "v2:") by ``MetadataCache.set_cache``.
-                    # The pre-fix LIKE 'enriched:{cat}:%' matched zero rows, so
-                    # ``force=True`` silently never cleared the polished cache —
-                    # users hitting "🔄 Force Re-Enrich" expected a fresh fetch but
-                    # got cache-hits via the polished tier-1 path. Documented as a
-                    # latent bug in ARCHITECTURE.md §15 since #38a; fixed now so
-                    # force re-enrich actually does what its name promises +
-                    # streaming-merge (#39) fires for every item.
-                    from src.cache.metadata_cache import _CACHE_VERSION as _CV
-                    for cat in categories:
-                        if source in ("watch_history", "both"):
-                            deleted = _mc.conn.execute(
-                                "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                                (f"{_CV}:enriched:{cat}:%",)
-                            ).rowcount
-                            logger.info("Cleared %d cache entries for %s", deleted, cat)
-                        elif source == "arr":
-                            # Clear only ARR-sourced cache keys (radarr/sonarr/lidarr prefixes).
-                            deleted = 0
-                            for svc in ("radarr", "sonarr", "lidarr"):
-                                deleted += _mc.conn.execute(
+                # Cache file first (from a worker), then the status rows on
+                # the DB writer thread — the same order as before.
+                def _clear_cache():
+                    # One sqlite3 handle (MetadataCache.conn) instead of two pointed
+                    # at the same file — concurrent writers used to deadlock here.
+                    _mc = MetadataCache()
+                    try:
+                        # Phase 2 #39 fix: every key in api_cache is prefixed with the
+                        # ``_CACHE_VERSION`` (currently "v2:") by ``MetadataCache.set_cache``.
+                        # The pre-fix LIKE 'enriched:{cat}:%' matched zero rows, so
+                        # ``force=True`` silently never cleared the polished cache —
+                        # users hitting "🔄 Force Re-Enrich" expected a fresh fetch but
+                        # got cache-hits via the polished tier-1 path. Documented as a
+                        # latent bug in ARCHITECTURE.md §15 since #38a; fixed now so
+                        # force re-enrich actually does what its name promises +
+                        # streaming-merge (#39) fires for every item.
+                        from src.cache.metadata_cache import _CACHE_VERSION as _CV
+                        for cat in categories:
+                            if source in ("watch_history", "both"):
+                                deleted = _mc.conn.execute(
                                     "DELETE FROM api_cache WHERE cache_key LIKE ?",
-                                    (f"{_CV}:enriched:{cat}:{svc}:%",)
+                                    (f"{_CV}:enriched:{cat}:%",)
                                 ).rowcount
-                            logger.info("Cleared %d ARR cache entries for %s", deleted, cat)
+                                logger.info("Cleared %d cache entries for %s", deleted, cat)
+                            elif source == "arr":
+                                # Clear only ARR-sourced cache keys (radarr/sonarr/lidarr prefixes).
+                                deleted = 0
+                                for svc in ("radarr", "sonarr", "lidarr"):
+                                    deleted += _mc.conn.execute(
+                                        "DELETE FROM api_cache WHERE cache_key LIKE ?",
+                                        (f"{_CV}:enriched:{cat}:{svc}:%",)
+                                    ).rowcount
+                                logger.info("Cleared %d ARR cache entries for %s", deleted, cat)
 
-                    # Pass 46 (Bug 4 / B7): also wipe per-item embedding caches.
-                    # ``emb:{pid}`` and ``emb_ts:{pid}`` live with a 90-day TTL
-                    # and gate re-embedding by ts comparison; force-re-enrich
-                    # MUST drop them or the next taste-vector recompute keeps
-                    # reusing vectors built from the now-deleted old profiles.
-                    # Only run on watch_history / both — emb caches are keyed
-                    # by plex_rating_key, which arr-only items don't have.
-                    # Scoped to the REQUESTED categories: the old blanket
-                    # LIKE '%:emb:%' made a one-category force re-enrich
-                    # throw away every other category's vectors too.
-                    if source in ("watch_history", "both"):
-                        emb_deleted, emb_ts_deleted = _clear_emb_caches(
-                            _mc.conn, _emb_cache_item_keys(categories))
-                        logger.info(
-                            "Cleared %d emb + %d emb_ts cache rows for %s",
-                            emb_deleted, emb_ts_deleted, categories,
-                        )
+                        # Pass 46 (Bug 4 / B7): also wipe per-item embedding caches.
+                        # ``emb:{pid}`` and ``emb_ts:{pid}`` live with a 90-day TTL
+                        # and gate re-embedding by ts comparison; force-re-enrich
+                        # MUST drop them or the next taste-vector recompute keeps
+                        # reusing vectors built from the now-deleted old profiles.
+                        # Only run on watch_history / both — emb caches are keyed
+                        # by plex_rating_key, which arr-only items don't have.
+                        # Scoped to the REQUESTED categories: the old blanket
+                        # LIKE '%:emb:%' made a one-category force re-enrich
+                        # throw away every other category's vectors too.
+                        if source in ("watch_history", "both"):
+                            emb_deleted, emb_ts_deleted = _clear_emb_caches(
+                                _mc.conn, _emb_cache_item_keys(categories))
+                            logger.info(
+                                "Cleared %d emb + %d emb_ts cache rows for %s",
+                                emb_deleted, emb_ts_deleted, categories,
+                            )
 
-                    _mc.conn.commit()
-                finally:
-                    _mc.close()
-                with get_db_session() as db:
-                    if source in ("watch_history", "both"):
-                        db.query(EnrichmentStatus).filter(
-                            EnrichmentStatus.media_category.in_(categories)
-                        ).update({"enriched": False, "error": None, "enriched_at": None},
-                                 synchronize_session=False)
-                    if source in ("arr", "both"):
-                        db.query(ArrEnrichmentStatus).filter(
-                            ArrEnrichmentStatus.category.in_(categories)
-                        ).update({"enriched": False, "enriched_at": None},
-                                 synchronize_session=False)
-                    db.commit()
+                        _mc.conn.commit()
+                    finally:
+                        _mc.close()
+
+                await asyncio.to_thread(_clear_cache)
+
+                def _reset_status():
+                    with get_db_session() as db:
+                        if source in ("watch_history", "both"):
+                            db.query(EnrichmentStatus).filter(
+                                EnrichmentStatus.media_category.in_(categories)
+                            ).update({"enriched": False, "error": None, "enriched_at": None},
+                                     synchronize_session=False)
+                        if source in ("arr", "both"):
+                            db.query(ArrEnrichmentStatus).filter(
+                                ArrEnrichmentStatus.category.in_(categories)
+                            ).update({"enriched": False, "enriched_at": None},
+                                     synchronize_session=False)
+                        db.commit()
+
+                await run_write(_reset_status)
             except Exception as e:
                 logger.warning("Force-clear failed: %s", e)
 
@@ -2530,9 +2612,9 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # The route already acquired the enrichment_running lock atomically via
         # acquire_state_lock(); we don't need to set it again here. The flag
         # is released in the finally-block at the end of this function.
-        set_state("enrichment_progress", "0")
+        await run_write(set_state, "enrichment_progress", "0")
         # Persist settings so a startup-resume uses the exact same parameters
-        set_state("enrichment_last_settings", _json.dumps({
+        await run_write(set_state, "enrichment_last_settings", _json.dumps({
             "categories": categories,
             "source": source,
             "limit": limit,
@@ -2541,7 +2623,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             "fast_only": fast_only,
             "specific": bool(specific_plex_rating_keys),
         }))
-        set_state("enrichment_interrupted", "1")
+        await run_write(set_state, "enrichment_interrupted", "1")
         setup_task = task_monitor.create(
             name=f"Enrichment setup: {', '.join(categories)}",
             category="enrichment",
@@ -2557,65 +2639,72 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         if specific_plex_rating_keys:
             from src.database.models import MediaIdentity
             items = []
-            with get_db_session() as db:
-                # Hydrate from EnrichmentStatus (gives us title + cat for
-                # the producer) joined with MediaIdentity (gives us tmdb /
-                # anilist / anidb / tvdb / imdb IDs the producer threads
-                # into fetch_and_prepare_raw).
-                es_rows = {
-                    es.plex_rating_key: es for es in db.query(EnrichmentStatus).filter(
-                        EnrichmentStatus.plex_rating_key.in_(specific_plex_rating_keys)
-                    )
-                }
-                mi_rows = {
-                    mi.plex_rating_key: mi for mi in db.query(MediaIdentity).filter(
-                        MediaIdentity.plex_rating_key.in_(specific_plex_rating_keys)
-                    )
-                }
-                missing = [k for k in specific_plex_rating_keys if k not in es_rows]
-                if missing:
-                    logger.warning("[upgrade] %d of %d specific keys have no EnrichmentStatus row "
-                                   "(will skip): %s", len(missing), len(specific_plex_rating_keys),
-                                   missing[:5])
-                for prk, es in es_rows.items():
-                    mi = mi_rows.get(prk)
-                    items.append({
-                        "plex_rating_key": prk,
-                        "title": es.title,
-                        # The producer uses series_title for show/anime/music
-                        # canonical dedup; setting it = title is safe for
-                        # the upgrade path since we're targeting one key.
-                        "series_title": es.title if es.media_category in ("show","anime","music") else None,
-                        "media_type": es.media_category,
-                        "tmdb_id":    mi.tmdb_id    if mi else None,
-                        "anilist_id": mi.anilist_id if mi else None,
-                        "anidb_id":   mi.anidb_id   if mi else None,
-                        "tvdb_id":    mi.tvdb_id    if mi else None,
-                        "imdb_id":    mi.imdb_id    if mi else None,
-                        "source": "upgrade",
-                    })
+            # ORM rows stay inside the worker; only the item dicts come back.
+            def _hydrate():
+                with get_db_session() as db:
+                    # Hydrate from EnrichmentStatus (gives us title + cat for
+                    # the producer) joined with MediaIdentity (gives us tmdb /
+                    # anilist / anidb / tvdb / imdb IDs the producer threads
+                    # into fetch_and_prepare_raw).
+                    es_rows = {
+                        es.plex_rating_key: es for es in db.query(EnrichmentStatus).filter(
+                            EnrichmentStatus.plex_rating_key.in_(specific_plex_rating_keys)
+                        )
+                    }
+                    mi_rows = {
+                        mi.plex_rating_key: mi for mi in db.query(MediaIdentity).filter(
+                            MediaIdentity.plex_rating_key.in_(specific_plex_rating_keys)
+                        )
+                    }
+                    missing = [k for k in specific_plex_rating_keys if k not in es_rows]
+                    if missing:
+                        logger.warning("[upgrade] %d of %d specific keys have no EnrichmentStatus row "
+                                       "(will skip): %s", len(missing), len(specific_plex_rating_keys),
+                                       missing[:5])
+                    for prk, es in es_rows.items():
+                        mi = mi_rows.get(prk)
+                        items.append({
+                            "plex_rating_key": prk,
+                            "title": es.title,
+                            # The producer uses series_title for show/anime/music
+                            # canonical dedup; setting it = title is safe for
+                            # the upgrade path since we're targeting one key.
+                            "series_title": es.title if es.media_category in ("show","anime","music") else None,
+                            "media_type": es.media_category,
+                            "tmdb_id":    mi.tmdb_id    if mi else None,
+                            "anilist_id": mi.anilist_id if mi else None,
+                            "anidb_id":   mi.anidb_id   if mi else None,
+                            "tvdb_id":    mi.tvdb_id    if mi else None,
+                            "imdb_id":    mi.imdb_id    if mi else None,
+                            "source": "upgrade",
+                        })
+
+            await run_read(_hydrate)
             logger.info("[upgrade] Targeted re-enrichment: hydrated %d items from %d keys",
                         len(items), len(specific_plex_rating_keys))
         else:
             # Step 1: collect from watch history (skip when arr-only)
             items = []
             if source in ("watch_history", "both"):
-                with get_db_session() as db:
-                    for cat in categories:
-                        for e in db.query(WatchHistoryEntry).filter(
-                            WatchHistoryEntry.user_id == user_id,
-                            WatchHistoryEntry.media_type == cat,
-                        ).all():
-                            items.append({
-                                "plex_rating_key": e.plex_item_id,
-                                "title": e.title,
-                                "series_title": e.series_title,
-                                "media_type": cat,
-                                "tmdb_id": e.tmdb_id,
-                                "tvdb_id": None,
-                                "imdb_id": None,
-                                "source": "watch_history",
-                            })
+                def _collect_history():
+                    with get_db_session() as db:
+                        for cat in categories:
+                            for e in db.query(WatchHistoryEntry).filter(
+                                WatchHistoryEntry.user_id == user_id,
+                                WatchHistoryEntry.media_type == cat,
+                            ).all():
+                                items.append({
+                                    "plex_rating_key": e.plex_item_id,
+                                    "title": e.title,
+                                    "series_title": e.series_title,
+                                    "media_type": cat,
+                                    "tmdb_id": e.tmdb_id,
+                                    "tvdb_id": None,
+                                    "imdb_id": None,
+                                    "source": "watch_history",
+                                })
+
+                await run_read(_collect_history)
 
             # Step 2: merge ARR items when source includes arr
             if source in ("arr", "both"):
@@ -2668,16 +2757,20 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             wh_keys = [i["plex_rating_key"] for i in items if not str(i["plex_rating_key"]).startswith(("radarr:", "sonarr:", "lidarr:"))]
             if wh_keys:
                 from src.database.models import MediaIdentity
-                with get_db_session() as db:
-                    id_map = {
-                        mi.plex_rating_key: {
-                            "tvdb_id": mi.tvdb_id, "imdb_id": mi.imdb_id,
-                            "anilist_id": mi.anilist_id, "tmdb_id": mi.tmdb_id,
+
+                def _load_ids():
+                    with get_db_session() as db:
+                        return {
+                            mi.plex_rating_key: {
+                                "tvdb_id": mi.tvdb_id, "imdb_id": mi.imdb_id,
+                                "anilist_id": mi.anilist_id, "tmdb_id": mi.tmdb_id,
+                            }
+                            for mi in db.query(MediaIdentity).filter(
+                                MediaIdentity.plex_rating_key.in_(wh_keys)
+                            ).all()
                         }
-                        for mi in db.query(MediaIdentity).filter(
-                            MediaIdentity.plex_rating_key.in_(wh_keys)
-                        ).all()
-                    }
+
+                id_map = await run_read(_load_ids)
                 for item in items:
                     ids = id_map.get(item["plex_rating_key"], {})
                     if ids.get("tvdb_id"):    item["tvdb_id"]    = ids["tvdb_id"]
@@ -2695,30 +2788,34 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             # Rule-based items (enriched=True, error set) are kept for LLM upgrade retries.
             # Items with no data (enriched=False) are always retried.
             if not force:
-                with get_db_session() as db:
-                    enriched_set = {
-                        (r.title, r.media_category)
-                        for r in db.query(EnrichmentStatus.title, EnrichmentStatus.media_category)
-                        .filter(
-                            EnrichmentStatus.enriched == True,
-                            EnrichmentStatus.error.is_(None),
-                        ).all()
-                    }
-                    # Healing: hold back not-found rows whose backoff wait is
-                    # not over and rows the owner ignored (force=True bypasses
-                    # both). Keyed by plex_rating_key — arr items and their
-                    # rows share the "svc:id" shape.
-                    _now = datetime.utcnow()
-                    held_keys: dict = {}
-                    for _prk, _err, _nra in db.query(
-                            EnrichmentStatus.plex_rating_key, EnrichmentStatus.error,
-                            EnrichmentStatus.next_retry_at,
-                    ).filter(EnrichmentStatus.error.isnot(None)).all():
-                        _el = (_err or "").lower()
-                        if _el.startswith("ignored"):
-                            held_keys[_prk] = ("ignored", None)
-                        elif _el.startswith("not found") and not _ES.is_due(_nra, _now):
-                            held_keys[_prk] = ("waiting", _nra)
+                def _load_prefilter():
+                    with get_db_session() as db:
+                        enriched_set = {
+                            (r.title, r.media_category)
+                            for r in db.query(EnrichmentStatus.title, EnrichmentStatus.media_category)
+                            .filter(
+                                EnrichmentStatus.enriched == True,
+                                EnrichmentStatus.error.is_(None),
+                            ).all()
+                        }
+                        # Healing: hold back not-found rows whose backoff wait is
+                        # not over and rows the owner ignored (force=True bypasses
+                        # both). Keyed by plex_rating_key — arr items and their
+                        # rows share the "svc:id" shape.
+                        _now = datetime.utcnow()
+                        held_keys: dict = {}
+                        for _prk, _err, _nra in db.query(
+                                EnrichmentStatus.plex_rating_key, EnrichmentStatus.error,
+                                EnrichmentStatus.next_retry_at,
+                        ).filter(EnrichmentStatus.error.isnot(None)).all():
+                            _el = (_err or "").lower()
+                            if _el.startswith("ignored"):
+                                held_keys[_prk] = ("ignored", None)
+                            elif _el.startswith("not found") and not _ES.is_due(_nra, _now):
+                                held_keys[_prk] = ("waiting", _nra)
+                    return enriched_set, held_keys
+
+                enriched_set, held_keys = await run_read(_load_prefilter)
                 # The enriched flag alone is NOT enough to skip: for months the
                 # 90d cache TTL silently killed enriched:* entries while the
                 # flag stayed True, so every run skipped exactly the items
@@ -2728,65 +2825,71 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                 # changed since the polish (_source_hash, user decision:
                 # change-based invalidation instead of time-based).
                 from src.cache.metadata_cache import MetadataCache as _PMC
-                _pc = _PMC()
-                try:
-                    _live = _pc.live_key_set("enriched:")
+                # Reads every live profile key: in a worker, off the loop.
+                def _prefilter_live(items):
+                    _pc = _PMC()
+                    try:
+                        _live = _pc.live_key_set("enriched:")
 
-                    def _live_enriched_key(it):
-                        mt = it["media_type"]
-                        mts = ("show", "anime") if mt in ("show", "anime") else (mt,)
-                        cands = [
-                            it.get("plex_rating_key"), it.get("tmdb_id"),
-                            it.get("tvdb_id"), it.get("anilist_id"),
-                            (it.get("series_title") or it.get("title") or "")[:40],
-                            (it.get("title") or "")[:40],
-                        ]
-                        for m in mts:
-                            for k in cands:
-                                if k and f"enriched:{m}:{k}" in _live:
-                                    return f"enriched:{m}:{k}"
-                        return None
+                        def _live_enriched_key(it):
+                            mt = it["media_type"]
+                            mts = ("show", "anime") if mt in ("show", "anime") else (mt,)
+                            cands = [
+                                it.get("plex_rating_key"), it.get("tmdb_id"),
+                                it.get("tvdb_id"), it.get("anilist_id"),
+                                (it.get("series_title") or it.get("title") or "")[:40],
+                                (it.get("title") or "")[:40],
+                            ]
+                            for m in mts:
+                                for k in cands:
+                                    if k and f"enriched:{m}:{k}" in _live:
+                                        return f"enriched:{m}:{k}"
+                            return None
 
-                    before = len(items)
-                    kept, n_dead, n_changed, n_skipped, n_check_err = [], 0, 0, 0, 0
-                    for i in items:
-                        fkey = ((i.get("series_title") or i["title"]), i["media_type"])
-                        if fkey not in enriched_set:
-                            kept.append(i)
-                            continue
-                        lk = _live_enriched_key(i)
-                        if lk is None:
-                            n_dead += 1          # flag says enriched, cache is gone
-                            kept.append(i)
-                            continue
-                        try:
-                            prof = (_pc.get_cache(lk) or {}).get("response") or {}
-                            sh = prof.get("_source_hash")
-                            if sh:
-                                _, _cat, _key = lk.split(":", 2)
-                                cur = _raw_source_hash(_pc, _cat, [_key])
-                                if cur and cur != sh:
-                                    n_changed += 1   # source metadata changed
-                                    kept.append(i)
-                                    continue
-                        except Exception as _pe:
-                            # This was `pass` → n_skipped: an unreadable profile
-                            # or hash check counted as "live-enriched" and the
-                            # item silently dropped out of the run. Keep it.
-                            n_check_err += 1
-                            if n_check_err == 1:
-                                logger.warning(
-                                    "Pre-filter: freshness check failed for %r — keeping "
-                                    "it in the run: %r", i.get("title"), _pe, exc_info=True)
-                            kept.append(i)
-                            continue
-                        n_skipped += 1
-                    items = kept
-                    if n_check_err > 1:
-                        logger.warning("Pre-filter: freshness check failed for %d items "
-                                       "(kept in the run)", n_check_err)
-                finally:
-                    _pc.close()
+                        before = len(items)
+                        kept, n_dead, n_changed, n_skipped, n_check_err = [], 0, 0, 0, 0
+                        for i in items:
+                            fkey = ((i.get("series_title") or i["title"]), i["media_type"])
+                            if fkey not in enriched_set:
+                                kept.append(i)
+                                continue
+                            lk = _live_enriched_key(i)
+                            if lk is None:
+                                n_dead += 1          # flag says enriched, cache is gone
+                                kept.append(i)
+                                continue
+                            try:
+                                prof = (_pc.get_cache(lk) or {}).get("response") or {}
+                                sh = prof.get("_source_hash")
+                                if sh:
+                                    _, _cat, _key = lk.split(":", 2)
+                                    cur = _raw_source_hash(_pc, _cat, [_key])
+                                    if cur and cur != sh:
+                                        n_changed += 1   # source metadata changed
+                                        kept.append(i)
+                                        continue
+                            except Exception as _pe:
+                                # This was `pass` → n_skipped: an unreadable profile
+                                # or hash check counted as "live-enriched" and the
+                                # item silently dropped out of the run. Keep it.
+                                n_check_err += 1
+                                if n_check_err == 1:
+                                    logger.warning(
+                                        "Pre-filter: freshness check failed for %r — keeping "
+                                        "it in the run: %r", i.get("title"), _pe, exc_info=True)
+                                kept.append(i)
+                                continue
+                            n_skipped += 1
+                        items = kept
+                        if n_check_err > 1:
+                            logger.warning("Pre-filter: freshness check failed for %d items "
+                                           "(kept in the run)", n_check_err)
+                    finally:
+                        _pc.close()
+                    return items, before, n_skipped, n_dead, n_changed
+
+                items, before, n_skipped, n_dead, n_changed = await asyncio.to_thread(
+                    _prefilter_live, items)
                 logger.info(
                     "Pre-filter: %d -> %d items (skipped %d live-enriched; revived "
                     "%d dead-cache + %d metadata-changed; kept rule-based/failed)",
@@ -2814,15 +2917,18 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # they arrive instead of waiting behind the background refresh
         # cycle that would otherwise consume the daily budget first.
         if items:
-            with get_db_session() as db:
-                ts_map = {
-                    (r.title, r.media_category): r.enriched_at
-                    for r in db.query(
-                        EnrichmentStatus.title,
-                        EnrichmentStatus.media_category,
-                        EnrichmentStatus.enriched_at,
-                    ).all()
-                }
+            def _load_ts_map():
+                with get_db_session() as db:
+                    return {
+                        (r.title, r.media_category): r.enriched_at
+                        for r in db.query(
+                            EnrichmentStatus.title,
+                            EnrichmentStatus.media_category,
+                            EnrichmentStatus.enriched_at,
+                        ).all()
+                    }
+
+            ts_map = await run_read(_load_ts_map)
 
             def _priority_key(it):
                 key = ((it.get("series_title") or it["title"]), it["media_type"])
@@ -2845,7 +2951,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # What this run's budget leaves behind: the custodian's cycle stays
         # due while it is above zero, and a sprint keeps enriching beside the
         # model queue until it is zero.
-        set_state("enrichment_left", str(max(0, len(items) - limit) if limit else 0))
+        await run_write(set_state, "enrichment_left", str(max(0, len(items) - limit) if limit else 0))
         if limit:
             items = items[:limit]
 
@@ -2854,12 +2960,12 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
 
         if total == 0:
             task_monitor.done(setup_task, "Nothing to enrich -- all items already have profiles")
-            set_state("last_enrichment_at", datetime.utcnow().isoformat())
+            await run_write(set_state, "last_enrichment_at", datetime.utcnow().isoformat())
             # Audit #2: without this reset the interrupted flag stayed 1
             # forever on the nothing-to-do path -- every server boot saw
             # "interrupted", ran a resume, hit total==0 again AND paid a
             # full taste recomputation (LLM summaries) each time.
-            set_state("enrichment_interrupted", "0")
+            await run_write(set_state, "enrichment_interrupted", "0")
             await _run_taste_computation(user_id, categories)
             return
 
@@ -2980,9 +3086,8 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                                 media_type=cached_profile.get("media_type") or pcat,
                                 fallback_title=pitem.get("title") or ""):
                             cached_profile.pop("vector_pending", None)
-                            from src.cache.metadata_cache import MetadataCache
-                            with MetadataCache() as _vc:
-                                _vc.set_cache(raw["_cache_key"], cached_profile, days=30)
+                            from src.cache.metadata_cache import acache_set
+                            await acache_set(raw["_cache_key"], cached_profile, days=30)
                     await _write_enrichment_db(pitem, cached_profile, pcat, fresh_attempt=False)
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
@@ -3160,7 +3265,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                 if not _keys:
                     continue
                 try:
-                    _n = _rollback_attempts(_keys)
+                    _n = await run_write(_rollback_attempts, _keys)
                     logger.warning(
                         "[enrichment][%s] rolled back %d not-found attempts after "
                         "the abort: %s", _cat, _n, _reason)
@@ -3192,39 +3297,40 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
 
             # Persist raw dict so fetch_and_prepare_raw can return it on the next run
             try:
-                from src.cache.metadata_cache import MetadataCache as _MC
-                _c = _MC()
-                _c.set_cache(
+                from src.cache.metadata_cache import acache_set
+                await acache_set(
                     f"raw_prefetch:{item['plex_rating_key']}",
                     raw,
                     days=7,
                 )
-                _c.close()
             except Exception as _ce:
                 _ES.log_topup_failure(logger, "[game-mode] raw cache write", canonical, _ce)
 
+            def _write_status():
+                with get_db_session() as db:
+                    # Pass 29: same lookup-by-unique-key fix as the
+                    # main producer — plex_rating_key, not title.
+                    status = db.query(EnrichmentStatus).filter(
+                        EnrichmentStatus.plex_rating_key == item["plex_rating_key"],
+                    ).first()
+                    if not status:
+                        status = EnrichmentStatus(
+                            plex_rating_key=item["plex_rating_key"],
+                            title=canonical,
+                            media_category=cat,
+                        )
+                        db.add(status)
+                    else:
+                        status.title          = canonical
+                        status.media_category = cat
+                    status.enriched    = True
+                    status.enriched_at = datetime.utcnow()
+                    status.error       = "api_cached — LLM pending"
+                    db.commit()
+
             for _attempt in range(5):
                 try:
-                    with get_db_session() as db:
-                        # Pass 29: same lookup-by-unique-key fix as the
-                        # main producer — plex_rating_key, not title.
-                        status = db.query(EnrichmentStatus).filter(
-                            EnrichmentStatus.plex_rating_key == item["plex_rating_key"],
-                        ).first()
-                        if not status:
-                            status = EnrichmentStatus(
-                                plex_rating_key=item["plex_rating_key"],
-                                title=canonical,
-                                media_category=cat,
-                            )
-                            db.add(status)
-                        else:
-                            status.title          = canonical
-                            status.media_category = cat
-                        status.enriched    = True
-                        status.enriched_at = datetime.utcnow()
-                        status.error       = "api_cached — LLM pending"
-                        db.commit()
+                    await run_write(_write_status)
                     break
                 except Exception as _e:
                     if "database is locked" in str(_e) and _attempt < 4:
@@ -3358,7 +3464,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
 
         _, processed = await asyncio.gather(_producer(), _consumer())
 
-        set_state("last_enrichment_at", datetime.utcnow().isoformat())
+        await run_write(set_state, "last_enrichment_at", datetime.utcnow().isoformat())
         logger.info(
             "Enrichment complete: %d items processed across %s "
             "(of which %d not_found by producer)",
@@ -3368,7 +3474,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # New enriched data → invalidate downstream recommendation caches.
         if processed and processed > 0:
             from src.services.app_state import set_datetime as _set_dt
-            _set_dt("recs_invalidate_at", datetime.utcnow())
+            await run_write(_set_dt, "recs_invalidate_at", datetime.utcnow())
 
         await _run_taste_computation(user_id, categories)
 
@@ -3379,14 +3485,14 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             logger.warning("Post-enrichment verification failed: %s", e, exc_info=True)
 
         # Normal completion — clear interrupted flag
-        set_state("enrichment_interrupted", "0")
+        await run_write(set_state, "enrichment_interrupted", "0")
 
     except asyncio.CancelledError:
         logger.info("Enrichment cancelled")
         task_monitor.skip(setup_task, "Cancelled")
-        set_state("enrichment_interrupted", "0")
+        await run_write(set_state, "enrichment_interrupted", "0")
     finally:
-        set_state("enrichment_running", "0")
+        await run_write(set_state, "enrichment_running", "0")
 
 
 async def _run_taste_computation(user_id: int, categories: list = None):

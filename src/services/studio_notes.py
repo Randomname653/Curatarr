@@ -19,6 +19,7 @@ piggyback by the reception walker.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Optional
@@ -209,6 +210,17 @@ async def _wiki_person_lead(name: str) -> str:
     return "" if answered else None    # silence is not "no article"
 
 
+def _on_cache(cache, fn):
+    """``fn(cache)`` on the caller's handle, or on one of its own when there
+    is none. Called through asyncio.to_thread: the cache file has its own
+    lock, and a coroutine must not wait on it on the event loop."""
+    if cache is not None:
+        return fn(cache)
+    from src.cache.metadata_cache import MetadataCache
+    with MetadataCache() as own:
+        return fn(own)
+
+
 async def ensure_director_note(name: str, cache=None) -> Optional[str]:
     """Director counterpart of ensure_studio_note — JIT-ONLY by design:
     4,303 distinct directors across the library make a bulk walker too
@@ -217,13 +229,9 @@ async def ensure_director_note(name: str, cache=None) -> Optional[str]:
     name = (name or "").split(",")[0].strip()
     if not name or _norm(name) in _NAME_SENTINELS or not _norm(name):
         return None
-    from src.cache.metadata_cache import MetadataCache
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
     try:
         key = f"director_note:{_norm(name)}"
-        hit = cache.get_cache(key)
+        hit = await asyncio.to_thread(_on_cache, cache, lambda c: c.get_cache(key))
         if hit and isinstance(hit.get("response"), dict):
             return hit["response"].get("note")
         extract = await _wiki_person_lead(name)
@@ -236,16 +244,14 @@ async def ensure_director_note(name: str, cache=None) -> Optional[str]:
             if out is None:
                 return None    # transient — no model answered; no stamp
             note = out or None
-        cache.set_cache(key, {"checked": True, "note": note}, days=_NOTE_CACHE_DAYS)
+        await asyncio.to_thread(_on_cache, cache, lambda c: c.set_cache(
+            key, {"checked": True, "note": note}, days=_NOTE_CACHE_DAYS))
         if note:
             logger.info("[director-note] %s: %s", name, note[:100])
         return note
     except Exception as e:
         log_topup_failure(logger, "[director-note]", name, e)
         return None
-    finally:
-        if owns:
-            cache.close()
 
 
 async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
@@ -254,12 +260,9 @@ async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
     at most one Wikipedia + summarizer round ever)."""
     if not studio or _norm(studio) in _NAME_SENTINELS or not _norm(studio):
         return None
-    from src.cache.metadata_cache import MetadataCache
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
     try:
-        hit = cache.get_cache(_cache_key(studio))
+        key = _cache_key(studio)
+        hit = await asyncio.to_thread(_on_cache, cache, lambda c: c.get_cache(key))
         if hit and isinstance(hit.get("response"), dict):
             return hit["response"].get("note")
         extract = await _wiki_studio_lead(studio)
@@ -271,14 +274,11 @@ async def ensure_studio_note(studio: str, cache=None) -> Optional[str]:
             if out is None:
                 return None    # transient — no model answered; no stamp
             note = out or None
-        cache.set_cache(_cache_key(studio), {"checked": True, "note": note},
-                        days=_NOTE_CACHE_DAYS)
+        await asyncio.to_thread(_on_cache, cache, lambda c: c.set_cache(
+            key, {"checked": True, "note": note}, days=_NOTE_CACHE_DAYS))
         if note:
             logger.info("[studio-note] %s: %s", studio, note[:100])
         return note
     except Exception as e:
         log_topup_failure(logger, "[studio-note]", studio, e)
         return None
-    finally:
-        if owns:
-            cache.close()

@@ -366,8 +366,9 @@ async def unload_llm_models() -> list[str]:
     import httpx
     ollama_url = settings.effective_ollama
     try:
+        from src.database.runner import run_read
         from src.services.embed_service import effective_embedding_model
-        _emb = effective_embedding_model()
+        _emb = await run_read(effective_embedding_model)   # reads app_state
     except Exception:
         _emb = settings.EMBEDDING_MODEL
     ours = [m for m in (

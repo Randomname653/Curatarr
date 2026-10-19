@@ -27,12 +27,14 @@ Invariants (enforced by tests/test_kb_overview.py):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
 from datetime import datetime
 from pathlib import Path
 
+from src.database.runner import run_read
 from src.paths import DATA_DIR
 from src.services.enrichment_state import (STATES, STATE_DEFINITIONS, DONE_STATES,
                                             classify_enrichment_row)
@@ -140,36 +142,46 @@ async def classified_items() -> list[dict]:
     from src.routers.library import _fetch_arr_library
     from fastapi import HTTPException
 
-    mc = MetadataCache()
-    try:
-        live_enriched = mc.live_key_set("enriched:")
-    finally:
-        mc.close()
+    def _live_enriched():
+        mc = MetadataCache()
+        try:
+            return mc.live_key_set("enriched:")
+        finally:
+            mc.close()
+
+    # The cache file has its own lock; asyncio.to_thread, never the DB writer.
+    live_enriched = await asyncio.to_thread(_live_enriched)
 
     chroma_ids: set = set()
     try:
-        from src.vector_store.chromadb_wrapper import ChromaDBWrapper
-        chroma_ids = set(ChromaDBWrapper().all_ids())
+        from src.vector_store.chromadb_wrapper import ChromaDBWrapper, run_chroma
+        # The wrapper reads its embedding profile from app_state on open.
+        chroma_ids = set(await run_chroma(lambda: ChromaDBWrapper().all_ids()))
     except Exception as e:
         logger.warning("[kb-overview] chroma id fetch failed: %s", e)
 
-    with get_db_session() as db:
-        arr_flags = {
-            (r.service, r.arr_id): (bool(r.enriched), r.error)
-            for r in db.query(ArrEnrichmentStatus.service, ArrEnrichmentStatus.arr_id,
-                              ArrEnrichmentStatus.enriched, ArrEnrichmentStatus.error).all()
-        }
-        # The row truth, keyed the way arr items are keyed ("svc:id"). The
-        # old version never read it — it looked at ArrEnrichmentStatus.error,
-        # which nothing wrote, so 798 not-found rows read as "retry".
-        es_rows = {
-            r.plex_rating_key: r
-            for r in db.query(EnrichmentStatus.plex_rating_key, EnrichmentStatus.enriched,
-                              EnrichmentStatus.error, EnrichmentStatus.provisional,
-                              EnrichmentStatus.next_retry_at, EnrichmentStatus.attempt_count,
-                              EnrichmentStatus.match_basis,
-                              EnrichmentStatus.match_confidence).all()
-        }
+    def _status_rows():
+        # Column rows (not ORM instances): safe to read after the session.
+        with get_db_session() as db:
+            arr_flags = {
+                (r.service, r.arr_id): (bool(r.enriched), r.error)
+                for r in db.query(ArrEnrichmentStatus.service, ArrEnrichmentStatus.arr_id,
+                                  ArrEnrichmentStatus.enriched, ArrEnrichmentStatus.error).all()
+            }
+            # The row truth, keyed the way arr items are keyed ("svc:id"). The
+            # old version never read it — it looked at ArrEnrichmentStatus.error,
+            # which nothing wrote, so 798 not-found rows read as "retry".
+            es_rows = {
+                r.plex_rating_key: r
+                for r in db.query(EnrichmentStatus.plex_rating_key, EnrichmentStatus.enriched,
+                                  EnrichmentStatus.error, EnrichmentStatus.provisional,
+                                  EnrichmentStatus.next_retry_at, EnrichmentStatus.attempt_count,
+                                  EnrichmentStatus.match_basis,
+                                  EnrichmentStatus.match_confidence).all()
+            }
+        return arr_flags, es_rows
+
+    arr_flags, es_rows = await run_read(_status_rows)
     now_dt = datetime.utcnow()
 
     items: list[dict] = []
@@ -270,16 +282,21 @@ async def build_overview() -> dict:
     from src.database.connection import get_db_session
     from src.database.models import EnrichmentStatus, WatchHistoryEntry
 
-    mc = MetadataCache()
-    try:
-        wiki_counts = {c: mc.count_raw_with_marker(c, '"significance"')
-                       for c in ("movie", "show", "anime", "music")}
-        omdb_counts = {c: mc.count_raw_with_marker(c, '"omdb_checked"')
-                       for c in ("movie", "show", "anime", "music")}
-        reception_counts = {c: mc.count_raw_with_marker(c, '"reception"')
-                            for c in ("movie", "show", "anime")}
-    finally:
-        mc.close()
+    def _marker_counts():
+        mc = MetadataCache()
+        try:
+            wiki_counts = {c: mc.count_raw_with_marker(c, '"significance"')
+                           for c in ("movie", "show", "anime", "music")}
+            omdb_counts = {c: mc.count_raw_with_marker(c, '"omdb_checked"')
+                           for c in ("movie", "show", "anime", "music")}
+            reception_counts = {c: mc.count_raw_with_marker(c, '"reception"')
+                                for c in ("movie", "show", "anime")}
+        finally:
+            mc.close()
+        return wiki_counts, omdb_counts, reception_counts
+
+    # The cache file has its own lock; asyncio.to_thread, never the DB writer.
+    wiki_counts, omdb_counts, reception_counts = await asyncio.to_thread(_marker_counts)
 
     # ── per-category aggregation over the classified items ────────────────────
     # needs_attention counts exactly what the Needs-attention page lists —
@@ -287,8 +304,11 @@ async def build_overview() -> dict:
     # sidebar badge and the page never disagree.
     from src.database.connection import get_db_session
     from src.services.enrichment_state import attention_reasons, finding_to_dict, pending_findings
-    with get_db_session() as db:
-        pend = {k: [finding_to_dict(f) for f in v] for k, v in pending_findings(db).items()}
+    def _pending():
+        with get_db_session() as db:
+            return {k: [finding_to_dict(f) for f in v] for k, v in pending_findings(db).items()}
+
+    pend = await run_read(_pending)
     categories: dict = {}
     for it in await classified_items():
         c = categories.setdefault(it["category"], _empty_category())
@@ -331,41 +351,49 @@ async def build_overview() -> dict:
 
     # ── watch-history-only section (its OWN set, never mixed into the above) ──
     from sqlalchemy import func, distinct, case
-    with get_db_session() as db:
-        wh_rows = {}
-        # "enriched" here means a real profile (error IS NULL) — a not-found
-        # sentinel also carries enriched=True and used to be counted as done.
-        grouped = db.query(
-            EnrichmentStatus.media_category,
-            func.count(EnrichmentStatus.id).label("rows"),
-            func.sum(case(((EnrichmentStatus.enriched == True) & EnrichmentStatus.error.is_(None), 1),
-                          else_=0)).label("enriched"),
-            func.sum(case((EnrichmentStatus.error.like("Not found%"), 1), else_=0)).label("not_found"),
-        ).group_by(EnrichmentStatus.media_category).all()
 
-        for r in grouped:
-            cat = r.media_category or "?"
-            b = wh_rows.setdefault(cat, {"rows": 0, "enriched": 0, "not_found": 0})
-            b["rows"] += r.rows
-            b["enriched"] += (r.enriched or 0)
-            b["not_found"] += (r.not_found or 0)
+    def _history_counts():
+        with get_db_session() as db:
+            wh_rows = {}
+            # "enriched" here means a real profile (error IS NULL) — a not-found
+            # sentinel also carries enriched=True and used to be counted as done.
+            grouped = db.query(
+                EnrichmentStatus.media_category,
+                func.count(EnrichmentStatus.id).label("rows"),
+                func.sum(case(((EnrichmentStatus.enriched == True) & EnrichmentStatus.error.is_(None), 1),
+                              else_=0)).label("enriched"),
+                func.sum(case((EnrichmentStatus.error.like("Not found%"), 1), else_=0)).label("not_found"),
+            ).group_by(EnrichmentStatus.media_category).all()
 
-        # ── music pipeline (Spotify cascade) ──────────────────────────────────
-        # ⚡ Bolt: Fast path - combined 5 individual aggregate queries into a single
-        # database query using conditional logic to eliminate 4 DB round trips.
-        music_stats = db.query(
-            func.sum(case(((WatchHistoryEntry.source == "spotify"), 1), else_=0)).label("spotify_total"),
-            func.sum(case(((WatchHistoryEntry.source == "spotify") & ~WatchHistoryEntry.plex_item_id.like("spotify%"), 1), else_=0)).label("spotify_matched"),
-            func.sum(case(((WatchHistoryEntry.source == "spotify") & WatchHistoryEntry.genres.isnot(None) & (WatchHistoryEntry.genres != ""), 1), else_=0)).label("genre_covered"),
-            func.count(distinct(case(((WatchHistoryEntry.media_type == "music") & WatchHistoryEntry.series_title.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("artists_total"),
-            func.count(distinct(case(((WatchHistoryEntry.media_type == "music") & WatchHistoryEntry.series_title.isnot(None) & WatchHistoryEntry.artist_mbid.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("artists_mbid"),
-        ).first()
+            for r in grouped:
+                cat = r.media_category or "?"
+                b = wh_rows.setdefault(cat, {"rows": 0, "enriched": 0, "not_found": 0})
+                b["rows"] += r.rows
+                b["enriched"] += (r.enriched or 0)
+                b["not_found"] += (r.not_found or 0)
 
-        spotify_total = int(music_stats.spotify_total or 0)
-        spotify_matched = int(music_stats.spotify_matched or 0)
-        genre_covered = int(music_stats.genre_covered or 0)
-        artists_total = int(music_stats.artists_total or 0)
-        artists_mbid = int(music_stats.artists_mbid or 0)
+            # ── music pipeline (Spotify cascade) ──────────────────────────────────
+            # ⚡ Bolt: Fast path - combined 5 individual aggregate queries into a single
+            # database query using conditional logic to eliminate 4 DB round trips.
+            music_stats = db.query(
+                func.sum(case(((WatchHistoryEntry.source == "spotify"), 1), else_=0)).label("spotify_total"),
+                func.sum(case(((WatchHistoryEntry.source == "spotify") & ~WatchHistoryEntry.plex_item_id.like("spotify%"), 1), else_=0)).label("spotify_matched"),
+                func.sum(case(((WatchHistoryEntry.source == "spotify") & WatchHistoryEntry.genres.isnot(None) & (WatchHistoryEntry.genres != ""), 1), else_=0)).label("genre_covered"),
+                func.count(distinct(case(((WatchHistoryEntry.media_type == "music") & WatchHistoryEntry.series_title.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("artists_total"),
+                func.count(distinct(case(((WatchHistoryEntry.media_type == "music") & WatchHistoryEntry.series_title.isnot(None) & WatchHistoryEntry.artist_mbid.isnot(None), WatchHistoryEntry.series_title), else_=None))).label("artists_mbid"),
+            ).first()
+
+            spotify_total = int(music_stats.spotify_total or 0)
+            spotify_matched = int(music_stats.spotify_matched or 0)
+            genre_covered = int(music_stats.genre_covered or 0)
+            artists_total = int(music_stats.artists_total or 0)
+            artists_mbid = int(music_stats.artists_mbid or 0)
+        return (wh_rows, spotify_total, spotify_matched, genre_covered,
+                artists_total, artists_mbid)
+
+    (wh_rows, spotify_total, spotify_matched, genre_covered,
+     artists_total, artists_mbid) = await run_read(_history_counts)
+    mbid_parked = await run_read(_mbid_parked)
 
     # ── storage ────────────────────────────────────────────────────────────────
     storage = {
@@ -390,7 +418,7 @@ async def build_overview() -> dict:
             # Names MusicBrainz had no answer for, waiting out their backoff
             # (services/music_misses.py). Without this the MBID bar looks
             # stuck a few percent short forever with nothing to explain it.
-            "mbid_parked": _mbid_parked(),
+            "mbid_parked": mbid_parked,
         },
         "storage": storage,
     }

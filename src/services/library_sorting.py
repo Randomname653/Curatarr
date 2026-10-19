@@ -33,6 +33,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.database.runner import run_read, run_write
 from src.services.anime_mapping import get_anime_mapping
 from src.services.app_state import get_state, set_state
 from src.services.enrichment_state import is_transient_error
@@ -90,7 +91,7 @@ async def _tmdb_meta(client: httpx.AsyncClient, tvdb_id: int) -> tuple[list, boo
     belongs in the anime library. Cached together in app_state.
     """
     ck = f"tvdb_meta:{tvdb_id}"
-    cached = get_state(ck)
+    cached = await run_read(get_state, ck)
     if cached is not None:
         o, _, a = cached.partition("#")
         return [c for c in o.split(",") if c], a == "1"
@@ -116,7 +117,7 @@ async def _tmdb_meta(client: httpx.AsyncClient, tvdb_id: int) -> tuple[list, boo
         logger.log(logging.DEBUG if is_transient_error(e) else logging.WARNING,
                    "[lib-sort] TMDB meta lookup failed for tvdb %s: %r", tvdb_id, e)
         return origin, animated
-    set_state(ck, f"{','.join(origin)}#{'1' if animated else '0'}")
+    await run_write(set_state, ck, f"{','.join(origin)}#{'1' if animated else '0'}")
     return origin, animated
 
 

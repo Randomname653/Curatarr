@@ -161,7 +161,8 @@ def test_member_reachable_jobs_carry_a_budget():
 
 def test_plex_sync_is_single_flight():
     ps = _src("src/services/plex_sync.py")
-    assert 'acquire_state_lock("plex_sync_running")' in ps and 'release_state_lock("plex_sync_running")' in ps
+    assert ('run_write(acquire_state_lock, "plex_sync_running")' in ps
+            and 'run_write(release_state_lock, "plex_sync_running")' in ps)
     assert "async def _sync_plex_history_impl(" in ps
     mn = _src("src/main.py")
     boot = mn[mn.index("Reset any stuck flags"):mn.index("interrupted deletion")]

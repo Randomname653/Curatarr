@@ -58,7 +58,7 @@ def test_the_on_demand_path_honours_the_pin_at_all():
     the chat or a re-eval enriched it live — whichever ran last won."""
     src = _read("services/media_enricher.py")
     assert "def _match_override_ids(" in src
-    assert src.count("_pin = _match_override_ids(plex_rating_key)") == 2
+    assert src.count("_pin = await run_read(_match_override_ids, plex_rating_key)") == 2
 
 
 def test_a_failed_lookup_never_repoints_an_entry():

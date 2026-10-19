@@ -702,9 +702,10 @@ def test_the_discussion_carries_the_measured_numbers_not_just_the_transcript():
     the derived numbers are a pure DB read and must ride on EVERY discussion
     turn, exactly as they ride on every batch verdict."""
     chat = (_SRC / "routers" / "chat.py").read_text(encoding="utf-8")
-    assert "subtitle_facts(" in chat, "discussion must attach the DIALOGUE line"
+    # (read off the event loop: ``await run_read(subtitle_facts, ...)``)
+    assert "run_read(subtitle_facts," in chat, "discussion must attach the DIALOGUE line"
     # ...unconditionally, not inside the reevaluate-only transcript block:
-    attach = chat.index("subtitle_facts(")
+    attach = chat.index("run_read(subtitle_facts,")
     reeval = chat.index('if getattr(ctx, "reevaluate", False):')
     assert attach < reeval, "the numbers line must not be reevaluate-gated"
     # and the judge's own path keeps it too

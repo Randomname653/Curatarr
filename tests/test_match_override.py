@@ -47,15 +47,15 @@ check("pinned ids override, unset ids leave resolution alone",
       # the pin is now read by one helper (_match_override_ids) which keeps
       # only the ids the owner actually set, and BOTH resolution paths apply
       # them with `or` so an unset id leaves normal resolution untouched
-      me.count('_pin = _match_override_ids(plex_rating_key)') == 2
+      me.count('_pin = await run_read(_match_override_ids, plex_rating_key)') == 2
       and me.count('tmdb_id = _pin.get("tmdb_id") or tmdb_id') == 2
       and me.count('mbid = _pin.get("mbid") or mbid') == 2)
 check("the on-demand path honours the pin too, not just the nightly walk",
       # it did not: a pinned title reverted whenever the judge / chat / re-eval
       # enriched it live, because the pin lived only in fetch_and_prepare_raw
-      me.index("_pin = _match_override_ids(plex_rating_key)")
+      me.index("_pin = await run_read(_match_override_ids, plex_rating_key)")
       < me.index("async def enrich_media_item(")
-      < me.rindex("_pin = _match_override_ids(plex_rating_key)"))
+      < me.rindex("_pin = await run_read(_match_override_ids, plex_rating_key)"))
 check("the tvdb id authority never overrules a pin",
       me.count('not _pin.get("tmdb_id")') == 2)
 

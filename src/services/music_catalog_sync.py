@@ -53,6 +53,7 @@ _STATE_KEY = "music_catalog_sync"
 async def sync_soulsync_to_lidarr(task=None) -> dict:
     from src.services import soulsync_client
     from src.services.app_state import set_state
+    from src.database.runner import run_read, run_write
 
     def _prog(message=None, processed=None, total=None):
         # Activity-card progress (the run takes ~10 min; without this it sat
@@ -106,7 +107,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                    if a.get("foreignArtistId")}
 
         # ── 3. create missing, DISARMED ──────────────────────────────────
-        defaults = _read_defaults("lidarr")
+        defaults = await run_read(_read_defaults, "lidarr")
         added, added_ids, add_failed, no_mbid = [], [], 0, 0
         can_add = bool(defaults.get("root_folder_path")
                        and defaults.get("quality_profile_id")
@@ -197,7 +198,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
         "path_mismatches": sorted(m for m in mismatches if m)[:40],
         "at": datetime.utcnow().isoformat(),
     }
-    set_state(_STATE_KEY, json.dumps(result))
+    await run_write(set_state, _STATE_KEY, json.dumps(result))
     if mismatches:
         logger.warning("[catalog-sync] %d artists indexed but FILE-LESS while "
                        "SoulSync knows albums — folder-name drift; fix the "

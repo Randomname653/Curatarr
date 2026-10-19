@@ -47,6 +47,25 @@ async def _mb_request(client: httpx.AsyncClient, url: str, params: dict) -> http
         return await client.get(url, params=params, headers=MB_HEADERS)
 
 
+# The cache is its own SQLite file: every read and write goes to a worker
+# thread so the event loop never waits on its lock. One handle per call
+# (connections are per thread); MetadataCache is looked up at call time.
+def _cache_get(cache_key: str):
+    cache = MetadataCache()
+    try:
+        return cache.get_cache(cache_key)
+    finally:
+        cache.close()
+
+
+def _cache_set(cache_key: str, response, days: int) -> None:
+    cache = MetadataCache()
+    try:
+        cache.set_cache(cache_key, response, days=days)
+    finally:
+        cache.close()
+
+
 # Match a Deezer artist URL → numeric ID. Deezer relations on MusicBrainz
 # look like ``https://www.deezer.com/artist/12345`` (sometimes with a
 # ``/en/`` locale segment). Anchored on the digits so a release/album
@@ -71,11 +90,9 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
     """
     if not mbid:
         return None
-    cache = MetadataCache()
     cache_key = f"mb:deezerid:{mbid}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached is not None:
-        cache.close()
         return cached["response"]   # may legitimately be None
 
     deezer_id = None
@@ -92,21 +109,18 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
                 if m:
                     deezer_id = m.group(1)
                     break
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - an outage; None is not cached, so the next ask retries
         logger.debug("MB→Deezer resolve failed for mbid %s: %s", mbid, e)
-        cache.close()
         return None            # transient — do not freeze a hiccup for 60 days
 
     if r.status_code != 200:
-        cache.close()
         return None            # transient — MB throttled or down
 
     # Cache the outcome — including a None result, so linkless artists
     # don't trigger a fresh rate-limited MB call on every batch. Only a
     # DEFINITIVE answer lands here: MB answered 200 and either had the
     # Deezer link or provably does not.
-    cache.set_cache(cache_key, deezer_id, days=60)
-    cache.close()
+    await asyncio.to_thread(_cache_set, cache_key, deezer_id, 60)
     return deezer_id
 
 
@@ -134,13 +148,11 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
     the query escaping.
     """
     rejected = set(rejected or ())
-    cache = MetadataCache()
     cache_key = f"mb:artist:{mbid}" if mbid else f"mb:artist:{artist_name[:60].lower()}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached:
         _resp = cached["response"]   # may legitimately be None (neg-cached)
         if not (rejected and isinstance(_resp, dict) and _resp.get("mbid") in rejected):
-            cache.close()
             return _resp
         # The cached hit is the one the owner just excluded — search again.
 
@@ -158,13 +170,11 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
                     # 429/503 is MB having a moment, not "no such artist" —
                     # neg-caching it froze a hiccup into a 7-day miss and the
                     # enrichment wrote the artist down as not found.
-                    cache.close()
                     return TRANSIENT
                 artists = [a for a in (r.json().get("artists") or [])
                            if a.get("id") and a.get("id") not in rejected]
                 if not artists:
-                    cache.set_cache(cache_key, None, days=7)
-                    cache.close()
+                    await asyncio.to_thread(_cache_set, cache_key, None, 7)
                     return None
 
                 mbid = artists[0].get("id")
@@ -175,19 +185,16 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
                 {"inc": "tags+genres+ratings", "fmt": "json"},
             )
             if r2.status_code == 404:
-                cache.set_cache(cache_key, None, days=7)   # definitive: no such mbid
-                cache.close()
+                await asyncio.to_thread(_cache_set, cache_key, None, 7)   # definitive: no such mbid
                 return None
             if r2.status_code != 200:
-                cache.close()
                 return TRANSIENT                           # throttled / down
 
             data = r2.json()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - an outage; TRANSIENT tells the caller, nothing is cached
         logger.debug("MusicBrainz error for %s: %s", artist_name, e)
         # No neg-cache on exception (timeout, DNS, etc.) — transient.
-        cache.close()
         return TRANSIENT
 
     tags = sorted(
@@ -209,8 +216,7 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
         "source": "musicbrainz",
     }
 
-    cache.set_cache(cache_key, result, days=60)
-    cache.close()
+    await asyncio.to_thread(_cache_set, cache_key, result, 60)
     return result
 
 
@@ -220,12 +226,9 @@ async def fetch_musicbrainz_album(mbid: str, album_name: str, artist_name: str) 
     Returns tags, release year, label, track count.
     Rate-limited via _mb_request (1 req/sec globally).
     """
-    from src.cache.metadata_cache import MetadataCache
-    cache = MetadataCache()
     cache_key = f"mb:album:{mbid or album_name[:40].lower()}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached:
-        cache.close()
         return cached["response"]
 
     try:
@@ -240,14 +243,12 @@ async def fetch_musicbrainz_album(mbid: str, album_name: str, artist_name: str) 
                      "limit": 1, "fmt": "json"})
                 hits = r.json().get("release-groups", [])
                 if not hits:
-                    cache.close()
                     return None
                 rg = hits[0]
                 r = await _mb_request(client, f"{MB_BASE}/release-group/{rg['id']}",
                     {"inc": "tags+genres+ratings", "fmt": "json"})
 
         if r.status_code != 200:
-            cache.close()
             return None
 
         data = r.json()
@@ -263,13 +264,11 @@ async def fetch_musicbrainz_album(mbid: str, album_name: str, artist_name: str) 
             "rating": data.get("rating", {}).get("value"),
             "source": "musicbrainz_album",
         }
-        cache.set_cache(cache_key, result, days=60)
-        cache.close()
+        await asyncio.to_thread(_cache_set, cache_key, result, 60)
         return result
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - album tags are optional; nothing is cached, the next ask retries
         logger.debug("MusicBrainz album error for %s/%s: %s", artist_name, album_name, e)
-        cache.close()
         return None
 
 
@@ -282,14 +281,10 @@ async def enrich_album(album_name: str, artist_name: str, mbid: str = None) -> O
     album-level evidence, but music proposals are currently artist-level.
     Wire it up when album debates (Bomber-class) get their own dossier.
     """
-    from src.cache.metadata_cache import MetadataCache
-    cache = MetadataCache()
     cache_key = f"enriched:album:{artist_name[:30].lower()}:{album_name[:30].lower()}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached and cached.get("response", {}).get("source"):
-        cache.close()
         return cached["response"]
-    cache.close()
 
     mb_data = await fetch_musicbrainz_album(mbid, album_name, artist_name)
 
@@ -334,10 +329,7 @@ async def enrich_album(album_name: str, artist_name: str, mbid: str = None) -> O
         "source": "musicbrainz_album",
     }
 
-    from src.cache.metadata_cache import MetadataCache
-    _c = MetadataCache()
-    _c.set_cache(cache_key, result, days=60)
-    _c.close()
+    await asyncio.to_thread(_cache_set, cache_key, result, 60)
     return result
 
 
@@ -349,11 +341,9 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
     if not lastfm_key:
         return None
 
-    cache = MetadataCache()
     cache_key = f"lastfm:artist:{artist_name[:60].lower()}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached:
-        cache.close()
         return cached["response"]   # may legitimately be None (neg-cached)
 
     try:
@@ -376,14 +366,12 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
                 # 429/5xx is Last.fm having a moment, not "no such artist" —
                 # freezing it for 7 days starves tags/similar/bio downstream.
                 # The marker tells the enrichment "unavailable", not "miss".
-                cache.close()
                 return TRANSIENT
             data = r.json().get("artist", {})
             if not data:
                 # 200 with an empty body IS the definitive no-record answer
                 # (Pass 80) — that one stays cached.
-                cache.set_cache(cache_key, None, days=7)
-                cache.close()
+                await asyncio.to_thread(_cache_set, cache_key, None, 7)
                 return None
 
             # Similar artists
@@ -405,9 +393,8 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
                     for a in r2.json().get("similarartists", {}).get("artist", [])
                 ]
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - an outage; TRANSIENT tells the caller, nothing is cached
         logger.debug("Last.fm error for %s: %s", artist_name, e)
-        cache.close()
         return TRANSIENT
 
     tags = [t.get("name", "") for t in data.get("tags", {}).get("tag", [])]
@@ -428,8 +415,7 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
         "source": "lastfm",
     }
 
-    cache.set_cache(cache_key, result, days=30)
-    cache.close()
+    await asyncio.to_thread(_cache_set, cache_key, result, 30)
     return result
 
 
@@ -460,12 +446,9 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
 
     if not skip_mb:
         # Full mode: regular read-through cache.
-        cache = MetadataCache()
-        cached = cache.get_cache(cache_key)
+        cached = await asyncio.to_thread(_cache_get, cache_key)
         if cached:
-            cache.close()
             return cached["response"]
-        cache.close()
 
         # SoulSync FIRST (owner decision 2026-08-15): the LAN neighbour
         # aggregates 10 providers in ONE call and is the richer, actively
@@ -531,9 +514,7 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         # READ above (it was always the name key, so an mbid caller never
         # saw it).
         if not skip_mb:                     # a TRANSIENT returned above
-            cache = MetadataCache()
-            cache.set_cache(cache_key, None, days=7)
-            cache.close()
+            await asyncio.to_thread(_cache_set, cache_key, None, 7)
         return None
 
     # Merge: SoulSync fields WIN (primary), MusicBrainz supplies the factual
@@ -594,10 +575,8 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
     # has no tags or bio): kept for a day, not 30, so the next ask fills the gap.
     if not skip_mb:
         days = 1 if transient else 30
-        cache = MetadataCache()
         for k in dict.fromkeys((cache_key, f"artist_profile:{artist_name[:60].lower()}")):
-            cache.set_cache(k, profile, days=days)
-        cache.close()
+            await asyncio.to_thread(_cache_set, k, profile, days)
     return profile
 
 
@@ -610,13 +589,10 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
     if not lastfm_key:
         return await enrich_artist(artist)
 
-    cache = MetadataCache()
     cache_key = f"track:{artist[:40].lower()}:{title[:40].lower()}"
-    cached = cache.get_cache(cache_key)
+    cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached:
-        cache.close()
         return cached["response"]
-    cache.close()
 
     # Pass 80b: helper to cache the artist-profile fallback at the *track*
     # cache_key when Last.fm doesn't know the track. Without this, the daily
@@ -634,9 +610,7 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
         # Never persist an outage: TRANSIENT (an upstream down) or a fallback
         # served because Last.fm itself was throttled or failing.
         if cacheable and fb is not TRANSIENT:
-            _c = MetadataCache()
-            _c.set_cache(cache_key, fb, days=7)
-            _c.close()
+            await asyncio.to_thread(_cache_set, cache_key, fb, 7)
         return fb
 
     try:
@@ -674,9 +648,7 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
             "embedding_text": f"{title} by {artist}. Tags: {', '.join(tags[:8])}.",
         }
 
-        cache = MetadataCache()
-        cache.set_cache(cache_key, result, days=30)
-        cache.close()
+        await asyncio.to_thread(_cache_set, cache_key, result, 30)
         return result
 
     except Exception as e:

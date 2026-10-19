@@ -17,6 +17,7 @@ import httpx
 
 from src.config import settings
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.services.app_state import (get_datetime, set_datetime, get_state, set_state,
                                     acquire_state_lock, release_state_lock)
 from src.database.models import (
@@ -140,53 +141,57 @@ async def _sync_music_ratings(
                     continue
                 logger.info("[ratings] %r: %d rated %s(s)", sec_title, len(items), level)
 
-                with get_db_session() as db:
-                    for item in items:
-                        rating_key = item.get("ratingKey")
-                        user_rating = item.get("userRating")
-                        if not rating_key:
-                            skipped_no_key += 1
-                            continue
-                        if user_rating is None:
-                            # Shouldn't happen given the filter, but defend
-                            # against a Plex API behaviour change.
-                            continue
-                        try:
-                            rating_val = float(user_rating)
-                        except (TypeError, ValueError):
-                            continue
-                        if rating_val <= 0:
-                            continue
-
-                        artist_name = _artist_name_for_level(item, level)
-                        rated_at = None
-                        last_rated_ts = item.get("lastRatedAt")
-                        if last_rated_ts:
+                def _upsert() -> None:
+                    nonlocal upserted, skipped_no_key
+                    with get_db_session() as db:
+                        for item in items:
+                            rating_key = item.get("ratingKey")
+                            user_rating = item.get("userRating")
+                            if not rating_key:
+                                skipped_no_key += 1
+                                continue
+                            if user_rating is None:
+                                # Shouldn't happen given the filter, but defend
+                                # against a Plex API behaviour change.
+                                continue
                             try:
-                                rated_at = datetime.utcfromtimestamp(int(last_rated_ts))
+                                rating_val = float(user_rating)
                             except (TypeError, ValueError):
-                                rated_at = None
+                                continue
+                            if rating_val <= 0:
+                                continue
 
-                        existing = db.query(PlexRating).filter(
-                            PlexRating.user_id == owner_user_id,
-                            PlexRating.plex_item_id == str(rating_key),
-                        ).first()
-                        if existing:
-                            existing.rating = rating_val
-                            existing.rated_at = rated_at
-                            existing.artist_name = artist_name or existing.artist_name
-                            existing.media_type = level
-                        else:
-                            db.add(PlexRating(
-                                user_id=owner_user_id,
-                                plex_item_id=str(rating_key),
-                                media_type=level,
-                                rating=rating_val,
-                                rated_at=rated_at,
-                                artist_name=artist_name or None,
-                            ))
-                        upserted += 1
-                    db.commit()
+                            artist_name = _artist_name_for_level(item, level)
+                            rated_at = None
+                            last_rated_ts = item.get("lastRatedAt")
+                            if last_rated_ts:
+                                try:
+                                    rated_at = datetime.utcfromtimestamp(int(last_rated_ts))
+                                except (TypeError, ValueError):
+                                    rated_at = None
+
+                            existing = db.query(PlexRating).filter(
+                                PlexRating.user_id == owner_user_id,
+                                PlexRating.plex_item_id == str(rating_key),
+                            ).first()
+                            if existing:
+                                existing.rating = rating_val
+                                existing.rated_at = rated_at
+                                existing.artist_name = artist_name or existing.artist_name
+                                existing.media_type = level
+                            else:
+                                db.add(PlexRating(
+                                    user_id=owner_user_id,
+                                    plex_item_id=str(rating_key),
+                                    media_type=level,
+                                    rating=rating_val,
+                                    rated_at=rated_at,
+                                    artist_name=artist_name or None,
+                                ))
+                            upserted += 1
+                        db.commit()
+
+                await run_write(_upsert)
 
     if skipped_no_key:
         logger.debug("[ratings] skipped %d items lacking ratingKey", skipped_no_key)
@@ -222,6 +227,22 @@ def section_listing_lacks(payload, sec_key) -> bool:
     return all(str(d.get("key")) != str(sec_key) for d in dirs)
 
 
+def _bump_section_miss(sec_key) -> int:
+    """One more miss on the section's streak; returns the new count. Read
+    and write in one call, so it runs as one step on the writer thread."""
+    try:
+        misses = int(get_state(_section_miss_key(sec_key)) or 0) + 1
+    except ValueError:
+        misses = 1
+    set_state(_section_miss_key(sec_key), str(misses))
+    return misses
+
+
+def _reset_section_miss(sec_key) -> None:
+    if get_state(_section_miss_key(sec_key)) not in (None, "", "0"):
+        set_state(_section_miss_key(sec_key), "0")
+
+
 async def _section_confirmed_gone(client, plex_url: str, headers: dict, sec_key) -> bool:
     """After a 404 on one section: ask Plex which sections exist. Counts a
     miss only when that list answered and lacks the key; True once the
@@ -234,12 +255,7 @@ async def _section_confirmed_gone(client, plex_url: str, headers: dict, sec_key)
     except Exception as e:  # noqa: BLE001 - doubt keeps the library
         logger.debug("Section list check failed: %s", e)
         return False
-    try:
-        misses = int(get_state(_section_miss_key(sec_key)) or 0) + 1
-    except ValueError:
-        misses = 1
-    set_state(_section_miss_key(sec_key), str(misses))
-    return misses >= SECTION_MISS_LIMIT
+    return await run_write(_bump_section_miss, sec_key) >= SECTION_MISS_LIMIT
 
 
 async def sync_plex_history(job_id: Optional[int] = None, force: bool = False,
@@ -251,14 +267,14 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False,
     window each passed the check and ran full syncs side by side. The
     state lock is the same mutex the enrichment and music runs use; the
     lifespan clears a stale one at boot."""
-    if not acquire_state_lock("plex_sync_running"):
+    if not await run_write(acquire_state_lock, "plex_sync_running"):
         # ``busy`` tells the scheduler this run did nothing — unlike the
         # cooldown skip below, which means history is already fresh.
         return {"skipped": True, "busy": True, "reason": "A sync is already running"}
     try:
         return await _sync_plex_history_impl(job_id, force, recompute_taste)
     finally:
-        release_state_lock("plex_sync_running")
+        await run_write(release_state_lock, "plex_sync_running")
 
 
 async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = False,
@@ -274,7 +290,7 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
         return {"error": "PLEX_URL / PLEX_TOKEN not configured"}
 
     # Rate-limit: skip if synced < 60 min ago and not forced
-    last_sync = get_datetime("last_sync_at")
+    last_sync = await run_read(get_datetime, "last_sync_at")
     if not force and last_sync:
         age_min = (datetime.utcnow() - last_sync).total_seconds() / 60
         if age_min < 60:
@@ -283,11 +299,15 @@ async def _sync_plex_history_impl(job_id: Optional[int] = None, force: bool = Fa
     # Load library config from DB — before the Activity card exists, so a
     # not-yet-configured install doesn't leave a card behind on every trigger.
     from src.database.models import LibraryConfig
-    with get_db_session() as db:
-        lib_configs = {
-            c.plex_section_key: (c.media_category, c.plex_section_type, c.plex_section_title)
-            for c in db.query(LibraryConfig).all()
-        }
+
+    def _load_configs() -> dict:
+        with get_db_session() as db:
+            return {
+                c.plex_section_key: (c.media_category, c.plex_section_type, c.plex_section_title)
+                for c in db.query(LibraryConfig).all()
+            }
+
+    lib_configs = await run_read(_load_configs)
 
     if not lib_configs:
         return {"error": "No library config. Configure libraries first via the setup wizard."}
@@ -382,12 +402,16 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                                    sec_title, sec_key, SECTION_MISS_LIMIT)
                     try:
                         from src.database.models import LibraryConfig as LC
-                        with get_db_session() as _db:
-                            dead = _db.query(LC).filter(LC.plex_section_key == sec_key).first()
-                            if dead:
-                                _db.delete(dead)
-                                _db.commit()
-                        set_state(_section_miss_key(sec_key), "0")
+
+                        def _drop_dead() -> None:
+                            with get_db_session() as _db:
+                                dead = _db.query(LC).filter(LC.plex_section_key == sec_key).first()
+                                if dead:
+                                    _db.delete(dead)
+                                    _db.commit()
+                            set_state(_section_miss_key(sec_key), "0")
+
+                        await run_write(_drop_dead)
                     except Exception as _e:
                         # kept: the next sync retries the removal
                         logger.warning("Could not remove dead library config: %s", _e)
@@ -401,8 +425,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 failed_sections.append(sec_title)
                 continue
             try:   # it answered: any 404 streak ends (best-effort, never fails the sync)
-                if get_state(_section_miss_key(sec_key)) not in (None, "", "0"):
-                    set_state(_section_miss_key(sec_key), "0")
+                await run_write(_reset_section_miss, sec_key)
             except Exception as _e:  # noqa: BLE001 - only a 404-streak counter; the next sync resets it
                 logger.debug("Section miss streak reset failed: %s", _e)
 
@@ -886,9 +909,12 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # doesn't lose any of the play data already persisted above. Best-effort:
     # logs failures, doesn't raise.
     try:
-        with get_db_session() as _db:
-            _admin = _db.query(User).filter(User.is_admin == True).first()  # noqa: E712
-            _admin_id = _admin.id if _admin else None
+        def _admin_id_of() -> Optional[int]:
+            with get_db_session() as _db:
+                _admin = _db.query(User).filter(User.is_admin == True).first()  # noqa: E712
+                return _admin.id if _admin else None
+
+        _admin_id = await run_read(_admin_id_of)
         if _admin_id is not None:
             await _sync_music_ratings(plex_url, headers, lib_configs, _admin_id)
         else:
@@ -901,13 +927,13 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
         # Their plays were never fetched: keep the old watermark so the next
         # sync (the hourly cooldown reads the same stamp) asks for them again.
         if last_sync is not None:
-            set_datetime("last_sync_at", last_sync)
+            await run_write(set_datetime, "last_sync_at", last_sync)
         logger.warning("Plex sync: %s answered with an error — watermark kept at %s, "
                        "those plays are fetched next time",
                        ", ".join(failed_sections), last_sync)
         _done_msg += f" — {', '.join(failed_sections)} not fetched, retried next sync"
     else:
-        set_datetime("last_sync_at", sync_started)
+        await run_write(set_datetime, "last_sync_at", sync_started)
     if unattributed:
         _done_msg += f" ({unattributed} parked on admin — run Re-Attribution after the user logs in)"
     task_monitor.done(_sync_task, _done_msg)
@@ -915,19 +941,23 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # Delegate taste vector recompute to taste_engine (canonical implementation)
     if synced > 0:
         # New watch data → invalidate downstream recommendation caches.
-        set_datetime("recs_invalidate_at", datetime.utcnow())
+        await run_write(set_datetime, "recs_invalidate_at", datetime.utcnow())
         # Watched-a-recommendation detection: match the fresh rows against
         # each user's library-lane recs (feeds the follow-up trigger and the
         # all-sampled early refresh). Best-effort — never blocks the sync.
         try:
-            _process_rec_watch_hits(new_play_hits)
+            await run_write(_process_rec_watch_hits, new_play_hits)
         except Exception as e:
             logger.warning("[rec-hits] processing failed: %s", e)
         if recompute_taste:
             from src.services.taste_engine import compute_all_taste_vectors
-            with get_db_session() as db:
-                active_users = db.query(User).filter(User.is_active == True).all()
-                user_ids = [u.id for u in active_users]
+
+            def _active_ids() -> list:
+                with get_db_session() as db:
+                    active_users = db.query(User).filter(User.is_active == True).all()
+                    return [u.id for u in active_users]
+
+            user_ids = await run_read(_active_ids)
             for uid in user_ids:
                 await compute_all_taste_vectors(uid)
         else:
@@ -1218,12 +1248,17 @@ async def import_plex_history_for_user(user_id: int) -> dict:
         "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
     }
 
-    with get_db_session() as db:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            return {"error": "user not found"}
-        username = (user.plex_username or "").strip()
-        is_admin = bool(user.is_admin)
+    def _load_user() -> Optional[tuple]:
+        with get_db_session() as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return None
+            return (user.plex_username or "").strip(), bool(user.is_admin)
+
+    found = await run_read(_load_user)
+    if found is None:
+        return {"error": "user not found"}
+    username, is_admin = found
     # The admin (server owner) is the data source; their plays are synced the
     # normal way. Don't import "their" account history on top of it.
     if is_admin or not username:
@@ -1286,57 +1321,66 @@ async def import_plex_history_for_user(user_id: int) -> dict:
     #    play kind (episode -> anime/show, movie -> movie).
     resolved: dict = {}
     unresolved: list = []
-    with get_db_session() as db:
-        titles = {}
-        for m in events:
-            t, is_ep = _canon(m)
-            if t:
-                titles[t] = is_ep
-        for t, is_ep in titles.items():
-            rows = db.query(EnrichmentStatus).filter(EnrichmentStatus.title == t).all()
-            cands = [r for r in rows if (r.vector_ready or r.enriched) and r.plex_rating_key]
-            if not cands:
-                unresolved.append(t)
-                continue
-            want = ("anime", "show") if is_ep else ("movie",)
-            pick = next((r for r in cands if r.media_category in want), cands[0])
-            resolved[t] = (pick.plex_rating_key, pick.media_category)
+
+    def _resolve() -> None:
+        with get_db_session() as db:
+            titles = {}
+            for m in events:
+                t, is_ep = _canon(m)
+                if t:
+                    titles[t] = is_ep
+            for t, is_ep in titles.items():
+                rows = db.query(EnrichmentStatus).filter(EnrichmentStatus.title == t).all()
+                cands = [r for r in rows if (r.vector_ready or r.enriched) and r.plex_rating_key]
+                if not cands:
+                    unresolved.append(t)
+                    continue
+                want = ("anime", "show") if is_ep else ("movie",)
+                pick = next((r for r in cands if r.media_category in want), cands[0])
+                resolved[t] = (pick.plex_rating_key, pick.media_category)
+
+    await run_read(_resolve)
 
     # 4. Insert one row per play event (real viewedAt). Dedupe on re-run.
     imported = 0
     by_cat: dict = defaultdict(int)
-    with get_db_session() as db:
-        existing = {
-            (w.plex_item_id, w.viewed_at)
-            for w in db.query(WatchHistoryEntry.plex_item_id, WatchHistoryEntry.viewed_at)
-                       .filter(WatchHistoryEntry.user_id == user_id).all()
-        }
-        for m in events:
-            t, is_ep = _canon(m)
-            if t not in resolved:
-                continue
-            key, cat = resolved[t]
-            va = m.get("viewedAt")
-            vt = datetime.utcfromtimestamp(int(va)) if va else None
-            if (key, vt) in existing:
-                continue
-            db.add(WatchHistoryEntry(
-                user_id=user_id,
-                plex_user_id=account_id,
-                plex_item_id=key,
-                title=(m.get("title") or t),
-                media_type=cat,
-                series_title=t if is_ep else None,
-                season=m.get("parentIndex"),
-                episode=m.get("index"),
-                viewed_at=vt,
-                completed=1,
-                source=None,
-            ))
-            existing.add((key, vt))
-            imported += 1
-            by_cat[cat] += 1
-        db.commit()
+
+    def _insert() -> None:
+        nonlocal imported
+        with get_db_session() as db:
+            existing = {
+                (w.plex_item_id, w.viewed_at)
+                for w in db.query(WatchHistoryEntry.plex_item_id, WatchHistoryEntry.viewed_at)
+                           .filter(WatchHistoryEntry.user_id == user_id).all()
+            }
+            for m in events:
+                t, is_ep = _canon(m)
+                if t not in resolved:
+                    continue
+                key, cat = resolved[t]
+                va = m.get("viewedAt")
+                vt = datetime.utcfromtimestamp(int(va)) if va else None
+                if (key, vt) in existing:
+                    continue
+                db.add(WatchHistoryEntry(
+                    user_id=user_id,
+                    plex_user_id=account_id,
+                    plex_item_id=key,
+                    title=(m.get("title") or t),
+                    media_type=cat,
+                    series_title=t if is_ep else None,
+                    season=m.get("parentIndex"),
+                    episode=m.get("index"),
+                    viewed_at=vt,
+                    completed=1,
+                    source=None,
+                ))
+                existing.add((key, vt))
+                imported += 1
+                by_cat[cat] += 1
+            db.commit()
+
+    await run_write(_insert)
 
     logger.info("[history-import] user %s (acct %s): imported %d rows %s, %d titles unresolved",
                 user_id, account_id, imported, dict(by_cat), len(unresolved))
@@ -1489,7 +1533,7 @@ async def reattribute_watch_history() -> dict:
     # Re-attribution shifts which user owns which entries → invalidate cached
     # recommendations across the board so the next read regenerates against
     # the corrected taste data.
-    set_datetime("recs_invalidate_at", datetime.utcnow())
+    await run_write(set_datetime, "recs_invalidate_at", datetime.utcnow())
 
     logger.info(
         "Re-attribution done: %d updated, %d unchanged, %d unattributable | "
@@ -1583,9 +1627,13 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
     }
 
     from src.database.models import LibraryConfig
-    with get_db_session() as db:
-        sections = [(s.plex_section_key, s.plex_section_type, s.media_category)
+
+    def _load_sections() -> list:
+        with get_db_session() as db:
+            return [(s.plex_section_key, s.plex_section_type, s.media_category)
                     for s in db.query(LibraryConfig).all()]
+
+    sections = await run_read(_load_sections)
 
     live_keys: set[str] = set()
     empty_sections: list = []
@@ -1617,57 +1665,66 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
 
     logger.info("Orphan-cleanup: %d live ratingKeys collected from Plex", len(live_keys))
 
-    with get_db_session() as db:
-        # Same filter as re-attribution: keep ALL Spotify-sourced rows even
-        # if music_matcher gave them a numeric Plex ratingKey, because the
-        # play happened on Spotify and the underlying Plex music track may
-        # legitimately not be in any configured library section.
-        from sqlalchemy import or_
-        rows = db.query(
-            WatchHistoryEntry.id,
-            WatchHistoryEntry.plex_item_id
-        ).filter(
-            or_(
-                WatchHistoryEntry.source.is_(None),
-                WatchHistoryEntry.source != "spotify",
-            ),
-            ~WatchHistoryEntry.plex_item_id.like("spotify:%"),
-        ).all()
-        to_delete_ids = []
-        for row in rows:
-            rk = row.plex_item_id
-            if not rk:
-                continue
-            if rk in live_keys:
-                continue
-            # Only consider numeric ratingKeys (skip oddball custom IDs)
-            if not rk.isdigit():
-                continue
-            to_delete_ids.append(row.id)
+    def _purge():
+        """Scan, decide and delete in one write call: the refusal guard and
+        the delete must judge the same rows. Returns (examined, ids,
+        refused)."""
+        with get_db_session() as db:
+            # Same filter as re-attribution: keep ALL Spotify-sourced rows even
+            # if music_matcher gave them a numeric Plex ratingKey, because the
+            # play happened on Spotify and the underlying Plex music track may
+            # legitimately not be in any configured library section.
+            from sqlalchemy import or_
+            rows = db.query(
+                WatchHistoryEntry.id,
+                WatchHistoryEntry.plex_item_id
+            ).filter(
+                or_(
+                    WatchHistoryEntry.source.is_(None),
+                    WatchHistoryEntry.source != "spotify",
+                ),
+                ~WatchHistoryEntry.plex_item_id.like("spotify:%"),
+            ).all()
+            to_delete_ids = []
+            for row in rows:
+                rk = row.plex_item_id
+                if not rk:
+                    continue
+                if rk in live_keys:
+                    continue
+                # Only consider numeric ratingKeys (skip oddball custom IDs)
+                if not rk.isdigit():
+                    continue
+                to_delete_ids.append(row.id)
 
-        if (not force and rows
-                and len(to_delete_ids) > ORPHAN_MAX_SHARE * len(rows)):
-            logger.warning("Orphan-cleanup: would delete %d of %d rows — refused",
-                           len(to_delete_ids), len(rows))
-            return {"error": f"Would delete {len(to_delete_ids)} of {len(rows)} history rows "
-                             f"(more than {ORPHAN_MAX_SHARE:.0%}) — refusing; re-run with "
-                             "force=true if Plex really lost that much",
-                    "deleted": 0, "would_delete": len(to_delete_ids), "examined": len(rows)}
+            if (not force and rows
+                    and len(to_delete_ids) > ORPHAN_MAX_SHARE * len(rows)):
+                return len(rows), to_delete_ids, True
 
-        if to_delete_ids:
-            db.query(WatchHistoryEntry).filter(
-                WatchHistoryEntry.id.in_(to_delete_ids)
-            ).delete(synchronize_session=False)
-            db.commit()
+            if to_delete_ids:
+                db.query(WatchHistoryEntry).filter(
+                    WatchHistoryEntry.id.in_(to_delete_ids)
+                ).delete(synchronize_session=False)
+                db.commit()
+            return len(rows), to_delete_ids, False
+
+    examined, to_delete_ids, refused = await run_write(_purge)
+    if refused:
+        logger.warning("Orphan-cleanup: would delete %d of %d rows — refused",
+                       len(to_delete_ids), examined)
+        return {"error": f"Would delete {len(to_delete_ids)} of {examined} history rows "
+                         f"(more than {ORPHAN_MAX_SHARE:.0%}) — refusing; re-run with "
+                         "force=true if Plex really lost that much",
+                "deleted": 0, "would_delete": len(to_delete_ids), "examined": examined}
 
     if to_delete_ids:
-        set_datetime("recs_invalidate_at", datetime.utcnow())
+        await run_write(set_datetime, "recs_invalidate_at", datetime.utcnow())
 
     logger.info("Orphan-cleanup done: %d rows deleted", len(to_delete_ids))
     return {
         "deleted": len(to_delete_ids),
         "live_keys_seen": len(live_keys),
-        "examined": len(rows),
+        "examined": examined,
     }
 
 
@@ -1770,8 +1827,12 @@ async def _generate_taste_summary(
     # user's chat language and pass the directive in so the summary lands
     # in the same language as the other LLM surfaces (Pass 40).
     from src.database.connection import get_db_session
-    with get_db_session() as _db:
-        user_lang = detect_user_language(user_id, _db)
+
+    def _lang():
+        with get_db_session() as _db:
+            return detect_user_language(user_id, _db)
+
+    user_lang = await run_read(_lang)
     lang_line = language_directive(user_lang)
 
     # Pass 47 (A4-drift): use the canonical BLACKLISTED_PITCH_PHRASES list
@@ -1898,16 +1959,19 @@ async def get_user_taste_context(user_id: int, query: str = "",
     along (pillars builds its OWNER TASTE line per category); a discussion
     defending the judge's verdict reasons from the same base.
     """
-    with get_db_session() as db:
-        tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
-        if not tv:
-            return ""
+    def _load() -> Optional[tuple]:
+        with get_db_session() as db:
+            tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
+            if not tv:
+                return None
+            return (json.loads(tv.genre_affinity or "{}"),
+                    json.loads(tv.top_titles or "{}"),
+                    tv.summary_text or "", tv.watch_count or 0, tv.computed_at)
 
-        type_data = json.loads(tv.genre_affinity or "{}")
-        top_titles_by_type = json.loads(tv.top_titles or "{}")
-        summary_text = tv.summary_text or ""
-        watch_count = tv.watch_count or 0
-        computed_at = tv.computed_at
+    loaded = await run_read(_load)
+    if loaded is None:
+        return ""
+    type_data, top_titles_by_type, summary_text, watch_count, computed_at = loaded
 
     # Detect which categories are relevant to the query — unless the caller
     # already knows (an active discussion carries its item's category).
@@ -2244,16 +2308,20 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
     if not plex_url or not plex_token:
         return {"error": "PLEX_URL / PLEX_TOKEN not configured"}
 
-    last = get_datetime("last_tech_sync_at")
+    last = await run_read(get_datetime, "last_tech_sync_at")
     if not force and last and (datetime.utcnow() - last).total_seconds() < 12 * 3600:
         return {"skipped": True, "last": last.isoformat()}
 
     headers = {"Accept": "application/json", "X-Plex-Token": plex_token,
                "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID}
     from src.database.models import LibraryConfig
-    with get_db_session() as db:
-        lib_configs = {c.plex_section_key: (c.media_category, c.plex_section_title)
-                       for c in db.query(LibraryConfig).all()}
+
+    def _load_configs() -> dict:
+        with get_db_session() as db:
+            return {c.plex_section_key: (c.media_category, c.plex_section_title)
+                    for c in db.query(LibraryConfig).all()}
+
+    lib_configs = await run_read(_load_configs)
 
     _task = task_monitor.create(name="Tech-metadata sync", category="sync")
     task_monitor.start(_task)
@@ -2319,13 +2387,13 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                         agg[rk]["tvdb_id"] = agg[rk]["tvdb_id"] or gids["tvdb_id"]
                         agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
 
-    written = _persist_tech_profiles(agg)
-    pruned = _prune_stale_tech_profiles(set(agg.keys()), scanned - incomplete)
+    written = await run_write(_persist_tech_profiles, agg)
+    pruned = await run_write(_prune_stale_tech_profiles, set(agg.keys()), scanned - incomplete)
     if pruned:
         task_monitor.log(_task, f"pruned {pruned} stale profiles (rating keys Plex no longer has)")
         from src.services.size_norms import invalidate_norms_cache
         invalidate_norms_cache()
-    set_datetime("last_tech_sync_at", datetime.utcnow())
+    await run_write(set_datetime, "last_tech_sync_at", datetime.utcnow())
     task_monitor.done(_task, f"{written} tech profiles")
     logger.info("[tech] wrote %d MediaTechProfile rows across %d items", written, len(agg))
     return {"profiles": written, "items": len(agg), "pruned": pruned}

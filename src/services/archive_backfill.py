@@ -234,19 +234,24 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
     from src.services.wikidata import topup_wikidata
 
     owns = cache is None
-    if owns:
-        cache = MetadataCache()
     try:
         if source == "external_ids":
             # Bulk by nature: one library fetch answers thousands of titles,
             # so it does not walk the per-title path below.
             from src.services.external_ids import harvest
+            if owns:
+                # harvest works one handle across its whole walk, from this
+                # thread; a handle opened on a worker could not be closed
+                # safely from here (see MetadataCache.close).
+                cache = MetadataCache()
             return await harvest(cache, limit=limit, task=task,
                                  should_stop=should_stop,
                                  on_progress=on_progress)
         if source not in ("significance", "reception", "wikidata", "omdb"):
             return {"error": f"unknown source {source!r}"}
-        todo = pending(source, cache=cache)
+        # Without a handle passed in, the scan and every top-up open their
+        # own on the worker thread their cache work runs on.
+        todo = await asyncio.to_thread(pending, source, cache=cache)
         if limit:
             todo = todo[:limit]
 
@@ -312,5 +317,5 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
         await asyncio.gather(*(_worker() for _ in range(max(1, width))))
         return {"source": source, "visited": seen, "added": added}
     finally:
-        if owns:
+        if owns and cache is not None:
             cache.close()

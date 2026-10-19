@@ -82,6 +82,41 @@ async def aset_state(key: str, value: str) -> bool:
     return await run_write(set_state, key, value)
 
 
+async def aget_state(key: str) -> Optional[str]:
+    """``get_state`` from a coroutine: runs on a worker thread (WAL readers
+    run concurrently), so the event loop never waits on SQLite."""
+    from src.database.runner import run_read
+    return await run_read(get_state, key)
+
+
+async def aset_states_if_changed(values: dict) -> dict:
+    from src.database.runner import run_write
+    return await run_write(set_states_if_changed, values)
+
+
+async def aget_datetime(key: str) -> Optional[datetime]:
+    from src.database.runner import run_read
+    return await run_read(get_datetime, key)
+
+
+async def aset_datetime(key: str, dt: datetime) -> None:
+    from src.database.runner import run_write
+    await run_write(set_datetime, key, dt)
+
+
+async def aacquire_state_lock(key: str, value: str = "1") -> bool:
+    """``acquire_state_lock`` on the DB writer thread. Same atomic result."""
+    from src.database.runner import run_write
+    return await run_write(acquire_state_lock, key, value)
+
+
+async def arelease_state_lock(key: str) -> bool:
+    """``release_state_lock`` on the DB writer thread. Same bool result; a
+    release that did not land is still logged at ERROR."""
+    from src.database.runner import run_write
+    return await run_write(release_state_lock, key)
+
+
 def set_states_if_changed(values: dict) -> dict:
     """Write only the keys whose value differs from what is stored, in ONE
     transaction. Returns {key: previous value (None when absent)} for the

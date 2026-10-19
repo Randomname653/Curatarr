@@ -19,6 +19,7 @@ fit note. The only LLM left in the loop is the query parse, which
 proved reliable in every live round.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -464,31 +465,76 @@ async def _texts_to_vectors(texts: list) -> dict:
         if k:
             want.setdefault(k, t)
     result, misses = {}, []
-    cache = None
-    try:
-        from src.cache.metadata_cache import MetadataCache
-        cache = MetadataCache()
-    except Exception:
-        cache = None
-    cache_warned = False   # once per call: this runs per tag
+    warned: list = []     # once per call: this runs per tag
+
+    def _ck(k: str) -> str:
+        return f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
+
+    # The api_cache file has its own lock: both cache passes run on a worker
+    # thread, each with its own handle (handles are per thread).
+    def _open():
+        try:
+            from src.cache.metadata_cache import MetadataCache
+            return MetadataCache()
+        except Exception:
+            return None
+
+    def _release(cache) -> None:
+        try:
+            if cache is not None:
+                cache.close()
+        except Exception:  # noqa: BLE001 - releasing a handle; the vectors are computed
+            pass
+
+    def _read_cached(keys: list):
+        """(cache usable, {k: vec}) for the keys with a stored vector."""
+        cache = _open()
+        found: dict = {}
+        if cache is None:
+            return False, found
+        try:
+            for k in keys:
+                try:
+                    hit = cache.get_cache(_ck(k))
+                    vec = ((hit or {}).get("response") or {}).get("v")
+                    if vec:
+                        found[k] = vec
+                except Exception as e:
+                    # read as a miss: the tag is embedded afresh
+                    if not warned:
+                        warned.append(True)
+                        logger.warning("[search] tag-vector cache read failed: %s", e)
+        finally:
+            _release(cache)
+        return True, found
+
+    def _write_cached(items: list) -> None:
+        cache = _open()
+        if cache is None:
+            return
+        try:
+            for k, unit in items:
+                try:
+                    cache.set_cache(_ck(k), {"v": unit}, days=90)
+                except Exception as e:
+                    if not warned:
+                        warned.append(True)
+                        logger.warning("[search] tag-vector cache write "
+                                       "failed: %s", e)
+        finally:
+            _release(cache)
+
+    cache_ok, cached = await asyncio.to_thread(
+        _read_cached, [k for k in want if k not in _vec_memo])
     for k, orig in want.items():
         if k in _vec_memo:
             result[k] = _vec_memo[k]
             continue
-        if cache is not None:
-            try:
-                ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
-                hit = cache.get_cache(ck)
-                vec = ((hit or {}).get("response") or {}).get("v")
-                if vec:
-                    _vec_memo[k] = vec
-                    result[k] = vec
-                    continue
-            except Exception as e:
-                # read as a miss: the tag is embedded afresh
-                if not cache_warned:
-                    cache_warned = True
-                    logger.warning("[search] tag-vector cache read failed: %s", e)
+        vec = cached.get(k)
+        if vec:
+            _vec_memo[k] = vec
+            result[k] = vec
+            continue
         misses.append((k, orig))
     if misses:
         prefix = "search_document: " if prof.get("prefixes") else ""
@@ -498,25 +544,15 @@ async def _texts_to_vectors(texts: list) -> dict:
         for i in range(0, len(texts_in), 32):
             vecs.extend(await _post_embed(model, texts_in[i:i + 32], num_ctx))
         if len(vecs) == len(misses):
+            fresh = []
             for (k, _orig), v in zip(misses, vecs):
                 unit = _l2(v)
                 if unit:
                     _vec_memo[k] = unit
                     result[k] = unit
-                    if cache is not None:
-                        try:
-                            ck = f"tagemb2:{model}:{hashlib.sha1(k.encode(), usedforsecurity=False).hexdigest()[:16]}"
-                            cache.set_cache(ck, {"v": unit}, days=90)
-                        except Exception as e:
-                            if not cache_warned:
-                                cache_warned = True
-                                logger.warning("[search] tag-vector cache write "
-                                               "failed: %s", e)
-    try:
-        if cache is not None:
-            cache.close()
-    except Exception:  # noqa: BLE001 - releasing a handle; the vectors are computed
-        pass
+                    fresh.append((k, unit))
+            if cache_ok and fresh:
+                await asyncio.to_thread(_write_cached, fresh)
     return result
 
 
@@ -911,7 +947,7 @@ async def curated_search(query: str, n_results: int = 10, domain: str = None,
 
     if parsed and parsed["constraints"]:
         try:
-            cand_tags = _candidate_tags(hits, domain)
+            cand_tags = await asyncio.to_thread(_candidate_tags, hits, domain)
             cons_core = [_split_negation(c)[0] for c in parsed["constraints"]]
             await _texts_to_vectors(
                 cons_core + [t for tags in cand_tags for t in tags])

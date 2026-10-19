@@ -48,6 +48,7 @@ import httpx
 
 from src.config import settings
 from src.database.connection import get_db_session
+from src.database.runner import run_read, run_write
 from src.database.models import ChatStarter, WatchHistoryEntry
 from src.services.llm_utils import strip_think_tags, curator_options, CURATOR_KEEP_ALIVE
 from src.services.viewing_sessions import rhythm as _viewing_rhythm
@@ -256,7 +257,7 @@ Return ONLY the JSON array."""
 
 async def generate_starters(user_id: int, n: int = 5) -> int:
     """One LLM batch → validated, deduped pool rows. Returns inserted count."""
-    facts = collect_facts(user_id)
+    facts = await run_read(collect_facts, user_id)
     if len(facts) <= 1:          # only the clock fact → nothing to anchor on
         return 0
 
@@ -300,12 +301,14 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
         return 0
 
     # Enforcement — in code, where it cannot be sweet-talked.
-    with get_db_session() as db:
-        recent = (db.query(ChatStarter.text)
-                  .filter(ChatStarter.user_id == user_id)
-                  .order_by(ChatStarter.created_at.desc())
-                  .limit(30).all())
-    seen_openings = {_opening(r.text) for r in recent}
+    def _recent_texts() -> list:
+        with get_db_session() as db:
+            return [r.text for r in (db.query(ChatStarter.text)
+                                     .filter(ChatStarter.user_id == user_id)
+                                     .order_by(ChatStarter.created_at.desc())
+                                     .limit(30).all())]
+
+    seen_openings = {_opening(t) for t in await run_read(_recent_texts)}
     seen_forms: set = set()
     now = datetime.utcnow()
     accepted = []
@@ -343,10 +346,13 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
         ))
 
     if accepted:
-        with get_db_session() as db:
-            for row in accepted:
-                db.add(row)
-            db.commit()
+        def _insert():
+            with get_db_session() as db:
+                for row in accepted:
+                    db.add(row)
+                db.commit()
+
+        await run_write(_insert)
     logger.info("[starters] user %d: %d/%d candidates accepted",
                 user_id, len(accepted), len(candidates))
     return len(accepted)

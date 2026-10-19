@@ -206,9 +206,55 @@ way. `tests/test_silent_except_ratchet.py` is now a rule, not a ratchet: no
 silent broad except in `src/` unless its line gives a concrete reason. The baseline
 file is gone.
 
+### Round 5 (follow-up PR): the event loop free of SQLite
+
+Every route and scheduler job is a coroutine. A synchronous SQLAlchemy call inside one
+ran SQLite on the event-loop thread, so every request and stream waited for it, and up
+to `busy_timeout` (60 s) when another process held the write lock. That is why both
+timeouts were 60 s.
+
+| Measure | Before | After |
+|---|---|---|
+| Sync DB calls inside coroutines (static, `tests/test_loop_db_ratchet.py`) | 561 in 48 files | 12 in 2 files |
+| Loop-side statements while running every suite (runtime, `loop_guard`) | 76 sites / 2397 statements | 0 |
+| `busy_timeout` / `pool_timeout` / `pool_size` | 60 s / 60 s / 5 | 15 s / 10 s / 10 |
+
+- **`src/database/loop_guard.py`**: an engine hook records each statement that runs
+  while a loop is running on its thread, under the innermost `src/` coroutine. It logs
+  each site once at WARNING; `GET /api/system/loop-guard` (admin) lists them.
+  `CURATARR_LOOP_GUARD=raise` turns a site into an error; the per-group suites
+  `tests/test_loop_free_g1..g6.py` use it.
+- **The conversion**: DB sections moved into sync helpers run by `run_read` (worker
+  pool) or `run_write` (the one writer thread). The helpers return plain values, never
+  ORM rows, because a row used after its session closes raises DetachedInstanceError.
+  Read-modify-write runs as one `run_write`. Route handlers no longer hold a request
+  `Session` across awaits; the deletion paths work on a plain copy of the proposal
+  and write back only what changed. The async wrappers are `aget_state`,
+  `aacquire_state_lock` / `arelease_state_lock`, `acache_get` / `acache_set` and
+  similar.
+- **Left on purpose**: the 11 statements of the lifespan's own startup and teardown,
+  which run while no request is served and are counted separately; and one cache
+  handle in `archive_backfill.run_source`, whose walk (`external_ids.harvest`) uses it
+  from the loop thread.
+- **Found on the way**: two existing crashes, caught by the new per-group tests.
+  - `GET /deletions` raised `UnboundLocalError` on its cached path, because a local
+    `import asyncio` later in the function shadowed the module's name (since
+    2026-10-15).
+  - `check_and_generate_messages` used `_func` before its local import, so no
+    proactive message was generated for anyone.
+- **Timeouts**: `busy_timeout` is now 15 s and `pool_timeout` 10 s. `pool_size` is 10,
+  for the worker threads that now carry every read. The per-checkout `busy_timeout`
+  reset and `pool_pre_ping` are gone, and `temp_store=MEMORY` is set.
+  `tests/test_loop_responsiveness.py` holds the write lock from another process:
+  the API answers in under 200 ms, the loop never stalls for more than 200 ms, and the
+  waiting writes land once the lock is released. A control run of the old pattern
+  stalls for the whole hold.
+
 ### Still open
 
-- The 58 route handlers that do await keep their synchronous DB sections on the loop,
-  and about 213 synchronous DB call sites sit inside service coroutines. Moving both onto
-  `run_read`/`run_write` is the remaining step before `busy_timeout`/`pool_timeout`
-  (60 s) can come down. `foreign_keys=ON` still needs a `foreign_key_check` cleanup first.
+- `sync_lyrics` reads `plex_music.db` with raw `sqlite3` on the loop, once per track.
+  It goes through neither engine, so neither the ratchet nor the guard sees it.
+- The enrichment cache (`src/cache/metadata_cache.py`) keeps its own 60 s timeout. It
+  is a separate file shared with the out-of-process music enricher, and its calls from
+  coroutines now run on worker threads.
+- `foreign_keys=ON` still needs a `foreign_key_check` cleanup first.

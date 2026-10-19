@@ -193,38 +193,56 @@ async def run_embedding_migration(task) -> dict:
     # ── DB-side vector spaces: memories + principles ─────────────────────
     from src.database.connection import get_db_session
     from src.database.models import CuratorPrinciple, EpisodicMemory
+    from src.database.runner import run_read, run_write
+
+    # Plain (id, text) pairs out, vectors back in by id: the session used to
+    # stay open across every embed call.
+    def _load(model_cls, text_attr):
+        with get_db_session() as db:
+            return [(r.id, getattr(r, text_attr) or "") for r in
+                    db.query(model_cls).filter(model_cls.embedding_json.isnot(None)).all()]
+
+    def _store(model_cls, vec_by_id: dict) -> None:
+        with get_db_session() as db:
+            for r in db.query(model_cls).filter(model_cls.id.in_(list(vec_by_id))).all():
+                r.embedding_json = json.dumps(vec_by_id[r.id])
+            db.commit()
+
     mem_n = 0
     for model_cls, text_attr, label in ((EpisodicMemory, "content", "memories"),
                                         (CuratorPrinciple, "text", "principles")):
-        with get_db_session() as db:
-            rows = (db.query(model_cls)
-                    .filter(model_cls.embedding_json.isnot(None)).all())
-            for i in range(0, len(rows), 32):
-                if task.status.value == "skipped":
-                    return {"ok": False, "cancelled": True}
-                chunk = rows[i:i + 32]
-                vecs = await embed_documents(
-                    [getattr(r, text_attr) or "" for r in chunk],
-                    profile=V2_PROFILE)
-                for r, v in zip(chunk, vecs):
-                    if v:
-                        r.embedding_json = json.dumps(v)
-                        mem_n += 1
-                db.commit()
-            task_monitor.update(task, message=f"Re-embedded {label} "
-                                              f"({len(rows)} rows)")
+        rows = await run_read(_load, model_cls, text_attr)
+        for i in range(0, len(rows), 32):
+            if task.status.value == "skipped":
+                return {"ok": False, "cancelled": True}
+            chunk = rows[i:i + 32]
+            vecs = await embed_documents([text for _, text in chunk],
+                                         profile=V2_PROFILE)
+            got = {rid: v for (rid, _), v in zip(chunk, vecs) if v}
+            mem_n += len(got)
+            await run_write(_store, model_cls, got)
+        task_monitor.update(task, message=f"Re-embedded {label} "
+                                          f"({len(rows)} rows)")
 
     # ── THE FLIP ─────────────────────────────────────────────────────────
-    set_state(PREV_PROFILE_KEY, json.dumps(get_profile()))
-    set_profile(V2_PROFILE)
+    # Both writes on the writer thread, in this order: the previous profile
+    # is on record before the switch.
+    def _flip():
+        set_state(PREV_PROFILE_KEY, json.dumps(get_profile()))
+        set_profile(V2_PROFILE)
+
+    await run_write(_flip)
     task_monitor.update(task, message="Profile flipped — app now runs on "
                                       "v2-moe + prefixes + new collection")
 
     # ── taste rebuild: lookups against the new corpus, no LLM ────────────
     from src.database.models import User
     from src.services.taste_engine import compute_all_taste_vectors
-    with get_db_session() as db:
-        user_ids = [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]  # noqa: E712
+    def _active_ids():
+        with get_db_session() as db:
+            return [u_id for (u_id,) in db.query(User.id).filter(User.is_active == True).all()]  # noqa: E712
+
+    user_ids = await run_read(_active_ids)
     for uid in user_ids:
         try:
             await compute_all_taste_vectors(uid, skip_summaries=True)

@@ -210,9 +210,17 @@ async def topup_wikidata(
     """
     if media_type not in ("anime", "movie", "show"):
         return False
-    owns = cache is None
-    if owns:
-        cache = MetadataCache()
+    shared = cache
+
+    def _on_cache(fn):
+        # The cache reads and writes run on a worker, never the loop. A
+        # handle passed in serves any thread; without one, each call opens
+        # its own on its worker (connections are per thread).
+        if shared is not None:
+            return fn(shared)
+        with MetadataCache() as c:
+            return fn(c)
+
     try:
         from src.services.media_enricher import _RAW_CACHE_DAYS
         id_keys = [v for v in (cache_id, anilist_id, anidb_id, tmdb_id, tvdb_id,
@@ -221,17 +229,21 @@ async def topup_wikidata(
         if t40:
             id_keys.append(t40)
 
-        targets, imdb = [], imdb_id
-        for k in id_keys:
-            hit = cache.get_cache(f"raw:{media_type}:{k}")
-            if not hit or not isinstance(hit.get("response"), dict):
-                continue
-            raw = hit["response"]
-            if (raw.get("wikidata_checked")
-                    and raw.get("wikidata_v") == _LOGIC_VERSION):
-                return False
-            imdb = imdb or raw.get("imdb_id")
-            targets.append((f"raw:{media_type}:{k}", raw))
+        def _targets(cache):
+            targets, imdb = [], imdb_id
+            for k in id_keys:
+                hit = cache.get_cache(f"raw:{media_type}:{k}")
+                if not hit or not isinstance(hit.get("response"), dict):
+                    continue
+                raw = hit["response"]
+                if (raw.get("wikidata_checked")
+                        and raw.get("wikidata_v") == _LOGIC_VERSION):
+                    return None, None
+                imdb = imdb or raw.get("imdb_id")
+                targets.append((f"raw:{media_type}:{k}", raw))
+            return targets, imdb
+
+        targets, imdb = await asyncio.to_thread(_on_cache, _targets)
         if not targets or not imdb:
             return False
 
@@ -239,23 +251,23 @@ async def topup_wikidata(
         if facts is None:
             return False          # transient — do not stamp, the walker retries
 
-        added = False
-        for key, raw in targets:
-            fields = {"wikidata_checked": True, "wikidata_v": _LOGIC_VERSION}
-            drop = ()
-            if facts:
-                fields["wikidata"] = facts
-                added = True
-            else:
-                drop = ("wikidata",)
-            write_fields(cache, key, raw, fields, drop=drop, days=_RAW_CACHE_DAYS)
-        return added
+        def _write(cache):
+            added = False
+            for key, raw in targets:
+                fields = {"wikidata_checked": True, "wikidata_v": _LOGIC_VERSION}
+                drop = ()
+                if facts:
+                    fields["wikidata"] = facts
+                    added = True
+                else:
+                    drop = ("wikidata",)
+                write_fields(cache, key, raw, fields, drop=drop, days=_RAW_CACHE_DAYS)
+            return added
+
+        return await asyncio.to_thread(_on_cache, _write)
     except Exception as e:
         log_topup_failure(logger, "[wikidata]", title, e)
         return False
-    finally:
-        if owns:
-            cache.close()
 
 
 def format_wikidata_line(facts: dict) -> str:
