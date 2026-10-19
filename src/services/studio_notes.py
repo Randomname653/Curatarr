@@ -42,6 +42,7 @@ WIKI_HEADERS = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/cu
 # cheap and lets a correction upstream reach the evidence within it.
 _NOTE_CACHE_DAYS = 365   # NONE results cache too
 from src.services.llm_utils import UNTRUSTED_RULE, fence_untrusted  # noqa: E402
+from src.services.http_client import tls_context
 
 _CONDENSE_SYS = (
     "You write a one-line STUDIO NOTE for a media curator's evidence file. "
@@ -101,7 +102,7 @@ async def _wiki_studio_lead(studio: str) -> str:
     Animation' and 'Felix Film' -> 'Felix the Cat' were exactly this trap)."""
     want = _norm(studio)
     answered = False
-    async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers=WIKI_HEADERS) as client:
         for query in (studio, f"{studio} animation studio"):
             try:
                 sr = await client.get(WIKI_API, params={
@@ -110,7 +111,8 @@ async def _wiki_studio_lead(studio: str) -> str:
                 hits = (sr.json().get("query", {}).get("search", [])
                         if sr.status_code == 200 else [])
                 answered = answered or sr.status_code == 200
-            except Exception:
+            except Exception as e:
+                log_topup_failure(logger, "[studio-notes] wiki search", studio, e)
                 hits = []
             for h in hits[:4]:
                 t = h.get("title") or ""
@@ -122,7 +124,8 @@ async def _wiki_studio_lead(studio: str) -> str:
                         "titles": t, "exintro": 1, "explaintext": 1, "redirects": 1})
                     pages = (ex.json().get("query") or {}).get("pages") or {}
                     extract = next(iter(pages.values()), {}).get("extract") or ""
-                except Exception:
+                except Exception as e:
+                    log_topup_failure(logger, "[studio-notes] wiki extract", t, e)
                     continue
                 low = extract.lower()
                 if ("studio" in low or "animation" in low) and len(extract) > 200:
@@ -136,7 +139,7 @@ async def _condense(studio: str, extract: str,
         if not model:
             continue
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system",
@@ -178,7 +181,7 @@ async def _wiki_person_lead(name: str) -> str:
     contain the name, lead must read like a film person)."""
     want = _norm(name)
     answered = False
-    async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers=WIKI_HEADERS) as client:
         for query in (name, f"{name} film director"):
             try:
                 sr = await client.get(WIKI_API, params={
@@ -187,7 +190,8 @@ async def _wiki_person_lead(name: str) -> str:
                 hits = (sr.json().get("query", {}).get("search", [])
                         if sr.status_code == 200 else [])
                 answered = answered or sr.status_code == 200
-            except Exception:
+            except Exception as e:
+                log_topup_failure(logger, "[studio-notes] wiki search", name, e)
                 hits = []
             for h in hits[:4]:
                 t = h.get("title") or ""
@@ -203,7 +207,8 @@ async def _wiki_person_lead(name: str) -> str:
                         "titles": t, "exintro": 1, "explaintext": 1, "redirects": 1})
                     pages = (ex.json().get("query") or {}).get("pages") or {}
                     extract = next(iter(pages.values()), {}).get("extract") or ""
-                except Exception:
+                except Exception as e:
+                    log_topup_failure(logger, "[studio-notes] wiki extract", t, e)
                     continue
                 if _PERSON_HINT.search(extract) and len(extract) > 200:
                     return extract

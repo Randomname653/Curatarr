@@ -689,6 +689,10 @@ class CachedRecommendation(Base):
     tvdb_id         = Column(Integer, nullable=True)
     year            = Column(Integer, nullable=True)
     plex_rating_key = Column(String(64), nullable=True)
+    # The signals behind the card's "Why?" (engine.recommendation_score_factors),
+    # as JSON. No existing column could carry it; NULL on older rows, which
+    # then show no "Why?" rather than a made-up one.
+    score_factors   = Column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_cached_recs_user_cat", "user_id", "category"),

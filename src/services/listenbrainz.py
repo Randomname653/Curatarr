@@ -42,6 +42,7 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
+from src.services.http_client import tls_context
 
 LB_BASE = "https://api.listenbrainz.org/1"
 LB_HEADERS = {
@@ -174,7 +175,7 @@ async def fetch_artist_popularity(artist_mbid: str,
         return resp if isinstance(resp, dict) else {}
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
             r = await _lb_request(
                 client,
                 f"{LB_BASE}/popularity/top-release-groups-for-artist/{artist_mbid}",
@@ -193,8 +194,8 @@ async def fetch_artist_popularity(artist_mbid: str,
         return None
     try:
         entries = r.json()
-    except Exception:
-        return None
+    except ValueError:
+        return None   # non-JSON body: no verdict, nothing cached
     if not isinstance(entries, list):
         return None
     if not entries:

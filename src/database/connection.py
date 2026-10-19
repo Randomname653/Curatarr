@@ -270,6 +270,8 @@ def _migrate_columns() -> None:
         ("cached_recommendations", "tvdb_id", "INTEGER"),
         ("cached_recommendations", "year", "INTEGER"),
         ("cached_recommendations", "plex_rating_key", "VARCHAR(64)"),
+        # The rec card's "Why?" breakdown (NULL on older rows).
+        ("cached_recommendations", "score_factors", "TEXT"),
         # Pass 99-fu13 / Phase 2 #37: per-item enrichment-source tracking.
         # ``fetch_tier`` distinguishes a provisional fast-pass enrichment
         # ("fast" — only the cheap sources were consulted) from the

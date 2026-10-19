@@ -38,6 +38,7 @@ from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
 
 from src.database.runner import run_read
 from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +396,8 @@ def _tech_facts(item: dict, media_type: str) -> tuple[str, bool]:
     """Raw tech line + bitrate-outlier flag. ('', False) when no profile on file."""
     try:
         from src.services.size_norms import tech_profile_for, size_outlier
-    except Exception:
+    except ImportError as e:
+        logger.warning("[pillars] size_norms unavailable — no Bitrate line: %r", e)
         return "", False
     # media_type scopes the TMDB lookup: film and series ids are separate
     # sequences, so the bare number can otherwise return another work's profile.
@@ -623,7 +625,8 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
                 "[pillars] %r (%s) carries the profile of %r (%s) — refusing "
                 "to judge on a misfiled record",
                 title, item.get("year"), vd.get("title"), vd.get("year"))
-        verified_text = format_verified_block(vd) or ""
+        # It also looks the edition up in the DB (editions.edition_by_title).
+        verified_text = await run_read(format_verified_block, vd) or ""
         # "9 episodes played" means something different for a 12- vs a
         # 100-episode series — join the two data sources for the judge.
         if (ow and (ow.get("episodes") or 0) >= 2
@@ -816,7 +819,10 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     try:
         tech_line, outlier = await run_read(_tech_facts, item, media_type)
     except Exception as e:
-        logger.debug("[pillars] tech failed for %r: %s", title, e)
+        # a locked DB is transient; anything else is a bug that silently
+        # drops the Bitrate line from every verdict
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[pillars] tech", title, e)
         tech_line, outlier = "", False
     flags["bitrate_outlier"] = outlier
 
@@ -1234,7 +1240,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
     }
 
     async def _post():
-        async with httpx.AsyncClient(timeout=_JUDGE_TIMEOUT) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_JUDGE_TIMEOUT) as client:
             resp = await client.post(
                 f"{settings.effective_ollama}/api/chat", json=payload)
         resp.raise_for_status()

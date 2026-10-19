@@ -1,7 +1,7 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
 import { state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
-import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, toast } from './ui.js';
+import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, toast } from './ui.js';
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
@@ -401,7 +401,8 @@ export async function showOnboarding(step) {
   onboardingStep = step;
   const overlay = document.getElementById('onboarding-overlay');
   overlay.classList.remove('hidden');
-  renderOnboardingStep(step);
+  // a dialog: focus goes in once the step has rendered (app.js traps Tab there)
+  renderOnboardingStep(step).then(() => focusDialog(overlay));
 }
 
 export function hideOnboarding() {

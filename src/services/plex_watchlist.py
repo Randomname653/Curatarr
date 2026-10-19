@@ -23,6 +23,7 @@ import logging
 from typing import Optional
 
 import httpx
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ async def add_to_watchlist(user_id: int, title: str,
             return {"ok": False, "error": "user has no plex.tv token on file"}
 
         headers = _headers(token)
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15.0) as client:
             r = await client.get(f"{_DISCOVER}/library/search", headers=headers,
                                  params={"query": title, **_SEARCH_PARAMS})
             r.raise_for_status()

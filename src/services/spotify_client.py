@@ -21,6 +21,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
+from src.database.runner import run_read, run_write
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +59,35 @@ _backoff_until: float = 0.0
 _PERSIST_THRESHOLD = 300   # seconds; retry-after above this = a "come back much later" ban
 
 
+# Last persisted ban end this process read successfully: the fallback when
+# the stored one cannot be read.
+_last_known_until: Optional[datetime] = None
+
+
 def _persisted_backoff_remaining() -> float:
-    """Seconds left on a persisted Spotify backoff (0 if none/expired/error)."""
+    """Seconds left on a persisted Spotify backoff (0 if none/expired).
+
+    An unreadable value is not "no ban": calling Spotify during a 24 h ban
+    can restart the window, so a read error keeps the last known ban, or
+    backs off _PERSIST_THRESHOLD seconds when none is known."""
+    global _last_known_until
     try:
         from src.services.app_state import get_state
         raw = get_state("spotify_backoff_until")
         if not raw:
+            _last_known_until = None
             return 0.0
         until = datetime.fromisoformat(raw)
+        _last_known_until = until
         return max(0.0, (until - datetime.utcnow()).total_seconds())
-    except Exception:
-        return 0.0
+    except Exception as e:
+        left = 0.0
+        if _last_known_until is not None:
+            left = (_last_known_until - datetime.utcnow()).total_seconds()
+        left = max(left, float(_PERSIST_THRESHOLD))
+        logger.warning("[spotify] persisted backoff unreadable - backing off %.0fs: %s",
+                       left, e)
+        return left
 
 
 def _persist_backoff(seconds: float) -> None:
@@ -93,7 +113,7 @@ async def _get_token(client_id: str, client_secret: str) -> Optional[str]:
 
     credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.post(
                 _TOKEN_URL,
                 headers={
@@ -150,7 +170,7 @@ async def _batch_get(
 
         batch = ids[i:i + chunk]
         try:
-            async with httpx.AsyncClient(timeout=12) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=12) as client:
                 r = await client.get(url, headers=headers, params={"ids": ",".join(batch)})
             if r.status_code == 200:
                 consecutive_429 = 0
@@ -166,7 +186,7 @@ async def _batch_get(
                 # survives restarts and we stop re-knocking (which can reset
                 # the 24h window). Then bail to Last.fm for the duration.
                 if retry_after > _PERSIST_THRESHOLD:
-                    _persist_backoff(retry_after)
+                    await run_write(_persist_backoff, retry_after)   # force_set_state: a raw write
                     return results, True
                 _backoff_until = time.monotonic() + retry_after
                 if retry_after > 60 or consecutive_429 >= 2:
@@ -180,7 +200,7 @@ async def _batch_get(
                 await asyncio.sleep(retry_after)
                 # Retry this batch once after the backoff
                 try:
-                    async with httpx.AsyncClient(timeout=12) as client:
+                    async with httpx.AsyncClient(verify=tls_context(), timeout=12) as client:
                         r2 = await client.get(url, headers=headers, params={"ids": ",".join(batch)})
                     if r2.status_code == 200:
                         consecutive_429 = 0
@@ -191,7 +211,7 @@ async def _batch_get(
                         consecutive_429 += 1
                         retry_after = float(r2.headers.get("retry-after", "30")) + 2
                         if retry_after > _PERSIST_THRESHOLD:
-                            _persist_backoff(retry_after)
+                            await run_write(_persist_backoff, retry_after)   # force_set_state: a raw write
                         logger.warning(
                             "[spotify] retry also 429 (%d consecutive) — bailing",
                             consecutive_429,
@@ -233,7 +253,7 @@ async def resolve_track_genres(
     # don't even fetch a token. Re-knocking during a dev-mode 24h ban can
     # reset the window, so the cheapest + safest move is to stay silent
     # until it elapses and let the caller fall through to Last.fm.
-    remaining = _persisted_backoff_remaining()
+    remaining = await run_read(_persisted_backoff_remaining)
     if remaining > 0:
         logger.warning(
             "[spotify] persisted backoff active — %.0f s (%.1f h) remaining; "

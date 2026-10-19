@@ -98,6 +98,7 @@ def _extract_relations(al: dict) -> list[dict]:
     return rels[:_MAX_RELATIONS]
 
 from src.services.llm_utils import UNTRUSTED_RULE, fence_untrusted  # noqa: E402
+from src.services.http_client import tls_context
 
 _CONDENSE_SYS = (
     "You write a RECEPTION summary for a media curator's evidence file. "
@@ -162,7 +163,10 @@ async def _jikan(client: httpx.AsyncClient, path: str):
     try:
         r = await client.get(f"{JIKAN_URL}{path}")
         return r.json() if r.status_code == 200 else None
-    except Exception:
+    except ValueError:
+        return None    # a 200 that is not JSON: no answer
+    except Exception as e:
+        log_topup_failure(logger, "[reception] jikan", path, e)
         return None
 
 
@@ -211,8 +215,12 @@ async def _tmdb_reviews(client: httpx.AsyncClient, tmdb_id, media_type: str) -> 
             params={"api_key": settings.TMDB_API_KEY, "language": "en-US"},
         )
         return (r.json().get("results") or []) if r.status_code == 200 else None
-    except Exception:
-        return None    # transient — TMDB 429s under load, and that is not "no reviews"
+    except ValueError:
+        return None    # a 200 that is not JSON: no answer, not "no reviews"
+    except Exception as e:
+        # transient — TMDB 429s under load, and that is not "no reviews"
+        log_topup_failure(logger, "[reception] tmdb reviews", tmdb_id, e)
+        return None
 
 
 # ── condensation ─────────────────────────────────────────────────────────────
@@ -222,7 +230,7 @@ async def _condense(prompt: str) -> Optional[str]:
         if not model:
             continue
         try:
-            async with httpx.AsyncClient(timeout=150) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=150) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system", "content": _CONDENSE_SYS},
@@ -269,7 +277,7 @@ async def build_reception(title: str, media_type: str, *, year: int = None,
     prose comes from the summarizer. Returns (reception_text, typed_relations)
     — relations and staff ride along free on the same AniList call (anime
     only)."""
-    async with httpx.AsyncClient(timeout=25) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=25) as client:
         if media_type == "anime":
             al = await _anilist_media(client, anilist_id=anilist_id,
                                       search=title, year=year)
@@ -426,7 +434,8 @@ def _offline_tags(title: str, media_type: str, *, anilist_id=None,
         # drop AniDB tag-maintenance noise ("x -- do not add -- to be split")
         return [t for t in (off or {}).get("tags", [])
                 if "--" not in t and len(t) < 40][:18]
-    except Exception:
+    except Exception as e:
+        log_topup_failure(logger, "[reception] offline tags", title, e)
         return []
 
 
@@ -601,7 +610,7 @@ async def topup_franchise(
         rels, anidb_tags, staff = [], [], []
         if media_type == "anime":
             al_id = anilist_id or doc.get("anilist_id")
-            async with httpx.AsyncClient(timeout=25) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=25) as client:
                 al = await _anilist_media(client, anilist_id=al_id,
                                           search=title, year=year or doc.get("year"))
             if al is None:
@@ -660,11 +669,9 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     from src.services.llm_priority import wait_for_curator
 
     def _gaming() -> bool:
-        try:
-            from src.services.app_state import get_state
-            return get_state("game_active") == "1"
-        except Exception:
-            return False
+        # Fails closed: an unreadable flag counts as a game (app_state.game_active).
+        from src.services.app_state import game_active
+        return game_active()
 
     # weekly snapshot for the AniDB-tag side (downloads at most once a week)
     from src.services.anime_offline import ensure_offline_db
@@ -705,7 +712,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
             continue
         try:
             resp = _json.loads(row["response"]) if isinstance(row["response"], str) else row["response"]
-        except Exception:
+        except (ValueError, TypeError):
             continue
         items.append((order[cat], cat, id_key, resp or {}))
     # Round-robin across categories instead of the old strict anime-first:

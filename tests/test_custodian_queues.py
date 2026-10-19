@@ -229,7 +229,8 @@ ok = asyncio.run(dc._run_plex_sync())
 check("the custodian's Plex sync skips the inline taste run and chains nothing",
       ok is True and calls["sync_kw"] == {"force": False, "recompute_taste": False}
       and calls["chain"] == 0)
-check("...and leaves the flag for the model queue", state.get(dc._FOLLOWUP_FLAG) == "1")
+check("...and leaves the flag for the model queue",
+      state.get(dc._FOLLOWUP_FLAG) not in (None, "", "0"))
 
 calls["sync_kw"] = None
 asyncio.run(sched.job_plex_sync())

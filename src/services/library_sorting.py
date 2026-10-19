@@ -37,6 +37,7 @@ from src.database.runner import run_read, run_write
 from src.services.anime_mapping import get_anime_mapping
 from src.services.app_state import get_state, set_state
 from src.services.enrichment_state import is_transient_error
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ async def scan_misclassified() -> dict:
 
     mapping = await get_anime_mapping()
     headers = {"X-Api-Key": key}
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
         try:
             series = (await client.get(f"{sonarr}/api/v3/series", headers=headers)).json()
             rootfolders = (await client.get(f"{sonarr}/api/v3/rootfolder", headers=headers)).json()
@@ -332,7 +333,7 @@ def _recategorize_local(sonarr_id: int, new_cat: str,
             meta["media_type"] = new_cat
             chroma.update_metadata(key, meta)
             # Facet re-write happens in the ASYNC caller (apply_reclassify)
-            # after the to_thread hop: this helper runs in a worker thread
+            # after the run_write hop: this helper runs on the writer thread
             # where create_task has no loop — an external eval caught the
             # original fire-and-forget here as a silent no-op.
     except Exception as e:
@@ -357,7 +358,7 @@ async def apply_reclassify(items: list) -> dict:
     from src.services.arr_client import classify_sonarr_category
     headers = {"X-Api-Key": key}
     results = []
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for it in items or []:
             sid = it.get("sonarr_id")
             fix = it.get("fix") or {}
@@ -396,8 +397,10 @@ async def apply_reclassify(items: list) -> dict:
                 # category with nothing telling the owner.
                 local_errors: list = []
                 try:
-                    old_cat = await asyncio.to_thread(_recategorize_local, sid,
-                                                      new_cat, local_errors)
+                    # a read-update-commit of three tables: the single writer,
+                    # not a free worker racing it
+                    old_cat = await run_write(_recategorize_local, sid,
+                                              new_cat, local_errors)
                 except Exception as _le:
                     old_cat = None
                     local_errors.append(f"local: {_le}"[:120])

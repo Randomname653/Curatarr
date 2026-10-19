@@ -81,6 +81,12 @@ loop_guard.reset()
 asyncio.run(_ns["caller"]())
 check("the innermost src/ coroutine is the site, not the helper it called",
       list(_sites()) == ["src/services/guard_probe.py:2 (caller)"])
+check("... and is marked as a src/ coroutine (what run_all fails on)",
+      [x["coroutine"] for x in loop_guard.snapshot()["sites"]] == [True])
+loop_guard.reset()
+asyncio.run(_on_loop())
+check("a test's own coroutine calling a sync src/ helper is not marked",
+      [x["coroutine"] for x in loop_guard.snapshot()["sites"]] == [False])
 
 
 async def _off_loop():
@@ -150,6 +156,37 @@ body = route.endpoint() if route else {}
 check("it returns the sites with counts",
       body.get("statements_on_loop") == 1 and body["sites"][0]["site"].startswith("src/services/"))
 check("both engines carry the hook", id(conn_mod.engine) in loop_guard._installed)
+
+# ── 5. the battery dump ─────────────────────────────────────────────────────
+print("dump for tests/run_all.py")
+import subprocess  # noqa: E402
+
+dump = tmp / "dump"
+dump.mkdir()
+code = (
+    "import asyncio, sys; sys.path.insert(0, %r)\n"
+    "from sqlalchemy import create_engine\n"
+    "from src.database import loop_guard\n"
+    "eng = create_engine('sqlite://'); loop_guard.install(eng)\n"
+    "async def main():\n"
+    "    with eng.connect() as c: c.exec_driver_sql('SELECT 1')\n"
+    "asyncio.run(main())\n" % str(ROOT))
+subprocess.run([sys.executable, "-c", code], check=True,
+               env={**os.environ, "CURATARR_LOOP_GUARD_DUMP": str(dump)})
+files = list(dump.glob("*.json"))
+import json  # noqa: E402
+check("with CURATARR_LOOP_GUARD_DUMP set, a process writes its sites on exit",
+      len(files) == 1 and json.loads(files[0].read_text())["statements_on_loop"] == 1)
+
+sys.path.insert(0, str(ROOT / "tests"))
+import run_all  # noqa: E402
+
+(dump / "1.json").write_text(json.dumps({"argv": ["x", "tests/test_x.py"], "sites": [
+    {"site": "src/services/a.py:1 (job)", "statements": 2, "coroutine": True},
+    {"site": "src/services/b.py:9 (helper)", "statements": 1, "coroutine": False},
+    {"site": "src/services/guard_probe.py:2 (caller)", "statements": 1, "coroutine": True}]}))
+check("run_all fails on a src/ coroutine site, not on a test's own or the probe",
+      list(run_all.loop_guard_sites(str(dump))) == ["src/services/a.py:1 (job)"])
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

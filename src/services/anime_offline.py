@@ -37,6 +37,7 @@ DUMP_URL = ("https://github.com/manami-project/anime-offline-database"
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 OFFLINE_DB_PATH = _REPO_ROOT / "data" / "cache" / "anime_offline.db"
 MAX_AGE_DAYS = 7
 
@@ -75,7 +76,9 @@ def _fresh() -> bool:
         n = con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0]
         con.close()
         return n > 10000
-    except Exception:
+    except sqlite3.Error as e:
+        # corrupt file / dropped table: not fresh, so the caller rebuilds it
+        logger.debug("[anime-offline] snapshot unreadable, treating as stale: %s", e)
         return False
 
 
@@ -83,33 +86,44 @@ async def ensure_offline_db(allow_download: bool = True) -> bool:
     """Make sure the weekly snapshot exists locally. Returns True when a
     usable DB is present. ``allow_download=False`` (JIT paths) never blocks
     on the 60 MB fetch — it just reports whether the local copy is usable."""
-    if _fresh():
+    # Every SQLite open, the ~60 MB parse and the ~30k-row rebuild run in a
+    # worker thread: on the loop they froze the whole app for the rebuild.
+    if await asyncio.to_thread(_fresh):
         return True
     if not allow_download:
         return OFFLINE_DB_PATH.exists()
     async with _get_load_lock():
-        if _fresh():
+        if await asyncio.to_thread(_fresh):
             return True
         try:
             t0 = time.time()
-            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=300, follow_redirects=True) as client:
                 r = await client.get(DUMP_URL)
             if r.status_code != 200:
                 logger.warning("[anime-offline] download HTTP %s", r.status_code)
-                return _usable()
-            entries = (json.loads(r.content).get("data")) or []
-            if not entries:
+                return await asyncio.to_thread(_usable)
+            n = await asyncio.to_thread(_parse_and_rebuild, r.content)
+            if not n:
                 logger.warning("[anime-offline] download held 0 entries — keeping snapshot")
-                return _usable()
-            _rebuild(entries)
+                return await asyncio.to_thread(_usable)
             logger.info("[anime-offline] snapshot rebuilt: %d entries in %.0fs",
-                        len(entries), time.time() - t0)
+                        n, time.time() - t0)
             return True
         except Exception as e:
             logger.warning("[anime-offline] refresh failed: %s", e)
             # exists() alone said True for a file whose tables were dropped
             # by a half-finished rebuild; report whether lookups can work.
-            return _usable()
+            return await asyncio.to_thread(_usable)
+
+
+def _parse_and_rebuild(body: bytes) -> int:
+    """Parse the dump and rebuild the snapshot from it; the entry count, 0
+    when the dump held none (the snapshot is then left alone)."""
+    entries = (json.loads(body).get("data")) or []
+    if not entries:
+        return 0
+    _rebuild(entries)
+    return len(entries)
 
 
 def _usable() -> bool:
@@ -122,7 +136,8 @@ def _usable() -> bool:
             return con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0] > 0
         finally:
             con.close()
-    except Exception:
+    except sqlite3.Error as e:
+        logger.warning("[anime-offline] snapshot unusable: %s", e)
         return False
 
 

@@ -6,6 +6,8 @@ import { state } from './state.js';
 import { EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
+import { _whyButton } from './deletions.js';
+import { tabToHash } from './nav.js';
 
 export function _stopRecsPoll() {
   if (state._recsPollTimer) { clearInterval(state._recsPollTimer); state._recsPollTimer = null; }
@@ -18,7 +20,24 @@ const _LANE_META = {
   discovery: { title: 'Discover new',      sub: 'not in your library · worth acquiring' },
 };
 
-export function _recCard(rec) {
+// "Why?" on a rec card: the signals it was picked on
+// (engine.recommendation_score_factors). The button, its toggle and Escape are
+// the Deletions card's; only the panel's words differ, because these are facts
+// the pick was made on, not the points of a score. A rec cached before the
+// breakdown existed has none and shows no button.
+export function _recWhy(rec, key) {
+  const f = rec.score_factors?.factors || [];
+  if (!f.length) return {btn: '', panel: ''};
+  const p = {id: `rec-${key}`, score_factors: {factors: f}};
+  return {btn: _whyButton(p), panel: `<div class="why-panel mt-8" id="why-${p.id}" tabindex="-1" hidden>
+    <div class="fs-12 t2 mb-6">What it was picked on</div>
+    <ul class="why-list">${f.map(x => `<li>${esc(x.label)}</li>`).join('')}</ul>
+    <div class="fs-11 t3 mt-6">The curator chose from these signals and wrote the pitch below.</div>
+  </div>`};
+}
+
+export function _recCard(rec, key) {
+  const why = _recWhy(rec, key);
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span class="badge muted badge-sm">${esc(g)}</span>`).join('');
   const isLib = rec.lane === 'library';
@@ -29,7 +48,7 @@ export function _recCard(rec) {
       <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
-          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}</div>
+          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}${why.btn}</div>
           <div class="panel-actions">
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
@@ -37,6 +56,7 @@ export function _recCard(rec) {
               : ''}
           </div>
         </div>
+        ${why.panel}
         <div class="fs-12 t3 mt-4">${esc(rec.category_label||'')}</div>
         ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
         ${rec.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(rec.synopsis)}</div>` : ''}
@@ -140,7 +160,7 @@ export async function searchLibrary() {
 export function _recSection(lane, recs) {
   if (!recs || !recs.length) return '';
   const m = _LANE_META[lane] || { title:lane, sub:'' };
-  return `<div class="list-head"><span>${esc(m.title)}</span><span class="fw-400 fs-12 t3">· ${esc(m.sub)} · ${recs.length}</span></div>` + recs.map(_recCard).join('');
+  return `<div class="list-head"><span>${esc(m.title)}</span><span class="fw-400 fs-12 t3">· ${esc(m.sub)} · ${recs.length}</span></div>` + recs.map((r, i) => _recCard(r, `${lane}-${i}`)).join('');
 }
 
 export async function loadRecs(category=null, btn=null, refresh=false) {
@@ -160,9 +180,9 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
   try {
     const url = '/api/recommendations/?' + (category ? `category=${category}&` : '') + `limit=8&refresh=${refresh}&source=cache` + _laneParam();
     const r = await api(url);
-    // If the user clicked another tab while we were fetching, abandon — the
-    // newer call already cleared the poll timer and is rendering now.
-    if (state.currentRecsCategory !== requestedCategory) return;
+    // If the user clicked another tab or lane while we were fetching, abandon —
+    // the newer call already cleared the poll timer and is rendering now.
+    if (state.currentRecsCategory !== requestedCategory || (state.currentRecsLane || 'all') !== laneFilter) return;
     if (!r.recommendations?.length) {
       // No cache yet — kick off a background build of BOTH lanes and poll.
       el.innerHTML = emptyHtml('Generating recommendations from your library and beyond — about 2–4 minutes the first time. This view updates on its own.');
@@ -186,11 +206,19 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
 
 export function setRecLane(lane, btn) {
   state.currentRecsLane = lane;
+  tabToHash('recs', lane);    // #recs/library survives a reload
   for (const [id, val] of [['lane-all-btn','all'], ['lane-lib-btn','library'], ['lane-disc-btn','discovery']]) {
     const b = document.getElementById(id);
     if (b) b.classList.toggle('active', lane === val);
   }
   loadRecs(state.currentRecsCategory);
+}
+
+// The lane as the in-view tab of #recs (nav.js registerTabRoute). showView has
+// just loaded the view on the current lane, so only a different lane reloads.
+export const REC_LANES = ['all', 'library', 'discovery'];
+export function openRecLane(lane) {
+  if ((state.currentRecsLane || 'all') !== lane) setRecLane(lane);
 }
 
 // Force a full regeneration of BOTH lanes (the scheduler job), then reload once

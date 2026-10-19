@@ -16,10 +16,13 @@ SoulSync), shared by the setup wizard and the library panel (2026-10-10 audit):
   the write-only masking of the integrations panel.
 """
 import ipaddress
+import logging
 import re
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # Never a media server, always an SSRF target: link-local (where the
 # AWS/GCP/Azure metadata services answer), AWS's IPv6 metadata address and
@@ -107,12 +110,15 @@ async def resolved_refusal(url: str) -> Optional[str]:
     ``metadata.example`` that resolves to 169.254.169.254 passed it (the
     2026-10-10 audit left this open). Called right before a connection test
     connects; every address the name resolves to must be acceptable. A name
-    that does not resolve is left to fail the connect on its own."""
+    that does not resolve is left to fail the connect on its own. A lookup
+    that times out or errors any other way is a refusal: answering "fine"
+    there let a slow resolver walk past the check."""
     import asyncio
+    import socket
     try:
         host = (httpx.URL(url).host or "").rstrip(".")
-    except Exception:
-        return None
+    except (httpx.InvalidURL, ValueError, TypeError):
+        return None                       # validate_service_url refused it already
     if not host:
         return None
     try:
@@ -123,8 +129,15 @@ async def resolved_refusal(url: str) -> Optional[str]:
     try:
         infos = await asyncio.wait_for(
             asyncio.get_running_loop().getaddrinfo(host, None), _RESOLVE_TIMEOUT_S)
-    except Exception:
-        return None
+    except socket.gaierror:
+        return None                       # does not resolve: the connect fails by itself
+    except asyncio.TimeoutError:
+        logger.warning("[endpoint] %s did not resolve within %.0f s - refused", host,
+                       _RESOLVE_TIMEOUT_S)
+        return f"{host} could not be resolved in time - try again, or use its IP address"
+    except Exception as e:
+        logger.warning("[endpoint] resolving %s failed - refused: %s", host, e)
+        return f"{host} could not be resolved ({type(e).__name__}) - use its IP address"
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])

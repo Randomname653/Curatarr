@@ -143,7 +143,8 @@ def backfill_done() -> bool:
     try:
         from src.services.app_state import get_state
         return get_state(_BACKFILL_DONE_KEY) == "1"
-    except Exception:
+    except Exception as e:
+        logger.warning("[facets] backfill-done flag unreadable - read as not done: %s", e)
         return False
 
 
@@ -164,7 +165,9 @@ async def run_facet_backfill(task=None) -> bool:
     chroma = get_chroma_db()
     try:
         offset = int(await run_read(get_state, _BACKFILL_CURSOR_KEY) or 0)
-    except Exception:
+    except (ValueError, TypeError):
+        # A garbled cursor restarts the (idempotent) backfill. A failed READ
+        # is raised instead: restarting 27k titles over a locked DB was waste.
         offset = 0
     total = await run_chroma(chroma.get_count)
 

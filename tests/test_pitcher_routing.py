@@ -61,7 +61,7 @@ class _FakeResp:
 
 
 class _FakeClient:
-    def __init__(self, timeout=None):
+    def __init__(self, timeout=None, **kw):   # verify=: the shared TLS context
         pass
 
     async def __aenter__(self):

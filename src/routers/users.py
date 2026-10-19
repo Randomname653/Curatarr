@@ -69,6 +69,24 @@ def update_user(
     db_user = db.query(User).filter(User.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
+    # Same guards as DELETE: a deactivated sole admin cannot sign in, and
+    # first-run setup stays closed because an (inactive) admin row exists —
+    # recovery would take a hand edit of the database.
+    if update.is_active is False and db_user.is_admin:
+        if user_id == _admin.id:
+            raise HTTPException(
+                status_code=400,
+                detail="Admins cannot deactivate themselves. Promote another user first.",
+            )
+        others = (db.query(User.id)
+                  .filter(User.is_admin == True, User.is_active == True,  # noqa: E712
+                          User.id != user_id)
+                  .first())
+        if others is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot deactivate the last active admin. Promote another user first.",
+            )
     if update.is_active is not None:
         db_user.is_active = update.is_active
         if not update.is_active:

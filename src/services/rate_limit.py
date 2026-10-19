@@ -22,15 +22,20 @@ out of their own server) and forget keys once their window expires.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Hashable, Optional
 
 from fastapi import HTTPException
 
+logger = logging.getLogger(__name__)
+
 _BUCKETS: dict[tuple[str, str], list[float]] = {}
 _LOCK = threading.Lock()
 _MAX_KEYS = 5000
+_FAIL_OPEN_WARN_S = 60.0
+_fail_open_warned_at = 0.0
 
 # Budgets. Generous for a human, tight for a script. Owner-tunable later via
 # settings if a household ever hits them in earnest.
@@ -41,6 +46,9 @@ RECS_REFRESH_PER_10MIN = 2
 MEMORY_FLUSHES_PER_MIN = 20
 MUSIC_STARTS_PER_10MIN = 2
 SYNC_TRIGGERS_PER_10MIN = 3
+TASTE_RECOMPUTES_PER_10MIN = 3
+ARR_REFRESHES_PER_10MIN = 3        # member-forced live arr pulls (Lidarr's takes minutes)
+ANCHOR_CORRECTIONS_PER_10MIN = 5   # each drops a SHARED enrichment row → a re-fetch cascade
 
 
 def enforce(scope: str, key: Hashable, limit: int, window_s: float,
@@ -68,6 +76,14 @@ def enforce(scope: str, key: Hashable, limit: int, window_s: float,
     except HTTPException:
         raise
     except Exception:
+        # Open on purpose (module docstring), never quietly: while this fires
+        # the setup-code brute-force limit and every per-user budget are off.
+        # Rate-limited - enforce() sits on hot request paths.
+        global _fail_open_warned_at
+        if now - _fail_open_warned_at > _FAIL_OPEN_WARN_S:
+            _fail_open_warned_at = now
+            logger.warning("[rate_limit] limiter error on %r - request let through, "
+                           "budgets NOT enforced", scope, exc_info=True)
         return   # fail open
 
 
@@ -130,3 +146,4 @@ class InFlight:
 # Shared guards (module singletons; one process, one loop).
 CHAT_IN_FLIGHT = InFlight("A chat reply")
 RECS_REFRESH_IN_FLIGHT = InFlight("A recommendation refresh")
+TASTE_RECOMPUTE_IN_FLIGHT = InFlight("A taste-profile recompute")

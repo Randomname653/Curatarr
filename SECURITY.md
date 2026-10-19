@@ -39,7 +39,7 @@ Defaults that matter:
   script injection that survived DOMPurify cannot phone a token home.
   Scripts are the module tree only (`script-src 'self'`; no inline handlers
   or inline scripts since 2026-09-13), so injected markup cannot run code
-  either. `style-src` still allows inline styles.
+  either. `style-src 'self'` too: no inline styles since 2026-09-25.
 - Deletion actions require an authenticated session; proposals are never
   executed without an explicit user approval in the UI. The arr id or Plex
   rating key must be a positive integer before a DELETE is built; anything
@@ -92,12 +92,24 @@ are budgeted — ten per address and a hundred in all per fifteen minutes,
 then the gate answers 429 for the rest of the window — and a browser on the
 machine itself is never locked out (2026-09-25).
 
+`ALLOWED_HOSTS` in `.env` (comma-separated names, `*.example.com` wildcards)
+adds a second, opt-in line against DNS rebinding: a rebound page still sends
+its own name as `Host`, so every request whose Host is not listed is answered
+400 before auth or the UI see it. `localhost`, `127.0.0.1` and `::1` always
+pass, so a typo cannot lock the owner out locally. It is off by default
+because no default list can know the IP, hostname or proxy name an install
+is reached by — turning it on with the wrong list would cut off every LAN
+browser on upgrade.
+
 ## Connection tests and service addresses
 
 Plex, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:
 no credentials, query string or fragment (a `#` would cut off the API path
-the client appends), and no link-local or cloud-metadata address. LAN and
-loopback addresses are of course fine. "Test connection" with a blank key
+the client appends), and no link-local or cloud-metadata address. A host
+name is resolved before a test or setup step connects to it, and is refused
+when it resolves to such an address, or when the lookup times out (3 s)
+or errors (a name that does not exist simply fails to connect). LAN and loopback
+addresses are of course fine. "Test connection" with a blank key
 field re-uses the saved key only against the saved address — a new address
 needs its key typed in, so a saved token never travels to a host it was not
 saved for. A failed test says what kind of failure it was (key rejected,
@@ -115,7 +127,9 @@ windows with a `Retry-After` on refusal) and, where the work is long, a
 **one-at-a-time guard**: one chat reply in flight per user, one
 recommendation generation per user (the plain `GET` lane included), one
 Plex sync server-wide, music pipeline starts and sync triggers a few per
-ten minutes. Budgets are generous for a human and tight for a script; the
+ten minutes, and (2026-10-19) one taste-profile rebuild per user at a time,
+three per ten minutes, plus small budgets on forced live arr refreshes and
+on "re-fetch metadata" in chat, which drops a shared cache row. Budgets are generous for a human and tight for a script; the
 guards expire on their own, so a dropped stream cannot lock anyone out.
 Administrative work (enrichment runs, backfills, migrations, process
 classification, deletions, arr writes) is admin-only at the router mount.
@@ -124,7 +138,9 @@ view lists only the tasks that carry their user id (their own analyses,
 recommendation refreshes, memory extractions), never the server's, and the
 library status tells a member which arr services exist, not their LAN
 addresses, root folders or test results (the arr profile lists, which carry
-root folders, are admin-only since 2026-10-10). The OMDb key has a daily budget
+root folders, are admin-only since 2026-10-10; since 2026-10-19 the saved
+arr defaults, the Plex section paths, each arr item's root folder, the "open
+in arr" link and raw connector errors are the admin's too). The OMDb key has a daily budget
 (`OMDB_DAILY_LIMIT`, the free tier's 1,000): once spent, lookups wait for
 tomorrow instead of hammering a refusing API.
 
@@ -151,7 +167,8 @@ decade, so an upstream correction reaches the evidence.
 
 Subtitle downloads, proxied poster images and uploaded Spotify archives are
 read through bounds enforced *while* streaming (4 MB, 5 MB, 50 MB per zip
-member / 400 MB per archive), never buffered first and measured after; the
+member / 400 MB per archive), never buffered first and measured after; a
+Spotify upload takes at most 20 files of at most 200 MB each; the
 CPU-bound subtitle metrics run off the event loop so one oversized file
 cannot stall every other user's request. The image proxy accepts a name
 only from its whitelist, serves raster images only (no SVG; every response

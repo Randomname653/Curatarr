@@ -39,6 +39,7 @@ UA = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 STYLES_DB_PATH = _REPO_ROOT / "data" / "cache" / "discogs_styles.db"
 MAX_AGE_DAYS = 30
 
@@ -218,16 +219,16 @@ def _fresh() -> bool:
         n = con.execute("SELECT COUNT(*) FROM artist_styles").fetchone()[0]
         con.close()
         return n > 0
-    except Exception:
+    except sqlite3.Error as e:
+        # corrupt file / dropped table: not fresh, so the next tick rebuilds it
+        logger.debug("[discogs] styles snapshot unreadable, treating as stale: %s", e)
         return False
 
 
 def _gaming() -> bool:
-    try:
-        from src.services.app_state import get_state
-        return get_state("game_active") == "1"
-    except Exception:
-        return False
+    # Fails closed: an unreadable flag counts as a game (app_state.game_active).
+    from src.services.app_state import game_active
+    return game_active()
 
 
 async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
@@ -319,14 +320,14 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
             buf = buf[-(4 << 20):]
         return None
 
-    async with httpx.AsyncClient(timeout=120, headers=UA,
+    async with httpx.AsyncClient(verify=tls_context(), timeout=120, headers=UA,
                                  follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
             if resp.status_code != 200:
                 return {"error": f"HTTP {resp.status_code} (endpoint rate-limits; retry next tick)"}
             try:
                 total_bytes = int(resp.headers.get("content-length") or 0)
-            except Exception:
+            except (ValueError, TypeError):
                 total_bytes = 0
             async for chunk in resp.aiter_bytes(1 << 19):
                 read_c += len(chunk)
@@ -414,8 +415,12 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
     return result
 
 
+_styles_warned_at = 0.0
+
+
 def artist_styles(artist: str) -> list[str]:
     """Sync read: the aggregated Discogs styles for one artist ([] if none)."""
+    global _styles_warned_at
     if not artist or not STYLES_DB_PATH.exists():
         return []
     try:
@@ -424,5 +429,13 @@ def artist_styles(artist: str) -> list[str]:
                           (_norm(artist),)).fetchone()
         con.close()
         return json.loads(row[0]) if row else []
-    except Exception:
+    except (ValueError, TypeError):
+        return []          # one malformed row
+    except sqlite3.Error as e:
+        # A broken snapshot reads as "no styles" for every artist; read per
+        # title, so at most once a minute.
+        now = time.monotonic()
+        if now - _styles_warned_at > 60:
+            _styles_warned_at = now
+            logger.warning("[discogs] styles snapshot unreadable: %s", e)
         return []

@@ -115,7 +115,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
         for ai, a in enumerate(ss_artists):
             if ai % 250 == 0:
                 _prog(message=f"Comparing catalogues… {ai:,}/{len(ss_artists):,} "
-                              f"artists ({len(added)} added)",
+                              f"artists ({len(added)} added, {add_failed} failed)",
                       processed=ai, total=len(ss_artists))
             mbid = a.get("musicbrainz_id")
             name = a.get("name")
@@ -144,7 +144,12 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                     added_ids.append(int(created["id"]))
             except Exception as e:
                 add_failed += 1
-                logger.debug("[catalog-sync] add %r failed: %s", name, e)
+                # The first one at WARNING: every add can fail the same way
+                # (bad root folder, auth), and at DEBUG the run read as fine.
+                if add_failed == 1:
+                    logger.warning("[catalog-sync] Lidarr add %r failed: %r", name, e)
+                else:
+                    logger.debug("[catalog-sync] add %r failed: %s", name, e)
 
         # ── 4. HEAL stale entries with surgical refreshes ────────────────
         # In catalog mode Lidarr NEVER rescans on its own (owner set
@@ -186,7 +191,8 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                 log_topup_failure(logger, "[catalog-sync] refresh", aid, e)
 
     result = {
-        "ok": True,
+        # every add failing is a broken sync, not a quiet night
+        "ok": not (add_failed and not added),
         "soulsync_artists": len(ss_artists),
         "lidarr_artists": len(lidarr_artists),
         "added_disarmed": len(added),
@@ -204,8 +210,10 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                        "SoulSync knows albums — folder-name drift; fix the "
                        "artist Path in Lidarr (first: %s)",
                        len(mismatches), ", ".join(result["path_mismatches"][:5]))
-    logger.info("[catalog-sync] soulsync=%d lidarr=%d added=%d refreshed=%d "
-                "(backlog %d) grown=%d mismatches=%d",
-                len(ss_artists), len(lidarr_artists), len(added), refreshed,
-                result["refresh_backlog"], len(stale_named), len(mismatches))
+    logger.info("[catalog-sync] soulsync=%d lidarr=%d added=%d add_failed=%d "
+                "refreshed=%d (backlog %d) grown=%d mismatches=%d",
+                len(ss_artists), len(lidarr_artists), len(added), add_failed,
+                refreshed, result["refresh_backlog"], len(stale_named), len(mismatches))
+    _prog(message=f"Done: {len(added)} added disarmed, {add_failed} add failed, "
+                  f"{refreshed} refreshes queued, {len(mismatches)} path mismatches")
     return result

@@ -33,7 +33,7 @@ def curation_stats(months: int = 12,
         cached = json.loads(
             get_state(_narrative_key(user.id, datetime.utcnow().year)) or "{}")
         data["narrative"] = cached.get("text")
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         data["narrative"] = None
     return data
 

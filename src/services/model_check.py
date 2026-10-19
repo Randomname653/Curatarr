@@ -94,7 +94,7 @@ def curator_fit_warning() -> str:
     try:
         from src.services.process_monitor import _nvidia_smi
         smi = _nvidia_smi()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - startup hint only: no GPU reading means no VRAM-fit warning to give
         smi = None
     if not smi:
         return ""
@@ -104,7 +104,7 @@ def curator_fit_warning() -> str:
         r.raise_for_status()
         sizes = {(m.get("name") or m.get("model") or ""): m.get("size")
                  for m in r.json().get("models") or []}
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - startup hint only: Ollama unreadable means no model size to compare
         return ""
     model = settings.CURATOR_MODEL
     size = sizes.get(model) or sizes.get(f"{model}:latest")

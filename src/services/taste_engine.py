@@ -96,7 +96,10 @@ async def soulsync_signals() -> dict:
     try:
         cached = json.loads(await run_read(get_state, _SIGNALS_KEY) or "{}")
         fresh = datetime.utcnow() - datetime.fromisoformat(cached["at"]) < _SIGNALS_TTL
-    except Exception:
+    except (ValueError, TypeError, KeyError):
+        cached, fresh = {}, False          # none stored yet, or unreadable: refetch
+    except Exception as e:
+        logger.warning("[taste] SoulSync signal cache unreadable, refetching: %s", e)
         cached, fresh = {}, False
     if not fresh:
         followed, liked = await ss.watchlist_artists(), await ss.liked_song_artists()
@@ -1137,7 +1140,9 @@ async def compute_taste_vector_for_user(
         # Preferred source: the item's STORED index vector (eval 1.3 —
         # one representation for index and taste; also makes the
         # post-migration rebuild a cheap lookup instead of a re-embed).
-        doc_vec = _chroma_item_vector(entry, profile)
+        # On the Chroma thread: up to four get_by_id lookups per entry.
+        from src.vector_store.chromadb_wrapper import run_chroma
+        doc_vec = await run_chroma(_chroma_item_vector, entry, profile)
         if doc_vec is not None:
             return doc_vec, weight, _t
 
@@ -1173,6 +1178,7 @@ async def compute_taste_vector_for_user(
 
     # Process in chunks so we can check for cancellation and send progress updates
     CHUNK = 10
+    embed_failed = 0
     for i in range(0, len(tasks), CHUNK):
         if _tv_task.status.value == "skipped":
             logger.info("Taste vector computation cancelled at %d/%d", i, len(tasks))
@@ -1183,6 +1189,13 @@ async def compute_taste_vector_for_user(
         chunk_hits = 0
         for result in chunk_results:
             if isinstance(result, Exception):
+                # Dropped without a word, a bug in embed_entry left the taste
+                # vector frozen at its old value behind "Got 0/N" at INFO.
+                embed_failed += 1
+                if embed_failed <= 3:
+                    logger.warning("[taste] %s/%s: embedding an entry failed",
+                                   user_id, category or "all",
+                                   exc_info=(type(result), result, result.__traceback__))
                 continue
             emb, w, t = result
             if emb:
@@ -1212,6 +1225,14 @@ async def compute_taste_vector_for_user(
                 enriched_titles_for_vr.add(t)
 
     logger.info("Got %d/%d embeddings successfully", len(embeddings_weights), len(top_entries))
+    if tasks and embed_failed * 5 > len(tasks):
+        # More than a fifth broke: a vector from the rest is a skewed sample,
+        # and writing it would replace a good one. Keep the stored vector.
+        msg = (f"{embed_failed} of {len(tasks)} embeddings failed - "
+               "taste vector left as it was")
+        logger.warning("[taste] %s/%s: %s", user_id, category or "all", msg)
+        task_monitor.error(_tv_task, msg)
+        return {}
 
     # Mark enriched titles as vector_ready — match by (title, media_category) so the
     # single EnrichmentStatus row per series/artist is found regardless of which
@@ -1374,7 +1395,7 @@ def _update_plain_taste_stats(user_id: int, all_results: dict, summary_parts: li
             def _merged(old_json: str, new: dict) -> dict:
                 try:
                     old = json.loads(old_json or "{}")
-                except Exception:
+                except (TypeError, ValueError):
                     old = {}
                 if not isinstance(old, dict):
                     old = {}
@@ -1482,7 +1503,9 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                         res.get("cluster_centroids") or res.get("embedding"),
                         res.get("drop_embedding"), cat)
 
-                # Store vector stats (embedding stored separately when PIN available)
+                # Embedding and vector stats go into one plain-JSON blob
+                # (version 0). Nothing is encrypted: the PIN that was to key
+                # it is gone (2026-10), the column name is historical.
                 blob_dict = {
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "drop_embedding": res.get("drop_embedding"),
@@ -1515,9 +1538,16 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                         fresh = db.query(EncryptedTasteVector).filter(
                             EncryptedTasteVector.id == existing_etv.id).first()
                         try:
-                            fd = json.loads(fresh.encrypted_blob) if fresh else {}
-                        except Exception:
-                            fd = {}
+                            fd = json.loads(fresh.encrypted_blob) if fresh else None
+                        except (TypeError, ValueError):
+                            fd = None
+                        if not isinstance(fd, dict):
+                            # {} here meant rev 0 and a force-write of our
+                            # stale carry-over over whatever the merger wrote.
+                            logger.warning("[taste] %s blob unreadable after a CAS "
+                                           "miss - recompute result not written, "
+                                           "stored blob kept", cat)
+                            continue
                         for k in ("explicit_feedback", "disliked_titles",
                                   "theme_aversion"):
                             if fd.get(k) is not None:

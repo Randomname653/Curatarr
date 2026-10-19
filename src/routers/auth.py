@@ -28,6 +28,7 @@ from src.database import get_db
 from src.database.connection import get_db_session
 from src.database.runner import run_write
 from src.database.models import User
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -357,7 +358,7 @@ async def request_plex_pin(request: Request):
     """Step 1 – Request a fresh PIN from Plex."""
     _enforce_pin_create_rate_limit((request.client.host if request.client else "") or "?")
     client_id = settings.PLEX_CLIENT_ID
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=tls_context()) as client:
         resp = await client.post(
             "https://plex.tv/api/v2/pins",
             headers=_plex_headers(client_id),
@@ -388,7 +389,7 @@ async def _plex_owner_id() -> Optional[str]:
     if not token:
         return None
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             r = await client.get("https://plex.tv/api/v2/user",
                                  headers={**_plex_headers(), "X-Plex-Token": token},
                                  timeout=10)
@@ -407,7 +408,7 @@ async def _plex_server_account_ids() -> Optional[set]:
     if not url or not token:
         return None
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             r = await client.get(f"{url.rstrip('/')}/accounts",
                                  headers={"X-Plex-Token": token, "Accept": "application/xml"},
                                  timeout=10)
@@ -461,7 +462,7 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
     client_id = _check_pin_binding(pin_id, nonce)
     _enforce_poll_rate_limit(pin_id)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=tls_context()) as client:
         resp = await client.get(
             f"https://plex.tv/api/v2/pins/{pin_id}",
             headers=_plex_headers(client_id),
@@ -476,7 +477,7 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
         return {"status": "pending"}
 
     # Fetch Plex account details
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=tls_context()) as client:
         user_resp = await client.get(
             "https://plex.tv/api/v2/user",
             headers={**_plex_headers(client_id), "X-Plex-Token": auth_token},
@@ -510,10 +511,13 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
 
     def _create_user(first_ever):
         with get_db_session() as db:
+            # Admin is decided HERE, in the inserting transaction: first_ever
+            # was read in an earlier one, and two first logins racing past it
+            # both became admin. The loser of the race is a regular user.
             user = User(
                 plex_user_id=plex_id,
                 plex_username=plex_username,
-                is_admin=first_ever,
+                is_admin=bool(first_ever) and _no_admin_exists(db),
                 is_active=True,
                 created_at=datetime.now(timezone.utc),
                 # Store the user's OWN plex.tv token — per-account Plex writes
@@ -532,12 +536,12 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
         if settings.PLEX_LOGIN_REQUIRE_MEMBERSHIP:
             await _assert_plex_membership(plex_id, first_ever)
         info = await run_write(_create_user, first_ever)
-        logger.info("New user: %s (admin=%s)", plex_username, first_ever)
+        logger.info("New user: %s (admin=%s)", plex_username, info[1])
         # A secondary user just arrived → set up their data automatically:
         # re-attribute their Plex plays off the admin + build their taste
         # vector in the background. No admin button, no manual step. (The
         # first-ever user is the admin / data source, so they're skipped.)
-        if not first_ever:
+        if not info[1]:
             background_tasks.add_task(_bootstrap_user_data, info[0])
     user_id, is_admin, token_version, username = info
 

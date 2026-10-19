@@ -6,6 +6,60 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Easier to use with a keyboard and a screen reader, and recommendations say why.**
+- Chat replies are announced once they're finished, not word by word.
+- Keyboard focus stays inside an open dialog.
+- The tab you're on in Deletions, the Knowledge Base, the arr pages and Recommendations
+  is part of the link, so a reload or a bookmark opens the same tab.
+- Recommendation cards have a "Why?" that lists what each pick was based on: how close it
+  is to your taste, the genres you like, trending, your own stated values, and so on.
+- The thinking-status text is readable now, and an armed delete button is solid red.
+- New optional setting `ALLOWED_HOSTS`. Set it to the names you reach Curatarr by, and
+  requests for any other name are refused, which blocks DNS-rebinding pages. It is empty
+  by default, so nothing changes until you set it.
+- A music job that crashed can no longer leave the music pipeline marked as running.
+
+**Members can't overload the box or see the admin's network.**
+- Rebuilding a taste profile, forcing a live arr refresh and re-fetching metadata from chat
+  now have small per-user budgets. Only one taste rebuild per user runs at a time.
+- An admin can no longer deactivate themselves or the last active admin. Before, that
+  locked everyone out of the admin side until someone edited the database.
+- Members no longer get root folders, Plex library paths, arr addresses or raw error
+  text. The detail goes to the server log.
+- The model-update review shows judgements the judge didn't answer, and says "no verdict"
+  when most of them failed.
+- A taste rebuild where most embeddings fail now keeps the old profile and says so,
+  instead of quietly writing a skewed one.
+- Large Spotify histories no longer freeze the app for a few seconds during the Last.fm
+  genre top-up.
+
+**When something can't be read, Curatarr now says so.** Several checks used to read an
+unreadable value as "all clear". Now:
+- an unreadable game flag counts as a game;
+- a server-address check whose name lookup times out is refused;
+- an unreadable OMDb usage count leaves no budget for the day;
+- the music pipeline's Stop button works even when its flag can't be read.
+
+Screens that showed a failure as if it were real data now say what couldn't be loaded:
+- Sonarr/Radarr history on the deletions page;
+- enrichment coverage;
+- arr profiles in library settings;
+- chat history.
+
+A corrupt taste profile is flagged on the deletion run instead of being quietly
+ignored. The enrichment status counts are no longer shown to another user for a few
+seconds. Two people logging in for the first time at the same moment can no longer
+both become admin.
+
+**Fewer pauses from game checks, web requests and large imports.** The "is a game
+running?" check (`nvidia-smi` plus a scan of every process) ran before every AI request
+and for every enriched or judged title. It now answers from the last result, refreshed in
+the background every 30 seconds. Every web request also loaded the system's certificate
+list again (about 50 ms each); that now happens once at startup. Large Radarr, Sonarr and
+Lidarr libraries, the Spotify import, the anime database and the image cache are read
+and written off the thread that serves pages. The test run now fails if any code makes
+that thread wait on the database.
+
 **Searches and enrichment no longer pause the server.** Vector-store calls (search,
 recommendations, the facet index, every enriched title's write, the embedding
 migration) now run on their own thread instead of the one that serves every page. The

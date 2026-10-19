@@ -222,7 +222,8 @@ def test_the_wiring():
 
     pm = (_ROOT / "src/services/process_monitor.py").read_text(encoding="utf-8")
     assert "def game_process_running() -> bool:" in pm and "def gpu_pressure_reason() -> str:" in pm
-    assert "return gpu_pressure() or game_process_running()" in pm
+    # both causes, no short circuit, so the loop's cached verdicts stay fresh
+    assert "pressed = gpu_pressure()\n    game = game_process_running()\n    return pressed or game" in pm
 
     cust = (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
     assert 'llm_role: str = "curator"' in cust, "curator is the safe default"

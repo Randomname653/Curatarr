@@ -10,6 +10,7 @@ import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
+import { tabToHash } from './nav.js';
 
 // Pass 17: small badge showing "added Xd ago" when the proposal has a
 // recent file-import timestamp. Threshold of 30 days keeps the badge
@@ -226,6 +227,7 @@ let _delLoadSeq = 0;
 export async function loadDeletions(category=null, btn=null, refresh=false) {
   const seq = ++_delLoadSeq;
   state.currentDelCategory = category;
+  tabToHash('deletions', category);     // #deletions/movie survives a reload
   // Restore the correct active tab whether called from a tab click, the Analyse
   // button, the Show Cached button, or a programmatic call like showView().
   document.querySelectorAll('#deletions-view .cat-tab').forEach(b => {
@@ -250,6 +252,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
       if (seq !== _delLoadSeq) return;
       _renderEnrichmentCoverageBanner(r.enrichment_coverage);
       _renderRunBanner(r.last_run);
+      _renderActivityBanner(r.activity_note);
       if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
       _renderDeletionProposals(r.proposals || []);
     } catch(e) {
@@ -308,6 +311,9 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     if (seq !== _delLoadSeq) return;
 
     _renderRunBanner(r.last_run);
+    // The arr history couldn't be read: the message (empty list) or this
+    // banner (partial list) says so — never "nothing imported recently".
+    _renderActivityBanner(r.message && !r.proposals?.length ? null : r.activity_note);
     if (r.message && !r.proposals?.length) { el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(r.message)}</p>`; return; }
 
     // Show enrichment coverage banner when data quality is low
@@ -329,7 +335,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
 // is gone before anyone reads it.
 export function _renderRunBanner(run) {
   document.getElementById('del-run-banner')?.remove();
-  if (!run || !(run.failed || run.deferred || run.stopped)) return;
+  if (!run || !(run.failed || run.deferred || run.stopped || run.degraded)) return;
   const banner = document.createElement('div');
   banner.id = 'del-run-banner';
   banner.setAttribute('role', 'status');
@@ -342,19 +348,37 @@ export function _renderRunBanner(run) {
   // fixes, and the old fixed sentence blamed the model for both.
   const cause = esc(run.failed_reason || "the model didn't answer");
   const stopped = run.stopped ? ` Stopped early: ${esc(run.stopped)}.` : '';
+  // An unreadable taste profile: the run went on, but its ranking is weaker.
+  const degraded = run.degraded ? ` Note: ${esc(run.degraded)}.` : '';
   if (run.failed && run.failed >= run.judged) {
     banner.className = 'banner danger';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${deferred}${degraded}</div>${again}`;
   } else if (run.failed) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${deferred}${degraded}</div>${again}`;
   } else if (run.stopped) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${deferred}${degraded}</div>${again}`;
+  } else if (run.degraded) {
+    banner.className = 'banner warn';
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${degraded}${deferred}</div>${again}`;
   } else {
     banner.className = 'banner';
     banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${deferred}</div>`;
   }
+  const delContent = document.getElementById('del-content');
+  delContent.parentNode.insertBefore(banner, delContent);
+}
+
+export function _renderActivityBanner(note) {
+  document.getElementById('del-activity-banner')?.remove();
+  if (!note) return;
+  const banner = document.createElement('div');
+  banner.id = 'del-activity-banner';
+  banner.className = 'banner warn';
+  banner.setAttribute('role', 'status');
+  const warn = SVG_WARN.replace('width="13" height="13"', 'width="18" height="18"');
+  banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text">${esc(note)}</div>`;
   const delContent = document.getElementById('del-content');
   delContent.parentNode.insertBefore(banner, delContent);
 }
@@ -368,7 +392,13 @@ export function _renderEnrichmentCoverageBanner(cov) {
   const banner = document.createElement('div');
   banner.id = 'enrich-cov-banner';
   const warn = SVG_WARN.replace('width="13" height="13"', 'width="18" height="18"');
-  if (cov.never_run) {
+  if (cov.unknown) {
+    // The status table couldn't be read — say so instead of "never run".
+    banner.className = 'banner warn';
+    banner.innerHTML = `<span class="banner-icon">${warn}</span>
+      <div class="banner-text"><b>Enrichment coverage unknown.</b> Curatarr couldn't read the enrichment status${cov.error ? ` (${esc(cov.error)})` : ''}, so it can't say how much of your library has rating and genre data.
+        <div class="fs-11 t3 mt-4">Reload in a moment; if it persists, check the server log.</div></div>`;
+  } else if (cov.never_run) {
     banner.className = 'banner danger';
     banner.innerHTML = `<span class="banner-icon">${warn}</span>
       <div class="banner-text"><b>Library enrichment has never run.</b> Curatarr has no rating or genre data for your library — proposals may be inaccurate.

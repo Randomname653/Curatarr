@@ -23,6 +23,7 @@ import httpx
 
 from src.config import settings
 from src.services.enrichment_state import log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,8 @@ def cached_lidarr_artists() -> Optional[list]:
     try:
         from src.routers.library import _LIB_CACHE
         items = (_LIB_CACHE.get("lidarr") or {}).get("items_raw")
-    except Exception:  # noqa: BLE001
-        return None
+    except (ImportError, AttributeError, TypeError):
+        return None   # no library router loaded / cache not shaped as expected
     return items if isinstance(items, list) and items else None
 
 
@@ -135,7 +136,7 @@ async def discography_summary(artist_mbid: str = None,
         # The artist comes from the cached library or a one-artist query: the
         # full /artist list (15-30 MB, ~2 min on a big Lidarr) per chat turn
         # and per judged candidate left every music answer waiting on it.
-        async with httpx.AsyncClient(timeout=_ONE_ARTIST_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_ONE_ARTIST_TIMEOUT_S) as client:
             artist = await find_lidarr_artist(client, base, key,
                                               mbid=artist_mbid, name=artist_name)
             if artist is None:

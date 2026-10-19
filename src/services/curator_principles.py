@@ -45,6 +45,7 @@ from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import CuratorPrinciple
 from src.services.llm_utils import parse_llm_json
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ async def _curator_json(system: str, user: str, schema: dict,
                     "repeat_penalty": 1.0,
                     "num_ctx": CURATOR_NUM_CTX, **curator_gpu()},
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
         r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
     r.raise_for_status()
     return parse_llm_json((r.json().get("message") or {}).get("content", "") or "")
@@ -232,7 +233,10 @@ async def _embed(text: str):
     try:
         from src.services.episodic_memory import _embed as em_embed
         return await em_embed(text)
-    except Exception:
+    except Exception as e:
+        # em_embed already logs and returns None on an embed outage, so
+        # anything landing here is a bug, not a transient.
+        logger.warning("[principles] embedding crashed: %s", e, exc_info=True)
         return None
 
 
@@ -560,7 +564,7 @@ async def retrieve_principles(user_id: int, category: str | None = None,
             for text, emb_json in rows:
                 try:
                     sem = _cosine_similarity(qe, json.loads(emb_json)) if emb_json else 0.0
-                except Exception:
+                except (ValueError, TypeError):
                     sem = 0.0
                 if sem is None:
                     sem = 0.0   # dimension mismatch ranks like "no embedding"

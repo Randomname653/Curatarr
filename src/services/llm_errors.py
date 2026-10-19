@@ -21,6 +21,7 @@ from __future__ import annotations
 import enum
 
 import httpx
+from src.services.http_client import tls_context
 
 
 class LLMFailure(str, enum.Enum):
@@ -135,7 +136,7 @@ async def post_chat(base_url: str, payload: dict, *, read_timeout: float) -> dic
     """POST a non-streaming /api/chat and return the parsed response, or
     raise LLMCallError with the kind of failure."""
     try:
-        async with httpx.AsyncClient(timeout=timeout_for(read_timeout)) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=timeout_for(read_timeout)) as client:
             resp = await client.post(f"{base_url}/api/chat", json=payload)
     except httpx.TimeoutException as e:
         # ConnectTimeout is a TimeoutException too, but it means the host is

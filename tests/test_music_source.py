@@ -131,7 +131,8 @@ def test_plex_delete_confirms_the_item_is_gone_and_drops_it_from_the_index():
 
 def test_the_wiring_reads_music_service():
     sched = (_ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
-    assert '"music": music_service() or "lidarr"' in sched
+    assert ('_music_svc = await asyncio.to_thread(music_service)' in sched
+            and '"music": _music_svc or "lidarr"' in sched)
     rec = (_ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
     assert "PLEX MUSIC (Lidarr optional)" in rec and 'if p.service == "plex":' in rec
     js = (_ROOT / "frontend/js/deletions.js").read_text(encoding="utf-8")

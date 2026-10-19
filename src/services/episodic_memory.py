@@ -39,6 +39,7 @@ from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
 from src.services.llm_utils import clean_llm_text, parse_llm_json, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
     # matches, as before.
     try:
         new_emb = json.loads(new_emb_raw) if new_emb_raw else None
-    except Exception:
+    except (ValueError, TypeError):
         new_emb = None
     if not new_emb:
         return []
@@ -300,7 +301,7 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
             continue
         try:
             v = json.loads(emb)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         if isinstance(v, list) and len(v) == len(new_emb):
             ids.append(mid)
@@ -418,7 +419,7 @@ Output ONLY a JSON block:
 {{"status": "CONTRADICTION" | "REAFFIRMATION" | "NUANCE" | "UNRELATED", "reason": "brief explanation"}}"""
 
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
                 r = await client.post(
                     f"{settings.effective_ollama}/api/chat",
                     json={
@@ -581,7 +582,7 @@ async def retrieve_memories(
                     try:
                         mem_emb = json.loads(mem.embedding_json)
                         sem_score = _cosine_similarity(query_embedding, mem_emb)
-                    except Exception:
+                    except (ValueError, TypeError):
                         sem_score = 0.0
                     if sem_score is None:
                         sem_score = _NEUTRAL_SEM   # other model's vector → as if none
@@ -731,7 +732,7 @@ async def retrieve_considerations(
     item_emb = await _embed(item_profile, kind="query")
     if not item_emb:
         return []
-    def _load() -> list:
+    def _load_scored() -> list:
         with get_db_session() as db:
             q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
             if media_category:
@@ -741,25 +742,27 @@ async def retrieve_considerations(
                 )
             # Pull plain fields out before the session closes — the ORM instances
             # would otherwise raise DetachedInstanceError on attribute access below.
-            return [
+            rows = [
                 (m.id, m.content, m.importance, m.embedding_json, m.media_category,
                  m.metadata_json)
                 for m in q.all()
             ]
+        # Scored here, in the worker: a json.loads + 768-d pure-Python cosine
+        # per memory (~0.3 ms each) ran on the loop once per judged title.
+        sims = []
+        for mid, content, importance, emb_json, mcat, meta in rows:
+            if not emb_json or _is_superseded(meta):
+                continue
+            try:
+                sem = _cosine_similarity(item_emb, json.loads(emb_json))
+            except (ValueError, TypeError):
+                continue
+            if sem is None:
+                continue   # other model's vector — same as no embedding
+            sims.append((sem, mid, content, importance, mcat))
+        return sims
 
-    rows = await run_read(_load)
-
-    sims = []
-    for mid, content, importance, emb_json, mcat, meta in rows:
-        if not emb_json or _is_superseded(meta):
-            continue
-        try:
-            sem = _cosine_similarity(item_emb, json.loads(emb_json))
-        except Exception:
-            continue
-        if sem is None:
-            continue   # other model's vector — same as no embedding
-        sims.append((sem, mid, content, importance, mcat))
+    sims = await run_read(_load_scored)
     if len(sims) < 3:
         return []
 
@@ -880,7 +883,7 @@ async def _run_memory_extraction(
         # Timeout raised from 30s → 90s (Pass 14.13). With the curator
         # potentially eviction-cycling and the summarizer cold-loading
         # 14GB, 30s clipped legitimate slow runs as ReadTimeout.
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -1026,8 +1029,11 @@ async def _run_memory_extraction(
                     metadata={"title": fact.get("title", ""), "source": "chat"},
                     # domain-less chats used to mint NULL memories that leak
                     # into every taste profile — classify from the content
+                    # (in a thread: a DB lookup plus the 25k-name library
+                    # index rebuild per fact)
                     media_category=media_category
-                    or classify_memory_category(fact["content"], title_field),
+                    or await asyncio.to_thread(classify_memory_category,
+                                               fact["content"], title_field),
                 )
                 if mem_id:
                     wrote_any = True
@@ -1994,7 +2000,7 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
 
     try:
         # Timeout 20s → 90s (Pass 14.13).
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -2379,7 +2385,7 @@ Output ONLY valid JSON:
 }}"""
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -2483,7 +2489,7 @@ Output ONLY valid JSON:
 USER MESSAGES:
 {joined}"""
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={

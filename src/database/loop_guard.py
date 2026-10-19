@@ -42,6 +42,7 @@ _DB_DIR = str(Path(__file__).resolve().parent) + os.sep
 _ASYNC_FLAGS = inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR
 _lock = threading.Lock()
 _sites: dict[str, int] = {}      # "src/x.py:123 (func)" -> statements on the loop
+_coro_sites: set[str] = set()    # sites attributed to a src/ coroutine (not a test's)
 _lifecycle = 0                   # statements while no request could be waiting
 _serving = True
 _installed: set[int] = set()
@@ -67,16 +68,18 @@ def _fmt(f) -> str:
     return f"{rel}:{f.f_lineno} ({f.f_code.co_name})"
 
 
-def _call_site(depth: int = 3) -> str:
+def _call_site(depth: int = 3) -> tuple[str, bool]:
+    """(site, True when it is a src/ coroutine). A site that is only a sync
+    src/ function was reached from a coroutine outside src/ (a test)."""
     f, first = sys._getframe(depth), None
     while f is not None:
         path = f.f_code.co_filename
         if path.startswith(_SRC) and not path.startswith(_DB_DIR):
             if f.f_code.co_flags & _ASYNC_FLAGS:
-                return _fmt(f)
+                return _fmt(f), True
             first = first or f
         f = f.f_back
-    return _fmt(first) if first is not None else "<outside src>"
+    return (_fmt(first) if first is not None else "<outside src>"), False
 
 
 def _record(label: str = "") -> str | None:
@@ -89,10 +92,13 @@ def _record(label: str = "") -> str | None:
         with _lock:
             _lifecycle += 1
         return None
-    site = _call_site() + label
+    site, from_coro = _call_site()
+    site += label
     with _lock:
         first = site not in _sites
         _sites[site] = _sites.get(site, 0) + 1
+        if from_coro:
+            _coro_sites.add(site)
     if first:
         logger.warning(
             "Database statement on the event-loop thread at %s - the server "
@@ -138,7 +144,8 @@ def snapshot() -> dict:
     return {
         "mode": mode(),
         "serving": _serving,
-        "sites": [{"site": s, "statements": n} for s, n in sites],
+        "sites": [{"site": s, "statements": n, "coroutine": s in _coro_sites}
+                  for s, n in sites],
         "statements_on_loop": sum(n for _, n in sites),
         "lifecycle_statements": lifecycle,
     }
@@ -148,4 +155,24 @@ def reset() -> None:
     global _lifecycle
     with _lock:
         _sites.clear()
+        _coro_sites.clear()
         _lifecycle = 0
+
+
+def _dump_at_exit() -> None:
+    """With CURATARR_LOOP_GUARD_DUMP=<dir>, every process writes its snapshot
+    there on exit; tests/run_all.py collects them over the whole battery."""
+    out = os.environ.get("CURATARR_LOOP_GUARD_DUMP")
+    if not out or not _sites:
+        return
+    import json
+    try:
+        Path(out, f"{os.getpid()}.json").write_text(
+            json.dumps({"argv": sys.argv, **snapshot()}), encoding="utf-8")
+    except OSError as e:
+        logger.warning("loop guard: could not write %s: %s", out, e)
+
+
+if os.environ.get("CURATARR_LOOP_GUARD_DUMP"):
+    import atexit
+    atexit.register(_dump_at_exit)

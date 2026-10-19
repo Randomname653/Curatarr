@@ -166,7 +166,8 @@ export async function showApp() {
 
   // A bookmarked or reloaded #view opens where the owner left off.
   routeFromHash({focus: false});
-  loadLibraryConfig();
+  // The Plex-libraries pane and its /discover call are admin-only.
+  if (state.currentUser?.is_admin) loadLibraryConfig();
   loadHistoryStatus();
   restoreChatHistory();
   loadGlancePanel();

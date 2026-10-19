@@ -273,6 +273,11 @@ class Settings(BaseSettings):
     # ── CORS ─────────────────────────────────────────────────────────────────
     # Override via .env as JSON: CORS_ORIGINS=["http://myserver:8000"]
     CORS_ORIGINS: list = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    # Opt-in Host-header allow-list against DNS rebinding, comma-separated,
+    # "*.example.com" wildcards allowed: ALLOWED_HOSTS=curatarr.lan,192.168.1.20
+    # Empty = no Host check. A default list would lock out every install
+    # reached by IP, hostname or proxy name. Loopback names always pass.
+    ALLOWED_HOSTS: str = ""
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to

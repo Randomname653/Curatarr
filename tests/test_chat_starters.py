@@ -223,7 +223,7 @@ def test_selection_decays_and_respects_the_daypart():
     assert "impressions < MAX_IMPRESSIONS" in src
     assert "ChatStarter.expires_at > now" in src
     assert 'in_((dp, "any"))' in src
-    assert "row.impressions = (row.impressions or 0) + 1" in src
+    assert "row.impressions = func.coalesce(ChatStarter.impressions, 0) + 1" in src
 
 
 def test_proactive_messages_gained_the_same_mortality():
@@ -243,7 +243,7 @@ def test_the_custodian_owns_generation_and_the_gpu_gate():
     assert entry.cadence_h == 12.0
     # and the request path never generates inline
     chat = _src("routers/chat.py")
-    assert "asyncio.create_task(_refill(user.id))" in chat
+    assert "track_task(_refill(user.id)" in chat      # kept, not a bare create_task
     assert "is_game_running()" in chat
 
 

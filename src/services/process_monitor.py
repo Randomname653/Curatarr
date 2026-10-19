@@ -20,6 +20,7 @@ from typing import Optional
 import psutil
 
 from src.config import settings
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -210,19 +211,49 @@ def _ollama_loaded_models() -> "list | None":
         r = httpx.get(f"{settings.effective_ollama}/api/ps", timeout=2)
         r.raise_for_status()
         return [m.get("name") for m in (r.json().get("models") or [])]
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None   # Ollama down or an odd reply: "unknown", the callers handle None
     except Exception:
+        _warn_rate_limited("ollama_ps", "[gpu] /api/ps probe crashed - read as unknown")
         return None
+
+
+_warned_at: dict = {}
+
+
+def _warn_rate_limited(key: str, msg: str, every_s: float = 600.0) -> None:
+    """WARNING with traceback at most every ``every_s`` per key: the game
+    watcher probes every 30 s, so a persistent bug must not flood the log."""
+    import time
+    now = time.monotonic()
+    if now - _warned_at.get(key, -every_s - 1) > every_s:
+        _warned_at[key] = now
+        logger.warning(msg, exc_info=True)
+
+
+def _on_loop() -> bool:
+    """True on a thread that is running an asyncio loop. The probes below
+    take nvidia-smi (up to its 4 s timeout), an HTTP call to Ollama and a
+    walk over every process: on the loop thread they froze every request,
+    and every LLM call asks (ollama_options -> llm_lane). There they answer
+    from the last verdict instead; the game watcher probes on a worker
+    every 30 s (scheduler.job_game_watcher)."""
+    import asyncio
+    return asyncio._get_running_loop() is not None
 
 
 def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
     """True when the GPU has been saturated for _GPU_HOLD_S by something that
-    is not Ollama. ``smi`` / ``ps`` are injectable for tests."""
+    is not Ollama. ``smi`` / ``ps`` are injectable for tests. On the event
+    loop: the last verdict, never a probe (see _on_loop)."""
     import time
     global _gpu_unavailable_until
     if not getattr(settings, "GPU_PRESSURE_GATE", True):
         return False
     now = time.time() if now is None else now
     injected = smi is not None or ps is not None
+    if not injected and _on_loop():
+        return _gpu_cache["busy"]
     if not injected and now - _gpu_cache["at"] < _GPU_CACHE_S:
         return _gpu_cache["busy"]
     if not injected and now < _gpu_unavailable_until:
@@ -271,11 +302,23 @@ def gpu_pressure_reason() -> str:
     return str(_gpu_cache.get("reason") or "")
 
 
+_last_game = {"running": False}
+
+
 def game_process_running() -> bool:
     """A known game or launcher process is running. Split out of
     is_game_running so the LLM lane can tell the two causes apart: a game
     owns the whole box (the CPU lane stays off), a GPU-hungry batch job
-    owns only the card (summariser work moves to the processor)."""
+    owns only the card (summariser work moves to the processor). On the
+    event loop: the last verdict, never a process walk (see _on_loop)."""
+    if _on_loop():
+        return _last_game["running"]
+    running = _probe_game_process()
+    _last_game["running"] = running
+    return running
+
+
+def _probe_game_process() -> bool:
     import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
@@ -336,7 +379,7 @@ def game_process_running() -> bool:
             if name and name.lower() in targets:
                 _cached_game_pid = proc.pid
                 return True
-        except Exception:
+        except (psutil.Error, AttributeError):
             continue
 
     return False
@@ -344,8 +387,33 @@ def game_process_running() -> bool:
 
 def is_game_running() -> bool:
     """Return True when a known game or game-launcher signal is detected, or
-    when something other than Ollama has been holding the GPU."""
-    return gpu_pressure() or game_process_running()
+    when something other than Ollama has been holding the GPU. Off the loop
+    both probes run (no short circuit), so the verdicts the loop reads stay
+    fresh for each cause."""
+    pressed = gpu_pressure()
+    game = game_process_running()
+    return pressed or game
+
+
+async def _our_models() -> list[str]:
+    """Every model Curatarr may hold in VRAM, for unload_llm_models."""
+    try:
+        from src.database.runner import run_read
+        from src.services.embed_service import effective_embedding_model
+        embs = [await run_read(effective_embedding_model)]   # reads app_state
+    except Exception:
+        # Which embedder is active is unknown: unload the default profile's
+        # model AND the legacy one, or a game may start beside the real one.
+        _warn_rate_limited("embedding_model", "[gpu] active embedding model unreadable - "
+                           "unloading the default profile model and the legacy one")
+        from src.services.embedding_migration import V2_PROFILE
+        embs = [V2_PROFILE.get("model"), settings.EMBEDDING_MODEL]
+    return list(dict.fromkeys(m for m in (
+        settings.CURATOR_MODEL,
+        settings.SUMMARIZER_MODEL,
+        *embs,   # the ACTIVE profile model, not the legacy v1 default
+        (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
+    ) if m))
 
 
 async def unload_llm_models() -> list[str]:
@@ -365,20 +433,9 @@ async def unload_llm_models() -> list[str]:
     """
     import httpx
     ollama_url = settings.effective_ollama
-    try:
-        from src.database.runner import run_read
-        from src.services.embed_service import effective_embedding_model
-        _emb = await run_read(effective_embedding_model)   # reads app_state
-    except Exception:
-        _emb = settings.EMBEDDING_MODEL
-    ours = [m for m in (
-        settings.CURATOR_MODEL,
-        settings.SUMMARIZER_MODEL,
-        _emb,   # the ACTIVE profile model, not the legacy v1 default
-        (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
-    ) if m]
+    ours = await _our_models()
     unloaded: list[str] = []
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         # Which of our models are currently loaded?
         probe_ok = False
         resident: set[str] = set()
@@ -507,7 +564,7 @@ def get_unknown_processes() -> list[dict]:
                 continue
             try:
                 mem = proc.memory_info()    # None when access is denied
-            except Exception:
+            except psutil.Error:
                 mem = None
             if mem is None or mem.rss < min_rss:
                 continue                          # another instance may be bigger

@@ -29,6 +29,7 @@ from src.database.models import (
     TasteVectorEntry, User,
     EncryptedTasteVector, ProtectedMedia, EpisodicMemory
 )
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -370,11 +371,13 @@ def _failure_sentence(kinds: dict) -> str:
 
 def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
                          deferred: int = 0, fail_kinds: dict | None = None,
-                         stopped: str = "") -> dict:
+                         stopped: str = "", degraded: str = "") -> dict:
     """Store one category's run for the Deletions banner. ``failed`` keeps
     its old meaning (titles that got no verdict because something broke);
-    ``failed_by_kind`` / ``failed_reason`` say what broke, and ``stopped``
-    why the run ended before its cap — a game, or an Ollama outage."""
+    ``failed_by_kind`` / ``failed_reason`` say what broke, ``stopped``
+    why the run ended before its cap — a game, or an Ollama outage — and
+    ``degraded`` which signal the run had to score without (an unreadable
+    taste profile)."""
     kinds = {k: n for k, n in (fail_kinds or {}).items() if n}
     run = {
         "at": datetime.utcnow().isoformat(),
@@ -385,6 +388,7 @@ def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
         "failed_by_kind": kinds,
         "failed_reason": _failure_sentence(kinds),
         "stopped": stopped,
+        "degraded": degraded,
     }
     DELETION_RUN_SUMMARY[category] = run
     return run
@@ -406,6 +410,7 @@ def deletion_run_summary(category: str | None = None) -> dict | None:
     out["failed_by_kind"] = kinds
     out["failed_reason"] = _failure_sentence(kinds)
     out["stopped"] = "; ".join(dict.fromkeys(r["stopped"] for r in runs if r.get("stopped")))
+    out["degraded"] = "; ".join(dict.fromkeys(r["degraded"] for r in runs if r.get("degraded")))
     return out
 
 
@@ -639,7 +644,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]
         for model in dict.fromkeys(m for m in chain if m):
             try:
-                async with httpx.AsyncClient(timeout=120) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
                     r = await client.post(
                         f"{settings.effective_ollama}/api/chat",
                         json={
@@ -677,7 +682,7 @@ def _trending_fresh(cached: dict, now: datetime = None,
     """True when a cached {fetched_at, …} app_state blob is younger than ttl_h."""
     try:
         fetched = datetime.fromisoformat(cached.get("fetched_at") or "")
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         return False
     return ((now or datetime.utcnow()) - fetched).total_seconds() < ttl_h * 3600
 
@@ -769,7 +774,7 @@ async def _get_trending(cat: str) -> list:
         paths = [("/trending/tv/week", {}), ("/tv/on_the_air", {})]
     titles: list = []
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             for path, extra in paths:
                 r = await client.get(f"https://api.themoviedb.org/3{path}",
                                      params={"api_key": api_key, **extra})
@@ -810,6 +815,55 @@ def _rhythm_line(ts: dict) -> str:
     return f"Viewing rhythm: {', '.join(parts)}." if parts else ""
 
 
+def recommendation_score_factors(*, lane: str, confidence=None, fit: dict | None = None,
+                                 values: list | None = None, trending: bool = False,
+                                 neighbour: bool = False, exploration: bool = False) -> dict:
+    """The signals one recommendation was picked on — what its card's "Why?"
+    shows. Same {"factors": [{key, label}]} shape as the deletion breakdown,
+    but without ``points``: a rec has no additive score (the curator picks
+    from a taste-ranked pool), so a number per factor would be invented.
+    Real numbers ride along as ``rank`` / ``of`` / ``cosine`` / ``value``.
+
+    Only the requesting user's own signals go in — never an arr address,
+    path or another user's data: members see their recs and this with them."""
+    out: list[dict] = []
+    fit = fit or {}
+    if fit.get("rank"):
+        rank, pool = fit["rank"], fit.get("pool") or fit["rank"]
+        basis = ("closeness to your watch history" if fit.get("basis") == "embedding"
+                 else "overlap with the genres you watch")
+        f = {"key": "taste", "rank": rank, "of": pool,
+             "label": f"#{rank} of {pool} unwatched titles in your library by {basis}"}
+        if fit.get("cosine") is not None:
+            f["cosine"] = fit["cosine"]
+        out.append(f)
+    if fit.get("genres"):
+        out.append({"key": "genres", "label": "Genres you watch: " + ", ".join(fit["genres"])})
+    if fit.get("disliked"):
+        out.append({"key": "disliked", "label": "You said you didn't like it"})
+    for text in values or []:
+        text = (text or "").strip()
+        if text:
+            out.append({"key": "values", "label": "Matches something you said you value: "
+                        f"“{text[:80]}{'…' if len(text) > 80 else ''}”"})
+            break
+    if trending:
+        out.append({"key": "trending", "label": "Trending or upcoming on TMDB right now"})
+    if neighbour:
+        out.append({"key": "neighbour", "label": "Next to artists you play most, in the listening graph"})
+    if exploration:
+        out.append({"key": "exploration",
+                    "label": "Picked as a deliberate stretch outside your usual taste"})
+    out.append({"key": "lane", "label": "In your library and still unwatched" if lane == "library"
+                else "Not in your library, and nothing you've watched or removed"})
+    if (isinstance(confidence, (int, float)) and not isinstance(confidence, bool)
+            and math.isfinite(confidence)):
+        pct = round(max(0.0, min(1.0, float(confidence))) * 100)
+        out.append({"key": "confidence", "value": pct,
+                    "label": f"The curator rated the fit {pct}%"})
+    return {"kind": "recommendation", "lane": lane, "factors": out}
+
+
 async def generate_recommendations(
     user_id: int,
     category: str = None,
@@ -847,7 +901,7 @@ async def generate_recommendations(
 
     # Shared memory layer for the watched/owned filters below.
     from src.services.library_memory import (
-        seen_index, owned_index, removed_index, is_seen, partition,
+        seen_index, owned_index, removed_index, is_seen, partition, normalize_title,
     )
 
     # Taste context. No cache read here — this function always generates fresh;
@@ -925,6 +979,10 @@ async def generate_recommendations(
         # Both lanes need the user's FULL seen-set for this category (no [:15]
         # cap; matched by stable id + normalised title).
         seen = await run_read(seen_index, user_id, cat)
+        # Per-lane evidence the "Why?" breakdown is built from after the pick.
+        _why_by_title: dict = {}
+        trend_titles: list = []
+        nb: list = []
 
         if arr_library:
             # LIBRARY LANE: owned items with already-watched dropped robustly.
@@ -964,7 +1022,9 @@ async def generate_recommendations(
                         year=i.get("year"),
                         allow_summarizer=False,
                     )
-                except Exception:
+                except Exception as e:
+                    from src.services.enrichment_state import log_topup_failure
+                    log_topup_failure(logger, "[recs] pitch verified-data", i.get("title"), e)
                     vd = None
                 if vd:
                     th = vd.get("themes") or []
@@ -997,7 +1057,9 @@ async def generate_recommendations(
                 try:
                     cons = await retrieve_considerations(
                         user_id, prof, media_category=cat, top_k=2)
-                except Exception:
+                except Exception as e:
+                    from src.services.enrichment_state import log_topup_failure
+                    log_topup_failure(logger, "[recs] pitch considerations", i.get("title"), e)
                     cons = []
                 # Precision guard for the VISIBLE ⭐ surfacing (stricter than the
                 # deletion side's silent, capped score nudge — a wrong tag the
@@ -1013,11 +1075,16 @@ async def generate_recommendations(
                 if cons:
                     line += " | ⭐ USER VALUES: " + "; ".join(
                         str(c.get("content") or "")[:80] for c in cons[:2])
-                return line
+                return line, [str(c.get("content") or "") for c in cons[:2]]
 
-            items_text = "\n".join(
-                await _asyncio.gather(*[_cand_line(i) for i in unwatched[:30]])
-            )
+            offered = unwatched[:30]
+            lines = await _asyncio.gather(*[_cand_line(i) for i in offered])
+            items_text = "\n".join(line for line, _ in lines)
+            # The pick is matched back to its candidate for "Why?": the fit
+            # score_arr_items ranked it on and the values shown beside it.
+            for i, (_, vals) in zip(offered, lines):
+                _why_by_title.setdefault(normalize_title(i.get("title") or ""),
+                                         (i.get("_rec_fit"), vals))
 
             prompt = f"""[MODE: ELITE RECOMMENDATION PITCH]
 You are Curatarr, a highly analytical and slightly opinionated personal media curator.
@@ -1050,7 +1117,8 @@ Output format:
             # owned any more) or recorded as disliked: never re-pitched.
             removed = await asyncio.to_thread(removed_index, user_id, cat, disliked_titles)
             noun = "tracks/artists" if cat == "music" else "titles"
-            trend = _trending_line(await _get_trending(cat))
+            trend_titles = await _get_trending(cat)
+            trend = _trending_line(trend_titles)
             trend_block = f"\n{trend}" if trend else ""
             if cat == "music":
                 from src.services.library_memory import normalize_title as _nt
@@ -1124,10 +1192,19 @@ Output format:
                     "LLM suggestions", cat, len(recs) - len(kept), len(recs),
                 )
             recs = kept
+        trend_n = {normalize_title(t) for t in trend_titles}
+        nb_n = {normalize_title(n) for n in nb}
         for rec in recs:
             rec["category"] = cat
             rec["category_label"] = CATEGORY_LABELS.get(cat, cat)
             rec["lane"] = lane
+            t_n = normalize_title(rec.get("title") or "")
+            fit, vals = _why_by_title.get(t_n, (None, None))
+            rec["score_factors"] = recommendation_score_factors(
+                lane=lane, confidence=rec.get("confidence"), fit=fit, values=vals,
+                trending=t_n in trend_n, neighbour=t_n in nb_n,
+                exploration=(lane == "discovery" and str(rec.get("reason") or "")
+                             .lstrip().lower().startswith("exploration pick")))
             all_recs.append(rec)
 
     return all_recs
@@ -1311,6 +1388,10 @@ async def generate_deletion_proposals(
         # the category, not score it as if nobody had kept, discussed, played
         # or rated anything: an empty set reads as "no protection".
         guard_failures: list[str] = []
+        # Taste signals that exist but could not be read: the run goes on
+        # without them, but says so (log + run banner) instead of scoring as
+        # if the owner had no taste — or, with nothing left, as a cold start.
+        taste_unreadable: list[str] = []
 
         with get_db_session() as db:
             # 1. Load Taste Vector
@@ -1337,7 +1418,10 @@ async def generate_deletion_proposals(
                     ts_genres = {g.lower(): s for g, s in
                                  ((_td.get(category) or {}).get("genre_affinity")
                                   or {}).items()}
-                except Exception:
+                except (TypeError, ValueError, AttributeError) as e:
+                    logger.warning("[deletions] %s genre affinity unreadable — "
+                                   "scoring without genre stats: %r", category, e)
+                    taste_unreadable.append("genre affinity")
                     ts_genres = {}
                 encrypted = db.query(EncryptedTasteVector).filter(
                     EncryptedTasteVector.user_id == user_id,
@@ -1348,12 +1432,21 @@ async def generate_deletion_proposals(
                     # LOUDLY, not silently zero out every taste signal.
                     try:
                         _blob = json.loads(encrypted.encrypted_blob)
-                    except Exception:
+                        if not isinstance(_blob, dict):
+                            raise ValueError(f"blob is a {type(_blob).__name__}")
+                    except (TypeError, ValueError) as e:
+                        # same loud degrade as the v1 gate below: no taste
+                        # vector, anchors or owner feedback this run
+                        logger.warning("[deletions] %s taste blob is corrupt — "
+                                       "scoring WITHOUT taste signals until the "
+                                       "next taste rebuild rewrites it: %r", category, e)
+                        taste_unreadable.append("taste vector and owner feedback")
                         _blob = {}
                     if _blob.get("version") == 1:
                         logger.warning("[deletions] %s taste blob is encrypted "
                                        "(v1) — scoring WITHOUT taste signals "
                                        "until the next taste rebuild rewrites it", category)
+                        taste_unreadable.append("taste vector and owner feedback")
                         _blob = {}
                     user_vector = _blob.get("embedding")
                     # Global calibration anchors from the last taste rebuild
@@ -1575,6 +1668,7 @@ async def generate_deletion_proposals(
                                exc_info=True)
         return {
             "guard_failures": guard_failures,
+            "taste_unreadable": taste_unreadable,
             "lang_directive_str": lang_directive_str,
             "user_vector": user_vector,
             "taste_blurb": taste_blurb,
@@ -1619,6 +1713,10 @@ async def generate_deletion_proposals(
     curator_positioned = _ctx["curator_positioned"]
     recent_watched = _ctx["recent_watched"]
     user_rating_by_artist = _ctx["user_rating_by_artist"]
+    taste_degraded = ("scored without the " + " and ".join(_ctx["taste_unreadable"])
+                      + " — the stored taste profile could not be read; the "
+                      "next taste rebuild rewrites it"
+                      if _ctx["taste_unreadable"] else "")
 
     # SoulSync follows (owner decision 2026-10-09): an artist the owner
     # follows there is wanted, and its watchlist would fetch every new release
@@ -1646,6 +1744,7 @@ async def generate_deletion_proposals(
     scored_candidates = []
     prelim: list[dict] = []                # all candidates, pre-calibration
     hard_protect_skipped: list[str] = []   # for the post-loop log line
+    cosine_failures: list[str] = []        # one WARNING per run, after the loop
     user_vector_n = _normalize_vec(user_vector)   # unit vector for cosine math
     # Centered comparison space (eval 2.4): text embeddings share a common
     # cone; subtracting the corpus mean widens the discriminative range and
@@ -1690,9 +1789,16 @@ async def generate_deletion_proposals(
     # category, every candidate would be ranked by size and rating alone —
     # the biggest files pitched first, on no evidence about the owner.
     if not user_cmps and not ts_genres:
-        _why = "no taste profile for this category yet"
+        if _ctx["taste_unreadable"]:
+            # a profile exists but is unreadable — not a cold start
+            _why = ("could not read the stored taste profile ("
+                    + ", ".join(_ctx["taste_unreadable"])
+                    + ") — nothing proposed until the next taste rebuild")
+            logger.warning("[deletions] %s: skipped — %s", category, _why)
+        else:
+            _why = "no taste profile for this category yet"
+            logger.info("[deletions] %s: skipped — %s", category, _why)
         _msg(f"{category}: not proposing deletions — {_why}")
-        logger.info("[deletions] %s: skipped — %s", category, _why)
         _record_deletion_run(category, stopped=_why)
         return []
 
@@ -1835,7 +1941,10 @@ async def generate_deletion_proposals(
                     cosine = max(float(np.dot(u, iv_c)) for u in user_cmps)
                     if drop_cmp is not None:
                         drop_cos = float(np.dot(drop_cmp, iv_c))
-            except Exception:
+            except Exception as e:
+                # counted, reported once after the loop: per-item warnings
+                # would flood the log on one bad shape across the library
+                cosine_failures.append(f"{title!r}: {e!r}")
                 cosine = None
         # A non-finite cosine is no taste evidence: it falls to the genre /
         # no-taste branch below instead of mapping to maximum mismatch.
@@ -1855,6 +1964,11 @@ async def generate_deletion_proposals(
             "cached_rating": cached_rating,
             "user_rating": user_rating,
         })
+
+    if cosine_failures:
+        logger.warning("[deletions] %s: taste cosine failed for %d candidate(s) — "
+                       "scored without taste fit (first: %s)",
+                       category, len(cosine_failures), cosine_failures[0])
 
     # Pass 82c: audit trail — log which artists were hard-protected by the
     # user's ≥ 4-star Plex rating. Helps explain "why isn't <artist> in the
@@ -1936,7 +2050,7 @@ async def generate_deletion_proposals(
             _why = "could not read listening depth — nothing proposed rather than judging without it"
             logger.warning("[deletions] music: play-map build failed: %s", _e, exc_info=True)
             _msg(f"{category}: not proposing deletions — {_why}")
-            _record_deletion_run(category, stopped=_why)
+            _record_deletion_run(category, stopped=_why, degraded=taste_degraded)
             return []
     _play_protected: list = []
     _taste_src_counts = {"embedding": 0, "genre": 0, "none": 0}
@@ -1978,9 +2092,10 @@ async def generate_deletion_proposals(
         _it = p["item"]
         _tp = (_tech_idx.get(("tmdb", _it.get("tmdb_id")))
                or _tech_idx.get(("tvdb", _it.get("tvdb_id"))))
-        _so = size_outlier(_tp["media_type"], _tp["resolution"], _tp["codec"],
-                           _tp["mb_per_min"],
-                           is_remux=_tp.get("is_remux", False)) if _tp else None
+        # The first call loads the norms table (main DB), the rest hit its cache.
+        _so = await run_read(size_outlier, _tp["media_type"], _tp["resolution"], _tp["codec"],
+                             _tp["mb_per_min"],
+                             is_remux=_tp.get("is_remux", False)) if _tp else None
         if _so:
             size_pts = (min(SIZE_PTS_CAP, (_so["ratio"] - 1.0) * 12.0)
                         if _so["verdict"] == "bloated" else 0.0)
@@ -2112,7 +2227,7 @@ async def generate_deletion_proposals(
     if _consider_slice and _cons_failed == len(_consider_slice):
         _why = "learned keep-considerations could not be read (embedding or vector store down)"
         _msg(f"{category}: not proposing deletions — {_why}")
-        _record_deletion_run(category, stopped=_why)
+        _record_deletion_run(category, stopped=_why, degraded=taste_degraded)
         return []
     if _cons_failed:
         scored_candidates = [c for c in scored_candidates
@@ -2171,7 +2286,7 @@ async def generate_deletion_proposals(
             _msg(f"{category}: not judging — {_lane_why}")
             logger.info("[deletions] %s: lane closed before the run (%s)",
                         category, _lane_why)
-            _record_deletion_run(category, stopped=_lane_why)
+            _record_deletion_run(category, stopped=_lane_why, degraded=taste_degraded)
             return []
         judged = 0
         thin_skipped = 0
@@ -2513,12 +2628,13 @@ async def generate_deletion_proposals(
              + (f" ({sum(fail_kinds.values())} failed: "
                 f"{_failure_sentence(dict(fail_kinds))})" if fail_kinds else "")
              + (f" — stopped early: {stopped}" if stopped else "")
+             + (f" — {taste_degraded}" if taste_degraded else "")
              + ".")
         _record_deletion_run(
             category, judged=judged, flagged=len(final_proposals),
             deferred=(thin_skipped + misfiled_skipped + unchecked_skipped
                       + signal_unknown_skipped + watch_unknown_skipped),
-            fail_kinds=dict(fail_kinds), stopped=stopped)
+            fail_kinds=dict(fail_kinds), stopped=stopped, degraded=taste_degraded)
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────
@@ -2570,8 +2686,8 @@ async def generate_deletion_proposals(
     # done" / "re-watched and loved". Injected as neutral context (no score
     # nudge — see _watch_pitch_line), so the curator weighs it like a memory.
     from src.services.watch_status import watched_lookup as _watched_lookup
-    watch_status_map = _watched_lookup(
-        user_id, [c["item"].get("title") for c in top_pitch_set],
+    watch_status_map = await run_read(
+        _watched_lookup, user_id, [c["item"].get("title") for c in top_pitch_set],
         category=category)
     _msg(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
@@ -2685,7 +2801,9 @@ async def generate_deletion_proposals(
             # cold-read / plot-inversion (the Skate-Leading bug). tvdb_id alone
             # reaches the cached anime/show data; plex_rating_key adds the
             # prefetch overview.
-            verified_block = format_verified_block(
+            # format_verified_block also reads the edition from the DB.
+            verified_block = await run_read(
+                format_verified_block,
                 # Legacy pitch loop holds the curator gate — no summarizer here
                 # (VRAM churn; see ensure_verified_data docstring).
                 await ensure_verified_data(
@@ -2728,7 +2846,8 @@ async def generate_deletion_proposals(
             # resolution/codec class (don't flag) or genuine bitrate bloat (size
             # is a fair argument)? Stops the blanket "70 GB is too big" complaint.
             from src.services.size_norms import size_context_for
-            size_ctx_block = "" if category == "music" else size_context_for(
+            size_ctx_block = "" if category == "music" else await run_read(
+                size_context_for,
                 tmdb_id=item.get("tmdb_id"), tvdb_id=item.get("tvdb_id"),
                 plex_rating_key=item.get("plex_rating_key"),
                 media_type=category)
@@ -2939,17 +3058,27 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
             if encrypted and encrypted.encrypted_blob:
                 try:
                     _blob = json.loads(encrypted.encrypted_blob)
-                    if _blob.get("version") == 1:
-                        logger.warning("[recs] %s taste blob is encrypted (v1) — "
-                                       "ranking without the taste vector", category)
-                        _blob = {}
-                    user_vector = _blob.get("embedding")
-                    user_clusters = _blob.get("cluster_centroids")
-                    disliked_lc = {(t or "").lower()
-                                   for t in _blob.get("disliked_titles") or []}
-                except Exception:
-                    user_vector = None
-                    user_clusters = None
+                    if not isinstance(_blob, dict):
+                        raise ValueError(f"blob is a {type(_blob).__name__}")
+                except (TypeError, ValueError) as e:
+                    logger.warning("[recs] %s taste blob is corrupt — ranking "
+                                   "without the taste vector until the next "
+                                   "taste rebuild: %r", category, e)
+                    _blob = {}
+                if _blob.get("version") == 1:
+                    logger.warning("[recs] %s taste blob is encrypted (v1) — "
+                                   "ranking without the taste vector", category)
+                    _blob = {}
+                user_vector = _blob.get("embedding")
+                user_clusters = _blob.get("cluster_centroids")
+                # its own step: one odd dislike entry used to throw away the
+                # taste vector parsed just above
+                try:
+                    disliked_lc = {str(t).lower()
+                                   for t in _blob.get("disliked_titles") or [] if t}
+                except TypeError as e:
+                    logger.warning("[recs] %s disliked_titles unreadable — ranking "
+                                   "without recorded dislikes: %r", category, e)
         return type_data, user_vector, user_clusters, disliked_lc
 
     type_data, user_vector, user_clusters, disliked_lc = await run_read(_taste)
@@ -2977,6 +3106,13 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     def _genre_score(item: dict) -> float:
         genres = [g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()]
         return sum(genre_affinity.get(g, 0) for g in genres)
+
+    def _genres_matched(item: dict) -> list:
+        """The item's genres the user's affinity rates above zero, strongest
+        first — the overlap the genre fallback ranks on, named for "Why?"."""
+        genres = [g.strip() for g in (item.get("genres") or "").split(",") if g.strip()]
+        hits = [g for g in genres if (genre_affinity.get(g.lower()) or 0) > 0]
+        return sorted(hits, key=lambda g: -genre_affinity[g.lower()])[:3]
 
     # Multimodal pairs rank by MAX over cluster centroids (ComiRec) — one
     # strong interest match wins; a blend of unrelated interests can't
@@ -3032,23 +3168,35 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
             return None
         return max(float(np.dot(u, emb_n)) for u in user_vecs_n)
 
-    _dim_mismatch = [0]
-    vectored: list = []
-    genre_only: list = []
-    for item in items:
-        vs = _vector_score(item)
-        if vs is not None:
-            vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
-        else:
-            genre_only.append(((_dislike_rank(item), _genre_score(item),
-                                _monitored_rank(item)), item))
+    # Pure CPU (normalize + dot per item, ~100 ms per 5k items) in one worker
+    # thread; everything it reads was fetched above — no DB/Chroma in here.
+    def _rank_all() -> list:
+        vectored: list = []
+        genre_only: list = []
+        for item in items:
+            vs = _vector_score(item)
+            if vs is not None:
+                vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
+            else:
+                genre_only.append(((_dislike_rank(item), _genre_score(item),
+                                    _monitored_rank(item)), item))
+        vectored.sort(key=lambda t: t[0], reverse=True)
+        genre_only.sort(key=lambda t: t[0], reverse=True)
+        # Enriched items first (real semantic taste-fit), genre-only fallback after.
+        ranked = ([("embedding", k, it) for k, it in vectored]
+                  + [("genres", k, it) for k, it in genre_only])
+        # Copies, not the arr dicts: those are the shared library cache, and
+        # the fit is this user's. "_rec_fit" feeds the rec card's "Why?".
+        return [{**it, "_rec_fit": {
+                    "basis": basis, "rank": n, "pool": len(ranked),
+                    "cosine": round(k[1], 4) if basis == "embedding" else None,
+                    "genres": _genres_matched(it), "disliked": k[0] == 0}}
+                for n, (basis, k, it) in enumerate(ranked, 1)]
 
+    _dim_mismatch = [0]
+    ranked = await asyncio.to_thread(_rank_all)
     if _dim_mismatch[0]:
         logger.warning("[recs] %d item embedding(s) have another dimension than "
                        "the taste vector (embedding model changed?) — ranked by "
                        "genre until the next taste rebuild", _dim_mismatch[0])
-    vectored.sort(key=lambda t: t[0], reverse=True)
-    genre_only.sort(key=lambda t: t[0], reverse=True)
-    # Enriched items first (real semantic taste-fit), genre-only fallback after.
-    ranked = [it for _, it in vectored] + [it for _, it in genre_only]
     return ranked[:top_n]

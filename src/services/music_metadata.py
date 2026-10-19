@@ -18,6 +18,7 @@ import httpx
 from src.config import settings
 from src.cache.metadata_cache import MetadataCache
 from src.services.enrichment_state import TRANSIENT, log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
 
     deezer_id = None
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await _mb_request(
                 client, f"{MB_BASE}/artist/{mbid}",
                 {"inc": "url-rels", "fmt": "json"},
@@ -157,7 +158,7 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
         # The cached hit is the one the owner just excluded — search again.
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             if not mbid:
                 # No id from the arr — fall back to a name search (ambiguous:
                 # the first hit not excluded by the owner wins — the
@@ -192,7 +193,9 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
 
             data = r2.json()
 
-    except Exception as e:  # noqa: BLE001 - an outage; TRANSIENT tells the caller, nothing is cached
+    except (httpx.HTTPError, ValueError) as e:
+        # An outage or a non-JSON body: TRANSIENT tells the caller, nothing is
+        # cached. A response-shape bug propagates - the caller logs it.
         logger.debug("MusicBrainz error for %s: %s", artist_name, e)
         # No neg-cache on exception (timeout, DNS, etc.) — transient.
         return TRANSIENT
@@ -232,7 +235,7 @@ async def fetch_musicbrainz_album(mbid: str, album_name: str, artist_name: str) 
         return cached["response"]
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             if mbid:
                 r = await _mb_request(client, f"{MB_BASE}/release-group/{mbid}",
                     {"inc": "tags+genres+ratings", "fmt": "json"})
@@ -293,7 +296,7 @@ async def enrich_album(album_name: str, artist_name: str, mbid: str = None) -> O
     lastfm_tags = []
     if lastfm_key:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
                 r = await client.get(LASTFM_BASE, params={
                     "method": "album.gettoptags",
                     "artist": artist_name,
@@ -347,7 +350,7 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
         return cached["response"]   # may legitimately be None (neg-cached)
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.get(
                 LASTFM_BASE,
                 params={
@@ -393,7 +396,8 @@ async def fetch_lastfm_artist(artist_name: str) -> Optional[dict]:
                     for a in r2.json().get("similarartists", {}).get("artist", [])
                 ]
 
-    except Exception as e:  # noqa: BLE001 - an outage; TRANSIENT tells the caller, nothing is cached
+    except (httpx.HTTPError, ValueError) as e:
+        # An outage or a non-JSON body (see the MusicBrainz fetch above).
         logger.debug("Last.fm error for %s: %s", artist_name, e)
         return TRANSIENT
 
@@ -478,8 +482,10 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         )
         # An exception is an upstream that did not answer, not "no record".
         if isinstance(mb, Exception):
+            log_topup_failure(logger, "[music] MusicBrainz", artist_name, mb)
             mb = TRANSIENT
         if isinstance(lfm, Exception):
+            log_topup_failure(logger, "[music] Last.fm", artist_name, lfm)
             lfm = TRANSIENT
     else:
         # Fast mode: skip MB entirely + skip the artist_profile cache
@@ -490,7 +496,8 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         ss = None
         try:
             lfm = await fetch_lastfm_artist(artist_name)
-        except Exception:
+        except Exception as e:
+            log_topup_failure(logger, "[music] Last.fm", artist_name, e)
             lfm = TRANSIENT
 
     # TRANSIENT is falsy, so the test below used to read "MusicBrainz and
@@ -614,7 +621,7 @@ async def enrich_track(title: str, artist: str, album: str = "") -> Optional[dic
         return fb
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(
                 LASTFM_BASE,
                 params={

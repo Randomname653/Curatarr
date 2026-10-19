@@ -252,14 +252,27 @@ def recompute_taste(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
 ):
-    """Recompute taste vectors from current enrichment data."""
+    """Recompute taste vectors from current enrichment data.
+
+    Each run is embeddings plus an LLM summary per category and a
+    calibration pass on the shared GPU, so — like ``/recommendations/
+    refresh-cache`` — a per-user budget and one run per user at a time
+    (a second click while one runs → 409)."""
+    from src.services import rate_limit as _rl
+    _rl.enforce("taste-recompute", user.id, _rl.TASTE_RECOMPUTES_PER_10MIN, 600,
+                "Your taste profile was recomputed recently — try again in a few minutes")
+    _rl.TASTE_RECOMPUTE_IN_FLIGHT.enter_or_409(user.id)
     background_tasks.add_task(_run_taste_bg, user.id)
     return {"status": "started"}
 
 
 async def _run_taste_bg(user_id: int):
     from src.services.taste_engine import compute_all_taste_vectors
-    await compute_all_taste_vectors(user_id)
+    from src.services import rate_limit as _rl
+    try:
+        await compute_all_taste_vectors(user_id)
+    finally:
+        _rl.TASTE_RECOMPUTE_IN_FLIGHT.leave(user_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

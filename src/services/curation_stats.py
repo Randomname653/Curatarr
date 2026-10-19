@@ -152,8 +152,8 @@ def build_curation_stats(user_id: int, months: int = 12) -> dict:
                         "weight": float(fb.get("weight") or 1.0),
                         "category": etv.media_category,
                     })
-            except Exception:
-                continue
+            except (ValueError, TypeError, AttributeError):
+                continue   # unparseable blob - its feedback is left out
         feedback.sort(key=lambda f: f.get("date") or "", reverse=True)
 
     totals = {

@@ -52,6 +52,7 @@ from src.database.runner import run_read, run_write
 from src.database.models import ChatStarter, WatchHistoryEntry
 from src.services.llm_utils import strip_think_tags, curator_options, CURATOR_KEEP_ALIVE
 from src.services.viewing_sessions import rhythm as _viewing_rhythm
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             if not model:
                 continue
             try:
-                async with httpx.AsyncClient(timeout=90) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
                     resp = await client.post(
                         f"{settings.effective_ollama}/api/chat",
                         json={
@@ -410,8 +411,11 @@ def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
                 break
             if row not in picked:
                 picked.append(row)
+        # SQL-side increment: two tabs loading starters at once both read
+        # the same count, and a Python-side +1 kept only one impression.
+        from sqlalchemy import func
         for row in picked:
-            row.impressions = (row.impressions or 0) + 1
+            row.impressions = func.coalesce(ChatStarter.impressions, 0) + 1
         db.commit()
         return [{"id": r.id, "text": r.text} for r in picked]
 

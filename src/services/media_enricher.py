@@ -37,6 +37,7 @@ from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_opt
 
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
+from src.services.http_client import tls_context
 
 
 # Pass 99-fu2: prompt version tag for the two-tier cache split.
@@ -260,7 +261,10 @@ def _vd_first(cache, keys: list):
     for k in keys:
         try:
             hit = cache.get_cache(k)
-        except Exception:
+        except Exception as e:
+            # A cache that cannot be read is not "no profile" - the prompt
+            # then goes out without the verified facts.
+            logger.warning("[enricher] verified-data cache read failed for %s: %s", k, e)
             hit = None
         if hit:
             resp = hit.get("response")
@@ -435,7 +439,9 @@ def _discogs_styles_for(raw: dict) -> Optional[list]:
     try:
         from src.services.discogs_offline import artist_styles
         return artist_styles(raw.get("name") or raw.get("title")) or None
-    except Exception:
+    except Exception as e:
+        logger.warning("[enricher] Discogs styles read failed for %r: %s",
+                       raw.get("name") or raw.get("title"), e)
         return None
 
 
@@ -446,7 +452,8 @@ def _director_note_for(cache, director) -> Optional[str]:
     try:
         from src.services.studio_notes import get_director_note_cached
         return get_director_note_cached(director.split(",")[0].strip(), cache)
-    except Exception:
+    except Exception as e:
+        logger.warning("[enricher] director-note cache read failed for %r: %s", director, e)
         return None
 
 
@@ -874,7 +881,7 @@ async def fetch_significance(
     try:
         # Wikipedia's API rejects generic / browser-spoofing User-Agents with a
         # 403 — it requires a descriptive UA that includes a contact/URL.
-        async with httpx.AsyncClient(timeout=20, headers={
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers={
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
@@ -988,7 +995,7 @@ async def fetch_significance(
     # without touching the template.
     prompt = _SIGNIFICANCE_PROMPT.format(title=title, extract=scrub_untrusted(extract))
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
             r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                 "model": SUMMARIZER_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
@@ -1049,7 +1056,7 @@ async def fetch_wikipedia_summary(
             "music": "band musician"}.get(media_type, "")
     query = f"{title} {hint}".strip()
     try:
-        async with httpx.AsyncClient(timeout=20, headers={
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers={
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
@@ -1512,11 +1519,9 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     from src.services.llm_priority import wait_for_curator
 
     def _gaming() -> bool:
-        try:
-            from src.services.app_state import get_state
-            return get_state("game_active") == "1"
-        except Exception:
-            return False
+        # Fails closed: an unreadable flag counts as a game (app_state.game_active).
+        from src.services.app_state import game_active
+        return game_active()
 
     def _scan(cache):
         cur = cache.conn.cursor()
@@ -1569,8 +1574,8 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             resp = _json.loads(row["response"]) if isinstance(row["response"], str) else row["response"]
             title = (resp or {}).get("title") or id_key
             year = (resp or {}).get("year")
-        except Exception:
-            continue
+        except (ValueError, TypeError, AttributeError):
+            continue   # unparseable cache row - not a backfill candidate
         if task is not None:
             try:
                 from src.services.task_monitor import task_monitor
@@ -1621,7 +1626,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     for k, resp in rows:
         try:
             b = _json.loads(resp)
-        except Exception:
+        except (ValueError, TypeError):
             continue
         if not isinstance(b, dict):
             continue
@@ -1637,7 +1642,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         # through: they get exactly ONE more fetch to pick up RT/Metacritic
         try:
             cat = k.split("raw:", 1)[1].split(":", 1)[0]
-        except Exception:
+        except (IndexError, AttributeError):
             continue
         candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb, b.get("tmdb_id")))
 
@@ -2057,8 +2062,10 @@ async def _streaming_fetch_runner(
             try:
                 data = t.result()
             except Exception as _e:
+                # A crashing fetcher is not "no data from that source": a
+                # bug must show (log_topup_failure keeps outages at DEBUG).
                 data = None
-                logger.debug("[stream] %s task error: %s", src, _e)
+                log_topup_failure(logger, f"[stream] {src}", ctx.get("title"), _e)
             _merge_source_into_raw(raw, src, data, media_type, is_anime)
         # Now check sufficiency post-merge.
         if not sufficient and _has_enough_data_for_polish(raw, media_type):
@@ -2118,7 +2125,7 @@ async def _finalize_streaming_merge(
             data = await task
         except Exception as _e:
             data = None
-            logger.debug("[finalize] %s task error for %s: %s", src, plex_rating_key, _e)
+            log_topup_failure(logger, f"[stream] {src}", plex_rating_key, _e)
         _merge_source_into_raw(live_raw, src, data, media_type, is_anime)
 
     # Update the DB row.
@@ -2439,7 +2446,7 @@ async def authoritative_tv_tmdb_id(tvdb_id, tmdb_id=None, *, cache=None):
     if hit:
         return (hit.get("response") or {}).get("tmdb_id") or tmdb_id
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             data = await _tmdb_get(client, f"/find/{tvdb}",
                                    {"external_source": "tvdb_id"})
     except Exception as e:
@@ -2480,7 +2487,7 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
     """
     endpoint = "movie" if media_type in ("movie", "radarr") else "tv"
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         details, credits, keywords, ext_ids = await asyncio.gather(
             _tmdb_get(client, f"/{endpoint}/{tmdb_id}", {"append_to_response": ""}),
             _tmdb_get(client, f"/{endpoint}/{tmdb_id}/credits"),
@@ -2593,12 +2600,34 @@ def _omdb_day() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
+_omdb_count_warned_at = 0.0
+
+
 def omdb_calls_today() -> int:
+    """Calls spent today. A missing key/table (fresh DB) is zero; any other
+    read failure counts the day as spent - reading it as 0 let a locked or
+    broken app_state hand out calls past OMDB_DAILY_LIMIT."""
+    from sqlalchemy.exc import OperationalError
     from src.services.app_state import get_state
     try:
         return int(get_state(f"omdb_calls:{_omdb_day()}") or 0)
-    except Exception:  # noqa: BLE001 - no app_state yet (fresh DB): count from zero
-        return 0
+    except OperationalError as e:
+        if "no such table" in str(e).lower():
+            return 0   # no app_state yet (fresh DB): count from zero
+        return _omdb_count_unreadable(e)
+    except Exception as e:
+        return _omdb_count_unreadable(e)
+
+
+def _omdb_count_unreadable(err: BaseException) -> int:
+    """The day's count could not be read: report the budget as spent."""
+    global _omdb_count_warned_at
+    now = time.monotonic()
+    if now - _omdb_count_warned_at > 60:     # checked per title: once a minute
+        _omdb_count_warned_at = now
+        logger.warning("[omdb] calls-used-today unreadable - treating today's budget "
+                       "as spent: %s", err)
+    return int(getattr(settings, "OMDB_DAILY_LIMIT", 1000) or 0)
 
 
 def omdb_quota_left() -> int:
@@ -2637,7 +2666,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
         return None
     _ensure_concurrency_primitives()
     try:
-        async with _SEM_OMDB, httpx.AsyncClient(timeout=8) as client:   # Pass 99-fu3: cap 4 concurrent
+        async with _SEM_OMDB, httpx.AsyncClient(verify=tls_context(), timeout=8) as client:   # Pass 99-fu3: cap 4 concurrent
             r = await client.get("https://www.omdbapi.com/", params={
                 "apikey": omdb_key,
                 "i": imdb_id,
@@ -2746,7 +2775,7 @@ async def _fetch_mal_official(mal_id: int = None, title: str = None,
     same closeness check as Jikan's), then the detail record."""
     from src.services import mal_source
     _ensure_concurrency_primitives()
-    async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:
+    async with _SEM_JIKAN, httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         if not mal_id and title:
             found = await mal_source.search(client, title, _titles_close_enough,
                                             set(rejected or ()))
@@ -2777,7 +2806,7 @@ async def _fetch_jikan(mal_id: int = None, title: str = None,
     _ensure_concurrency_primitives()
     rejected = set(rejected or ())
     try:
-        async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:   # Pass 99-fu3: cap 2 concurrent
+        async with _SEM_JIKAN, httpx.AsyncClient(verify=tls_context(), timeout=10) as client:   # Pass 99-fu3: cap 2 concurrent
             if mal_id:
                 r = await client.get(f"https://api.jikan.moe/v4/anime/{mal_id}/full")
             elif title:
@@ -3094,7 +3123,7 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
     """Fetch rich AniList data including tags, demographics, staff."""
     try:
         await _anilist_wait()
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.post(
                 "https://graphql.anilist.co",
                 json={"query": ANILIST_QUERY, "variables": {"id": anilist_id}},
@@ -3443,7 +3472,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
         )
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -3494,7 +3523,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                     f"{', '.join(_title_nums)}. Re-emit the JSON.]"
                 )
                 try:
-                    async with httpx.AsyncClient(timeout=120) as _c2:
+                    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as _c2:
                         _r2 = await _c2.post(
                             f"{settings.effective_ollama}/api/chat",
                             json={
@@ -4880,7 +4909,7 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None,
     rejected = set(rejected or ())
     try:
         await _anilist_wait()
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.post(
                 "https://graphql.anilist.co",
                 json={"query": ANILIST_SEARCH_QUERY, "variables": {"search": title}},
@@ -4998,7 +5027,7 @@ async def anilist_candidates(title: str, limit: int = 6) -> list[dict]:
     owner is the matcher. Same search the resolver uses."""
     try:
         await _anilist_wait()
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.post(
                 "https://graphql.anilist.co",
                 json={"query": ANILIST_SEARCH_QUERY, "variables": {"search": title}},
@@ -5046,7 +5075,7 @@ async def _tmdb_search_and_fetch(
         # TMDB uses different param names per endpoint
         params["year" if endpoint == "movie" else "first_air_date_year"] = year
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         r = await _tmdb_get(client, f"/search/{endpoint}", params)
     results = r.get("results", [])
 
@@ -5055,7 +5084,7 @@ async def _tmdb_search_and_fetch(
     if not results and year:
         logger.debug("TMDB search '%s' year=%d → 0 results, retrying without year",
                      title, year)
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await _tmdb_get(client, f"/search/{endpoint}", {"query": title})
         results = r.get("results", [])
 
@@ -5111,7 +5140,7 @@ async def _tmdb_fetch_by_external_id(imdb_id: str, media_type: str) -> Optional[
     if not settings.TMDB_API_KEY or not imdb_id:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await _tmdb_get(client, f"/find/{imdb_id}",
                                 {"external_source": "imdb_id"})
         results = (

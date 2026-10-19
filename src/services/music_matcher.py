@@ -34,7 +34,8 @@ from sqlalchemy import update
 from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
-from src.services.enrichment_state import TRANSIENT
+from src.services.enrichment_state import TRANSIENT, log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +62,37 @@ def _normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
+def _index_tracks(resp, sec_key, plex_index: dict) -> None:
+    """Parse one section's all-tracks answer and add it to ``plex_index``.
+    Runs in a worker thread: the unpaginated listing measured 64 MB / 1.6 s
+    to parse plus ~0.8 s of normalising at 50k tracks, all of which froze the
+    loop. The caller awaits it, so nothing else touches the dict meanwhile."""
+    items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
+    logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
+
+    for item in items:
+        # originalTitle = track artist (differs from album artist for features)
+        artist = item.get("originalTitle") or item.get("grandparentTitle", "")
+        title  = item.get("title", "")
+        key    = (_normalize(artist), _normalize(title))
+        if key[0] and key[1]:
+            genres = [g["tag"] for g in (item.get("Genre") or [])]
+            plex_index[key] = {
+                "rating_key": str(item["ratingKey"]),
+                "genres":     genres,
+            }
+
+
 def _stop_requested() -> bool:
-    """Return True when the GUI/API has requested a pipeline stop."""
+    """Return True when the GUI/API has requested a pipeline stop. An
+    unreadable flag counts as a stop: reading it as "keep going" ignored the
+    user's Stop for the rest of the run."""
     try:
         from src.services.app_state import get_state
         return get_state("music_pipeline_stop_requested") == "1"
-    except Exception:
-        return False
+    except Exception as e:
+        logger.warning("[music_matcher] stop flag unreadable - stopping: %s", e)
+        return True
 
 
 def _load_unmatched_plays(user_id: int, since_id: int) -> list[tuple]:
@@ -179,7 +204,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     # Key: (norm_artist, norm_title) → {"rating_key": str, "genres": list[str]}
     plex_index: dict[tuple, dict] = {}
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
         for sec_key in music_sections:
             if await run_read(_stop_requested):
                 break
@@ -194,20 +219,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                                    sec_key, resp.status_code)
                     continue
 
-                items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
-                logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
-
-                for item in items:
-                    # originalTitle = track artist (differs from album artist for features)
-                    artist = item.get("originalTitle") or item.get("grandparentTitle", "")
-                    title  = item.get("title", "")
-                    key    = (_normalize(artist), _normalize(title))
-                    if key[0] and key[1]:
-                        genres = [g["tag"] for g in (item.get("Genre") or [])]
-                        plex_index[key] = {
-                            "rating_key": str(item["ratingKey"]),
-                            "genres":     genres,
-                        }
+                await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
             except Exception as exc:
                 logger.error("[music_matcher] Failed to fetch section %s: %s", sec_key, exc)
 
@@ -385,7 +397,7 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
             profile = await fetch_musicbrainz_artist(name)
             queried += 1
         except Exception as exc:
-            logger.debug("[music_matcher] MB lookup failed for %r: %s", name, exc)
+            log_topup_failure(logger, "[music_matcher] MB lookup", name, exc)
             failed += 1
             continue
 
@@ -680,9 +692,9 @@ async def enrich_music_genres_lastfm(
     # ── Collect Spotify-source rows missing genres ───────────────────────────
     # Query only the columns we need as plain tuples — avoids DetachedInstanceError
     # when accessing attributes outside the session context.
-    def _load_rows():
+    def _load_groups():
         with get_db_session() as db:
-            return [tuple(r) for r in (
+            rows = [tuple(r) for r in (
                 db.query(
                     WatchHistoryEntry.id,
                     WatchHistoryEntry.series_title,
@@ -696,26 +708,27 @@ async def enrich_music_genres_lastfm(
                 )
                 .all()
             )]
+        # Group by normalised (artist, title) — store original strings for API call
+        # groups: norm_key → (original_artist, original_title, [play_id, ...])
+        # Here, on the read worker: a history of 200k plays without genres
+        # took ~3 s of normalising, and on the loop that froze every request.
+        groups: dict[tuple, tuple] = {}
+        for play_id, series_title, title in rows:
+            norm_key = (_normalize(series_title or ""), _normalize(title or ""))
+            if norm_key not in groups:
+                groups[norm_key] = (series_title or "", title or "", [])
+            groups[norm_key][2].append(play_id)
+        return groups, len(rows)
 
-    rows = await run_read(_load_rows)
-    # rows is a list of (id, series_title, title) tuples — session-independent
+    groups, n_plays = await run_read(_load_groups)
 
-    if not rows:
+    if not n_plays:
         return {"enriched_plays": 0, "tracks_queried": 0, "failed": 0}
-
-    # Group by normalised (artist, title) — store original strings for API call
-    # groups: norm_key → (original_artist, original_title, [play_id, ...])
-    groups: dict[tuple, tuple] = {}
-    for play_id, series_title, title in rows:
-        norm_key = (_normalize(series_title or ""), _normalize(title or ""))
-        if norm_key not in groups:
-            groups[norm_key] = (series_title or "", title or "", [])
-        groups[norm_key][2].append(play_id)
 
     logger.info(
         "[music_matcher] Phase 2 starting: %d unique Spotify-source tracks to enrich "
         "via Last.fm (%d plays), batch=%d",
-        len(groups), len(rows), batch,
+        len(groups), n_plays, batch,
     )
 
     # Limit to `batch` unique tracks per run
@@ -751,7 +764,7 @@ async def enrich_music_genres_lastfm(
 
     iterations_done = 0
     transient_streak = 0
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         for i, (norm_key, (artist, title, _ids)) in enumerate(unique_tracks):
             # An outage is not "Last.fm has no tags": tracks it could not
             # answer for stay NULL (retried), and five in a row end the batch.

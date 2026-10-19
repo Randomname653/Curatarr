@@ -69,8 +69,17 @@ def _load_refresh_subject(user_id: int):
             return {"id": u.id, "is_admin": bool(u.is_admin),
                     "is_active": bool(u.is_active),
                     "token_version": int(u.token_version or 0)}
-    except Exception:  # noqa: BLE001
+    except Exception as e:
+        # Fails closed (no refresh; the token runs to its expiry), but a dead
+        # DB here would otherwise be silent. Per request: rate-limited.
+        now = time.monotonic()
+        if now - _refresh_warned["at"] > 60:
+            _refresh_warned["at"] = now
+            logger.warning("[auth] token refresh skipped - account unreadable: %s", e)
         return None
+
+
+_refresh_warned = {"at": float("-inf")}
 
 
 class TokenRefreshMiddleware:
@@ -109,7 +118,10 @@ class TokenRefreshMiddleware:
                     # Re-issue from the DB row, not the token's own claims:
                     # a deactivated or logged-out user must not be handed a
                     # fresh week by the very token that should have died.
-                    subject = _load_refresh_subject(int(payload["sub"]))
+                    # On the read pool: a sync User query here stalled the
+                    # loop on every request a day-old token makes.
+                    from src.database.runner import run_read
+                    subject = await run_read(_load_refresh_subject, int(payload["sub"]))
                     if subject and subject["is_active"] \
                             and int(payload.get("ver", 0) or 0) == subject["token_version"]:
                         from src.routers.auth import _create_jwt
@@ -168,3 +180,76 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+# Always admitted, whatever ALLOWED_HOSTS says: the owner on the machine
+# itself (and the tray launcher's browser tab, http://localhost:<port>)
+# can never be locked out by a typo in the list.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_host_warned = {"at": float("-inf")}
+
+
+def parse_allowed_hosts(raw: str | None) -> list[str]:
+    """``ALLOWED_HOSTS`` (comma-separated) -> lower-case names, blanks dropped."""
+    return [h.strip().lower().rstrip(".") for h in (raw or "").split(",") if h.strip()]
+
+
+def host_without_port(value: str) -> str:
+    """``Host`` header -> lower-case name: ``[::1]:8000`` -> ``::1``,
+    ``Curatarr.LAN:8000`` -> ``curatarr.lan``."""
+    v = value.strip().lower()
+    if v.startswith("["):
+        v = v[1:v.find("]")] if "]" in v else ""
+    elif v.count(":") == 1:
+        v = v.split(":", 1)[0]
+    return v.rstrip(".")
+
+
+def host_allowed(host: str, allowed: list[str]) -> bool:
+    if host in LOOPBACK_HOSTS:
+        return True
+    for pat in allowed:
+        if pat == host or pat == "*":
+            return True
+        # "*.example.com" covers sub.example.com, not example.com itself.
+        if pat.startswith("*.") and host.endswith(pat[1:]) and len(host) > len(pat) - 1:
+            return True
+    return False
+
+
+class HostAllowListMiddleware:
+    """Opt-in ``ALLOWED_HOSTS`` check (DNS-rebinding defence).
+
+    A rebound page reaches the server under the attacker's own name, so a
+    request whose Host is not on the list is answered 400 before auth, the
+    API or the static files see it. An empty list disables the check — the
+    default, because any fixed list would lock out installs reached by IP,
+    hostname or a reverse proxy's name. Pure ASGI like the others.
+    """
+
+    def __init__(self, app, allowed_hosts: str = ""):
+        self.app = app
+        self.allowed = parse_allowed_hosts(allowed_hosts)
+
+    async def __call__(self, scope, receive, send):
+        if not self.allowed or scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        raw = next((v for k, v in scope.get("headers", []) if k == b"host"), b"")
+        host = host_without_port(raw.decode("latin-1"))
+        if host_allowed(host, self.allowed):
+            await self.app(scope, receive, send)
+            return
+        now = time.monotonic()
+        if now - _host_warned["at"] > 60:      # a scanner must not flood the log
+            _host_warned["at"] = now
+            logger.warning("[host] refused %s %s - Host %r is not in ALLOWED_HOSTS",
+                           scope.get("method", "WS"), scope.get("path", "?"), host[:100])
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        body = b"Invalid host header"
+        await send({"type": "http.response.start", "status": 400,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                                (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})

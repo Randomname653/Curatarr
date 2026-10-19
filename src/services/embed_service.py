@@ -31,11 +31,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
 from typing import Optional
 
 import httpx
 
 from src.config import settings
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,11 @@ _BATCH = 32
 _TIMEOUT = 120.0   # a cold CPU load + a 32-batch takes a while
 
 _profile_cache: dict = {"value": None}
+# Bumped by set_profile: a read that started before the flip committed must
+# not cache the OLD profile after set_profile cleared it (wrong model and
+# collection until restart). Stored only if the generation is unchanged.
+_profile_gen = [0]
+_profile_lock = threading.Lock()
 
 
 def _default_profile() -> dict:
@@ -67,8 +74,10 @@ def effective_embedding_model() -> str:
 
 def get_profile() -> dict:
     """The active embedding profile (cached; set_profile invalidates)."""
-    if _profile_cache["value"] is not None:
-        return _profile_cache["value"]
+    cached = _profile_cache["value"]
+    if cached is not None:
+        return cached
+    gen = _profile_gen[0]
     prof = _default_profile()
     try:
         from src.services.app_state import get_state
@@ -81,7 +90,9 @@ def get_profile() -> dict:
         # boot) pinned the wrong model + collection after any migration.
         logger.warning("[embed] profile read failed (default used, not cached): %s", e)
         return prof
-    _profile_cache["value"] = prof
+    with _profile_lock:
+        if _profile_gen[0] == gen:
+            _profile_cache["value"] = prof
     return prof
 
 
@@ -90,7 +101,9 @@ def set_profile(profile: dict) -> None:
     refreshes the ChromaDB singleton so the new collection is served."""
     from src.services.app_state import set_state
     set_state(PROFILE_KEY, json.dumps(profile))
-    _profile_cache["value"] = None
+    with _profile_lock:
+        _profile_gen[0] += 1
+        _profile_cache["value"] = None
     try:
         from src.vector_store import chromadb_wrapper
         chromadb_wrapper.refresh_singleton()
@@ -114,7 +127,7 @@ def _l2(vec: list) -> Optional[list]:
 async def _post_embed(model: str, inputs: list, num_ctx: int) -> list:
     """One /api/embed call. Returns a vector list per input, or [] on error."""
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/embed",
                 json={"model": model, "input": inputs,
@@ -162,7 +175,7 @@ async def evict_embedder(profile: dict = None) -> None:
     curator generations so nothing competes for memory."""
     prof = profile or get_profile()
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as c:
             await c.post(f"{settings.effective_ollama}/api/embed",
                          json={"model": prof["model"], "input": "unload",
                                "keep_alive": 0})

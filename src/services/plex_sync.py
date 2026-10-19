@@ -41,6 +41,7 @@ from src.services.llm_utils import (
     strip_think_tags, ollama_options, curator_options,
     detect_user_language, language_directive,
 )
+from src.services.http_client import tls_context
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,7 +110,7 @@ async def _sync_music_ratings(
     upserted = 0
     skipped_no_key = 0
 
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for sec_key, sec_title in music_keys:
             for type_num, level in _RATING_LEVELS:
                 try:
@@ -373,7 +374,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # asks for them again from the old point.
     failed_sections: list = []
 
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for sec_key, (category, plex_sec_type, sec_title) in lib_configs.items():
             if category == "ignore":
                 continue
@@ -464,7 +465,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     PLEX_TYPE_INPROGRESS = {"movie": "1", "show": "4", "anime": "4"}
     in_progress_entries = []
 
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for sec_key, (category, plex_sec_type, sec_title) in lib_configs.items():
             if category not in PLEX_TYPE_INPROGRESS or category == "ignore":
                 continue
@@ -542,7 +543,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
         async with sem:
             return await fetch_one_meta(client, rk)
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         tasks = [fetch_with_sem(client, rk) for rk in unique_rating_keys[:cap]]
         results = await asyncio.gather(*tasks)
         for rk, meta in results:
@@ -555,7 +556,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # Fetch /accounts outside of sync context to avoid async-in-sync issues
     local_account_map: dict = {}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             acc_resp = await client.get(
                 f"{plex_url}/accounts",
                 headers={**headers, "Accept": "application/json"},
@@ -622,6 +623,9 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # run inline it held the event loop for the whole walk, freezing every
     # request and the Activity stream on a large initial sync. The session
     # is opened and closed inside the thread, never shared with the loop.
+    # Deliberately NOT run_write: a backlog walk is minutes long and commits
+    # per chunk, so on the single writer every other write in the app would
+    # queue behind it; SQLite's lock serialises the chunk commits anyway.
     synced = 0
     skipped = 0
     resumed = 0   # unfinished rows promoted to the finished view
@@ -1043,8 +1047,15 @@ def _process_rec_watch_hits(hits: list[dict]) -> None:
         key = f"rec_watch_hits:user_id={uid}"
         try:
             queue = _json.loads(get_state(key) or "[]")
-        except Exception:
-            queue = []
+            if not isinstance(queue, list):
+                raise ValueError(f"not a list: {type(queue).__name__}")
+        except Exception as e:
+            # Rewriting from [] would drop up to 50 queued follow-ups; this
+            # pass's hits are the smaller loss.
+            logger.warning("[rec-hits] %s unreadable, left as is - %d new hit(s) "
+                           "for user %d not queued: %s", key,
+                           sum(1 for m in matches if m["user_id"] == uid), uid, e)
+            continue
         known = {(q.get("title"), q.get("category")) for q in queue}
         for m in matches:
             if m["user_id"] == uid and (m["title"], m["category"]) not in known:
@@ -1112,7 +1123,7 @@ async def _fetch_plex_history_lookup(
     start = 0
     total_seen = 0
     pages = 0
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         while True:
             page_headers = {
                 **headers,
@@ -1180,7 +1191,7 @@ async def _fetch_account_to_user_map(plex_url: str, headers: dict, users: list) 
         return out
     out["1"] = admin_user
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(
                 f"{plex_url}/accounts",
                 headers={**headers, "Accept": "application/json"},
@@ -1267,7 +1278,7 @@ async def import_plex_history_for_user(user_id: int) -> dict:
     # 1. Resolve accountID from /accounts by username (case-insensitive).
     account_id = None
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.get(f"{plex_url}/accounts", headers=headers)
         accounts = r.json().get("MediaContainer", {}).get("Account") or []
         if isinstance(accounts, dict):
@@ -1288,7 +1299,7 @@ async def import_plex_history_for_user(user_id: int) -> dict:
     events: list = []
     start = 0
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             while True:
                 ph = {**headers, "X-Plex-Container-Start": str(start),
                       "X-Plex-Container-Size": "1000"}
@@ -1637,7 +1648,7 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
 
     live_keys: set[str] = set()
     empty_sections: list = []
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=httpx.Timeout(120, connect=10)) as client:
         for sec_key, sec_type, category in sections:
             type_num = _history_type_for(sec_type, category)
             if not type_num:
@@ -1905,7 +1916,7 @@ CRITICAL RULES (YOU MUST OBEY):
                 # cold load blew the timeout (3x reproduced on anime).
                 # 4-6 sentences need <300 tokens; 700 is generous.
                 # 420s: cold 20GB load + eval headroom.
-                async with httpx.AsyncClient(timeout=420) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=420) as client:
                     resp = await client.post(
                         f"{ollama_url}/api/chat",
                         json={
@@ -2328,7 +2339,7 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
     agg: dict = {}
     scanned, incomplete = set(), set()   # categories safe to prune vs. never
 
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
         for sec_key, (category, sec_title) in lib_configs.items():
             type_num = _PLEX_TECH_TYPE.get(category)
             if not type_num:
