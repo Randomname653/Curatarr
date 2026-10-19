@@ -14,11 +14,18 @@ Two styles exist and both are handled:
   false green) — imported and every argless ``test_*`` called, in a
   subprocess per file (``--bare``) so module state can't bleed across
   suites.
+
+Every suite also runs with the loop guard dumping its sites
+(src/database/loop_guard.py): a database statement that ran on the event
+loop from a src/ coroutine anywhere in the battery fails the run, even
+when no suite asserts on it.
 """
 import importlib.util
+import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +47,26 @@ except Exception:
 LOCK_HINT = "in use by another process"
 
 _BARE_MARKERS = re.compile(r"unittest\.main|sys\.exit|__main__")
+
+# Coroutine sites the battery may produce on purpose: test_loop_guard compiles
+# a probe coroutine under this src/ path to check the guard's attribution.
+_LOOP_GUARD_ALLOWED = ("src/services/guard_probe.py:",)
+
+
+def loop_guard_sites(dump_dir: str) -> dict:
+    """{site: [suite, ...]} for statements that ran on the event loop from a
+    src/ coroutine, over every process that dumped into ``dump_dir``."""
+    out: dict = {}
+    for f in sorted(Path(dump_dir).glob("*.json")):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        suite = Path(d.get("argv", ["?"])[-1]).name
+        for s in d.get("sites", []):
+            if s.get("coroutine") and not s["site"].startswith(_LOOP_GUARD_ALLOWED):
+                out.setdefault(s["site"], []).append(suite)
+    return out
 
 
 def is_bare(path: Path) -> bool:
@@ -77,8 +104,10 @@ def main() -> int:
     # cp1252 Windows shell a suite printing an arrow or an accented title dies
     # in print() and reads as a test failure. Pin UTF-8 so the result does not
     # depend on which terminal launched it.
+    dump_dir = tempfile.mkdtemp(prefix="curatarr-loop-guard-")
     env = {**__import__("os").environ,
-           "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8"}
+           "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8",
+           "CURATARR_LOOP_GUARD_DUMP": dump_dir}
     failures, locked = [], []
     for f in files:
         cmd = ([sys.executable, __file__, "--bare", str(f)] if is_bare(f)
@@ -98,6 +127,14 @@ def main() -> int:
                 print(out[-2000:])
     print(f"\n{len(files) - len(failures)}/{len(files)} suites green"
           + (f" — FAILED: {', '.join(failures)}" if failures else ""))
+    on_loop = loop_guard_sites(dump_dir)
+    for site, suites in sorted(on_loop.items()):
+        print(f"FAIL  loop guard: database statement on the event loop at {site} "
+              f"(seen in {', '.join(sorted(set(suites))[:3])})")
+    if on_loop:
+        print(f"{len(on_loop)} event-loop database site(s): move them to "
+              "run_read/run_write/run_chroma or asyncio.to_thread")
+        failures.append("loop guard")
     if locked:
         # Worth saying plainly. Several suites open the vector store, which
         # admits one process at a time, so with the app running they all fail

@@ -16,9 +16,11 @@ asks ``music_service()`` instead:
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 
 def lidarr_configured() -> bool:
@@ -26,10 +28,21 @@ def lidarr_configured() -> bool:
 
 
 def plex_music_indexed() -> bool:
-    """True once the Plex music index holds at least one artist."""
+    """True once the Plex music index holds at least one artist.
+
+    A LIMIT 1 probe, not lyrics_coverage(): that ran full-table aggregates
+    over every track just to answer yes/no, on the scheduler's loop thread."""
     try:
-        from src.services.lyrics import lyrics_coverage
-        return (lyrics_coverage().get("artists_indexed") or 0) > 0
+        from src.services import lyrics
+        path = Path(lyrics.LYRICS_DB_PATH)
+        if not path.exists():
+            return False
+        con = sqlite_connect(str(path))
+        try:
+            return con.execute(
+                "SELECT 1 FROM plex_artists WHERE tracks > 0 LIMIT 1").fetchone() is not None
+        finally:
+            con.close()
     except Exception:
         return False
 

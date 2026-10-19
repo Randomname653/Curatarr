@@ -37,6 +37,7 @@ from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_opt
 
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
+from src.services.http_client import tls_context
 
 
 # Pass 99-fu2: prompt version tag for the two-tier cache split.
@@ -874,7 +875,7 @@ async def fetch_significance(
     try:
         # Wikipedia's API rejects generic / browser-spoofing User-Agents with a
         # 403 — it requires a descriptive UA that includes a contact/URL.
-        async with httpx.AsyncClient(timeout=20, headers={
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers={
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
@@ -988,7 +989,7 @@ async def fetch_significance(
     # without touching the template.
     prompt = _SIGNIFICANCE_PROMPT.format(title=title, extract=scrub_untrusted(extract))
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
             r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                 "model": SUMMARIZER_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
@@ -1049,7 +1050,7 @@ async def fetch_wikipedia_summary(
             "music": "band musician"}.get(media_type, "")
     query = f"{title} {hint}".strip()
     try:
-        async with httpx.AsyncClient(timeout=20, headers={
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers={
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
@@ -2439,7 +2440,7 @@ async def authoritative_tv_tmdb_id(tvdb_id, tmdb_id=None, *, cache=None):
     if hit:
         return (hit.get("response") or {}).get("tmdb_id") or tmdb_id
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             data = await _tmdb_get(client, f"/find/{tvdb}",
                                    {"external_source": "tvdb_id"})
     except Exception as e:
@@ -2480,7 +2481,7 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
     """
     endpoint = "movie" if media_type in ("movie", "radarr") else "tv"
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         details, credits, keywords, ext_ids = await asyncio.gather(
             _tmdb_get(client, f"/{endpoint}/{tmdb_id}", {"append_to_response": ""}),
             _tmdb_get(client, f"/{endpoint}/{tmdb_id}/credits"),
@@ -2637,7 +2638,7 @@ async def fetch_omdb_data(imdb_id: str) -> Optional[dict]:
         return None
     _ensure_concurrency_primitives()
     try:
-        async with _SEM_OMDB, httpx.AsyncClient(timeout=8) as client:   # Pass 99-fu3: cap 4 concurrent
+        async with _SEM_OMDB, httpx.AsyncClient(verify=tls_context(), timeout=8) as client:   # Pass 99-fu3: cap 4 concurrent
             r = await client.get("https://www.omdbapi.com/", params={
                 "apikey": omdb_key,
                 "i": imdb_id,
@@ -2746,7 +2747,7 @@ async def _fetch_mal_official(mal_id: int = None, title: str = None,
     same closeness check as Jikan's), then the detail record."""
     from src.services import mal_source
     _ensure_concurrency_primitives()
-    async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:
+    async with _SEM_JIKAN, httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         if not mal_id and title:
             found = await mal_source.search(client, title, _titles_close_enough,
                                             set(rejected or ()))
@@ -2777,7 +2778,7 @@ async def _fetch_jikan(mal_id: int = None, title: str = None,
     _ensure_concurrency_primitives()
     rejected = set(rejected or ())
     try:
-        async with _SEM_JIKAN, httpx.AsyncClient(timeout=10) as client:   # Pass 99-fu3: cap 2 concurrent
+        async with _SEM_JIKAN, httpx.AsyncClient(verify=tls_context(), timeout=10) as client:   # Pass 99-fu3: cap 2 concurrent
             if mal_id:
                 r = await client.get(f"https://api.jikan.moe/v4/anime/{mal_id}/full")
             elif title:
@@ -3094,7 +3095,7 @@ async def fetch_anilist_full(anilist_id: int) -> dict:
     """Fetch rich AniList data including tags, demographics, staff."""
     try:
         await _anilist_wait()
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.post(
                 "https://graphql.anilist.co",
                 json={"query": ANILIST_QUERY, "variables": {"id": anilist_id}},
@@ -3443,7 +3444,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
         )
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
             r = await client.post(
                 f"{settings.effective_ollama}/api/chat",
                 json={
@@ -3494,7 +3495,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                     f"{', '.join(_title_nums)}. Re-emit the JSON.]"
                 )
                 try:
-                    async with httpx.AsyncClient(timeout=120) as _c2:
+                    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as _c2:
                         _r2 = await _c2.post(
                             f"{settings.effective_ollama}/api/chat",
                             json={
@@ -4880,7 +4881,7 @@ async def search_anilist_by_title(title: str, year: Optional[int] = None,
     rejected = set(rejected or ())
     try:
         await _anilist_wait()
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.post(
                 "https://graphql.anilist.co",
                 json={"query": ANILIST_SEARCH_QUERY, "variables": {"search": title}},
@@ -4998,7 +4999,7 @@ async def anilist_candidates(title: str, limit: int = 6) -> list[dict]:
     owner is the matcher. Same search the resolver uses."""
     try:
         await _anilist_wait()
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             r = await client.post(
                 "https://graphql.anilist.co",
                 json={"query": ANILIST_SEARCH_QUERY, "variables": {"search": title}},
@@ -5046,7 +5047,7 @@ async def _tmdb_search_and_fetch(
         # TMDB uses different param names per endpoint
         params["year" if endpoint == "movie" else "first_air_date_year"] = year
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         r = await _tmdb_get(client, f"/search/{endpoint}", params)
     results = r.get("results", [])
 
@@ -5055,7 +5056,7 @@ async def _tmdb_search_and_fetch(
     if not results and year:
         logger.debug("TMDB search '%s' year=%d → 0 results, retrying without year",
                      title, year)
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await _tmdb_get(client, f"/search/{endpoint}", {"query": title})
         results = r.get("results", [])
 
@@ -5111,7 +5112,7 @@ async def _tmdb_fetch_by_external_id(imdb_id: str, media_type: str) -> Optional[
     if not settings.TMDB_API_KEY or not imdb_id:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await _tmdb_get(client, f"/find/{imdb_id}",
                                 {"external_source": "imdb_id"})
         results = (

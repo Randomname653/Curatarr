@@ -40,6 +40,7 @@ def _safe_print(*args, **kwargs) -> None:
         print(*safe, **kwargs)
 
 from src.paths import ENV_FILE
+from src.services.http_client import tls_context
 ENV_PATH = ENV_FILE
 
 
@@ -224,7 +225,7 @@ async def test_plex(url: str, token: str) -> dict:
     if (refused := await _refused_target("Plex", url)):
         return refused
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(f"{url.rstrip('/')}/identity", headers=headers)
         if r.status_code == 200:
             data = r.json().get("MediaContainer", {})
@@ -239,7 +240,7 @@ async def test_ollama(endpoint: str) -> dict:
     if (refused := await _refused_target("Ollama", endpoint)):
         return refused
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(f"{endpoint.rstrip('/')}/api/tags")
         if r.status_code == 200:
             models = [m["name"] for m in r.json().get("models", [])]
@@ -253,7 +254,7 @@ async def test_arr(url: str, api_key: str, service: str) -> dict:
     if (refused := await _refused_target(service.capitalize(), url)):
         return refused
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
             r = await client.get(
                 f"{url.rstrip('/')}/api/v3/system/status",
                 headers={"X-Api-Key": api_key},
@@ -269,7 +270,7 @@ async def test_arr(url: str, api_key: str, service: str) -> dict:
 
 async def test_tmdb(api_key: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
             r = await client.get(
                 "https://api.themoviedb.org/3/configuration",
                 params={"api_key": api_key},
@@ -285,7 +286,7 @@ async def test_spotify(client_id: str, client_secret: str) -> dict:
     import base64
     credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.post(
                 "https://accounts.spotify.com/api/token",
                 headers={
@@ -304,7 +305,7 @@ async def test_spotify(client_id: str, client_secret: str) -> dict:
 
 async def test_lastfm(api_key: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
             r = await client.get(
                 "https://ws.audioscrobbler.com/2.0/",
                 params={"method": "chart.getTopArtists", "api_key": api_key,
@@ -699,7 +700,7 @@ async def warmup_check(ollama_endpoint: str, model: str) -> dict:
     import time
     try:
         timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=timeout) as client:
             t0 = time.monotonic()
             # /api/chat with think off: the path every curator call takes.
             # /api/generate measured the 2026-10 gemma4:31b weights at 10.5
@@ -753,7 +754,7 @@ async def warmup_check(ollama_endpoint: str, model: str) -> dict:
 async def model_exists(ollama_endpoint: str, model_name: str) -> bool:
     """Return True if *model_name* is already present in the local Ollama registry."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(f"{ollama_endpoint.rstrip('/')}/api/tags")
         if r.status_code != 200:
             return False
@@ -786,7 +787,7 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
     _safe_print(f"  ⬇️  Pulling {model_name} …", flush=True)
     try:
         # No read-timeout — large models can take many minutes to download.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=None, write=30, pool=30)) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=httpx.Timeout(connect=30, read=None, write=30, pool=30)) as client:
             async with client.stream(
                 "POST",
                 f"{ollama_endpoint.rstrip('/')}/api/pull",
@@ -906,7 +907,7 @@ async def build_ollama_models(ollama_endpoint: str,
     async def create_model(name: str, base_model: str, system_prompt: str,
                            num_ctx: int = 8192) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=300) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=300) as client:
                 async with client.stream(
                     "POST",
                     f"{ollama_endpoint.rstrip('/')}/api/create",

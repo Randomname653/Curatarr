@@ -543,7 +543,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
 
     raw_output = ""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.post(
                 f"{_cfg.effective_ollama}/api/chat",
                 json={
@@ -1036,6 +1036,7 @@ from src.services.watch_status import (
     watched_lookup as _watched_lookup,
     watch_tag as _watch_tag,
 )
+from src.services.http_client import tls_context
 
 
 async def _get_rag_context(query: str, n_results: int = 5, domain: str = None,
@@ -1293,7 +1294,8 @@ async def get_starters(user: User = Depends(get_current_user)):
                 finally:
                     _starter_gen_running.discard(uid)
 
-            asyncio.create_task(_refill(user.id))
+            from src.services.bg_tasks import track_task
+            track_task(_refill(user.id), name="starters_refill")
     except Exception as _e:
         logger.warning("[starters] refill check failed: %s", _e)
     return {"starters": picks}
@@ -1939,7 +1941,8 @@ async def _build_discuss_context_block(
             proposal.title, proposal.category or "movie",
             tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,
             plex_rating_key=_doc_key)
-        verified_block = format_verified_block(verified_payload)
+        # run_read: a series' edition line is a main-DB lookup
+        verified_block = await run_read(format_verified_block, verified_payload)
         # The curator knows the title is in the library but not whether the USER
         # has actually SEEN it — the signal that separates "delete unwatched
         # clutter" from "they watched this, it earned its place". Surface it.
@@ -2181,7 +2184,7 @@ async def _build_discuss_context_block(
                 from src.services.media_enricher import (ensure_verified_data,
                                                          format_verified_block)
                 _svd = await ensure_verified_data(active_title, domain or "movie")
-                _vb = format_verified_block(_svd)
+                _vb = await run_read(format_verified_block, _svd)
                 if _vb:
                     block += "\n" + _vb + "\n"
             except Exception as _e:
@@ -2276,7 +2279,7 @@ async def _build_discuss_context_block(
                                                      format_verified_block)
             _vd_payload = await ensure_verified_data(
                 series, domain or "movie", tmdb_id=row.tmdb_id)
-            _vb = format_verified_block(_vd_payload)
+            _vb = await run_read(format_verified_block, _vd_payload)
             if _vb:
                 block += "\n" + _vb + "\n"
         except Exception as _e:
@@ -2430,7 +2433,8 @@ async def _build_discuss_context_block(
         # title but attached no data at all, so a rewatch discussion ran on
         # a bare name while the raw doc knew everything.
         if anchor_title and ttype != "track_obsession":
-            block += _verified_block_for(anchor_title, anchor_category)
+            block += await asyncio.to_thread(_verified_block_for,
+                                             anchor_title, anchor_category)
 
         # No resolvable entity → say so instead of improvising. The "whimsical
         # escapism" message had no anchor; asked "what exactly are we talking
@@ -2927,8 +2931,8 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         )
                         # reuse path carried only the thin live fetch — attach
                         # the full dossier from the warm cache too
-                        hidden_metadata_context += _verified_block_for(
-                            active_title, _dom, cached_data)
+                        hidden_metadata_context += await asyncio.to_thread(
+                            _verified_block_for, active_title, _dom, cached_data)
                     logger.debug("[chat] Reusing cached title for thread %s: %s",
                                  thread_id, active_title)
                     pre_stream_status.append(f"Reusing cached metadata for '{active_title}'")
@@ -3001,7 +3005,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         if verified_payload and verified_payload.get("title"):
                             try:
                                 from src.services.media_enricher import format_verified_block
-                                _fvb = format_verified_block(verified_payload)
+                                _fvb = await run_read(format_verified_block, verified_payload)
                                 if _fvb:
                                     hidden_metadata_context += "\n" + _fvb + "\n"
                             except Exception as _e:
@@ -3040,8 +3044,8 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                 hidden_metadata_context = _build_hidden_context(
                     active_title, cached_data, domain=cached_domain
                 )
-                hidden_metadata_context += _verified_block_for(
-                    active_title, cached_domain, cached_data)
+                hidden_metadata_context += await asyncio.to_thread(
+                    _verified_block_for, active_title, cached_domain, cached_data)
             else:
                 hidden_metadata_context = _build_no_metadata_anchor(active_title)
             logger.debug("[chat] Reusing cached context for thread %s: %s",
@@ -3483,7 +3487,7 @@ FORMATTING RULES:
                 # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
                 # the response can take 5-10 minutes. We'd rather wait it out
                 # than 504 the user mid-stream when their model has spilled.
-                async with httpx.AsyncClient(timeout=600) as client:
+                async with httpx.AsyncClient(verify=tls_context(), timeout=600) as client:
                     async with client.stream(
                         "POST",
                         f"{ollama_url}/api/chat",

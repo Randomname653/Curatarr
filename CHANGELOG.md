@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Fewer pauses from game checks, web requests and large imports.** The "is a game
+running?" check (`nvidia-smi` plus a scan of every process) ran before every AI request
+and for every enriched or judged title. It now answers from the last result, refreshed in
+the background every 30 seconds. Every web request also loaded the system's certificate
+list again (about 50 ms each); that now happens once at startup. Large Radarr, Sonarr and
+Lidarr libraries, the Spotify import, the anime database and the image cache are read
+and written off the thread that serves pages. The test run now fails if any code makes
+that thread wait on the database.
+
 **Searches and enrichment no longer pause the server.** Vector-store calls (search,
 recommendations, the facet index, every enriched title's write, the embedding
 migration) now run on their own thread instead of the one that serves every page. The

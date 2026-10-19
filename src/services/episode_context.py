@@ -12,6 +12,7 @@ discography line.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -21,6 +22,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -31,22 +33,57 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower().translate(_DASHES)).strip()
 
 
+# (stamp, {normalized title: series id}) for the arr_library:sonarr row the
+# index was built from. Built in a worker thread and swapped in whole, never
+# mutated, so concurrent lookups only ever see a complete index.
+_SERIES_ID_MEMO: tuple = (None, {})
+
+
+def _sonarr_row_stamp(mc) -> Optional[tuple]:
+    """Identity of the live arr_library:sonarr row (the one get_cache would
+    serve: versioned first, then v1) without decoding it. Every rewrite —
+    set_cache and patch_cache alike — moves expires_at."""
+    from datetime import datetime
+    from src.cache.metadata_cache import _CACHE_VERSION
+    key = "arr_library:sonarr"
+    versioned = f"{_CACHE_VERSION}:{key}"
+    rows = {r[0]: r for r in mc.conn.execute(
+        "SELECT cache_key, expires_at, length(response) FROM api_cache "
+        "WHERE cache_key IN (?, ?) AND expires_at > ?",
+        (versioned, key, datetime.now().isoformat())).fetchall()}
+    row = rows.get(versioned) or rows.get(key)
+    return (str(mc.cache_path),) + tuple(row) if row else None
+
+
 def _sonarr_series_id(series_title: str) -> Optional[int]:
-    """Resolve via the warm arr_library cache — no Sonarr round-trip."""
+    """Resolve via the warm arr_library cache — no Sonarr round-trip.
+    Sync (cache file reads + a full blob decode on a miss): async callers run
+    it in a thread. The title index is memoized on the row's stamp, so the
+    per-judged-show repeats skip the decode and the normalize-every-title
+    pass."""
+    global _SERIES_ID_MEMO
     try:
         from src.cache.metadata_cache import MetadataCache
         mc = MetadataCache()
         try:
-            hit = mc.get_cache("arr_library:sonarr")
+            stamp = _sonarr_row_stamp(mc)
+            if stamp is None:
+                return None
+            memo_stamp, index = _SERIES_ID_MEMO
+            if memo_stamp != stamp:
+                hit = mc.get_cache("arr_library:sonarr")
+                resp = (hit or {}).get("response")
+                rows = (resp if isinstance(resp, list)
+                        else (resp or {}).get("items_raw") or [])
+                index = {}
+                for it in rows:
+                    if isinstance(it, dict):
+                        # first match wins, as the old linear scan did
+                        index.setdefault(_norm(it.get("title")), it.get("id"))
+                _SERIES_ID_MEMO = (stamp, index)
         finally:
             mc.close()
-        resp = (hit or {}).get("response")
-        rows = (resp if isinstance(resp, list)
-                else (resp or {}).get("items_raw") or [])
-        want = _norm(series_title)
-        for it in rows:
-            if isinstance(it, dict) and _norm(it.get("title")) == want:
-                return it.get("id")
+        return index.get(_norm(series_title))
     except Exception as e:
         logger.warning("[episode-ctx] series id lookup failed: %s", e)
     return None
@@ -58,11 +95,11 @@ async def _fetch_episodes(series_title: str) -> Optional[list]:
     key = settings.SONARR_API_KEY
     if not base or not key:
         return None
-    sid = _sonarr_series_id(series_title)
+    sid = await asyncio.to_thread(_sonarr_series_id, series_title)
     if not sid:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
             r = await client.get(f"{base}/api/v3/episode",
                                  params={"seriesId": sid, "apikey": key})
         return r.json() if r.status_code == 200 else None

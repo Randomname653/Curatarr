@@ -39,6 +39,7 @@ UA = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 STYLES_DB_PATH = _REPO_ROOT / "data" / "cache" / "discogs_styles.db"
 MAX_AGE_DAYS = 30
 
@@ -319,7 +320,7 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
             buf = buf[-(4 << 20):]
         return None
 
-    async with httpx.AsyncClient(timeout=120, headers=UA,
+    async with httpx.AsyncClient(verify=tls_context(), timeout=120, headers=UA,
                                  follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
             if resp.status_code != 200:

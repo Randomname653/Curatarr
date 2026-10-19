@@ -1137,7 +1137,9 @@ async def compute_taste_vector_for_user(
         # Preferred source: the item's STORED index vector (eval 1.3 —
         # one representation for index and taste; also makes the
         # post-migration rebuild a cheap lookup instead of a re-embed).
-        doc_vec = _chroma_item_vector(entry, profile)
+        # On the Chroma thread: up to four get_by_id lookups per entry.
+        from src.vector_store.chromadb_wrapper import run_chroma
+        doc_vec = await run_chroma(_chroma_item_vector, entry, profile)
         if doc_vec is not None:
             return doc_vec, weight, _t
 

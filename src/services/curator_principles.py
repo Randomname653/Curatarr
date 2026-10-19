@@ -45,6 +45,7 @@ from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import CuratorPrinciple
 from src.services.llm_utils import parse_llm_json
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ async def _curator_json(system: str, user: str, schema: dict,
                     "repeat_penalty": 1.0,
                     "num_ctx": CURATOR_NUM_CTX, **curator_gpu()},
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
         r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
     r.raise_for_status()
     return parse_llm_json((r.json().get("message") or {}).get("content", "") or "")

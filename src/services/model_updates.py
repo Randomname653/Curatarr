@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 import httpx
 
 from src.database.runner import run_read, run_write
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def _now() -> str:
 async def running_weights(endpoint: str, model: str) -> str | None:
     """sha256 of the weights a model (or bake) actually loads, or None."""
     try:
-        async with httpx.AsyncClient(timeout=20) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20) as c:
             r = await c.post(f"{endpoint}/api/show", json={"model": model})
         if r.status_code != 200:
             return None
@@ -94,7 +95,7 @@ async def registry_weights(ref: str) -> str | None:
         return None
     ns, name, tag = coords
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20, follow_redirects=True) as c:
             r = await c.get(f"{REGISTRY}/v2/{ns}/{name}/manifests/{tag}", headers={
                 "Accept": "application/vnd.docker.distribution.manifest.v2+json"})
         if r.status_code != 200:
@@ -194,7 +195,7 @@ async def disk_room(endpoint: str, base: str) -> tuple[bool, str]:
     if coords:
         ns, name, tag = coords
         try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=20, follow_redirects=True) as c:
                 r = await c.get(f"{REGISTRY}/v2/{ns}/{name}/manifests/{tag}", headers={
                     "Accept": "application/vnd.docker.distribution.manifest.v2+json"})
             if r.status_code != 200:
@@ -224,7 +225,7 @@ def pin_name(base: str, digest: str) -> str:
 
 
 async def _ollama(endpoint: str, method: str, path: str, **kw) -> httpx.Response:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=httpx.Timeout(30, read=600)) as c:
         return await c.request(method, f"{endpoint}{path}", **kw)
 
 

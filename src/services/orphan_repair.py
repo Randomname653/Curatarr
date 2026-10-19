@@ -17,6 +17,7 @@ from src.config import settings
 from src.database.connection import get_db_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ async def detect_orphaned_sections() -> list:
 
     known_keys = await run_read(_known_keys)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
         r = await client.get(
             f"{plex_url}/status/sessions/history/all",
             headers=headers,
@@ -122,7 +123,7 @@ async def apply_orphan_mapping(mappings: list) -> dict:
 
     # Now fetch history for each section from session history
     # (session history has librarySectionID per entry)
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         r = await client.get(
             f"{plex_url}/status/sessions/history/all",
             headers=headers,

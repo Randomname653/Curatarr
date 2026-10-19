@@ -42,6 +42,7 @@ WIKI_HEADERS = {"User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/cu
 # cheap and lets a correction upstream reach the evidence within it.
 _NOTE_CACHE_DAYS = 365   # NONE results cache too
 from src.services.llm_utils import UNTRUSTED_RULE, fence_untrusted  # noqa: E402
+from src.services.http_client import tls_context
 
 _CONDENSE_SYS = (
     "You write a one-line STUDIO NOTE for a media curator's evidence file. "
@@ -101,7 +102,7 @@ async def _wiki_studio_lead(studio: str) -> str:
     Animation' and 'Felix Film' -> 'Felix the Cat' were exactly this trap)."""
     want = _norm(studio)
     answered = False
-    async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers=WIKI_HEADERS) as client:
         for query in (studio, f"{studio} animation studio"):
             try:
                 sr = await client.get(WIKI_API, params={
@@ -136,7 +137,7 @@ async def _condense(studio: str, extract: str,
         if not model:
             continue
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
                 r = await client.post(f"{settings.effective_ollama}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system",
@@ -178,7 +179,7 @@ async def _wiki_person_lead(name: str) -> str:
     contain the name, lead must read like a film person)."""
     want = _norm(name)
     answered = False
-    async with httpx.AsyncClient(timeout=20, headers=WIKI_HEADERS) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers=WIKI_HEADERS) as client:
         for query in (name, f"{name} film director"):
             try:
                 sr = await client.get(WIKI_API, params={

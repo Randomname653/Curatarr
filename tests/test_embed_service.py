@@ -102,7 +102,7 @@ check("deprecated /api/embeddings endpoint gone from all callsites",
 
 te = (root / "src/services/taste_engine.py").read_text(encoding="utf-8")
 check("taste rebuild prefers the stored index vector (template unification)",
-      "_chroma_item_vector(entry, profile)" in te)
+      "run_chroma(_chroma_item_vector, entry, profile)" in te)
 check("embed cache is model-scoped (flip can't serve old-space vectors)",
       'f"emb:{_emb_model}:{pid}"' in te)
 check("skip_summaries rebuild path exists",

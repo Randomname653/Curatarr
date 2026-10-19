@@ -37,6 +37,7 @@ from src.cache.metadata_cache import MetadataCache, write_fields
 
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
+from src.services.http_client import tls_context
 
 SPARQL_URL = "https://query.wikidata.org/sparql"
 USER_AGENT = "Curatarr/1.0 (https://github.com/Randomname653/Curatarr)"
@@ -106,7 +107,7 @@ async def resolve_enwiki_article(imdb_id: str, *,
     if not digits.strip("0"):
         return ""
     try:
-        async with httpx.AsyncClient(
+        async with httpx.AsyncClient(verify=tls_context(), 
                 timeout=timeout, headers={"User-Agent": USER_AGENT}) as client:
             r = await client.get(WD_API, params={
                 "action": "query", "list": "search",
@@ -160,7 +161,7 @@ async def fetch_wikidata_facts(imdb_id: str, *, timeout: float = 25.0) -> Option
         return {}
     url = f"{SPARQL_URL}?format=json&query={urllib.parse.quote(_QUERY % imdb_id)}"
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=timeout) as client:
             r = await client.get(url, headers={"User-Agent": USER_AGENT,
                                                "Accept": "application/json"})
         if r.status_code != 200:

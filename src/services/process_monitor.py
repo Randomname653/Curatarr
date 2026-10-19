@@ -20,6 +20,7 @@ from typing import Optional
 import psutil
 
 from src.config import settings
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -214,15 +215,29 @@ def _ollama_loaded_models() -> "list | None":
         return None
 
 
+def _on_loop() -> bool:
+    """True on a thread that is running an asyncio loop. The probes below
+    take nvidia-smi (up to its 4 s timeout), an HTTP call to Ollama and a
+    walk over every process: on the loop thread they froze every request,
+    and every LLM call asks (ollama_options -> llm_lane). There they answer
+    from the last verdict instead; the game watcher probes on a worker
+    every 30 s (scheduler.job_game_watcher)."""
+    import asyncio
+    return asyncio._get_running_loop() is not None
+
+
 def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
     """True when the GPU has been saturated for _GPU_HOLD_S by something that
-    is not Ollama. ``smi`` / ``ps`` are injectable for tests."""
+    is not Ollama. ``smi`` / ``ps`` are injectable for tests. On the event
+    loop: the last verdict, never a probe (see _on_loop)."""
     import time
     global _gpu_unavailable_until
     if not getattr(settings, "GPU_PRESSURE_GATE", True):
         return False
     now = time.time() if now is None else now
     injected = smi is not None or ps is not None
+    if not injected and _on_loop():
+        return _gpu_cache["busy"]
     if not injected and now - _gpu_cache["at"] < _GPU_CACHE_S:
         return _gpu_cache["busy"]
     if not injected and now < _gpu_unavailable_until:
@@ -271,11 +286,23 @@ def gpu_pressure_reason() -> str:
     return str(_gpu_cache.get("reason") or "")
 
 
+_last_game = {"running": False}
+
+
 def game_process_running() -> bool:
     """A known game or launcher process is running. Split out of
     is_game_running so the LLM lane can tell the two causes apart: a game
     owns the whole box (the CPU lane stays off), a GPU-hungry batch job
-    owns only the card (summariser work moves to the processor)."""
+    owns only the card (summariser work moves to the processor). On the
+    event loop: the last verdict, never a process walk (see _on_loop)."""
+    if _on_loop():
+        return _last_game["running"]
+    running = _probe_game_process()
+    _last_game["running"] = running
+    return running
+
+
+def _probe_game_process() -> bool:
     import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
@@ -344,8 +371,12 @@ def game_process_running() -> bool:
 
 def is_game_running() -> bool:
     """Return True when a known game or game-launcher signal is detected, or
-    when something other than Ollama has been holding the GPU."""
-    return gpu_pressure() or game_process_running()
+    when something other than Ollama has been holding the GPU. Off the loop
+    both probes run (no short circuit), so the verdicts the loop reads stay
+    fresh for each cause."""
+    pressed = gpu_pressure()
+    game = game_process_running()
+    return pressed or game
 
 
 async def unload_llm_models() -> list[str]:
@@ -378,7 +409,7 @@ async def unload_llm_models() -> list[str]:
         (settings.PITCHER_MODEL or "").strip(),  # two-bake split (empty = off)
     ) if m]
     unloaded: list[str] = []
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
         # Which of our models are currently loaded?
         probe_ok = False
         resident: set[str] = set()

@@ -49,6 +49,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
 from src.database.runner import run_read, run_write  # noqa: E402
+from src.services.http_client import tls_context
 
 # Bump when a formula below changes, so stamped rows re-offer themselves.
 METRICS_VERSION = "1"
@@ -776,7 +777,7 @@ async def fetch_opensubtitles(imdb_id: str, languages: str = "en,de",
         return ""
     head = {"Api-Key": api_key, "User-Agent": _OS_UA}
     try:
-        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=25.0, follow_redirects=True) as c:
             jwt = await _os_login(c, api_key, user, pw)
             if jwt:
                 head["Authorization"] = "Bearer " + jwt
@@ -892,7 +893,7 @@ async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
     duration_min = 0.0
     episode_ref = None          # (season, episode) when we measured an episode
     try:
-        async with httpx.AsyncClient(timeout=20.0) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20.0) as c:
             r = await c.get(base + "/library/metadata/" + str(plex_rating_key),
                             headers=headers)
             if r.status_code == 404:

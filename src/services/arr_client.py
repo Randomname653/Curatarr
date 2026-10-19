@@ -6,7 +6,9 @@ Provides unified async interface with rate limiting, caching, and error handling
 
 import asyncio
 import email.utils
+import json
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -56,6 +58,19 @@ def listing_timeout() -> float:
         return float(getattr(settings, "ARR_LISTING_TIMEOUT_S", 240) or 240)
     except Exception:  # noqa: BLE001
         return 240.0
+
+
+# aiohttp's own test for ``resp.json()`` (client_reqrep.json_re).
+_JSON_CTYPE = re.compile(r"^application/(?:[\w.+-]+?\+)?json")
+
+
+def _decode_json_body(body: bytes, encoding: str) -> Any:
+    """``resp.json()``'s decode step, for a worker thread: a full library
+    listing is 15-30 MB of JSON, ~0.3-1 s of parsing that froze the loop."""
+    stripped = body.strip()
+    if not stripped:
+        return None
+    return json.loads(stripped.decode(encoding))
 
 
 def retry_after_s(header: Optional[str], default: float = 60.0,
@@ -164,6 +179,7 @@ class MediaService(ABC):
         params: Optional[Dict] = None,
         timeout: float = 30.0,
         max_timeout_retries: int = 1,
+        parse_in_thread: bool = False,
     ) -> Dict:
         """Execute API request with rate limiting and caching.
 
@@ -189,6 +205,10 @@ class MediaService(ABC):
         messages or error strings (e.g. Tautulli's apikey query param).
         aiohttp serialises them onto the URL at request time, but ``endpoint``
         — which is what we log — stays clean.
+
+        ``parse_in_thread`` is for the full library listings: the body is
+        read on the loop and decoded in a worker thread (same content-type
+        check and errors as ``resp.json()``).
         """
 
         # Check cache
@@ -245,7 +265,19 @@ class MediaService(ABC):
                         error_text = await resp.text()
                         raise Exception(f"API error {resp.status}: {error_text}")
                     else:
-                        result = await resp.json()
+                        if parse_in_thread:
+                            body = await resp.read()
+                            ctype = resp.headers.get("Content-Type", "").lower()
+                            if not _JSON_CTYPE.match(ctype):
+                                raise aiohttp.ContentTypeError(
+                                    resp.request_info, resp.history, status=resp.status,
+                                    message=("Attempt to decode JSON with unexpected "
+                                             "mimetype: %s" % ctype),
+                                    headers=resp.headers)
+                            result = await asyncio.to_thread(
+                                _decode_json_body, body, resp.get_encoding())
+                        else:
+                            result = await resp.json()
 
                         if use_cache and cache_key:
                             self._cache_set(cache_key, result)
@@ -427,6 +459,7 @@ class RadarrClient(MediaService):
             # once costs the arr the same full scan again.
             timeout=listing_timeout(),
             max_timeout_retries=0,
+            parse_in_thread=True,
         )
         return result
 
@@ -549,6 +582,7 @@ class SonarrClient(MediaService):
             # once costs the arr the same full scan again.
             timeout=listing_timeout(),
             max_timeout_retries=0,
+            parse_in_thread=True,
         )
         return result
 
@@ -715,6 +749,7 @@ class LidarrClient(MediaService):
             # once costs the arr the same full scan again.
             timeout=listing_timeout(),
             max_timeout_retries=0,
+            parse_in_thread=True,
         )
         return result
 

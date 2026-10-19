@@ -46,6 +46,7 @@ Blu-ray/DVD source).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
@@ -225,7 +226,9 @@ async def sync_editions(client, *, budget: Optional[int] = None, now: Optional[d
             continue
         row = classify_files(files)
         cat = _category(s)
-        flags = anidb_flags(s.get("title") or "", s.get("year"), lookup=lookup) if cat == "anime" else dict(_NO_FLAGS)
+        # The snapshot lookup opens and queries a SQLite file: a thread, not the loop.
+        flags = (await asyncio.to_thread(anidb_flags, s.get("title") or "", s.get("year"), lookup=lookup)
+                 if cat == "anime" else dict(_NO_FLAGS))
         def _upsert(s=s, sid=sid, row=row, cat=cat, flags=flags):
             with get_db_session() as db:
                 ed = db.query(SeriesEdition).filter(SeriesEdition.service == "sonarr", SeriesEdition.arr_id == sid).first()

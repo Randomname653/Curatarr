@@ -35,6 +35,7 @@ from src.database.connection import get_db_session, write_session
 from src.database.models import LibraryConfig, WatchHistoryEntry
 from src.database.runner import run_read, run_write
 from src.services.enrichment_state import TRANSIENT
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,27 @@ def _normalize(s: str) -> str:
     s = unicodedata.normalize("NFKD", s)
     s = _PUNCT_RE.sub("", s)
     return " ".join(s.lower().split())
+
+
+def _index_tracks(resp, sec_key, plex_index: dict) -> None:
+    """Parse one section's all-tracks answer and add it to ``plex_index``.
+    Runs in a worker thread: the unpaginated listing measured 64 MB / 1.6 s
+    to parse plus ~0.8 s of normalising at 50k tracks, all of which froze the
+    loop. The caller awaits it, so nothing else touches the dict meanwhile."""
+    items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
+    logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
+
+    for item in items:
+        # originalTitle = track artist (differs from album artist for features)
+        artist = item.get("originalTitle") or item.get("grandparentTitle", "")
+        title  = item.get("title", "")
+        key    = (_normalize(artist), _normalize(title))
+        if key[0] and key[1]:
+            genres = [g["tag"] for g in (item.get("Genre") or [])]
+            plex_index[key] = {
+                "rating_key": str(item["ratingKey"]),
+                "genres":     genres,
+            }
 
 
 def _stop_requested() -> bool:
@@ -179,7 +201,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     # Key: (norm_artist, norm_title) → {"rating_key": str, "genres": list[str]}
     plex_index: dict[tuple, dict] = {}
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
         for sec_key in music_sections:
             if await run_read(_stop_requested):
                 break
@@ -194,20 +216,7 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                                    sec_key, resp.status_code)
                     continue
 
-                items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
-                logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
-
-                for item in items:
-                    # originalTitle = track artist (differs from album artist for features)
-                    artist = item.get("originalTitle") or item.get("grandparentTitle", "")
-                    title  = item.get("title", "")
-                    key    = (_normalize(artist), _normalize(title))
-                    if key[0] and key[1]:
-                        genres = [g["tag"] for g in (item.get("Genre") or [])]
-                        plex_index[key] = {
-                            "rating_key": str(item["ratingKey"]),
-                            "genres":     genres,
-                        }
+                await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
             except Exception as exc:
                 logger.error("[music_matcher] Failed to fetch section %s: %s", sec_key, exc)
 
@@ -751,7 +760,7 @@ async def enrich_music_genres_lastfm(
 
     iterations_done = 0
     transient_streak = 0
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
         for i, (norm_key, (artist, title, _ids)) in enumerate(unique_tracks):
             # An outage is not "Last.fm has no tags": tracks it could not
             # answer for stay NULL (retried), and five in a row end the batch.

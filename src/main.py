@@ -82,6 +82,10 @@ async def lifespan(app: FastAPI):
     # recommendations_engine; a corrupt store still stops the start loudly.
     from src.vector_store.chromadb_wrapper import get_chroma_db
     get_chroma_db()
+    # The TLS context every HTTP client shares (src/services/http_client.py):
+    # loading the CA bundle is ~50 ms of CPU, paid here instead of by a request.
+    from src.services.http_client import tls_context
+    tls_context()
 
     from src.services.scheduler import start_scheduler
     start_scheduler()
@@ -124,7 +128,7 @@ async def lifespan(app: FastAPI):
     # probe that fails counts as a game until the watcher knows better.
     try:
         from src.services.process_monitor import is_game_running as _igr
-        _game = _igr()
+        _game = await asyncio.to_thread(_igr)    # a real probe: on the loop it is cache-only
     except Exception as e:
         logger.warning("Boot: game probe failed - assuming a game until the "
                        "watcher's first tick: %s", e)
@@ -302,8 +306,10 @@ async def _startup_sync_if_needed():
     # curator model and can OOM the GPU mid-game. The next scheduled sync (or
     # the one after the game exits) covers it.
     try:
-        from src.services.process_monitor import is_game_running
-        if is_game_running():
+        from src.services import process_monitor
+        # On a worker: on the loop is_game_running answers from the probe
+        # cache, which 6 s after boot may not have been filled yet.
+        if await asyncio.to_thread(process_monitor.is_game_running):
             logger.info("[startup] Game running — skipping startup sync")
             return
     except Exception as e:
@@ -471,10 +477,12 @@ def system_notifications_route(user=Depends(get_current_user)):
 
 
 @app.get("/api/system/dependencies", dependencies=_ADMIN_ONLY)
-async def system_dependencies():
+def system_dependencies():
     """Pinned requirements vs. the interpreter that serves this request —
     the report the lifespan logged, for Settings → Maintenance. Read-only:
-    installing is the launchers' job, before the first import."""
+    installing is the launchers' job, before the first import. A plain def:
+    both checks read files and walk importlib.metadata (~1 s cold), so they
+    run in the threadpool, off the loop."""
     from src.deps_check import check
     from src.deps_lock import check as lock_check
     out = check().as_dict()
@@ -524,7 +532,10 @@ async def shutdown_server():
             path = request_dev_server_stop()
             logger.info("Shutdown requested from the web UI — SIGINT via %s.", path)
 
-    asyncio.create_task(_raise_sigint())
+    # Tracked: the loop holds tasks weakly, and a collected one meant the
+    # "Shut down" button silently did nothing.
+    from src.services.bg_tasks import track_task
+    track_task(_raise_sigint(), name="ui_shutdown")
     return {"status": "shutting_down"}
 
 

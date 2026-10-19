@@ -287,7 +287,8 @@ async def library_configure(
     cfg[f"{req.service}_api_key"] = req.api_key
 
     try:
-        write_env(cfg)
+        # write_env runs icacls twice on Windows: a subprocess, off the loop.
+        await asyncio.to_thread(write_env, cfg)
     except ValueError as e:   # a value .env must not hold (line break, mask)
         raise HTTPException(status_code=400, detail=str(e))
     # Live-reload the in-process settings so the next request sees the
@@ -544,6 +545,7 @@ _LOOKUP_WARNED: list = []
 # the freshness check survives process restarts (monotonic resets at
 # start-of-process and would mark every reloaded entry as 0s old).
 import time
+from src.services.http_client import tls_context
 
 _LIB_CACHE: dict[str, dict] = {}
 _LIB_CACHE_TTL = 900       # 15 min freshness window (after which we re-fetch)
@@ -1760,7 +1762,7 @@ async def library_breakdown(
         }
         # Section metadata (scanned_at + verify keys still exist) — single call
         try:
-            async with _httpx.AsyncClient(timeout=15) as client:
+            async with _httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
                 meta_resp = await client.get(f"{plex_url}/library/sections", headers=headers)
                 if meta_resp.status_code == 200:
                     for sec in (meta_resp.json()
@@ -1984,6 +1986,8 @@ async def library_breakdown(
         except Exception:
             return 0
 
+    _vector_counts: dict = {}   # svc -> count, filled on first need
+
     # ── 6. Assemble per-library response ────────────────────────────────────
     arr_for_category = {
         "movie": "radarr",
@@ -2117,7 +2121,12 @@ async def library_breakdown(
             "per-category, accurate (show vs anime stay split)."
         )
         if vector_indexed == 0 and svc:
-            chroma_n = _vector_count(svc)
+            # count_by_id_prefix fetches every id in the collection: Chroma
+            # thread, once per service.
+            if svc not in _vector_counts:
+                from src.vector_store.chromadb_wrapper import run_chroma
+                _vector_counts[svc] = await run_chroma(_vector_count, svc)
+            chroma_n = _vector_counts[svc]
             if chroma_n:
                 vector_indexed = chroma_n
                 vector_basis = (

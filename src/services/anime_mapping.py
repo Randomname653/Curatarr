@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 ANIME_LIST_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list-master.xml"
 from src.paths import DATA_DIR
 from src.database.loop_guard import sqlite_connect
+from src.services.http_client import tls_context
 MAPPING_DB_PATH = DATA_DIR / "cache" / "anime_mapping.db"
 MAX_AGE_DAYS = 7  # re-download weekly
 
@@ -121,7 +122,7 @@ async def _load_or_download() -> AnimeMapping:
     # Download fresh
     logger.info("Downloading anime-lists mapping from GitHub...")
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.get(ANIME_LIST_URL)
         if r.status_code != 200:
             logger.warning("Failed to download anime-lists: HTTP %s", r.status_code)

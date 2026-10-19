@@ -34,6 +34,7 @@ import httpx
 
 from src.config import settings
 from src.services.enrichment_state import log_topup_failure
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ async def _get(path: str, params: dict = None) -> Optional[dict]:
     if not _configured():
         return None
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
             r = await c.get(_base() + path, headers=_headers(), params=params)
         if r.status_code == 404:
             logger.debug("[soulsync] %s -> HTTP 404", path)
@@ -162,7 +163,7 @@ async def list_artists_page(page: int = 1, limit: int = 100) -> Optional[dict]:
     if not _configured():
         return None
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
             r = await c.get(_base() + "/library/artists", headers=_headers(),
                             params={"page": page, "limit": limit})
         if r.status_code != 200:
@@ -272,7 +273,7 @@ async def liked_song_artists(max_pages: int = 25) -> Optional[list[str]]:
         return None
     names: list[str] = []
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
             for page in range(1, max_pages + 1):
                 r = await c.get(_base() + "/wishlist", headers=_headers(),
                                 params={"page": page, "limit": 200})
@@ -334,7 +335,7 @@ async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
     if client is None and not writes_allowed():
         return {"ok": False, "id": None, "error": "SoulSync writes are off here", "skipped": True}
     own = client is None
-    c = client or httpx.AsyncClient(timeout=_BAN_TIMEOUT)
+    c = client or httpx.AsyncClient(verify=tls_context(), timeout=_BAN_TIMEOUT)
     try:
         banned, status = await _banned_artist_id(c, name)
         if status != 200:

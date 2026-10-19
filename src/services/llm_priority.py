@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
+from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +155,7 @@ async def loaded_models() -> Optional[list[dict]]:
     from src.config import settings
     err = None
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
             r = await client.get(f"{settings.effective_ollama}/api/ps")
         if r.status_code == 200:
             _ps_failing = False
@@ -190,7 +191,7 @@ async def _evict_model(model_name: str, timeout: float = 8.0) -> bool:
     """
     from src.config import settings
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             await client.post(
                 f"{settings.effective_ollama}/api/generate",
                 json={"model": model_name, "keep_alive": 0},
@@ -420,7 +421,7 @@ async def resolve_pitcher_model() -> str:
     if not pitcher:
         return fallback
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
             r = await client.get(f"{settings.effective_ollama}/api/tags")
         if r.status_code == 200:
             names = [m.get("name", "") or m.get("model", "")
