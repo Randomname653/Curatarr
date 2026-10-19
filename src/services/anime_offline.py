@@ -36,6 +36,7 @@ DUMP_URL = ("https://github.com/manami-project/anime-offline-database"
             "/releases/latest/download/anime-offline-database-minified.json")
 # repo-root-anchored — background/standalone runners don't share the app CWD
 from src.paths import ROOT as _REPO_ROOT
+from src.database.loop_guard import sqlite_connect
 OFFLINE_DB_PATH = _REPO_ROOT / "data" / "cache" / "anime_offline.db"
 MAX_AGE_DAYS = 7
 
@@ -70,7 +71,7 @@ def _fresh() -> bool:
     if age >= timedelta(days=MAX_AGE_DAYS):
         return False
     try:
-        con = sqlite3.connect(OFFLINE_DB_PATH)
+        con = sqlite_connect(OFFLINE_DB_PATH)
         n = con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0]
         con.close()
         return n > 10000
@@ -116,7 +117,7 @@ def _usable() -> bool:
     if not OFFLINE_DB_PATH.exists():
         return False
     try:
-        con = sqlite3.connect(OFFLINE_DB_PATH)
+        con = sqlite_connect(OFFLINE_DB_PATH)
         try:
             return con.execute("SELECT COUNT(*) FROM offline_anime").fetchone()[0] > 0
         finally:
@@ -133,7 +134,7 @@ def _rebuild(entries: list[dict]) -> None:
     still reported the DB usable. Now the old tables survive any failure.
     """
     OFFLINE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(OFFLINE_DB_PATH, isolation_level=None)
+    con = sqlite_connect(OFFLINE_DB_PATH, isolation_level=None)
     try:
         cur = con.cursor()
         cur.execute("BEGIN")
@@ -195,7 +196,7 @@ def lookup(*, anilist_id=None, mal_id=None, anidb_id=None,
             raise FileNotFoundError(f"offline snapshot missing: {OFFLINE_DB_PATH}")
         return None
     try:
-        con = sqlite3.connect(OFFLINE_DB_PATH)
+        con = sqlite_connect(OFFLINE_DB_PATH)
         con.row_factory = sqlite3.Row
         row = None
         for col, val in (("anilist", anilist_id), ("mal", mal_id)):

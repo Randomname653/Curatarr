@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 from src.database.connection import get_db_session
 from src.database.models import AppState
+from src.database.loop_guard import sqlite_connect
 
 
 def get_state(key: str) -> Optional[str]:
@@ -238,7 +239,7 @@ def force_set_state(key: str, value: str, timeout_s: int = 120) -> bool:
     # ("C:/…") only worked by accident.
     db_path = engine.url.database
     try:
-        conn = sqlite3.connect(db_path, timeout=timeout_s, isolation_level=None)
+        conn = sqlite_connect(db_path, timeout=timeout_s, isolation_level=None)
         try:
             conn.execute(
                 """

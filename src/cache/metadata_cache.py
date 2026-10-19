@@ -14,6 +14,7 @@ from pathlib import Path
 import logging
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def _open(path: Path) -> sqlite3.Connection:
     # surfaced as "database is locked" on every collision, because the
     # default busy_timeout is 0 ("fail immediately"). Match the pragma profile
     # the main DB uses in src/database/connection.py.
-    conn = sqlite3.connect(
+    conn = sqlite_connect(
         path,
         check_same_thread=False,
         timeout=60.0,   # python-side wait when SQLite reports BUSY

@@ -14,6 +14,7 @@ itself is resolved without the full library list (find_lidarr_artist).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import Counter
 from typing import Optional
@@ -127,7 +128,9 @@ async def discography_summary(artist_mbid: str = None,
     if not (artist_mbid or artist_name):
         return None
     if not base or not key:
-        return plex_discography_summary(artist_mbid=artist_mbid, artist_name=artist_name)
+        # plex_music.db, read on a worker thread
+        return await asyncio.to_thread(plex_discography_summary,
+                                       artist_mbid=artist_mbid, artist_name=artist_name)
     try:
         # The artist comes from the cached library or a one-artist query: the
         # full /artist list (15-30 MB, ~2 min on a big Lidarr) per chat turn

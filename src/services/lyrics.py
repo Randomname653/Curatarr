@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ FetchText = Callable[[str], Awaitable[Optional[bytes]]]     # stream key -> byte
 def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
     p = Path(db_path or LYRICS_DB_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(p), timeout=30)
+    con = sqlite_connect(str(p), timeout=30)
     con.row_factory = sqlite3.Row
     try:
         con.execute("PRAGMA journal_mode=WAL")
@@ -209,6 +210,92 @@ def _index_artists(con, artists: list, stamp: str, complete: bool) -> int:
     return con.execute("SELECT COUNT(*) FROM plex_artists").fetchone()[0]
 
 
+def _upsert_section(db_path, items: list, stamp: str, retry_before: str) -> tuple:
+    """Upsert one section's listing; (tracks seen, [(key, stream, fmt)] to fetch).
+    Runs on a worker thread with its own connection, committed on return."""
+    con = _connect(db_path)
+    try:
+        seen = 0
+        to_fetch = []
+        for it in items:
+            key = str(it.get("ratingKey") or "")
+            if not key:
+                continue
+            seen += 1
+            skey, fmt = _lyric_stream(it)
+            row = con.execute("SELECT stream_key, text, failed_at FROM track_lyrics WHERE plex_rating_key=?",
+                              (key,)).fetchone()
+            changed = row is not None and (row["stream_key"] or None) != skey
+            size = sum((p.get("size") or 0) for m in (it.get("Media") or []) for p in (m.get("Part") or []))
+            con.execute(
+                """INSERT INTO track_lyrics (plex_rating_key, artist_key, album_key, artist, album, title,
+                                             duration_ms, stream_key, fmt, checked_at, gone,
+                                             size_bytes, added_at, album_year)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?)
+                   ON CONFLICT(plex_rating_key) DO UPDATE SET
+                       artist_key=excluded.artist_key, album_key=excluded.album_key,
+                       artist=excluded.artist, album=excluded.album, title=excluded.title,
+                       duration_ms=excluded.duration_ms, stream_key=excluded.stream_key,
+                       fmt=excluded.fmt, checked_at=excluded.checked_at, gone=0,
+                       size_bytes=excluded.size_bytes, added_at=excluded.added_at,
+                       album_year=excluded.album_year""",
+                (key, str(it.get("grandparentRatingKey") or ""), str(it.get("parentRatingKey") or ""),
+                 it.get("grandparentTitle"), it.get("parentTitle"), it.get("title"),
+                 it.get("duration"), skey, fmt, stamp, int(size), it.get("addedAt"), it.get("parentYear")))
+            if changed:
+                # a new sidecar replaced the old one, or it went away:
+                # never serve the previous text as if it were current
+                con.execute("UPDATE track_lyrics SET text=NULL, lines=0, fetched_at=NULL, failed_at=NULL "
+                            "WHERE plex_rating_key=?", (key,))
+            if skey and (row is None or changed
+                         or (row["text"] is None
+                             and (row["failed_at"] is None or row["failed_at"] < retry_before))):
+                to_fetch.append((key, skey, fmt))
+        con.commit()
+        return seen, to_fetch
+    finally:
+        con.close()
+
+
+def _store_texts(db_path, results: list, stamp: str) -> None:
+    """Write one batch of fetches: [(key, lines | None)], None = Plex refused."""
+    con = _connect(db_path)
+    try:
+        for key, lines in results:
+            if lines is None:
+                con.execute("UPDATE track_lyrics SET failed_at=? WHERE plex_rating_key=?", (stamp, key))
+            else:
+                text = "\n".join(lines)[:_MAX_CHARS]
+                con.execute("UPDATE track_lyrics SET text=?, lines=?, fetched_at=?, failed_at=NULL "
+                            "WHERE plex_rating_key=?", (text, len(lines), stamp, key))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _finish_run(db_path, artists: list, stamp: str, complete: bool, result: dict) -> dict:
+    """Mark gone tracks, rebuild the artist index, store the run's numbers."""
+    con = _connect(db_path)
+    try:
+        gone = 0
+        if complete:
+            gone = con.execute("UPDATE track_lyrics SET gone=1 WHERE checked_at <> ? AND gone=0", (stamp,)).rowcount
+        n_artists = _index_artists(con, artists, stamp, complete)
+        result = {
+            "listed": result["listed"], "with_stream": result["listed"] and con.execute(
+                "SELECT COUNT(*) FROM track_lyrics WHERE gone=0 AND stream_key IS NOT NULL").fetchone()[0],
+            "fetched": result["fetched"], "failed": result["failed"], "pending": result["pending"],
+            "gone_marked": gone, "artists": n_artists, "complete": complete, "done": result["done"],
+        }
+        con.execute("INSERT OR REPLACE INTO lyrics_meta (key, value) VALUES ('last_run', ?)", (stamp,))
+        con.execute("INSERT OR REPLACE INTO lyrics_meta (key, value) VALUES ('last_result', ?)",
+                    (json.dumps(result),))
+        con.commit()
+        return result
+    finally:
+        con.close()
+
+
 async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: FetchText, *,
                       list_artists=None, db_path: Optional[Path] = None, budget: Optional[int] = None,
                       task=None, now: Optional[datetime] = None) -> dict:
@@ -219,115 +306,68 @@ async def sync_lyrics(sections: list, list_tracks: ListTracks, fetch_text: Fetch
     artist index (``list_artists``: section key → artist items with guids,
     optional). A stream Plex refused is left alone for ``_RETRY_DAYS`` unless
     its key changes. Returns the run's numbers; ``done`` is False when the
-    budget ran out."""
+    budget ran out.
+
+    Every database step runs on a worker thread and commits before the next
+    await: the run used to hold plex_music.db's write lock across each Plex
+    listing and lyric fetch, with every statement on the event loop."""
     now = now or datetime.utcnow()
     stamp = now.isoformat()
     budget = _FETCH_BUDGET if budget is None else budget
     retry_before = (now - timedelta(days=_RETRY_DAYS)).isoformat()
-    con = _connect(db_path)
-    try:
-        seen = 0
-        to_fetch = []
-        artists = []
-        complete = bool(sections)
-        for sec_key, sec_title in sections:
-            items = await list_tracks(sec_key)
-            if items is None:
+    seen = 0
+    to_fetch = []
+    artists = []
+    complete = bool(sections)
+    for sec_key, sec_title in sections:
+        items = await list_tracks(sec_key)
+        if items is None:
+            complete = False
+            logger.warning("[lyrics] listing of section %r broke — nothing is marked gone this run", sec_title)
+            continue
+        if list_artists is not None:
+            arts = await list_artists(sec_key)
+            if arts is None:
                 complete = False
-                logger.warning("[lyrics] listing of section %r broke — nothing is marked gone this run", sec_title)
-                continue
-            if list_artists is not None:
-                arts = await list_artists(sec_key)
-                if arts is None:
-                    complete = False
-                else:
-                    artists.extend(arts)
-            for it in items:
-                key = str(it.get("ratingKey") or "")
-                if not key:
-                    continue
-                seen += 1
-                skey, fmt = _lyric_stream(it)
-                row = con.execute("SELECT stream_key, text, failed_at FROM track_lyrics WHERE plex_rating_key=?",
-                                  (key,)).fetchone()
-                changed = row is not None and (row["stream_key"] or None) != skey
-                size = sum((p.get("size") or 0) for m in (it.get("Media") or []) for p in (m.get("Part") or []))
-                con.execute(
-                    """INSERT INTO track_lyrics (plex_rating_key, artist_key, album_key, artist, album, title,
-                                                 duration_ms, stream_key, fmt, checked_at, gone,
-                                                 size_bytes, added_at, album_year)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?)
-                       ON CONFLICT(plex_rating_key) DO UPDATE SET
-                           artist_key=excluded.artist_key, album_key=excluded.album_key,
-                           artist=excluded.artist, album=excluded.album, title=excluded.title,
-                           duration_ms=excluded.duration_ms, stream_key=excluded.stream_key,
-                           fmt=excluded.fmt, checked_at=excluded.checked_at, gone=0,
-                           size_bytes=excluded.size_bytes, added_at=excluded.added_at,
-                           album_year=excluded.album_year""",
-                    (key, str(it.get("grandparentRatingKey") or ""), str(it.get("parentRatingKey") or ""),
-                     it.get("grandparentTitle"), it.get("parentTitle"), it.get("title"),
-                     it.get("duration"), skey, fmt, stamp, int(size), it.get("addedAt"), it.get("parentYear")))
-                if changed:
-                    # a new sidecar replaced the old one, or it went away:
-                    # never serve the previous text as if it were current
-                    con.execute("UPDATE track_lyrics SET text=NULL, lines=0, fetched_at=NULL, failed_at=NULL "
-                                "WHERE plex_rating_key=?", (key,))
-                if skey and (row is None or changed
-                             or (row["text"] is None
-                                 and (row["failed_at"] is None or row["failed_at"] < retry_before))):
-                    to_fetch.append((key, skey, fmt))
-        con.commit()
+            else:
+                artists.extend(arts)
+        n, fetch = await asyncio.to_thread(_upsert_section, db_path, items, stamp, retry_before)
+        seen += n
+        to_fetch.extend(fetch)
 
-        batch = to_fetch[:budget]
-        fetched = failed = 0
-        sem = asyncio.Semaphore(_CONCURRENCY)
+    batch = to_fetch[:budget]
+    fetched = failed = 0
+    sem = asyncio.Semaphore(_CONCURRENCY)
 
-        def _report(msg: str):
-            if task is None:
-                return
-            try:
-                from src.services.task_monitor import task_monitor
-                task_monitor.update(task, processed=fetched + failed, total=len(batch), message=msg)
-            except Exception:  # noqa: BLE001 - progress card only; the scan is unaffected
-                pass
+    def _report(msg: str):
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            task_monitor.update(task, processed=fetched + failed, total=len(batch), message=msg)
+        except Exception:  # noqa: BLE001 - progress card only; the scan is unaffected
+            pass
 
-        async def _one(key, skey, fmt):
-            nonlocal fetched, failed
-            async with sem:
-                raw = await fetch_text(skey)
-            if raw is None:
-                failed += 1
-                con.execute("UPDATE track_lyrics SET failed_at=? WHERE plex_rating_key=?", (stamp, key))
-                return
-            lines = parse_lyrics(raw, fmt)
-            text = "\n".join(lines)[:_MAX_CHARS]
-            con.execute("UPDATE track_lyrics SET text=?, lines=?, fetched_at=?, failed_at=NULL "
-                        "WHERE plex_rating_key=?", (text, len(lines), stamp, key))
-            fetched += 1
+    async def _one(key, skey, fmt):
+        nonlocal fetched, failed
+        async with sem:
+            raw = await fetch_text(skey)
+        if raw is None:
+            failed += 1
+            return key, None
+        fetched += 1
+        return key, parse_lyrics(raw, fmt)
 
-        _report(f"{seen:,} tracks listed, {len(to_fetch):,} lyric streams to fetch")
-        for i in range(0, len(batch), 50):
-            await asyncio.gather(*(_one(*t) for t in batch[i:i + 50]))
-            con.commit()
-            _report(f"{fetched + failed:,}/{len(batch):,} lyric streams fetched this run")
+    _report(f"{seen:,} tracks listed, {len(to_fetch):,} lyric streams to fetch")
+    for i in range(0, len(batch), 50):
+        results = await asyncio.gather(*(_one(*t) for t in batch[i:i + 50]))
+        await asyncio.to_thread(_store_texts, db_path, results, stamp)
+        _report(f"{fetched + failed:,}/{len(batch):,} lyric streams fetched this run")
 
-        gone = 0
-        if complete:
-            gone = con.execute("UPDATE track_lyrics SET gone=1 WHERE checked_at <> ? AND gone=0", (stamp,)).rowcount
-        n_artists = _index_artists(con, artists, stamp, complete)
-        result = {
-            "listed": seen, "with_stream": seen and con.execute(
-                "SELECT COUNT(*) FROM track_lyrics WHERE gone=0 AND stream_key IS NOT NULL").fetchone()[0],
-            "fetched": fetched, "failed": failed, "pending": len(to_fetch) - len(batch),
-            "gone_marked": gone, "artists": n_artists, "complete": complete, "done": len(to_fetch) <= budget,
-        }
-        con.execute("INSERT OR REPLACE INTO lyrics_meta (key, value) VALUES ('last_run', ?)", (stamp,))
-        con.execute("INSERT OR REPLACE INTO lyrics_meta (key, value) VALUES ('last_result', ?)",
-                    (json.dumps(result),))
-        con.commit()
-        return result
-    finally:
-        con.close()
+    return await asyncio.to_thread(_finish_run, db_path, artists, stamp, complete, {
+        "listed": seen, "fetched": fetched, "failed": failed,
+        "pending": len(to_fetch) - len(batch), "done": len(to_fetch) <= budget,
+    })
 
 
 # ── reads for the profile walker, the KB line and the custodian report ──────

@@ -11,6 +11,8 @@ the baseline must have none. When a file goes down, lower its number in the
 baseline in the same change (the test says so).
 
 The runtime side is src/database/loop_guard.py (GET /api/system/loop-guard).
+src/ also opens its other SQLite files only through
+``loop_guard.sqlite_connect``, so the guard sees those statements as well.
 
     python tests/test_loop_db_ratchet.py            # check
     python tests/test_loop_db_ratchet.py --update   # rewrite the baseline (only ever lower)
@@ -29,7 +31,7 @@ SYNC_DB = {
     "get_db_session", "write_session", "SessionLocal",
     "get_state", "set_state", "set_states_if_changed", "force_set_state",
     "acquire_state_lock", "release_state_lock", "get_datetime", "set_datetime",
-    "MetadataCache",
+    "MetadataCache", "sqlite_connect",
 }
 # ... and methods on a session held in one of these names.
 SESSION_NAMES = {"db", "_db"}
@@ -85,6 +87,23 @@ def counts() -> dict:
     return out
 
 
+def raw_connects() -> list:
+    """src/ files that open SQLite without the guard: every other file
+    (enrichment cache, plex_music.db, offline indexes, the lease) goes
+    through ``loop_guard.sqlite_connect`` so its statements are seen too."""
+    out = []
+    for p in sorted(SRC.rglob("*.py")):
+        if p.name == "loop_guard.py":
+            continue
+        tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "connect" and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in ("sqlite3", "dbapi2")):
+                out.append(f"{p.relative_to(ROOT).as_posix()}:{node.lineno}")
+    return out
+
+
 def main() -> int:
     now = counts()
     base = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else {}
@@ -97,6 +116,11 @@ def main() -> int:
         print(f"baseline written: {sum(merged.values())} sites in {len(merged)} files")
         return 0
     fail = passed = 0
+    raw = raw_connects()
+    for site in raw:
+        print(f"  FAIL  {site}: sqlite3.connect - use loop_guard.sqlite_connect")
+    fail += len(raw)
+    passed += not raw
     for f, n in sorted(now.items()):
         allowed = base.get(f, 0)
         if n > allowed:

@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from typing import Optional
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def arrivals(since: int, *, db_path: Optional[str] = None) -> list:
     if not path:
         return []
     try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con = sqlite_connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error as e:
         # mode=ro: the collector has not built the index yet (normal early on).
         logger.debug("[rematch] index unreadable: %s", e)

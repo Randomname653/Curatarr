@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 ANIME_LIST_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list-master.xml"
 from src.paths import DATA_DIR
+from src.database.loop_guard import sqlite_connect
 MAPPING_DB_PATH = DATA_DIR / "cache" / "anime_mapping.db"
 MAX_AGE_DAYS = 7  # re-download weekly
 
@@ -103,14 +104,16 @@ def _is_settled(mapping: AnimeMapping) -> bool:
 
 
 async def _load_or_download() -> AnimeMapping:
-    """Load from local DB or download fresh."""
+    """Load from local DB or download fresh. The cache file reads and writes
+    and the XML parse run on worker threads: tens of thousands of rows, once
+    after startup, while the server is already answering."""
     MAPPING_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if local DB exists and is fresh
     if MAPPING_DB_PATH.exists():
         age = datetime.utcnow() - datetime.fromtimestamp(MAPPING_DB_PATH.stat().st_mtime)
         if age < timedelta(days=MAX_AGE_DAYS):
-            mapping = _load_from_db()
+            mapping = await asyncio.to_thread(_load_from_db)
             if mapping.total_entries > 0:
                 logger.info("Anime mapping loaded from cache: %d entries", mapping.total_entries)
                 return mapping
@@ -122,16 +125,16 @@ async def _load_or_download() -> AnimeMapping:
             r = await client.get(ANIME_LIST_URL)
         if r.status_code != 200:
             logger.warning("Failed to download anime-lists: HTTP %s", r.status_code)
-            return _load_from_db()  # fall back to cached
+            return await asyncio.to_thread(_load_from_db)  # fall back to cached
 
-        mapping = _parse_xml(r.text)
+        mapping = await asyncio.to_thread(_parse_xml, r.text)
         if mapping.total_entries == 0:
             # A truncated/garbled download parses to nothing. Saving that used
             # to DROP the populated cache table and leave the DB empty.
             logger.warning("Anime mapping download parsed to 0 entries — keeping cached copy")
-            return _load_from_db()
+            return await asyncio.to_thread(_load_from_db)
         try:
-            _save_to_db(mapping)
+            await asyncio.to_thread(_save_to_db, mapping)
         except Exception as e:
             # The parsed mapping is still good for this process; the old cache
             # survives because the swap is transactional.
@@ -142,7 +145,7 @@ async def _load_or_download() -> AnimeMapping:
 
     except Exception as e:
         logger.warning("Anime mapping download failed: %s — using cached", e)
-        return _load_from_db()
+        return await asyncio.to_thread(_load_from_db)
 
 
 def _parse_xml(xml_text: str) -> AnimeMapping:
@@ -189,7 +192,7 @@ def _save_to_db(mapping: AnimeMapping):
     if mapping.total_entries == 0 or not mapping.tvdb_to_anidb:
         logger.warning("Refusing to save an empty anime mapping over the cache")
         return
-    conn = sqlite3.connect(MAPPING_DB_PATH, isolation_level=None)
+    conn = sqlite_connect(MAPPING_DB_PATH, isolation_level=None)
     try:
         conn.execute("BEGIN")
         # AniList ids are learned at runtime via update_anilist_id(); the XML
@@ -243,7 +246,7 @@ def _load_from_db() -> AnimeMapping:
     if not MAPPING_DB_PATH.exists():
         return mapping
     try:
-        conn = sqlite3.connect(MAPPING_DB_PATH)
+        conn = sqlite_connect(MAPPING_DB_PATH)
         rows = conn.execute("SELECT anidb_id, tvdb_id, anilist_id FROM anime_mapping").fetchall()
         for anidb_id, tvdb_id, anilist_id in rows:
             mapping.tvdb_to_anidb[tvdb_id] = anidb_id
@@ -273,7 +276,7 @@ def update_anilist_id(anidb_id: int, anilist_id: int):
 
     if MAPPING_DB_PATH.exists():
         try:
-            conn = sqlite3.connect(MAPPING_DB_PATH)
+            conn = sqlite_connect(MAPPING_DB_PATH)
             conn.execute(
                 "UPDATE anime_mapping SET anilist_id=? WHERE anidb_id=?",
                 (anilist_id, anidb_id)

@@ -26,6 +26,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from src.config import settings
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -1218,7 +1219,7 @@ _VACUUM_BUSY_FLAGS = ("enrichment_running", "music_pipeline_running",
 def _free_page_ratio(path: str) -> float:
     """freelist_count / page_count of one SQLite file (read-only)."""
     import sqlite3
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    conn = sqlite_connect(f"file:{path}?mode=ro", uri=True, timeout=10)
     try:
         pages = conn.execute("PRAGMA page_count").fetchone()[0] or 0
         free = conn.execute("PRAGMA freelist_count").fetchone()[0] or 0
@@ -1236,7 +1237,7 @@ def _vacuum_sqlite_file(path: str) -> None:
     lock at the moment VACUUM starts, and the default 5 s would give up on
     the weekly pass."""
     import sqlite3
-    conn = sqlite3.connect(path, isolation_level=None, timeout=60)
+    conn = sqlite_connect(path, isolation_level=None, timeout=60)
     try:
         # incremental_vacuum reclaims pages from the freelist when
         # auto_vacuum is enabled. Harmless when not.
@@ -1347,8 +1348,8 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
     ``backup()`` in one step copies every page before returning."""
     import sqlite3
     # Online backup: page-by-page snapshot of the live DB (handles WAL).
-    src = sqlite3.connect(db_path, timeout=60)
-    dst = sqlite3.connect(dest)
+    src = sqlite_connect(db_path, timeout=60)
+    dst = sqlite_connect(dest)
     try:
         with dst:
             src.backup(dst)
@@ -1357,7 +1358,7 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
         src.close()
 
     # A backup that fails integrity_check is worse than none — verify it.
-    chk = sqlite3.connect(dest)
+    chk = sqlite_connect(dest)
     try:
         return (chk.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
     finally:

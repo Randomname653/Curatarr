@@ -30,6 +30,7 @@ A wrong id is not a missing fact, it is a confident lie about a different
 work — the same failure the corrupt-id detector and the Fix-match pin exist
 to undo. Anything still ambiguous after both steps is left alone.
 """
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -279,9 +280,13 @@ def _recheck(cache, index, rows) -> int:
     return reverted
 
 
-async def harvest(cache, *, limit: int = 0, task=None, should_stop=None,
+async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
                   on_progress=None) -> dict:
-    """Fill missing ids on raw cache entries from the *arr libraries."""
+    """Fill missing ids on raw cache entries from the *arr libraries.
+
+    After the library fetch the walk is all cache reads and writes, so it
+    runs on a worker thread. With no ``cache`` it opens its own handle
+    there; a handle passed in is used through that thread's connection."""
     from src.cache.metadata_cache import write_fields
     from src.services.media_enricher import _RAW_CACHE_DAYS
 
@@ -300,64 +305,74 @@ async def harvest(cache, *, limit: int = 0, task=None, should_stop=None,
         return {"source": "external_ids", "visited": 0, "added": 0,
                 "reverted": 0}
 
-    def _rows():
-        return cache.conn.execute(
-            """
-            SELECT cache_key, response FROM api_cache
-            WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
-              AND expires_at > datetime('now')
-            """
-        ).fetchall()
+    def _walk(cache):
+        def _rows():
+            return cache.conn.execute(
+                """
+                SELECT cache_key, response FROM api_cache
+                WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
+                  AND expires_at > datetime('now')
+                """
+            ).fetchall()
 
-    rows = _rows()
-    reverted = _recheck(cache, index, rows)
-    if reverted:
-        # A reverted entry is a gap again, and the fill pass below reads the
-        # rows it was handed — re-read so this run can offer it a better
-        # match instead of leaving it empty until the next one.
         rows = _rows()
+        reverted = _recheck(cache, index, rows)
+        if reverted:
+            # A reverted entry is a gap again, and the fill pass below reads the
+            # rows it was handed — re-read so this run can offer it a better
+            # match instead of leaving it empty until the next one.
+            rows = _rows()
 
-    visited = added = 0
-    by_how: dict = {}
-    for key, resp in rows:
-        if should_stop and should_stop():
-            break
-        try:
-            raw = json.loads(resp)
-        except Exception:
-            continue
-        if raw.get("imdb_id") or not raw.get("title"):
-            continue
-        families = _families_for(raw)
-        if not families:
-            continue
-        visited += 1
-        if limit and visited > limit:
-            break
-        rec, how = _match(raw, index, families)
-        if not rec:
-            continue
-        fields = {f: rec[f] for f in ("imdb_id", "tvdb_id", "tmdb_id")
-                  if rec.get(f) and not raw.get(f)}
-        if fields:
-            # How the entry was identified, not merely that it was: an exact
-            # id join and a name-with-year join are not equally trustworthy,
-            # and a later audit should be able to tell them apart.
-            fields["ids_from_arr"] = how
-            fields["ids_from_arr_v"] = MATCH_VERSION
-            by_how[how] = by_how.get(how, 0) + 1
-            # The cache prefixes the version itself; the key read back out of
-            # the table already carries it, and passing it through unchanged
-            # writes a second copy under "v2:v2:raw:…" that nothing ever reads.
-            write_fields(cache, _unprefixed(key), raw, fields,
-                         days=_RAW_CACHE_DAYS)
-            added += 1
-        if visited % 50 == 0:
-            if task is not None:
-                from src.services.task_monitor import task_monitor
-                task_monitor.update(task, processed=visited, total=len(rows),
-                                    message=f"{added} matched so far")
-            if on_progress is not None:
-                on_progress(visited, len(rows), added)
-    return {"source": "external_ids", "visited": visited, "added": added,
-            "reverted": reverted, "by": by_how}
+        visited = added = 0
+        by_how: dict = {}
+        for key, resp in rows:
+            if should_stop and should_stop():
+                break
+            try:
+                raw = json.loads(resp)
+            except Exception:
+                continue
+            if raw.get("imdb_id") or not raw.get("title"):
+                continue
+            families = _families_for(raw)
+            if not families:
+                continue
+            visited += 1
+            if limit and visited > limit:
+                break
+            rec, how = _match(raw, index, families)
+            if not rec:
+                continue
+            fields = {f: rec[f] for f in ("imdb_id", "tvdb_id", "tmdb_id")
+                      if rec.get(f) and not raw.get(f)}
+            if fields:
+                # How the entry was identified, not merely that it was: an exact
+                # id join and a name-with-year join are not equally trustworthy,
+                # and a later audit should be able to tell them apart.
+                fields["ids_from_arr"] = how
+                fields["ids_from_arr_v"] = MATCH_VERSION
+                by_how[how] = by_how.get(how, 0) + 1
+                # The cache prefixes the version itself; the key read back out of
+                # the table already carries it, and passing it through unchanged
+                # writes a second copy under "v2:v2:raw:…" that nothing ever reads.
+                write_fields(cache, _unprefixed(key), raw, fields,
+                             days=_RAW_CACHE_DAYS)
+                added += 1
+            if visited % 50 == 0:
+                if task is not None:
+                    from src.services.task_monitor import task_monitor
+                    task_monitor.update(task, processed=visited, total=len(rows),
+                                        message=f"{added} matched so far")
+                if on_progress is not None:
+                    on_progress(visited, len(rows), added)
+        return {"source": "external_ids", "visited": visited, "added": added,
+                "reverted": reverted, "by": by_how}
+
+    def _run():
+        if cache is not None:
+            return _walk(cache)
+        from src.cache.metadata_cache import MetadataCache
+        with MetadataCache() as own:
+            return _walk(own)
+
+    return await asyncio.to_thread(_run)

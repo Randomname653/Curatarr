@@ -228,7 +228,6 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
     and the run is completely silent. A caller that prints cannot tell a slow
     job from a hung one; this lets it.
     """
-    from src.cache.metadata_cache import MetadataCache
     from src.services.media_enricher import topup_significance, topup_omdb
     from src.services.reception import topup_reception
     from src.services.wikidata import topup_wikidata
@@ -239,11 +238,8 @@ async def run_source(source: str, *, limit: int = 0, cache=None,
             # Bulk by nature: one library fetch answers thousands of titles,
             # so it does not walk the per-title path below.
             from src.services.external_ids import harvest
-            if owns:
-                # harvest works one handle across its whole walk, from this
-                # thread; a handle opened on a worker could not be closed
-                # safely from here (see MetadataCache.close).
-                cache = MetadataCache()
+            # Without a handle passed in, harvest opens its own on the
+            # worker thread its walk runs on.
             return await harvest(cache, limit=limit, task=task,
                                  should_stop=should_stop,
                                  on_progress=on_progress)

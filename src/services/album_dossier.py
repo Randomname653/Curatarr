@@ -33,6 +33,7 @@ import httpx
 
 from src.config import settings
 from src.services.enrichment_state import log_topup_failure
+from src.database.loop_guard import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +258,7 @@ async def build_album_dossier(artist_name: str, album_title: str) -> Optional[st
         from src.services.discogs_offline import STYLES_DB_PATH
         if not STYLES_DB_PATH.exists():
             return None
-        con = sqlite3.connect(str(STYLES_DB_PATH))
+        con = sqlite_connect(str(STYLES_DB_PATH))
         row = con.execute(
             "SELECT styles, year FROM master_styles WHERE artist_norm=? "
             "AND title LIKE ? LIMIT 1",
