@@ -250,6 +250,26 @@ check("a cell that took more than the simulated card has is a K.O.",
       and not matrix.tier_fits({**ok, "tier_overrun_mib": 432})
       and matrix.tier_fits({**ok, "tier_overrun_mib": 200}))
 
+# ── borderline cells get measured again ────────────────────────────────────
+off = {**ok, "gpu_share_pct": 18}
+check("borderline: offloaded and near the tok/s K.O. line",
+      matrix.borderline({**off, "mono_gen_tok_s_median": 8.2})
+      and matrix.borderline({**off, "mono_gen_tok_s_median": 4.7}))
+check("not borderline: clear of the line, or fully on the GPU, or failed",
+      not matrix.borderline({**off, "mono_gen_tok_s_median": 30, "judge_wall_s_p90": 10})
+      and not matrix.borderline({**ok, "gpu_share_pct": 100, "mono_gen_tok_s_median": 7})
+      and not matrix.borderline({"status": "load_failed", "gpu_share_pct": 18}))
+check("borderline: a judge p90 near its line counts too",
+      matrix.borderline({**off, "mono_gen_tok_s_median": 30, "judge_wall_s_p90": 80}))
+st = matrix.settle([{**off, "mono_gen_tok_s_median": g} for g in (8.2, 4.7, 7.9)])
+check("settle: the median attempt wins, all attempts and the spread are kept",
+      st["mono_gen_tok_s_median"] == 7.9 and len(st["attempts"]) == 3
+      and st["attempt_spread_pct"] == 42.7 and st["speed_unstable"])
+check("settle: close attempts are stable",
+      not matrix.settle([{**off, "mono_gen_tok_s_median": g} for g in (7.0, 7.4, 7.2)])["speed_unstable"])
+q = _gpu.wait_quiet_cpu(max_pct=100, window_s=0.1, timeout_s=1)
+check("quiet-host wait reports its reading", q == {} or (q["host_quiet"] and "host_cpu_idle_pct" in q))
+
 # ── subset + text helpers ──────────────────────────────────────────────────
 items = [{"key": f"{c}:{i}", "category": c, "title": f"T{i}",
           "flags": {"acclaim_present": i % 3 == 0, "owner_watched": i % 4 == 0}}

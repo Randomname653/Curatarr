@@ -116,6 +116,40 @@ def perf_ok(m: dict) -> tuple[bool, str]:
     return True, ""
 
 
+BORDERLINE_FACTOR = 1.5      # within x1.5 of a K.O. line, either side
+BORDERLINE_REPEATS = 2       # extra measurements of a borderline cell
+UNSTABLE_SPREAD_PCT = 35.0
+
+
+def borderline(m: dict) -> bool:
+    """An offloaded cell whose speed sits close enough to a K.O. line that
+    host noise can flip it. Offloaded layers run on the CPU, and the same
+    granite4.1:8b 4 GB cell measured 8.2 and 4.7 tok/s (2026-10-19) — one
+    pass, one side of MIN_GEN_TOK_S."""
+    if m.get("status") != "ok" or (share(m) or 0) >= 100:
+        return False
+    gen, p90 = m.get("mono_gen_tok_s_median"), m.get("judge_wall_s_p90")
+    near_gen = gen is not None and MIN_GEN_TOK_S / BORDERLINE_FACTOR <= gen <= MIN_GEN_TOK_S * BORDERLINE_FACTOR
+    near_p90 = p90 is not None and MAX_JUDGE_P90_S / BORDERLINE_FACTOR <= p90 <= MAX_JUDGE_P90_S * BORDERLINE_FACTOR
+    return near_gen or near_p90
+
+
+def settle(attempts: list[dict]) -> dict:
+    """The median attempt by generation speed, carrying every attempt's
+    numbers and their spread."""
+    ok = [a for a in attempts if a.get("status") == "ok"] or attempts
+    ranked = sorted(ok, key=lambda a: a.get("mono_gen_tok_s_median") or 0)
+    pick = dict(ranked[len(ranked) // 2])
+    gens = [a.get("mono_gen_tok_s_median") or 0 for a in ok]
+    spread = round(100 * (max(gens) - min(gens)) / max(gens), 1) if max(gens) else None
+    pick["attempts"] = [{k: a.get(k) for k in ("status", "mono_gen_tok_s_median", "judge_wall_s_p90",
+                                               "cpu_mean_pct", "host_cpu_idle_pct", "ram_taken_mib")}
+                        for a in attempts]
+    pick["attempt_spread_pct"] = spread
+    pick["speed_unstable"] = bool(spread is not None and spread > UNSTABLE_SPREAD_PCT)
+    return pick
+
+
 def tier_fits(m: dict) -> bool:
     """A simulated-card cell that ran fully on the GPU within the card."""
     return (m.get("status") == "ok" and share(m) == 100
@@ -211,6 +245,7 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
                     "vram_gb": round((m.get("vram_model_mib") or 0) / 1024, 1),
                     "gpu_share_pct": share(m),
                     "sysmem_fallback": bool(m.get("sysmem_fallback")),
+                    "speed_unstable": bool(m.get("speed_unstable")),
                     "ram_taken_gb": round((m.get("ram_taken_mib") or 0) / 1024, 1),
                 },
                 "quality": {"score25": q["score25"], "provisional": q["provisional"],

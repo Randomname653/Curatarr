@@ -65,7 +65,7 @@ class Sampler:
 
     def __init__(self, index: int = 0, interval_ms: int = 250):
         self.index, self.interval_ms = index, interval_ms
-        self.samples: list[tuple] = []   # (t, used_mib, util, power_w, temp_c, ram_avail_mib)
+        self.samples: list[tuple] = []   # (t, used_mib, util, power_w, temp_c, ram_avail_mib, cpu_pct)
         self._proc = None
         self._thread = None
         self._mark = 0
@@ -96,7 +96,11 @@ class Sampler:
             except ValueError:
                 continue
             ram = psutil.virtual_memory().available // MIB if psutil else None
-            self.samples.append((time.monotonic(), used, util, power, temp, ram))
+            # Whole-host CPU since the previous sample: an offloaded model
+            # runs its CPU layers here, and anything else running steals
+            # from them (granite4.1:8b on 4 GB: 8.2 vs 4.7 tok/s, 2026-10-19).
+            cpu = psutil.cpu_percent(interval=None) if psutil else None
+            self.samples.append((time.monotonic(), used, util, power, temp, ram, cpu))
 
     def __exit__(self, *exc):
         if self._proc:
@@ -118,7 +122,10 @@ class Sampler:
         util = [x[2] for x in s]
         power = [x[3] for x in s if x[3] is not None]
         ram = [x[5] for x in s if x[5] is not None]
+        cpu = [x[6] for x in s if x[6] is not None]
         return {
+            "cpu_mean_pct": round(sum(cpu) / len(cpu), 1) if cpu else None,
+            "cpu_peak_pct": max(cpu) if cpu else None,
             "vram_used_peak_mib": max(used),
             "vram_used_mean_mib": round(sum(used) / len(used)),
             "gpu_util_mean_pct": round(sum(util) / len(util)),
@@ -130,6 +137,22 @@ class Sampler:
             "ram_taken_mib": max(0, ram[0] - min(ram)) if ram else None,
             "samples": len(s),
         }
+
+
+def wait_quiet_cpu(max_pct: float = 20.0, window_s: float = 3.0, timeout_s: float = 120.0) -> dict:
+    """Wait until the host CPU is quiet before a cell (Windows Update, an
+    indexer, a browser tab). Returns the last reading and how long it took;
+    after ``timeout_s`` it measures anyway and the reading says why."""
+    try:
+        import psutil
+    except ImportError:
+        return {}
+    t0 = time.monotonic()
+    pct = psutil.cpu_percent(interval=window_s)
+    while pct > max_pct and time.monotonic() - t0 < timeout_s:
+        pct = psutil.cpu_percent(interval=window_s)
+    return {"host_cpu_idle_pct": pct, "host_quiet_wait_s": round(time.monotonic() - t0, 1),
+            "host_quiet": pct <= max_pct}
 
 
 class CudaError(RuntimeError):

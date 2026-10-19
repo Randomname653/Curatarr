@@ -340,10 +340,27 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                            "desktop_mib": reserve_mib, "budget_mib": tier * 1024 - reserve_mib,
                            "cuda_free_mib": info["free_mib"], "cuda_ctx_mib": info["ctx_mib"],
                            "fit_target_mib": target}
-                try:
+                def attempt():
+                    quiet = gpu.wait_quiet_cpu()
+                    if quiet and not quiet["host_quiet"]:
+                        log(f"  host CPU still at {quiet['host_cpu_idle_pct']} % after "
+                            f"{quiet['host_quiet_wait_s']} s - measuring anyway")
                     with gpu.Sampler() as smp:
-                        m = perf.run_cell(bench.endpoint, ref, num_ctx=ctx, num_gpu=num_gpu,
+                        a = perf.run_cell(bench.endpoint, ref, num_ctx=ctx, num_gpu=num_gpu,
                                           profile=profile, facts=facts, reps=args.reps, sampler=smp)
+                    a.update(quiet)
+                    return a
+
+                try:
+                    attempts = [attempt()]
+                    if matrix.borderline(attempts[0]):
+                        log(f"  tier {tier}: {attempts[0].get('mono_gen_tok_s_median')} t/s / judge p90 "
+                            f"{attempts[0].get('judge_wall_s_p90')} s is near a K.O. line - "
+                            f"measuring {matrix.BORDERLINE_REPEATS} more times")
+                        attempts += [attempt() for _ in range(matrix.BORDERLINE_REPEATS)]
+                        m = matrix.settle(attempts)
+                    else:
+                        m = attempts[0]
                 finally:
                     server.unload_all(bench.endpoint)
                     if sim:
@@ -360,7 +377,10 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                 log(f"  {cfg.label} {profile} ctx {ctx} tier {tier} gpu {num_gpu}: "
                     f"{m.get('status')} share {matrix.share(m)} %{' (SYSMEM FALLBACK)' if m.get('sysmem_fallback') else ''} "
                     f"vram {m.get('vram_model_mib')} MiB{f' (OVER the card by {over})' if over else ''} "
-                    f"gen {m.get('mono_gen_tok_s_median')} t/s judge {m.get('judge_wall_s_median')} s")
+                    f"gen {m.get('mono_gen_tok_s_median')} t/s judge {m.get('judge_wall_s_median')} s"
+                    f" cpu {m.get('cpu_mean_pct')} %"
+                    + (f" | {len(m['attempts'])} attempts, spread {m['attempt_spread_pct']} %"
+                       f"{' UNSTABLE' if m['speed_unstable'] else ''}" if m.get("attempts") else ""))
                 return m
 
             if "perf" in phases:
