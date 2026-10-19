@@ -14,12 +14,16 @@ the old doc, facets refreshed. NO LLM anywhere — no confabulation surface.
 
 import asyncio
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 # Same guard class as media_enricher's merge: an adult genre in a bare
 # prefetch genre list (arr/TVDB-fed) is exactly how the poisoning started.
 _ADULT_GENRES = {"hentai", "erotica"}
+
+# Metadata key stamped on every doc this module rebuilt (see the upsert).
+REBUILT_MARK = "rebuilt_from_prefetch"
 
 
 async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> bool:
@@ -91,7 +95,13 @@ async def rebuild_doc_from_prefetch(doc_id: str, fallback_domain: str = "") -> b
                 "media_type": domain, "domain": domain,
                 "genres": ", ".join(genres),
                 "themes": ", ".join(keywords[:6]),
-                "mood": "", "year": year}
+                "mood": "", "year": year,
+                # The repair marker: a gone-from-arr doc has no enriched:* row
+                # to make it look alive, so without it the weekly zombie walk
+                # re-classified and re-embedded the same docs forever (and the
+                # same first 150 took the cap every week). A real re-enrichment
+                # replaces the metadata wholesale, which drops the marker.
+                REBUILT_MARK: datetime.utcnow().isoformat(timespec="seconds")}
         # ONE upsert, not delete-then-add: when add raised after the delete,
         # the doc was gone yet reported "left untouched", and a gone-from-arr
         # item never re-enriches — the knowledge this module exists to keep

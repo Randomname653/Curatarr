@@ -68,12 +68,17 @@ async def ban_deleted_artist(p) -> None:
     from src.services import soulsync_client as ss
     if _category(p) != "music" or not ss.writes_allowed():
         return
-    mbid = None
+    # Lidarr's own id for the artist it just deleted (read by the delete's
+    # freshness guard) comes first: it IS the artist, where a SoulSync name
+    # search misses "Beatles, The" vs "The Beatles" and leaves a name-only
+    # ban. Then the id an earlier attempt recorded.
+    mbid = getattr(p, "lidarr_mbid", None) or _json(p.soulsync_ban).get("mbid")
     try:
-        # SoulSync keeps listing the artist until its weekly deep scan, so
-        # the MusicBrainz id is usually still there right after the delete.
-        info = await ss.artist_info(p.title)
-        mbid = (info or {}).get("musicbrainz_id") or _json(p.soulsync_ban).get("mbid")
+        if not mbid:
+            # SoulSync keeps listing the artist until its weekly deep scan, so
+            # the MusicBrainz id is usually still there right after the delete.
+            info = await ss.artist_info(p.title)
+            mbid = (info or {}).get("musicbrainz_id") or None
         res = await ss.block_artist(p.title, mbid)
     except Exception as e:  # noqa: BLE001
         # The recorded error reaches the browser (ban_warning): a fixed

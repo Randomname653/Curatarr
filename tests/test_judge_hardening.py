@@ -132,6 +132,25 @@ ev = _run(db=_BrokenDB())
 check("an empty household says 'none have watched it' — views only, no requests",
       "none have watched it." in ev["facts"] and "requested" not in ev["facts"]
       and not ev["flags"]["household_unknown"])
+
+# A member's explicit keep (their own ProtectedMedia row) is a household
+# claim: the owner's run never loads member protections, so a member told
+# "it's protected" was protected by nothing (2026-10-19 audit).
+pillars._read_db_facts = lambda *a, **k: {
+    "ow": None, "ow_unknown": False, "others": [], "keeps": ["Ana"],
+    "taste_summary": "", "fb_blob": None}
+ev = _run(db=_BrokenDB())
+check("a member's keep is a household claim (the deletion loop's CUT floor)",
+      ev["flags"]["household_claim"] == "Ana (asked to keep it)"
+      and ev["flags"]["other_user_engaged"]
+      and "Ana: asked the curator to KEEP this title" in ev["facts"])
+pillars._read_db_facts = lambda *a, **k: {
+    "ow": None, "ow_unknown": False, "others": [], "keeps": None,
+    "taste_summary": "", "fb_blob": None}
+ev = _run(db=_BrokenDB())
+check("unreadable keep requests are UNKNOWN (the title is deferred), never 'nobody'",
+      ev["flags"]["household_unknown"] and ev["flags"]["household_claim"] == ""
+      and "do not assume nobody asked to keep it" in ev["facts"])
 pillars._read_db_facts = _orig_read
 
 # ── 3. Pillar III decided in Python ─────────────────────────────────────────

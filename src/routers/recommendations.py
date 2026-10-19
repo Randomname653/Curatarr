@@ -1794,6 +1794,14 @@ async def _delete_one_and_log(user_id: int, p: _Proposal) -> bool:
     if blocked:
         logger.info("[deletion] %r not deleted: %s", p.title, blocked)
         return False
+    # A Retry from limbo: the first attempt may have deleted the item before
+    # its outcome got lost. There a 404 is the answer we were waiting for,
+    # not a failure — it used to turn the row into a dead-end "error" that
+    # was never banned, so SoulSync could fetch the artist straight back.
+    # Carried on the proposal (never saved: not a column) so the guard and
+    # the executor both see it.
+    p.retry_delete = p.status == "limbo"
+    p.already_gone = False
     if p.service == "lidarr":
         drift = await _lidarr_freshness_guard(p)
         if drift:
@@ -1813,7 +1821,12 @@ async def _delete_one_and_log(user_id: int, p: _Proposal) -> bool:
                     p.title, p.status)
         return False
     try:
-        result = await _execute_arr_delete(p)
+        if p.already_gone:
+            logger.info("[deletion] %r is already gone from Lidarr — the earlier "
+                        "attempt deleted it", p.title)
+            result = True
+        else:
+            result = await _execute_arr_delete(p)
     except Exception as e:
         # Never leave the claim hanging in "deleting" (invisible, unactionable).
         logger.error("[deletion] delete raised for %r: %s", p.title, e)
@@ -1860,6 +1873,32 @@ async def _delete_one_and_log(user_id: int, p: _Proposal) -> bool:
     return success
 
 
+async def _lidarr_artist_present(p) -> Optional[bool]:
+    """True when Lidarr has the proposal's artist (and then ``p.lidarr_mbid``
+    holds its foreignArtistId — the SoulSync ban's MBID, which a name search
+    misses for "Beatles, The" vs "The Beatles"), False on a 404, None when
+    Lidarr could not say."""
+    if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
+        return None
+    media_id = _require_media_id(p.media_id)
+    if media_id is None:
+        return None
+    base = str(settings.effective_lidarr_url).rstrip("/")
+    try:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
+            r = await client.get(f"{base}/api/v1/artist/{media_id}",
+                                 headers={"X-Api-Key": settings.LIDARR_API_KEY})
+        if r.status_code == 404:
+            return False
+        if r.status_code != 200:
+            return None
+        p.lidarr_mbid = (r.json() or {}).get("foreignArtistId") or None
+        return True
+    except Exception as e:
+        log_topup_failure(logger, "[deletion] lidarr artist lookup", p.title, e)
+        return None
+
+
 async def _lidarr_freshness_guard(p) -> Optional[str]:
     """Refresh ONE artist, wait for the command, then require real track
     files (per-file API — the aggregated sizeOnDisk is exactly the field
@@ -1869,6 +1908,13 @@ async def _lidarr_freshness_guard(p) -> Optional[str]:
     delete costs a retry, a stale delete silently strands files."""
     if not (settings.LIDARR_URL and settings.LIDARR_API_KEY):
         return "lidarr not configured"
+    # Read the artist first: its MBID goes to the SoulSync ban, and on a
+    # Retry a 404 means the earlier attempt already deleted it — refreshing
+    # an artist that no longer exists parked it in limbo for good.
+    present = await _lidarr_artist_present(p)
+    if present is False and getattr(p, "retry_delete", False):
+        p.already_gone = True
+        return None
     base = str(settings.effective_lidarr_url).rstrip("/")
     headers = {"X-Api-Key": settings.LIDARR_API_KEY}
     try:
@@ -2875,7 +2921,8 @@ def _require_media_id(value) -> Optional[str]:
     return s if _MEDIA_ID.fullmatch(s) else None
 
 
-async def _plex_delete_artist(key: str, client=None) -> Optional[bool]:
+async def _plex_delete_artist(key: str, client=None,
+                              gone_ok: bool = False) -> Optional[bool]:
     """Delete a Plex artist WITH its files (Plex 'Allow media deletion' must
     be on — the owner's server has it), then re-read the item: a 200 means
     Plex kept it (deletion not allowed, or a scan raced) and that is a
@@ -2897,20 +2944,26 @@ async def _plex_delete_artist(key: str, client=None) -> Optional[bool]:
     client = client or httpx.AsyncClient(verify=tls_context(), timeout=30)
     try:
         r = await client.delete(f"{base}/library/metadata/{key}", headers=headers)
-        if r.status_code not in (200, 204):
+        if gone_ok and r.status_code in (404, 410):
+            # A retry of a delete whose outcome was lost: already gone.
+            logger.info("[plex] artist %s already gone — the earlier delete "
+                        "went through", key)
+            chk = r
+        elif r.status_code not in (200, 204):
             logger.error("[plex] delete HTTP %s for artist %s — is 'Allow media deletion' "
                          "enabled on the Plex server?", r.status_code, key)
             return False
-        # The DELETE was accepted: from here on the files may be gone, so a
-        # check that cannot answer is "outcome unknown" (limbo, retryable),
-        # never "error". And only a 404 proves the artist gone - a 401/500
-        # on the re-read used to count as success.
-        try:
-            chk = await client.get(f"{base}/library/metadata/{key}", headers=headers)
-        except Exception as e:
-            logger.warning("[plex] artist %s: delete accepted, check failed (%s) "
-                           "— outcome unknown", key, e)
-            return None
+        else:
+            # The DELETE was accepted: from here on the files may be gone, so
+            # a check that cannot answer is "outcome unknown" (limbo,
+            # retryable), never "error". And only a 404 proves the artist
+            # gone - a 401/500 on the re-read used to count as success.
+            try:
+                chk = await client.get(f"{base}/library/metadata/{key}", headers=headers)
+            except Exception as e:
+                logger.warning("[plex] artist %s: delete accepted, check failed (%s) "
+                               "— outcome unknown", key, e)
+                return None
         if chk.status_code == 200:
             logger.error("[plex] artist %s is still there after the delete — files kept", key)
             return False
@@ -2967,9 +3020,17 @@ async def _verify_arr_item_gone(client, url: str, headers: dict) -> Optional[boo
 async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
     """True = deleted, False = the arr refused / failed, None = outcome
     unknown (connection lost or timed out and the follow-up check could not
-    confirm) — the caller parks None in limbo instead of a dead-end error."""
+    confirm) — the caller parks None in limbo instead of a dead-end error.
+    ``p.retry_delete`` marks a Retry from limbo, where a 404 means the first
+    attempt already deleted the item."""
+    retry = bool(getattr(p, "retry_delete", False))
+
     def _check(r, label: str) -> bool:
         if r.status_code in (200, 204):
+            return True
+        if retry and r.status_code == 404:
+            logger.info("[%s] %r already gone — the earlier delete went through",
+                        label, p.title)
             return True
         logger.error("[%s] delete HTTP %s — %s", label, r.status_code, r.text[:300])
         return False
@@ -3028,7 +3089,7 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
                     return gone
             return _check(r, p.service)
         if p.service == "plex":
-            return await _plex_delete_artist(str(p.media_id))
+            return await _plex_delete_artist(str(p.media_id), gone_ok=retry)
     except Exception as e:
         logger.error("[arr] delete failed: %s", e)
     return False

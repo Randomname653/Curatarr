@@ -19,6 +19,26 @@ Condensed release history, newest first.
   by default, so nothing changes until you set it.
 - A music job that crashed can no longer leave the music pipeline marked as running.
 
+**Household members' data stays theirs, and maintenance stops repeating itself.**
+- A household member who tells the curator to keep a title is heard: the deletion judge
+  can't cut it any more, it becomes the owner's call. The chat now says "protected for
+  you" to members rather than "permanently protected".
+- Orphan Repair credits each play to the Plex account that watched it. Before, every
+  household play went to the admin's taste profile.
+- The owner's SoulSync follows and likes only shape the owner's music taste.
+- Principle capture from deletion debates runs for the owner only.
+- Re-filing a show as anime (or back) takes its protections along.
+- The nightly SoulSync→Lidarr catalog sync no longer re-adds artists you deleted.
+- The SoulSync ban of a deleted Lidarr artist uses Lidarr's own MusicBrainz id. A Retry
+  whose item is already gone counts as deleted instead of ending in an error.
+- A reply like "which show?" in a verification question's thread no longer counts as
+  your answer; the question stays open.
+- A maintenance task that fails waits longer before each retry (up to its normal
+  interval) instead of rerunning every 30 minutes.
+- The weekly audit no longer rebuilds the same orphaned vectors every week.
+- The OMDb top-up keeps going until its backlog is empty, and anime rows are no longer
+  fetched again every day.
+
 **Members can't overload the box or see the admin's network.**
 - Rebuilding a taste profile, forcing a live arr refresh and re-fetching metadata from chat
   now have small per-user budgets. Only one taste rebuild per user runs at a time.

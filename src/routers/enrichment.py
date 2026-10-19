@@ -1142,10 +1142,10 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     # audit drains the backlog across runs.
     _REBUILD_CAP = 150
     zstats = {"docs_walked": 0, "arr_live_requeued": 0, "arr_gone": 0,
-              "rebuilt": 0, "no_prefetch": 0}
+              "rebuilt": 0, "no_prefetch": 0, "already_rebuilt": 0}
     try:
         from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
-        from src.services.corpus_repair import rebuild_doc_from_prefetch
+        from src.services.corpus_repair import REBUILT_MARK, rebuild_doc_from_prefetch
         if not truth:
             # No ARR ground truth → cannot tell live from gone; skip rather
             # than misclassify (stats stay 0, next audit retries).
@@ -1204,6 +1204,10 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                     zstats["docs_walked"] += 1
                     if d in truth:
                         bucket["live"].append(d)
+                    elif md.get(REBUILT_MARK):
+                        # Already rebuilt from prefetch on an earlier run:
+                        # still gone, still profile-less, nothing new to do.
+                        zstats["already_rebuilt"] += 1
                     else:
                         bucket["gone"].append((d, dom))
                 offset += len(ids)

@@ -50,6 +50,37 @@ _REFRESH_CAP_PER_RUN = 15  # each refresh = MB roundtrip + disk scan (~40-120s
 _STATE_KEY = "music_catalog_sync"
 
 
+def music_tombstones() -> tuple[set, set]:
+    """(MBIDs, normalised names) of artists the owner deleted. Blocking —
+    for ``run_read``.
+
+    SoulSync keeps listing a deleted artist until its weekly deep scan, and
+    a direct Lidarr add is not stopped by the import-list exclusion the
+    delete set — so without this the nightly sync re-added every artist the
+    owner had just deleted. A returned artist the owner chose to KEEP is no
+    tombstone; one parked in limbo is (its files may already be gone)."""
+    from src.database.connection import get_db_session
+    from src.database.models import DeletionProposal
+    from src.services.deletion_returns import _category, _json
+    from src.services.soulsync_client import norm_name
+    mbids, names = set(), set()
+    with get_db_session() as db:
+        rows = (db.query(DeletionProposal.title, DeletionProposal.category,
+                         DeletionProposal.service, DeletionProposal.soulsync_ban,
+                         DeletionProposal.returned_info)
+                  .filter(DeletionProposal.status.in_(("deleted", "limbo"))).all())
+    for r in rows:
+        if _category(r) != "music" or _json(r.returned_info).get("state") == "kept":
+            continue
+        mbid = _json(r.soulsync_ban).get("mbid")
+        if mbid:
+            mbids.add(str(mbid))
+        n = norm_name(r.title or "")
+        if n:
+            names.add(n)
+    return mbids, names
+
+
 async def sync_soulsync_to_lidarr(task=None) -> dict:
     from src.services import soulsync_client
     from src.services.app_state import set_state
@@ -108,7 +139,8 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
 
         # ── 3. create missing, DISARMED ──────────────────────────────────
         defaults = await run_read(_read_defaults, "lidarr")
-        added, added_ids, add_failed, no_mbid = [], [], 0, 0
+        dead_mbids, dead_names = await run_read(music_tombstones)
+        added, added_ids, add_failed, no_mbid, tombstoned = [], [], 0, 0, 0
         can_add = bool(defaults.get("root_folder_path")
                        and defaults.get("quality_profile_id")
                        and defaults.get("metadata_profile_id"))
@@ -123,6 +155,9 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
                 no_mbid += 1
                 continue
             if mbid in by_mbid or not name:
+                continue
+            if mbid in dead_mbids or soulsync_client.norm_name(name) in dead_names:
+                tombstoned += 1     # the owner deleted it: never resurrect
                 continue
             if not can_add:
                 continue
@@ -198,6 +233,7 @@ async def sync_soulsync_to_lidarr(task=None) -> dict:
         "added_disarmed": len(added),
         "add_failed": add_failed,
         "no_mbid": no_mbid,
+        "skipped_deleted": tombstoned,
         "refreshes_queued": refreshed,
         "refresh_backlog": max(0, len(refresh_ids) - _REFRESH_CAP_PER_RUN),
         "grown_artists": sorted(s for s in stale_named if s)[:20],

@@ -135,6 +135,25 @@ async def apply_orphan_mapping(mappings: list) -> dict:
     all_items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
     section_map = {m["section_id"]: m["category"] for m in active}
 
+    # history/all is EVERY Plex account's plays, each tagged with accountID.
+    # Crediting them all to the admin moved a member's watches into the
+    # admin's taste vector and drop centroid — and out of Pillar III, the one
+    # place their engagement protects their shows. Resolve each account to
+    # its local user; only an unresolvable account is parked on the admin
+    # (where /admin/re-attribute can still move it).
+    def _users() -> list:
+        from types import SimpleNamespace
+        from src.database.models import User
+        with get_db_session() as db:
+            return [SimpleNamespace(id=u.id, is_admin=u.is_admin,
+                                    plex_username=u.plex_username,
+                                    plex_user_id=u.plex_user_id)
+                    for u in db.query(User).all()]
+
+    from src.services.plex_sync import _fetch_account_to_user_map
+    acct_map = await _fetch_account_to_user_map(plex_url, headers,
+                                                await run_read(_users))
+
     # Find admin user, dedupe and insert: read-modify-write, so ONE helper
     # on the writer thread.
     def _import_entries() -> int:
@@ -166,8 +185,17 @@ async def apply_orphan_mapping(mappings: list) -> dict:
                     continue
 
                 viewed_at = datetime.utcfromtimestamp(int(viewed_at_ts))
-                dedup = (admin_user_id, rating_key, viewed_at)
-                if dedup in existing_keys:
+                acc = str(item.get("accountID") or "")
+                owner = acct_map.get(acc) if acc else None
+                uid = owner.id if owner else admin_user_id
+                plex_uid = ((owner.plex_user_id if owner else None)
+                            or acc or str(admin_plex_id))
+                dedup = (uid, rating_key, viewed_at)
+                # The admin-parked copy an earlier (pre-attribution) repair
+                # wrote counts too: re-attribution moves it, a re-run must
+                # not add a second copy beside it.
+                if dedup in existing_keys or \
+                        (admin_user_id, rating_key, viewed_at) in existing_keys:
                     continue
 
                 plex_type = item.get("type", "")
@@ -182,8 +210,8 @@ async def apply_orphan_mapping(mappings: list) -> dict:
                 )
 
                 db.add(WatchHistoryEntry(
-                    user_id=admin_user_id,
-                    plex_user_id=str(admin_plex_id),
+                    user_id=uid,
+                    plex_user_id=str(plex_uid),
                     plex_item_id=rating_key,
                     title=item.get("title", ""),
                     media_type=category,
