@@ -107,7 +107,9 @@ def custodian_sprint(
 
 
 @router.get("/status")
-@ttl_response(10, key=lambda **kw: bool(kw.get("quick")))
+# Per user: the "watched titles enriched" numbers count the caller's own
+# history (keyed on quick alone, one member saw another's for 10 s).
+@ttl_response(10, key=lambda **kw: (kw["user"].id, bool(kw.get("quick"))))
 async def enrichment_status(
     user: User = Depends(get_current_user),
     quick: bool = False,

@@ -139,6 +139,28 @@ def set_states_if_changed(values: dict) -> dict:
     return changed
 
 
+_game_flag_warned_at = 0.0
+
+
+def game_active() -> bool:
+    """True when the game watcher has flagged a game as running. Every job
+    that would load a model or saturate the box checks this. An unreadable
+    flag counts as a game: guessing "no game" is the guess that loads the
+    LLM mid-match (it was four separate copies, three of which guessed
+    "no game"). Logged at WARNING, at most once a minute."""
+    global _game_flag_warned_at
+    try:
+        return get_state("game_active") == "1"
+    except Exception as e:
+        import time
+        now = time.monotonic()
+        if now - _game_flag_warned_at > 60:
+            _game_flag_warned_at = now
+            logging.getLogger(__name__).warning(
+                "[app_state] game flag unreadable - treating as a game: %s", e)
+        return True
+
+
 def get_datetime(key: str) -> Optional[datetime]:
     val = get_state(key)
     if not val:

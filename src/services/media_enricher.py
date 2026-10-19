@@ -1513,11 +1513,9 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     from src.services.llm_priority import wait_for_curator
 
     def _gaming() -> bool:
-        try:
-            from src.services.app_state import get_state
-            return get_state("game_active") == "1"
-        except Exception:
-            return False
+        # Fails closed: an unreadable flag counts as a game (app_state.game_active).
+        from src.services.app_state import game_active
+        return game_active()
 
     def _scan(cache):
         cur = cache.conn.cursor()

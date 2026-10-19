@@ -96,11 +96,9 @@ _sprint_seen: datetime | None = None      # the end this process last announced
 
 
 def _gaming() -> bool:
-    try:
-        from src.services.app_state import get_state
-        return get_state("game_active") == "1"
-    except Exception:
-        return False
+    # Fails closed: an unreadable flag counts as a game (app_state.game_active).
+    from src.services.app_state import game_active
+    return game_active()
 
 
 def _admin_id() -> int | None:

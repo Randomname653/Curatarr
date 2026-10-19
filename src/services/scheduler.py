@@ -120,12 +120,8 @@ def _gaming() -> bool:
     scheduler jobs check this and skip — no point fighting the game for VRAM
     (Pass 75). An unreadable flag counts as a game: the jobs behind this
     check load the LLM, and guessing "no game" is the guess that can OOM one."""
-    try:
-        from src.services.app_state import get_state
-        return get_state("game_active") == "1"
-    except Exception as e:
-        logger.warning("[scheduler] game flag unreadable - treating as a game: %s", e)
-        return True
+    from src.services.app_state import game_active
+    return game_active()
 
 
 async def job_game_watcher():
