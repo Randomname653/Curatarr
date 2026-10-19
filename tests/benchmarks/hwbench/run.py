@@ -368,6 +368,7 @@ def cmd_run(args) -> None:
     global _LOG
     DATA.mkdir(parents=True, exist_ok=True)
     _LOG = DATA / f"run_{datetime.now():%Y-%m-%d_%H-%M}.log"
+    server.reap_orphan_runners(log)      # a Ctrl+C'd run can leave one holding the card
     problems = preflight(args.force_busy, args.busy_mib)
     if problems:
         for p in problems:

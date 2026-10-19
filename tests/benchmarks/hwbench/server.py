@@ -105,8 +105,12 @@ class BenchServer:
         raise SystemExit("bench ollama serve did not come up within 60 s")
 
     def stop(self) -> None:
+        """Stop the server AND its runners. Ollama loads each model in a
+        child llama-server process; terminating only `ollama serve` left that
+        runner alive — after a Ctrl+C on 2026-10-19 an orphaned runner held
+        24 GB of VRAM with no parent."""
         if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
+            kill_tree(self._proc.pid)
             try:
                 self._proc.wait(timeout=20)
             except subprocess.TimeoutExpired:
@@ -121,6 +125,64 @@ class BenchServer:
     def __exit__(self, *exc):
         self.stop()
         return False
+
+
+def kill_tree(pid: int) -> None:
+    """Terminate a process and every descendant (children first)."""
+    try:
+        import psutil
+        parent = psutil.Process(pid)
+        kids = parent.children(recursive=True)
+    except Exception:
+        kids, parent = [], None
+    for k in kids:
+        try:
+            k.terminate()
+        except Exception:
+            pass
+    if parent is not None:
+        try:
+            parent.terminate()
+        except Exception:
+            pass
+    try:
+        import psutil
+        psutil.wait_procs(kids, timeout=15)
+    except Exception:
+        pass
+
+
+def orphan_runners() -> list:
+    """llama-server processes whose parent is gone: left behind by a bench
+    server that died with its Python (Ctrl+C, a killed session). A runner of
+    a live `ollama serve` — the owner's — has a parent and is never listed."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    out = []
+    for p in psutil.process_iter(["name", "ppid"]):
+        try:
+            runner = (p.info["name"] or "").lower().startswith("llama-server")
+            if runner and not psutil.pid_exists(p.info["ppid"]):
+                out.append(p)
+        except Exception:
+            continue
+    return out
+
+
+def reap_orphan_runners(log=print) -> int:
+    n = 0
+    for p in orphan_runners():
+        try:
+            p.terminate()
+            p.wait(timeout=15)
+            n += 1
+        except Exception:
+            continue
+    if n:
+        log(f"  stopped {n} orphaned model runner(s) from an earlier, interrupted bench")
+    return n
 
 
 def loaded_models(endpoint: str) -> list[dict]:
