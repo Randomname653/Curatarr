@@ -51,6 +51,7 @@ DATA = HERE.parent / "hwbench_data"
 OWNER_OLLAMA = os.environ.get("HWBENCH_OWNER_OLLAMA", "http://127.0.0.1:11434")
 APP_URL = os.environ.get("HWBENCH_APP_URL", "http://127.0.0.1:8000")
 PROFILE_CTX = {"large": 16384, "small": 8192}
+KV_QUALITY_MIN_SAVING_MIB = 1024
 SERVERS = {
     "default": server.ServerConfig("auto", "f16"),
     "q8": server.ServerConfig("1", "q8_0"),
@@ -202,6 +203,7 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
     prefetched = False
     phases = set(args.phases.split(","))
     tier_by_server: dict[str, int | None] = {}
+    full_vram: dict = {}
 
     ctx_max = (led.model(key) or {}).get("context_max")
     for sname in args.servers.split(","):
@@ -258,10 +260,12 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
 
             if "perf" in phases:
                 full = cell("full", 99)
+                full_vram[(cfg.label, profile)] = full.get("vram_model_mib")
                 if next_ref and not prefetched:
                     store.prefetch(next_ref)       # after the cold load: no disk contention there
                     prefetched = True
                 total = gpu.query()["total_mib"]
+            if "perf" in phases and not args.no_tiers:
                 fit = None
                 if matrix.share(full) == 100:
                     t = tightest_tier(full.get("vram_model_mib") or 0, reserve_mib, total)
@@ -291,7 +295,18 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
             if "quality" in phases and c["role"] == "curator":
                 default_fit = tier_by_server.get((SERVERS["default"].label, profile))
                 this_fit = tier_by_server.get((cfg.label, profile))
-                if sname != "default" and "perf" in phases and not (
+                if args.no_tiers:
+                    # No tier cells this run: a quantised KV cache earns its
+                    # (cheap: gate + judge) quality pass when it saves real VRAM
+                    # on the full card at the profile's context.
+                    f16 = full_vram.get((SERVERS["default"].label, profile))
+                    mine = full_vram.get((cfg.label, profile))
+                    saves = bool(f16 and mine and f16 - mine >= KV_QUALITY_MIN_SAVING_MIB)
+                    if sname != "default" and not saves:
+                        log(f"  {cfg.label} {profile}: saves under {KV_QUALITY_MIN_SAVING_MIB} MiB "
+                            f"against f16 — skipping KV quality")
+                        continue
+                elif sname != "default" and "perf" in phases and not (
                         this_fit and (default_fit is None or this_fit < default_fit)):
                     log(f"  {cfg.label} {profile}: no smaller tier than f16 — skipping KV quality")
                     continue
@@ -481,6 +496,9 @@ def main() -> None:
     p = sub.add_parser("run")
     p.add_argument("--only", default="", help="comma list of refs (default: all candidates)")
     p.add_argument("--phases", default="sweep,perf,quality")
+    p.add_argument("--no-tiers", action="store_true",
+                   help="perf measures the full card only - no simulated smaller cards "
+                        "(the CUDA ballast does not hold on Windows/WDDM, 2026-10-19)")
     p.add_argument("--servers", default="default,q8,q4")
     p.add_argument("--items", default="sub40", choices=["sub40", "full"])
     p.add_argument("--reps", type=int, default=3)
