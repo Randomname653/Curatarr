@@ -99,7 +99,8 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                                                    limit=limit, arr_library=cat_items)
             for rec in recs:
                 match = next((i for i in cat_items if i["title"] == rec.get("title")), {})
-                rec["arr_url"] = match.get("arr_url", "")
+                # The link is the arr's LAN address — the admin's, not a member's.
+                rec["arr_url"] = match.get("arr_url", "") if user.is_admin else ""
                 rec["size_gb"] = round(match.get("size_mb", 0) / 1024, 1)
                 rec["poster_url"] = await _fetch_poster(rec.get("title", ""), cat)
                 rec["category_label"] = CAT_LABEL.get(cat, cat)

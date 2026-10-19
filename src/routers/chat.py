@@ -3665,6 +3665,12 @@ def correct_chat_anchor(
             "ok": False,
             "reason": "no active topic in this thread yet — ask Curatarr something first",
         }
+    # The row it drops is the SHARED enrichment cache: every drop is a fresh
+    # upstream cascade for the next asker. Budgeted per user (after the
+    # no-anchor answer, which costs nothing).
+    from src.services import rate_limit as _rl
+    _rl.enforce("anchor-correct", user.id, _rl.ANCHOR_CORRECTIONS_PER_10MIN, 600,
+                "Metadata was re-fetched several times just now — try again in a few minutes")
     title  = cached[0]
     domain = cached[2] if len(cached) > 2 else "movie"
     media_type = domain or "movie"
@@ -3858,4 +3864,5 @@ async def flush_memories(
         return {"ok": ok is not False, "thread_id": req.thread_id}
     except Exception as e:
         logger.warning("[chat] flush-memories failed for %s: %s", req.thread_id, e)
-        return {"ok": False, "thread_id": req.thread_id, "error": str(e)}
+        return {"ok": False, "thread_id": req.thread_id,
+                "error": "memory extraction failed — see the server log"}

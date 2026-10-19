@@ -54,9 +54,13 @@ def _guess_category(section: dict) -> str:
 
 @router.get("/discover")
 @ttl_response(30, shared=True)   # the Plex server's own sections
-async def discover_libraries(user: User = Depends(get_current_user)):
+async def discover_libraries(user: User = Depends(require_admin)):
     """
     Fetch all Plex library sections with stats: item count, size, scan time, paths.
+
+    Admin-only: the section filesystem paths and the household-wide play
+    counts are the admin's, and only the admin's library mapping (settings
+    pane, first-run onboarding) reads this.
     """
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
