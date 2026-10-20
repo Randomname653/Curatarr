@@ -1269,8 +1269,9 @@ async def job_db_vacuum():
     tombstoned pages behind). NEVER deletes data — only reclaims free
     space.
 
-    Targets: data/curatarr.db (main app DB) and data/cache/metadata.db
-    (api_cache). Each file is vacuumed independently with
+    Targets: data/curatarr.db (main app DB), the api_cache file
+    (settings.ENRICHMENT_CACHE) and the lyrics / Plex-music index
+    (lyrics.LYRICS_DB_PATH). Each file is vacuumed independently with
     its own connection so a failure on one doesn't block the other.
 
     Logs old vs new file size per DB so the impact is visible.
@@ -1297,6 +1298,13 @@ async def job_db_vacuum():
     cache_path = str(getattr(_s, "ENRICHMENT_CACHE", "")) or ""
     if cache_path and os.path.exists(cache_path):
         targets.append(("metadata.db", cache_path))
+    # Lyrics / Plex-music index: its walker deletes and rewrites rows daily.
+    # Next to the cache file, as lyrics.py places it — resolved now, not at
+    # that module's import, so a relocated cache takes the index with it.
+    from src.services.lyrics import LYRICS_DB_PATH
+    lyrics_path = os.path.join(os.path.dirname(cache_path), LYRICS_DB_PATH.name) if cache_path else ""
+    if lyrics_path and os.path.exists(lyrics_path):
+        targets.append((LYRICS_DB_PATH.name, lyrics_path))
 
     if not targets:
         task_monitor.skip(task, "No SQLite files found to vacuum")

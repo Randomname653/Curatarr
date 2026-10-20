@@ -536,6 +536,11 @@ async def _run_cache_prune(task=None) -> bool:
     return True
 
 
+async def _run_retention(task=None) -> bool:
+    from src.services.retention import run_retention
+    return await run_retention(task=task)
+
+
 async def _run_limbo_reconcile(task=None) -> bool:
     from src.services.limbo_reconcile import reconcile_limbo
     await reconcile_limbo(task=task)
@@ -657,6 +662,24 @@ class Task:
     after: tuple = ()
 
 
+# A settle-only task (the weekly VACUUM: minutes holding the write lock)
+# prefers the first tick after a start, when nothing else writes yet. A box
+# that is never restarted never had that tick again, so VACUUM and PRAGMA
+# optimize stopped after week one (2026-10 lifecycle audit). Past this many
+# cadences without a run it goes on any tick; its own busy check still
+# postpones it while a long job writes.
+_SETTLE_ESCAPE = 2.0
+
+
+def _settle_waits(t: Task, queue: str) -> bool:
+    """True when a settle-only task must wait for the next start. Reads the
+    task's stamp: off the event loop."""
+    if not (t.settle_only and _first_run_done[queue]):
+        return False
+    from src.services.scheduler import _job_overdue
+    return not _job_overdue(t.job_id, t.cadence_h * _SETTLE_ESCAPE)
+
+
 def queue_of(t: Task) -> str:
     """Model work (the task drives a model) or background work."""
     return QUEUE_MODEL if t.needs_llm else QUEUE_BACKGROUND
@@ -708,6 +731,10 @@ def _registry() -> list[Task]:
              needs_llm=True, takes_task=True),
         Task("cache_prune",      "Expired cache rows",   24.0,  _run_cache_prune,
              takes_task=True),
+        # Retired rows past their horizon (old superseded proposals, read
+        # bubbles, used starters, day counters) — see services/retention.py.
+        Task("retention",        "Retired rows",         24.0,
+             _run_retention, takes_task=True),
         # A database restored without its vector store (or with an older
         # one): enriched rows whose doc is gone are re-embedded from the
         # cache, or re-queued when the profile is gone too. CPU embeds only;
@@ -962,7 +989,8 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
             # below ran inline: while one waits on a worker thread, the other
             # queue's after-check must still count the task as ahead.
             try:
-                if t.settle_only and _first_run_done[queue] and not force:
+                if (t.settle_only and not force
+                        and await run_read(_settle_waits, t, queue)):
                     continue
                 if not force and not await run_read(_job_overdue, t.job_id, t.cadence_h):
                     continue
@@ -1082,7 +1110,8 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
         out = {}
         for t in registry:
             try:
-                out[t.job_id] = _job_overdue(t.job_id, t.cadence_h)
+                out[t.job_id] = (_job_overdue(t.job_id, t.cadence_h)
+                                 and not _settle_waits(t, queue_of(t)))
             except Exception:  # noqa: BLE001 — handled per queue below
                 pass
         return out
@@ -1097,9 +1126,7 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
             continue
         tasks = [t for t in registry if queue_of(t) == q]
         try:
-            due = {t.job_id for t in tasks
-                   if force or (overdue[t.job_id]
-                                and not (t.settle_only and _first_run_done[q]))}
+            due = {t.job_id for t in tasks if force or overdue[t.job_id]}
         except Exception:  # noqa: BLE001 — unknown due state: count them all as ahead
             due = {t.job_id for t in tasks}
         # Claimed before the first await, so two ticks can never both start it.
@@ -1261,7 +1288,7 @@ def _model_work_due() -> bool:
     try:
         return any(_job_overdue(t.job_id, t.cadence_h) for t in _registry()
                    if queue_of(t) == QUEUE_MODEL
-                   and not (t.settle_only and _first_run_done[QUEUE_MODEL]))
+                   and not _settle_waits(t, QUEUE_MODEL))
     except Exception:  # noqa: BLE001 — unknown due state: keep going
         return True
 
