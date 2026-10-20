@@ -97,29 +97,33 @@ def _profile_index() -> tuple:
     by_title: dict = {}
     cache = MetadataCache()
     try:
+        # The fields come out in SQLite's C JSON reader, not json.loads: a
+        # recovery from a wipe re-runs this every tick until the backlog is
+        # gone, over every profile of the library.
         cur = cache.conn.execute(
-            "SELECT cache_key, response FROM api_cache WHERE cache_key LIKE ? "
-            "AND expires_at > ?",
+            "SELECT cache_key, "
+            "       json_extract(response, '$.plex_rating_key'), "
+            "       json_extract(response, '$.tmdb_id'), "
+            "       json_extract(response, '$.anilist_id'), "
+            "       json_extract(response, '$.title'), "
+            "       COALESCE(json_extract(response, '$.embedding_text'), '') != '' "
+            "FROM api_cache WHERE cache_key LIKE ? AND expires_at > ? "
+            "AND json_valid(response) "
+            "AND COALESCE(json_extract(response, '$._not_found'), 0) IN (0, '')",
             # Local time, as MetadataCache._expires_at writes it.
             (f"{_CACHE_VERSION}:enriched:%", datetime.now().isoformat()))
-        for row in cur:
-            try:
-                prof = json.loads(row["response"])
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(prof, dict) or prof.get("_not_found"):
-                continue
-            key = row["cache_key"][len(_CACHE_VERSION) + 1:]       # enriched:{cat}:{id}
+        for ck, prk, tmdb_id, anilist_id, title, has_text in cur:
+            key = ck[len(_CACHE_VERSION) + 1:]                      # enriched:{cat}:{id}
             cat = key.split(":", 2)[1] if key.count(":") >= 2 else ""
+            prof = {"plex_rating_key": prk, "tmdb_id": tmdb_id,
+                    "anilist_id": anilist_id, "title": title}
             # Music artists embed a genre/tag line when the summariser wrote
             # no embedding_text (store_profile_vector does the same).
-            has_text = bool(prof.get("embedding_text")) or cat == "music"
-            entry = (key, doc_id_for(prof), has_text, cat)
-            prk = str(prof.get("plex_rating_key") or "")
+            entry = (key, doc_id_for(prof), bool(has_text) or cat == "music", cat)
             if prk:
-                by_key[prk] = entry
-            if prof.get("title"):
-                by_title.setdefault(_title_key(cat, prof["title"]), entry)
+                by_key[str(prk)] = entry
+            if title:
+                by_title.setdefault(_title_key(cat, title), entry)
     finally:
         cache.close()
     return by_key, by_title

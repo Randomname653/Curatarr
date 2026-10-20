@@ -140,7 +140,10 @@ seed([("12345", "movie", True, None),             # a Plex ratingKey
                              "embedding_text": "a movie", "media_type": "movie",
                              "vector_pending": True},
       "enriched:music:Boards of Canada": {"title": "Boards of Canada",
-                                          "plex_rating_key": "777", "genres": ["idm"]}})
+                                          "plex_rating_key": "777", "genres": ["idm"]},
+      # a not-found sentinel is no profile: 888 still counts as knowledge-less
+      "enriched:show:888": {"_not_found": True, "plex_rating_key": "888",
+                            "title": "T4", "embedding_text": "nothing"}})
 present.clear()
 embedded.clear()
 done = run(vr.reconcile_vectors())
