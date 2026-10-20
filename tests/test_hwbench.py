@@ -210,6 +210,11 @@ check("a judge-scored model is no longer provisional",
       not mx_s["tiers"]["8"]["recommended"]["quality"]["provisional"])
 check("agreement with the production model does not rank: 60 % agreement but better reasoning wins 24 GB",
       mx_s["tiers"]["24"]["recommended"]["model"] == "tiny:4b")
+mx_a = matrix.build(L, allowed={"gemma4:31b"})
+check("export allowlist: a model outside the catalog never reaches a tier",
+      mx_a["tiers"]["24"]["recommended"]["model"] == "gemma4:31b"
+      and all(o is None or o["model"] == "gemma4:31b"
+              for row in mx_a["tiers"].values() for o in [row["recommended"]] + row["alternatives"]))
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
 
 # A judge that gives nearly every title the same verdict is a K.O.
@@ -242,6 +247,9 @@ L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99}, 
                               {"num_ctx": 8192, "vram_model_mib": 3000, "gpu_share_pct": 100},
                               {"num_ctx": 131072, "vram_model_mib": 24000, "gpu_share_pct": 80}],
                    "max_resident_ctx": 8192})
+L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99, "host": "nas"}, env=env,
+          metrics={"points": [{"num_ctx": 2048, "vram_model_mib": 2270, "gpu_share_pct": 100}],
+                   "max_resident_ctx": 2048})
 fp = matrix.build(L)["footprints"]["tiny:4b"][matrix.DEFAULT_SERVER]
 check("sweep: resident windows exported, the spilled one left out",
       fp["mib_by_ctx"] == {"2048": 2500, "8192": 3000} and fp["max_resident_ctx"] == 8192)

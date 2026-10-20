@@ -627,7 +627,11 @@ def cmd_status(args) -> None:
 def cmd_matrix(args) -> None:
     led = Ledger()
     _, ref = load_candidates()
-    mx = matrix.build(led, reference_ref=ref)
+    allowed = None
+    if args.export:
+        from src.services.model_catalog import CURATOR_MODELS
+        allowed = {e["model"] for e in CURATOR_MODELS}
+    mx = matrix.build(led, reference_ref=ref, allowed=allowed)
     md = matrix.render_md(mx)
     (DATA / "matrix.md").parent.mkdir(parents=True, exist_ok=True)
     (DATA / "matrix.md").write_text(md, encoding="utf-8")

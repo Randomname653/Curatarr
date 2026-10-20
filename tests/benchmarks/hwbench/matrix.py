@@ -234,7 +234,12 @@ def quality_score(by_scorer: dict) -> dict:
     return {"score25": score, "judge25": judge, "notes25": notes, "provisional": judge is None}
 
 
-def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
+def build(ledger: Ledger, reference_ref: str = "gemma4:31b",
+          allowed: set[str] | None = None) -> dict:
+    """``allowed``: the models the wizard may offer (the catalog's curator
+    entries). A model reaches the setup only through a deliberate catalog
+    entry, so everything else stays out of the tiers - qwen3.8 benches well
+    but failed the chat bench and is a pitcher-only option."""
     runs = ledger.runs()
     quality = [r for r in runs if r["phase"] == "quality"]
     perf = [r for r in runs if r["phase"] == "perf"
@@ -287,6 +292,8 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
         s, m = p["settings"], p["metrics"]
         q = qual_by.get((p["model_key"], s.get("profile"), s.get("server")))
         if not q or not q["ok"]:
+            continue
+        if allowed is not None and ledger.model(p["model_key"])["ref"] not in allowed:
             continue
         ok, _ = perf_ok(m)
         if not ok:
@@ -348,7 +355,10 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     # Measured footprints for the catalog: MiB per context window, per model
     # and server setting — what the wizard checks a card against.
     footprints: dict = {}
-    for sw in (r for r in runs if r["phase"] == "ctx_sweep"):
+    # Bench-card sweeps only: a remote card's sweep (the NAS, Linux) reads
+    # 214-276 MiB below the same model on Windows/WDDM and would give a
+    # Windows card a footprint that is too tight.
+    for sw in (r for r in runs if r["phase"] == "ctx_sweep" and not r["settings"].get("host")):
         ref = ledger.model(sw["model_key"])["ref"]
         pts = {str(p["num_ctx"]): p["vram_model_mib"] for p in sw["metrics"].get("points", [])
                if p.get("gpu_share_pct") == 100 and p.get("vram_model_mib")}
