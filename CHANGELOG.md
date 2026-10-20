@@ -6,6 +6,19 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Faster deletion scans and taste rebuilds.**
+- The judge's per-title watch lookups use new watch-history indexes: under a millisecond
+  instead of 30–180 ms on a 400k-play history.
+- Learned keep-considerations for the 60 judged candidates come from one batched
+  embedding call and one read of your memories. That was a call and a full read per
+  candidate, and the scoring is now about 34× faster.
+- While the GPU writes one verdict, the next title's evidence is already being gathered.
+- Reception, dialogue and Wikidata lookups before a scan run a few titles at a time,
+  alongside the significance pass, instead of one after another.
+- A taste rebuild pulls each category's vector corpus once (4–9 s for 30k vectors), not
+  twice per household member.
+- Pages and API responses over 1 KB are gzip-compressed. Live streams are not.
+
 **Months without a restart: bounded memory, retention, and healing after a restore.**
 - Search's in-memory phrase vectors are capped (about 100 MB at most). They used to grow
   with every search for as long as the app ran.

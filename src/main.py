@@ -413,6 +413,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Compress JSON and static assets over 1 KB: the deletions / recs / arr-item
+# lists ship synopses and score factors per row and the JS bundle is plain
+# text — typically 5-10x smaller on the wire. Starlette leaves
+# text/event-stream alone, so the chat and task SSE streams are untouched.
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
 # Slow-request telemetry: logs any endpoint taking >300ms to response
 # start, so "the page feels slow" can be answered from the log instead of
 # guessed at. Time-to-first-byte, so SSE streams don't count as slow.

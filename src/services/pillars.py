@@ -289,8 +289,9 @@ def _other_users_watch(db, owner_id: int, item: dict, category: str) -> list[dic
     filters = _watch_filters(item, category)
     if not filters:
         return []
-    rows = (db.query(WatchHistoryEntry)
-              .filter(WatchHistoryEntry.user_id != owner_id, *filters).all())
+    W = WatchHistoryEntry
+    rows = (db.query(W.user_id, W.season, W.episode, W.completed, W.viewed_at)
+              .filter(W.user_id != owner_id, *filters).all())
     if not rows:
         return []
     names = {u.id: (u.plex_username or f"user {u.id}")

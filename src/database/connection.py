@@ -1,5 +1,6 @@
 """Curatarr - Database Connection"""
 
+import re
 from contextlib import contextmanager
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -335,6 +336,21 @@ def _migrate_columns() -> None:
         # Healing: the Step-5 pre-filter and the KB "open" breakdown filter
         # on due-ness every run — same scale argument as fetch_tier.
         ("idx_es_next_retry_at",         "enrichment_status", "next_retry_at"),
+        # Per-candidate watch lookups (pillars._watch_filters, watch_status):
+        # OR(title=, series_title=, lower(series_title) IN, tmdb_id=). With an
+        # index on every OR term SQLite runs it as a MULTI-INDEX OR; without
+        # one it walked all of the owner's ~350k rows (the other-users query
+        # the whole table) — 30-180 ms per judged title, measured on a 400k
+        # synthetic table, vs <1 ms indexed.
+        ("ix_wh_title",                  "watch_history", "title"),
+        ("ix_wh_series_title",           "watch_history", "series_title"),
+        ("ix_wh_series_title_lc",        "watch_history", "lower(series_title)"),
+        ("ix_wh_tmdb_id",                "watch_history", "tmdb_id"),
+        # Range scans by user + family + recency (the 90-day windows, the
+        # taste rebuild's per-category history read).
+        ("ix_wh_user_type_viewed",       "watch_history", "user_id, media_type, viewed_at"),
+        # Per-title enrichment lookups (plex_sync, the KB breakdown).
+        ("ix_es_title_cat",              "enrichment_status", "title, media_category"),
     ]
 
     import logging as _logging
@@ -363,8 +379,20 @@ def _migrate_columns() -> None:
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
                     added.add((table, col))
+            _cols_of: dict = {}
             for idx_name, table, col in new_indexes:
                 if table in tables:
+                    # Every column the index names must exist: a table from
+                    # an older (or a test's trimmed) schema skips the index
+                    # instead of failing the whole migration transaction.
+                    if table not in _cols_of:
+                        _cols_of[table] = {row[1] for row in conn.execute(
+                            text(f"PRAGMA table_info({table})"))}
+                    needed = set(re.findall(r"[a-z_]+(?![a-z_]*\()", col))
+                    if not needed <= _cols_of[table]:
+                        _mig_log.debug("[migrate] %s skipped: %s lacks %s", idx_name,
+                                       table, ", ".join(sorted(needed - _cols_of[table])))
+                        continue
                     conn.execute(text(
                         f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"
                     ))
@@ -676,4 +704,43 @@ def init_db():
     _migrate_columns()
     _migrate_deletion_proposals_autoincrement()
     _ensure_deletion_proposal_indexes()
+    _refresh_planner_stats()
     _secure_db_files()
+
+
+def _refresh_planner_stats() -> None:
+    """ANALYZE watch_history when the planner has no statistics for one of
+    its lookup indexes (first boot after they were added; ~0.25 s at 400k
+    rows). Without stats SQLite prefers the single-column user_id index for
+    the owner's watch lookups — a walk of their ~350k rows — over the
+    MULTI-INDEX OR on the title indexes (70-180 ms vs <1 ms per title). A
+    sampled ANALYZE (analysis_limit) is not enough: it sees one user in its
+    sample and rates user_id as selective. Best-effort: a missing stat
+    costs speed, never correctness."""
+    from sqlalchemy import text
+    import logging as _logging
+    if "sqlite" not in settings.DATABASE_URL:
+        return
+    want = {"ix_wh_title", "ix_wh_series_title", "ix_wh_series_title_lc", "ix_wh_tmdb_id"}
+    try:
+        with engine.connect() as conn:
+            have = {}
+            if conn.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                 "AND name='sqlite_stat1'")).first():
+                for idx, stat in conn.execute(text(
+                        "SELECT idx, stat FROM sqlite_stat1 WHERE tbl='watch_history'")):
+                    try:
+                        have[idx] = int(str(stat).split()[0])
+                    except (ValueError, IndexError):
+                        pass
+            rows = conn.execute(text("SELECT count(*) FROM watch_history")).scalar() or 0
+            # Fresh stats for every index, taken at no less than half today's
+            # size: a fresh install analyzes an EMPTY table on its first boot
+            # and would otherwise keep those stats as the history grows.
+            if want <= set(have) and min(have[i] for i in want) * 2 + 1000 >= rows:
+                return
+            conn.execute(text("PRAGMA analysis_limit=0"))
+            conn.execute(text("ANALYZE watch_history"))
+            conn.commit()
+    except Exception as e:
+        _logging.getLogger(__name__).warning("[migrate] ANALYZE failed: %s", e)

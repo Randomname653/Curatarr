@@ -780,37 +780,135 @@ async def retrieve_considerations(
     item_emb = await _embed(item_profile, kind="query")
     if not item_emb:
         return []
-    def _load_scored() -> list:
-        with get_db_session() as db:
-            q = db.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id)
-            if media_category:
-                q = q.filter(
-                    (EpisodicMemory.media_category == media_category) |
-                    (EpisodicMemory.media_category.is_(None))
-                )
-            # Pull plain fields out before the session closes — the ORM instances
-            # would otherwise raise DetachedInstanceError on attribute access below.
-            rows = [
-                (m.id, m.content, m.importance, m.embedding_json, m.media_category,
-                 m.metadata_json)
-                for m in q.all()
-            ]
-        # Scored here, in the worker: a json.loads + 768-d pure-Python cosine
-        # per memory (~0.3 ms each) ran on the loop once per judged title.
-        sims = []
-        for mid, content, importance, emb_json, mcat, meta in rows:
-            if not emb_json or _is_superseded(meta):
-                continue
-            try:
-                sem = _cosine_similarity(item_emb, json.loads(emb_json))
-            except (ValueError, TypeError):
-                continue
-            if sem is None:
-                continue   # other model's vector — same as no embedding
-            sims.append((sem, mid, content, importance, mcat))
-        return sims
+    loaded = await run_read(_load_consideration_rows, user_id, media_category)
+    # Scored in a worker: a library-sized memory set is a few ms of NumPy.
+    return await asyncio.to_thread(_score_considerations, item_emb, item_profile,
+                                   loaded, top_k)
 
-    sims = await run_read(_load_scored)
+
+async def retrieve_considerations_many(
+    user_id: int,
+    item_profiles: list,
+    media_category: str = None,
+    top_k: int = 3,
+) -> list:
+    """retrieve_considerations for many candidates at once: one list per
+    profile, in order, scored exactly as the single call scores them.
+
+    The deletion scan used to call the single version once per candidate
+    (60 at JUDGE_CAP): 60 serial /api/embed round-trips and 60 full reads +
+    json.loads of every memory embedding. Here the queries go out in
+    _BATCH-sized /api/embed calls, the memories are read and decoded ONCE
+    into a matrix, and each candidate costs one matrix-vector product."""
+    profiles = [p if (p and p.strip()) else "" for p in item_profiles]
+    want = [i for i, p in enumerate(profiles) if p]
+    out: list = [[] for _ in profiles]
+    if not want:
+        return out
+    embs = await _embed_queries([profiles[i] for i in want])
+    if not any(embs):
+        return out
+    loaded = await run_read(_load_consideration_rows, user_id, media_category)
+    scored = await asyncio.to_thread(_score_considerations_many, embs,
+                                     [profiles[i] for i in want], loaded, top_k)
+    for i, cons in zip(want, scored):
+        out[i] = cons
+    return out
+
+
+async def _embed_queries(texts: list) -> list:
+    """Query-side embeddings for many texts; [None]*n when the service fails
+    (the same "no lookup" the single _embed reports as None)."""
+    from src.services.embed_service import embed_queries, get_profile
+    try:
+        # the profile read can hit the DB on a cold cache: off the loop
+        vecs = await embed_queries(texts, await asyncio.to_thread(get_profile))
+        return vecs if len(vecs) == len(texts) else [None] * len(texts)
+    except Exception as e:
+        logger.warning("Memory query embedding failed: %s", e)
+        return [None] * len(texts)
+
+
+def _load_consideration_rows(user_id: int, media_category: Optional[str]) -> dict:
+    """The user's live memories for consideration scoring, decoded ONCE:
+    ``rows`` [(id, content, importance, media_category, width)] in table
+    order, ``keep`` {row position: content tokens} for the keep-leaning ones
+    (the query-independent half of the test, done once), and ``mats`` {width: (row positions, float64 matrix, row norms)}
+    so a query costs one matrix-vector product. Blocking — run it with
+    run_read."""
+    import numpy as np
+    with get_db_session() as db:
+        q = db.query(EpisodicMemory.id, EpisodicMemory.content,
+                     EpisodicMemory.importance, EpisodicMemory.embedding_json,
+                     EpisodicMemory.media_category, EpisodicMemory.metadata_json
+                     ).filter(EpisodicMemory.user_id == user_id)
+        if media_category:
+            q = q.filter(
+                (EpisodicMemory.media_category == media_category) |
+                (EpisodicMemory.media_category.is_(None))
+            )
+        raw = q.all()
+    rows, by_width, keep = [], {}, {}
+    for mid, content, importance, emb_json, mcat, md in raw:
+        if not emb_json or _is_superseded(md):
+            continue
+        try:
+            vec = np.asarray(json.loads(emb_json), dtype=np.float64)
+        except (ValueError, TypeError):
+            continue
+        if vec.ndim != 1:
+            continue
+        width = int(vec.shape[0])
+        if width:
+            by_width.setdefault(width, []).append((len(rows), vec))
+        c = content or ""
+        if (not _CONSIDERATION_NEGATIVE_RE.search(c)
+                and _CONSIDERATION_POSITIVE_RE.search(c)):
+            keep[len(rows)] = _consideration_tokens(content)
+        rows.append((mid, content, importance, mcat, width))
+    mats = {}
+    for width, items in by_width.items():
+        m = np.stack([v for _, v in items])
+        mats[width] = ([pos for pos, _ in items], m, np.linalg.norm(m, axis=1))
+    return {"rows": rows, "keep": keep, "mats": mats}
+
+
+def _score_considerations_many(embs: list, profiles: list, loaded: dict,
+                               top_k: int) -> list:
+    """_score_considerations for each (embedding, profile) pair; [] where
+    the embedding is missing. CPU-only — run it off the loop."""
+    return [_score_considerations(e, p, loaded, top_k) if e else []
+            for e, p in zip(embs, profiles)]
+
+
+def _score_considerations(item_emb: list, item_profile: str, loaded: dict,
+                          top_k: int) -> list:
+    """The standout test of retrieve_considerations over pre-decoded rows.
+    The cosines of every memory as wide as the query come from one
+    matrix-vector product (the old per-memory pure-Python cosine was ~0.3 ms
+    each); an empty stored vector scores 0.0 and one of another width is
+    skipped, as _cosine_similarity decides."""
+    import numpy as np
+    q = np.asarray(item_emb, dtype=np.float64)
+    dim = int(q.shape[0])
+    rows = loaded["rows"]
+    cos = {}
+    if dim in loaded["mats"]:
+        pos, m, norms = loaded["mats"][dim]
+        denom = norms * np.linalg.norm(q)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            vals = np.where(denom == 0, 0.0, (m @ q) / denom)
+        cos = dict(zip(pos, vals.tolist()))
+    sims = []
+    for k, (mid, content, importance, mcat, width) in enumerate(rows):
+        if width == 0:
+            sem = 0.0
+        elif k in cos:
+            sem = cos[k]
+        else:
+            _cosine_similarity(item_emb, [0.0] * width)   # warns once per width pair
+            continue
+        sims.append((sem, k, mid, content, importance, mcat))
     if len(sims) < 3:
         return []
 
@@ -821,14 +919,12 @@ async def retrieve_considerations(
     threshold = mean + max(0.08, std)
     item_tokens = _consideration_tokens(item_profile)
 
+    keep = loaded["keep"]
     out = []
-    for sem, mid, content, importance, mcat in sims:
-        c = content or ""
-        if _CONSIDERATION_NEGATIVE_RE.search(c):
+    for sem, k, mid, content, importance, mcat in sims:
+        if k not in keep:
             continue
-        if not _CONSIDERATION_POSITIVE_RE.search(c):
-            continue
-        overlap = item_tokens & _consideration_tokens(content)
+        overlap = item_tokens & keep[k]
         embed_standout = sem >= threshold
         # lexical path: a shared distinctive concept (LGBTQ, a franchise name,
         # "partner") is a reliable signal the embedding misses — but require the

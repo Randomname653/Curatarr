@@ -896,7 +896,7 @@ q = wrapper.query([[0.0]], n_results=2)
 check("query() over-fetches by the headroom and trims after hiding merged docs",
       wrapper.collection.asked == 2 + cw._MERGED_HEADROOM and q["ids"] == [["a", "c"]])
 check("taste calibration skips merged docs (no title counted twice)",
-      wrapper.embeddings_for_domain("movie") == [[1.0]])
+      [list(r) for r in wrapper.embeddings_for_domain("movie")] == [[1.0]])
 
 import src.services.corpus_repair as crp  # noqa: E402
 

@@ -214,8 +214,8 @@ loop = eng.split("watch_unknown_skipped = 0")[1].split("return final_proposals")
 check("the loop defers unreadable watch data BEFORE any judge call",
       loop.index('get("household_unknown")') < loop.index("await adjudicate("))
 check("the loop no longer holds a session across build_evidence",
-      "ev = await build_evidence(item, user_id, category)" in loop
-      and "_jdb" not in loop)
+      "build_evidence(item, user_id, category)" in loop
+      and "user_id, category, db" not in loop and "_jdb" not in loop)
 check("deferred titles land in the run summary",
       "+ watch_unknown_skipped)" in loop)
 
