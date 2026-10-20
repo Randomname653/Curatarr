@@ -305,6 +305,7 @@ export async function detectGpu() {
       + (r.busy_note ? `<div class="t-amber test-status">${SVG_WARN} ${esc(r.busy_note)}</div>` : '');
     state.setupData.vram_gb = r.vram_gb;
     state.setupData.gpu_name = r.name || null;
+    state.setupData.ram_gb = r.ram_gb ?? null;
     const sel = document.getElementById('s-vram');
     if (sel) {
       [...sel.options].filter(o => o.dataset.detected).forEach(o => o.remove());
@@ -327,7 +328,8 @@ export async function refreshModelRecs() {
   try {
     const r = await api('/api/setup/recommend', 'POST',
                         {ollama_endpoint: endpoint, vram_gb: state.setupData.vram_gb ?? null,
-                         gpu_name: state.setupData.gpu_name ?? null});
+                         gpu_name: state.setupData.gpu_name ?? null,
+                         ram_gb: state.setupData.ram_gb ?? null});
     renderRecSelect('s-curator-model', r.curator, r.installed);
     renderRecSelect('s-summarizer-model', r.summarizer, r.installed);
     renderRecSelect('s-embed-model', r.embedding, r.installed);
@@ -361,7 +363,14 @@ export function renderHardwarePackage(pkg) {
   const srv = Object.entries(r.server || {})
     .filter(([k]) => k === 'OLLAMA_KV_CACHE_TYPE' || k === 'OLLAMA_FLASH_ATTENTION')
     .map(([k, v]) => `${k}=${v}`);
-  return `<div class="test-status">Bench result for ${pkg.tier_gb} GB: <b>${esc(r.model)}</b>`
+  // An offloaded package keeps most of its model in system RAM; when this
+  // host has too little, the server already picked the alternative that fits.
+  const rf = pkg.ram_fallback;
+  const ramNote = !rf ? ''
+    : rf.instead_of
+      ? `<div class="t-amber test-status">${SVG_WARN} ${esc(rf.instead_of)} would need ~${esc(rf.needs_gb)} GB of system RAM on this card (this host has ${esc(rf.host_gb)} GB) — recommending ${esc(r.model)} instead.</div>`
+      : `<div class="t-amber test-status">${SVG_WARN} This package needs ~${esc(rf.needs_gb)} GB of system RAM; this host has ${esc(rf.host_gb)} GB. Expect swapping.</div>`;
+  return ramNote + `<div class="test-status">Bench result for ${pkg.tier_gb} GB: <b>${esc(r.model)}</b>`
     + `${r.installed ? ' (installed)' : ''} — ${speed}; judge ~${ex.judge_s ?? '?'} s per title;`
     + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${ex.gpu_share_pct} % on the GPU, rest in RAM` : ''}.</div>`
     + `<div class="t3 fs-12">Curatarr .env: ${esc(env.join(' · '))}`

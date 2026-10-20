@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-20T18:13:42",
+ "generated": "2026-10-20T19:41:25",
  "bench_version": "2026-10.1",
  "reference": "gemma4:31b",
  "footprints": {
@@ -1086,40 +1086,42 @@
  "tiers": {
   "4": {
    "recommended": {
-    "model": "gemma4:e4b-it-qat",
-    "weights_digest": "sha256:e8b6a059ba86947a44ace84d6e5679795bc41862c25c30513142588f0e9dba1d",
-    "profile": "small",
-    "num_ctx": 8192,
+    "model": "gemma4:26b-a4b-it-qat",
+    "weights_digest": "sha256:4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5",
+    "profile": "large",
+    "num_ctx": 16384,
     "num_gpu": -1,
     "server": {
      "OLLAMA_NUM_PARALLEL": "1",
      "OLLAMA_MAX_LOADED_MODELS": "1",
-     "OLLAMA_KV_CACHE_TYPE": "f16"
+     "OLLAMA_KV_CACHE_TYPE": "q8_0",
+     "OLLAMA_FLASH_ATTENTION": "1"
     },
     "derived": false,
     "expected": {
-     "gen_tok_s": 17.2,
-     "judge_s": 10.66,
-     "monologue_s": 3.58,
+     "gen_tok_s": 15.2,
+     "judge_s": 19.51,
+     "monologue_s": 5.56,
      "vram_gb": 2.6,
-     "gpu_share_pct": 21,
+     "gpu_share_pct": 8,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 7.3
+     "ram_taken_gb": 18.5,
+     "ram_need_gb": 19.4
     },
     "quality": {
-     "score25": 19.69,
-     "judge25": 19.6,
-     "notes25": 19.82,
+     "score25": 21.48,
+     "judge25": 21.88,
+     "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 62.5,
+      "exact_pct": 70.0,
       "side_pct": 72.5
      }
     },
-    "perf_run": "d1f659cf04bd217e-479",
-    "quality_run": "11a31439628978f8-298",
+    "perf_run": "74d4b02646af7abf-439",
+    "quality_run": "d3b3d94a22f2f76c-512",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1129,41 +1131,41 @@
    },
    "alternatives": [
     {
-     "model": "gemma4:26b-a4b-it-qat",
-     "weights_digest": "sha256:4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5",
-     "profile": "large",
-     "num_ctx": 16384,
+     "model": "gemma4:e4b-it-qat",
+     "weights_digest": "sha256:e8b6a059ba86947a44ace84d6e5679795bc41862c25c30513142588f0e9dba1d",
+     "profile": "small",
+     "num_ctx": 8192,
      "num_gpu": -1,
      "server": {
       "OLLAMA_NUM_PARALLEL": "1",
       "OLLAMA_MAX_LOADED_MODELS": "1",
-      "OLLAMA_KV_CACHE_TYPE": "q8_0",
-      "OLLAMA_FLASH_ATTENTION": "1"
+      "OLLAMA_KV_CACHE_TYPE": "f16"
      },
      "derived": false,
      "expected": {
-      "gen_tok_s": 15.2,
-      "judge_s": 19.51,
-      "monologue_s": 5.56,
+      "gen_tok_s": 17.2,
+      "judge_s": 10.66,
+      "monologue_s": 3.58,
       "vram_gb": 2.6,
-      "gpu_share_pct": 8,
+      "gpu_share_pct": 21,
       "sysmem_fallback": false,
       "speed_unstable": false,
-      "ram_taken_gb": 18.5
+      "ram_taken_gb": 7.3,
+      "ram_need_gb": 10.5
      },
      "quality": {
-      "score25": 20.11,
+      "score25": 19.69,
       "judge25": 19.6,
-      "notes25": 20.88,
+      "notes25": 19.82,
       "provisional": false,
       "agreement": {
        "n": 40,
-       "exact_pct": 72.5,
-       "side_pct": 75.0
+       "exact_pct": 62.5,
+       "side_pct": 72.5
       }
      },
-     "perf_run": "74d4b02646af7abf-439",
-     "quality_run": "d3b3d94a22f2f76c-506",
+     "perf_run": "d1f659cf04bd217e-479",
+     "quality_run": "11a31439628978f8-298",
      "measured_on": {
       "gpu": "NVIDIA GeForce RTX 4090",
       "driver": "617.14",
@@ -1194,21 +1196,22 @@
      "gpu_share_pct": 19,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 16.1
+     "ram_taken_gb": 16.1,
+     "ram_need_gb": 17.8
     },
     "quality": {
-     "score25": 20.11,
-     "judge25": 19.6,
+     "score25": 21.48,
+     "judge25": 21.88,
      "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 72.5,
-      "side_pct": 75.0
+      "exact_pct": 70.0,
+      "side_pct": 72.5
      }
     },
     "perf_run": "dcdc2791f20ebd7f-426",
-    "quality_run": "3babfda515b82be5-115",
+    "quality_run": "3babfda515b82be5-510",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1240,21 +1243,22 @@
      "gpu_share_pct": 34,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 12.8
+     "ram_taken_gb": 12.8,
+     "ram_need_gb": 15.6
     },
     "quality": {
-     "score25": 20.11,
-     "judge25": 19.6,
+     "score25": 21.48,
+     "judge25": 21.88,
      "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 72.5,
-      "side_pct": 75.0
+      "exact_pct": 70.0,
+      "side_pct": 72.5
      }
     },
     "perf_run": "0417fe5f52747874-437",
-    "quality_run": "d3b3d94a22f2f76c-506",
+    "quality_run": "d3b3d94a22f2f76c-512",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1286,21 +1290,22 @@
      "gpu_share_pct": 47,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 10.8
+     "ram_taken_gb": 10.8,
+     "ram_need_gb": 13.7
     },
     "quality": {
-     "score25": 20.11,
-     "judge25": 19.6,
+     "score25": 21.48,
+     "judge25": 21.88,
      "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 72.5,
-      "side_pct": 75.0
+      "exact_pct": 70.0,
+      "side_pct": 72.5
      }
     },
     "perf_run": "e750b5c38e8b860b-436",
-    "quality_run": "d3b3d94a22f2f76c-506",
+    "quality_run": "d3b3d94a22f2f76c-512",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1332,21 +1337,22 @@
      "gpu_share_pct": 61,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 8.6
+     "ram_taken_gb": 8.6,
+     "ram_need_gb": 11.7
     },
     "quality": {
-     "score25": 20.11,
-     "judge25": 19.6,
+     "score25": 21.48,
+     "judge25": 21.88,
      "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 72.5,
-      "side_pct": 75.0
+      "exact_pct": 70.0,
+      "side_pct": 72.5
      }
     },
     "perf_run": "11c86a6fb4a50652-435",
-    "quality_run": "d3b3d94a22f2f76c-506",
+    "quality_run": "d3b3d94a22f2f76c-512",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1378,21 +1384,22 @@
      "gpu_share_pct": 87,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 4.2
+     "ram_taken_gb": 4.2,
+     "ram_need_gb": 7.9
     },
     "quality": {
-     "score25": 20.11,
-     "judge25": 19.6,
+     "score25": 21.48,
+     "judge25": 21.88,
      "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 72.5,
-      "side_pct": 75.0
+      "exact_pct": 70.0,
+      "side_pct": 72.5
      }
     },
     "perf_run": "55cf2460131941a2-434",
-    "quality_run": "d3b3d94a22f2f76c-506",
+    "quality_run": "d3b3d94a22f2f76c-512",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1422,7 +1429,8 @@
       "gpu_share_pct": 66,
       "sysmem_fallback": false,
       "speed_unstable": false,
-      "ram_taken_gb": 12.1
+      "ram_taken_gb": 12.1,
+      "ram_need_gb": null
      },
      "quality": {
       "score25": 22.24,
@@ -1468,21 +1476,22 @@
      "gpu_share_pct": 100,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 3.1
+     "ram_taken_gb": 3.1,
+     "ram_need_gb": 6.0
     },
     "quality": {
-     "score25": 20.11,
-     "judge25": 19.6,
+     "score25": 21.48,
+     "judge25": 21.88,
      "notes25": 20.88,
      "provisional": false,
      "agreement": {
       "n": 40,
-      "exact_pct": 72.5,
-      "side_pct": 75.0
+      "exact_pct": 70.0,
+      "side_pct": 72.5
      }
     },
     "perf_run": "c5d11d00f83be7e3-127",
-    "quality_run": "d3b3d94a22f2f76c-506",
+    "quality_run": "d3b3d94a22f2f76c-512",
     "measured_on": {
      "gpu": "NVIDIA GeForce RTX 4090",
      "driver": "617.14",
@@ -1511,7 +1520,8 @@
       "gpu_share_pct": 79,
       "sysmem_fallback": false,
       "speed_unstable": false,
-      "ram_taken_gb": 14.6
+      "ram_taken_gb": 14.6,
+      "ram_need_gb": null
      },
      "quality": {
       "score25": 22.24,
@@ -1553,7 +1563,8 @@
       "gpu_share_pct": 84,
       "sysmem_fallback": false,
       "speed_unstable": false,
-      "ram_taken_gb": 13.4
+      "ram_taken_gb": 13.4,
+      "ram_need_gb": 8.8
      },
      "quality": {
       "score25": 22.23,
@@ -1598,7 +1609,8 @@
      "gpu_share_pct": 100,
      "sysmem_fallback": false,
      "speed_unstable": false,
-     "ram_taken_gb": 18.0
+     "ram_taken_gb": 18.0,
+     "ram_need_gb": 6.0
     },
     "quality": {
      "score25": 22.23,
@@ -1641,7 +1653,8 @@
       "gpu_share_pct": 100,
       "sysmem_fallback": false,
       "speed_unstable": false,
-      "ram_taken_gb": 12.2
+      "ram_taken_gb": 12.2,
+      "ram_need_gb": null
      },
      "quality": {
       "score25": 22.24,
@@ -1684,21 +1697,22 @@
       "gpu_share_pct": 100,
       "sysmem_fallback": false,
       "speed_unstable": false,
-      "ram_taken_gb": 3.1
+      "ram_taken_gb": 3.1,
+      "ram_need_gb": 6.0
      },
      "quality": {
-      "score25": 20.11,
-      "judge25": 19.6,
+      "score25": 21.48,
+      "judge25": 21.88,
       "notes25": 20.88,
       "provisional": false,
       "agreement": {
        "n": 40,
-       "exact_pct": 72.5,
-       "side_pct": 75.0
+       "exact_pct": 70.0,
+       "side_pct": 72.5
       }
      },
      "perf_run": "c5d11d00f83be7e3-127",
-     "quality_run": "d3b3d94a22f2f76c-506",
+     "quality_run": "d3b3d94a22f2f76c-512",
      "measured_on": {
       "gpu": "NVIDIA GeForce RTX 4090",
       "driver": "617.14",

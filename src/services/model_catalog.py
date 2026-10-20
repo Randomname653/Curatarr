@@ -173,7 +173,8 @@ def _tight(entry: dict, vram_gb: float, role: str = "curator", matrix: dict | No
 
 def recommend_models(vram_gb: float | None,
                      installed: set[str] | None = None,
-                     gpu_name: str | None = None) -> dict:
+                     gpu_name: str | None = None,
+                     ram_gb: float | None = None) -> dict:
     """VRAM-aware wizard recommendation.
 
     Returns ``{"curator": [...], "summarizer": [...], "embedding": [...],
@@ -235,7 +236,7 @@ def recommend_models(vram_gb: float | None,
         "pitcher": pitcher,
         "pitcher_note": pitcher_note,
         "floor_note": floor_note,
-        "package": hardware_package(vram_gb, gpu_name, installed, matrix=matrix),
+        "package": hardware_package(vram_gb, gpu_name, installed, matrix=matrix, ram_gb=ram_gb),
     }
 
 
@@ -293,9 +294,15 @@ def tier_for(vram_gb: float | None, tiers) -> str | None:
 
 def hardware_package(vram_gb: float | None, gpu_name: str | None = None,
                      installed: set[str] | None = None,
-                     matrix: dict | None = None) -> dict | None:
+                     matrix: dict | None = None,
+                     ram_gb: float | None = None) -> dict | None:
     """The bench-measured package for this card, or None (no matrix, no
-    VRAM figure, or no tier this small)."""
+    VRAM figure, or no tier this small).
+
+    ``ram_gb``: the host's system RAM. A package that offloads most of its
+    model needs the rest in RAM (``expected.ram_need_gb``); when the host has
+    less, the first alternative that fits is recommended instead and the
+    answer says why (the MoE on a 4 GB card needs ~19 GB, e4b ~10)."""
     matrix = matrix if matrix is not None else load_matrix()
     if not matrix or vram_gb is None:
         return None
@@ -310,8 +317,20 @@ def hardware_package(vram_gb: float | None, gpu_name: str | None = None,
     if not rec:
         return {"tier_gb": int(tier), "recommended": None,
                 "note": f"Nothing passed the bench at {tier} GB."}
+    alts = list(row.get("alternatives") or [])
+    ram_fallback = None
+    need = (rec.get("expected") or {}).get("ram_need_gb")
+    if ram_gb is not None and need is not None and need > ram_gb + 0.25:
+        fits = [a for a in alts
+                if ((a.get("expected") or {}).get("ram_need_gb") or 0) <= ram_gb + 0.25]
+        if fits:
+            ram_fallback = {"instead_of": rec["model"], "needs_gb": need, "host_gb": ram_gb}
+            alts = [rec] + [a for a in alts if a is not fits[0]]
+            rec = fits[0]
+        else:
+            ram_fallback = {"instead_of": None, "needs_gb": need, "host_gb": ram_gb}
     out = {"tier_gb": int(tier), "recommended": dict(rec),
-           "alternatives": row.get("alternatives") or [],
+           "alternatives": alts, "ram_fallback": ram_fallback,
            "bench": {"generated": matrix.get("generated"),
                      "bench_version": matrix.get("bench_version")}}
     measured_on = (rec.get("measured_on") or {}).get("gpu")

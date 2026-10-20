@@ -35,9 +35,12 @@ Rules, in order:
    score (NOTES_SCORER). A package without a judge score is ``provisional``
    and ranks after every scored one. Agreement is still exported, as a
    diagnostic only. Ties go to the faster package, then to less VRAM.
-6. Recommendation gates (``recommend``): within QUALITY_WINDOW of the best
+6. Recommendation gates (``recommend``): the best model keeps a card it
+   fits fully and comfortably; otherwise, within QUALITY_WINDOW of the best
    score the faster package wins, and a package slower than COMFORT_JUDGE_S
    per verdict is only an alternative while a comfortable one exists.
+   Every package carries ``ram_need_gb``, which the wizard checks against
+   the host (model_catalog.hardware_package).
 
 Thresholds are module constants so a test can pin them and a change shows
 up in review.
@@ -66,6 +69,8 @@ NOTES_SCORER = "claude"         # rubric 5-axis-2026-08 (card notes)
 JUDGE_WEIGHT = 0.6              # the judge decides deletions; the notes are what people read
 QUALITY_WINDOW = 1.5            # points of 25 within which the faster package wins
 COMFORT_JUDGE_S = 20.0          # median seconds per judge verdict for a recommendation
+BEST_TIE = 0.25                 # scores this close count as the same quality
+HOST_RAM_BASE_GB = 6.0          # OS + Curatarr + Ollama itself, before any offloaded layers
 MAX_VERDICT_SHARE = 0.75        # one verdict on more titles than this = a degenerate judge
 MIN_DEGENERATE_N = 10           # too few verdicts to call it either way
 DEFAULT_SERVER = "fa-auto_kv-f16"
@@ -185,7 +190,12 @@ def _tier_fit_derived(cell: dict, tier_gb: int, reserve_mib: int) -> bool:
 
 def recommend(opts: list[dict]) -> dict | None:
     """The package a card gets recommended, from its per-model best packages
-    (Don, 2026-10-20). Two gates over the quality ranking:
+    (Don, 2026-10-20). Three rules over the quality ranking:
+
+    * the best model keeps a card it fits fully and comfortably - the
+      quality window is for "usable vs. painful", not for trading quality
+      for speed nobody needs (24 GB: gemma4:31b-it-qat at 7 s a verdict
+      stays ahead of the MoE at 2 s);
 
     * comfort - a package over COMFORT_JUDGE_S per judge verdict is only an
       alternative, unless nothing on the card is comfortable (gemma4:31b on
@@ -202,8 +212,24 @@ def recommend(opts: list[dict]) -> dict | None:
     pool = [o for o in opts if not o["quality"]["provisional"]] or opts
     pool = [o for o in pool if o["comfortable"]] or pool
     best = max(o["quality"]["score25"] or 0 for o in pool)
+    top = [o for o in pool if (o["quality"]["score25"] or 0) >= best - BEST_TIE
+           and o["comfortable"] and (o["expected"]["gpu_share_pct"] or 0) >= 100]
+    if top:
+        return max(top, key=lambda o: o["expected"]["gen_tok_s"] or 0)
     window = [o for o in pool if (o["quality"]["score25"] or 0) >= best - QUALITY_WINDOW]
     return max(window, key=lambda o: o["expected"]["gen_tok_s"] or 0)
+
+
+def ram_need_gb(model: dict, gpu_share_pct) -> float | None:
+    """System RAM a host needs for this package: the offloaded share of the
+    model file plus the base the OS, Curatarr and Ollama take. A MoE that
+    keeps 8 % on a 4 GB card holds ~13 GB of its 14.6 GB in RAM - fine on a
+    32 GB host, not on a 16 GB one. None when the file size is unknown."""
+    size = model.get("total_bytes") or model.get("weights_bytes")
+    if not size or gpu_share_pct is None:
+        return None
+    cpu_gb = size / 2**30 * max(0.0, 1 - gpu_share_pct / 100)
+    return round(cpu_gb + HOST_RAM_BASE_GB, 1)
 
 
 def degenerate(run: dict) -> str:
@@ -327,6 +353,7 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b",
                     "sysmem_fallback": bool(m.get("sysmem_fallback")),
                     "speed_unstable": bool(m.get("speed_unstable")),
                     "ram_taken_gb": round((m.get("ram_taken_mib") or 0) / 1024, 1),
+                    "ram_need_gb": ram_need_gb(model, share(m)),
                 },
                 "quality": {"score25": q["score25"], "judge25": q["judge25"],
                             "notes25": q["notes25"], "provisional": q["provisional"],

@@ -627,6 +627,18 @@ def write_env(config: dict) -> None:
 
 # ── MODELFILE BUILDER ─────────────────────────────────────────────────────────
 
+def _host_ram_gb() -> float | None:
+    """This host's system RAM: an offloaded curator keeps the rest of its
+    model there, so the wizard checks a package's RAM need against it."""
+    try:
+        import psutil
+        return round(psutil.virtual_memory().total / 2**30, 1)
+    except (ImportError, OSError) as e:
+        # Unknown RAM only skips the RAM check; the wizard still recommends.
+        logger.warning("[setup] host RAM unreadable: %s: %s", type(e).__name__, e)
+        return None
+
+
 async def detect_gpu() -> dict:
     """Probe the Curatarr HOST's GPU via nvidia-smi (user-triggered only).
 
@@ -681,7 +693,7 @@ async def detect_gpu() -> dict:
                 f"now — if a game or another model holds them, the curator only "
                 f"gets the rest while that runs.") if held > 3 else None
         return {"ok": True, "gpus": gpus, "vram_gb": top["vram_gb"],
-                "name": top["name"], "busy_note": busy}
+                "name": top["name"], "busy_note": busy, "ram_gb": _host_ram_gb()}
     except FileNotFoundError:
         return {"ok": False, "error": "nvidia-smi not found — no NVIDIA "
                 "driver on this host (or a non-NVIDIA GPU). Pick the VRAM "

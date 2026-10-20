@@ -161,6 +161,34 @@ check("package: below every tier the note names the floor",
 check("package: no matrix -> None, the wizard keeps the fit verdicts",
       hardware_package(24.0, None, set(), matrix={}) is None)
 
+# System RAM: an offloaded package keeps most of its model in host RAM.
+_mx4 = {"tiers": {"4": {
+    "recommended": {"model": "gemma4:26b-a4b-it-qat", "server": {},
+                    "expected": {"gen_tok_s": 15.2, "judge_s": 19.5, "gpu_share_pct": 8,
+                                 "ram_need_gb": 19.4},
+                    "quality": {"score25": 21.48, "provisional": False}},
+    "alternatives": [{"model": "gemma4:e4b-it-qat", "server": {},
+                      "expected": {"gen_tok_s": 17.2, "judge_s": 10.7, "gpu_share_pct": 21,
+                                   "ram_need_gb": 9.6},
+                      "quality": {"score25": 19.69, "provisional": False}}]}}}
+_r16 = hardware_package(4.0, None, set(), matrix=_mx4, ram_gb=15.9)
+check("RAM: a 16 GB host gets the alternative that fits, and the answer says why",
+      _r16["recommended"]["model"] == "gemma4:e4b-it-qat"
+      and _r16["ram_fallback"] == {"instead_of": "gemma4:26b-a4b-it-qat", "needs_gb": 19.4, "host_gb": 15.9}
+      and _r16["alternatives"][0]["model"] == "gemma4:26b-a4b-it-qat")
+_r32 = hardware_package(4.0, None, set(), matrix=_mx4, ram_gb=31.9)
+check("RAM: a 32 GB host keeps the better package",
+      _r32["recommended"]["model"] == "gemma4:26b-a4b-it-qat" and _r32["ram_fallback"] is None)
+check("RAM: unknown host RAM changes nothing",
+      hardware_package(4.0, None, set(), matrix=_mx4)["recommended"]["model"] == "gemma4:26b-a4b-it-qat")
+_r8 = hardware_package(4.0, None, set(), matrix=_mx4, ram_gb=8.0)
+check("RAM: nothing fits -> keep the recommendation but warn",
+      _r8["recommended"]["model"] == "gemma4:26b-a4b-it-qat"
+      and _r8["ram_fallback"]["instead_of"] is None and _r8["ram_fallback"]["host_gb"] == 8.0)
+check("the wizard sends the host RAM and names the fallback",
+      "ram_gb: state.setupData.ram_gb" in _frontend_everything()
+      and "ram_fallback" in _frontend_everything())
+
 # Measured beats estimated: the sweep's footprint at the role's context.
 _fp = {"footprints": {"gemma4:26b": {"fa-auto_kv-f16": {
     "mib_by_ctx": {"8192": 17000, "16384": 18400, "32768": 21200}}}}}

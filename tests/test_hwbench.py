@@ -226,9 +226,22 @@ check("...a spread judge and a too-small sample are not",
       and matrix.degenerate({"artifacts": [judge_file("tiny", ["CUT"] * 5)]}) == "")
 
 # Recommendation gates: comfort, then the quality window.
-def _opt(name, score, tok, judge, prov=False):
+def _opt(name, score, tok, judge, prov=False, share=60):
     return {"model": name, "quality": {"score25": score, "provisional": prov},
-            "expected": {"gen_tok_s": tok, "judge_s": judge}}
+            "expected": {"gen_tok_s": tok, "judge_s": judge, "gpu_share_pct": share}}
+check("the best model keeps a card it fits fully and comfortably (24 GB: 31b-qat over the MoE)",
+      matrix.recommend([_opt("31b-qat", 22.23, 42.9, 7.3, share=100),
+                        _opt("moe", 21.48, 159.6, 2.2, share=100)])["model"] == "31b-qat")
+check("...scores within BEST_TIE count as the best; the faster of those wins",
+      matrix.recommend([_opt("31b", 22.24, 41.7, 7.2, share=100),
+                        _opt("31b-qat", 22.23, 42.9, 7.3, share=100)])["model"] == "31b-qat")
+check("...an offloaded best model does not keep the card: the window applies (16 GB)",
+      matrix.recommend([_opt("31b", 22.24, 10.0, 18.0, share=66),
+                        _opt("moe", 21.48, 106.6, 3.3, share=87)])["model"] == "moe")
+check("ram need: the offloaded share of the file plus the host base",
+      matrix.ram_need_gb({"total_bytes": 15634200302}, 8) == round(15634200302 / 2**30 * 0.92 + matrix.HOST_RAM_BASE_GB, 1)
+      and matrix.ram_need_gb({"total_bytes": 15634200302}, 100) == matrix.HOST_RAM_BASE_GB
+      and matrix.ram_need_gb({}, 50) is None)
 slow, fast = _opt("big", 22.2, 6.1, 44.0), _opt("moe", 20.1, 95.6, 3.6)
 check("comfort gate: a 44 s-per-verdict package is only an alternative while a comfortable one exists",
       matrix.recommend([slow, fast])["model"] == "moe" and not slow["comfortable"])

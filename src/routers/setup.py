@@ -167,6 +167,9 @@ class RecommendRequest(BaseModel):
     # The detected card's name: scales the bench's measured speed by memory
     # bandwidth for the hardware package (model_catalog.hardware_package).
     gpu_name: Optional[str] = Field(default=None, max_length=120)
+    # The host's system RAM: a package that offloads most of its model needs
+    # the rest there (model_catalog.hardware_package falls back when short).
+    ram_gb: Optional[float] = Field(default=None, ge=0, le=4096)
 
     _url = field_validator("ollama_endpoint")(validate_service_url)
 
@@ -185,7 +188,7 @@ async def recommend(req: RecommendRequest,
     tags = await test_ollama(endpoint)
     if tags.get("ok"):
         installed = set(tags.get("models") or [])
-    result = recommend_models(req.vram_gb, installed, req.gpu_name)
+    result = recommend_models(req.vram_gb, installed, req.gpu_name, req.ram_gb)
     result["installed"] = sorted(installed)
     result["ollama_ok"] = bool(tags.get("ok"))
     return result
