@@ -1377,6 +1377,27 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
         chk.close()
 
 
+def _free_bytes(path: str) -> int:
+    import shutil
+    return shutil.disk_usage(path).free
+
+
+def _prune_snapshots(bdir: str, keep: int) -> int:
+    """Keep the newest *keep* daily snapshots (names sort by their UTC
+    stamp); returns how many were removed."""
+    import glob
+    import os
+    snaps = sorted(glob.glob(os.path.join(bdir, "curatarr_*.db")))
+    dropped = 0
+    for old in snaps[:-keep] if keep > 0 else snaps:
+        try:
+            os.remove(old)
+            dropped += 1
+        except OSError:
+            pass
+    return dropped
+
+
 async def job_db_backup():
     """
     Daily consistent SQLite backup of the main app DB.
@@ -1416,6 +1437,21 @@ async def job_db_backup():
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     dest = os.path.join(bdir, f"curatarr_{stamp}.db")
 
+    # The snapshot lands on the live database's volume. Written onto a
+    # nearly full disk it takes the last free space the live DB needs for
+    # its WAL and the vacuum's rewrite, so it needs room for itself plus as
+    # much again. Short of that, the oldest snapshot makes way first (the
+    # rotation below would drop it anyway); still short, no backup today.
+    need = 2 * os.path.getsize(db_path)
+    if _free_bytes(bdir) < need:
+        _prune_snapshots(bdir, KEEP - 1)
+    if _free_bytes(bdir) < need:
+        msg = (f"only {_free_bytes(bdir) // (1024 * 1024)} MB free next to the database "
+               f"(a backup needs {need // (1024 * 1024)} MB) — skipped")
+        task_monitor.error(task, msg)
+        logger.error("[backup] %s", msg)
+        return False
+
     try:
         ok = await asyncio.to_thread(_snapshot_sqlite, db_path, dest)
         if not ok:
@@ -1426,13 +1462,7 @@ async def job_db_backup():
 
         # Rotate: keep the newest KEEP snapshots, drop older ones.
         snaps = sorted(glob.glob(os.path.join(bdir, "curatarr_*.db")))
-        dropped = 0
-        for old in snaps[:-KEEP]:
-            try:
-                os.remove(old)
-                dropped += 1
-            except OSError:
-                pass
+        dropped = _prune_snapshots(bdir, KEEP)
 
         size_mb = os.path.getsize(dest) / (1024 * 1024)
         summary = f"{os.path.basename(dest)} ({size_mb:.1f}MB) · kept {min(len(snaps), KEEP)} · dropped {dropped}"
