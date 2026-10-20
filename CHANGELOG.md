@@ -224,6 +224,14 @@ genre that is rarest in your library first, and add up to two short
 themes in a quieter chip ("Anthropomorphic warships", "Drug heist"). Music
 cards, which showed none, get theirs from the artist profile.
 
+**The deletion scan reads ratings safely.** One profile whose rating read
+"N/A/10 (N/A votes)" stopped every scheduled scan: the summariser had echoed
+its prompt line, and Jikan/MAL put the content rating ("PG-13 - Teens 13 or
+older") in the same field. Ratings are now read as a number or not at all,
+profiles store the source's score instead of the model's echo, and the
+prompt says "unknown" when there is none. Profiles already holding text
+are picked up by the audit's re-enrichment.
+
 **Dependencies.** aiohttp 3.14.5 for GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3
 and GHSA-494j-54xm-rwp3 (fixed in 3.14.4). Curatarr uses aiohttp only as the
 client for the arrs, never as a server, so the request-timeout and request

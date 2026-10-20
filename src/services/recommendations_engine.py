@@ -478,9 +478,12 @@ def _rating_from_cached(cached: dict | None) -> tuple:
     cache entry (or None). Pure — no I/O."""
     if not cached:
         return None, None, []
+    from src.services.rating_value import count_number, rating_number
     profile    = cached.get("response", {})
-    rating     = profile.get("rating")
-    vote_count = profile.get("vote_count") or 0
+    # Cached profiles hold text here too ("N/A/10 (N/A votes)", a content
+    # rating); a bare float() on one stopped the whole deletion scan.
+    rating     = rating_number(profile.get("rating"))
+    vote_count = count_number(profile.get("vote_count"))
     genres_raw = profile.get("genres") or []
 
     # Pass 54: a rating of exactly 0 is NOT a 0/10 verdict — it's the
@@ -492,10 +495,10 @@ def _rating_from_cached(cached: dict | None) -> tuple:
     # Require a positive rating to count; 0 falls through to the
     # caller's neutral-5.5 default. ``genres_raw`` is still returned
     # so cached genres survive the rating gate.
-    if rating is not None and float(rating) > 0:
+    if rating is not None and rating > 0:
         reliability = "limited votes — treat as indicative" if vote_count < 200 else f"{vote_count:,} votes"
         ctx = f"External rating: {rating:.1f}/10 ({reliability})"
-        return ctx, float(rating), genres_raw
+        return ctx, rating, genres_raw
     # Rating absent or zero — still hand back the cached genres.
     return None, None, genres_raw
 

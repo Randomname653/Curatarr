@@ -38,6 +38,7 @@ from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_opt
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
 from src.services.http_client import tls_context
+from src.services.rating_value import prompt_rating, rating_number
 
 
 # Pass 99-fu2: prompt version tag for the two-tier cache split.
@@ -365,7 +366,7 @@ def build_verified_data(
             "source_author":  raw.get("source_author"),
             "source_kind":    raw.get("source_kind"),
             "cast":           pick(enriched.get("cast_top3"), raw.get("cast")),
-            "rating":         pick(enriched.get("rating"), raw.get("rating")),
+            "rating":         pick(rating_number(raw.get("rating")), rating_number(enriched.get("rating"))),
             # Vote MASS next to the score: harvested from TMDB vote_count /
             # OMDb imdbVotes since forever, but it never reached the judge —
             # 7.4/10 read identically at 50 votes and at 500k. scored_by is
@@ -3362,7 +3363,7 @@ EXTENDED INFO: {extra_context}
 TONE HINTS (use to calibrate mood): {tone_hints}
 CAST: {cast}
 DIRECTOR/CREATOR: {director}
-RATING: {rating}/10 ({votes} votes)
+RATING: {rating}
 
 MOOD REFERENCE — pick ONLY 1-3 moods that are DOMINANT throughout the whole work:
 - bleak: hopeless atmosphere, no redemption
@@ -3403,6 +3404,17 @@ Output this exact JSON (no extra text, no markdown fences):
 
 
 async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
+    """The summariser's profile, with ``rating`` taken from the SOURCE data
+    as a number. The model was asked to echo the rating and wrote back the
+    prompt line ("N/A/10 (N/A votes)", "5.3/10") or a content rating, which
+    then sat in the cache as text."""
+    result = await _summarize_with_small_llm(raw_metadata)
+    if isinstance(result, dict):
+        result["rating"] = rating_number(raw_metadata.get("rating"))
+    return result
+
+
+async def _summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
     """
     Use the small/fast summarizer model to create a structured profile.
     Falls back to a rule-based profile if Ollama is unavailable.
@@ -3467,8 +3479,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                                        raw_metadata.get("tone_hints") or "N/A", 300),
             cast=", ".join(raw_metadata.get("cast", [])[:5]),
             director=raw_metadata.get("director") or "Unknown",
-            rating=raw_metadata.get("rating") or "N/A",
-            votes=raw_metadata.get("vote_count") or "N/A",
+            rating=prompt_rating(raw_metadata.get("rating"), raw_metadata.get("vote_count")),
         )
 
     try:
