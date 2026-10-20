@@ -20,8 +20,10 @@ the result for a card that is too small), not retried.
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import time
+from pathlib import Path
 
 import httpx
 
@@ -92,6 +94,39 @@ def _residency(endpoint: str, model: str) -> dict:
                     "gpu_share_pct": round(100 * vram / size) if size else None,
                     "context_length": m.get("context_length")}
     return {}
+
+
+LAYERS_RE = re.compile(r"offloaded (\d+)/(\d+) layers to GPU")
+
+
+def log_mark(path) -> int:
+    """Where the server log ends now: the next load's lines come after it."""
+    try:
+        return Path(path).stat().st_size if path else 0
+    except OSError:
+        return 0
+
+
+def gpu_layers(path, since: int) -> dict:
+    """The layer split llama-server logged for the load after ``since``
+    ("load_tensors: offloaded 17/36 layers to GPU"). It counts what really
+    sits on the card, where /api/ps under-reports the new gemma4 format so
+    badly that its share is useless (gemma4:e4b-it-qat: ps 3.1 GB, card
+    4.7 GB, 2026-10-20). Empty when the log has no such line."""
+    if not path:
+        return {}
+    try:
+        with open(path, "rb") as f:
+            f.seek(since)
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return {}
+    hits = LAYERS_RE.findall(tail)
+    if not hits:
+        return {}
+    on, total = (int(x) for x in hits[-1])
+    return {"gpu_layers": [on, total],
+            "gpu_share_layers_pct": round(100 * on / total) if total else None}
 
 
 def ps_implausible(res: dict, vram_model_mib: int | None) -> bool:
@@ -228,7 +263,8 @@ def ctx_sweep(endpoint: str, model: str, *, context_max: int | None,
 
 def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
              profile: str, facts: list[str], reps: int = 3,
-             long_probe: bool = True, sampler: gpu.Sampler | None = None) -> dict:
+             long_probe: bool = True, sampler: gpu.Sampler | None = None,
+             server_log=None) -> dict:
     """Measure one cell. ``num_gpu`` None = let Ollama split (CURATOR_NUM_GPU=-1)."""
     opts = {"num_ctx": num_ctx}
     if num_gpu is not None:
@@ -239,6 +275,7 @@ def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
     idle = gpu.query()
     if sampler:
         sampler.mark()
+    mark = log_mark(server_log)
 
     out: dict = {"idle_vram_used_mib": idle["used_mib"], "idle_vram_free_mib": idle["free_mib"]}
     load = _stream_chat(endpoint, {**base, "messages": [{"role": "user", "content": "ready"}],
@@ -248,6 +285,7 @@ def run_cell(endpoint: str, model: str, *, num_ctx: int, num_gpu: int | None,
         return out
     out["cold_load_s"] = load["load_s"]
     out.update(_residency(endpoint, model))
+    out.update(gpu_layers(server_log, mark))
     loaded = gpu.query()
     out["vram_model_mib"] = loaded["used_mib"] - idle["used_mib"]
     out["ps_implausible"] = ps_implausible(out, out["vram_model_mib"])

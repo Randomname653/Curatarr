@@ -397,7 +397,8 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
                             f"{quiet['host_quiet_wait_s']} s - measuring anyway")
                     with gpu.Sampler() as smp:
                         a = perf.run_cell(bench.endpoint, ref, num_ctx=ctx, num_gpu=num_gpu,
-                                          profile=profile, facts=facts, reps=args.reps, sampler=smp)
+                                          profile=profile, facts=facts, reps=args.reps, sampler=smp,
+                                          server_log=getattr(bench, "log_path", None))
                     a.update(quiet)
                     if gpu.is_remote():
                         a["runner_cmdline"] = runner_cmdline()

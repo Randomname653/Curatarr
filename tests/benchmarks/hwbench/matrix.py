@@ -113,14 +113,19 @@ def quality_ok(m: dict) -> tuple[bool, str]:
 
 def share(m: dict):
     """What really sits on the card: the effective share when the driver
-    spilled into shared memory, else Ollama's own figure."""
+    spilled into shared memory, else the layer split llama-server logged,
+    else Ollama's own figure."""
+    if m.get("sysmem_fallback"):
+        return m.get("gpu_share_effective_pct", m.get("gpu_share_pct"))
+    if m.get("gpu_share_layers_pct") is not None:
+        return m["gpu_share_layers_pct"]
     return m.get("gpu_share_effective_pct", m.get("gpu_share_pct"))
 
 
 def perf_ok(m: dict) -> tuple[bool, str]:
     if m.get("status") != "ok":
         return False, m.get("status") or "no status"
-    if m.get("ps_implausible"):
+    if m.get("ps_implausible") and m.get("gpu_share_layers_pct") is None:
         # The GPU share comes from /api/ps; when ps under-reports the model
         # that share is meaningless, so the cell cannot vouch for a fit.
         return False, "Ollama's residency figure is implausible (ps << nvidia-smi)"

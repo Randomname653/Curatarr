@@ -217,6 +217,28 @@ check("export allowlist: a model outside the catalog never reaches a tier",
               for row in mx_a["tiers"].values() for o in [row["recommended"]] + row["alternatives"]))
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
 
+# The layer split llama-server logs beats /api/ps.
+from tests.benchmarks.hwbench import perf as _perf  # noqa: E402
+_log = tmp / "serve.log"
+_log.write_text("load_tensors: offloaded 41/41 layers to GPU\nold model\n", encoding="utf-8")
+_mark = _perf.log_mark(_log)
+with _log.open("a", encoding="utf-8") as _f:
+    _f.write("time=... msg=\"starting llama-server\"\nload_tensors: offloaded 17/36 layers to GPU\n")
+check("layers: the split of the load AFTER the mark is read, not an older one",
+      _perf.gpu_layers(_log, _mark) == {"gpu_layers": [17, 36], "gpu_share_layers_pct": 47})
+check("layers: no line or no log -> nothing",
+      _perf.gpu_layers(_log, _perf.log_mark(_log)) == {} and _perf.gpu_layers(None, 0) == {})
+_e4b = {**ok, "gpu_share_pct": 100, "ps_implausible": True, "vram_model_mib": 4712}
+check("ps implausible without a layer split is still a K.O.",
+      matrix.perf_ok(_e4b)[0] is False)
+check("...with the logged layer split the cell counts (gemma4:e4b-it-qat at 6 GB)",
+      matrix.perf_ok({**_e4b, "gpu_share_layers_pct": 100})[0] is True
+      and matrix.share({**_e4b, "gpu_share_layers_pct": 100}) == 100)
+check("the layer split overrides ps, a spill still overrides both",
+      matrix.share({**ok, "gpu_share_pct": 100, "gpu_share_layers_pct": 80}) == 80
+      and matrix.share({**ok, "gpu_share_layers_pct": 100, "sysmem_fallback": True,
+                        "gpu_share_effective_pct": 99}) == 99)
+
 # A judge that gives nearly every title the same verdict is a K.O.
 check("degenerate judge: 10 of 12 the same verdict",
       matrix.degenerate({"artifacts": [judge_file("degen", ["KEEP_WITH_FLAG"] * 10 + ["CUT", "HARD_KEEP"])]})

@@ -76,6 +76,7 @@ class BenchServer:
         self.config: ServerConfig | None = None
         self._proc: subprocess.Popen | None = None
         self.log_dir = log_dir
+        self.log_path: Path | None = None   # the running server's log (layer split)
 
     def version(self) -> str:
         try:
@@ -99,7 +100,8 @@ class BenchServer:
         log = None
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-            log = open(self.log_dir / f"ollama-serve_{config.log_label}.log", "ab")
+            self.log_path = self.log_dir / f"ollama-serve_{config.log_label}.log"
+            log = open(self.log_path, "ab")
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         self._proc = subprocess.Popen([ollama_exe(), "serve"], env=env,
                                       stdout=log or subprocess.DEVNULL,
