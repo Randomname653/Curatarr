@@ -206,11 +206,17 @@ from src.services import pillars  # noqa: E402
 filters = pillars._watch_filters({"title": "Some Show", "tmdb_id": 42}, "show")
 W = WatchHistoryEntry
 with conn_mod.get_db_session() as db:
-    q = db.query(W.viewed_at).filter(W.user_id == 1, *filters)
+    # The query _owner_watch runs: ``user_id + 0`` keeps the planner off the
+    # user_id-led indexes. On the live history (384k rows, the owner holds
+    # nearly all) a plain ``user_id ==`` still took ix_wh_user_type_viewed
+    # after ANALYZE: 34 ms per title against 0.5 ms for the OR.
+    q = db.query(W.viewed_at).filter((W.user_id + 0) == 1, *filters)
     sql = str(q.statement.compile(conn_mod.engine, compile_kwargs={"literal_binds": True}))
     plan = " ".join(r[3] for r in db.execute(text("EXPLAIN QUERY PLAN " + sql)))
 check("the owner's watch lookup is a MULTI-INDEX OR, not a walk of their rows",
       "MULTI-INDEX OR" in plan and "ix_wh_title" in plan)
+check("...and _owner_watch keeps user_id off the index (user_id + 0)",
+      "(WatchHistoryEntry.user_id + 0) == owner_id" in (ROOT / "src/services/pillars.py").read_text(encoding="utf-8"))
 
 # ── the deletion loop pipelines evidence ────────────────────────────────────
 print("deletion loop evidence pipelining")
