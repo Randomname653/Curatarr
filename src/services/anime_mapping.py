@@ -207,19 +207,25 @@ def _save_to_db(mapping: AnimeMapping):
                 "SELECT anidb_id, anilist_id FROM anime_mapping WHERE anilist_id IS NOT NULL"
             ).fetchall())
         conn.execute("DROP TABLE IF EXISTS anime_mapping_new")
+        # One row per AniDB entry. Saving from tvdb_to_anidb kept a single
+        # AniDB id per TVDB series, so every other season's entry vanished
+        # from the cache after the first restart. ``is_primary`` marks the
+        # entry tvdb_to_anidb resolves to, so a load rebuilds the same lookup.
         conn.execute("""
             CREATE TABLE anime_mapping_new (
                 anidb_id INTEGER NOT NULL,
                 tvdb_id  INTEGER NOT NULL,
                 anilist_id INTEGER,
+                is_primary INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (anidb_id)
             )
         """)
         rows = [
-            (anidb, tvdb, mapping.anidb_to_anilist.get(anidb) or learned.get(anidb))
-            for tvdb, anidb in mapping.tvdb_to_anidb.items()
+            (anidb, tvdb, mapping.anidb_to_anilist.get(anidb) or learned.get(anidb),
+             1 if mapping.tvdb_to_anidb.get(tvdb) == anidb else 0)
+            for anidb, tvdb in mapping.anidb_to_tvdb.items()
         ]
-        conn.executemany("INSERT OR REPLACE INTO anime_mapping_new VALUES (?,?,?)", rows)
+        conn.executemany("INSERT OR REPLACE INTO anime_mapping_new VALUES (?,?,?,?)", rows)
         conn.execute("DROP TABLE IF EXISTS anime_mapping")
         conn.execute("ALTER TABLE anime_mapping_new RENAME TO anime_mapping")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tvdb ON anime_mapping (tvdb_id)")
@@ -248,13 +254,22 @@ def _load_from_db() -> AnimeMapping:
         return mapping
     try:
         conn = sqlite_connect(MAPPING_DB_PATH)
-        rows = conn.execute("SELECT anidb_id, tvdb_id, anilist_id FROM anime_mapping").fetchall()
-        for anidb_id, tvdb_id, anilist_id in rows:
-            mapping.tvdb_to_anidb[tvdb_id] = anidb_id
+        try:
+            rows = conn.execute("SELECT anidb_id, tvdb_id, anilist_id, is_primary "
+                                "FROM anime_mapping").fetchall()
+        except sqlite3.OperationalError:
+            # A cache written before is_primary: one row per TVDB series,
+            # every row the primary one.
+            rows = [(*r, 1) for r in conn.execute(
+                "SELECT anidb_id, tvdb_id, anilist_id FROM anime_mapping").fetchall()]
+        for anidb_id, tvdb_id, anilist_id, primary in rows:
             mapping.anidb_to_tvdb[anidb_id] = tvdb_id
+            if primary or tvdb_id not in mapping.tvdb_to_anidb:
+                mapping.tvdb_to_anidb[tvdb_id] = anidb_id
             if anilist_id:
                 mapping.anidb_to_anilist[anidb_id] = anilist_id
-                mapping.tvdb_to_anilist[tvdb_id] = anilist_id
+                if primary:
+                    mapping.tvdb_to_anilist[tvdb_id] = anilist_id
         mapping.total_entries = len(rows)
 
         ts = conn.execute("SELECT value FROM meta WHERE key='downloaded_at'").fetchone()

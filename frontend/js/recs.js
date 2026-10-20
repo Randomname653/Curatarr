@@ -53,7 +53,9 @@ export function _recCard(rec, key) {
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
               ? `<button type="button" class="btn btn-primary btn-sm" ${act('onAddRecToArr', EL)} data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`
-              : ''}
+              : rec.lane === 'discovery' && rec.category === 'music' && _membersWishViaPlex
+                ? `<button type="button" class="btn btn-primary btn-sm" ${act('onWishRec', EL)} data-title="${escAttr(rec.title)}" title="Put it on the household's wanted list — the owner fulfils wishes in SoulSync">Wish</button>`
+                : ''}
           </div>
         </div>
         ${why.panel}
@@ -105,6 +107,34 @@ export async function onAddRecToArr(btn) {
     });
     btnDone(btn, 'Added', {keepDisabled: true});
     toast(`Added "${m.title}" to ${svc}`, 'success');
+  } catch (e) {
+    let detail = e.message || 'failed';
+    try { detail = JSON.parse(detail).detail || detail; } catch {}
+    toast(detail, 'danger', {ms: 8000});
+    btnDone(btn);
+  }
+}
+
+// Household members can wish for music (owner decision 2026-10-20) — only
+// where wishes exist at all: no Lidarr, music through Plex. Read once per
+// Recommendations load; the owner's own "+ Add" covers every other case.
+let _membersWishViaPlex = false;
+async function _refreshWishMode() {
+  if (state.currentUser?.is_admin) { _membersWishViaPlex = false; return; }
+  try {
+    const lid = ((await api('/api/library/status')) || {}).lidarr || {};
+    _membersWishViaPlex = !lid.configured && lid.music_source === 'plex';
+  } catch { _membersWishViaPlex = false; }
+}
+
+export async function onWishRec(btn) {
+  const title = btn.dataset.title;
+  btnBusy(btn, 'Wishing…');
+  try {
+    const w = await api('/api/library/wish', 'POST', {title, source: 'rec'});
+    btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
+    toast(w.in_library ? `"${title}" is already in the Plex music`
+                       : `"${title}" is on the household's wanted list`, w.in_library ? 'info' : 'success');
   } catch (e) {
     let detail = e.message || 'failed';
     try { detail = JSON.parse(detail).detail || detail; } catch {}
@@ -179,7 +209,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
   const laneFilter = state.currentRecsLane || 'all';
   try {
     const url = '/api/recommendations/?' + (category ? `category=${category}&` : '') + `limit=8&refresh=${refresh}&source=cache` + _laneParam();
-    const r = await api(url);
+    const [r] = await Promise.all([api(url), _refreshWishMode()]);
     // If the user clicked another tab or lane while we were fetching, abandon —
     // the newer call already cleared the poll timer and is rendering now.
     if (state.currentRecsCategory !== requestedCategory || (state.currentRecsLane || 'all') !== laneFilter) return;

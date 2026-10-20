@@ -114,7 +114,9 @@ def test_without_soulsync_there_are_no_signals():
 def test_the_wiring():
     taste = (_ROOT / "src" / "services" / "taste_engine.py").read_text(encoding="utf-8")
     music = taste[taste.index('    if category == "music":\n        from src.services.soulsync_client'):]
-    assert "signals = await soulsync_signals()" in music
+    # The owner's SoulSync is one household-wide profile: members never take it.
+    assert ("signals = (await soulsync_signals()\n"
+            "                   if await run_read(is_admin_user, user_id) else {})") in music
     assert "artist_weight(d[\"last\"], d[\"plays\"], d[\"ur\"], now, sig)" in music
     eng = (_ROOT / "src" / "services" / "recommendations_engine.py").read_text(encoding="utf-8")
     assert "_names = await watchlist_artists()" in eng

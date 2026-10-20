@@ -35,6 +35,7 @@ import httpx
 
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
+from src.services.household import is_admin_user
 from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
@@ -1317,8 +1318,13 @@ JSON:"""
     # extraction on that thread mines it again, and the novelty check turns
     # re-captures into reinforcement instead of duplicates.
     try:
+        # Owner only: principles feed the owner's judge, and /principles (the
+        # only place to review one) is admin-only — a member naming any
+        # deletion_proposal:{id} thread bought two curator calls per flush
+        # and left principles nobody could ever see.
         if getattr(settings, "PRINCIPLES_ENABLED", False) and \
-                (thread_id or "").startswith("deletion_proposal:"):
+                (thread_id or "").startswith("deletion_proposal:") and \
+                await run_read(is_admin_user, user_id):
             from src.services.curator_principles import capture_principles_from_thread
             # track_task instead of a silent set: the Bomber debate's capture
             # died without a trace (done-callbacks swallow exceptions, and the
@@ -1768,7 +1774,15 @@ async def handle_protection_intent(
         if protected_titles:
             titles_str = "', '".join(protected_titles)
             count_word = "is" if len(protected_titles) == 1 else "are"
-            msg = f"✅ '{titles_str}' {count_word} now permanently protected."
+            if await run_read(is_admin_user, user_id):
+                msg = f"✅ '{titles_str}' {count_word} now permanently protected."
+            else:
+                # A member's keep is a Pillar III claim on the owner's deletion
+                # run (pillars._other_users_keeps): never cut, but the owner
+                # still decides — "permanently protected" promised more.
+                msg = (f"✅ '{titles_str}' {count_word} now protected for you — "
+                       "it won't be cut while you want it; the owner has the "
+                       "final say.")
             if watchlisted:
                 msg += " Watchlisted: " + ", ".join(watchlisted) + "."
             if watchlist_fails:

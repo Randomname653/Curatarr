@@ -305,6 +305,37 @@ async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
         return {"source": "external_ids", "visited": 0, "added": 0,
                 "reverted": 0}
 
+    # Owner pins (MediaMatchOverride) outrank every catalogue: a pin exists
+    # because the arr held the WRONG id, and a name match against that same
+    # arr would attach the wrong film's IMDb id to the pinned entry. Pinned
+    # entries are left to the pipeline, which applies the pin itself. An
+    # unreadable pin table skips the run (a pin is never guessed at).
+    def _pins():
+        from src.database.connection import get_db_session
+        from src.database.models import MediaMatchOverride
+        tmdb, titles = set(), set()
+        with get_db_session() as db:
+            for t_id, title in db.query(MediaMatchOverride.tmdb_id,
+                                        MediaMatchOverride.title).all():
+                if t_id:
+                    tmdb.add(str(t_id))
+                if title:
+                    titles.add(title.strip().lower())
+        return tmdb, titles
+
+    try:
+        from src.database.runner import run_read
+        pinned_tmdb, pinned_titles = await run_read(_pins)
+    except Exception as e:
+        logger.warning("[external-ids] harvest skipped — match pins unreadable: %s", e)
+        return {"source": "external_ids", "visited": 0, "added": 0,
+                "reverted": 0, "error": "match pins unreadable"}
+
+    def _is_pinned(raw: dict) -> bool:
+        tid = raw.get("tmdb_id")
+        return ((tid is not None and str(tid) in pinned_tmdb)
+                or (raw.get("title") or "").strip().lower() in pinned_titles)
+
     def _walk(cache):
         def _rows():
             return cache.conn.execute(
@@ -333,6 +364,8 @@ async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
             except (ValueError, TypeError):
                 continue
             if raw.get("imdb_id") or not raw.get("title"):
+                continue
+            if _is_pinned(raw):
                 continue
             families = _families_for(raw)
             if not families:

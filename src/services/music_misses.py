@@ -65,6 +65,26 @@ def _norm(name: str) -> str:
     return (name or "").strip().lower()
 
 
+def _same_name(name: str):
+    """SQL condition: this row is ``name`` the way due_filter reads names —
+    case and surrounding space ignored. The exact match used here before
+    disagreed with due_filter: "Foo" and "foo" became two rows (the second
+    starting the backoff over at 14 days), and clearing "foo" left "Foo"
+    parked. Both sides go through SQLite's lower(), so the fold is the same."""
+    from sqlalchemy import func, literal
+    from src.database.models import MusicLookupMiss
+    return (func.lower(func.trim(MusicLookupMiss.name))
+            == func.lower(func.trim(literal(name or ""))))
+
+
+# A lookup that RAISES (not "no match", not throttled) is retried every run;
+# one that keeps raising for the same name held a batch slot forever, since
+# the batch cap takes the first N due names. After this many consecutive
+# errors the name is parked like a miss.
+_ERROR_PARK_AFTER = 3
+_ERROR_REASON = "lookup error"
+
+
 def due_filter(names: Iterable[str], *, kind: str = ARTIST_MBID,
                now: Optional[datetime] = None) -> list:
     """The subset of ``names`` worth querying: never missed, or past the
@@ -105,7 +125,7 @@ def record_miss(name: str, *, kind: str = ARTIST_MBID, reason: str = "",
     try:
         with get_db_session() as db:
             row = (db.query(MusicLookupMiss)
-                   .filter(MusicLookupMiss.kind == kind, MusicLookupMiss.name == name)
+                   .filter(MusicLookupMiss.kind == kind, _same_name(name))
                    .first())
             if row is None:
                 row = MusicLookupMiss(kind=kind, name=name, attempts=0)
@@ -130,12 +150,52 @@ def clear_miss(name: str, *, kind: str = ARTIST_MBID) -> None:
     try:
         with get_db_session() as db:
             (db.query(MusicLookupMiss)
-             .filter(MusicLookupMiss.kind == kind, MusicLookupMiss.name == name)
+             .filter(MusicLookupMiss.kind == kind, _same_name(name))
              .delete(synchronize_session=False))
     except Exception as e:                                   # pragma: no cover
         _write_failed("clear", name, e)
         return
     _write_ok()
+
+
+def record_error(name: str, *, kind: str = ARTIST_MBID, error: str = "",
+                 now: Optional[datetime] = None) -> int:
+    """Count a lookup that raised. Below _ERROR_PARK_AFTER in a row the name
+    stays due (an error may be passing); at the threshold it is parked like a
+    miss. Returns the wait in days (0 while still due)."""
+    now = now or datetime.utcnow()
+    if not (name or "").strip():
+        return 0
+    from src.database.connection import get_db_session
+    from src.database.models import MusicLookupMiss
+    try:
+        with get_db_session() as db:
+            row = (db.query(MusicLookupMiss)
+                   .filter(MusicLookupMiss.kind == kind, _same_name(name))
+                   .first())
+            if row is None:
+                row = MusicLookupMiss(kind=kind, name=name, attempts=0)
+                db.add(row)
+            prev = row.last_reason or ""
+            streak = 1
+            if prev.startswith(_ERROR_REASON + " x"):
+                try:
+                    streak = int(prev[len(_ERROR_REASON) + 2:].split(":", 1)[0]) + 1
+                except ValueError:
+                    streak = 1
+            row.last_attempt_at = now
+            row.last_reason = f"{_ERROR_REASON} x{streak}: {error}"[:200]
+            days = 0
+            if streak >= _ERROR_PARK_AFTER:
+                row.attempts = int(row.attempts or 0) + 1
+                days = _wait_days(row.attempts)
+                row.next_retry_at = now + timedelta(days=days)
+                row.last_reason = f"{_ERROR_REASON} x0: parked after {streak}"[:200]
+    except Exception as e:                                   # pragma: no cover
+        _write_failed("error count", name, e)
+        return 0
+    _write_ok()
+    return days
 
 
 def stats(kind: str = ARTIST_MBID, *, now: Optional[datetime] = None) -> dict:

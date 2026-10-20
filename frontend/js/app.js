@@ -14,7 +14,7 @@ import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzo
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
-import { loadRecs, onAddRecToArr, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
+import { loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { loadReport, writeYearlyReview } from './report.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
@@ -179,6 +179,7 @@ const actions = {
   newChat,
   omdbBackfill,
   onAddRecToArr,
+  onWishRec,
   onApplyOrphanRepair,
   onBacklogNotAddedOnly,
   onBacklogOnlyResolved,

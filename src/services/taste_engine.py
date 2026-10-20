@@ -1006,10 +1006,14 @@ async def compute_taste_vector_for_user(
     # weighted by recency × log-plays × best user rating, keeps every listened
     # artist in the average and makes the vector stable against binges.
     # SoulSync signals (followed / liked) raise the rating factor; an artist
-    # the owner follows joins the average before the first play.
+    # the owner follows joins the average before the first play. SoulSync is
+    # ONE household-wide profile — the owner's Spotify — so a member's vector
+    # never takes it: their music taste is their own plays.
     if category == "music":
         from src.services.soulsync_client import norm_name
-        signals = await soulsync_signals()
+        from src.services.household import is_admin_user
+        signals = (await soulsync_signals()
+                   if await run_read(is_admin_user, user_id) else {})
         by_artist: dict = {}
         for e in entries:
             a = e.get("series_title") or e.get("title")

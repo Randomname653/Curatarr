@@ -161,8 +161,12 @@ async def _run_omdb(deep: bool = False, task=None) -> bool:
     limit = 5000 if deep else 2000
     r = await run_omdb_backfill(task=task, limit=limit)
     cand, done = r.get("candidates", 0), r.get("enriched", 0)
-    logger.info("[custodian] omdb top-up: %d/%d", done, cand)
-    return cand <= limit
+    left = r.get("remaining", 0)
+    logger.info("[custodian] omdb top-up: %d/%d, %d remaining", done, cand, left)
+    # Done only when nothing is left beyond this run's budget. ``candidates``
+    # is counted after the [:limit] cut, so the old ``cand <= limit`` was
+    # always true and stamped 24 hours of silence over any backlog.
+    return left == 0
 
 
 async def _run_significance(deep: bool = False, task=None) -> bool:
@@ -282,8 +286,11 @@ async def _run_discogs_styles(deep: bool = False, task=None) -> bool:
     if r.get("skipped"):
         return True
     logger.info("[custodian] discogs styles: %s", r)
-    # 429 from the dump endpoint → stay due, retry next tick
-    return "error" not in r
+    # An error (429, a broken stream, no library artists) stays due and backs
+    # off — a permanent one no longer re-downloads every 30 minutes.
+    if "error" in r:
+        raise TaskFailed(f"discogs styles: {r.get('error')}")
+    return True
 
 
 async def _run_memory_catchup(deep: bool = False) -> bool:
@@ -488,8 +495,7 @@ async def _run_collections(deep: bool = False, task=None) -> bool:
     _prog(task, message="Curator is designing collection shelves… (LLM)")
     designs = await design_collections()
     if not designs:
-        logger.info("[custodian] no collection designs produced — task stays due")
-        return False
+        raise TaskFailed("no collection designs produced")
     _prog(task, message=f"Pushing {len(designs)} shelf design(s) to Plex…")
     res = await push_collections(designs)
     _prog(task, message=f"Pushed: {res}")
@@ -500,7 +506,8 @@ async def _run_collections(deep: bool = False, task=None) -> bool:
         logger.warning("[custodian] collections: only %s of %d shelves created — "
                        "task stays due: %s", (res or {}).get("created", 0),
                        len(designs), res)
-        return False
+        raise TaskFailed(f"only {(res or {}).get('created', 0)} of "
+                         f"{len(designs)} shelves created")
     logger.info("[custodian] collections pushed: %s", res)
     return True
 
@@ -858,6 +865,64 @@ def _cancel_requested() -> bool:
     return bool(task is not None and task.cancelling())
 
 
+class TaskFailed(Exception):
+    """A runner's way to say "this run FAILED", as opposed to returning False
+    for "made progress, more is left". Both leave the task due; only a failure
+    (this, or any other exception) backs the task off."""
+
+
+def _fail_key(job_id: str) -> str:
+    return f"job_fail:{job_id}"
+
+
+def _read_failures(job_id: str) -> dict:
+    """{"n": consecutive failures, "at": iso time of the last one}. app_state
+    holds TEXT, so the record is JSON; anything unreadable counts as none."""
+    from src.services.app_state import get_state
+    raw = get_state(_fail_key(job_id))
+    if not raw:
+        return {}
+    try:
+        rec = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def _backoff_due(job_id: str, cadence_h: float) -> bool:
+    """False while a failing task waits out its backoff: 30 min after the
+    first failure (the next tick, as before), doubling after each further one,
+    never longer than the task's own cadence. A failing task used to rerun
+    every 30 minutes for good — the weekly shelf design reran the big model
+    and re-pushed Plex all day, a broken Discogs stream re-fetched ~590 MB."""
+    rec = _read_failures(job_id)
+    n, at = int(rec.get("n") or 0), rec.get("at")
+    if n <= 0 or not at:
+        return True
+    try:
+        last = datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return True
+    wait_h = min(float(cadence_h), 0.5 * 2 ** (n - 1))
+    return datetime.utcnow() >= last + timedelta(hours=wait_h)
+
+
+def _record_failure(job_id: str) -> int:
+    from src.services.app_state import set_state
+    n = int(_read_failures(job_id).get("n") or 0) + 1
+    set_state(_fail_key(job_id), json.dumps(
+        {"n": n, "at": datetime.utcnow().isoformat(timespec="seconds")}))
+    return n
+
+
+def _clear_failures(job_id: str) -> None:
+    """A run that returned (done or partial) ends the failure streak. Writes
+    only when a streak exists, so a healthy tick costs no write."""
+    if _read_failures(job_id):
+        from src.services.app_state import set_state
+        set_state(_fail_key(job_id), "")
+
+
 async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
     """One queue's run: its overdue tasks in priority order, one at a time."""
     from src.services.scheduler import _job_overdue, _record_job_run
@@ -877,6 +942,10 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                 if t.settle_only and _first_run_done[queue] and not force:
                     continue
                 if not force and not await run_read(_job_overdue, t.job_id, t.cadence_h):
+                    continue
+                if not force and not await run_read(_backoff_due, t.job_id, t.cadence_h):
+                    actions.append({"task": t.job_id,
+                                    "result": "backing off (failed last run)"})
                     continue
                 blocking = set(t.after) & _ahead_in(other)
                 if blocking and queue == QUEUE_BACKGROUND:
@@ -919,6 +988,7 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                     kwargs["task"] = mon
                 done = await t.runner(**kwargs)
                 done = True if done is None else bool(done)
+                await run_write(_clear_failures, t.job_id)
                 if done:
                     await run_write(_record_job_run, t.job_id)
                 if mon is not None:
@@ -930,10 +1000,16 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
                     "seconds": round(time.time() - t0, 1),
                 })
             except Exception as e:
-                logger.warning("[custodian] task %s failed: %s", t.job_id, e, exc_info=True)
+                logger.warning("[custodian] task %s failed: %s", t.job_id, e,
+                               exc_info=not isinstance(e, TaskFailed))
                 if mon is not None:
                     task_monitor.error(mon, _short_error(e))
                 actions.append({"task": t.job_id, "result": f"error: {_short_error(e)}"})
+                try:
+                    await run_write(_record_failure, t.job_id)
+                except Exception as fe:  # noqa: BLE001 — the run's error is logged above
+                    logger.warning("[custodian] could not record %s failure: %s",
+                                   t.job_id, fe)
             finally:
                 _queue_pending[queue].discard(t.job_id)
                 _queue_current[queue] = None

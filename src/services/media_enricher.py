@@ -1607,7 +1607,8 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     imdb_id but are missing OMDb-only fields (writer / awards), and top each up
     via OMDb. Throttled by the OMDb semaphore; fast over the supporter key
     (100k/day). ``task`` is an optional task_monitor handle for progress.
-    Returns ``{"candidates": N, "enriched": M}``."""
+    Returns ``{"candidates": N, "enriched": M, "remaining": R}`` — R is what
+    the ``limit`` left for the next run."""
     import json as _json
 
     # 1. Gather candidates from the raw cache, deduped by (media_type, imdb_id)
@@ -1642,15 +1643,21 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         # docs checked before the full-harvest fix (no ratings_checked) fall
         # through: they get exactly ONE more fetch to pick up RT/Metacritic
         try:
-            cat = k.split("raw:", 1)[1].split(":", 1)[0]
+            cat, _, cid = k.split("raw:", 1)[1].partition(":")
         except (IndexError, AttributeError):
             continue
-        candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb, b.get("tmdb_id")))
+        # The row's OWN id rides along: raw rows are keyed by anilist/anidb/
+        # tmdb/tvdb id or title, and the top-up only tried tmdb + title — an
+        # AniList-keyed anime row never got its stamp and was re-fetched from
+        # OMDb every day.
+        candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb,
+                                            b.get("tmdb_id"), cid or None))
 
     cand_list = list(candidates.values())
     if limit:
         cand_list = cand_list[:limit]
     total = len(cand_list)
+    remaining = len(candidates) - total
     logger.info("[omdb-backfill] %d candidate titles (imdb_id present, OMDb missing)", total)
 
     def _tick(msg, **kw):
@@ -1667,9 +1674,9 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     state = {"updated": 0, "done": 0}
 
     # No shared handle: each top-up merges on a worker thread with its own.
-    async def _one(title, cat, imdb, tmdb):
+    async def _one(title, cat, imdb, tmdb, cid):
         try:
-            if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb):
+            if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb, cache_id=cid):
                 state["updated"] += 1
         except Exception as e:
             log_topup_failure(logger, "[omdb-backfill]", title, e)
@@ -1685,7 +1692,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         await asyncio.gather(*[_one(*c) for c in cand_list[i:i + CHUNK]])
 
     logger.info("[omdb-backfill] done — %d/%d titles enriched", state["updated"], total)
-    return {"candidates": total, "enriched": state["updated"]}
+    return {"candidates": total, "enriched": state["updated"], "remaining": remaining}
 
 
 # ── Pass 99-fu3: Per-service concurrency caps for the parallel producer ─────
