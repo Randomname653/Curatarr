@@ -840,8 +840,14 @@ async def job_memory_decay():
         total, decayed = await run_write(_decay)
         task_monitor.update(task, total=total)
 
-        task_monitor.done(task, f"{decayed} memories decayed")
-        logger.info("[scheduler] Memory decay: %d memories decayed", decayed)
+        from src.services.episodic_memory import strip_superseded_vectors
+        stripped = await run_write(strip_superseded_vectors)
+
+        task_monitor.done(task, f"{decayed} memories decayed · vectors dropped from "
+                                f"{stripped['memories']} superseded memories, "
+                                f"{stripped['principles']} superseded principles")
+        logger.info("[scheduler] Memory decay: %d memories decayed, superseded vectors "
+                    "dropped: %s", decayed, stripped)
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] Memory decay failed: %s", e)
