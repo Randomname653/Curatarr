@@ -19,8 +19,8 @@ from src.database.loop_guard import sqlite_connect
 
 def get_state(key: str) -> Optional[str]:
     with get_db_session() as db:
-        row = db.query(AppState).filter(AppState.key == key).first()
-        return row.value if row else None
+        # ⚡ Bolt: Query specific column and use .scalar() to avoid full ORM object instantiation overhead
+        return db.query(AppState.value).filter(AppState.key == key).scalar()
 
 
 _UPSERT_SQL = (
