@@ -239,7 +239,8 @@ try:
     settings.CURATOR_NUM_GPU = -1
     o = llm_utils.curator_options()["options"]
     check("CURATOR_NUM_GPU=-1 leaves the split to Ollama", "num_gpu" not in o and "num_thread" not in o)
-    check("...and the judge follows the same setting", pillars.curator_gpu() == {})
+    check("...and the judge follows the same setting",
+          "num_gpu" not in pillars.curator_payload([])["options"])
 finally:
     settings.LLM_PROFILE, settings.CURATOR_NUM_CTX, settings.CURATOR_NUM_GPU = _saved
 

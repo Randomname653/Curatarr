@@ -37,7 +37,7 @@ from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
                       ValidationError, field_validator, model_validator)
 
 from src.database.runner import run_read
-from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
+from src.services.llm_utils import CURATOR_NUM_CTX, curator_payload
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -1084,21 +1084,16 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         {"role": "system", "content": judge_system_prompt(law_extra)},
         {"role": "user", "content": "FACTS:\n" + evidence_facts},
     ]
-    payload = {
-        "model": model,
-        "messages": messages,
-        "format": VERDICT_SCHEMA,
-        "stream": False,
-        "think": False,
-        "keep_alive": "10m",
-        # repeat_penalty 1.0: a constrained JSON answer repeats its quotes,
-        # colons and key prefixes by construction; the default penalty pushes
-        # a small model off them. seed: temperature 0 is greedy already, the
-        # seed pins the rest.
-        "options": {"temperature": 0.0, "seed": 7, "repeat_penalty": 1.0,
-                    "num_predict": _JUDGE_PREDICT,
-                    "num_ctx": CURATOR_NUM_CTX, **curator_gpu()},
-    }
+    # curator_payload: the runner options (num_ctx, num_gpu) and keep_alive of
+    # every other curator call — the judge's own "10m" cut the chat's 1h
+    # residency short (Ollama keeps the LAST request's keep_alive).
+    # repeat_penalty 1.0: a constrained JSON answer repeats its quotes,
+    # colons and key prefixes by construction; the default penalty pushes
+    # a small model off them. seed: temperature 0 is greedy already, the
+    # seed pins the rest.
+    payload = curator_payload(messages, model=model, temperature=0.0,
+                              num_predict=_JUDGE_PREDICT, fmt=VERDICT_SCHEMA,
+                              seed=7, repeat_penalty=1.0)
 
     async def _ask() -> Verdict:
         data = await post_chat(settings.effective_ollama, payload,
@@ -1294,18 +1289,13 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         f"(For your reasoning only — do NOT quote this: {_governing(verdict)}){flag}\n\n"
         "Write the verdict. No headers, no lists."
     )
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False, "think": False, "keep_alive": "10m",
-        # num_ctx MUST match every other curator call: this one slipped the
-        # 16384 rollout (no explicit value -> baked 8192 default), so a
-        # deletion run alternated judge(16k)/monologue(8k) and FULLY
-        # RELOADED the 20 GB model twice per candidate — the VRAM sawtooth
-        # the owner caught in Task Manager.
-        "options": {"temperature": 0.7, "num_predict": 500, **curator_gpu(),
-                    "num_ctx": CURATOR_NUM_CTX},
-    }
+    # num_ctx MUST match every other curator call: this one slipped the
+    # 16384 rollout (no explicit value -> baked 8192 default), so a
+    # deletion run alternated judge(16k)/monologue(8k) and FULLY
+    # RELOADED the 20 GB model twice per candidate — the VRAM sawtooth
+    # the owner caught in Task Manager. curator_payload pins it.
+    payload = curator_payload([{"role": "user", "content": prompt}], model=model,
+                              temperature=0.7, num_predict=500)
 
     async def _post():
         async with httpx.AsyncClient(verify=tls_context(), timeout=_JUDGE_TIMEOUT) as client:

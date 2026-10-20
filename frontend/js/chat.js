@@ -628,6 +628,7 @@ export async function restoreChatHistory() {
 // ── DISCUSS IN CHAT ───────────────────────────────────────────────────────────
 export function discussInChat(type, data) {
   if (_busyStreaming()) return;
+  warmCurator();
   // Switch to chat view
   showView('chat');
 
@@ -875,6 +876,7 @@ export async function deleteFromDiscussion() {
 
 export async function discussDeletion(id, title, pitch, category, poster_url) {
   if (_busyStreaming()) return;
+  warmCurator();
   const userNote = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
 
   // 1. Save the context for the next API send event. Backend looks up the
@@ -948,3 +950,26 @@ export function onApplyOrphanRepair(btn) {
   catch { sections = []; }
   applyOrphanRepair(sections);
 }
+
+// ── SPECULATIVE CURATOR WARM-UP ──────────────────────────────────────────────
+// Focus on / typing in the chat input, or a Discuss click, pings the server
+// (debounced, at most every 20 s). The server marks the user active — so
+// background LLM work keeps off the GPU while they type — and, when the
+// curator is not resident, starts loading it now instead of after Send: the
+// 20 GB load overlaps the typing rather than the wait for the first token.
+let _warmTimer = 0, _warmAt = 0;
+const WARM_DEBOUNCE_MS = 400, WARM_MIN_GAP_MS = 20000;
+
+export function warmCurator() {
+  clearTimeout(_warmTimer);
+  _warmTimer = setTimeout(() => {
+    if (!state.token || Date.now() - _warmAt < WARM_MIN_GAP_MS) return;
+    _warmAt = Date.now();
+    // Speculative: a failed warm-up costs nothing but the head start.
+    api('/api/chat/warm', 'POST').catch(e => console.debug('[chat] warm-up skipped:', e?.message || e));
+  }, WARM_DEBOUNCE_MS);
+}
+
+// Delegated, so it covers the input however and whenever the view renders it.
+document.addEventListener('focusin', e => { if (e.target?.id === 'chat-input') warmCurator(); });
+document.addEventListener('input', e => { if (e.target?.id === 'chat-input') warmCurator(); });

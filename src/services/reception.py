@@ -666,7 +666,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
     import json as _json
     from datetime import datetime
     from src.cache.metadata_cache import MetadataCache, write_fields
-    from src.services.llm_priority import wait_for_curator
+    from src.services.llm_priority import make_room_for_summarizer
 
     def _gaming() -> bool:
         # Fails closed: an unreadable flag counts as a game (app_state.game_active).
@@ -753,7 +753,7 @@ async def run_reception_backfill(limit: int = 40, task=None) -> dict:
                     message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
             except Exception:  # noqa: BLE001 - progress card only; the backfill is unaffected
                 pass
-        await wait_for_curator()
+        await make_room_for_summarizer()
         # full pass when reception was never fetched; light relations/tags
         # catch-up (no LLM) when only the franchise fields are missing
         fn = topup_reception if not resp.get("reception_checked") else topup_franchise

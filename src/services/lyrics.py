@@ -840,8 +840,10 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
     yield_warned = False
     for a in todo[:budget]:
         try:
-            from src.services.llm_priority import wait_for_curator
-            await wait_for_curator()
+            # make_room: waits out the user's activity too, and clears the
+            # idle curator before the 8B loads (llm_priority).
+            from src.services.llm_priority import make_room_for_summarizer
+            await make_room_for_summarizer()
         except Exception as e:
             # wait_for_curator proceeds after its own timeout too: a
             # courtesy yield, so carry on - but a broken one is a bug.

@@ -1887,11 +1887,13 @@ CRITICAL RULES (YOU MUST OBEY):
             settings.CURATOR_MODEL,    settings.BASE_CURATOR_MODEL,
             settings.SUMMARIZER_MODEL, settings.BASE_SUMMARIZER_MODEL,
         ]
-        # Yield to an active chat before generating — this can fall back to
-        # the big curator model, and even the 8B shouldn't fight a live chat
-        # for the single GPU.
-        from src.services.llm_priority import wait_for_curator
-        await wait_for_curator()
+        # Curator-tier attempts run through background_curator_call (they
+        # used to post past the gate after a bare wait_for_curator: a chat
+        # turn then queued inside Ollama behind a 700-token summary); the 8B
+        # fallback first makes room (quiet window + idle-curator evict).
+        from src.services.llm_priority import (background_curator_call,
+                                               make_room_for_summarizer)
+        from src.services.llm_utils import is_curator_model, keep_alive_for, options_for
         # Evict the embedding model BEFORE the 27B call. The recompute's
         # embedding phase leaves nomic resident (keep_alive 2m), and the
         # packed curator then runs in partial CPU offload — measured 0.5 t/s
@@ -1916,16 +1918,27 @@ CRITICAL RULES (YOU MUST OBEY):
                 # cold load blew the timeout (3x reproduced on anime).
                 # 4-6 sentences need <300 tokens; 700 is generous.
                 # 420s: cold 20GB load + eval headroom.
-                async with httpx.AsyncClient(verify=tls_context(), timeout=420) as client:
-                    resp = await client.post(
-                        f"{ollama_url}/api/chat",
-                        json={
-                            "model": model,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "stream": False,
-                            **curator_options(temperature=0.8, num_predict=700),
-                        },
-                    )
+                # options_for / keep_alive_for: the curator's runner options
+                # on the curator, the summariser bake's on the 8B — one shared
+                # set reloaded the 8B at the curator's 16k window, and the
+                # missing keep_alive cut the curator's 1h residency to 5m.
+                async def _post(model=model):
+                    async with httpx.AsyncClient(verify=tls_context(), timeout=420) as client:
+                        return await client.post(
+                            f"{ollama_url}/api/chat",
+                            json={
+                                "model": model,
+                                "messages": [{"role": "user", "content": prompt}],
+                                "stream": False,
+                                "keep_alive": keep_alive_for(model),
+                                **options_for(model, temperature=0.8, num_predict=700),
+                            },
+                        )
+                if is_curator_model(model):
+                    resp = await background_curator_call("taste summary", _post)
+                else:
+                    await make_room_for_summarizer()
+                    resp = await _post()
             except httpx.TimeoutException:
                 logger.warning("Taste summary: %r timed out after 420s — trying next model", model)
                 continue

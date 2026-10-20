@@ -3132,7 +3132,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         # Pass 60: the bulk consumer now waits on the combined gate — it
         # yields to BOTH the curator (chat) and a user-triggered priority
         # re-enrich, instead of only the curator.
-        from src.services.llm_priority import wait_for_enrichment_slot
+        from src.services.llm_priority import wait_for_enrichment_slot, make_room_for_summarizer
 
         # Pass 93: shared progress counter — producer counts not_found
         # sentinels (which bypass the consumer), consumer counts everything
@@ -3512,6 +3512,11 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                             await unload_llm_models()
                     else:
                         await wait_for_enrichment_slot()
+                        # The gates above only close WHILE a curator call
+                        # runs; between chat turns they are open, and the 8B
+                        # load would push the idle curator out of VRAM under
+                        # the user's next message. Wait for a quiet window.
+                        await make_room_for_summarizer()
                         profile = await process_and_save(raw)
                         # fresh_attempt: a real round ended here. profile=None
                         # (LLM failure) writes "Processing failed" — no attempt

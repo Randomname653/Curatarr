@@ -255,6 +255,15 @@ SUMMARIZER_KEEP_ALIVE = "30s"
 #                              faster so background can drain.
 CURATOR_IDLE_EVICT_SECONDS = 60
 CURATOR_IDLE_EVICT_BUSY    = 10
+# Past the idle window the curator is only evicted when something needs the
+# card (a queued summariser call) — or once the user has been away this long.
+# A reader of a 4096-token reply easily spends more than 60 s on it, and the
+# reload that eviction bought them cost more than keeping the model resident
+# cost anybody: background summariser work makes its own room through
+# llm_priority.make_room_for_summarizer. Bounded at five minutes because the
+# card is shared with other programs (image generation) that need the 20 GB
+# back once the user has actually stopped chatting.
+CURATOR_IDLE_KEEP_S        = 300
 
 # Curator context window — benchmarked 2026-07-08 (tests/benchmarks/
 # num_ctx_bench.py, nomic resident, RTX 4090 24GB): 16384 runs 100% GPU at
@@ -318,10 +327,67 @@ def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) 
     # = -1, that placement is removed and Ollama decides).
     opts = ollama_options(temperature, num_predict,
                           **{"num_ctx": CURATOR_NUM_CTX, **curator_gpu(), **extra})
+    # num_thread is a RUNNER option — a change reloads the model. The CPU
+    # lane's thread budget is the summariser's; the curator never runs there,
+    # and the hand-built curator payloads never sent one, so neither does this.
+    if "num_thread" not in extra:
+        opts["options"].pop("num_thread", None)
     if "num_gpu" not in curator_gpu() and "num_gpu" not in extra:
         opts["options"].pop("num_gpu", None)
-        opts["options"].pop("num_thread", None)
     return opts
+
+
+# The summariser bake's window (setup_wizard bakes curatarr-summarizer at
+# 8192). summarizer_options pins it for call sites that may hand a summariser
+# the curator's options — plex_sync's taste summary falls back from the 27B
+# to the 8B in one loop, and sent the 8B a 16k window: a reload of the 8B on
+# the way in, and another on the next ordinary summariser call.
+SUMMARIZER_NUM_CTX = 8192
+
+
+def summarizer_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
+    """ollama_options with the summariser bake's window pinned."""
+    return ollama_options(temperature, num_predict,
+                          **{"num_ctx": SUMMARIZER_NUM_CTX, **extra})
+
+
+def is_curator_model(model: str) -> bool:
+    """True for the curator-tier bakes (curator, its base, the pitcher)."""
+    from src.config import settings
+    names = {settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL,
+             (settings.PITCHER_MODEL or "").strip()}
+    names.discard("")
+    names.discard(None)
+    return bool(model) and model in names
+
+
+def options_for(model: str, temperature: float = 0.7, num_predict: int = 1024,
+                **extra) -> dict:
+    """Runner-consistent options for whichever tier ``model`` belongs to —
+    for loops that walk a curator → summariser fallback chain."""
+    fn = curator_options if is_curator_model(model) else summarizer_options
+    return fn(temperature, num_predict, **extra)
+
+
+def keep_alive_for(model: str) -> str:
+    return CURATOR_KEEP_ALIVE if is_curator_model(model) else SUMMARIZER_KEEP_ALIVE
+
+
+def curator_payload(messages: list, *, model: str = None, temperature: float = 0.7,
+                    num_predict: int = 1024, fmt=None, stream: bool = False,
+                    **extra) -> dict:
+    """THE curator request body. Model, keep_alive and the runner options come
+    from one place, so no call site can shorten the curator's residency (Ollama
+    applies the LAST request's keep_alive: the judge's "10m" and the taste
+    summary's missing value cut the chat's 1h short) or reshape its runner
+    (num_ctx / num_gpu / num_thread — any change is a 20 GB reload)."""
+    from src.config import settings
+    p = {"model": model or settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL,
+         "messages": messages, "stream": stream, "keep_alive": CURATOR_KEEP_ALIVE,
+         **curator_options(temperature, num_predict, **extra)}
+    if fmt is not None:
+        p["format"] = fmt
+    return p
 
 
 def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:

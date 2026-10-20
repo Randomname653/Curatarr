@@ -256,6 +256,10 @@ Rules:
 Return ONLY the JSON array."""
 
 
+# User silence a starters refill waits for before taking the GPU.
+_REFILL_QUIET_S = 60.0
+
+
 async def generate_starters(user_id: int, n: int = 5) -> int:
     """One LLM batch → validated, deduped pool rows. Returns inserted count."""
     facts = await run_read(collect_facts, user_id)
@@ -266,10 +270,14 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
                             n=n, forms=list(FORMS))
     # Through the priority gate, never past it: a deletion run holding the
     # pitcher must not get the curator loaded on top by a background refill.
-    # The gate queues us until the GPU is free.
-    from src.services.llm_priority import curator_priority
-    content = None
-    async with curator_priority("chat starters"):
+    # BACKGROUND priority and a quiet window: GET /starters fires this refill
+    # when the chat view OPENS — under the old FIFO gate the user's first
+    # message queued behind 900 tokens of openers ("Curatarr is busy (chat
+    # starters)"). Now it waits until the user is idle, and a message sent
+    # while it decodes aborts it (re-run afterwards).
+    from src.services.llm_priority import background_curator_call
+
+    async def _generate() -> str | None:
         for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
             if not model:
                 continue
@@ -286,12 +294,16 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
                         },
                     )
                 if resp.status_code == 200:
-                    content = strip_think_tags(
+                    out = strip_think_tags(
                         resp.json().get("message", {}).get("content", "").strip())
-                    if content:
-                        break
+                    if out:
+                        return out
             except Exception as e:
                 logger.warning("[starters] %s failed: %s", model, e)
+        return None
+
+    content = await background_curator_call("chat starters", _generate,
+                                            quiet_s=_REFILL_QUIET_S)
     if not content:
         return 0
 

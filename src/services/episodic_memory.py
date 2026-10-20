@@ -1000,6 +1000,7 @@ async def _run_memory_extraction(
     user_id: int,
     prompt: str,
     media_category: str = None,
+    quiet_s: float = 0.0,
 ) -> None:
     """Shared core of memory extraction: send a prepared extraction prompt to
     the summarizer, parse the JSON, write the resulting memories and run
@@ -1015,9 +1016,15 @@ async def _run_memory_extraction(
     # endpoint. Without this, a chat turn that's still streaming would force
     # the summarizer load into a contested-VRAM situation, and the resulting
     # Ollama call would frequently httpx.ReadTimeout (~30s).
+    #
+    # make_room_for_summarizer: the debounced / catch-up runs (quiet_s > 0)
+    # also wait until the user has gone quiet, and the idle curator is
+    # evicted before the 8B loads — on a 24 GB card the load would otherwise
+    # unload it under the user's next message. The synchronous flushes (New
+    # chat, clear history, shutdown) pass 0: a request is waiting on them.
     try:
-        from src.services.llm_priority import wait_for_curator
-        await wait_for_curator()
+        from src.services.llm_priority import make_room_for_summarizer
+        await make_room_for_summarizer(quiet_s)
     except Exception as e:
         # wait_for_curator already proceeds after its own timeout; a raise
         # here is a bug, so say so and carry on the same way.
@@ -1220,6 +1227,9 @@ async def _run_memory_extraction(
 # deliberation pace; explicit exits (New chat / Exit / Delete & exit) still
 # flush immediately, and the custodian's catch-up covers killed debounces.
 _THREAD_EXTRACT_DEBOUNCE_S = 300.0
+# Debounced / catch-up runs additionally wait for this much user silence
+# (llm_priority.wait_quiet) — the user may have moved on to another thread.
+_POST_TURN_QUIET_S = 45.0
 # keyed by f"{user_id}:{thread_id}" → the pending asyncio debounce task
 _pending_thread_extracts: dict[str, asyncio.Task] = {}
 # The media_category each pending extraction was scheduled with, same key.
@@ -1249,10 +1259,31 @@ async def _carded(coro, name: str, task_id: str) -> None:
     task_monitor.done(t)
 
 
+# Preference / judgement cues for the extraction pre-gate. Recall-leaning on
+# purpose — a false hit costs one LLM call, a miss costs a memory — so it
+# also matches stance verbs (keep / delete), evaluative adjectives and
+# reasons. A thread of pure questions and acknowledgements matches nothing.
+_PREF_CUES = re.compile(
+    r"\b(?:lov(?:e|ed|es|ing)|lik(?:e|ed|es|ing)|enjoy\w*|hat(?:e|ed|es|ing)|dislike\w*"
+    r"|can'?t stand|favou?rite\w*|prefer\w*|because|since|cause|bor(?:ing|ed)|annoy\w*"
+    r"|overrated|underrated|masterpiece|brilliant|amazing|awesome|great|good|bad|awful"
+    r"|terrible|trash|garbage|cringe|meh|mid|fun|funny|beautiful|gorgeous|ugly|dumb"
+    r"|stupid|smart|clever|slow|tedious|never again|always|never|rewatch\w*|binge\w*"
+    r"|guilty pleasure|comfort|nostalgi\w*|keep\w*|kept|delete|deleting|get rid"
+    r"|wonderful|excellent|fantastic|incredible|perfect|best|worst|hilarious|dull"
+    r"|not (?:really |quite )?(?:for me|my thing)|obsessed"
+    r"|weil|mag|mochte|liebe|hasse|lieblings\w*|langweil\w*|gut|schlecht"
+    r"|gefäll\w*|gefiel\w*|genial|super|schön\w*|geil\w*|klasse|grandios|gro(?:ß|ss)artig"
+    r"|meisterwerk|mies|öde|scheiß\w*|lieber|gern\w*|nicht mein ding|spannend|witzig"
+    r"|lustig|nervig|nervt"
+    r"|toll|furchtbar|behalt\w*|lösch\w*)\b", re.I)
+
+
 async def extract_memories_from_thread(
     user_id: int,
     thread_id: str,
     media_category: str = None,
+    quiet_s: float = 0.0,
 ) -> bool:
     """Extract long-term memories from the user-message SEQUENCE of one chat
     thread, picking up where the last extraction left off (AppState cursor).
@@ -1421,29 +1452,38 @@ USER MESSAGES (oldest → newest):
 
 JSON:"""
 
-    # Activity card: this is a real LLM run firing minutes after a chat goes
-    # quiet — GPU work the Activity view showed nothing for. Work-gated (the
-    # early-outs above return before this) so idle catch-up ticks stay silent.
-    # task_id per thread: a re-extraction replaces its old card.
-    from src.services.task_monitor import task_monitor
-    _mt = task_monitor.create(name="Chat memory extraction", category="memory",
-                              task_id=f"memx-{user_id}-{thread_id}")
-    task_monitor.start(_mt)
-    try:
-        ok = await _run_memory_extraction(user_id, prompt,
-                                          media_category=media_category)
-    except Exception as e:
-        task_monitor.error(_mt, str(e))
-        raise
-    if not ok:
-        # The runner converts every failure — API non-200, JSON that would
-        # not parse, an Ollama outage — into a normal return, so "no
-        # exception" never meant "successful run". Leaving the cursor put
-        # re-offers this window on the next flush; advancing it would
-        # silently drop these messages from memory extraction for ever.
-        task_monitor.error(_mt, "extraction failed — window will be retried")
-        return False
-    task_monitor.done(_mt, f"{len(user_msgs)} new message(s) analyzed")
+    if not any(_PREF_CUES.search(m) for m in user_msgs):
+        # Lexical pre-gate: no preference / judgement cue in any of the
+        # user's messages (rule 5 of the prompt: no WHY = no memory). The
+        # extractor would answer [] — skip the 1000-token call and its model
+        # load; the cursor still advances and the hooks below still run.
+        logger.info("[memory] thread %s: no preference cue in %d message(s) — "
+                    "extraction LLM skipped", thread_id, len(user_msgs))
+    else:
+        # Activity card: this is a real LLM run firing minutes after a chat goes
+        # quiet — GPU work the Activity view showed nothing for. Work-gated (the
+        # early-outs above return before this) so idle catch-up ticks stay silent.
+        # task_id per thread: a re-extraction replaces its old card.
+        from src.services.task_monitor import task_monitor
+        _mt = task_monitor.create(name="Chat memory extraction", category="memory",
+                                  task_id=f"memx-{user_id}-{thread_id}")
+        task_monitor.start(_mt)
+        try:
+            ok = await _run_memory_extraction(user_id, prompt,
+                                              media_category=media_category,
+                                              quiet_s=quiet_s)
+        except Exception as e:
+            task_monitor.error(_mt, str(e))
+            raise
+        if not ok:
+            # The runner converts every failure — API non-200, JSON that would
+            # not parse, an Ollama outage — into a normal return, so "no
+            # exception" never meant "successful run". Leaving the cursor put
+            # re-offers this window on the next flush; advancing it would
+            # silently drop these messages from memory extraction for ever.
+            task_monitor.error(_mt, "extraction failed — window will be retried")
+            return False
+        task_monitor.done(_mt, f"{len(user_msgs)} new message(s) analyzed")
 
     # Advance the cursor only AFTER a successful run — a crash mid-extract
     # then re-tries the same window on the next flush instead of silently
@@ -1515,7 +1555,8 @@ async def _debounced_thread_extract(
     key = _extract_key(user_id, thread_id)
     try:
         await asyncio.sleep(_THREAD_EXTRACT_DEBOUNCE_S)
-        await extract_memories_from_thread(user_id, thread_id, media_category=media_category)
+        await extract_memories_from_thread(user_id, thread_id, media_category=media_category,
+                                           quiet_s=_POST_TURN_QUIET_S)
     except asyncio.CancelledError:
         # Rescheduled by a newer turn (or flushed) — expected, not an error.
         raise
@@ -1611,7 +1652,7 @@ async def extract_catchup(min_quiet_minutes: int = 15) -> dict:
             logger.info("[memory] catch-up: %s has unextracted messages "
                         "(cursor %d < %d)", tid, cur, max_uid)
             try:
-                await extract_memories_from_thread(uid, tid)
+                await extract_memories_from_thread(uid, tid, quiet_s=_POST_TURN_QUIET_S)
                 done += 1
             except Exception as e:
                 logger.warning("[memory] catch-up failed for %s: %s", tid, e)
@@ -2142,16 +2183,52 @@ Assistant said: {assistant_response[:300]}
 Output:"""
 
 
+# The scanner prompt carries its whole instruction set inline, so it runs on
+# the curator as well as on the summariser bake; this replaces the baked
+# persona for the call (the judge does the same).
+_PROTECTION_SYSTEM = ("You are a precise intent classifier. Follow the instructions "
+                      "in the user message exactly and output only the lines they ask for.")
+
+
 async def _call_protection_classifier(prompt: str) -> Optional[str]:
     """
-    Pass 14.13: yield to any active curator before hammering the
-    summarizer. Background protection scan was ReadTimeout-ing at 20s
-    because the curator was still streaming and the summarizer was
-    contesting the same 14GB VRAM slot.
+    Runs right after a chat reply, so the curator the user is talking to is
+    resident. Loading the 8B summariser for this scan unloaded it on a 24 GB
+    card (the two do not fit side by side), and the user's next message paid
+    a full curator reload. So: when the curator is resident, the scan runs ON
+    it — through background_curator_call, i.e. queued behind any interactive
+    turn and aborted (then re-run) the moment the user sends one. Only when
+    no curator is resident does it take the summariser, after making room.
     """
+    from src.services import llm_priority as lp
     try:
-        from src.services.llm_priority import wait_for_curator
-        await wait_for_curator()
+        resident = await lp.curator_resident()
+    except Exception as e:  # noqa: BLE001 - residency is a routing hint only
+        logger.debug("[protection] residency probe failed: %s", e)
+        resident = False
+    if resident:
+        from src.services.llm_utils import curator_payload
+
+        async def _post() -> dict:
+            async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
+                r = await client.post(
+                    f"{settings.effective_ollama}/api/chat",
+                    json=curator_payload(
+                        [{"role": "system", "content": _PROTECTION_SYSTEM},
+                         {"role": "user", "content": prompt}],
+                        temperature=0.1, num_predict=700))
+            r.raise_for_status()
+            return r.json()
+        try:
+            data = await lp.background_curator_call("protection check", _post, quiet_s=3)
+            return strip_think_tags((data.get("message") or {}).get("content", "").strip())
+        except Exception as e:
+            logger.error("💥 [PROTECTION CHECK ERROR] (curator): %s: %s",
+                         type(e).__name__, e or "(no message)")
+            return None
+
+    try:
+        await lp.make_room_for_summarizer()
     except Exception as e:
         logger.warning("[protection] curator priority wait failed: %s", e)
 
@@ -2178,6 +2255,56 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
             type(e).__name__, e or "(no message)",
         )
     return None
+
+
+# Positive pre-gate for the protection scanner. The scanner exists to catch a
+# DECISIVE keep directive in the user's own words; without a keep cue (or a
+# bare yes answering a question about the anchored title) there is nothing
+# for it to find, and "thanks!" / "lol fair" / "I liked season one" each cost
+# a 700-token LLM call — on the 24 GB card, also the curator's residency.
+_KEEP_CUES = re.compile(
+    r"\b(?:keep(?:ing|s)?|kept|stays?|staying|protect\w*|retain\w*|hold(?:ing)? on to"
+    r"|hang(?:ing)? on to|not (?:getting rid|deleting|removing|letting (?:it|this) go)"
+    r"|don'?t (?:delete|remove|touch|cut)|do not (?:delete|remove|touch|cut)"
+    r"|leave (?:it|this|them)|override|my call|veto|save (?:it|this)|spare (?:it|this)"
+    r"|never (?:delete|remove)|hands off|not done with|still (?:watching|want)"
+    r"|behalt\w*|bleib\w*|schütz\w*|nicht lösch\w*|lass(?:en)? (?:wir )?(?:es|ihn|sie|das)"
+    r"|lösch\w*\s+(?:\S+\s+){0,4}?nicht|auf keinen fall|blo(?:ß|ss) nicht|finger weg"
+    r"|nicht (?:weg|entfern\w*|raus)|hände weg)\b", re.I)
+_AFFIRM_ONLY = re.compile(
+    r"^\s*(?:yes|yeah|yep|yup|sure|agreed|deal|exactly|fine|ok(?:ay)?|ja|jo|jep|genau"
+    r"|einverstanden|passt)\b[\s.!]*$", re.I)
+
+
+# Log-only since 2026-10-21 (owner's call): the pre-gate below decides
+# nothing yet, it only logs the turns it WOULD have skipped. A missed keep
+# costs a protection; the spared call is not worth that until the log shows
+# the cues catch every real keep. Set True to let it skip.
+PROTECTION_PREGATE_ENFORCED = False
+
+
+def protection_gate(user_message: str, anchor_title: Optional[str] = None, *,
+                    log: bool = True) -> bool:
+    """Whether the post-turn protection check runs for this turn."""
+    if protection_worth_checking(user_message, anchor_title):
+        return True
+    if log:
+        logger.info("[protection] pre-gate %s - no keep cue in %r",
+                    "skipped the check" if PROTECTION_PREGATE_ENFORCED
+                    else "would skip it (log-only)", (user_message or "")[:80])
+    return not PROTECTION_PREGATE_ENFORCED
+
+
+def protection_worth_checking(user_message: str, anchor_title: Optional[str] = None) -> bool:
+    """True when the user's OWN words could hold a keep directive: a keep cue
+    anywhere, or a bare affirmative inside a thread anchored on a title (the
+    "Shall we keep it?" → "yes" case, where the subject is the anchor)."""
+    msg = (user_message or "").strip()
+    if not msg:
+        return False
+    if _KEEP_CUES.search(msg):
+        return True
+    return bool(anchor_title) and bool(_AFFIRM_ONLY.match(msg))
 
 
 def _check_protection_pre_gate(user_message: str) -> bool:
@@ -2296,6 +2423,10 @@ async def detect_and_handle_protection(
     through to the resolution-log row (state vs history — see
     ``CuratorResolutionLog``).
     """
+    if not protection_gate(user_message, anchor_title, log=False):
+        logger.debug("[protection] no keep cue in the user's words — NO_ACTION for %r",
+                     (user_message or "")[:60])
+        return None
     if _check_protection_pre_gate(user_message):
         return None
 
@@ -2645,6 +2776,14 @@ Output ONLY valid JSON:
 
 USER MESSAGES:
 {joined}"""
+    try:
+        # Background 8B call: wait out the user and clear the idle curator
+        # first (the extraction that schedules this may have skipped its own
+        # LLM call — and with it, this same make-room step).
+        from src.services.llm_priority import make_room_for_summarizer
+        await make_room_for_summarizer(_POST_TURN_QUIET_S)
+    except Exception as e:  # noqa: BLE001 - courtesy yield; the analysis still runs
+        logger.warning("[rec-feedback] curator yield failed: %s", e)
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(

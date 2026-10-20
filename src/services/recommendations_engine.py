@@ -661,10 +661,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
     by the legacy deletion-pitch call sites for the two-bake split; discovery,
     collections and the yearly review pass nothing and stay on the curator.
     """
-    from src.services.llm_priority import curator_start, curator_done
-    if not skip_priority:
-        await curator_start("recommendations", exclusive_model=model_override)
-    try:
+    async def _chain() -> Optional[str]:
         chain = ([model_override] if model_override else []) + [
             settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]
         for model in dict.fromkeys(m for m in chain if m):
@@ -694,9 +691,16 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             except Exception as e:
                 logger.warning("LLM call failed (%s): %s", type(e).__name__, e)
         return None
-    finally:
-        if not skip_priority:
-            curator_done()
+
+    if skip_priority:
+        return await _chain()
+    # BACKGROUND + interruptible: a chat turn arriving mid-generation aborts
+    # this request (Ollama stops decoding when the connection closes), takes
+    # the GPU, and the chain re-runs afterwards — instead of the user waiting
+    # out up to 800 tokens behind "Curatarr is busy (recommendations)".
+    from src.services.llm_priority import background_curator_call
+    return await background_curator_call("recommendations", _chain,
+                                         exclusive_model=model_override)
 
 
 _TRENDING_TTL_H = 24
@@ -2310,7 +2314,8 @@ async def generate_deletion_proposals(
         from src.services.pillars import build_evidence, adjudicate, write_monologue
         from src.services.llm_errors import DESCRIPTIONS, INFRA, LLMFailure
         from src.services.llm_priority import (curator_start, curator_done,
-                                               evict_if_resident, gate_contested)
+                                               evict_if_resident, gate_contested,
+                                               wait_quiet)
         # A game already running: no warm-up (it can load the summariser) and
         # no gate. The scheduler's own check runs once per job; a manual
         # Analyze and every category after the first land here.
@@ -2439,6 +2444,14 @@ async def generate_deletion_proposals(
             logger.warning("[deletions] pre-judge warm-up failed: %s", _e,
                            exc_info=True)
         _gate_label = f"deletion scan: {category}"
+        # Two-bake split: the run's model is NOT the one chat answers on, so
+        # every yield to a chat swaps ~20 GB each way. Re-acquiring the
+        # instant the chat turn ends evicted the curator the user was still
+        # talking to — and their follow-up evicted the pitcher again, two
+        # full swaps per message. After a yield the run waits for the
+        # conversation to settle before it takes the GPU back.
+        _split_run = pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL)
+        _YIELD_QUIET_S = 90.0 if _split_run else 0.0
         await curator_start(_gate_label, exclusive_model=pitch_model)
         # Whether THIS run currently owns a slot. The yield below drops it and
         # re-acquires; a cancel (scan stopped) landing in that re-acquire
@@ -2466,6 +2479,7 @@ async def generate_deletion_proposals(
                     _msg(f"{category}: yielding GPU to a waiting request…")
                     _holds_gate = False
                     curator_done()
+                    await wait_quiet(_YIELD_QUIET_S)
                     await curator_start(_gate_label, exclusive_model=pitch_model)
                     _holds_gate = True
                 # Checked AFTER a yield too: the chat we waited for can take
@@ -2506,6 +2520,18 @@ async def generate_deletion_proposals(
                     judged -= 1
                     continue
                 try:
+                    # Start the NEXT candidate's evidence now, before the skip
+                    # gates below: a skipped candidate `continue`s past the
+                    # judge call, and with the prefetch placed after the gates
+                    # the following candidate's evidence (DB reads, embedder,
+                    # network top-ups) was then built synchronously INSIDE the
+                    # GPU slot. Not while Ollama is failing: the breaker above
+                    # must be able to stop the run before any new work starts.
+                    _nx = _ci + 1
+                    if (consecutive_outages == 0 and _nx < len(scored_candidates)
+                            and _nx not in _ev_ahead):
+                        _ev_ahead[_nx] = asyncio.ensure_future(build_evidence(
+                            scored_candidates[_nx]["item"], user_id, category))
                     # THIN-EVIDENCE GATE: no enrichment, no Wikipedia — only
                     # the arr synopsis stub. Judging that produces confident
                     # confabulation (the They Will Kill You / Buffaloed
@@ -2578,13 +2604,6 @@ async def generate_deletion_proposals(
                                        "principles could not be read",
                                        category, item.get("title"))
                         continue
-                    # Not while Ollama is failing: the breaker above must
-                    # be able to stop the run before any new work starts.
-                    _nx = _ci + 1
-                    if (consecutive_outages == 0 and _nx < len(scored_candidates)
-                            and _nx not in _ev_ahead):
-                        _ev_ahead[_nx] = asyncio.ensure_future(build_evidence(
-                            scored_candidates[_nx]["item"], user_id, category))
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
@@ -2629,6 +2648,16 @@ async def generate_deletion_proposals(
                                "_guard_detail": _claim}
                     v = "STAGNANT"
                 if v in ("CUT", "STAGNANT"):
+                    # Yield between the verdict and its monologue too: they
+                    # are two full generations, and a chat queued during the
+                    # verdict waited out both before the loop-top yield.
+                    if gate_contested():
+                        _msg(f"{category}: yielding GPU to a waiting request…")
+                        _holds_gate = False
+                        curator_done()
+                        await wait_quiet(_YIELD_QUIET_S)
+                        await curator_start(_gate_label, exclusive_model=pitch_model)
+                        _holds_gate = True
                     pitch = await write_monologue(
                         ev["facts"], verdict, model=pitch_model,
                         lang_directive=lang_directive_str, skip_priority=True)

@@ -425,10 +425,11 @@ SUBJECT: {title_or_genre}
 Output ONLY the question text — no quotes, no labels, no explanation."""
 
     rephrased = question["question"]  # English worst-case fallback
-    # Small-model call — yield to an active chat so two generations don't
-    # share the single GPU.
-    from src.services.llm_priority import wait_for_curator
-    await wait_for_curator()
+    # Small-model call — wait for the user to go quiet and clear the idle
+    # curator first: on a 24 GB card the 8B load would unload it under the
+    # user's next message (llm_priority.make_room_for_summarizer).
+    from src.services.llm_priority import make_room_for_summarizer
+    await make_room_for_summarizer()
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
@@ -522,10 +523,11 @@ Extract:
 
 Output as JSON only: {{"answers_question": true, "sentiment": "...", "key_insight": "...", "update_type": "..."}}"""
 
-    # Small-model call — yield to an active chat so two generations don't
-    # share the single GPU.
-    from src.services.llm_priority import wait_for_curator
-    await wait_for_curator()
+    # Small-model call — wait for the user to go quiet and clear the idle
+    # curator first: on a 24 GB card the 8B load would unload it under the
+    # user's next message (llm_priority.make_room_for_summarizer).
+    from src.services.llm_priority import make_room_for_summarizer
+    await make_room_for_summarizer()
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(

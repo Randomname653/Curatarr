@@ -14,9 +14,9 @@ from datetime import datetime
 from typing import AsyncGenerator
 
 from src.services.llm_utils import (
-    ThinkTagStreamFilter, clean_llm_text, ollama_options, strip_think_tags,
+    ThinkTagStreamFilter, clean_llm_text, strip_think_tags,
     curator_options, CURATOR_NUM_CTX,
-    CURATOR_KEEP_ALIVE, SUMMARIZER_KEEP_ALIVE,
+    CURATOR_KEEP_ALIVE,
     detect_user_language, language_directive,
 )
 from src.config import settings as _cfg
@@ -59,6 +59,42 @@ def _in_session(fn, *args, **kwargs):
     from src.database.connection import get_db_session
     with get_db_session() as db:
         return fn(*args, db=db, **kwargs)
+
+
+# Titles whose summariser top-ups are queued behind the quiet window, so a
+# thread that names the same title every turn queues it once.
+_deferred_topups: set = set()
+
+
+async def _verified_for_chat(title: str, media_type: str, **ids):
+    """``ensure_verified_data`` for the chat pre-stream, WITHOUT its summariser
+    steps (Wikipedia significance, reception, studio / director notes).
+
+    Those load the 8B, and on a 24 GB card that unloads the idle-resident
+    curator the turn is about to need — media_enricher's own docstring puts
+    the reload at 60-120 s, and the judge has passed allow_summarizer=False
+    for that reason all along; chat never did. The top-ups still happen: a
+    background task runs them once the user has gone quiet
+    (make_room_for_summarizer), so the cache carries them on the next turn."""
+    from src.services.media_enricher import ensure_verified_data
+    payload = await ensure_verified_data(title, media_type, allow_summarizer=False, **ids)
+    key = (title or "").strip().lower(), media_type
+    if key[0] and key not in _deferred_topups:
+        _deferred_topups.add(key)
+
+        async def _later():
+            try:
+                from src.services.llm_priority import make_room_for_summarizer
+                await make_room_for_summarizer()
+                await ensure_verified_data(title, media_type, **ids)
+            except Exception as e:
+                log_topup_failure(logger, "[chat] deferred verified top-up", title, e)
+            finally:
+                _deferred_topups.discard(key)
+
+        from src.services.bg_tasks import track_task
+        track_task(_later(), name="chat_verified_topup")
+    return payload
 
 
 def _row_copy(row):
@@ -505,6 +541,56 @@ def _match_library_title(message: str) -> tuple[str, str] | None:
     return (best[1], best[2]) if best else None
 
 
+# Entity extraction runs on the CURATOR, not the summariser: this is the
+# pre-stream of a chat turn, and on a 24 GB card loading the 8B next to the
+# idle-resident 20 GB curator made Ollama unload the curator — the turn then
+# paid the 8B load, an evict-and-poll of up to 8 s, and a full curator reload
+# before its first token. The curator is about to answer this very turn, so
+# asking it costs no load at all (it starts warming it when cold). The
+# summariser bake's MODE prompt does not exist in the curator bake, hence the
+# neutral system message (it overrides the baked persona, as the judge's does).
+_ENTITY_SYSTEM = (
+    "Extract the single most prominent media title (movie, TV show, anime, "
+    "music artist, album or track) the message refers to. Extract the full "
+    "proper noun exactly (\"Jesus Shows You the Way to the Highway\", not "
+    "\"Jesus\"). If no specific media title is named, return an empty title. "
+    "Answer with JSON only.")
+_ENTITY_SCHEMA = {"type": "object", "properties": {"title": {"type": "string"}},
+                  "required": ["title"]}
+# A cold curator load fits in here; past it the regex fallback answers.
+_ENTITY_TIMEOUT_S = 45.0
+
+
+async def _extract_entity_llm(normalized_query: str) -> str:
+    """The raw JSON answer of the curator's entity extraction, or "".
+
+    Holds the GPU slot as INTERACTIVE for the one short call so no background
+    job slips in, but never waits for it: when the slot is taken (a deletion
+    run, another user's reply) the regex fallback answers instead of queueing
+    the pre-stream behind minutes of background work."""
+    from src.services.llm_priority import INTERACTIVE, curator_busy, curator_priority
+    from src.services.llm_utils import curator_payload
+    if curator_busy():
+        logger.info("[chat] entity extraction: GPU slot busy — regex fallback")
+        return ""
+    try:
+        async with curator_priority("chat: identifying the title", priority=INTERACTIVE):
+            async with httpx.AsyncClient(verify=tls_context(),
+                                         timeout=_ENTITY_TIMEOUT_S) as client:
+                r = await client.post(
+                    f"{_cfg.effective_ollama}/api/chat",
+                    json=curator_payload(
+                        [{"role": "system", "content": _ENTITY_SYSTEM},
+                         {"role": "user", "content": normalized_query}],
+                        temperature=0.0, num_predict=80, fmt=_ENTITY_SCHEMA),
+                )
+        if r.status_code == 200:
+            return r.json().get("message", {}).get("content", "").strip()
+    except Exception as e:
+        log_topup_failure(logger, "[chat] entity extraction", normalized_query[:80], e)
+    return ""
+
+
 async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
     """
     Three-pass title extraction:
@@ -513,7 +599,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
          verbatim in the message wins. Phrasing-proof — "Kill la Kill
          sounds interesting please ellaborate" defeated both passes below
          while the title sat literally in the message (and in the library).
-      1. Call curatarr-summarizer MODE 6 (LLM, JSON output)
+      1. Ask the resident curator (_extract_entity_llm, JSON output)
       2. If LLM returned nothing usable, fall back to regex patterns
          on the user's literal message ("tell me about X", quoted phrases)
 
@@ -522,7 +608,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
     it, queries like "Hexenkönigin und der Datendieb" silently skipped
     the metadata pipeline entirely.
 
-    Hard timeout: 10s. Returns (title or None, year or None).
+    Hard timeout: _ENTITY_TIMEOUT_S. Returns (title or None, year or None).
 
     Pass 14.14: query is typo-normalised before BOTH the LLM call and the
     regex fallback. The user-facing original is left alone — only the
@@ -539,27 +625,7 @@ async def _detect_media_in_query(query: str) -> tuple[str | None, int | None]:
                     lib_hit[0], lib_hit[1])
         return lib_hit[0], year
 
-    extraction_model = getattr(_cfg, "SUMMARIZER_MODEL", None) or "curatarr-summarizer"
-    prompt = f"[MODE: ENTITY EXTRACTION]\nInput: {normalized_query}"
-
-    raw_output = ""
-    try:
-        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
-            r = await client.post(
-                f"{_cfg.effective_ollama}/api/chat",
-                json={
-                    "model": extraction_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                    "keep_alive": SUMMARIZER_KEEP_ALIVE,
-                    **ollama_options(temperature=0.0, num_predict=80),
-                },
-            )
-        if r.status_code == 200:
-            raw_output = r.json().get("message", {}).get("content", "").strip()
-
-    except Exception as e:
-        log_topup_failure(logger, "[chat] entity extraction", normalized_query[:80], e)
+    raw_output = await _extract_entity_llm(normalized_query)
 
     # Try to parse the LLM output. Accept several shapes the summarizer
     # might emit: bare {"title": "X"}, nested {"output": {"title": "X"}},
@@ -1303,6 +1369,57 @@ async def get_starters(user: User = Depends(get_current_user)):
     return {"starters": picks}
 
 
+# Monotonic time of the last warm-up load attempt — server-wide, so several
+# open tabs typing at once start one load, not one each.
+_last_warm = {"at": float("-inf")}
+_WARM_MIN_INTERVAL_S = 20.0
+
+
+@router.post("/warm")
+async def warm_curator(user: User = Depends(get_current_user)):
+    """Speculative warm-up — the chat input got focus, the user is typing, or
+    clicked Discuss.
+
+    Always: marks the user active, so background LLM work waiting for a quiet
+    window (make_room_for_summarizer, background_curator_call) holds off and
+    does not evict the curator under the message being typed.
+
+    When the slot is free, the curator lane is open and the curator is NOT
+    resident: loads it now, while the user is still typing, through the gate
+    at INTERACTIVE priority (enrichment pauses and the summariser is cleared
+    first, as for a real turn). The load request carries the SAME runner
+    options every curator call sends — a warm-up with another num_ctx or
+    num_gpu would itself be the reload it is meant to save."""
+    import time as _time
+    from src.services import llm_priority as lp
+    from src.services.llm_lane import curator_available
+    from src.services.llm_utils import curator_payload
+
+    lp.touch_interactive()
+    now = _time.monotonic()
+    if (now - _last_warm["at"] < _WARM_MIN_INTERVAL_S or lp.curator_busy()
+            or not curator_available()[0]):
+        return {"warming": False}
+    _last_warm["at"] = now
+
+    async def _load():
+        try:
+            if await lp.curator_resident():
+                return
+            async with lp.curator_priority("warming up", priority=lp.INTERACTIVE):
+                # Empty messages: Ollama loads the model and returns.
+                payload = curator_payload([], temperature=0.7, num_predict=1)
+                async with httpx.AsyncClient(verify=tls_context(), timeout=300) as client:
+                    await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
+            logger.info("[chat] curator warmed ahead of the user's message")
+        except Exception as e:  # noqa: BLE001 - speculative; the turn loads it anyway
+            logger.debug("[chat] curator warm-up failed: %s", e)
+
+    from src.services.bg_tasks import track_task
+    track_task(_load(), name="curator_prewarm")
+    return {"warming": True}
+
+
 @router.post("/starters/{starter_id}/used")
 def starter_used(starter_id: int, user: User = Depends(get_current_user)):
     from src.services.chat_starters import mark_used
@@ -1939,7 +2056,7 @@ async def _build_discuss_context_block(
                             f"as a transcript of record):\n{_tx}\n")
             except Exception as _e:
                 log_topup_failure(logger, "[chat] level-2 transcript", proposal.title, _e)
-        verified_payload = await ensure_verified_data(
+        verified_payload = await _verified_for_chat(
             proposal.title, proposal.category or "movie",
             tvdb_id=proposal.tvdb_id, tmdb_id=proposal.tmdb_id,
             plex_rating_key=_doc_key)
@@ -2185,7 +2302,7 @@ async def _build_discuss_context_block(
             try:
                 from src.services.media_enricher import (ensure_verified_data,
                                                          format_verified_block)
-                _svd = await ensure_verified_data(active_title, domain or "movie")
+                _svd = await _verified_for_chat(active_title, domain or "movie")
                 _vb = await run_read(format_verified_block, _svd)
                 if _vb:
                     block += "\n" + _vb + "\n"
@@ -2279,7 +2396,7 @@ async def _build_discuss_context_block(
         try:
             from src.services.media_enricher import (ensure_verified_data,
                                                      format_verified_block)
-            _vd_payload = await ensure_verified_data(
+            _vd_payload = await _verified_for_chat(
                 series, domain or "movie", tmdb_id=row.tmdb_id)
             _vb = await run_read(format_verified_block, _vd_payload)
             if _vb:
@@ -2703,6 +2820,11 @@ def _schedule_post_turn(user_id: int, thread_id: str, user_text: str, reply: str
         # pronoun-only signals like "we are keeping this show" register
         # against the right title.
         anchor = _get_thread_active_title(user_id, thread_id)
+        # Lexical pre-gate, before a task even exists: a turn with no keep
+        # cue in the user's own words cannot carry a keep directive.
+        from src.services.episodic_memory import protection_gate
+        if not protection_gate(user_text, anchor[0] if anchor else None):
+            return
         track_task(
             _check_protection_intent_bg(
                 user_id, user_text, reply,
@@ -2739,6 +2861,11 @@ async def send_message(
     from src.services import rate_limit as _rl
     _rl.enforce("chat", user.id, _rl.CHAT_MESSAGES_PER_5MIN, 300,
                 "Too many messages in a short time — give the curator a moment")
+
+    # A user is here: background LLM work that waits for a quiet window
+    # (make_room_for_summarizer, background_curator_call) holds off.
+    from src.services.llm_priority import touch_interactive
+    touch_interactive()
 
     # Thread isolation: each deletion-proposal / proactive-message gets its own
     # thread; free chat lives on "general". History from one thread is invisible
@@ -2980,12 +3107,13 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         active_title = enrichment_data.get("title") or detected_title
                         # Honour the verified-data DEMAND for general chat too: the
                         # cascade enriches but does NOT fetch the on-demand OMDb /
-                        # Wikipedia significance — warm them now (cached, time-boxed)
-                        # so the context block below carries them.
+                        # Wikipedia data — top up what needs no model now (cached,
+                        # time-boxed); the summariser-distilled parts follow in
+                        # the background once the user is quiet (_verified_for_chat).
                         verified_payload = None
                         try:
                             from src.services.media_enricher import ensure_verified_data
-                            verified_payload = await ensure_verified_data(
+                            verified_payload = await _verified_for_chat(
                                 active_title, matched_domain or "movie",
                                 tmdb_id=enrichment_data.get("tmdb_id"),
                                 tvdb_id=enrichment_data.get("tvdb_id"),
@@ -3380,7 +3508,7 @@ FORMATTING RULES:
         stream_state["started"] = True
         from src.services.llm_priority import (
             curator_start, curator_done, check_curator_vram_health, curator_busy,
-            gate_owner,
+            gate_owner, INTERACTIVE,
         )
         loop = asyncio.get_running_loop()
 
@@ -3420,7 +3548,9 @@ FORMATTING RULES:
             # pulse. curator_start undoes its own acquire when cancelled, so a
             # disconnect while queued leaves no slot to release; the one case
             # to cover is the acquire finishing in the same tick as the cancel.
-            acquire = asyncio.ensure_future(curator_start("chat"))
+            # INTERACTIVE: served before every queued background job, and
+            # preempts an in-flight background_curator_call holding the slot.
+            acquire = asyncio.ensure_future(curator_start("chat", priority=INTERACTIVE))
             try:
                 while not acquire.done():
                     await asyncio.wait({acquire}, timeout=_HEARTBEAT_S)
