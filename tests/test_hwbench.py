@@ -212,6 +212,14 @@ check("agreement with the production model does not rank: 60 % agreement but bet
       mx_s["tiers"]["24"]["recommended"]["model"] == "tiny:4b")
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
 
+# A judge that gives nearly every title the same verdict is a K.O.
+check("degenerate judge: 10 of 12 the same verdict",
+      matrix.degenerate({"artifacts": [judge_file("degen", ["KEEP_WITH_FLAG"] * 10 + ["CUT", "HARD_KEEP"])]})
+      .startswith("degenerate judge: 10 of 12"))
+check("...a spread judge and a too-small sample are not",
+      matrix.degenerate({"artifacts": [judge_file("spread", ["CUT", "HARD_KEEP", "STAGNANT"] * 4)]}) == ""
+      and matrix.degenerate({"artifacts": [judge_file("tiny", ["CUT"] * 5)]}) == "")
+
 # Recommendation gates: comfort, then the quality window.
 def _opt(name, score, tok, judge, prov=False):
     return {"model": name, "quality": {"score25": score, "provisional": prov},

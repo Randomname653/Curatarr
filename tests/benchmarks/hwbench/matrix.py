@@ -8,7 +8,8 @@ it was measured at, plus the runners-up. The setup wizard reads it
 Rules, in order:
 
 1. Quality K.O. (per model x profile x server): JSON gate valid >= 95 %,
-   judge valid >= 95 %, empty monologues <= 5 %.
+   judge valid >= 95 %, empty monologues <= 5 %, and no degenerate judge
+   (one verdict on more than MAX_VERDICT_SHARE of the titles).
 2. Performance K.O. (per cell): the cell finished without timeout; either
    fully on the GPU, or — when partly offloaded — monologue generation
    >= MIN_GEN_TOK_S and judge p90 <= MAX_JUDGE_P90_S; no latency
@@ -65,6 +66,8 @@ NOTES_SCORER = "claude"         # rubric 5-axis-2026-08 (card notes)
 JUDGE_WEIGHT = 0.6              # the judge decides deletions; the notes are what people read
 QUALITY_WINDOW = 1.5            # points of 25 within which the faster package wins
 COMFORT_JUDGE_S = 20.0          # median seconds per judge verdict for a recommendation
+MAX_VERDICT_SHARE = 0.75        # one verdict on more titles than this = a degenerate judge
+MIN_DEGENERATE_N = 10           # too few verdicts to call it either way
 DEFAULT_SERVER = "fa-auto_kv-f16"
 TIER_METHOD = "llama_fit_target"
 TIER_OVERRUN_TOL_MIB = 256
@@ -203,6 +206,22 @@ def recommend(opts: list[dict]) -> dict | None:
     return max(window, key=lambda o: o["expected"]["gen_tok_s"] or 0)
 
 
+def degenerate(run: dict) -> str:
+    """A judge that hands nearly every title the same verdict is not judging:
+    llama3.2:3b called 31 of 40 KEEP_WITH_FLAG, granite4.2:3b 34 of 40
+    STAGNANT (2026-10-19). Empty when the verdicts are spread."""
+    rows = _judge_rows(run)
+    if len(rows) < MIN_DEGENERATE_N:
+        return ""
+    counts: dict = defaultdict(int)
+    for r in rows.values():
+        counts[r["verdict"]] += 1
+    verdict, n = max(counts.items(), key=lambda kv: kv[1])
+    if n / len(rows) > MAX_VERDICT_SHARE:
+        return f"degenerate judge: {n} of {len(rows)} verdicts are {verdict}"
+    return ""
+
+
 def quality_score(by_scorer: dict) -> dict:
     """The ranking quality of one quality run from its scores: judge
     argumentation and card notes, weighted; provisional without a judge score."""
@@ -234,6 +253,9 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     for q in sorted(quality, key=lambda q: q["settings"].get("server") != DEFAULT_SERVER):
         s = q["settings"]
         ok, why = quality_ok(q["metrics"])
+        degen = degenerate(q) if ok else ""
+        if degen:
+            ok, why = False, degen
         agr = agreement(q, ref_run) if ref_run and q is not ref_run else (
             {"n": 0, "exact_pct": 100.0, "side_pct": 100.0} if q is ref_run else {})
         entry = {"ok": ok, "why": why, "agreement": agr, "run_id": q["id"],
