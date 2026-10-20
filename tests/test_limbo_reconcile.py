@@ -125,6 +125,7 @@ with fake_db_session() as db:
 
 recs._DELETE_CLAIMS.clear()
 recs._DELETE_CLAIMS[5] = time.monotonic()      # a delete of this process is running
+lr._SEEN_DELETING.clear()
 
 stats = asyncio.run(lr.reconcile_limbo())
 
@@ -148,12 +149,13 @@ check("an item still on the server stays in limbo",
 check("... and is NEVER sent a DELETE by the reconciler",
       ("DELETE", "radarr", "2") not in requests and "2" in on_server["radarr"])
 check("an unreachable service's row is left alone", status(6) == "limbo")
-check("a 'deleting' row no delete holds is parked in limbo (visible, retryable)",
-      status(4) in ("limbo", "deleted"))
+check("a 'deleting' row is not adopted on the pass that first sees it "
+      "(its delete may not have noted the claim yet)",
+      status(4) == "deleting" and stats["adopted"] == 0)
 check("a 'deleting' row a running delete holds is not touched", status(5) == "deleting")
 check("stats count every outcome",
-      stats["resolved"] >= 2 and stats["still_present"] == 1
-      and stats["unanswered"] >= 1 and stats["adopted"] == 1)
+      stats["resolved"] == 2 and stats["still_present"] == 1
+      and stats["unanswered"] == 1)
 check("the claim map is cleared once outcomes are committed",
       not ({1, 3} & set(recs._DELETE_CLAIMS)))
 
@@ -162,10 +164,14 @@ with fake_db_session() as db:
                db.query(ProactiveMessage).filter_by(trigger_type="limbo_deletions")]
 check("the owner hears about the deletion still waiting",
       len(bubbles) == 1 and "Kept Movie" in bubbles[0])
-asyncio.run(lr.reconcile_limbo())
+stats = asyncio.run(lr.reconcile_limbo())
 with fake_db_session() as db:
     n = db.query(ProactiveMessage).filter_by(trigger_type="limbo_deletions").count()
 check("... at most once a week", n == 1)
+check("next pass: the 'deleting' row no delete holds is parked in limbo and "
+      "then recorded, being gone from Radarr",
+      stats["adopted"] == 1 and status(4) == "deleted" and logged("Hidden Claim") == 1)
+check("... the held one still is not", status(5) == "deleting")
 
 # A stale claim (older than any real delete) is adopted too.
 recs._DELETE_CLAIMS[5] = time.monotonic() - 2 * lr._CLAIM_STALE_S

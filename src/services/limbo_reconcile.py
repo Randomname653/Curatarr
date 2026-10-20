@@ -19,7 +19,10 @@ Once a day, per open limbo row:
 
 It also adopts rows hidden in ``deleting`` that no delete of this process
 holds (a status write that failed three times): they become limbo — visible,
-retryable — instead of waiting months for the next boot to do the same.
+retryable — instead of waiting months for the next boot to do the same. Only
+a row that was already ``deleting`` on the previous pass: a delete claims
+its row on the writer thread before it can note the claim in
+_DELETE_CLAIMS, and no real delete lasts a day.
 Nothing here sends a DELETE for an item that still exists.
 """
 from __future__ import annotations
@@ -34,19 +37,24 @@ logger = logging.getLogger(__name__)
 _CLAIM_STALE_S = 3600.0          # the longest delete (Lidarr guard + 300 s + polls) is minutes
 _NOTIFY_EVERY = timedelta(days=7)
 _NOTIFY_TRIGGER = "limbo_deletions"
+# Ids seen in "deleting" by the previous pass of this process.
+_SEEN_DELETING: set = set()
 
 
-def _adopt_orphaned_claims(held: set) -> int:
-    """'deleting' rows that no delete of this process holds -> 'limbo'."""
+def _adopt_orphaned_claims(held: set, seen: set) -> tuple:
+    """'deleting' rows seen last pass that no delete of this process holds
+    -> 'limbo'. Returns (adopted, ids still 'deleting' after this pass)."""
     from src.database.connection import get_db_session
     from src.database.models import DeletionProposal as DP
     with get_db_session() as db:
-        q = db.query(DP).filter(DP.status == "deleting")
-        if held:
-            q = q.filter(~DP.id.in_(sorted(held)))
-        n = q.update({"status": "limbo"}, synchronize_session=False)
-        db.commit()
-    return n
+        now_deleting = {i for (i,) in db.query(DP.id).filter(DP.status == "deleting")}
+        orphaned = sorted((now_deleting & seen) - held)
+        n = 0
+        if orphaned:
+            n = (db.query(DP).filter(DP.id.in_(orphaned), DP.status == "deleting")
+                 .update({"status": "limbo"}, synchronize_session=False))
+            db.commit()
+    return n, now_deleting - set(orphaned)
 
 
 def _limbo_rows() -> list:
@@ -136,8 +144,10 @@ async def reconcile_limbo(task=None) -> dict:
 
     now = time.monotonic()
     held = {pid for pid, at in recs._DELETE_CLAIMS.items() if now - at < _CLAIM_STALE_S}
-    stats = {"adopted": await run_write(_adopt_orphaned_claims, held),
-             "resolved": 0, "still_present": 0, "unanswered": 0}
+    adopted, still = await run_write(_adopt_orphaned_claims, held, set(_SEEN_DELETING))
+    _SEEN_DELETING.clear()
+    _SEEN_DELETING.update(still)
+    stats = {"adopted": adopted, "resolved": 0, "still_present": 0, "unanswered": 0}
     rows = await run_read(_limbo_rows)
     if task is not None:
         task_monitor.update(task, total=len(rows))
