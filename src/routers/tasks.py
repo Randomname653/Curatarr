@@ -44,8 +44,9 @@ def _visible(tasks: list, user_id: int, is_admin: bool) -> list:
 def _is_admin(user_id: int) -> bool:
     from src.database.connection import get_db_session
     with get_db_session() as db:
-        row = db.query(User.is_admin).filter(User.id == user_id).first()
-    return bool(row and row[0])
+        # ⚡ Bolt: Query specific column and use .scalar() to avoid full ORM object instantiation overhead
+        val = db.query(User.is_admin).filter(User.id == user_id).scalar()
+    return bool(val)
 
 
 @router.get("/")

@@ -186,6 +186,12 @@ async def lifespan(app: FastAPI):
             log_topup_failure(logger, "[boot] library prewarm", "arr caches", e)
     track_task(_prewarm_library(), name="library_prewarm")
 
+    # A restored curatarr.db carries its own (possibly recent) reconcile
+    # stamp: two counts decide whether the first tick reconciles anyway.
+    if settings.is_configured:
+        from src.services.vector_reconcile import boot_drift_check
+        track_task(boot_drift_check(), name="vector_drift_check")
+
     if not settings.is_configured:
         logger.warning("Curatarr is not configured yet. Open http://localhost:%d to run setup.", settings.PORT)
     try:

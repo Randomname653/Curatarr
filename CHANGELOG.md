@@ -6,6 +6,27 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Months without a restart: bounded memory, retention, and healing after a restore.**
+- Search's in-memory phrase vectors are capped (about 100 MB at most). They used to grow
+  with every search for as long as the app ran.
+- A database restored without its vector store, or with an older one, is noticed at
+  startup and daily. Missing vectors are rebuilt from the cached profiles in the
+  background, titles whose profile is gone too are enriched again, and the owner is told
+  once a week while the two disagree.
+- A deletion whose outcome was unknown ("limbo") is recorded as deleted once Radarr,
+  Sonarr, Lidarr or Plex confirm the item is gone. One still in the library stays for you
+  to retry, with a weekly reminder. A delete stuck out of sight after a failed save shows
+  up in limbo the next day instead of after the next restart.
+- The weekly database clean-up (VACUUM) runs on servers that are never restarted, and
+  covers the lyrics index too.
+- Old retired rows are removed: deletion proposals replaced over 90 days ago, read
+  notifications over 90 days old and used conversation starters after 30 days. A row
+  someone discussed in chat is kept.
+- `update_db.py` keeps its newest three pre-migration copies instead of all of them. The
+  daily backup is skipped, loudly, when the disk could not hold it plus as much again.
+- Memories and principles that were replaced keep their text but drop their stored
+  vectors, and saving a new memory no longer reads every replaced one.
+
 **Easier to use with a keyboard and a screen reader, and recommendations say why.**
 - Chat replies are announced once they're finished, not word by word.
 - Keyboard focus stays inside an open dialog.
