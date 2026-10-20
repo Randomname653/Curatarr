@@ -38,6 +38,10 @@ def _fresh_gate():
     lp._gate_owner = ""
     lp._gate_waiters = 0
     lp._curator_evict_task = None
+    lp._holder_prios.clear()
+    lp._preemptible.clear()
+    lp._preempted.clear()
+    lp._last_interactive = 0.0
 
 
 def _db():
@@ -304,7 +308,7 @@ def _run_extract(thread_id, rows, user_id=1):
     session.commit()
     prompts = []
 
-    async def fake_run(uid, prompt, media_category=None):
+    async def fake_run(uid, prompt, media_category=None, quiet_s=0.0):
         prompts.append(prompt)
         return True
 

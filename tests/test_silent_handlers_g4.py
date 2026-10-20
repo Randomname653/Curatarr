@@ -80,7 +80,7 @@ finally:
 
 # ── 2. curator principles: a broken yield gate skips the call ───────────────
 print("curator principles yield gate")
-_orig_wait = llm_priority.wait_for_curator
+_orig_wait = llm_priority.curator_start
 _orig_cp_client = cp.httpx.AsyncClient
 posted = []
 
@@ -96,7 +96,7 @@ class _Recorder:
 
 
 try:
-    llm_priority.wait_for_curator = _broken_wait
+    llm_priority.curator_start = _broken_wait
     cp.httpx.AsyncClient = _Recorder
     err = None
     try:
@@ -107,7 +107,7 @@ try:
     check("the gate's own error reaches the caller (which logs and skips)",
           isinstance(err, RuntimeError))
 finally:
-    llm_priority.wait_for_curator = _orig_wait
+    llm_priority.curator_start = _orig_wait
     cp.httpx.AsyncClient = _orig_cp_client
 
 

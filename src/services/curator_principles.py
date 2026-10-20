@@ -35,7 +35,7 @@ import json
 import logging
 import re
 
-from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
+from src.services.llm_utils import CURATOR_NUM_CTX, curator_payload
 from datetime import datetime
 
 import httpx
@@ -50,6 +50,8 @@ from src.services.http_client import tls_context
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 300.0
+# User silence a principle call waits for after a chat turn (wait_quiet).
+_QUIET_S = 20.0
 _MIN_THREAD_MESSAGES = 4   # fewer than 2 exchanges is not a debate worth mining
 
 
@@ -125,32 +127,32 @@ _NOVELTY_SCHEMA = {
 async def _curator_json(system: str, user: str, schema: dict,
                         num_predict: int = 800) -> dict:
     """One format-forced JSON call to the curator model, persona overridden by
-    the neutral ``system`` prompt. Defers to any live curator work first (this is
-    background learning — it must never delay a chat turn)."""
-    try:
-        from src.services.llm_priority import wait_for_curator
-        await wait_for_curator()
-    except Exception as e:
-        # Fail closed: a broken yield gate must not let background learning
-        # take the GPU from a live chat. Every caller logs and skips this run.
-        logger.warning("[principles] curator yield gate failed - skipping this "
-                       "call: %r", e)
-        raise
-    payload = {
-        "model": settings.CURATOR_MODEL,
-        "messages": [{"role": "system", "content": system},
-                     {"role": "user", "content": user}],
-        "format": schema, "stream": False, "think": False, "keep_alive": "10m",
+    the neutral ``system`` prompt.
+
+    Background learning, so it runs through ``background_curator_call``: it
+    holds the GPU slot (it used to post past the gate after a bare
+    wait_for_curator — the next chat turn then got the slot and queued INSIDE
+    Ollama behind this call, 10-30 s of "thinking" nobody could see), waits
+    for a short quiet window after a chat turn, and is aborted and re-run
+    when the user sends a message while it decodes. A failing gate raises —
+    every caller logs and skips the run (fail closed: background learning
+    never takes the GPU from a live chat)."""
+    from src.services.llm_priority import background_curator_call
+    payload = curator_payload(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0.1, num_predict=num_predict, fmt=schema,
         # repeat_penalty 1.0: constrained JSON repeats its own punctuation and
         # key prefixes by construction (see pillars.adjudicate).
-        "options": {"temperature": 0.1, "num_predict": num_predict,
-                    "repeat_penalty": 1.0,
-                    "num_ctx": CURATOR_NUM_CTX, **curator_gpu()},
-    }
-    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
-        r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
-    r.raise_for_status()
-    return parse_llm_json((r.json().get("message") or {}).get("content", "") or "")
+        repeat_penalty=1.0)
+
+    async def _post() -> dict:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
+            r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
+        r.raise_for_status()
+        return r.json()
+
+    data = await background_curator_call("principles", _post, quiet_s=_QUIET_S)
+    return parse_llm_json((data.get("message") or {}).get("content", "") or "")
 
 
 # ── THREAD TEXT (both sides) ─────────────────────────────────────────────────

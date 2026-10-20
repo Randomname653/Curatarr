@@ -33,7 +33,7 @@ from src.services.enrichment_state import (
     match_score as _match_score, match_decision as _match_decision,
 )
 from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_options,
-                                    fence_untrusted, scrub_untrusted)
+                                    fence_untrusted, scrub_untrusted, SUMMARIZER_KEEP_ALIVE)
 
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
@@ -1001,6 +1001,9 @@ async def fetch_significance(
                 "model": SUMMARIZER_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
+                # One-off distill: no Ollama 5m default holding 5 GB of VRAM
+                # the next chat turn's curator_start then has to evict.
+                "keep_alive": SUMMARIZER_KEEP_ALIVE,
                 **ollama_options(temperature=0.1, num_predict=400),
             })
         if r.status_code != 200:
@@ -1517,7 +1520,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     Returns {"checked": n, "added": n, "remaining": n} — remaining>0 means the
     custodian should keep the task due and continue next tick."""
     import json as _json
-    from src.services.llm_priority import wait_for_curator
+    from src.services.llm_priority import make_room_for_summarizer
 
     def _gaming() -> bool:
         # Fails closed: an unreadable flag counts as a game (app_state.game_active).
@@ -1585,7 +1588,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
                     message=f"{cat}: {title} ({total - checked:,} unchecked overall)")
             except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
                 pass
-        await wait_for_curator()
+        await make_room_for_summarizer()
         try:
             if await asyncio.wait_for(
                 topup_significance(title, cat, plex_rating_key=id_key, year=year),

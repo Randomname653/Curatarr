@@ -1634,8 +1634,12 @@ async def generate_proactive_message(
     # Proactive messages use the big curator model — route the generation
     # through the curator gate so a scheduled message can't collide with a
     # user's chat on the single GPU (it queues for the slot like the rest).
-    from src.services.llm_priority import curator_priority
-    async with curator_priority("proactive message"):
+    # BACKGROUND + interruptible (background_curator_call): queued behind
+    # every chat turn, aborted and re-run when a user sends one mid-decode,
+    # and only after the user has been quiet a moment.
+    from src.services.llm_priority import background_curator_call
+
+    async def _generate() -> Optional[str]:
         for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
             if not model:
                 continue
@@ -1672,8 +1676,9 @@ async def generate_proactive_message(
             except Exception as e:
                 # Includes timeouts, connection errors — try the next model.
                 logger.warning("Proactive message LLM failed (%s): %s", model, e)
+        return None
 
-    return None
+    return await background_curator_call("proactive message", _generate, quiet_s=30.0)
 
 
 # ── MAIN SCHEDULER FUNCTION ───────────────────────────────────────────────────

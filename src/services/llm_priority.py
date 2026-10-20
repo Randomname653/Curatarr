@@ -28,7 +28,9 @@ Lifecycle invariants
 """
 
 import asyncio
+import heapq
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -94,16 +96,67 @@ def _get_pe_event() -> asyncio.Event:
 # semaphore serializes all curator-tier calls: the second caller queues until
 # the slot frees. ``MAX_CONCURRENT_CURATOR`` (default 1) can be raised if the
 # host ever gets enough VRAM to run two big generations side by side.
-_gpu_gate: asyncio.Semaphore | None = None
+#
+# Waiters are served by PRIORITY, then arrival. A plain FIFO semaphore served
+# a chat turn after every recs / proactive / starters job that happened to
+# queue first — opening the chat view queued a 900-token starters refill
+# right ahead of the user's first message.
+INTERACTIVE = 0     # a user is watching this one (chat stream, warm-up)
+BACKGROUND = 1      # everything else
 
 
-def _get_gate() -> asyncio.Semaphore:
+class _PriorityGate:
+    """Semaphore whose waiters are woken by (priority, arrival) instead of
+    arrival alone. A freed slot is handed straight to the chosen waiter, so a
+    caller arriving in between cannot jump the queue."""
+
+    def __init__(self, slots: int):
+        self._free = slots
+        self._heap: list = []           # (priority, seq, future)
+        self._seq = 0
+
+    def locked(self) -> bool:
+        return self._free <= 0
+
+    def waiting(self, priority: int | None = None) -> int:
+        return sum(1 for p, _, f in self._heap
+                   if not f.done() and (priority is None or p == priority))
+
+    async def acquire(self, priority: int = BACKGROUND) -> None:
+        if self._free > 0 and not self.waiting():
+            self._free -= 1
+            return
+        fut = asyncio.get_running_loop().create_future()
+        self._seq += 1
+        heapq.heappush(self._heap, (priority, self._seq, fut))
+        try:
+            await fut
+        except asyncio.CancelledError:
+            # Handed the slot in the same tick we were cancelled: pass it on
+            # instead of leaking it to a waiter that is gone.
+            if fut.done() and not fut.cancelled():
+                self.release()
+            raise
+
+    def release(self) -> None:
+        while self._heap:
+            _, _, fut = heapq.heappop(self._heap)
+            if not fut.done():
+                fut.set_result(None)    # direct hand-over; _free unchanged
+                return
+        self._free += 1
+
+
+_gpu_gate: _PriorityGate | None = None
+
+
+def _get_gate() -> _PriorityGate:
     """Lazy global curator slot, bound to the running loop on first use."""
     global _gpu_gate
     if _gpu_gate is None:
         from src.config import settings
         n = max(1, int(getattr(settings, "MAX_CONCURRENT_CURATOR", 1) or 1))
-        _gpu_gate = asyncio.Semaphore(n)
+        _gpu_gate = _PriorityGate(n)
     return _gpu_gate
 
 
@@ -121,6 +174,13 @@ def curator_busy() -> bool:
 # category.
 _gate_owner: str = ""
 _gate_waiters: int = 0
+# Set when a gate holder ran (a big model is plausibly resident), cleared once
+# make_room_for_summarizer or the idle evictor has cleared the card.
+_curator_warm: bool = False
+# Priorities of the current slot holders, in acquire order. Lets
+# curator_done() (called bare by every site) tell whether an interactive
+# turn just ended, and wait_quiet() whether one is still running.
+_holder_prios: list = []
 
 
 def gate_owner() -> str:
@@ -131,6 +191,72 @@ def gate_owner() -> str:
 def gate_contested() -> bool:
     """True when at least one caller is queued on the curator gate."""
     return _gate_waiters > 0
+
+
+def interactive_waiting() -> bool:
+    """True when an interactive turn is queued on the gate."""
+    return _get_gate().waiting(INTERACTIVE) > 0
+
+
+def interactive_active() -> bool:
+    """True while an interactive turn holds a curator slot."""
+    return INTERACTIVE in _holder_prios
+
+
+# ── INTERACTIVITY CLOCK ───────────────────────────────────────────────────────
+# Monotonic time of the last sign of a user: a chat turn starting or ending,
+# a typing / focus ping (POST /api/chat/warm). Background LLM work that would
+# load a model or hold the GPU waits until this is a quiet window old — the
+# post-turn jobs used to fire the instant a reply ended and cost the user's
+# very next message a 20 GB reload.
+_last_interactive = 0.0
+
+
+def touch_interactive() -> None:
+    global _last_interactive
+    _last_interactive = time.monotonic()
+
+
+def seconds_since_interactive() -> float:
+    return time.monotonic() - _last_interactive
+
+
+async def wait_quiet(quiet_s: float = 45.0, max_wait: float = 900.0) -> None:
+    """Return once the user has been idle for ``quiet_s`` seconds with no
+    interactive turn held or queued. Gives up after ``max_wait`` so a user
+    chatting for an hour cannot starve background learning for ever (the
+    work then still queues BEHIND interactive turns on the priority gate)."""
+    if quiet_s <= 0:
+        return
+    deadline = time.monotonic() + max_wait
+    while time.monotonic() < deadline:
+        idle = seconds_since_interactive()
+        if idle >= quiet_s and not interactive_active() and not interactive_waiting():
+            return
+        step = quiet_s - idle if idle < quiet_s else 1.0
+        await asyncio.sleep(max(0.5, min(step, deadline - time.monotonic())))
+    logger.info("[gate] quiet window of %.0fs never came within %.0fs — proceeding",
+                quiet_s, max_wait)
+
+
+# ── PREEMPTION ────────────────────────────────────────────────────────────────
+# In-flight background curator requests that an interactive turn may abort:
+# cancelling the request task closes its HTTP connection, which makes Ollama
+# stop decoding. background_curator_call() then re-queues it.
+_preemptible: dict = {}         # request Task -> owner label
+_preempted: set = set()
+
+
+def _preempt_background() -> None:
+    for t, owner in list(_preemptible.items()):
+        if not t.done():
+            _preempted.add(t)
+            t.cancel()
+            logger.info("[gate] preempting %r for an interactive turn", owner)
+
+
+class Preempted(Exception):
+    """A background curator call was preempted more often than allowed."""
 
 
 # ── MODEL INTROSPECTION ───────────────────────────────────────────────────────
@@ -282,7 +408,8 @@ async def check_curator_vram_health(curator_model: str) -> dict:
 # ── CURATOR LIFECYCLE ─────────────────────────────────────────────────────────
 
 async def curator_start(owner: str = "curator request", *,
-                        exclusive_model: str = None) -> None:
+                        exclusive_model: str = None,
+                        priority: int = BACKGROUND) -> None:
     """
     Signal that a curator (chat / recommendations) call is starting.
     ``owner`` is a debug label shown to queued callers ("deletion scan: anime").
@@ -303,8 +430,16 @@ async def curator_start(owner: str = "curator request", *,
     immediately because ``_event.is_set()`` is still True, and an
     enrichment worker could fire an LLM call against the model that's
     about to be evicted out from under it.
+
+    ``priority`` orders the queue: INTERACTIVE (a user is watching) is served
+    before every BACKGROUND waiter, and an interactive arrival preempts any
+    in-flight ``background_curator_call`` holding the slot.
     """
-    global _active, _curator_evict_task, _gate_owner, _gate_waiters
+    global _active, _curator_evict_task, _gate_owner, _gate_waiters, _curator_warm
+    if priority == INTERACTIVE:
+        touch_interactive()
+        if _get_gate().locked():
+            _preempt_background()
     # Serialize big-model generations across the whole server: block here
     # until a curator slot is free (MAX_CONCURRENT_CURATOR, default 1). A
     # second chatter / recs / proactive call waits instead of fighting for
@@ -313,10 +448,12 @@ async def curator_start(owner: str = "curator request", *,
     # released exactly once per successful acquire in curator_done().
     _gate_waiters += 1
     try:
-        await _get_gate().acquire()
+        await _get_gate().acquire(priority)
     finally:
         _gate_waiters -= 1
     _gate_owner = owner
+    _curator_warm = True
+    _holder_prios.append(priority)
     _active += 1
     is_first = (_active == 1)
 
@@ -346,7 +483,7 @@ async def curator_start(owner: str = "curator request", *,
                       or settings.BASE_CURATOR_MODEL)
             await evict_others(target)
     except BaseException:
-        curator_done()
+        curator_done(priority=priority)
         raise
 
 
@@ -490,6 +627,16 @@ async def _scheduled_curator_evict() -> None:
 
     try:
         await asyncio.sleep(delay)
+        # Past the window, evict only when something needs the card (a
+        # summariser call queued on wait_for_curator) or once the user has
+        # been away CURATOR_IDLE_KEEP_S. Background summariser work that
+        # starts with the gate already open makes its own room
+        # (make_room_for_summarizer) — so a reader who takes 90 s over a
+        # long reply no longer pays a 20 GB reload for their follow-up.
+        from src.services.llm_utils import CURATOR_IDLE_KEEP_S
+        while (_summarizer_pending == 0
+               and seconds_since_interactive() < CURATOR_IDLE_KEEP_S):
+            await asyncio.sleep(15)
     except asyncio.CancelledError:
         logger.debug("Curator eviction cancelled — new chat activity")
         raise
@@ -516,7 +663,23 @@ async def _scheduled_curator_evict() -> None:
             logger.debug("%s already absent — nothing to evict", model)
 
 
-def curator_done() -> None:
+def _pop_holder(priority: int | None) -> int | None:
+    """Drop one holder record. Callers release bare (``curator_done()``), so
+    with no priority given the single holder is it — and with several
+    (MAX_CONCURRENT_CURATOR > 1) a background record goes first, which can
+    only make wait_quiet more cautious, never less."""
+    if not _holder_prios:
+        return None
+    if priority in _holder_prios:
+        _holder_prios.remove(priority)
+        return priority
+    if len(_holder_prios) > 1 and BACKGROUND in _holder_prios:
+        _holder_prios.remove(BACKGROUND)
+        return BACKGROUND
+    return _holder_prios.pop()
+
+
+def curator_done(priority: int | None = None) -> None:
     """
     Signal that a curator call has finished.
     Resumes enrichment once all in-flight curator calls are done, and
@@ -534,6 +697,8 @@ def curator_done() -> None:
         return
     _active -= 1
     _gate_owner = ""
+    if _pop_holder(priority) == INTERACTIVE:
+        touch_interactive()     # the quiet window runs from the END of a turn
     _get_gate().release()   # free the slot for the next queued curator call
     if _active == 0:
         _get_event().set()
@@ -554,7 +719,8 @@ def curator_done() -> None:
 
 @asynccontextmanager
 async def curator_priority(owner: str = "curator request", *,
-                           exclusive_model: str = None):
+                           exclusive_model: str = None,
+                           priority: int = BACKGROUND):
     """Async context manager — guarantees ``curator_done`` even on exceptions.
 
     Preferred over manually pairing ``curator_start`` / ``curator_done``::
@@ -563,11 +729,94 @@ async def curator_priority(owner: str = "curator request", *,
             await ollama_call(...)
             ...
     """
-    await curator_start(owner, exclusive_model=exclusive_model)
+    await curator_start(owner, exclusive_model=exclusive_model, priority=priority)
     try:
         yield
     finally:
-        curator_done()
+        curator_done(priority=priority)
+
+
+async def background_curator_call(owner: str, call, *, exclusive_model: str = None,
+                                  quiet_s: float = 0.0, max_preempts: int = 3):
+    """Run ``call()`` — a coroutine FACTORY doing curator-model requests — on
+    the curator slot at BACKGROUND priority, and return its result.
+
+    * ``quiet_s`` first waits for the user to have been idle that long
+      (``wait_quiet``), so post-turn work never takes the GPU in the gap
+      between a reply and the user's follow-up.
+    * An interactive turn arriving while ``call()`` runs preempts it: the
+      request task is cancelled (closing the connection stops Ollama's
+      decode), the slot goes to the turn, and ``call()`` is re-run from the
+      start once the turn is over. After ``max_preempts`` restarts it raises
+      ``Preempted``.
+
+    Every curator request that is NOT a user's chat turn belongs in here —
+    a bare post to the curator model past the gate is a GPU holder nobody can
+    see: a chat that got the slot then queued INSIDE Ollama behind it.
+    """
+    for _ in range(max_preempts + 1):
+        await wait_quiet(quiet_s)
+        await curator_start(owner, exclusive_model=exclusive_model, priority=BACKGROUND)
+        if interactive_waiting():
+            # A turn queued while we were still acquiring / evicting — before
+            # the request was registered as preemptible. Hand the slot over
+            # now instead of making it wait out a whole generation.
+            curator_done(priority=BACKGROUND)
+            quiet_s = max(quiet_s, 5.0)
+            continue
+        task = asyncio.ensure_future(call())
+        _preemptible[task] = owner
+        try:
+            # asyncio.wait, not await: OUR cancel propagates, the request's
+            # own (preemption) cancel is inspected below instead.
+            await asyncio.wait({task})
+        finally:
+            _preemptible.pop(task, None)
+            if not task.done():
+                task.cancel()
+            curator_done(priority=BACKGROUND)
+        if task in _preempted:
+            _preempted.discard(task)
+            # Back off behind the turn that preempted us, not just the gate.
+            quiet_s = max(quiet_s, 5.0)
+            continue
+        return task.result()
+    raise Preempted(owner)
+
+
+async def curator_resident() -> bool:
+    """True when the curator bake is loaded in Ollama (one /api/ps GET)."""
+    from src.config import settings
+    model = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
+    if not model:
+        return False
+    base_name = model.split(":")[0]
+    loaded = await loaded_models()
+    return bool(loaded) and any(base_name in m.get("name", "") for m in loaded)
+
+
+async def make_room_for_summarizer(quiet_s: float = 45.0) -> None:
+    """Background SUMMARISER work calls this before its Ollama request.
+
+    On a 24 GB card the 8B summariser and the 20 GB curator do not fit side
+    by side: a summariser load while the curator sits idle makes Ollama unload
+    the curator, and the user's next message pays the reload. ``wait_for_
+    curator`` only waits while a curator call is RUNNING — between turns the
+    gate is open, so post-turn jobs walked straight in. This waits for a quiet
+    window first, then for any running curator call, then evicts the idle
+    curator (confirmed via /api/ps) so the load never races it into CPU
+    offload either."""
+    global _curator_warm
+    from src.config import settings
+    await wait_quiet(quiet_s)
+    await wait_for_curator()
+    # Only after this process put a curator into VRAM is there anything to
+    # clear: skips the /api/ps probe on every bulk-enrichment item otherwise.
+    if _active or not _curator_warm:
+        return      # (a curator call that got in meanwhile evicts US, not vice versa)
+    await evict_if_resident(settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL)
+    if not _active:
+        _curator_warm = False
 
 
 # ── ENRICHMENT CHECKPOINT ─────────────────────────────────────────────────────

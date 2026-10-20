@@ -269,7 +269,7 @@ def test_starters_are_curator_openers_not_user_prompts():
     assert "YOU (the curator) OPENED this conversation" in branch
     assert 'refers to the USER, not to you' in branch
     # an anchored opener grounds the discussion like a title click does
-    assert "ensure_verified_data(active_title" in branch
+    assert "_verified_for_chat(active_title" in branch
 
 
 def test_anchors_survive_the_gate_and_bad_ones_are_dropped():

@@ -141,7 +141,7 @@ def test_thread_anchor_reads_inside_session():
 
     prompts, feedback, state = [], [], {}
 
-    async def _fake_run(user_id, prompt, media_category=None):
+    async def _fake_run(user_id, prompt, media_category=None, quiet_s=0.0):
         prompts.append(prompt)
         return True
 

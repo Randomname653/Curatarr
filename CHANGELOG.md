@@ -6,6 +6,31 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Chat no longer waits on background work or on reloading the model.**
+- A chat message goes ahead of every queued background job (recommendations, proactive
+  messages, chat openers, principle learning). If one of those is already generating, it
+  is stopped and re-run after your reply.
+- Chat no longer loads the small model before your reply. On a 24 GB card that pushed
+  the curator out of VRAM, and the reply paid for a full reload. The title in your
+  message is now read by the curator itself. The Wikipedia/reception summaries are
+  fetched in the background once you are idle and are there from the next message on.
+- Work after a reply (keep/protect detection, memory extraction, verification answers,
+  bulk enrichment) waits until you have been quiet for a while. It no longer pushes the
+  curator out between your reply and your follow-up.
+- Keep/protect detection only runs when your message contains a keep phrase (or a bare
+  "yes" in a discussion about a title). Memory extraction is skipped for conversations
+  with no likes, dislikes or reasons in them.
+- The curator stays loaded for 5 minutes after a reply unless background work needs the
+  card. It used to be unloaded after 60 seconds, so reading a long reply cost a reload.
+- Every curator request uses the same context size and keep-alive. The deletion judge and
+  the taste summary used to shorten the curator's keep-alive. The taste summary also
+  reloaded the small model at the curator's 16k context.
+- During a deletion scan using the separate pitcher model, the scan waits for your
+  conversation to settle before taking the GPU back. Each message used to swap both
+  models out and back in.
+- Focusing the chat box or typing starts loading the curator if it is not already in
+  VRAM, so it loads while you type instead of after you press Send.
+
 **Faster deletion scans and taste rebuilds.**
 - The judge's per-title watch lookups use new watch-history indexes: under a millisecond
   instead of 30–180 ms on a 400k-play history.
