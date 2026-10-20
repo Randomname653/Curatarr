@@ -48,7 +48,34 @@ CURATOR_MODELS = [
         "label": "Low-VRAM fallback",
         "notes": ("Fast and format-solid, but noticeably flatter arguments "
                   "than the 31b — verdicts read more generic. The verified "
-                  "floor: nothing smaller has passed the bench."),
+                  "floor before the hardware matrix."),
+    },
+    # The hardware-matrix packages (tests/benchmarks/hwbench, 2026-10): the
+    # wizard offers them through model_matrix.json for the card it detects.
+    {
+        "model": "gemma4:31b-it-qat",
+        "vram_gb": 19.0,
+        "verified": True,
+        "label": "24 GB package",
+        "notes": ("The quantisation-aware twin of the production model: the same "
+                  "reasoning quality on the bench, at the same speed."),
+    },
+    {
+        "model": "gemma4:26b-a4b-it-qat",
+        "vram_gb": 16.0,
+        "verified": True,
+        "label": "6-20 GB package",
+        "notes": ("Mixture-of-experts: only ~4B parameters work per token, so it "
+                  "stays fast when part of it runs on the CPU - 96 tok/s on a "
+                  "16 GB card, still ~35 on 6 GB. Reasoning a step below the 31b."),
+    },
+    {
+        "model": "gemma4:e4b-it-qat",
+        "vram_gb": 6.1,
+        "verified": True,
+        "label": "4 GB package",
+        "notes": ("The smallest curator that still judges soundly; its card notes "
+                  "read more generic."),
     },
 ]
 

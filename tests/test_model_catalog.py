@@ -87,10 +87,14 @@ check("24 GB: no floor note", r24["floor_note"] is None)
 check("installed models are marked", r24["curator"][0]["installed"] is True)
 
 r12 = recommend_models(12.0, set())
-check("12 GB: no verified curator fits — the floor note says so honestly",
-      not any(c["fits"] for c in r12["curator"])
-      and r12["floor_note"] is not None
-      and "untested" in r12["floor_note"])
+check("12 GB: a hardware-matrix package fits (gemma4:e4b-it-qat), no floor note",
+      any(c["fits"] and c["model"] == "gemma4:e4b-it-qat" for c in r12["curator"])
+      and r12["floor_note"] is None)
+r4 = recommend_models(4.0, set())
+check("4 GB: no verified curator fits on the estimate alone — the floor note says so honestly",
+      not any(c["fits"] for c in r4["curator"])
+      and r4["floor_note"] is not None
+      and "untested" in r4["floor_note"])
 
 r_unknown = recommend_models(None, set())
 check("no VRAM info: entries carry no fit verdict (frontend asks instead)",

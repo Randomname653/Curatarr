@@ -354,8 +354,8 @@ export function renderHardwarePackage(pkg) {
     ? `~${pkg.estimate.gen_tok_s} tok/s on your card (estimate: ${esc(pkg.estimate.basis)})`
     : `${ex.gen_tok_s ?? '?'} tok/s measured on ${esc((r.measured_on || {}).gpu || 'the bench card')}`;
   const q = r.quality || {};
-  const quality = q.score25 != null ? `quality ${q.score25}/25`
-    : `verdicts agree ${q.agreement?.exact_pct ?? '?'} % with the production model (provisional)`;
+  const quality = q.score25 != null ? `quality ${q.score25}/25${q.provisional ? ' (provisional)' : ''}`
+    : 'quality not scored yet';
   const env = [`LLM_PROFILE=${r.profile}`, `CURATOR_NUM_CTX=${r.num_ctx}`,
                `CURATOR_NUM_GPU=${r.num_gpu}`];
   const srv = Object.entries(r.server || {})
@@ -593,29 +593,18 @@ export async function buildOnboardingModels() {
     const r = await api('/api/setup/build-models','POST');
     if (r.curator && r.summarizer) {
       const okLine = '<p class="t-success">curatarr-curator and curatarr-summarizer created!</p>';
-      el.innerHTML = okLine + '<p class="loading" role="status" aria-live="polite">Warm-up check: loading the curator once to verify it runs on the GPU…</p>';
+      el.innerHTML = okLine + '<p class="loading" role="status" aria-live="polite">Mini-bench: the curator judges two sample titles and writes one card note on this machine (about a minute)…</p>';
       // A model that doesn't quite fit VRAM runs silently part-on-CPU and
       // the whole app just feels broken-slow. Catch that HERE, not on the
-      // user's first real conversation.
-      let warm = null, warmErr = null;
-      try { warm = await api('/api/setup/warmup','POST',{model:'curatarr-curator'}); }
-      catch (e) { warmErr = _errMsg(e); }
-      let verdict = '';
-      // A warm-up that could not run used to skip the GPU-fit warning in
-      // silence — "unknown" is not "fits".
-      if (warmErr || (warm && !warm.ok)) {
-        verdict = `<p class="t-amber">${SVG_WARN} The warm-up check could not run (${esc(warmErr || warm.error || 'no answer')}) — whether the curator fits this GPU is unknown. If chat feels slow, check Ollama and consider a smaller curator model.</p>`;
-      } else if (warm && warm.ok) {
-        if (warm.verdict === 'cpu_spill')
-          verdict = `<p class="t-amber">${SVG_WARN} ${warm.cpu_percent}% of the curator runs on CPU — it does not fit this GPU's VRAM and everything will feel slow. Consider a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).</p>`;
-        else if (warm.verdict === 'slow')
-          verdict = `<p class="t-amber">${SVG_WARN} Generation is slow (${warm.tokens_per_s} tok/s) despite full GPU residency.</p>`;
-        else
-          verdict = `<p class="t-success">Fully on GPU${warm.tokens_per_s ? ` · ${warm.tokens_per_s} tok/s` : ''}${warm.load_s ? ` (one-time load ${warm.load_s}s)` : ''}</p>`;
-      }
-      el.innerHTML = okLine + verdict;
+      // user's first real conversation - with the calls production makes.
+      let mb = null, mbErr = null;
+      try {
+        mb = await api('/api/setup/minibench', 'POST',
+                       {vram_gb: state.setupData?.vram_gb ?? null, gpu_name: state.setupData?.gpu_name ?? null});
+      } catch (e) { mbErr = _errMsg(e); }
+      el.innerHTML = okLine + renderMinibench(mb, mbErr);
       setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; },
-                 !warm || !warm.ok || warm.verdict !== 'ok' ? 7000 : 1500);
+                 !mb || !mb.ok || mb.verdict !== 'ok' ? 12000 : 4000);
     } else {
       let msg = '';
       if (!r.curator) msg += `${SVG_X} curatarr-curator failed<br>`;
@@ -626,6 +615,35 @@ export async function buildOnboardingModels() {
   } catch(e) {
     el.innerHTML = `<div class="t-danger">${esc(_errMsg(e))}</div>`;
   }
+}
+
+// The mini-bench result: what this machine did with the curator, next to
+// what the hardware bench measured for the card. "Unknown" is never shown as
+// "fits" - a check that could not run says so.
+export function renderMinibench(mb, err) {
+  if (err || !mb || !mb.ok) {
+    return `<p class="t-amber">${SVG_WARN} The mini-bench could not run (${esc(err || mb?.error || 'no answer')}) — whether the curator runs well on this machine is unknown. If chat feels slow, check Ollama and consider a smaller curator model.</p>`;
+  }
+  const w = mb.warmup || {};
+  const gen = mb.gen_tok_s ?? w.tokens_per_s;
+  const pkg = mb.package;
+  const exp = pkg?.expected || {};
+  const bench = pkg
+    ? ` · the bench measured ${esc(exp.judge_s ?? '?')} s / ${esc((pkg.estimate?.gen_tok_s ?? exp.gen_tok_s) ?? '?')} tok/s for ${pkg.tier_gb} GB`
+    : '';
+  const line = `${esc(mb.judge_s_median ?? '?')} s per judge verdict · ${esc(gen ?? '?')} tok/s writing`
+    + (w.load_s ? ` · one-time load ${esc(w.load_s)} s` : '') + bench;
+  const srv = Object.entries(pkg?.server || {}).map(([k, v]) => `${k}=${v}`).join(' · ');
+  const kv = srv ? `<div class="t3 fs-12">The bench package also sets the Ollama server to ${esc(srv)} — that lives in Ollama's own settings, not in Curatarr.</div>` : '';
+  const reason = mb.reason ? ` — ${esc(mb.reason)}` : '';
+  if (mb.verdict === 'ok')
+    return `<p class="t-success">Mini-bench passed: ${line}${reason}</p>${kv}`;
+  const advice = {
+    spill: 'The curator does not fit this GPU and parts run from system RAM. Pick the package for a smaller card, or a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).',
+    slow: 'It runs, but slower than is comfortable for a deletion run. A smaller package will feel much faster.',
+    unreliable: 'The curator did not produce valid verdicts. Pick another curator model before the first deletion run.',
+  }[mb.verdict] || '';
+  return `<p class="t-amber">${SVG_WARN} Mini-bench: ${esc(mb.verdict)}${reason}. ${esc(advice)}</p><div class="t3 fs-12">${line}</div>${kv}`;
 }
 
 export async function logout() {

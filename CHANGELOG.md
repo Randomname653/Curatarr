@@ -6,6 +6,27 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Months without a restart: bounded memory, retention, and healing after a restore.**
+- Search's in-memory phrase vectors are capped (about 100 MB at most). They used to grow
+  with every search for as long as the app ran.
+- A database restored without its vector store, or with an older one, is noticed at
+  startup and daily. Missing vectors are rebuilt from the cached profiles in the
+  background, titles whose profile is gone too are enriched again, and the owner is told
+  once a week while the two disagree.
+- A deletion whose outcome was unknown ("limbo") is recorded as deleted once Radarr,
+  Sonarr, Lidarr or Plex confirm the item is gone. One still in the library stays for you
+  to retry, with a weekly reminder. A delete stuck out of sight after a failed save shows
+  up in limbo the next day instead of after the next restart.
+- The weekly database clean-up (VACUUM) runs on servers that are never restarted, and
+  covers the lyrics index too.
+- Old retired rows are removed: deletion proposals replaced over 90 days ago, read
+  notifications over 90 days old and used conversation starters after 30 days. A row
+  someone discussed in chat is kept.
+- `update_db.py` keeps its newest three pre-migration copies instead of all of them. The
+  daily backup is skipped, loudly, when the disk could not hold it plus as much again.
+- Memories and principles that were replaced keep their text but drop their stored
+  vectors, and saving a new memory no longer reads every replaced one.
+
 **Easier to use with a keyboard and a screen reader, and recommendations say why.**
 - Chat replies are announced once they're finished, not word by word.
 - Keyboard focus stays inside an open dialog.
@@ -18,6 +39,45 @@ Condensed release history, newest first.
   requests for any other name are refused, which blocks DNS-rebinding pages. It is empty
   by default, so nothing changes until you set it.
 - A music job that crashed can no longer leave the music pipeline marked as running.
+
+**Household members' data stays theirs, and maintenance stops repeating itself.**
+- A household member who tells the curator to keep a title is heard: the deletion judge
+  can't cut it any more, it becomes the owner's call. This holds with the pillar judge
+  switched off as well.
+- A title deleted and added back in Radarr/Sonarr/Lidarr no longer shows up twice in
+  search. Its old vector is merged into the new entry: kept, but hidden from search,
+  and no longer rebuilt. The chat now says "protected for
+  you" to members rather than "permanently protected".
+- Orphan Repair credits each play to the Plex account that watched it. Before, every
+  household play went to the admin's taste profile.
+- The owner's SoulSync follows and likes only shape the owner's music taste.
+- Principle capture from deletion debates runs for the owner only.
+- Re-filing a show as anime (or back) takes its protections along.
+- The nightly SoulSync→Lidarr catalog sync no longer re-adds artists you deleted.
+- The SoulSync ban of a deleted Lidarr artist uses Lidarr's own MusicBrainz id. A Retry
+  whose item is already gone counts as deleted instead of ending in an error.
+- A reply like "which show?" in a verification question's thread no longer counts as
+  your answer; the question stays open.
+- A maintenance task that fails waits longer before each retry (up to its normal
+  interval) instead of rerunning every 30 minutes.
+- The weekly audit no longer rebuilds the same orphaned vectors every week.
+- The OMDb top-up keeps going until its backlog is empty, and anime rows are no longer
+  fetched again every day.
+- Two overlapping runs can no longer fill the notification bell with duplicate curator
+  messages, and the hourly message cap is now applied. Verification questions are asked
+  once, even when two jobs start at the same moment, and they expire after a week.
+- Filling in missing external ids skips titles whose match you pinned.
+- Music lookups treat "Foo" and "foo" as the same name, and a name whose lookup keeps
+  failing is parked like one that was not found.
+- Re-filing a show also removes its profile under the old category. If the weekly audit
+  fails partway through a requeue, the finding keeps its one automatic retry.
+- The anime mapping cache keeps every season's AniDB entry.
+- The Spotify backlog and the wish list mark artists you deleted.
+- Household members can wish for music too (when music runs through Plex without
+  Lidarr): a **Wish** button on music recommendations and in their Spotify backlog. The
+  wanted list shows who asked. The owner removes any wish, a member takes back their
+  own, and members have a small hourly budget and a cap on open wishes.
+- Each person's Recommendations page shows when their own recommendations were built.
 
 **Members can't overload the box or see the admin's network.**
 - Rebuilding a taste profile, forcing a live arr refresh and re-fetching metadata from chat
@@ -223,6 +283,14 @@ Ecchi, Mecha, Slice of Life), drop what the tab already says, put the
 genre that is rarest in your library first, and add up to two short
 themes in a quieter chip ("Anthropomorphic warships", "Drug heist"). Music
 cards, which showed none, get theirs from the artist profile.
+
+**The deletion scan reads ratings safely.** One profile whose rating read
+"N/A/10 (N/A votes)" stopped every scheduled scan: the summariser had echoed
+its prompt line, and Jikan/MAL put the content rating ("PG-13 - Teens 13 or
+older") in the same field. Ratings are now read as a number or not at all,
+profiles store the source's score instead of the model's echo, and the
+prompt says "unknown" when there is none. Profiles already holding text
+are picked up by the audit's re-enrichment.
 
 **Dependencies.** aiohttp 3.14.5 for GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3
 and GHSA-494j-54xm-rwp3 (fixed in 3.14.4). Curatarr uses aiohttp only as the

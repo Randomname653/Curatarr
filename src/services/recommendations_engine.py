@@ -355,6 +355,28 @@ def _with_guard(sf: dict | None, cand: dict, verdict: dict | None) -> dict | Non
     return {**base, "guard": guard}
 
 
+def _idx_key(item: dict) -> str:
+    return f"{item.get('title') or ''}\x00{item.get('tmdb_id') or ''}"
+
+
+def _member_keeps_for(user_id: int, items: list, category: str) -> dict:
+    """Blocking (run_read): ``{_idx_key(item): [member names]}`` for the items
+    another active household member asked to keep (pillars._other_users_keeps,
+    the legacy path's Pillar III). An item whose lookup failed maps to None."""
+    from src.database.connection import get_db_session
+    from src.services.pillars import _other_users_keeps
+    out: dict = {}
+    with get_db_session() as db:
+        for it in items:
+            try:
+                out[_idx_key(it)] = _other_users_keeps(db, user_id, it, category)
+            except Exception as e:  # noqa: BLE001 — per item, logged; the item waits
+                logger.warning("[deletions] member-keep lookup failed for %r: %s",
+                               it.get("title"), e)
+                out[_idx_key(it)] = None
+    return out
+
+
 def _failure_sentence(kinds: dict) -> str:
     """'Ollama is not answering (2); the answer was cut off (1)' — the causes
     behind a run's failures, most frequent first, for the Deletions banner."""
@@ -478,9 +500,12 @@ def _rating_from_cached(cached: dict | None) -> tuple:
     cache entry (or None). Pure — no I/O."""
     if not cached:
         return None, None, []
+    from src.services.rating_value import count_number, rating_number
     profile    = cached.get("response", {})
-    rating     = profile.get("rating")
-    vote_count = profile.get("vote_count") or 0
+    # Cached profiles hold text here too ("N/A/10 (N/A votes)", a content
+    # rating); a bare float() on one stopped the whole deletion scan.
+    rating     = rating_number(profile.get("rating"))
+    vote_count = count_number(profile.get("vote_count"))
     genres_raw = profile.get("genres") or []
 
     # Pass 54: a rating of exactly 0 is NOT a 0/10 verdict — it's the
@@ -492,10 +517,10 @@ def _rating_from_cached(cached: dict | None) -> tuple:
     # Require a positive rating to count; 0 falls through to the
     # caller's neutral-5.5 default. ``genres_raw`` is still returned
     # so cached genres survive the rating gate.
-    if rating is not None and float(rating) > 0:
+    if rating is not None and rating > 0:
         reliability = "limited votes — treat as indicative" if vote_count < 200 else f"{vote_count:,} votes"
         ctx = f"External rating: {rating:.1f}/10 ({reliability})"
-        return ctx, float(rating), genres_raw
+        return ctx, rating, genres_raw
     # Rating absent or zero — still hand back the cached genres.
     return None, None, genres_raw
 
@@ -2689,6 +2714,11 @@ async def generate_deletion_proposals(
     watch_status_map = await run_read(
         _watched_lookup, user_id, [c["item"].get("title") for c in top_pitch_set],
         category=category)
+    # A household member's explicit keep holds here too, without the pillar
+    # judge: never a plain pitch, always the owner's call. Unreadable keeps
+    # mean the item waits for the next scan (never "nobody asked").
+    member_keeps = await run_read(_member_keeps_for, user_id,
+                                  [c["item"] for c in top_pitch_set], category)
     _msg(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
         f"generating LLM pitches for top {len(top_pitch_set)}…"
@@ -2698,6 +2728,8 @@ async def generate_deletion_proposals(
     try:
         for _pidx, cand in enumerate(top_pitch_set, start=1):
             item = cand["item"]
+            if member_keeps.get(_idx_key(item), []) is None:
+                continue      # household keeps unreadable: decided next scan
             _msg(
                 f"{category}: LLM pitch {_pidx}/{len(top_pitch_set)} — "
                 f"{(item.get('title') or '?')[:50]}"
@@ -2954,11 +2986,16 @@ CRITICAL RULES AND GUARDRAILS:
             # 30-50, with a theoretical max around 125. /100 + clamp at 0.99
             # turns that into a meaningful 30-99 % confidence band — the
             # earlier formula capped most realistic candidates near 50 %.
+            _keepers = member_keeps.get(_idx_key(item))
+            _floor = ({"_guard": "household_floor", "_guard_detail": _keepers[0]}
+                      if _keepers else None)
             final_proposals.append({
                 "title": item.get("title"),
                 "pitch": pitch,
                 "confidence": min(0.99, max(0.10, cand["score"] / 100)),
-                "score_factors": _score_factors(cand),
+                "score_factors": _with_guard(_score_factors(cand), cand, _floor),
+                # A member asked to keep it: "Your call", never a plain cut.
+                "stagnant": bool(_keepers),
                 "size_mb": size_mb,
                 "size_gb": round(size_mb / 1024, 1),
                 "arr_id": item.get("arr_id"),

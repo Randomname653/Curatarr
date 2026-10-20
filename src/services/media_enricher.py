@@ -38,6 +38,7 @@ from src.services.llm_utils import (clean_llm_text, strip_think_tags, ollama_opt
 logger = logging.getLogger(__name__)
 from src.services.enrichment_state import log_topup_failure  # noqa: E402
 from src.services.http_client import tls_context
+from src.services.rating_value import prompt_rating, rating_number
 
 
 # Pass 99-fu2: prompt version tag for the two-tier cache split.
@@ -365,7 +366,7 @@ def build_verified_data(
             "source_author":  raw.get("source_author"),
             "source_kind":    raw.get("source_kind"),
             "cast":           pick(enriched.get("cast_top3"), raw.get("cast")),
-            "rating":         pick(enriched.get("rating"), raw.get("rating")),
+            "rating":         pick(rating_number(raw.get("rating")), rating_number(enriched.get("rating"))),
             # Vote MASS next to the score: harvested from TMDB vote_count /
             # OMDb imdbVotes since forever, but it never reached the judge —
             # 7.4/10 read identically at 50 votes and at 500k. scored_by is
@@ -1606,7 +1607,8 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     imdb_id but are missing OMDb-only fields (writer / awards), and top each up
     via OMDb. Throttled by the OMDb semaphore; fast over the supporter key
     (100k/day). ``task`` is an optional task_monitor handle for progress.
-    Returns ``{"candidates": N, "enriched": M}``."""
+    Returns ``{"candidates": N, "enriched": M, "remaining": R}`` — R is what
+    the ``limit`` left for the next run."""
     import json as _json
 
     # 1. Gather candidates from the raw cache, deduped by (media_type, imdb_id)
@@ -1641,15 +1643,21 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         # docs checked before the full-harvest fix (no ratings_checked) fall
         # through: they get exactly ONE more fetch to pick up RT/Metacritic
         try:
-            cat = k.split("raw:", 1)[1].split(":", 1)[0]
+            cat, _, cid = k.split("raw:", 1)[1].partition(":")
         except (IndexError, AttributeError):
             continue
-        candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb, b.get("tmdb_id")))
+        # The row's OWN id rides along: raw rows are keyed by anilist/anidb/
+        # tmdb/tvdb id or title, and the top-up only tried tmdb + title — an
+        # AniList-keyed anime row never got its stamp and was re-fetched from
+        # OMDb every day.
+        candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb,
+                                            b.get("tmdb_id"), cid or None))
 
     cand_list = list(candidates.values())
     if limit:
         cand_list = cand_list[:limit]
     total = len(cand_list)
+    remaining = len(candidates) - total
     logger.info("[omdb-backfill] %d candidate titles (imdb_id present, OMDb missing)", total)
 
     def _tick(msg, **kw):
@@ -1666,9 +1674,9 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     state = {"updated": 0, "done": 0}
 
     # No shared handle: each top-up merges on a worker thread with its own.
-    async def _one(title, cat, imdb, tmdb):
+    async def _one(title, cat, imdb, tmdb, cid):
         try:
-            if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb):
+            if await topup_omdb(title, cat, imdb_id=imdb, tmdb_id=tmdb, cache_id=cid):
                 state["updated"] += 1
         except Exception as e:
             log_topup_failure(logger, "[omdb-backfill]", title, e)
@@ -1684,7 +1692,7 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
         await asyncio.gather(*[_one(*c) for c in cand_list[i:i + CHUNK]])
 
     logger.info("[omdb-backfill] done — %d/%d titles enriched", state["updated"], total)
-    return {"candidates": total, "enriched": state["updated"]}
+    return {"candidates": total, "enriched": state["updated"], "remaining": remaining}
 
 
 # ── Pass 99-fu3: Per-service concurrency caps for the parallel producer ─────
@@ -3362,7 +3370,7 @@ EXTENDED INFO: {extra_context}
 TONE HINTS (use to calibrate mood): {tone_hints}
 CAST: {cast}
 DIRECTOR/CREATOR: {director}
-RATING: {rating}/10 ({votes} votes)
+RATING: {rating}
 
 MOOD REFERENCE — pick ONLY 1-3 moods that are DOMINANT throughout the whole work:
 - bleak: hopeless atmosphere, no redemption
@@ -3403,6 +3411,17 @@ Output this exact JSON (no extra text, no markdown fences):
 
 
 async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
+    """The summariser's profile, with ``rating`` taken from the SOURCE data
+    as a number. The model was asked to echo the rating and wrote back the
+    prompt line ("N/A/10 (N/A votes)", "5.3/10") or a content rating, which
+    then sat in the cache as text."""
+    result = await _summarize_with_small_llm(raw_metadata)
+    if isinstance(result, dict):
+        result["rating"] = rating_number(raw_metadata.get("rating"))
+    return result
+
+
+async def _summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
     """
     Use the small/fast summarizer model to create a structured profile.
     Falls back to a rule-based profile if Ollama is unavailable.
@@ -3467,8 +3486,7 @@ async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                                        raw_metadata.get("tone_hints") or "N/A", 300),
             cast=", ".join(raw_metadata.get("cast", [])[:5]),
             director=raw_metadata.get("director") or "Unknown",
-            rating=raw_metadata.get("rating") or "N/A",
-            votes=raw_metadata.get("vote_count") or "N/A",
+            rating=prompt_rating(raw_metadata.get("rating"), raw_metadata.get("vote_count")),
         )
 
     try:

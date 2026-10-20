@@ -162,8 +162,10 @@ small = L.upsert_model("tiny:4b", "sha256:bbb")
 V = ["CUT", "HARD_KEEP", "STAGNANT", "CUT", "KEEP_WITH_FLAG"]
 qm = {"gate_valid_pct": 100, "judge_valid_pct": 100, "mono_empty_pct": 0}
 env = {"gpu": "NVIDIA GeForce RTX 4090", "gpu_total_mib": 24564, "desktop_reserve_mib": 1024}
-L.add_run(ref, "quality", {"profile": "large", "server": matrix.DEFAULT_SERVER, "items": "sub40"},
-          env=env, metrics=qm, artifacts=[judge_file("ref", V)])
+rq = L.add_run(ref, "quality", {"profile": "large", "server": matrix.DEFAULT_SERVER, "items": "sub40"},
+               env=env, metrics=qm, artifacts=[judge_file("ref", V)])
+L.add_score(rq["id"], scorer=matrix.JUDGE_SCORER, rubric="j", aggregate={"mean25": 23.0})
+L.add_score(rq["id"], scorer=matrix.NOTES_SCORER, rubric="n", aggregate={"mean25": 21.0})
 qs = L.add_run(small, "quality", {"profile": "small", "server": matrix.DEFAULT_SERVER, "items": "sub40"},
                env=env, metrics=qm, artifacts=[judge_file("small", ["CUT", "HARD_KEEP", "CUT", "CUT", "HARD_KEEP"])])
 L.add_run(small, "quality", {"profile": "small", "server": "fa-1_kv-q8_0", "items": "sub40"},
@@ -186,19 +188,58 @@ check("24 GB: the reference's full-card cell counts as measured at 24 GB",
 check("a model with no tier spot check is NOT derived onto smaller tiers",
       mx["tiers"]["20"]["recommended"] is None or
       mx["tiers"]["20"]["recommended"]["model"] != "gemma4:31b")
-check("small model: agreement with the reference is the provisional quality",
+check("an unscored model is provisional; agreement is exported as a diagnostic only",
       mx["tiers"]["6"]["recommended"]["quality"]["agreement"]["exact_pct"] == 60.0
-      and mx["tiers"]["6"]["recommended"]["quality"]["provisional"])
+      and mx["tiers"]["6"]["recommended"]["quality"]["provisional"]
+      and mx["tiers"]["6"]["recommended"]["quality"]["score25"] is None)
+check("quality = judge and notes, weighted",
+      mx["tiers"]["24"]["recommended"]["quality"]["score25"] == round(
+          matrix.JUDGE_WEIGHT * 23.0 + (1 - matrix.JUDGE_WEIGHT) * 21.0, 2))
 check("q8 KV with unchanged verdicts serves the 4 GB tier and inherits the agreement",
       mx["tiers"]["4"]["recommended"]["model"] == "tiny:4b"
       and mx["tiers"]["4"]["recommended"]["quality"]["agreement"]["exact_pct"] == 60.0)
 check("the spot check at 6 GB lets the full-card cell derive 8 GB and up",
       mx["tiers"]["8"]["recommended"]["model"] == "tiny:4b"
       and mx["tiers"]["8"]["recommended"]["derived"])
-L.add_score(qs["id"], scorer="claude", rubric="r", aggregate={"mean25": 22.0})
-check("a scored model is no longer provisional",
-      not matrix.build(L)["tiers"]["8"]["recommended"]["quality"]["provisional"])
+L.add_score(qs["id"], scorer=matrix.NOTES_SCORER, rubric="n", aggregate={"mean25": 22.0})
+check("card notes alone leave a model provisional (the judge decides deletions)",
+      matrix.build(L)["tiers"]["8"]["recommended"]["quality"]["provisional"])
+L.add_score(qs["id"], scorer=matrix.JUDGE_SCORER, rubric="j", aggregate={"mean25": 24.0})
+mx_s = matrix.build(L)
+check("a judge-scored model is no longer provisional",
+      not mx_s["tiers"]["8"]["recommended"]["quality"]["provisional"])
+check("agreement with the production model does not rank: 60 % agreement but better reasoning wins 24 GB",
+      mx_s["tiers"]["24"]["recommended"]["model"] == "tiny:4b")
+mx_a = matrix.build(L, allowed={"gemma4:31b"})
+check("export allowlist: a model outside the catalog never reaches a tier",
+      mx_a["tiers"]["24"]["recommended"]["model"] == "gemma4:31b"
+      and all(o is None or o["model"] == "gemma4:31b"
+              for row in mx_a["tiers"].values() for o in [row["recommended"]] + row["alternatives"]))
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
+
+# A judge that gives nearly every title the same verdict is a K.O.
+check("degenerate judge: 10 of 12 the same verdict",
+      matrix.degenerate({"artifacts": [judge_file("degen", ["KEEP_WITH_FLAG"] * 10 + ["CUT", "HARD_KEEP"])]})
+      .startswith("degenerate judge: 10 of 12"))
+check("...a spread judge and a too-small sample are not",
+      matrix.degenerate({"artifacts": [judge_file("spread", ["CUT", "HARD_KEEP", "STAGNANT"] * 4)]}) == ""
+      and matrix.degenerate({"artifacts": [judge_file("tiny", ["CUT"] * 5)]}) == "")
+
+# Recommendation gates: comfort, then the quality window.
+def _opt(name, score, tok, judge, prov=False):
+    return {"model": name, "quality": {"score25": score, "provisional": prov},
+            "expected": {"gen_tok_s": tok, "judge_s": judge}}
+slow, fast = _opt("big", 22.2, 6.1, 44.0), _opt("moe", 20.1, 95.6, 3.6)
+check("comfort gate: a 44 s-per-verdict package is only an alternative while a comfortable one exists",
+      matrix.recommend([slow, fast])["model"] == "moe" and not slow["comfortable"])
+check("comfort gate falls away when nothing on the card is comfortable",
+      matrix.recommend([slow, _opt("big2", 21.0, 5.0, 60.0)])["model"] == "big")
+check("quality window: within 1.5 points the faster package wins",
+      matrix.recommend([_opt("a", 22.0, 30, 8), _opt("b", 21.0, 90, 3)])["model"] == "b")
+check("...outside it the better one stays",
+      matrix.recommend([_opt("a", 22.0, 30, 8), _opt("b", 20.0, 90, 3)])["model"] == "a")
+check("a scored package beats a faster provisional one",
+      matrix.recommend([_opt("a", 20.0, 30, 8), _opt("p", None, 200, 1, prov=True)])["model"] == "a")
 
 # The context sweep's measured footprints reach the export, spilled points not.
 L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99}, env=env,
@@ -206,6 +247,9 @@ L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99}, 
                               {"num_ctx": 8192, "vram_model_mib": 3000, "gpu_share_pct": 100},
                               {"num_ctx": 131072, "vram_model_mib": 24000, "gpu_share_pct": 80}],
                    "max_resident_ctx": 8192})
+L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99, "host": "nas"}, env=env,
+          metrics={"points": [{"num_ctx": 2048, "vram_model_mib": 2270, "gpu_share_pct": 100}],
+                   "max_resident_ctx": 2048})
 fp = matrix.build(L)["footprints"]["tiny:4b"][matrix.DEFAULT_SERVER]
 check("sweep: resident windows exported, the spilled one left out",
       fp["mib_by_ctx"] == {"2048": 2500, "8192": 3000} and fp["max_resident_ctx"] == 8192)
@@ -316,6 +360,19 @@ for srv in ("default", "q8"):
                env={}, metrics={"status": "ok"})
 check("pending: ...and no re-pull once every server has one",
       not _run.pending_work(cand, AT, PL, kv=False))
+ML = Ledger(tmp / "moe.json")
+mk = ML.upsert_model("m:1b", "sha256:feedface0000")
+for srv, vram in (("default", 16486), ("q8", 16150)):
+    _cfg = _run.SERVERS[srv]
+    ML.add_run(mk, "ctx_sweep", _run.sweep_settings(_cfg), env={}, metrics={})
+    ML.add_run(mk, "perf", {**_run.perf_base(_cfg, "large", "S1", 3), "tier_gb": "full", "num_gpu": 99},
+               env={}, metrics={"vram_model_mib": vram})
+ML.add_run(mk, "quality", _run.quality_settings(_run.SERVERS["default"], "large", "S1", "sub40", True),
+           env={}, metrics={})
+check("pending: an MoE's q8 saves 336 MiB on the full card -> no KV pass by default",
+      not _run.pending_work(cand, A, ML, kv=True))
+check("...--kv-quality makes it work anyway (q8 is what serves the small tiers)",
+      _run.pending_work(cand, _ap.Namespace(**{**vars(A), "kv_quality": True}), ML, kv=True))
 
 # ── remote host (the NAS card) ─────────────────────────────────────────────
 from tests.benchmarks.hwbench import models as _models, server as _server  # noqa: E402

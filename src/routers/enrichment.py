@@ -1067,17 +1067,42 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 db.commit()
 
         await run_write(_triage)
-        if to_requeue:
-            def _purge():
-                mc2 = MetadataCache()
-                try:
-                    for cache_key, *_ in to_requeue:
-                        mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
-                    mc2.conn.commit()
-                finally:
-                    mc2.close()
 
+    def _finding_keys(hits: list) -> list:
+        return [(prk or f"title:{category}:{(title or '')[:40]}", reason)
+                for _ck, prk, title, category, reason, _detail in hits]
+
+    async def _undo_triage_requeues(e: Exception) -> None:
+        # Triage committed "requeued" before the purge and the flip ran; if
+        # either failed, that one automatic chance was spent on nothing.
+        logger.warning("[audit] requeue of %d finding(s) failed (%s) — their "
+                       "automatic retry is kept for the next audit", len(to_requeue), e)
+
+        def _undo():
+            with get_db_session() as db:
+                n = _ES.unmark_requeued(db, _finding_keys(to_requeue))
+                db.commit()
+                return n
+        try:
+            await run_write(_undo)
+        except Exception as ue:  # noqa: BLE001 — logged; next audit escalates at worst
+            logger.warning("[audit] could not restore the requeue chance: %s", ue)
+
+    if not dry_run and to_requeue:
+        def _purge():
+            mc2 = MetadataCache()
+            try:
+                for cache_key, *_ in to_requeue:
+                    mc2.conn.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
+                mc2.conn.commit()
+            finally:
+                mc2.close()
+
+        try:
             await asyncio.to_thread(_purge)
+        except Exception as e:
+            await _undo_triage_requeues(e)
+            raise
 
     requeued = 0
     if not dry_run and to_requeue:
@@ -1124,7 +1149,11 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 db.commit()
             return requeued
 
-        requeued = await run_write(_requeue)
+        try:
+            requeued = await run_write(_requeue)
+        except Exception as e:
+            await _undo_triage_requeues(e)
+            raise
 
     logger.info(
         "[audit-requeue] scanned=%d incomplete=%d requeued=%d dry_run=%s by_reason=%s",
@@ -1142,10 +1171,14 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
     # audit drains the backlog across runs.
     _REBUILD_CAP = 150
     zstats = {"docs_walked": 0, "arr_live_requeued": 0, "arr_gone": 0,
-              "rebuilt": 0, "no_prefetch": 0}
+              "rebuilt": 0, "no_prefetch": 0, "already_rebuilt": 0,
+              "merged": 0, "already_merged": 0}
     try:
         from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
-        from src.services.corpus_repair import rebuild_doc_from_prefetch
+        from src.services.corpus_repair import (
+            REBUILT_MARK, find_live_twins, identity_keys, merge_into_live,
+            rebuild_doc_from_prefetch)
+        from src.vector_store.chromadb_wrapper import MERGED_INTO
         if not truth:
             # No ARR ground truth → cannot tell live from gone; skip rather
             # than misclassify (stats stay 0, next audit retries).
@@ -1171,6 +1204,7 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
         # docs would classify as gone; SoulSync's #828 lesson, ported).
         from src.services.stale_guard import is_implausible_mass_stale
         _cand: dict = {}          # service -> {"total": n, "live": [ids], "gone": [(id, dom)]}
+        _doc_ids: set = set()     # every arr doc in the collection
 
         def _classify_docs():
             # The full collection walk (every doc's metadata, 500 per page)
@@ -1190,6 +1224,7 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                     if "::" in d or not d.startswith(("sonarr:", "radarr:", "lidarr:")):
                         continue
                     svc = d.split(":", 1)[0]
+                    _doc_ids.add(d)
                     bucket = _cand.setdefault(svc, {"total": 0, "live": [], "gone": []})
                     bucket["total"] += 1
                     dom = md.get("domain") or md.get("media_type") or ""
@@ -1204,11 +1239,29 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                     zstats["docs_walked"] += 1
                     if d in truth:
                         bucket["live"].append(d)
+                    elif md.get(MERGED_INTO):
+                        # Merged into its live twin on an earlier run.
+                        zstats["already_merged"] += 1
+                    elif md.get(REBUILT_MARK):
+                        # Already rebuilt from prefetch on an earlier run:
+                        # still gone, still profile-less, nothing new to do.
+                        zstats["already_rebuilt"] += 1
                     else:
                         bucket["gone"].append((d, dom))
                 offset += len(ids)
 
         await run_chroma(_classify_docs)
+
+        # A gone doc whose title is live again under a new arr id (deleted
+        # and re-added) is MERGED into that twin, not rebuilt beside it.
+        live_index: dict = {}
+        for _prk, _it in truth.items():
+            if _prk not in _doc_ids:
+                continue      # the twin has no doc yet: merging would hide the title
+            for _k in identity_keys(_prk.split(":", 1)[0], _it):
+                live_index.setdefault(_k, _prk)
+        twins = await find_live_twins(
+            [d for b in _cand.values() for d, _ in b["gone"]], live_index)
 
         requeue_ids: list = []
         for svc, bucket in _cand.items():
@@ -1225,6 +1278,10 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
                 requeue_ids.extend(bucket["live"])
             for d, dom in bucket["gone"]:
                 zstats["arr_gone"] += 1
+                if d in twins:
+                    if dry_run or await merge_into_live(d, twins[d]):
+                        zstats["merged"] += 1
+                    continue
                 if not dry_run and zstats["rebuilt"] < _REBUILD_CAP:
                     if await rebuild_doc_from_prefetch(d, dom):
                         zstats["rebuilt"] += 1
@@ -1249,7 +1306,8 @@ async def _audit_enrichments(dry_run: bool, task=None) -> dict:
 
             await run_write(_requeue_zombies)
         _prog(f"Zombie walk: {zstats['docs_walked']} found, "
-              f"{zstats['arr_live_requeued']} requeued, {zstats['rebuilt']} rebuilt")
+              f"{zstats['arr_live_requeued']} requeued, {zstats['rebuilt']} rebuilt, "
+              f"{zstats['merged']} merged into a re-added twin")
     except _SkipZombieWalk:
         pass
     except Exception as e:

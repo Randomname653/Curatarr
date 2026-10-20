@@ -477,9 +477,16 @@ def test_plex_writes_raise_on_transient_errors():
 
     async def half(ds):
         return {"created": 1, "deleted": 2, "failed": 1}
+    # A partial push is a FAILURE now (2026-10-19): it stays due AND backs
+    # off, instead of re-running the curator design every 30 minutes.
     with patched(cd, design_collections=two_designs), patched(pc, push_collections=half):
-        ok = asyncio.run(dcu._run_collections())
-    check("custodian collections: fewer shelves than designs → stays due", ok is False)
+        try:
+            asyncio.run(dcu._run_collections())
+            raised = False
+        except dcu.TaskFailed:
+            raised = True
+    check("custodian collections: fewer shelves than designs → fails (stays due, backs off)",
+          raised)
 
 
 # ── 8. library_sorting ───────────────────────────────────────────────────────

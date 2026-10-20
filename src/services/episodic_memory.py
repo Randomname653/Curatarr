@@ -32,9 +32,11 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
+from sqlalchemy import case, func, literal
 
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
+from src.services.household import is_admin_user
 from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
@@ -244,6 +246,46 @@ def _is_superseded(metadata_json) -> bool:
         return False
 
 
+def _json_field(col, path: str):
+    """``json_extract(col, path)``, NULL for text that is not JSON: a bare
+    json_extract raises on malformed JSON and would fail the whole query,
+    where _is_superseded reads garbage as "not superseded"."""
+    return case((func.json_valid(col) == 1, func.json_extract(col, path)), else_=None)
+
+
+def not_superseded_sql(col):
+    """SQL twin of ``not _is_superseded(col)`` (same truthiness: a missing,
+    null, 0 or empty ``superseded_by`` is not superseded)."""
+    return func.coalesce(_json_field(col, "$.superseded_by"), 0).in_((0, ""))
+
+
+# A superseded memory keeps its text (the audit trail) but nothing reads its
+# vector again, and at ~15 KB of JSON per row the vectors were most of what
+# superseded rows cost. Dropped this long after the supersede.
+SUPERSEDED_VECTOR_DAYS = 30
+
+
+def strip_superseded_vectors(now: Optional[datetime] = None) -> dict:
+    """NULL the embedding of memories superseded over SUPERSEDED_VECTOR_DAYS
+    ago and of superseded curator principles (no reader looks at either).
+    Blocking — the writer thread."""
+    from src.database.models import CuratorPrinciple
+    cut = ((now or datetime.utcnow()) - timedelta(days=SUPERSEDED_VECTOR_DAYS)).isoformat()
+    M = EpisodicMemory
+    with get_db_session() as db:
+        mems = (db.query(M)
+                .filter(M.embedding_json.isnot(None),
+                        ~not_superseded_sql(M.metadata_json),
+                        _json_field(M.metadata_json, "$.superseded_at") < cut)
+                .update({"embedding_json": None}, synchronize_session=False))
+        prins = (db.query(CuratorPrinciple)
+                 .filter(CuratorPrinciple.status == "superseded",
+                         CuratorPrinciple.embedding_json.isnot(None))
+                 .update({"embedding_json": None}, synchronize_session=False))
+        db.commit()
+    return {"memories": mems, "principles": prins}
+
+
 def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
     """[(id, content)] of the older memories a new one may conflict with.
     Blocking (a full scan of the user's memories plus the similarity math) —
@@ -256,10 +298,16 @@ def _conflict_targets(user_id: int, new_memory_id: int, title: str) -> list:
     # each other as "duplicates" before either had a chance to land.
     cutoff_time = datetime.utcnow() - timedelta(minutes=1)
     with get_db_session() as db:
-        old_memories = db.query(M.id, M.content, M.metadata_json, M.embedding_json).filter(
+        # Superseded memories are left out in SQL: they are kept forever for
+        # the audit trail, and every new memory used to load and parse ALL of
+        # them, vectors included. A title-bearing memory needs no vectors.
+        cols = (M.id, M.content, M.metadata_json,
+                M.embedding_json if not title else literal(None))
+        old_memories = db.query(*cols).filter(
             M.user_id == user_id,
             M.id != new_memory_id,
             M.created_at < cutoff_time,
+            not_superseded_sql(M.metadata_json),
         ).all()
         new_emb_raw = None
         if not title:
@@ -1317,8 +1365,13 @@ JSON:"""
     # extraction on that thread mines it again, and the novelty check turns
     # re-captures into reinforcement instead of duplicates.
     try:
+        # Owner only: principles feed the owner's judge, and /principles (the
+        # only place to review one) is admin-only — a member naming any
+        # deletion_proposal:{id} thread bought two curator calls per flush
+        # and left principles nobody could ever see.
         if getattr(settings, "PRINCIPLES_ENABLED", False) and \
-                (thread_id or "").startswith("deletion_proposal:"):
+                (thread_id or "").startswith("deletion_proposal:") and \
+                await run_read(is_admin_user, user_id):
             from src.services.curator_principles import capture_principles_from_thread
             # track_task instead of a silent set: the Bomber debate's capture
             # died without a trace (done-callbacks swallow exceptions, and the
@@ -1768,7 +1821,15 @@ async def handle_protection_intent(
         if protected_titles:
             titles_str = "', '".join(protected_titles)
             count_word = "is" if len(protected_titles) == 1 else "are"
-            msg = f"✅ '{titles_str}' {count_word} now permanently protected."
+            if await run_read(is_admin_user, user_id):
+                msg = f"✅ '{titles_str}' {count_word} now permanently protected."
+            else:
+                # A member's keep is a Pillar III claim on the owner's deletion
+                # run (pillars._other_users_keeps): never cut, but the owner
+                # still decides — "permanently protected" promised more.
+                msg = (f"✅ '{titles_str}' {count_word} now protected for you — "
+                       "it won't be cut while you want it; the owner has the "
+                       "final say.")
             if watchlisted:
                 msg += " Watchlisted: " + ", ".join(watchlisted) + "."
             if watchlist_fails:

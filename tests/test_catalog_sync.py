@@ -87,6 +87,10 @@ lib._read_defaults = lambda svc: {"root_folder_path": "/music",
                                   "quality_profile_id": 1,
                                   "metadata_profile_id": 1}
 
+# No deletions on record for the main scenario (the real DB stays untouched).
+_real_tombstones = mcs.music_tombstones
+mcs.music_tombstones = lambda: (set(), set())
+
 res = asyncio.run(mcs.sync_soulsync_to_lidarr())
 check("sync paginates the full catalogue",
       res["soulsync_artists"] == 5 and res["lidarr_artists"] == 3)
@@ -107,6 +111,22 @@ check("surgical refreshes queued: added + file-less + grown",
 check("grown artist reported", res["grown_artists"] == ["Grown Artist"])
 check("healthy artist NOT refreshed", 11 not in refreshed)
 check("state stamped", mcs._STATE_KEY in _state)
+
+# A deleted artist SoulSync still lists (until its weekly deep scan) is never
+# re-added: a direct Lidarr add ignores the delete's import-list exclusion,
+# so the nightly sync resurrected every artist the owner had just deleted.
+added.clear()
+refreshed.clear()
+mcs.music_tombstones = lambda: ({"mb-2"}, set())
+res_t = asyncio.run(mcs.sync_soulsync_to_lidarr())
+check("a deleted artist (by MBID) is not re-added to Lidarr",
+      added == [] and res_t["skipped_deleted"] == 1)
+added.clear()
+mcs.music_tombstones = lambda: (set(), {sc.norm_name("new artist")})
+res_t = asyncio.run(mcs.sync_soulsync_to_lidarr())
+check("...nor one whose ban has no MBID, matched by normalised name",
+      added == [] and res_t["skipped_deleted"] == 1)
+mcs.music_tombstones = _real_tombstones
 
 walked = []
 real_pages, real_key = sc.list_artists_page, lib._get_arr_url_key

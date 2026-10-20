@@ -283,7 +283,8 @@ def _recategorize_local(sonarr_id: int, new_cat: str,
     old_cat = None
     try:
         from src.database.connection import get_db_session
-        from src.database.models import EnrichmentStatus, ArrEnrichmentStatus
+        from src.database.models import (EnrichmentStatus, ArrEnrichmentStatus,
+                                         ProtectedMedia)
         with get_db_session() as db:
             es = db.query(EnrichmentStatus).filter(
                 EnrichmentStatus.plex_rating_key == key).first()
@@ -296,6 +297,21 @@ def _recategorize_local(sonarr_id: int, new_cat: str,
             if arr:
                 old_cat = old_cat or arr.category
                 arr.category = new_cat
+            # Protections are category-scoped (the deletion scan loads only
+            # category == cat OR NULL), so a protection left under the old
+            # category silently stopped shielding the item: protect a show,
+            # re-file it as anime, and it came back as a deletion pitch.
+            # Every household member's rows move — the item moved, not a user.
+            if old_cat and old_cat != new_cat:
+                idents = {t for t in (getattr(es, "title", None),
+                                      getattr(arr, "title", None)) if t}
+                if arr is not None and arr.tmdb_id is not None:
+                    idents.add(str(arr.tmdb_id))
+                if idents:
+                    db.query(ProtectedMedia).filter(
+                        ProtectedMedia.category == old_cat,
+                        ProtectedMedia.identifier.in_(idents),
+                    ).update({"category": new_cat}, synchronize_session=False)
             db.commit()
     except Exception as e:
         logger.warning("[lib-sort] DB recategorize failed for %s: %s", key, e)
@@ -317,6 +333,12 @@ def _recategorize_local(sonarr_id: int, new_cat: str,
             payload = prof.get("response") if isinstance(prof, dict) and "response" in prof else prof
             # No time expiry — change-based invalidation (see enrichment.py).
             mc.set_cache(f"enriched:{new_cat}:{key}", payload, days=3650)
+            # Then drop the old-category copy: left behind, it was an orphan
+            # profile the audit and the KB counted under the wrong category.
+            from src.cache.metadata_cache import _CACHE_VERSION
+            mc.conn.execute("DELETE FROM api_cache WHERE cache_key = ?",
+                            (f"{_CACHE_VERSION}:enriched:{old_cat}:{key}",))
+            mc.conn.commit()
     except Exception as e:
         logger.warning("[lib-sort] cache re-key failed for %s: %s", key, e)
         errors.append(f"cache: {e}"[:120])

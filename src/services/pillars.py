@@ -311,6 +311,38 @@ def _other_users_watch(db, owner_id: int, item: dict, category: str) -> list[dic
     return out
 
 
+def _other_users_keeps(db, owner_id: int, item: dict, category: str) -> list[str]:
+    """PILLAR III signal: the names of OTHER household users who asked to keep
+    this title (their own ``ProtectedMedia`` row, written when they told the
+    curator to keep it). Protections are per user, and the owner's deletion
+    run only ever loaded the owner's — so a member who was told "it's
+    protected" was in fact protected by nothing short of watching it.
+
+    Matched like the owner's own protected set: identifier is the title or
+    the tmdb id, category-scoped (NULL = legacy rows, every category)."""
+    from sqlalchemy import or_
+    from src.database.models import ProtectedMedia, User
+    title = (item.get("title") or "").strip()
+    tmdb_id = item.get("tmdb_id")
+    idents = [i for i in (title, str(tmdb_id) if tmdb_id is not None else "") if i]
+    if not idents:
+        return []
+    rows = (db.query(ProtectedMedia.user_id, User.plex_username)
+              .join(User, User.id == ProtectedMedia.user_id)
+              .filter(ProtectedMedia.user_id != owner_id,
+                      User.is_active.isnot(False),
+                      ProtectedMedia.identifier.in_(idents),
+                      or_(ProtectedMedia.category == category,
+                          ProtectedMedia.category.is_(None)))
+              .all())
+    seen, out = set(), []
+    for uid, name in rows:
+        if uid not in seen:
+            seen.add(uid)
+            out.append(name or f"user {uid}")
+    return out
+
+
 # Pillar III, decided in Python. The judge weighs household engagement too,
 # but the sacred pillar must not depend on a model reading a line correctly —
 # an 8B model drops priority-ordered rules first. ``completed`` is stored PER
@@ -355,7 +387,7 @@ def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> d
     A failed watch lookup is reported as UNKNOWN (None), never as an empty
     result: "nobody watched it" built from an exception is a fabricated fact,
     and on Pillar III it is the one that deletes a household member's show."""
-    out = {"ow": None, "ow_unknown": False, "others": None,
+    out = {"ow": None, "ow_unknown": False, "others": None, "keeps": None,
            "taste_summary": "", "taste_unknown": False,
            "fb_blob": None, "fb_unknown": False}
     try:
@@ -367,6 +399,11 @@ def _read_db_facts(db, item: dict, user_id: int, category: str, title: str) -> d
         out["others"] = _other_users_watch(db, user_id, item, category)
     except Exception as e:
         logger.warning("[pillars] household lookup failed for %r: %s", title, e)
+    try:
+        out["keeps"] = _other_users_keeps(db, user_id, item, category)
+    except Exception as e:
+        # Unknown, not "nobody": same rule as the watch lookup above.
+        logger.warning("[pillars] household keep lookup failed for %r: %s", title, e)
     try:
         from src.database.models import TasteVectorEntry
         tv = db.query(TasteVectorEntry).filter(TasteVectorEntry.user_id == user_id).first()
@@ -584,6 +621,16 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     else:
         # Requests are not looked up anywhere, so the line claims views only.
         other_block = "  none have watched it."
+    keeps = dbf.get("keeps", [])
+    if keeps is None:
+        flags["household_unknown"] = True
+        other_block += ("\n  UNKNOWN — household keep requests could not be read; "
+                        "do not assume nobody asked to keep it.")
+    elif keeps:
+        flags["other_user_engaged"] = True
+        other_block += "".join(
+            f"\n  - {scrub_untrusted(n)}: asked the curator to KEEP this title"
+            for n in keeps)
 
     # ── ACCLAIM / METADATA (verified data — cache-first, no LLM) ──
     verified_text = ""
@@ -702,6 +749,10 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         flags["household_claim"] = _household_claim(
             others, category,
             vd.get("episodes_total") if isinstance(vd, dict) else None)
+    # A member's explicit keep is a claim on its own: their protection row
+    # never reaches the owner's protected set, so this is where it counts.
+    if keeps and not flags["household_claim"]:
+        flags["household_claim"] = f"{keeps[0]} (asked to keep it)"
 
     # ── OWNER taste (category-scoped) ──
     taste = ""
@@ -1140,9 +1191,10 @@ _MONOLOGUE_STANCE = {
 # stance would argue the CUT it no longer is.
 _GUARD_STANCE = {
     "household_floor": "Another member of the household has genuinely watched "
-                       "this title, so it is the owner's call, not a cut — make "
-                       "the honest case on what the title itself is, and say "
-                       "plainly that someone in the house engaged with it",
+                       "this title or asked to keep it, so it is the owner's "
+                       "call, not a cut — make the honest case on what the "
+                       "title itself is, and say plainly that someone in the "
+                       "house holds it",
 }
 
 

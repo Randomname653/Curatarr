@@ -840,8 +840,14 @@ async def job_memory_decay():
         total, decayed = await run_write(_decay)
         task_monitor.update(task, total=total)
 
-        task_monitor.done(task, f"{decayed} memories decayed")
-        logger.info("[scheduler] Memory decay: %d memories decayed", decayed)
+        from src.services.episodic_memory import strip_superseded_vectors
+        stripped = await run_write(strip_superseded_vectors)
+
+        task_monitor.done(task, f"{decayed} memories decayed · vectors dropped from "
+                                f"{stripped['memories']} superseded memories, "
+                                f"{stripped['principles']} superseded principles")
+        logger.info("[scheduler] Memory decay: %d memories decayed, superseded vectors "
+                    "dropped: %s", decayed, stripped)
     except Exception as e:
         task_monitor.error(task, str(e))
         logger.error("[scheduler] Memory decay failed: %s", e)
@@ -1269,8 +1275,9 @@ async def job_db_vacuum():
     tombstoned pages behind). NEVER deletes data — only reclaims free
     space.
 
-    Targets: data/curatarr.db (main app DB) and data/cache/metadata.db
-    (api_cache). Each file is vacuumed independently with
+    Targets: data/curatarr.db (main app DB), the api_cache file
+    (settings.ENRICHMENT_CACHE) and the lyrics / Plex-music index
+    (lyrics.LYRICS_DB_PATH). Each file is vacuumed independently with
     its own connection so a failure on one doesn't block the other.
 
     Logs old vs new file size per DB so the impact is visible.
@@ -1297,6 +1304,13 @@ async def job_db_vacuum():
     cache_path = str(getattr(_s, "ENRICHMENT_CACHE", "")) or ""
     if cache_path and os.path.exists(cache_path):
         targets.append(("metadata.db", cache_path))
+    # Lyrics / Plex-music index: its walker deletes and rewrites rows daily.
+    # Next to the cache file, as lyrics.py places it — resolved now, not at
+    # that module's import, so a relocated cache takes the index with it.
+    from src.services.lyrics import LYRICS_DB_PATH
+    lyrics_path = os.path.join(os.path.dirname(cache_path), LYRICS_DB_PATH.name) if cache_path else ""
+    if lyrics_path and os.path.exists(lyrics_path):
+        targets.append((LYRICS_DB_PATH.name, lyrics_path))
 
     if not targets:
         task_monitor.skip(task, "No SQLite files found to vacuum")
@@ -1369,6 +1383,27 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
         chk.close()
 
 
+def _free_bytes(path: str) -> int:
+    import shutil
+    return shutil.disk_usage(path).free
+
+
+def _prune_snapshots(bdir: str, keep: int) -> int:
+    """Keep the newest *keep* daily snapshots (names sort by their UTC
+    stamp); returns how many were removed."""
+    import glob
+    import os
+    snaps = sorted(glob.glob(os.path.join(bdir, "curatarr_*.db")))
+    dropped = 0
+    for old in snaps[:-keep] if keep > 0 else snaps:
+        try:
+            os.remove(old)
+            dropped += 1
+        except OSError:
+            pass
+    return dropped
+
+
 async def job_db_backup():
     """
     Daily consistent SQLite backup of the main app DB.
@@ -1408,6 +1443,21 @@ async def job_db_backup():
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     dest = os.path.join(bdir, f"curatarr_{stamp}.db")
 
+    # The snapshot lands on the live database's volume. Written onto a
+    # nearly full disk it takes the last free space the live DB needs for
+    # its WAL and the vacuum's rewrite, so it needs room for itself plus as
+    # much again. Short of that, the oldest snapshot makes way first (the
+    # rotation below would drop it anyway); still short, no backup today.
+    need = 2 * os.path.getsize(db_path)
+    if _free_bytes(bdir) < need:
+        _prune_snapshots(bdir, KEEP - 1)
+    if _free_bytes(bdir) < need:
+        msg = (f"only {_free_bytes(bdir) // (1024 * 1024)} MB free next to the database "
+               f"(a backup needs {need // (1024 * 1024)} MB) — skipped")
+        task_monitor.error(task, msg)
+        logger.error("[backup] %s", msg)
+        return False
+
     try:
         ok = await asyncio.to_thread(_snapshot_sqlite, db_path, dest)
         if not ok:
@@ -1418,13 +1468,7 @@ async def job_db_backup():
 
         # Rotate: keep the newest KEEP snapshots, drop older ones.
         snaps = sorted(glob.glob(os.path.join(bdir, "curatarr_*.db")))
-        dropped = 0
-        for old in snaps[:-KEEP]:
-            try:
-                os.remove(old)
-                dropped += 1
-            except OSError:
-                pass
+        dropped = _prune_snapshots(bdir, KEEP)
 
         size_mb = os.path.getsize(dest) / (1024 * 1024)
         summary = f"{os.path.basename(dest)} ({size_mb:.1f}MB) · kept {min(len(snaps), KEEP)} · dropped {dropped}"

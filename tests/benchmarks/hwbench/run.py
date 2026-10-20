@@ -286,7 +286,8 @@ def pending_work(c: dict, args, led: Ledger, kv: bool = True) -> bool:
                     row = next((r for r in led.runs(key, "perf") if r["fingerprint"] == fp), None)
                     vram[srv.label] = (row or {}).get("metrics", {}).get("vram_model_mib")
                 f16, mine = vram.get(SERVERS["default"].label), vram.get(cfg.label)
-                if not (f16 and mine and f16 - mine >= KV_QUALITY_MIN_SAVING_MIB):
+                if not getattr(args, "kv_quality", False) and not (
+                        f16 and mine and f16 - mine >= KV_QUALITY_MIN_SAVING_MIB):
                     continue
             if not led.has_run(fingerprint(key, "quality", quality_settings(
                     cfg, profile, snap_id, args.items, sname == "default"))):
@@ -470,7 +471,9 @@ def bench_model(c: dict, args, led: Ledger, bench: server.BenchServer,
             if "quality" in phases and c["role"] == "curator":
                 default_fit = tier_by_server.get((SERVERS["default"].label, profile))
                 this_fit = tier_by_server.get((cfg.label, profile))
-                if args.no_tiers:
+                if getattr(args, "kv_quality", False):
+                    pass        # --kv-quality: every KV server gets its pass
+                elif args.no_tiers:
                     # No tier cells this run: a quantised KV cache earns its
                     # (cheap: gate + judge) quality pass when it saves real VRAM
                     # on the full card at the profile's context.
@@ -624,7 +627,11 @@ def cmd_status(args) -> None:
 def cmd_matrix(args) -> None:
     led = Ledger()
     _, ref = load_candidates()
-    mx = matrix.build(led, reference_ref=ref)
+    allowed = None
+    if args.export:
+        from src.services.model_catalog import CURATOR_MODELS
+        allowed = {e["model"] for e in CURATOR_MODELS}
+    mx = matrix.build(led, reference_ref=ref, allowed=allowed)
     md = matrix.render_md(mx)
     (DATA / "matrix.md").parent.mkdir(parents=True, exist_ok=True)
     (DATA / "matrix.md").write_text(md, encoding="utf-8")
@@ -708,6 +715,10 @@ def main() -> None:
     p = sub.add_parser("run")
     p.add_argument("--only", default="", help="comma list of refs (default: all candidates)")
     p.add_argument("--phases", default="sweep,perf,quality")
+    p.add_argument("--kv-quality", action="store_true",
+                   help="run the quantised-KV quality passes regardless of the VRAM they save "
+                        "on the full card (an MoE saves 0.3-0.5 GB there, but q8 is what "
+                        "serves its 4 GB tier)")
     p.add_argument("--repull-for-kv", action="store_true",
                    help="re-download a removed model even when only its KV-quality passes are missing")
     p.add_argument("--no-tiers", action="store_true",

@@ -320,21 +320,47 @@ def _verification_questions(user_id: int) -> list:
     return questions[:10]
 
 
+# Users with a verification question being composed right now. The
+# custodian's recompute and the end of an enrichment run can both start a
+# session; both passed the 12-hour check before either stored its question,
+# and the bell showed the same question twice.
+_STARTING: set = set()
+
+# An unanswered verification question leaves the bell after this long. It
+# had no expiry: opening it leaves it unread on purpose (so it can still be
+# answered), and an ignored one stayed at the front of the queue.
+_VERIFICATION_TTL = timedelta(days=7)
+
+
+def _asked_recently(db, user_id: int) -> bool:
+    return db.query(ProactiveMessage).filter(
+        ProactiveMessage.user_id == user_id,
+        ProactiveMessage.trigger_type == "verification",
+        ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
+    ).first() is not None
+
+
 async def start_verification_session(user_id: int) -> Optional[str]:
     """
     Pick the highest-priority unasked question and send it as a proactive message.
     Returns the question text or None if nothing to ask.
     """
-    # Check we haven't already started a verification session recently
-    def _asked_recently() -> bool:
-        with get_db_session() as db:
-            return db.query(ProactiveMessage).filter(
-                ProactiveMessage.user_id == user_id,
-                ProactiveMessage.trigger_type == "verification",
-                ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
-            ).first() is not None
+    if user_id in _STARTING:
+        return None
+    _STARTING.add(user_id)
+    try:
+        return await _start_verification_session(user_id)
+    finally:
+        _STARTING.discard(user_id)
 
-    if await run_read(_asked_recently):
+
+async def _start_verification_session(user_id: int) -> Optional[str]:
+    # Check we haven't already started a verification session recently
+    def _recent() -> bool:
+        with get_db_session() as db:
+            return _asked_recently(db, user_id)
+
+    if await run_read(_recent):
         return None  # don't spam
 
     questions = await generate_verification_questions(user_id)
@@ -428,19 +454,27 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
         logger.warning("Question rephrase failed: %r", e, exc_info=True)
 
     # Store the message and mark the question as asked
-    def _store():
+    def _store() -> bool:
         with get_db_session() as db:
+            # Re-checked at write time: another process (a second worker)
+            # may have stored one during the LLM call above.
+            if _asked_recently(db, user_id):
+                return False
+            now = datetime.utcnow()
             db.add(ProactiveMessage(
                 user_id=user_id,
                 trigger_type="verification",
                 trigger_data=json.dumps(question),
                 message=rephrased,
                 read=False,
-                created_at=datetime.utcnow(),
+                created_at=now,
+                expires_at=now + _VERIFICATION_TTL,
             ))
             db.commit()
+            return True
 
-    await run_write(_store)
+    if not await run_write(_store):
+        return None
 
     await write_memory(
         user_id=user_id,
@@ -452,6 +486,9 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
 
     logger.info("Verification question sent to user %d: %s", user_id, question["type"])
     return rephrased
+
+
+_SENTIMENTS = frozenset({"positive", "negative", "neutral", "mixed"})
 
 
 async def process_verification_response(
@@ -478,11 +515,12 @@ They responded: "{user_message}"
 
 Extract:
 [MODE: SENTIMENT EXTRACTION]
-1. sentiment: positive/negative/neutral/mixed
-2. key_insight: one sentence summary of what this tells us about their taste
-3. update_type: affinity_boost/aversion_boost/ambivalent/context_dependent
+1. answers_question: true if the response actually answers the question; false for a clarifying question back ("which show?"), filler ("lol", "ok"), or something off-topic
+2. sentiment: positive/negative/neutral/mixed
+3. key_insight: one sentence summary of what this tells us about their taste
+4. update_type: affinity_boost/aversion_boost/ambivalent/context_dependent
 
-Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": "..."}}"""
+Output as JSON only: {{"answers_question": true, "sentiment": "...", "key_insight": "...", "update_type": "..."}}"""
 
     # Small-model call — yield to an active chat so two generations don't
     # share the single GPU.
@@ -504,14 +542,32 @@ Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": 
             return False
 
         result = json.loads(clean_llm_text(r.json().get("message", {}).get("content", "").strip()))
+        if not isinstance(result, dict):
+            return False
+
+        # Not an answer ("wait, which show?", "yeah lol"): nothing is stored
+        # and the caller re-opens the question, so the user's REAL answer on
+        # the next turn still finds it. Before, any reply was mined for an
+        # insight the model had to invent, and the claim then swallowed the
+        # actual answer. Only an explicit yes counts.
+        _ans = result.get("answers_question")
+        if not (_ans is True or str(_ans).strip().lower() in ("true", "yes")):
+            logger.info("Verification reply is not an answer — question kept open")
+            return False
 
         title = pending_question.get("title") or pending_question.get("genre", "")
-        insight = result.get("key_insight", "")
-        sentiment = result.get("sentiment", "neutral")
+        insight = (result.get("key_insight") or "").strip()
+        if not insight:
+            return False
+        # A made-up label ("unclear", "") must not become an explicit
+        # statement, the type that weighs most in the taste memory.
+        sentiment = str(result.get("sentiment") or "").strip().lower()
+        if sentiment not in _SENTIMENTS:
+            sentiment = "neutral"
 
         # Store as memory
         memory_type = "explicit_statement" if sentiment != "neutral" else "feedback"
-        await write_memory(
+        mid = await write_memory(
             user_id=user_id,
             memory_type=memory_type,
             content=f"{title}: {insight}",
@@ -523,6 +579,10 @@ Output as JSON only: {{"sentiment": "...", "key_insight": "...", "update_type": 
             },
             media_category=pending_question.get("context", {}).get("media_type"),
         )
+        if mid is None:
+            # Not saved (too short, write failed): returning True would keep
+            # the claim and lose the answer for good.
+            return False
         logger.info("Verification response processed: %s → %s", title, sentiment)
         return True
 

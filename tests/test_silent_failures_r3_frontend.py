@@ -223,8 +223,12 @@ def test_onboarding_sync_and_saves_report_failures():
     save = _fn(setup, "saveOnboardingLibraries")
     check("saveOnboardingLibraries has an error path", "try {" in save and "toast(" in save and "btnDone(btn)" in save)
     build = _fn(setup, "buildOnboardingModels")
-    check("a failed warm-up is said, not skipped",
-          "catch {}" not in build and "warm-up check could not run" in build)
+    # The warm-up became the mini-bench (2026-10-20); its failure text lives
+    # in renderMinibench, which the build step always renders.
+    render = _fn(setup, "renderMinibench")
+    check("a failed warm-up / mini-bench is said, not skipped",
+          "catch {}" not in build and "renderMinibench(mb, mbErr)" in build
+          and "mini-bench could not run" in render and "is unknown" in render)
     check("retryOnboardingStep is registered", "  retryOnboardingStep," in _read("app.js"))
 
 

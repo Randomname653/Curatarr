@@ -399,6 +399,10 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
         except Exception as exc:
             log_topup_failure(logger, "[music_matcher] MB lookup", name, exc)
             failed += 1
+            # Counted, and parked after a few in a row: a name whose lookup
+            # always raises held a batch slot every night.
+            await run_write(lambda: music_misses.record_error(
+                name, error=type(exc).__name__))
             continue
 
         if profile is TRANSIENT:

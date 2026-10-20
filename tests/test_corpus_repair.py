@@ -157,5 +157,16 @@ check("no ARR ground truth -> walk skipped, never misclassified",
 check("dry_run counts zombies without acting",
       '"zombies":    zstats' in en and "if not dry_run:" in en)
 
+# Repair treadmill (2026-10-19): a rebuilt doc still has no enriched:* row,
+# so every weekly walk classed it as a zombie again and re-embedded it — and
+# the same first 150 took the cap, starving the rest of the backlog.
+check("rebuilt doc carries the repair marker",
+      bool(fake_chroma.collection.added[-1][2].get(cr.REBUILT_MARK)))
+_walk = en[en.index("def _classify_docs"):en.index("await run_chroma(_classify_docs)")]
+check("zombie walk skips already-rebuilt gone docs (no weekly re-embed)",
+      "md.get(REBUILT_MARK)" in _walk
+      and _walk.index("if d in truth:") < _walk.index("md.get(REBUILT_MARK)")
+      < _walk.index('bucket["gone"].append'))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
