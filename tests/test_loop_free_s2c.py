@@ -92,23 +92,29 @@ async def _embed(text, kind="document"):
 
 
 _cos_threads = []
-_real_cos = em._cosine_similarity
+_real_load, _real_score = em._load_consideration_rows, em._score_considerations
 
 
-def _spy_cos(a, b):
+def _spy_load(*a):
     _cos_threads.append(_on_loop_thread())
-    return _real_cos(a, b)
+    return _real_load(*a)
 
 
-_saved_em = (em._embed, em._cosine_similarity)
-em._embed, em._cosine_similarity = _embed, _spy_cos
+def _spy_score(*a):
+    _cos_threads.append(_on_loop_thread())
+    return _real_score(*a)
+
+
+_saved_em = (em._embed, em._load_consideration_rows, em._score_considerations)
+em._embed, em._load_consideration_rows, em._score_considerations = (
+    _embed, _spy_load, _spy_score)
 try:
     cons = asyncio.run(em.retrieve_considerations(
         1, "Naruto Shippuden — Action, Adventure", media_category="anime", top_k=3))
 finally:
-    em._embed, em._cosine_similarity = _saved_em
-check("every memory was scored off the loop thread",
-      len(_cos_threads) == 4 and not any(_cos_threads))
+    em._embed, em._load_consideration_rows, em._score_considerations = _saved_em
+check("every memory was decoded and scored off the loop thread",
+      len(_cos_threads) == 2 and not any(_cos_threads))
 check("the ranking is unchanged (the franchise memory, sem 1.0, strength 0.506)",
       [c["id"] for c in cons] == [keep_id]
       and cons[0]["sem"] == 1.0 and cons[0]["strength"] == 0.506

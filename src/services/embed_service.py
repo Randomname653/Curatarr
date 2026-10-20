@@ -170,6 +170,23 @@ async def embed_query(text: str, profile: dict = None) -> Optional[list]:
     return _l2(vecs[0]) if vecs else None
 
 
+async def embed_queries(texts: list, profile: dict = None) -> list:
+    """embed_query for many texts in _BATCH-sized /api/embed calls — one
+    round-trip per 32 queries instead of one each. One Optional[vector]
+    per input."""
+    prof = profile or get_profile()
+    prefix = "search_query: " if prof.get("prefixes") else ""
+    out: list = []
+    for i in range(0, len(texts), _BATCH):
+        chunk = [prefix + (t or "") for t in texts[i:i + _BATCH]]
+        vecs = await _post_embed(prof["model"], chunk, int(prof.get("num_ctx") or 8192))
+        if len(vecs) != len(chunk):
+            out.extend([None] * len(chunk))
+            continue
+        out.extend(_l2(v) for v in vecs)
+    return out
+
+
 async def evict_embedder(profile: dict = None) -> None:
     """Unload the embedder from RAM (keep_alive 0) — called before big
     curator generations so nothing competes for memory."""

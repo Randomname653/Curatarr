@@ -175,18 +175,18 @@ llp.resolve_pitcher_model = _pitcher
 eng._judge_lane = lambda: (False, "test stops before the judge")
 settings.PILLARS_ENABLED = True
 
-# The considerations hook runs once per candidate the judge could reach —
-# the last step before judging. Reading the caller's `cand` there shows
-# exactly what was shortlisted, with its score terms.
+# The considerations hook runs once over the candidates the judge could
+# reach — the last step before judging. Reading the caller's `_consider_slice`
+# there shows exactly what was shortlisted, with its score terms.
 considered: list = []
 
 
-async def _considerations(user_id, profile, media_category=None, top_k=3):
-    considered.append(sys._getframe(1).f_locals["cand"])
-    return []
+async def _considerations(user_id, profiles, media_category=None, top_k=3):
+    considered.extend(sys._getframe(1).f_locals["_consider_slice"])
+    return [[] for _ in profiles]
 
 
-epm.retrieve_considerations = _considerations
+epm.retrieve_considerations_many = _considerations
 
 
 def seed_taste(blob=None, genres=None):

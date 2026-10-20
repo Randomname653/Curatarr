@@ -101,7 +101,9 @@ eng.DELETION_RUN_SUMMARY.clear()
 src = (ROOT / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
 block = src.split("if getattr(settings, \"PILLARS_ENABLED\", False):")[1]
 block = block.split("# ── LEGACY taste-mismatch pitch path")[0]
-loop = block.split("for cand in scored_candidates:")[1]
+loop = block.split("for _ci, cand in enumerate(scored_candidates):")[1]
+# where this candidate's evidence is taken up (built here, or ahead of time)
+EV = "_ev_ahead.pop(_ci"
 
 check("a closed lane is seen BEFORE the warm-up (which can load the summariser)",
       block.index("_judge_lane()") < block.index("PRE-JUDGE SIGNIFICANCE WARM-UP"))
@@ -109,9 +111,11 @@ check("...and before the gate is taken",
       block.index("_judge_lane()") < block.index("await curator_start(_gate_label"))
 check("the loop re-checks after yielding to a chat, before the next verdict",
       loop.index("if gate_contested():") < loop.index("_judge_lane()")
-      < loop.index("await build_evidence("))
+      < loop.index(EV))
 check("the outage breaker is checked before any new work",
-      loop.index("consecutive_outages >= _OUTAGE_STOP_AFTER") < loop.index("await build_evidence("))
+      loop.index("consecutive_outages >= _OUTAGE_STOP_AFTER") < loop.index(EV))
+check("...and no evidence is built ahead while an outage streak runs",
+      "if (consecutive_outages == 0 and _nx < len(scored_candidates)" in loop)
 outage = loop.split("if outage:")[1].split("else:")[0]
 check("an outage does not spend the 60-title cap", "judged -= 1" in outage
       and "consecutive_outages += 1" in outage)

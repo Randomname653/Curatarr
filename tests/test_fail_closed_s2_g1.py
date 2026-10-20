@@ -256,6 +256,10 @@ async def _no_cons(*a, **k):
     return []
 
 
+async def _no_cons_many(profiles):
+    return [[] for _ in profiles]
+
+
 cw.run_chroma = _run_chroma
 cw.get_chroma_db = lambda: SimpleNamespace(
     get_by_ids=lambda ids, chunk_size=1000: {
@@ -265,6 +269,7 @@ sn.load_tech_index = lambda: {}
 llp.resolve_pitcher_model = _pitcher
 eng._judge_lane = lambda: (False, "test stops before the judge")
 epm.retrieve_considerations = _no_cons
+epm.retrieve_considerations_many = lambda uid, profiles, **k: _no_cons_many(profiles)
 settings.PILLARS_ENABLED = True
 
 

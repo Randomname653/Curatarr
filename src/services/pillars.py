@@ -268,9 +268,14 @@ def _owner_watch(db, owner_id: int, item: dict, category: str) -> dict | None:
     filters = _watch_filters(item, category)
     if not filters:
         return None
+    # ``user_id + 0``: the owner holds nearly every row, so an index led by
+    # user_id walks ~350k of them (34 ms per title on the live history), yet
+    # SQLite's planner still prefers it to the per-term title indexes. The
+    # +0 keeps the term off any index and the lookup runs as a MULTI-INDEX
+    # OR on title / series_title / tmdb_id: 0.5 ms (live copy, 2026-10-20).
     rows = (db.query(WatchHistoryEntry.viewed_at, WatchHistoryEntry.completed,
                      WatchHistoryEntry.season, WatchHistoryEntry.episode)
-              .filter(WatchHistoryEntry.user_id == owner_id, *filters).all())
+              .filter((WatchHistoryEntry.user_id + 0) == owner_id, *filters).all())
     if not rows:
         return None
     return {
@@ -299,8 +304,9 @@ def _other_users_watch(db, owner_id: int, item: dict, category: str) -> list[dic
     filters = _watch_filters(item, category)
     if not filters:
         return []
-    rows = (db.query(WatchHistoryEntry)
-              .filter(WatchHistoryEntry.user_id != owner_id, *filters).all())
+    W = WatchHistoryEntry
+    rows = (db.query(W.user_id, W.season, W.episode, W.completed, W.viewed_at)
+              .filter(W.user_id != owner_id, *filters).all())
     if not rows:
         return []
     names = {u.id: (u.plex_username or f"user {u.id}")

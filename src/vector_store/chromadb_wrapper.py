@@ -52,6 +52,24 @@ _quick_checked = False
 _fallback_counts = {"query": 0, "get": 0}
 _FALLBACK_WARN_EVERY = 25      # empty-result fallbacks can mask corruption
 
+# embeddings_for_domain memo: {(collection, domain, limit): (write_gen, at,
+# float32 matrix)}. The taste rebuild pulls the same corpus up to twice per
+# (user, category) — cluster gate + calibration — and the corpus is the same
+# for every household member: 2 x users x 4 categories pulls of up to 30k
+# vectors, each seconds of Chroma decode. Every write through this wrapper
+# bumps _domain_write_gen, so a memo never outlives a change; the TTL bounds
+# how long the matrix (~90 MB at 30k x 768 float32) stays resident.
+_domain_emb_memo: dict = {}
+_domain_emb_lock = threading.Lock()
+_domain_write_gen = [0]
+_DOMAIN_EMB_TTL = 600.0
+
+
+def _bump_domain_gen() -> None:
+    with _domain_emb_lock:
+        _domain_write_gen[0] += 1
+        _domain_emb_memo.clear()
+
 
 def _startup_quick_check() -> None:
     """PRAGMA quick_check on Chroma's backing SQLite, once per process.
@@ -400,6 +418,7 @@ class ChromaDBWrapper:
         if embeddings:
             embeddings = [np.array(e, dtype=np.float32).tolist() for e in embeddings]
         
+        _bump_domain_gen()
         self.collection.add(
             documents=documents,
             embeddings=embeddings,
@@ -424,6 +443,7 @@ class ChromaDBWrapper:
         forever. ``upsert`` replaces all three."""
         if embeddings:
             embeddings = [np.array(e, dtype=np.float32).tolist() for e in embeddings]
+        _bump_domain_gen()
         self.collection.upsert(
             documents=documents,
             embeddings=embeddings,
@@ -560,6 +580,7 @@ class ChromaDBWrapper:
 
     def delete_by_id(self, doc_id: str) -> bool:
         """Delete document by ID."""
+        _bump_domain_gen()
         self.collection.delete(ids=[doc_id])
         return True
     
@@ -569,20 +590,31 @@ class ChromaDBWrapper:
         metadata: Dict
     ) -> bool:
         """Update metadata for existing document."""
+        _bump_domain_gen()
         self.collection.update(
             ids=[doc_id],
             metadatas=[metadata]
         )
         return True
     
-    def embeddings_for_domain(self, domain: str, limit: int = 30000) -> List:
+    def embeddings_for_domain(self, domain: str, limit: int = 30000):
         """All stored embeddings of one domain (movie/show/anime/music) —
         used by the taste rebuild to compute GLOBAL calibration anchors
         (centroid-vs-corpus cosine p10/p90) instead of per-batch anchors.
-        Returns a list of raw vectors; caller normalizes. 'show' unions the
+        Returns the raw vectors as one float32 matrix (rows x dim; Chroma
+        stores float32, so nothing is lost) or [] — caller normalizes.
+        Memoized until the next write through this wrapper, at most
+        _DOMAIN_EMB_TTL s; callers must not modify the matrix in place. 'show' unions the
         legacy 'tv' epoch via domain_where — the external eval measured show
         taste calibrated against the 289-doc 'show' slice while all watched
         series live under 'tv' (995 docs from the old Plex sync)."""
+        import time as _time
+        key = (getattr(self, "collection_name", None), domain, limit)
+        with _domain_emb_lock:
+            gen = _domain_write_gen[0]
+            hit = _domain_emb_memo.get(key)
+            if hit and hit[0] == gen and _time.monotonic() - hit[1] < _DOMAIN_EMB_TTL:
+                return hit[2]
         try:
             res = self.collection.get(where=domain_where(domain),
                                       include=["embeddings", "metadatas"], limit=limit)
@@ -591,7 +623,22 @@ class ChromaDBWrapper:
                 return []
             metas = res.get("metadatas") or [None] * len(emb)
             # A doc merged into its live twin would count the title twice.
-            return [e for e, m in zip(emb, metas) if not (m or {}).get(MERGED_INTO)]
+            rows = [e for e, m in zip(emb, metas) if not (m or {}).get(MERGED_INTO)]
+            try:
+                out = np.asarray(rows, dtype=np.float32) if rows else []
+            except (TypeError, ValueError):   # ragged: mixed widths
+                return rows
+            if not isinstance(out, list) and out.ndim == 2:
+                out.setflags(write=False)
+                with _domain_emb_lock:
+                    if _domain_write_gen[0] == gen:
+                        # expired entries go too: only live corpora stay resident
+                        now = _time.monotonic()
+                        for k in [k for k, v in _domain_emb_memo.items()
+                                  if now - v[1] >= _DOMAIN_EMB_TTL]:
+                            del _domain_emb_memo[k]
+                        _domain_emb_memo[key] = (gen, now, out)
+            return out
         except Exception as e:
             logger.warning("embeddings_for_domain(%s) failed: %s", domain, e)
             return []

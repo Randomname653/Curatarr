@@ -2221,29 +2221,37 @@ async def generate_deletion_proposals(
     # (JUDGE_CAP) is scored, to bound the per-item embedding calls — it was
     # [:30] while the judge walked to 60, so ranks 31-60 were judged without
     # their keep-value deductions.
-    from src.services.episodic_memory import retrieve_considerations
+    from src.services.episodic_memory import retrieve_considerations_many
     _CONSIDER_CAP = 45.0
     _consider_slice = scored_candidates[:JUDGE_CAP]
+    _profiles = []
     for cand in _consider_slice:
         it = cand["item"]
         g = it.get("genres") or it.get("genre") or ""
         if isinstance(g, list):
             g = ", ".join(str(x) for x in g)
-        profile = " — ".join(p for p in (
+        _profiles.append(" — ".join(p for p in (
             str(it.get("title") or ""),
             str(g),
             (it.get("overview") or it.get("synopsis") or "")[:200],
-        ) if p.strip())
-        try:
-            cons = await retrieve_considerations(
-                user_id, profile, media_category=category, top_k=3)
-        except Exception as e:
-            # No lookup is not "no keep-value": deferred to the next scan
-            # instead of being judged without its learned protections.
-            logger.warning("[deletions] considerations lookup failed for %r — "
-                           "deferred: %s", it.get("title"), e)
+        ) if p.strip()))
+    # ONE batched lookup for the whole slice: the queries share /api/embed
+    # calls and the memories are decoded once (it was a serial embed + full
+    # memory read per candidate).
+    try:
+        _cons_all = await retrieve_considerations_many(
+            user_id, _profiles, media_category=category, top_k=3)
+    except Exception as e:
+        # No lookup is not "no keep-value": deferred to the next scan
+        # instead of being judged without its learned protections.
+        logger.warning("[deletions] considerations lookup failed — "
+                       "deferred: %s", e)
+        _cons_all = None
+    for _ci, cand in enumerate(_consider_slice):
+        if _cons_all is None:
             cand["considerations_failed"] = True
             continue
+        cons = _cons_all[_ci]
         keep_pts = round(min(_CONSIDER_CAP, sum(c["strength"] for c in cons) * 30.0), 1)
         cand["considerations"] = cons
         cand["keep_value_pts"] = keep_pts
@@ -2349,50 +2357,73 @@ async def generate_deletion_proposals(
             from src.services.wikidata import topup_wikidata
             from src.services.subtitle_signals import topup_subtitle_metrics
             _warm_slice = scored_candidates[:JUDGE_CAP]
-            _warmed = _warmed_rec = _warmed_wd = _warmed_sub = 0
-            for _c in _warm_slice:
-                _it = _c["item"]
-                _ids = dict(tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
+            _wc = Counter()
+
+            def _ids_of(_it):
+                return dict(tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
                             plex_rating_key=_it.get("plex_rating_key"),
                             year=_it.get("year"))
-                try:
-                    if await asyncio.wait_for(topup_significance(
-                            _it.get("title"), category, **_ids), timeout=20.0):
-                        _warmed += 1
-                except Exception as _e:
-                    # A miss stays unchecked and the judge defers the title.
-                    log_topup_failure(logger, "[deletions] warm-up significance",
-                                      _it.get("title"), _e)
-                try:
-                    if await asyncio.wait_for(topup_reception(
-                            _it.get("title"), category, **_ids), timeout=20.0):
-                        _warmed_rec += 1
-                except Exception as _e:
-                    log_topup_failure(logger, "[deletions] warm-up reception",
-                                      _it.get("title"), _e)
-                # Dialogue metrics: one Plex read per candidate, no LLM, no GPU.
-                # Cheap enough to sit here, and this is the only place that can
-                # fetch them — build_evidence runs inside the gate and may only
-                # read what is already on disk.
-                try:
-                    if await asyncio.wait_for(topup_subtitle_metrics(
-                            _it.get("title"), category,
-                            tmdb_id=_it.get("tmdb_id"),
-                            tvdb_id=_it.get("tvdb_id")), timeout=25.0):
-                        _warmed_sub += 1
-                except Exception as _e:
-                    log_topup_failure(logger, "[deletions] warm-up dialogue",
-                                      _it.get("title"), _e)
-                try:
-                    if await asyncio.wait_for(topup_wikidata(
-                            _it.get("title"), category,
-                            tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
-                            plex_rating_key=_it.get("plex_rating_key")),
-                            timeout=25.0):
-                        _warmed_wd += 1
-                except Exception as _e:
-                    log_topup_failure(logger, "[deletions] warm-up wikidata",
-                                      _it.get("title"), _e)
+
+            async def _warm_significance():
+                # Serial on purpose: the summarizer loads once and distills
+                # the batch title by title.
+                for _c in _warm_slice:
+                    _it = _c["item"]
+                    try:
+                        if await asyncio.wait_for(topup_significance(
+                                _it.get("title"), category, **_ids_of(_it)),
+                                timeout=20.0):
+                            _wc["sig"] += 1
+                    except Exception as _e:
+                        # A miss stays unchecked and the judge defers the title.
+                        log_topup_failure(logger, "[deletions] warm-up significance",
+                                          _it.get("title"), _e)
+
+            # Reception, dialogue metrics and Wikidata are plain HTTP / Plex
+            # reads with no GPU in them, and each patches only its own cache
+            # fields (write_fields) — so they run alongside the summarizer
+            # pass and a few titles at a time instead of one after another
+            # (60 titles x three round-trips of up to 20-25 s each, serially).
+            _net_sem = asyncio.Semaphore(4)
+
+            async def _warm_net(_it):
+                async with _net_sem:
+                    _ids = _ids_of(_it)
+                    try:
+                        if await asyncio.wait_for(topup_reception(
+                                _it.get("title"), category, **_ids), timeout=20.0):
+                            _wc["rec"] += 1
+                    except Exception as _e:
+                        log_topup_failure(logger, "[deletions] warm-up reception",
+                                          _it.get("title"), _e)
+                    # Dialogue metrics: one Plex read per candidate, no LLM, no
+                    # GPU. Cheap enough to sit here, and this is the only place
+                    # that can fetch them — build_evidence runs inside the gate
+                    # and may only read what is already on disk.
+                    try:
+                        if await asyncio.wait_for(topup_subtitle_metrics(
+                                _it.get("title"), category,
+                                tmdb_id=_it.get("tmdb_id"),
+                                tvdb_id=_it.get("tvdb_id")), timeout=25.0):
+                            _wc["sub"] += 1
+                    except Exception as _e:
+                        log_topup_failure(logger, "[deletions] warm-up dialogue",
+                                          _it.get("title"), _e)
+                    try:
+                        if await asyncio.wait_for(topup_wikidata(
+                                _it.get("title"), category,
+                                tmdb_id=_it.get("tmdb_id"), tvdb_id=_it.get("tvdb_id"),
+                                plex_rating_key=_it.get("plex_rating_key")),
+                                timeout=25.0):
+                            _wc["wd"] += 1
+                    except Exception as _e:
+                        log_topup_failure(logger, "[deletions] warm-up wikidata",
+                                          _it.get("title"), _e)
+
+            await asyncio.gather(_warm_significance(),
+                                 *(_warm_net(_c["item"]) for _c in _warm_slice))
+            _warmed, _warmed_rec, _warmed_wd, _warmed_sub = (
+                _wc["sig"], _wc["rec"], _wc["wd"], _wc["sub"])
             if _warmed or _warmed_rec or _warmed_wd or _warmed_sub:
                 _msg(f"{category}: warmed {_warmed} significance, "
                      f"{_warmed_rec} reception, {_warmed_wd} on-record facts, "
@@ -2415,8 +2446,12 @@ async def generate_deletion_proposals(
         # the finally would release the slot of whoever holds it now (the
         # waiting chat) — letting a third caller onto the GPU alongside it.
         _holds_gate = True
+        # Evidence for the NEXT candidate is assembled while the GPU decodes
+        # this one's verdict (DB reads, two CPU-embedder calls, cache reads —
+        # none of it needs the model). {index: Task}; drained in the finally.
+        _ev_ahead: dict = {}
         try:
-            for cand in scored_candidates:
+            for _ci, cand in enumerate(scored_candidates):
                 if len(final_proposals) >= TARGET_CUTS or judged >= JUDGE_CAP:
                     break
                 # YIELD between verdicts: a funnel run holds the gate for many
@@ -2459,7 +2494,9 @@ async def generate_deletion_proposals(
                 try:
                     # No session passed: build_evidence reads the DB in a short
                     # session of its own and closes it before its network calls.
-                    ev = await build_evidence(item, user_id, category)
+                    _pre = _ev_ahead.pop(_ci, None)
+                    ev = await (_pre if _pre is not None
+                                else build_evidence(item, user_id, category))
                 except Exception as e:
                     # Our code, not the model: no LLM call was made, so it
                     # neither counts as judged nor resets the outage streak.
@@ -2541,6 +2578,13 @@ async def generate_deletion_proposals(
                                        "principles could not be read",
                                        category, item.get("title"))
                         continue
+                    # Not while Ollama is failing: the breaker above must
+                    # be able to stop the run before any new work starts.
+                    _nx = _ci + 1
+                    if (consecutive_outages == 0 and _nx < len(scored_candidates)
+                            and _nx not in _ev_ahead):
+                        _ev_ahead[_nx] = asyncio.ensure_future(build_evidence(
+                            scored_candidates[_nx]["item"], user_id, category))
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
                                                law_extra=ev.get("law_extra", ""))
@@ -2624,6 +2668,12 @@ async def generate_deletion_proposals(
                                         user_id, item, category, v, verdict)
                 # EVALUATE / bare-Ego keep / None → neither propose nor protect.
         finally:
+            for _t in _ev_ahead.values():
+                _t.cancel()
+            if _ev_ahead:
+                # Reap them: an unawaited failed task logs "exception never
+                # retrieved", and a cancel must land before the gate is freed.
+                await asyncio.gather(*_ev_ahead.values(), return_exceptions=True)
             # Eager pitcher eviction BEFORE releasing the gate ("gate free ⇒
             # VRAM free"): a chat right after the run loads the curator
             # without waiting out the pitcher's 10m keep_alive. Guarded +
