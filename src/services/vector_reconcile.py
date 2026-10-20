@@ -180,9 +180,10 @@ def is_drift(enriched: int, missing: int) -> bool:
     return enriched >= _DRIFT_MIN_ROWS and (enriched - missing) < _DRIFT_RATIO * enriched
 
 
-async def reconcile_vectors(task=None) -> bool:
+async def reconcile_vectors(task=None, report: dict | None = None) -> bool:
     """One pass; True when nothing actionable is left, False while re-embeds
-    remain (the custodian keeps the task due and continues next tick)."""
+    remain (the custodian keeps the task due and continues next tick).
+    *report*, when given, receives the pass's counts and summary line."""
     import asyncio
     from src.database.runner import run_read, run_write
     from src.services.task_monitor import task_monitor
@@ -278,6 +279,10 @@ async def reconcile_vectors(task=None) -> bool:
                f"{f' · {left} left' if left > 0 else ''}")
     _say(summary)
     logger.info("[vectors] reconcile: %s", summary)
+    if report is not None:
+        report.update(enriched=len(rows), docs=len(present), reembedded=done,
+                      failed=failed, requeued=len(requeue_now), no_text=no_text,
+                      gave_up=len(gave_up), left=max(0, left), summary=summary)
     if failed and not done:
         from src.services.data_custodian import TaskFailed
         raise TaskFailed(f"{failed} re-embeds failed (embedder or Chroma down?)")

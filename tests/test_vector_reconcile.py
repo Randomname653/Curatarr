@@ -270,6 +270,68 @@ run(vr.boot_drift_check())
 check("boot: an empty store with 100 enriched rows clears the stamp",
       state["job_last_run:vector_reconcile"] == "")
 
+# ── 6b. the pass reports its counts ─────────────────────────────────────────
+seed([("r1", "movie", True, None)],
+     {"enriched:movie:1": {"title": "R", "plex_rating_key": "r1",
+                           "embedding_text": "x", "media_type": "movie"}})
+present.clear()
+rep = {}
+run(vr.reconcile_vectors(report=rep))
+check("report carries the counts and the summary line",
+      rep.get("reembedded") == 1 and rep.get("left") == 0 and "re-embedded 1" in rep["summary"])
+
+# ── 6c. the deprecated backfill script runs the same pass ───────────────────
+import importlib.util  # noqa: E402
+import subprocess  # noqa: E402
+
+script = Path(__file__).resolve().parents[1] / "scripts/revectorize_backfill.py"
+spec = importlib.util.spec_from_file_location("revectorize_backfill", script)
+rb = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rb)
+
+passes = []
+
+
+def fake_pass(outcomes):
+    async def _p(task=None, report=None):
+        done, rep_ = outcomes[len(passes)]
+        passes.append(1)
+        report.update(rep_, summary="s")
+        return done
+    return _p
+
+
+_real_pass = vr.reconcile_vectors
+try:
+    passes.clear()
+    vr.reconcile_vectors = fake_pass([(False, {"reembedded": 300, "requeued": 0}),
+                                      (True, {"reembedded": 12, "requeued": 0})])
+    code = run(rb.main(max_passes=10))
+    check("script: drains the backlog pass by pass, then exits 0",
+          code == 0 and len(passes) == 2)
+    passes.clear()
+    vr.reconcile_vectors = fake_pass([(False, {"reembedded": 0, "requeued": 0, "left": 9})] * 3)
+    code = run(rb.main(max_passes=10))
+    check("script: a pass without progress stops it (exit 1), no spinning",
+          code == 1 and len(passes) == 1)
+
+    from src.services.data_custodian import TaskFailed  # noqa: E402
+
+    async def _boom(task=None, report=None):
+        raise TaskFailed("embedder down")
+    vr.reconcile_vectors = _boom
+    check("script: a failed pass exits 1", run(rb.main(max_passes=3)) == 1)
+finally:
+    vr.reconcile_vectors = _real_pass
+
+out = subprocess.run([sys.executable, str(script), "--dry-run"], capture_output=True,
+                     text=True, cwd=str(script.parents[1]), timeout=120)
+check("script: the removed flags are refused with an explanation, nothing runs",
+      out.returncode != 0 and "removed" in out.stderr and "deprecated" in out.stdout)
+src_script = script.read_text(encoding="utf-8")
+check("script: the plex-key profile lookup is gone",
+      "enriched:{row['media_category']}:{row['plex_rating_key']}" not in src_script)
+
 # ── 7. wiring ────────────────────────────────────────────────────────────────
 from src.services.data_custodian import _registry  # noqa: E402
 
