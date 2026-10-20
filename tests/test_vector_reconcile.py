@@ -195,6 +195,36 @@ with fake_db_session() as db:
 check("the next pass finishes the backlog without a second alert this week",
       alerts == 1 and len(present) == N)
 
+# ── 3b. one profile, two library entries (Plex watch + Radarr) ──────────────
+seed([("5555", "movie", True, None), ("radarr:7", "movie", True, None)],
+     {"enriched:movie:27205": {"title": "Inception", "plex_rating_key": "5555",
+                               "embedding_text": "dreams", "media_type": "movie"}})
+with fake_db_session() as db:       # the Radarr row knows the title the profile has
+    db.query(EnrichmentStatus).filter_by(plex_rating_key="radarr:7").update({"title": "Inception"})
+present.clear()
+embedded.clear()
+run(vr.reconcile_vectors())
+check("a profile shared by two rows is embedded once",
+      embedded == [("5555", "movie")])
+check("... and covers both rows (no re-queue of the second one)",
+      row("radarr:7") == (True, True) and row("5555") == (True, True))
+
+# ── 3c. a re-queue that re-enrichment cannot cover is not looped ────────────
+seed([("orphan", "show", True, None)], {})
+present.clear()
+run(vr.reconcile_vectors())
+check("first pass re-queues the row", row("orphan") == (False, False))
+with fake_db_session() as db:       # enrichment ran: cache hit, no doc written
+    db.query(EnrichmentStatus).filter_by(plex_rating_key="orphan").update({"enriched": True})
+run(vr.reconcile_vectors())
+check("second pass leaves it enriched (reported, not re-queued daily)",
+      row("orphan") == (True, False))
+present.add("orphan")
+run(vr.reconcile_vectors())
+import src.services.app_state as _as  # noqa: E402
+check("a row that healed drops out of the re-queue memory",
+      _as.get_state(vr._REQUEUED_KEY) == "[]")
+
 # ── 4. a failed Chroma read is a failure, never "everything is missing" ─────
 seed([("a1", "movie", True, None)], {})
 chroma_broken[0] = True

@@ -17,11 +17,14 @@ That covers every keying, whether Plex ``ratingKey``, ``radarr:42`` or a
 ``tmdb``/``anilist`` fallback; ``vector_ready`` alone could not (only the
 taste engine and the backfill script ever set it).
 
-Per enriched row with no doc:
+Per enriched row with no doc (its profile found by key, or else by category
+and title: one profile serves every library entry of a title):
   * its profile is cached  -> re-embed from the cache (one embedding call, no
-    summariser), capped per run, then ``vector_ready = 1``;
+    summariser, one per profile however many rows share it), capped per
+    run, then ``vector_ready = 1``;
   * no readable profile    -> ``enriched = 0``: the normal enrichment cycle
-    rebuilds it (the knowledge is already gone from both stores);
+    rebuilds it (the knowledge is already gone from both stores). Once per
+    row: one that re-enrichment did not cover is reported, not looped;
   * profile with no text   -> nothing to embed, left alone (counted).
 
 Never destructive: it adds vectors and re-queues rows, it deletes nothing.
@@ -46,6 +49,8 @@ _DRIFT_RATIO = 0.5        # docs for < half the enriched rows = desync, not nois
 _DRIFT_MIN_ROWS = 50      # a tiny library is not evidence of anything
 _ALERT_EVERY = timedelta(days=7)
 _ALERT_TRIGGER = "vector_desync"
+# app_state: ids of rows re-queued while missing; each is re-queued once.
+_REQUEUED_KEY = "vector_reconcile:requeued"
 
 
 def doc_id_for(profile: dict) -> str:
@@ -63,22 +68,33 @@ def _chroma_ids() -> set:
 
 
 def _enriched_rows() -> dict:
-    """plex_rating_key -> (id, media_category, vector_ready) for every row the
-    pre-filter treats as done."""
+    """plex_rating_key -> (id, media_category, vector_ready, title) for every
+    row the pre-filter treats as done."""
     from src.database.connection import get_db_session
     from src.database.models import EnrichmentStatus as ES
     with get_db_session() as db:
-        return {str(k): (i, cat, bool(vr)) for i, k, cat, vr in db.query(
-            ES.id, ES.plex_rating_key, ES.media_category, ES.vector_ready)
+        return {str(k): (i, cat, bool(vr), t) for i, k, cat, vr, t in db.query(
+            ES.id, ES.plex_rating_key, ES.media_category, ES.vector_ready, ES.title)
             .filter(ES.enriched == True, ES.error.is_(None)).all()}  # noqa: E712
 
 
-def _profile_index(keys: set) -> dict:
-    """plex_rating_key -> (cache_key, doc_id, has_text, category) for the live profiles
-    of *keys*. Streams the rows and keeps three fields each: the profiles of a
-    large library would not fit comfortably in memory at once."""
+def _title_key(cat, title) -> tuple:
+    return (cat or "", (title or "").strip().lower())
+
+
+def _profile_index() -> tuple:
+    """Every live polished profile, twice: by the plex_rating_key it names and
+    by (category, title). Values are (cache_key, doc_id, has_text, category).
+
+    The title map matters because ONE profile serves every library entry of a
+    title (the cache key is the external id): a movie both watched in Plex and
+    managed by Radarr has two rows, and the profile names whichever enriched
+    last. The other row is covered by that profile's doc, not orphaned.
+    Streams the rows and keeps four fields each — the profiles of a large
+    library would not fit comfortably in memory at once."""
     from src.cache.metadata_cache import MetadataCache, _CACHE_VERSION
-    out: dict = {}
+    by_key: dict = {}
+    by_title: dict = {}
     cache = MetadataCache()
     try:
         cur = cache.conn.execute(
@@ -93,18 +109,20 @@ def _profile_index(keys: set) -> dict:
                 continue
             if not isinstance(prof, dict) or prof.get("_not_found"):
                 continue
-            prk = str(prof.get("plex_rating_key") or "")
-            if prk not in keys:
-                continue
             key = row["cache_key"][len(_CACHE_VERSION) + 1:]       # enriched:{cat}:{id}
             cat = key.split(":", 2)[1] if key.count(":") >= 2 else ""
             # Music artists embed a genre/tag line when the summariser wrote
             # no embedding_text (store_profile_vector does the same).
             has_text = bool(prof.get("embedding_text")) or cat == "music"
-            out[prk] = (key, doc_id_for(prof), has_text, cat)
+            entry = (key, doc_id_for(prof), has_text, cat)
+            prk = str(prof.get("plex_rating_key") or "")
+            if prk:
+                by_key[prk] = entry
+            if prof.get("title"):
+                by_title.setdefault(_title_key(cat, prof["title"]), entry)
     finally:
         cache.close()
-    return out
+    return by_key, by_title
 
 
 def _read_profile(cache_key: str):
@@ -175,26 +193,36 @@ async def reconcile_vectors(task=None) -> bool:
     if not rows:
         _say("No enriched rows")
         return True
-    profiles = await asyncio.to_thread(_profile_index, set(rows))
+    by_key, by_title = await asyncio.to_thread(_profile_index)
+    from src.services.app_state import get_state
+    try:
+        requeued_before = set(json.loads(await run_read(get_state, _REQUEUED_KEY) or "[]"))
+    except (TypeError, ValueError):
+        requeued_before = set()
 
-    reembed, requeue, no_text, stale_flag, true_flag = [], [], 0, [], []
-    for prk, (row_id, _cat, ready) in rows.items():
-        prof = profiles.get(prk)
+    # cache_key -> (category, [row ids it covers]): one embed per profile,
+    # however many rows share it.
+    reembed: dict = {}
+    requeue, gave_up, no_text, stale_flag, true_flag = [], [], 0, [], []
+    for prk, (row_id, cat, ready, title) in rows.items():
+        prof = by_key.get(prk) or by_title.get(_title_key(cat, title))
         # An expired profile with its doc intact is the audit's business.
-        if (prof is not None and prof[1] in present) or (prof is None and prk in present):
+        if prk in present or (prof is not None and prof[1] in present):
             if not ready:
                 true_flag.append(row_id)
             continue
-        if prof is not None and not prof[2]:
-            no_text += 1
-            continue
-        if prof is not None:
-            reembed.append((row_id, prof[0], prof[3]))
-        else:
-            requeue.append(row_id)
         if ready:
             stale_flag.append(row_id)
-    missing = len(reembed) + len(requeue)
+        if prof is None:
+            # Re-enrichment rebuilds a row whose knowledge is gone from both
+            # stores. Once: a row it did not cover (its profile filed under
+            # a title this pass cannot match) would otherwise loop daily.
+            (gave_up if row_id in requeued_before else requeue).append(row_id)
+        elif not prof[2]:
+            no_text += 1
+        else:
+            reembed.setdefault(prof[0], (prof[3], []))[1].append(row_id)
+    missing = len(reembed) + len(requeue) + len(gave_up)
     requeue_now = requeue[:_REQUEUE_BATCH]
 
     # The library stats read vector_ready: make it say what is really there.
@@ -204,32 +232,37 @@ async def reconcile_vectors(task=None) -> bool:
         await run_write(_set_flags, true_flag, vector_ready=True)
     if requeue_now:
         await run_write(_set_flags, requeue_now, enriched=False, vector_ready=False)
+    # Remembered while still missing; a row that healed drops out.
+    remember = sorted(set(gave_up) | set(requeue_now))
+    if remember or requeued_before:
+        from src.services.app_state import set_state
+        await run_write(set_state, _REQUEUED_KEY, json.dumps(remember))
     if is_drift(len(rows), missing):
         logger.critical(
             "[vectors] ChromaDB holds docs for %d of %d enriched rows — restored "
-            "database without its vector store? Re-embedding %d from the cache, "
-            "re-queueing %d for enrichment", len(rows) - missing, len(rows),
-            len(reembed), len(requeue_now))
+            "database without its vector store? Re-embedding %d profiles from the "
+            "cache, re-queueing %d rows for enrichment", len(rows) - missing,
+            len(rows), len(reembed), len(requeue_now))
         await run_write(_alert_admin, len(rows), len(rows) - missing)
 
     from src.services.media_enricher import store_profile_vector
     from src.cache.metadata_cache import acache_set
+    batch = list(reembed.items())[:_REEMBED_BATCH]
     done, failed, landed = 0, 0, []
-    for row_id, cache_key, cat in reembed[:_REEMBED_BATCH]:
+    for cache_key, (cat, row_ids) in batch:
         prof = await asyncio.to_thread(_read_profile, cache_key)
         if not prof:
             continue
         if await store_profile_vector(prof, media_type=prof.get("media_type") or cat or "movie",
                                       fallback_title=prof.get("title") or ""):
-            landed.append(row_id)
+            landed.extend(row_ids)
             if prof.pop("vector_pending", None):
                 await acache_set(cache_key, prof, days=30)
             done += 1
         else:
             failed += 1
         if task is not None and (done + failed) % 25 == 0:
-            task_monitor.update(task, processed=done + failed,
-                                total=min(len(reembed), _REEMBED_BATCH))
+            task_monitor.update(task, processed=done + failed, total=len(batch))
     if landed:
         await run_write(_set_flags, landed, vector_ready=True)
 
@@ -237,6 +270,7 @@ async def reconcile_vectors(task=None) -> bool:
     summary = (f"{len(rows):,} enriched, {len(present):,} docs · re-embedded {done}"
                f"{f', {failed} failed' if failed else ''} · re-queued {len(requeue_now)}"
                f"{f' · {no_text} with nothing to embed' if no_text else ''}"
+               f"{f' · {len(gave_up)} not rebuilt by re-enrichment' if gave_up else ''}"
                f"{f' · {left} left' if left > 0 else ''}")
     _say(summary)
     logger.info("[vectors] reconcile: %s", summary)
