@@ -266,6 +266,13 @@ for msg, anchor, want in [
     ("yes", "Friends", True),
     ("yes", None, False),
     ("it stays.", "Friends", True),
+    # German verb-second order and emphatic forms (2026-10-21)
+    ("Lösch den Film nicht!", None, True),
+    ("auf keinen Fall löschen", None, True),
+    ("Finger weg von Dark", None, True),
+    ("bitte nicht entfernen", None, True),
+    ("hands off that one", None, True),
+    ("was läuft heute?", None, False),
 ]:
     check(f"protection pre-gate: {msg!r} (anchor={anchor!r}) -> {want}",
           em.protection_worth_checking(msg, anchor) is want)
@@ -276,13 +283,22 @@ for msg, want in [
     ("I love the soundtrack because it's moody", True),
     ("honestly kind of boring after episode 3", True),
     ("das war langweilig", True),
+    ("Der Film gefällt mir richtig", True),
+    ("einfach genial", True),
+    ("ein Meisterwerk", True),
+    ("not really my thing", True),
+    ("was läuft heute?", False),
 ]:
     check(f"memory pre-gate: {msg!r} -> {want}", bool(em._PREF_CUES.search(msg)) is want)
 
 chat_src = _src("src/routers/chat.py")
 post = chat_src[chat_src.index("def _schedule_post_turn("):chat_src.index("async def send_message(")]
 check("the post-turn scheduler gates the protection task before creating it",
-      post.index("protection_worth_checking(") < post.index("_check_protection_intent_bg("))
+      post.index("protection_gate(") < post.index("_check_protection_intent_bg("))
+check("the protection pre-gate is log-only for now (owner, 2026-10-21)",
+      em.PROTECTION_PREGATE_ENFORCED is False
+      and em.protection_gate("thanks!", "Friends", log=False) is True
+      and em.protection_worth_checking("thanks!", "Friends") is False)
 
 
 # ── 5. one runner, one keep_alive for every curator call ────────────────────

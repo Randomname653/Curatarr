@@ -1270,7 +1270,12 @@ _PREF_CUES = re.compile(
     r"|terrible|trash|garbage|cringe|meh|mid|fun|funny|beautiful|gorgeous|ugly|dumb"
     r"|stupid|smart|clever|slow|tedious|never again|always|never|rewatch\w*|binge\w*"
     r"|guilty pleasure|comfort|nostalgi\w*|keep\w*|kept|delete|deleting|get rid"
-    r"|weil|mag|mochte|liebe|hasse|lieblings\w*|langweilig|gut|schlecht"
+    r"|wonderful|excellent|fantastic|incredible|perfect|best|worst|hilarious|dull"
+    r"|not (?:really |quite )?(?:for me|my thing)|obsessed"
+    r"|weil|mag|mochte|liebe|hasse|lieblings\w*|langweil\w*|gut|schlecht"
+    r"|gefäll\w*|gefiel\w*|genial|super|schön\w*|geil\w*|klasse|grandios|gro(?:ß|ss)artig"
+    r"|meisterwerk|mies|öde|scheiß\w*|lieber|gern\w*|nicht mein ding|spannend|witzig"
+    r"|lustig|nervig|nervt"
     r"|toll|furchtbar|behalt\w*|lösch\w*)\b", re.I)
 
 
@@ -2262,11 +2267,32 @@ _KEEP_CUES = re.compile(
     r"|hang(?:ing)? on to|not (?:getting rid|deleting|removing|letting (?:it|this) go)"
     r"|don'?t (?:delete|remove|touch|cut)|do not (?:delete|remove|touch|cut)"
     r"|leave (?:it|this|them)|override|my call|veto|save (?:it|this)|spare (?:it|this)"
+    r"|never (?:delete|remove)|hands off|not done with|still (?:watching|want)"
     r"|behalt\w*|bleib\w*|schütz\w*|nicht lösch\w*|lass(?:en)? (?:wir )?(?:es|ihn|sie|das)"
-    r"|hände weg)\b", re.I)
+    r"|lösch\w*\s+(?:\S+\s+){0,4}?nicht|auf keinen fall|blo(?:ß|ss) nicht|finger weg"
+    r"|nicht (?:weg|entfern\w*|raus)|hände weg)\b", re.I)
 _AFFIRM_ONLY = re.compile(
     r"^\s*(?:yes|yeah|yep|yup|sure|agreed|deal|exactly|fine|ok(?:ay)?|ja|jo|jep|genau"
     r"|einverstanden|passt)\b[\s.!]*$", re.I)
+
+
+# Log-only since 2026-10-21 (owner's call): the pre-gate below decides
+# nothing yet, it only logs the turns it WOULD have skipped. A missed keep
+# costs a protection; the spared call is not worth that until the log shows
+# the cues catch every real keep. Set True to let it skip.
+PROTECTION_PREGATE_ENFORCED = False
+
+
+def protection_gate(user_message: str, anchor_title: Optional[str] = None, *,
+                    log: bool = True) -> bool:
+    """Whether the post-turn protection check runs for this turn."""
+    if protection_worth_checking(user_message, anchor_title):
+        return True
+    if log:
+        logger.info("[protection] pre-gate %s - no keep cue in %r",
+                    "skipped the check" if PROTECTION_PREGATE_ENFORCED
+                    else "would skip it (log-only)", (user_message or "")[:80])
+    return not PROTECTION_PREGATE_ENFORCED
 
 
 def protection_worth_checking(user_message: str, anchor_title: Optional[str] = None) -> bool:
@@ -2397,7 +2423,7 @@ async def detect_and_handle_protection(
     through to the resolution-log row (state vs history — see
     ``CuratorResolutionLog``).
     """
-    if not protection_worth_checking(user_message, anchor_title):
+    if not protection_gate(user_message, anchor_title, log=False):
         logger.debug("[protection] no keep cue in the user's words — NO_ACTION for %r",
                      (user_message or "")[:60])
         return None

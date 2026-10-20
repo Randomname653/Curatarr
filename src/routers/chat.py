@@ -2822,8 +2822,8 @@ def _schedule_post_turn(user_id: int, thread_id: str, user_text: str, reply: str
         anchor = _get_thread_active_title(user_id, thread_id)
         # Lexical pre-gate, before a task even exists: a turn with no keep
         # cue in the user's own words cannot carry a keep directive.
-        from src.services.episodic_memory import protection_worth_checking
-        if not protection_worth_checking(user_text, anchor[0] if anchor else None):
+        from src.services.episodic_memory import protection_gate
+        if not protection_gate(user_text, anchor[0] if anchor else None):
             return
         track_task(
             _check_protection_intent_bg(
