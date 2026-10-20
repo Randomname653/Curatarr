@@ -208,6 +208,43 @@ async def warmup(req: WarmupRequest,
     return await warmup_check(endpoint, req.model)
 
 
+class MinibenchRequest(BaseModel):
+    ollama_endpoint: Optional[str] = None
+    vram_gb: Optional[float] = None
+    gpu_name: Optional[str] = Field(default=None, max_length=120)
+
+    _url = field_validator("ollama_endpoint")(validate_service_url)
+
+
+@router.post("/minibench")
+async def minibench(req: MinibenchRequest,
+                    _gate=Depends(require_admin_or_first_run)):
+    """About a minute of production calls on this machine (warm-up, two
+    deletion verdicts, one card note) for a fictional owner: does the baked
+    curator run as the bench measured? When the hardware matrix has a package
+    for this card and it names the same base model, the bench runs with the
+    package's context and GPU split and returns its numbers to compare."""
+    from src.services.model_catalog import hardware_package
+    from src.services.setup_minibench import run_minibench
+    endpoint = req.ollama_endpoint or settings.effective_ollama
+    await _refuse_resolved({"ollama_endpoint": endpoint})
+    pkg = hardware_package(req.vram_gb, req.gpu_name) if req.vram_gb else None
+    rec = (pkg or {}).get("recommended") or {}
+    same = rec.get("model") == settings.BASE_CURATOR_MODEL
+    result = await run_minibench(endpoint, settings.CURATOR_MODEL,
+                                 num_ctx=rec.get("num_ctx") if same else None,
+                                 num_gpu=rec.get("num_gpu") if same else None,
+                                 expected_gen_tok_s=((pkg.get("estimate") or {}).get("gen_tok_s")
+                                                     or (rec.get("expected") or {}).get("gen_tok_s"))
+                                 if same else None)
+    if same:
+        result["package"] = {"tier_gb": pkg.get("tier_gb"), "model": rec.get("model"),
+                             "expected": rec.get("expected"), "estimate": pkg.get("estimate"),
+                             "server": {k: v for k, v in (rec.get("server") or {}).items()
+                                        if k in ("OLLAMA_KV_CACHE_TYPE", "OLLAMA_FLASH_ATTENTION")}}
+    return result
+
+
 class SetupCompleteRequest(BaseModel):
     plex_url: str
     plex_token: str
