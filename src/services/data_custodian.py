@@ -536,6 +536,12 @@ async def _run_cache_prune(task=None) -> bool:
     return True
 
 
+async def _run_limbo_reconcile(task=None) -> bool:
+    from src.services.limbo_reconcile import reconcile_limbo
+    await reconcile_limbo(task=task)
+    return True
+
+
 async def _run_vector_reconcile(task=None) -> bool:
     from src.services.vector_reconcile import reconcile_vectors
     return await reconcile_vectors(task=task)
@@ -736,6 +742,12 @@ def _registry() -> list[Task]:
         # bans a music delete could not set.
         Task("deletion_returns", "Deleted items back in the library", 24.0,
              _run_deletion_returns, takes_task=True),
+        # Deletions with an unknown outcome (limbo, and orphaned "deleting"
+        # claims): recorded as deleted once the service answers 404 for
+        # them, otherwise left for the owner. Never re-sends a DELETE for an
+        # item that still exists.
+        Task("limbo_reconcile",  "Deletions with an unknown outcome", 24.0,
+             _run_limbo_reconcile, takes_task=True),
         # Household collections: the 27B designs rotating themed shelves from
         # the OWNED library (section-global — one set via the owner token).
         Task("plex_collections", "Curatarr collections", 168.0,
