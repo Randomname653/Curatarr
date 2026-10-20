@@ -536,6 +536,11 @@ async def _run_cache_prune(task=None) -> bool:
     return True
 
 
+async def _run_vector_reconcile(task=None) -> bool:
+    from src.services.vector_reconcile import reconcile_vectors
+    return await reconcile_vectors(task=task)
+
+
 async def _run_chat_starters(task=None) -> str:
     """Top up every active user's conversation-starter pool.
 
@@ -697,6 +702,12 @@ def _registry() -> list[Task]:
              needs_llm=True, takes_task=True),
         Task("cache_prune",      "Expired cache rows",   24.0,  _run_cache_prune,
              takes_task=True),
+        # A database restored without its vector store (or with an older
+        # one): enriched rows whose doc is gone are re-embedded from the
+        # cache, or re-queued when the profile is gone too. CPU embeds only;
+        # returns False while a backlog remains, so ticks continue it.
+        Task("vector_reconcile", "Vector store vs database", 24.0,
+             _run_vector_reconcile, takes_task=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
              takes_deep=True, takes_task=True),
         Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,
