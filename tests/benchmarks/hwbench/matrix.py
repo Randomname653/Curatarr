@@ -34,6 +34,9 @@ Rules, in order:
    score (NOTES_SCORER). A package without a judge score is ``provisional``
    and ranks after every scored one. Agreement is still exported, as a
    diagnostic only. Ties go to the faster package, then to less VRAM.
+6. Recommendation gates (``recommend``): within QUALITY_WINDOW of the best
+   score the faster package wins, and a package slower than COMFORT_JUDGE_S
+   per verdict is only an alternative while a comfortable one exists.
 
 Thresholds are module constants so a test can pin them and a change shows
 up in review.
@@ -60,6 +63,8 @@ MIN_KV_AGREEMENT = 90.0     # % of its own verdicts a quantised KV cache must le
 JUDGE_SCORER = "claude-judge"   # rubric judge-argument-2026-10
 NOTES_SCORER = "claude"         # rubric 5-axis-2026-08 (card notes)
 JUDGE_WEIGHT = 0.6              # the judge decides deletions; the notes are what people read
+QUALITY_WINDOW = 1.5            # points of 25 within which the faster package wins
+COMFORT_JUDGE_S = 20.0          # median seconds per judge verdict for a recommendation
 DEFAULT_SERVER = "fa-auto_kv-f16"
 TIER_METHOD = "llama_fit_target"
 TIER_OVERRUN_TOL_MIB = 256
@@ -173,6 +178,29 @@ def valid_tier_cell(run: dict) -> bool:
 def _tier_fit_derived(cell: dict, tier_gb: int, reserve_mib: int) -> bool:
     need = (cell.get("vram_model_mib") or 0) + reserve_mib + FIT_MARGIN_MIB
     return share(cell) == 100 and need <= tier_gb * 1024
+
+
+def recommend(opts: list[dict]) -> dict | None:
+    """The package a card gets recommended, from its per-model best packages
+    (Don, 2026-10-20). Two gates over the quality ranking:
+
+    * comfort - a package over COMFORT_JUDGE_S per judge verdict is only an
+      alternative, unless nothing on the card is comfortable (gemma4:31b on
+      16 GB: 6 tok/s, 44 s a verdict, best quality);
+    * quality window - among packages within QUALITY_WINDOW points of the
+      best, the fastest wins (a 2-point quality lead is real, a 0.3 lead is
+      scoring noise, ten times the speed is not).
+
+    Scored packages always beat provisional ones."""
+    if not opts:
+        return None
+    for o in opts:
+        o["comfortable"] = (o["expected"]["judge_s"] or 1e9) <= COMFORT_JUDGE_S
+    pool = [o for o in opts if not o["quality"]["provisional"]] or opts
+    pool = [o for o in pool if o["comfortable"]] or pool
+    best = max(o["quality"]["score25"] or 0 for o in pool)
+    window = [o for o in pool if (o["quality"]["score25"] or 0) >= best - QUALITY_WINDOW]
+    return max(window, key=lambda o: o["expected"]["gen_tok_s"] or 0)
 
 
 def quality_score(by_scorer: dict) -> dict:
@@ -292,8 +320,9 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
             if o["model"] not in seen:
                 seen.add(o["model"])
                 uniq.append(o)
-        tiers[str(t)] = {"recommended": uniq[0] if uniq else None,
-                         "alternatives": uniq[1:4]}
+        rec = recommend(uniq)
+        tiers[str(t)] = {"recommended": rec,
+                         "alternatives": [o for o in uniq if o is not rec][:3]}
     # Measured footprints for the catalog: MiB per context window, per model
     # and server setting — what the wizard checks a card against.
     footprints: dict = {}

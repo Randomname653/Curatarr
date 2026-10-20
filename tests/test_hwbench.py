@@ -212,6 +212,22 @@ check("agreement with the production model does not rank: 60 % agreement but bet
       mx_s["tiers"]["24"]["recommended"]["model"] == "tiny:4b")
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
 
+# Recommendation gates: comfort, then the quality window.
+def _opt(name, score, tok, judge, prov=False):
+    return {"model": name, "quality": {"score25": score, "provisional": prov},
+            "expected": {"gen_tok_s": tok, "judge_s": judge}}
+slow, fast = _opt("big", 22.2, 6.1, 44.0), _opt("moe", 20.1, 95.6, 3.6)
+check("comfort gate: a 44 s-per-verdict package is only an alternative while a comfortable one exists",
+      matrix.recommend([slow, fast])["model"] == "moe" and not slow["comfortable"])
+check("comfort gate falls away when nothing on the card is comfortable",
+      matrix.recommend([slow, _opt("big2", 21.0, 5.0, 60.0)])["model"] == "big")
+check("quality window: within 1.5 points the faster package wins",
+      matrix.recommend([_opt("a", 22.0, 30, 8), _opt("b", 21.0, 90, 3)])["model"] == "b")
+check("...outside it the better one stays",
+      matrix.recommend([_opt("a", 22.0, 30, 8), _opt("b", 20.0, 90, 3)])["model"] == "a")
+check("a scored package beats a faster provisional one",
+      matrix.recommend([_opt("a", 20.0, 30, 8), _opt("p", None, 200, 1, prov=True)])["model"] == "a")
+
 # The context sweep's measured footprints reach the export, spilled points not.
 L.add_run(small, "ctx_sweep", {"server": matrix.DEFAULT_SERVER, "num_gpu": 99}, env=env,
           metrics={"points": [{"num_ctx": 2048, "vram_model_mib": 2500, "gpu_share_pct": 100},
