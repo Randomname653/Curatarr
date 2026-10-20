@@ -23,11 +23,17 @@ Rules, in order:
    that took more than the simulated card had (TIER_OVERRUN_TOL_MIB) is a
    performance K.O. — that card would spill or fail the load.
 4. A quantised KV cache (q8_0 / q4_0) is only judged, not re-scored: it
-   inherits the default server's quality when >= MIN_KV_AGREEMENT % of its
-   verdicts are unchanged, and is a K.O. when fewer are.
-5. Ranking: scored quality (Claude/owner rubric, mean of 25) when present,
-   else agreement with the reference model's verdicts — marked
-   ``provisional``. Ties go to the faster package, then to less VRAM.
+   inherits the SAME model's default-server quality when >= MIN_KV_AGREEMENT
+   % of its own verdicts are unchanged (self-consistency, not agreement with
+   another model), and is a K.O. when fewer are.
+5. Ranking: the scored quality of the model's own reasoning, never its
+   agreement with the current production model (Don, 2026-10-20: "a new
+   model may be RIGHT where the old one is wrong"). Quality = JUDGE_WEIGHT x
+   the judge-argumentation score (faith / law / logic / judgment / clarity of
+   the pillar reasoning, scorer JUDGE_SCORER) + the rest x the card-note
+   score (NOTES_SCORER). A package without a judge score is ``provisional``
+   and ranks after every scored one. Agreement is still exported, as a
+   diagnostic only. Ties go to the faster package, then to less VRAM.
 
 Thresholds are module constants so a test can pin them and a change shows
 up in review.
@@ -50,7 +56,10 @@ MIN_GEN_TOK_S = 6.0
 MAX_JUDGE_P90_S = 90.0
 MAX_ESCALATION = 3.0
 FIT_MARGIN_MIB = 512
-MIN_KV_AGREEMENT = 90.0     # % of verdicts a quantised KV cache must leave unchanged
+MIN_KV_AGREEMENT = 90.0     # % of its own verdicts a quantised KV cache must leave unchanged
+JUDGE_SCORER = "claude-judge"   # rubric judge-argument-2026-10
+NOTES_SCORER = "claude"         # rubric 5-axis-2026-08 (card notes)
+JUDGE_WEIGHT = 0.6              # the judge decides deletions; the notes are what people read
 DEFAULT_SERVER = "fa-auto_kv-f16"
 TIER_METHOD = "llama_fit_target"
 TIER_OVERRUN_TOL_MIB = 256
@@ -166,6 +175,18 @@ def _tier_fit_derived(cell: dict, tier_gb: int, reserve_mib: int) -> bool:
     return share(cell) == 100 and need <= tier_gb * 1024
 
 
+def quality_score(by_scorer: dict) -> dict:
+    """The ranking quality of one quality run from its scores: judge
+    argumentation and card notes, weighted; provisional without a judge score."""
+    judge = (by_scorer.get(JUDGE_SCORER) or {}).get("mean25")
+    notes = (by_scorer.get(NOTES_SCORER) or {}).get("mean25")
+    if judge is not None and notes is not None:
+        score = round(JUDGE_WEIGHT * judge + (1 - JUDGE_WEIGHT) * notes, 2)
+    else:
+        score = judge if judge is not None else notes
+    return {"score25": score, "judge25": judge, "notes25": notes, "provisional": judge is None}
+
+
 def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     runs = ledger.runs()
     quality = [r for r in runs if r["phase"] == "quality"]
@@ -174,8 +195,10 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
     ref_run = next((q for q in quality if ledger.model(q["model_key"])["ref"] == reference_ref
                     and q["settings"].get("profile") == "large"
                     and q["settings"].get("items") == "sub40"), None)
-    # Scored quality, keyed by quality run id.
-    scored = {s["run_id"]: s["aggregate"] for s in ledger.data["scores"]}
+    # Scored quality per quality run id and scorer.
+    scored: dict = defaultdict(dict)
+    for s in ledger.data["scores"]:
+        scored[s["run_id"]][s["scorer"]] = s["aggregate"]
 
     qual_by = {}   # (model_key, profile, server) -> verdict
     # Default-server runs first: a quantised-KV run is only a judge pass and
@@ -185,17 +208,17 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
         ok, why = quality_ok(q["metrics"])
         agr = agreement(q, ref_run) if ref_run and q is not ref_run else (
             {"n": 0, "exact_pct": 100.0, "side_pct": 100.0} if q is ref_run else {})
-        score = scored.get(q["id"], {}).get("mean25")
-        entry = {"ok": ok, "why": why, "agreement": agr, "score25": score,
-                 "provisional": score is None, "run_id": q["id"]}
+        entry = {"ok": ok, "why": why, "agreement": agr, "run_id": q["id"],
+                 **quality_score(scored.get(q["id"], {}))}
+        score = entry["score25"]
         base = qual_by.get((q["model_key"], s.get("profile"), DEFAULT_SERVER))
         if s.get("server") != DEFAULT_SERVER and base:
             base_run = next(r for r in quality if r["id"] == base["run_id"])
             kv = agreement(q, base_run)
             entry["kv_agreement"] = kv
             if kv.get("exact_pct", 0) >= MIN_KV_AGREEMENT and score is None:
-                entry.update(score25=base["score25"], provisional=base["provisional"],
-                             agreement=base["agreement"])
+                entry.update({k: base[k] for k in ("score25", "judge25", "notes25",
+                                                   "provisional", "agreement")})
             elif kv.get("exact_pct", 100) < MIN_KV_AGREEMENT:
                 entry.update(ok=False, why=f"KV quantisation moved verdicts "
                                           f"({kv.get('exact_pct')} % unchanged)")
@@ -248,7 +271,8 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
                     "speed_unstable": bool(m.get("speed_unstable")),
                     "ram_taken_gb": round((m.get("ram_taken_mib") or 0) / 1024, 1),
                 },
-                "quality": {"score25": q["score25"], "provisional": q["provisional"],
+                "quality": {"score25": q["score25"], "judge25": q["judge25"],
+                            "notes25": q["notes25"], "provisional": q["provisional"],
                             "agreement": q["agreement"]},
                 "perf_run": p["id"], "quality_run": q["run_id"],
                 "measured_on": {k: p["env"].get(k) for k in ("gpu", "driver", "ollama")},
@@ -256,9 +280,7 @@ def build(ledger: Ledger, reference_ref: str = "gemma4:31b") -> dict:
 
     def rank(o):
         qv = o["quality"]
-        primary = (qv["score25"] / 25 * 100) if qv["score25"] is not None else \
-            (qv["agreement"].get("exact_pct") or 0)
-        return (not qv["provisional"], primary, o["expected"]["gen_tok_s"] or 0,
+        return (not qv["provisional"], qv["score25"] or 0, o["expected"]["gen_tok_s"] or 0,
                 -(o["expected"]["vram_gb"] or 0))
 
     tiers = {}
@@ -309,8 +331,8 @@ def render_md(matrix: dict) -> str:
             lines.append(f"| {t} GB | — none passes — | | | | | | | | |")
             continue
         q = r["quality"]
-        qs = f"{q['score25']}/25" if q["score25"] is not None else \
-            f"{q['agreement'].get('exact_pct', '?')} % agree (prov.)"
+        qs = (f"{q['score25']}/25 (judge {q['judge25']}, notes {q['notes25']})"
+              + (" prov." if q["provisional"] else "")) if q["score25"] is not None else "unscored"
         srv = ",".join(f"{k.removeprefix('OLLAMA_')}={v}" for k, v in r["server"].items()
                        if k in ("OLLAMA_KV_CACHE_TYPE", "OLLAMA_FLASH_ATTENTION"))
         lines.append(f"| {t} GB | {r['model']} | {r['profile']} | {r['num_ctx']} | {r['num_gpu']} "

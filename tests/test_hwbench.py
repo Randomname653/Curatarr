@@ -162,8 +162,10 @@ small = L.upsert_model("tiny:4b", "sha256:bbb")
 V = ["CUT", "HARD_KEEP", "STAGNANT", "CUT", "KEEP_WITH_FLAG"]
 qm = {"gate_valid_pct": 100, "judge_valid_pct": 100, "mono_empty_pct": 0}
 env = {"gpu": "NVIDIA GeForce RTX 4090", "gpu_total_mib": 24564, "desktop_reserve_mib": 1024}
-L.add_run(ref, "quality", {"profile": "large", "server": matrix.DEFAULT_SERVER, "items": "sub40"},
-          env=env, metrics=qm, artifacts=[judge_file("ref", V)])
+rq = L.add_run(ref, "quality", {"profile": "large", "server": matrix.DEFAULT_SERVER, "items": "sub40"},
+               env=env, metrics=qm, artifacts=[judge_file("ref", V)])
+L.add_score(rq["id"], scorer=matrix.JUDGE_SCORER, rubric="j", aggregate={"mean25": 23.0})
+L.add_score(rq["id"], scorer=matrix.NOTES_SCORER, rubric="n", aggregate={"mean25": 21.0})
 qs = L.add_run(small, "quality", {"profile": "small", "server": matrix.DEFAULT_SERVER, "items": "sub40"},
                env=env, metrics=qm, artifacts=[judge_file("small", ["CUT", "HARD_KEEP", "CUT", "CUT", "HARD_KEEP"])])
 L.add_run(small, "quality", {"profile": "small", "server": "fa-1_kv-q8_0", "items": "sub40"},
@@ -186,18 +188,28 @@ check("24 GB: the reference's full-card cell counts as measured at 24 GB",
 check("a model with no tier spot check is NOT derived onto smaller tiers",
       mx["tiers"]["20"]["recommended"] is None or
       mx["tiers"]["20"]["recommended"]["model"] != "gemma4:31b")
-check("small model: agreement with the reference is the provisional quality",
+check("an unscored model is provisional; agreement is exported as a diagnostic only",
       mx["tiers"]["6"]["recommended"]["quality"]["agreement"]["exact_pct"] == 60.0
-      and mx["tiers"]["6"]["recommended"]["quality"]["provisional"])
+      and mx["tiers"]["6"]["recommended"]["quality"]["provisional"]
+      and mx["tiers"]["6"]["recommended"]["quality"]["score25"] is None)
+check("quality = judge and notes, weighted",
+      mx["tiers"]["24"]["recommended"]["quality"]["score25"] == round(
+          matrix.JUDGE_WEIGHT * 23.0 + (1 - matrix.JUDGE_WEIGHT) * 21.0, 2))
 check("q8 KV with unchanged verdicts serves the 4 GB tier and inherits the agreement",
       mx["tiers"]["4"]["recommended"]["model"] == "tiny:4b"
       and mx["tiers"]["4"]["recommended"]["quality"]["agreement"]["exact_pct"] == 60.0)
 check("the spot check at 6 GB lets the full-card cell derive 8 GB and up",
       mx["tiers"]["8"]["recommended"]["model"] == "tiny:4b"
       and mx["tiers"]["8"]["recommended"]["derived"])
-L.add_score(qs["id"], scorer="claude", rubric="r", aggregate={"mean25": 22.0})
-check("a scored model is no longer provisional",
-      not matrix.build(L)["tiers"]["8"]["recommended"]["quality"]["provisional"])
+L.add_score(qs["id"], scorer=matrix.NOTES_SCORER, rubric="n", aggregate={"mean25": 22.0})
+check("card notes alone leave a model provisional (the judge decides deletions)",
+      matrix.build(L)["tiers"]["8"]["recommended"]["quality"]["provisional"])
+L.add_score(qs["id"], scorer=matrix.JUDGE_SCORER, rubric="j", aggregate={"mean25": 24.0})
+mx_s = matrix.build(L)
+check("a judge-scored model is no longer provisional",
+      not mx_s["tiers"]["8"]["recommended"]["quality"]["provisional"])
+check("agreement with the production model does not rank: 60 % agreement but better reasoning wins 24 GB",
+      mx_s["tiers"]["24"]["recommended"]["model"] == "tiny:4b")
 check("the matrix renders", "| 24 GB | gemma4:31b" in matrix.render_md(mx))
 
 # The context sweep's measured footprints reach the export, spilled points not.
