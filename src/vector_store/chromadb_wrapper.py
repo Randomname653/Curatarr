@@ -75,10 +75,10 @@ def _startup_quick_check() -> None:
         if ok != "ok":
             logger.critical(
                 "ChromaDB backing store FAILED quick_check: %r. Restore "
-                "path: stop the app, move data/chromadb aside, restart, "
-                "then re-embed from the enrichment caches (re-enrichment; "
-                "scripts/revectorize_backfill.py covers rows with "
-                "vector_ready=0). POST /api/enrichment/embedding-migration "
+                "path: stop the app, move data/chromadb aside, restart: "
+                "the 'vector_reconcile' maintenance task re-embeds from the "
+                "enrichment caches on its own (scripts/revectorize_backfill.py "
+                "drains it in one go, app stopped). POST /api/enrichment/embedding-migration "
                 "is NOT a restore path — it copies from the v1 collection, "
                 "which no longer exists.",
                 ok)

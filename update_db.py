@@ -18,7 +18,9 @@ Two guards, because ``init_db()`` can rebuild a table and drop a retired one:
   the out-of-process music enricher) holding the write lock is exactly what
   made column adds fail;
 * it first takes an online backup of the database next to it, verified with
-  ``PRAGMA quick_check``, and names it so a bad migration can be undone.
+  ``PRAGMA quick_check``, and names it so a bad migration can be undone. The
+  newest three are kept: each is a full copy, and one per release used to
+  pile up next to the live database for good.
 
 Usage::
 
@@ -70,6 +72,23 @@ def _backup() -> Path | None:
     return dest
 
 
+PRE_MIGRATE_KEEP = 3
+
+
+def _rotate_pre_migrate(src_path: Path, keep: int = PRE_MIGRATE_KEEP) -> int:
+    """Drop all but the newest *keep* pre-migrate snapshots of *src_path*
+    (the timestamp in the name sorts lexically). Returns how many went."""
+    snaps = sorted(src_path.parent.glob(f"{src_path.stem}.pre-migrate-*{src_path.suffix}"))
+    dropped = 0
+    for old in snaps[:-keep] if keep > 0 else snaps:
+        try:
+            old.unlink()
+            dropped += 1
+        except OSError as e:
+            logger.warning("Could not remove old backup %s: %s", old, e)
+    return dropped
+
+
 def update_database():
     if _server_running():
         logger.error("Curatarr is running on port %s — stop it (and "
@@ -77,7 +96,9 @@ def update_database():
         sys.exit(1)
     backup = _backup()
     if backup:
-        logger.info("Backup written: %s", backup)
+        dropped = _rotate_pre_migrate(Path(engine.url.database))
+        logger.info("Backup written: %s%s", backup,
+                    f" (removed {dropped} older)" if dropped else "")
     logger.info("Checking the database for newly-declared tables and columns...")
     init_db()
     logger.info("Done. Missing tables and columns have been added; existing data is untouched.")

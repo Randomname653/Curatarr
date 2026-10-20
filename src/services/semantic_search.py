@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import OrderedDict
 
 from src.database.runner import run_read
 from src.services.watch_status import watched_lookup, watch_tag
@@ -456,7 +457,15 @@ def _candidate_tags(hits: list, domain: str = None) -> list:
 
 # ── Embedding with a persistent per-text cache ───────────────────────────────
 
-_vec_memo: dict = {}   # in-process: norm_text -> unit vector (for _vec_memo_model)
+# In-process: norm_text -> unit vector (for _vec_memo_model), least recently
+# used first. Bounded: the keys are open vocabulary (query constraints and the
+# LLM-written theme phrases on every hit, not just the closed AniList set) and
+# each 768-float list costs ~25 KB, so an unbounded memo grew to hundreds of
+# MB over months of searching (2026-10 lifecycle audit). One search resolves
+# at most ~810 texts (40 hits x _TAG_CAP + constraints); the cap leaves room
+# for several in flight, and an evicted text is one api_cache read away.
+_VEC_MEMO_CAP = 4096
+_vec_memo: "OrderedDict[str, list]" = OrderedDict()
 # The model the memo's vectors came from. Effectively a (model, text) key with
 # one model resident: the memo used to be keyed by text alone, so after an
 # embedding-profile flip old-model vectors were compared against new-model
@@ -555,6 +564,7 @@ async def _texts_to_vectors(texts: list) -> dict:
         _read_cached, [k for k in want if k not in _vec_memo])
     for k, orig in want.items():
         if k in _vec_memo:
+            _vec_memo.move_to_end(k)
             result[k] = _vec_memo[k]
             continue
         vec = cached.get(k)
@@ -580,7 +590,19 @@ async def _texts_to_vectors(texts: list) -> dict:
                     fresh.append((k, unit))
             if cache_ok and fresh:
                 await asyncio.to_thread(_write_cached, fresh)
+    # Trimmed after this call's inserts, oldest first: every text resolved
+    # here is now among the most recent, so _evidence_scores still finds
+    # them all. (A call that raised mid-embed is trimmed by the next one.)
+    _trim_vec_memo(len(want))
     return result
+
+
+def _trim_vec_memo(protect: int = 0) -> None:
+    """Drop least-recently-used vectors past the cap — never below
+    *protect*, the number of texts the call that just ran needs."""
+    limit = max(_VEC_MEMO_CAP, protect)
+    while len(_vec_memo) > limit:
+        _vec_memo.popitem(last=False)
 
 
 def _dot(a: list, b: list) -> float:

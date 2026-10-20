@@ -1705,6 +1705,13 @@ async def delete_returned(
     return await approve_deletion(new_id, user=user)
 
 
+# Proposal id -> monotonic time this process claimed it ("deleting"), until
+# _commit_outcome has written the outcome. A row in "deleting" that is NOT in
+# here has no delete running for it — the limbo reconciler parks it in limbo
+# instead of leaving it hidden until the next boot (2026-10 lifecycle audit).
+_DELETE_CLAIMS: dict[int, float] = {}
+
+
 async def _commit_outcome(p: _Proposal) -> None:
     """Commit what ``_delete_one_and_log`` decided, AFTER the DELETE ran.
 
@@ -1715,6 +1722,13 @@ async def _commit_outcome(p: _Proposal) -> None:
     Now: roll back, then write just the outcome, conditional on the claim
     this run still holds, a few times. The resolution-log row is the one
     thing a failed first commit loses, and that is logged."""
+    try:
+        await _commit_outcome_inner(p)
+    finally:
+        _DELETE_CLAIMS.pop(p.id, None)
+
+
+async def _commit_outcome_inner(p: _Proposal) -> None:
     pid, title = p.id, p.title
     status, resolved_at = p.status, p.resolved_at
     try:
@@ -1732,8 +1746,8 @@ async def _commit_outcome(p: _Proposal) -> None:
             logger.error("[deletion] status write for %r failed (attempt %d): %s",
                          title, attempt + 1, e)
             await asyncio.sleep(2 * (attempt + 1))
-    logger.error("[deletion] %r stays 'deleting' — the next start parks it in limbo",
-                 title)
+    logger.error("[deletion] %r stays 'deleting' — the daily limbo reconcile (or "
+                 "the next start) parks it in limbo", title)
 
 
 def _write_outcome(p: _Proposal) -> None:
@@ -1824,6 +1838,7 @@ async def _delete_one_and_log(user_id: int, p: _Proposal) -> bool:
         logger.info("[deletion] %r already claimed (%s) — not deleting twice",
                     p.title, p.status)
         return False
+    _DELETE_CLAIMS[p.id] = time.monotonic()
     try:
         if p.already_gone:
             logger.info("[deletion] %r is already gone from Lidarr — the earlier "
