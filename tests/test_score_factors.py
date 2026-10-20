@@ -101,7 +101,8 @@ recorded = src.split('"score_terms": dict(')[1].split('\n                ),')[0]
 for term in ("mismatch", "size_pts", "rating_swing", "user_rating_swing", "feedback_swing", "drop_penalty", "play_prot"):
     check(f"score term {term} is in the formula AND recorded for Why?", term in formula and f"{term}=" in recorded)
 check("both proposal builders (pillar + legacy) attach the breakdown",
-      src.count('"score_factors": _score_factors(cand),') == 1
+      # legacy: the guard is the household floor of a member's keep (2026-10-20)
+      src.count('"score_factors": _with_guard(_score_factors(cand), cand, _floor),') == 1
       and src.count('"score_factors": _with_guard(_score_factors(cand), cand, verdict),') == 1)
 
 # ── through the database ─────────────────────────────────────────────────────

@@ -858,6 +858,138 @@ rsrc = (ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
 check("cached_at comes from the user's own rows, not the household-wide stamp",
       'own = max((r["cached_at"] for r in recs if r.get("cached_at")), default=None)' in rsrc)
 
+# ══ Follow-ups (owner decisions 2026-10-20) ═════════════════════════════════
+
+# ── a re-added title's old doc is MERGED into its live twin, never rebuilt ──
+import numpy as np  # noqa: E402
+
+drop = cw.drop_merged
+res = {"ids": [["radarr:7", "radarr:912", "radarr:3"]],
+       "distances": [[0.1, 0.2, 0.3]],
+       "documents": [["old", "live", "other"]],
+       "metadatas": [[{cw.MERGED_INTO: "radarr:912"}, {}, {}]],
+       "embeddings": [np.zeros((3, 4))], "included": ["metadatas"]}
+out = drop(res, 2)
+check("similarity search hides merged docs and keeps every column aligned",
+      out["ids"] == [["radarr:912", "radarr:3"]] and out["distances"] == [[0.2, 0.3]]
+      and out["documents"] == [["live", "other"]] and len(out["embeddings"][0]) == 2)
+check("...and still returns the page size the caller asked for",
+      len(drop(res, 1)["ids"][0]) == 1)
+
+
+class _Coll:
+    def __init__(self):
+        self.asked = None
+
+    def query(self, query_embeddings, n_results, where=None):
+        self.asked = n_results
+        return {"ids": [["a", "b", "c"]], "distances": [[1, 2, 3]],
+                "metadatas": [[{}, {cw.MERGED_INTO: "x"}, {}]]}
+
+    def get(self, where=None, include=None, limit=None):
+        return {"embeddings": [[1.0], [2.0]], "metadatas": [{}, {cw.MERGED_INTO: "x"}]}
+
+
+wrapper = cw.ChromaDBWrapper.__new__(cw.ChromaDBWrapper)
+wrapper.collection = _Coll()
+q = wrapper.query([[0.0]], n_results=2)
+check("query() over-fetches by the headroom and trims after hiding merged docs",
+      wrapper.collection.asked == 2 + cw._MERGED_HEADROOM and q["ids"] == [["a", "c"]])
+check("taste calibration skips merged docs (no title counted twice)",
+      wrapper.embeddings_for_domain("movie") == [[1.0]])
+
+import src.services.corpus_repair as crp  # noqa: E402
+
+with session() as s:
+    s.add(ArrEnrichmentStatus(service="radarr", arr_id=7, category="movie",
+                              title="Dune", tmdb_id=438631))
+    s.add(ArrEnrichmentStatus(service="radarr", arr_id=8, category="movie",
+                              title="Gone For Good", tmdb_id=1))
+    s.commit()
+
+
+class _PrefetchCache(_NoCache):
+    def get_cache(self, k):
+        if k == "raw_prefetch:lidarr:5":
+            return {"response": {"title": "Solstice", "mbid": "MB-SOL"}}
+        return None
+
+    def close(self):
+        pass
+live_index = {}
+for prk, it in {"radarr:912": {"tmdb_id": 438631},
+                "lidarr:99": {"mbid": "mb-sol"},
+                "sonarr:438631": {"tvdb_id": 438631}}.items():
+    for k in crp.identity_keys(prk.split(":")[0], it):
+        live_index[k] = prk
+mcache.MetadataCache = _PrefetchCache
+try:
+    tw = asyncio.run(crp.find_live_twins(["radarr:7", "radarr:8", "lidarr:5"], live_index))
+finally:
+    mcache.MetadataCache = _saved[0]
+check("a gone doc is matched to its live twin by tmdb id (status row) and MBID (prefetch)",
+      tw == {"radarr:7": "radarr:912", "lidarr:5": "lidarr:99"}, tw)
+check("ids never cross services (a film's tmdb id is not a series' tvdb id)",
+      "sonarr:438631" not in tw.values())
+
+
+class _MergeChroma:
+    def __init__(self):
+        self.updated, self.facets_dropped = [], []
+
+    def get_by_id(self, d):
+        return {"id": d, "metadata": {"title": "Dune", "domain": "movie"}}
+
+    def update_metadata(self, d, meta):
+        self.updated.append((d, meta))
+
+    def facets_delete_by_parent(self, d):
+        self.facets_dropped.append(d)
+fake_merge = _MergeChroma()
+cw.get_chroma_db = lambda: fake_merge
+try:
+    ok = asyncio.run(crp.merge_into_live("radarr:7", "radarr:912"))
+finally:
+    cw.get_chroma_db = _saved[1]
+check("merging keeps the doc (metadata marked, nothing deleted) and drops its facets",
+      ok and fake_merge.updated[0][1][cw.MERGED_INTO] == "radarr:912"
+      and fake_merge.updated[0][1]["title"] == "Dune"
+      and fake_merge.facets_dropped == ["radarr:7"])
+_walk = en_src = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
+_gone_loop = _walk[_walk.index('for d, dom in bucket["gone"]:'):]
+check("the zombie walk merges a twin instead of rebuilding it, and only into a doc that exists",
+      _gone_loop.index("if d in twins:") < _gone_loop.index("rebuild_doc_from_prefetch(")
+      and "if _prk not in _doc_ids:" in _walk and "md.get(MERGED_INTO)" in _walk)
+
+# ── member keeps hold on the legacy path (no pillar judge) too ──────────────
+import src.services.recommendations_engine as reng  # noqa: E402
+
+keeps_map = reng._member_keeps_for(1, [{"title": "Severance"}, {"title": "Owner Only"}], "show")
+check("legacy path: a member's keep is found per item",
+      keeps_map == {reng._idx_key({"title": "Severance"}): ["ana"],
+                    reng._idx_key({"title": "Owner Only"}): []}, keeps_map)
+
+
+@contextmanager
+def _broken():
+    class _B:
+        def query(self, *a, **k):
+            raise RuntimeError("database is locked")
+    yield _B()
+conn.get_db_session = _broken
+try:
+    unk = reng._member_keeps_for(1, [{"title": "Severance"}], "show")
+finally:
+    conn.get_db_session = session
+check("legacy path: an unreadable keep is unknown (None), never 'nobody'",
+      unk == {reng._idx_key({"title": "Severance"}): None})
+eng = (ROOT / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
+_legacy = eng[eng.index("# ── LEGACY taste-mismatch pitch path"):]
+check("legacy proposals of member-kept titles are 'Your call' with the household guard",
+      '"stagnant": bool(_keepers),' in _legacy
+      and '{"_guard": "household_floor", "_guard_detail": _keepers[0]}' in _legacy
+      and "is None:\n                continue" in _legacy)
+
 conn.get_db_session = _real_session
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

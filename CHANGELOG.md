@@ -21,7 +21,11 @@ Condensed release history, newest first.
 
 **Household members' data stays theirs, and maintenance stops repeating itself.**
 - A household member who tells the curator to keep a title is heard: the deletion judge
-  can't cut it any more, it becomes the owner's call. The chat now says "protected for
+  can't cut it any more, it becomes the owner's call. This holds with the pillar judge
+  switched off as well.
+- A title deleted and added back in Radarr/Sonarr/Lidarr no longer shows up twice in
+  search. Its old vector is merged into the new entry: kept, but hidden from search,
+  and no longer rebuilt. The chat now says "protected for
   you" to members rather than "permanently protected".
 - Orphan Repair credits each play to the Plex account that watched it. Before, every
   household play went to the admin's taste profile.

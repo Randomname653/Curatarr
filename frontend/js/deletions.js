@@ -65,7 +65,7 @@ export function _whyPanel(p) {
 // engaged with it. Different reasons, different tooltips.
 export function _yourCallWhy(p) {
   return p.score_factors?.guard === 'household_floor'
-    ? 'The curator leaned toward cutting it, but someone else in your household has watched or played it — so the decision is yours'
+    ? 'The curator leaned toward cutting it, but someone else in your household has watched or played it, or asked to keep it — so the decision is yours'
     : 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
 }
 export function toggleWhy(btn) {

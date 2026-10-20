@@ -160,6 +160,55 @@ def _count_fallback(kind: str) -> None:
             "(run PRAGMA quick_check / see the restore path).", n, kind)
 
 
+
+# Metadata key on a doc that was MERGED into its live twin: the same title
+# (same tmdb/tvdb/MusicBrainz id) re-added to an arr under a new id gets a
+# second doc. The old one is kept — the knowledge is never deleted — but it
+# is hidden from similarity search so the title is not returned twice.
+MERGED_INTO = "merged_into"
+# Extra neighbours fetched per query so hiding merged docs never shortens
+# the page a caller asked for.
+_MERGED_HEADROOM = 8
+
+
+def drop_merged(results: Dict, n_results: int) -> Dict:
+    """``results`` (Chroma's nested query shape) without merged docs, each
+    row cut back to ``n_results``."""
+    if not isinstance(results, dict):
+        return results
+    ids = results.get("ids") or []
+    metas = results.get("metadatas")
+    if not metas:
+        return results
+    def _rows(key, val) -> bool:
+        # Per-query lists (ids, distances, metadatas, embeddings — the latter
+        # may be numpy rows); "included" and other scalars are left alone.
+        if key == "ids" or val is None or isinstance(val, (str, bytes, dict)):
+            return key == "ids"
+        try:
+            return len(val) == len(ids)
+        except TypeError:
+            return False
+
+    out = dict(results)
+    row_keys = [key for key, val in results.items() if _rows(key, val)]
+    for key in row_keys:
+        out[key] = list(results[key])
+    for i, row_ids in enumerate(ids):
+        row_meta = metas[i] if i < len(metas) and metas[i] is not None else []
+        keep = [j for j in range(len(row_ids))
+                if not ((row_meta[j] if j < len(row_meta) else None) or {}).get(MERGED_INTO)]
+        keep = keep[:n_results]
+        for key in row_keys:
+            row = results[key][i]
+            try:
+                if row is None or len(row) != len(row_ids):
+                    continue
+            except TypeError:
+                continue
+            out[key][i] = [row[j] for j in keep]
+    return out
+
 class ChromaDBWrapper:
     """
     Wrapper for ChromaDB vector storage.
@@ -418,7 +467,7 @@ class ChromaDBWrapper:
         try:
             results = self.collection.query(
                 query_embeddings=query_embeddings,
-                n_results=n_results,
+                n_results=n_results + _MERGED_HEADROOM,
                 where=where
             )
         except Exception as e:
@@ -431,7 +480,7 @@ class ChromaDBWrapper:
             return {"ids": [[]], "distances": [[]], "documents": [[]],
                     "metadatas": [[]], "embeddings": [[]]}
 
-        return results
+        return drop_merged(results, n_results)
     
     def get_by_id(self, doc_id: str) -> Optional[Dict]:
         """Get document by ID — including its embedding.
@@ -536,9 +585,13 @@ class ChromaDBWrapper:
         series live under 'tv' (995 docs from the old Plex sync)."""
         try:
             res = self.collection.get(where=domain_where(domain),
-                                      include=["embeddings"], limit=limit)
+                                      include=["embeddings", "metadatas"], limit=limit)
             emb = res.get("embeddings")
-            return list(emb) if emb is not None else []
+            if emb is None:
+                return []
+            metas = res.get("metadatas") or [None] * len(emb)
+            # A doc merged into its live twin would count the title twice.
+            return [e for e, m in zip(emb, metas) if not (m or {}).get(MERGED_INTO)]
         except Exception as e:
             logger.warning("embeddings_for_domain(%s) failed: %s", domain, e)
             return []
