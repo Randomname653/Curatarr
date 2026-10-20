@@ -52,6 +52,10 @@ Condensed release history, newest first.
   fails partway through a requeue, the finding keeps its one automatic retry.
 - The anime mapping cache keeps every season's AniDB entry.
 - The Spotify backlog and the wish list mark artists you deleted.
+- Household members can wish for music too (when music runs through Plex without
+  Lidarr): a **Wish** button on music recommendations and in their Spotify backlog. The
+  wanted list shows who asked. The owner removes any wish, a member takes back their
+  own, and members have a small hourly budget and a cap on open wishes.
 - Each person's Recommendations page shows when their own recommendations were built.
 
 **Members can't overload the box or see the admin's network.**

@@ -632,20 +632,19 @@ export async function renderWanted(svc) {
     return;
   }
   const rows = data.wishes || [];
-  const isAdmin = !!(state.currentUser && state.currentUser.is_admin);
   const body = rows.length ? rows.map(w => `
     <div class="panel-item">
       <div class="panel-item-head">
         <div class="panel-item-title">${esc(w.title)} ${w.in_library ? '<span class="badge success badge-sm" title="Plex has the artist now">in library</span>' : ''}${w.deleted ? DELETED_BADGE : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
-        <div class="panel-actions">${isAdmin ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>Remove</button>` : ''}</div>
+        <div class="panel-actions">${w.can_remove ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>${w.own ? 'Take back' : 'Remove'}</button>` : ''}</div>
       </div>
-      <div class="panel-item-meta">wished ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>
+      <div class="panel-item-meta">wished by ${w.own ? 'you' : esc(w.wished_by || 'someone')} ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>
     </div>`).join('')
     : emptyHtml('Nothing wanted yet — the Recommendations view and the Spotify Backlog put wishes here; you fulfil them in SoulSync.');
   contentEl.innerHTML = `<section class="section">
     <div class="section-head">
       <h3>Wanted <span class="badge muted badge-sm">${rows.length}</span></h3>
-      <span class="section-hint">Artists asked for while no arr is configured. Fulfil them in SoulSync; the badge turns green once Plex has them.</span>
+      <span class="section-hint">Artists anyone in the household asked for while no arr is configured. The owner fulfils them in SoulSync; the badge turns green once Plex has them.</span>
       <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderWanted', svc)}>Refresh</button></div>
     </div>
     <div class="section-body">${body}</div></section>`;

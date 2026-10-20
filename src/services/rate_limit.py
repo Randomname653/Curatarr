@@ -49,6 +49,8 @@ SYNC_TRIGGERS_PER_10MIN = 3
 TASTE_RECOMPUTES_PER_10MIN = 3
 ARR_REFRESHES_PER_10MIN = 3        # member-forced live arr pulls (Lidarr's takes minutes)
 ANCHOR_CORRECTIONS_PER_10MIN = 5   # each drops a SHARED enrichment row → a re-fetch cascade
+MEMBER_WISHES_PER_HOUR = 20        # each one is work for the owner in SoulSync
+MEMBER_OPEN_WISHES = 50            # open wishes one member may hold at once
 
 
 def enforce(scope: str, key: Hashable, limit: int, window_s: float,

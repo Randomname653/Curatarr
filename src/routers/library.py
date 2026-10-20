@@ -994,10 +994,10 @@ async def edition_releases(series_id: int, _user: User = Depends(require_admin))
 
 # ── Music wishes (Lidarr optional, 2026-09-15) ───────────────────────────────
 class WishRequest(BaseModel):
-    title: str
-    mbid: Optional[str] = None
+    title: str = Field(..., max_length=200)
+    mbid: Optional[str] = Field(None, max_length=40)
     source: str = Field("manual", pattern="^(rec|backlog|manual)$")
-    note: Optional[str] = None
+    note: Optional[str] = Field(None, max_length=300)
 
 
 _wish_lookup_warned_at = 0.0
@@ -1045,26 +1045,41 @@ def list_wishes(user: User = Depends(get_current_user)):
     from src.database.models import MusicWish
     is_deleted = _deleted_artist_check()
     with get_db_session() as db:
+        names = {uid: (n or f"user {uid}")
+                 for uid, n in db.query(User.id, User.plex_username).all()}
         rows = (db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
                 .order_by(MusicWish.created_at.desc()).all())
         wishes = [{"id": w.id, "title": w.title, "mbid": w.mbid, "source": w.source, "note": w.note,
                    "created_at": w.created_at.isoformat() if w.created_at else None,
                    "in_library": _wish_in_library(w.title, w.mbid),
-                   "deleted": is_deleted(w.title, w.mbid)} for w in rows]
+                   "deleted": is_deleted(w.title, w.mbid),
+                   # Household list: everyone sees who asked; the owner or
+                   # the one who asked may take a wish back.
+                   "wished_by": names.get(w.user_id, f"user {w.user_id}"),
+                   "own": w.user_id == user.id,
+                   "can_remove": bool(user.is_admin) or w.user_id == user.id}
+                  for w in rows]
     return {"wishes": wishes, "total": len(wishes)}
 
 
 @router.post("/wish")
-def add_wish(req: WishRequest, user: User = Depends(require_admin)):
+def add_wish(req: WishRequest, user: User = Depends(get_current_user)):
     """Add a wish; a second one for the same artist (by mbid, else name)
     returns the existing row. in_library tells the caller when Plex already
-    has the artist — then there is nothing to wish for."""
+    has the artist — then there is nothing to wish for.
+
+    Any household member may wish (owner decision 2026-10-20): the wish is
+    filed under their name, and the owner fulfils it in SoulSync. A wish
+    acquires nothing by itself. Members have an hourly budget and a cap on
+    open wishes, since every wish is work for the owner."""
     from sqlalchemy import func
     from src.database.connection import get_db_session
     from src.database.models import MusicWish
+    from src.services import rate_limit as _rl
     title = (req.title or "").strip()
     if not title:
         raise HTTPException(400, "title required")
+    member = not user.is_admin
     in_lib = _wish_in_library(title, req.mbid)
     with get_db_session() as db:
         q = db.query(MusicWish).filter(MusicWish.resolved_at.is_(None))
@@ -1072,6 +1087,13 @@ def add_wish(req: WishRequest, user: User = Depends(require_admin)):
             or q.filter(func.lower(MusicWish.title) == title.lower()).first()
         if dup:
             return {"ok": True, "id": dup.id, "already": True, "in_library": in_lib}
+        if member:
+            open_n = q.filter(MusicWish.user_id == user.id).count()
+            if open_n >= _rl.MEMBER_OPEN_WISHES:
+                raise HTTPException(429, f"You have {open_n} open wishes — wait until some "
+                                         "are fulfilled, or take one back")
+            _rl.enforce("wish", user.id, _rl.MEMBER_WISHES_PER_HOUR, 3600,
+                        detail="Too many wishes this hour — try again later")
         w = MusicWish(user_id=user.id, title=title, mbid=req.mbid, source=req.source, note=req.note)
         db.add(w)
         db.flush()
@@ -1080,12 +1102,14 @@ def add_wish(req: WishRequest, user: User = Depends(require_admin)):
 
 
 @router.delete("/wish/{wish_id}")
-def remove_wish(wish_id: int, user: User = Depends(require_admin)):
+def remove_wish(wish_id: int, user: User = Depends(get_current_user)):
+    """The owner removes any wish; a member only their own."""
     from src.database.connection import get_db_session
     from src.database.models import MusicWish
     with get_db_session() as db:
         w = db.query(MusicWish).filter(MusicWish.id == wish_id).first()
-        if not w:
+        # A member probing someone else's wish id learns nothing: 404 either way.
+        if not w or (not user.is_admin and w.user_id != user.id):
             raise HTTPException(404, "no such wish")
         w.resolved_at = datetime.utcnow()
     return {"ok": True}

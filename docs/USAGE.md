@@ -82,7 +82,7 @@ Items marked *(admin)* are visible to the admin account only.
 | Task | Where |
 |---|---|
 | Music without Lidarr | Nothing to configure — the daily walk indexes your Plex music; Library → **Music** runs on it (badge "Plex index") |
-| Wanted artists (no Lidarr) | Recommendations → **+ Add** or Spotify backlog → **Wish**; Library → **Music** → **Wanted** lists them, green once Plex has them |
+| Wanted artists (no Lidarr) | Recommendations → **+ Add** (owner) or **Wish** (household members), or Spotify backlog → **Wish**; Library → **Music** → **Wanted** lists them with who asked, green once Plex has them. The owner fulfils them in SoulSync and removes any; members take back their own |
 | Spotify artists not in Lidarr | Library → **Music** → **Spotify backlog** |
 | Lyrics on file, artists profiled | Knowledge Base → **Music pipeline** (the line under the stats bar; both walkers run with **Run maintenance now**) |
 

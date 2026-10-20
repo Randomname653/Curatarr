@@ -91,6 +91,83 @@ def test_wishes_are_added_once_listed_with_their_library_state_and_removed():
         ly.LYRICS_DB_PATH = ly.PLEX_MUSIC_DB_PATH = _ORIG_DB
 
 
+def test_members_wish_under_their_name_and_only_take_back_their_own():
+    """Owner decision 2026-10-20: household members may wish too. The wish
+    carries their name; the owner removes any wish, a member only theirs;
+    members have an hourly budget and a cap on open wishes."""
+    from fastapi import HTTPException
+    from src.database.models import User
+    from src.routers import library as lib
+    from src.services import rate_limit as rl
+    member = types.SimpleNamespace(id=2, is_admin=False)
+    other = types.SimpleNamespace(id=3, is_admin=False)
+    _seed_index("member-wishes")
+    rl.reset()
+    try:
+        with _sess() as db:
+            db.query(MusicWish).delete()
+            db.query(User).delete()
+            db.add_all([User(id=1, plex_user_id="1", plex_username="owner", is_admin=True),
+                        User(id=2, plex_user_id="2", plex_username="ana", is_admin=False),
+                        User(id=3, plex_user_id="3", plex_username="bo", is_admin=False)])
+        mine = lib.add_wish(lib.WishRequest(title="Neelix", source="rec"), member)
+        owners = lib.add_wish(lib.WishRequest(title="Boards of Canada"), ADMIN)
+        assert mine["ok"] and not mine["already"], "a member can wish"
+        seen = {w["title"]: w for w in lib.list_wishes(member)["wishes"]}
+        assert seen["Neelix"]["wished_by"] == "ana" and seen["Neelix"]["own"] is True
+        assert seen["Neelix"]["can_remove"] is True
+        assert seen["Boards of Canada"]["wished_by"] == "owner"
+        assert seen["Boards of Canada"]["can_remove"] is False, "not the member's wish"
+        assert all(w["can_remove"] for w in lib.list_wishes(ADMIN)["wishes"]), "the owner removes any"
+        for who, wid in ((member, owners["id"]), (other, mine["id"])):
+            try:
+                lib.remove_wish(wid, who)
+                assert False, "a member removed someone else's wish"
+            except HTTPException as e:
+                assert e.status_code == 404, "no hint that the wish exists"
+        assert lib.remove_wish(mine["id"], member) == {"ok": True}
+        # The cap on open wishes, then the hourly budget.
+        saved = (rl.MEMBER_OPEN_WISHES, rl.MEMBER_WISHES_PER_HOUR)
+        rl.MEMBER_OPEN_WISHES, rl.MEMBER_WISHES_PER_HOUR = 2, 3
+        try:
+            rl.reset()
+            lib.add_wish(lib.WishRequest(title="A1"), other)
+            lib.add_wish(lib.WishRequest(title="A2"), other)
+            try:
+                lib.add_wish(lib.WishRequest(title="A3"), other)
+                assert False, "open-wish cap not applied"
+            except HTTPException as e:
+                assert e.status_code == 429 and "open wishes" in e.detail
+            rl.MEMBER_OPEN_WISHES = 50
+            lib.add_wish(lib.WishRequest(title="A4"), other)
+            try:
+                lib.add_wish(lib.WishRequest(title="A5"), other)
+                assert False, "hourly budget not applied"
+            except HTTPException as e:
+                assert e.status_code == 429
+            assert lib.add_wish(lib.WishRequest(title="A6"), ADMIN)["ok"], "the owner has no budget"
+            dup = lib.add_wish(lib.WishRequest(title="a1"), member)
+            assert dup["already"], "an existing wish is returned, never filed twice"
+        finally:
+            rl.MEMBER_OPEN_WISHES, rl.MEMBER_WISHES_PER_HOUR = saved
+            rl.reset()
+    finally:
+        ly.LYRICS_DB_PATH = ly.PLEX_MUSIC_DB_PATH = _ORIG_DB
+
+
+def test_members_get_a_wish_button_and_the_list_names_who_asked():
+    recs = (_ROOT / "frontend/js/recs.js").read_text(encoding="utf-8")
+    assert "act('onWishRec', EL)" in recs and "_membersWishViaPlex" in recs
+    assert "rec.category === 'music' && _membersWishViaPlex" in recs
+    arr = (_ROOT / "frontend/js/arr.js").read_text(encoding="utf-8")
+    assert "w.can_remove ?" in arr and "wished by ${w.own ? 'you'" in arr
+    app = (_ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
+    assert "  onWishRec," in app
+    lib = (_ROOT / "src/routers/library.py").read_text(encoding="utf-8")
+    add = lib[lib.index('@router.post("/wish")'):lib.index('@router.delete("/wish/{wish_id}")')]
+    assert "Depends(get_current_user)" in add and "require_admin" not in add
+
+
 def test_the_pages_write_and_show_wishes():
     arr = (_ROOT / "frontend/js/arr.js").read_text(encoding="utf-8")
     assert "{ id: 'wanted', label: 'Wanted' }" in arr and "export async function renderWanted" in arr
