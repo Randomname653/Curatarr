@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Annotated, Literal
 
 from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
@@ -1134,7 +1135,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         else:
             async with curator_priority("pillar verdict", exclusive_model=model):
                 verdict, repaired = await _run()
-        out = verdict.model_dump()
+        out = _fact_guards(verdict.model_dump(), evidence_facts)
         if repaired:
             out["_repaired"] = True
             logger.info("[pillars] repair turn produced a valid verdict (%s)",
@@ -1149,6 +1150,45 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
                        type(e).__name__, e)
         return {**_EVALUATE_FALLBACK, "_error": f"{type(e).__name__}: {e}",
                 "_error_kind": "unknown"}
+
+
+_TECH_CLASS = re.compile(r"^TECH: .*\((bloated|normal|lean)\)\s*$", re.M)
+_SIGNAL_WORD = re.compile(r"\bsignal", re.I)
+
+
+def _fact_guards(out: dict, facts: str) -> dict:
+    """Two verdict errors every model made on the Jane Doe examples
+    (2026-10-20), corrected from the facts in Python instead of more prompt:
+
+    * the downscale flag follows the file, not the model's impression - the
+      TECH line's class decides: a KEEP_WITH_FLAG on a normal or lean file
+      becomes HARD_KEEP, a HARD_KEEP on a bloated file KEEP_WITH_FLAG
+      (gemma4:31b-it-qat and the MoE flagged a 0.94x sitcom);
+    * an owner signal never forces a keep on its own (the constitution's
+      rule): a keep protected only by EGO whose ego finding rests on the
+      signal goes to the owner's review as STAGNANT instead (31b-qat and
+      e4b kept a 5.6/10 film because "the owner signal supports it").
+
+    Each correction is listed in ``_guards`` so the run can count them."""
+    guards = []
+    verdict = out.get("verdict")
+    m = _TECH_CLASS.search(facts or "")
+    tech = m.group(1) if m else None
+    if verdict == "KEEP_WITH_FLAG" and tech in ("normal", "lean"):
+        out["verdict"], verdict = "HARD_KEEP", "HARD_KEEP"
+        guards.append(f"flag_without_outlier:{tech}")
+    elif verdict == "HARD_KEEP" and tech == "bloated":
+        out["verdict"], verdict = "KEEP_WITH_FLAG", "KEEP_WITH_FLAG"
+        guards.append("outlier_unflagged")
+    if (verdict in ("HARD_KEEP", "KEEP_WITH_FLAG") and out.get("protecting_pillar") == "EGO"
+            and "OWNER SIGNAL" in (facts or "")
+            and _SIGNAL_WORD.search(out.get("pillar_0_ego") or "")):
+        out["verdict"], out["protecting_pillar"] = "STAGNANT", "NONE"
+        guards.append("signal_forced_keep")
+    if guards:
+        out["_guards"] = guards
+        logger.info("[pillars] fact guards corrected the verdict: %s", ", ".join(guards))
+    return out
 
 
 def _lean_facts(facts: str) -> str:

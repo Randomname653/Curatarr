@@ -114,6 +114,38 @@ check("a missing bitrate_note defaults to empty (older answers stay valid)",
       pillars._parse_verdict(json.dumps({k: x for k, x in GOOD.items()
                                          if k != "bitrate_note"})).bitrate_note == "")
 
+# ── fact guards: the flag follows the file, a signal never forces a keep ────
+
+NORMAL = "OWNER TASTE: x\nTECH: 1080 h264, 21.0 GB, 26 MB/min, 0.94x class median (normal)"
+BLOATED = "TECH: 1080 h264, 14.2 GB, 140 MB/min, 2.40x class median (bloated)"
+SIGNAL = NORMAL + "\nOWNER SIGNAL: Jane wants to keep the low-budget 90s horror she grew up with."
+keep = {**GOOD, "verdict": "HARD_KEEP", "protecting_pillar": "HOUSEHOLD"}
+g = pillars._fact_guards({**keep, "verdict": "KEEP_WITH_FLAG"}, NORMAL)
+check("a flag on a normal file is dropped (the Flatmates error)",
+      g["verdict"] == "HARD_KEEP" and g["_guards"] == ["flag_without_outlier:normal"])
+g = pillars._fact_guards(dict(keep), BLOATED)
+check("a keep on a bloated file gets the flag",
+      g["verdict"] == "KEEP_WITH_FLAG" and g["_guards"] == ["outlier_unflagged"])
+check("a flag on a bloated file and a keep on a normal file stay as they are",
+      "_guards" not in pillars._fact_guards({**keep, "verdict": "KEEP_WITH_FLAG"}, BLOATED)
+      and "_guards" not in pillars._fact_guards(dict(keep), NORMAL))
+check("no TECH class (music, no profile) -> the flag is left to the model",
+      pillars._fact_guards({**keep, "verdict": "KEEP_WITH_FLAG"}, "TECH: no technical profile on record.")
+      ["verdict"] == "KEEP_WITH_FLAG")
+ego_keep = {**GOOD, "verdict": "HARD_KEEP", "protecting_pillar": "EGO",
+            "pillar_0_ego": "While the execution is clumsy, the title aligns with the owner's specific signal."}
+g = pillars._fact_guards(dict(ego_keep), SIGNAL)
+check("an EGO keep resting on the owner signal goes to review as STAGNANT (the Midnight Static error)",
+      g["verdict"] == "STAGNANT" and g["protecting_pillar"] == "NONE"
+      and g["_guards"] == ["signal_forced_keep"])
+check("an EGO keep that argues from taste alone stays",
+      "_guards" not in pillars._fact_guards(
+          {**ego_keep, "pillar_0_ego": "Slow-burn horror executed with real craft, exactly her taste."}, SIGNAL))
+check("a keep protected by a higher pillar is never touched by the signal guard",
+      pillars._fact_guards({**ego_keep, "protecting_pillar": "CUSTODIAN"}, SIGNAL)["verdict"] == "HARD_KEEP")
+check("without an OWNER SIGNAL line the word alone changes nothing",
+      pillars._fact_guards(dict(ego_keep), NORMAL)["verdict"] == "HARD_KEEP")
+
 # ── the schema: generation order and bounds ─────────────────────────────────
 
 props = list(pillars.VERDICT_SCHEMA["properties"])
