@@ -352,6 +352,19 @@ for srv in ("default", "q8"):
                env={}, metrics={"status": "ok"})
 check("pending: ...and no re-pull once every server has one",
       not _run.pending_work(cand, AT, PL, kv=False))
+ML = Ledger(tmp / "moe.json")
+mk = ML.upsert_model("m:1b", "sha256:feedface0000")
+for srv, vram in (("default", 16486), ("q8", 16150)):
+    _cfg = _run.SERVERS[srv]
+    ML.add_run(mk, "ctx_sweep", _run.sweep_settings(_cfg), env={}, metrics={})
+    ML.add_run(mk, "perf", {**_run.perf_base(_cfg, "large", "S1", 3), "tier_gb": "full", "num_gpu": 99},
+               env={}, metrics={"vram_model_mib": vram})
+ML.add_run(mk, "quality", _run.quality_settings(_run.SERVERS["default"], "large", "S1", "sub40", True),
+           env={}, metrics={})
+check("pending: an MoE's q8 saves 336 MiB on the full card -> no KV pass by default",
+      not _run.pending_work(cand, A, ML, kv=True))
+check("...--kv-quality makes it work anyway (q8 is what serves the small tiers)",
+      _run.pending_work(cand, _ap.Namespace(**{**vars(A), "kv_quality": True}), ML, kv=True))
 
 # ── remote host (the NAS card) ─────────────────────────────────────────────
 from tests.benchmarks.hwbench import models as _models, server as _server  # noqa: E402
