@@ -141,6 +141,7 @@ So: a household-claimed title or an objective masterwork STAYS even against the 
 # a verbose small model from spending num_predict on one field and ending in
 # truncated JSON.
 _FINDING_MAX = 400
+_FINDING_MIN_WORDS = 3   # "NONE", "N/A", "PASS", "HARD_KEEP" are labels, not findings
 VERDICT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -191,6 +192,15 @@ class Verdict(BaseModel):
     def _not_blank(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("a pillar finding is blank")
+        # A bare label is no reasoning: gemma4:26b-a4b-it-qat answered 11 of
+        # 40 bench titles with fields like "NONE" / "PASS" / "HARD_KEEP"
+        # (2026-10-20). The schema cannot force this - a grammar minLength
+        # made a model pad the string with junk until the JSON broke - so it
+        # is caught here and the repair turn names it.
+        if len(v.split()) < _FINDING_MIN_WORDS:
+            raise ValueError(f"the finding '{v.strip()[:40]}' is a bare label, not a "
+                             "sentence - write one sentence about THIS title for every "
+                             "pillar, also when the pillar does not apply")
         return v
 
     @model_validator(mode="after")

@@ -97,8 +97,19 @@ check("an unknown verdict is a SCHEMA failure",
       _kind({**GOOD, "verdict": "DELETE"}) is LLMFailure.SCHEMA)
 check("prose is a PARSE failure", _kind("I think it should go.") is LLMFailure.PARSE)
 check("a JSON list is not a verdict", _kind([GOOD]) is LLMFailure.SCHEMA)
-v = pillars._parse_verdict(json.dumps({**GOOD, "pillar_0_ego": "x" * 5000}))
+v = pillars._parse_verdict(json.dumps({**GOOD, "pillar_0_ego": "word " * 1000}))
 check("verbosity is trimmed, not rejected", len(v.pillar_0_ego) == 800)
+for label in ("NONE", "PASS", "HARD_KEEP", "N/A", "Not applicable."):
+    check(f"a bare label ({label!r}) is a SCHEMA failure, so the repair turn names it",
+          _kind({**GOOD, "pillar_1_resonance": label}) is LLMFailure.SCHEMA)
+check("...a label that opens a real sentence is a finding",
+      _kind({**GOOD, "pillar_1_resonance": "FAIL. The comedy offers comfort, not awe."}) is None)
+try:
+    pillars._parse_verdict(json.dumps({**GOOD, "pillar_2_custodian": "NONE"}))
+except LLMCallError as e:
+    check("the repair message names the field and asks for a sentence",
+          "pillar_2_custodian" in pillars._repair_message(e)
+          and "one sentence about THIS title" in pillars._repair_message(e))
 check("a missing bitrate_note defaults to empty (older answers stay valid)",
       pillars._parse_verdict(json.dumps({k: x for k, x in GOOD.items()
                                          if k != "bitrate_note"})).bitrate_note == "")
