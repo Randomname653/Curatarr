@@ -1,4 +1,5 @@
 // ── SIDEBAR COLLAPSE ─────────────────────────────────────────────────────────
+import { loadSwipe } from './swipe.js';
 import { REC_LANES, loadRecs, openRecLane, searchLibrary } from './recs.js';
 import { state } from './state.js';
 import { loadHistoryStatus } from './history.js';
@@ -150,6 +151,7 @@ export function showView(name, btn, o = {}) {
   if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(state.currentRecsCategory); } }
   if (name==='reclassify') loadReclassify();
   if (name==='report') loadReport();
+  if (name==='swipe') loadSwipe();
   // Views with tabs (Settings, Deletions, Knowledge Base, the arr pages):
   // the tab the hash names, or the one already open. o.pane is the older
   // spelling showLibrariesForce uses.

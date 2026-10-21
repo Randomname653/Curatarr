@@ -344,6 +344,14 @@ now come from their own Plex play history - the whole history on the first
 sync, incrementally after that; accounts without a Curatarr login are never
 filed under the owner.
 
+**Swipe.** A new view walks the library titles closest to your taste that
+you have not played in Plex, one card at a time: "Not seen" moves on,
+"Seen it" asks for 1-10 stars. Seen-and-rated titles join your taste
+profile (10 stars pull it toward the title, 1 star pushes it away), so
+what you watched on Netflix or in the cinema finally counts. Every ten
+answers rebuild that category's profile in the background. Keyboard
+(N, S, 1-9/0, U to undo) and drag gestures on phones.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

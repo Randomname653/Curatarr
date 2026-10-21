@@ -1072,6 +1072,17 @@ async def compute_taste_vector_for_user(
                     sum(1 for w, _ in series_entries if w < 0))
         top_entries = series_entries[:EMBED_CAP]
 
+    # Swipe answers (services/swipe.py): a title seen outside Plex, with its
+    # stars, joins the average like a watch - 10 stars pull, 1 star pushes.
+    # A title already weighed from the user's own plays is left to them.
+    from src.services.swipe import load_swipe_entries
+    _swipes = await asyncio.to_thread(load_swipe_entries, user_id, category)
+    if _swipes:
+        _have = {e.get("plex_item_id") for _, e in top_entries}
+        _added = [s for s in _swipes if s[1]["plex_item_id"] not in _have]
+        top_entries = list(top_entries) + _added
+        logger.info("%s: %d swipe answer(s) join the taste average", category, len(_added))
+
     # Count how many need fresh embeddings
     # Only items WITH enrichment data get embedded — unenriched items use genre counters
     def get_emb_ts(entry):
