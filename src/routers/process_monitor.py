@@ -143,8 +143,15 @@ def game_status(_user: User = Depends(get_current_user)):
         lane = ("game" if st["game"] else "cpu" if st["summarizer"] == "cpu"
                 else "paused") if st["gpu_pressed"] else "free"
         reason = st["reason"] or ""     # the state row is still empty here
+    # The game watcher (scheduler.job_game_watcher) probes every 30 s and
+    # stores its verdict as game_active. The UI polls this endpoint every
+    # 30 s as well, so a live probe here paid nvidia-smi plus a process walk
+    # on nearly every poll - 2.3 s per call while the judge loaded the GPU.
+    # The watcher's verdict answers; a live probe only before its first tick.
+    flag = get_state("game_active")
+    running = flag == "1" if flag in ("0", "1") else is_game_running()
     return {
-        "game_running": is_game_running(),
+        "game_running": running,
         "models_unloaded": [],
         "lane": lane,
         "lane_reason": reason,
