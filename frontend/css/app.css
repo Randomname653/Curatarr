@@ -83,6 +83,10 @@
   --info-dim: rgba(91,141,238,.12);
   --info-line: rgba(91,141,238,.25);
   --success: #3ddc97;
+  --loved: #ff5c8a;
+  --loved-fg: #ff8fae;
+  --loved-dim: rgba(255,92,138,.13);
+  --loved-line: rgba(255,92,138,.35);
   --success-dim: rgba(61,220,151,.1);
   --info: #5b8dee;
   --radius: 8px;
@@ -238,7 +242,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 [data-kind="disliked"], [data-lean="disliked"], .swipe-stamp[data-dir="down"] { --c: var(--danger-fg); }
 [data-kind="meh"], [data-lean="meh"], .swipe-stamp[data-dir="none"] { --c: var(--amber); }
 [data-kind="liked"], [data-lean="liked"], .swipe-stamp[data-dir="right"] { --c: var(--success); }
-[data-kind="loved"], [data-lean="loved"], .swipe-stamp[data-dir="up"] { --c: #ff5c8a; }
+[data-kind="loved"], [data-lean="loved"], .swipe-stamp[data-dir="up"] { --c: var(--loved); }
 [data-kind="seen"], [data-kind="exact"] { --c: var(--info); }
 
 .swipe-deck { position: relative; container-type: size; width: min(100%, 1000px); height: clamp(440px, calc(100vh - 300px), 780px); padding-bottom: 34px; }
@@ -268,7 +272,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .swipe-cr { border: 1px solid var(--border2); border-radius: 3px; padding: 0 5px; font-size: 11px; }
 .swipe-because { font-size: 12px; color: var(--text3); }
 .swipe-because b { color: var(--amber2); font-weight: 600; }
-.swipe-ribbon { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: #ff8fae; background: rgba(255,92,138,.13); border: 1px solid rgba(255,92,138,.35); }
+.swipe-ribbon { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--loved-fg); background: var(--loved-dim); border: 1px solid var(--loved-line); }
 .swipe-ribbon svg { width: 13px; height: 13px; fill: currentColor; }
 .swipe-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .swipe-tags .is-yours { border-color: var(--amber-line); color: var(--amber2); background: var(--amber-dim); }
@@ -289,7 +293,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .swipe-stamp[data-dir="down"] { top: 28px; left: 50%; transform: translateX(-50%) rotate(6deg); }
 .swipe-stamp[data-dir="none"] { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-8deg); }
 .swipe-note { position: absolute; z-index: 6; top: -14px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--bg3); border: 1px solid var(--border2); box-shadow: 0 8px 24px rgba(0,0,0,.4); white-space: nowrap; animation: swipe-note 2.6s ease both; }
-.swipe-note svg { width: 13px; height: 13px; color: #ff5c8a; fill: currentColor; }
+.swipe-note svg { width: 13px; height: 13px; color: var(--loved); fill: currentColor; }
 .swipe-done { max-width: 460px; padding: 24px; text-align: center; color: var(--text2); font-size: 13px; }
 .swipe-done h2 { font-size: 18px; color: var(--text); margin: 10px 0 6px; }
 .swipe-done-ic svg { width: 40px; height: 40px; color: var(--amber); }
