@@ -17,6 +17,7 @@
 // open) · U / Backspace undo · Esc closes the star row.
 import { api } from './api.js';
 import { _errHtml, _errMsg, act, activeDialog, emptyHtml, esc, proxyImg, toast } from './ui.js';
+import { haptic } from './mobile.js';
 
 const CATS = [['movie', 'Movies'], ['show', 'TV Shows'], ['anime', 'Anime']];
 const REACT = {
@@ -44,6 +45,9 @@ const DRAG_DECIDE_PX = 110;   // drag this far along one axis and it commits
 const FLICK_PX_MS = 0.5;      // ...or throw it this fast past FLICK_MIN_PX
 const FLICK_MIN_PX = 36;
 const DECK_DEPTH = 3;
+// A decision you can feel (Android; silent under reduced motion): loved
+// gets a double pulse, everything else one short tap.
+const BUZZ = {notseen: 10, disliked: 14, meh: 8, liked: 14, loved: [12, 50, 18], seen: 10};
 
 let _cat = 'show';
 let _queue = [];
@@ -429,6 +433,7 @@ async function _submit(seen, stars, kind, gesture) {
   if (!c) return;
   const cat = _cat, gen = _gen;
   _closeExact();
+  haptic(BUZZ[kind] ?? 10);
   _flyOut(_top(), kind, gesture);
   _queue.shift();
   _layout();
@@ -576,7 +581,7 @@ function _bindDrag(node) {
     const dir = _dirOf(st.dx, st.dy);
     const p = Math.min(1, _along(dir, st.dx, st.dy) / DRAG_DECIDE_PX);
     _lean(node, dir, p);
-    if (p >= 1 && !st.armed) navigator.vibrate?.(10);
+    if (p >= 1 && !st.armed) haptic(8);      // one tick as the card crosses the threshold
     st.armed = p >= 1;
   });
   const end = e => {
@@ -591,7 +596,6 @@ function _bindDrag(node) {
     const along = _along(dir, s.dx, s.dy);
     if (dir && (along >= DRAG_DECIDE_PX || (_along(dir, vx, vy) > FLICK_PX_MS && along > FLICK_MIN_PX))) {
       const kind = DIR_REACT[dir];
-      navigator.vibrate?.(16);
       _submit(kind !== 'notseen', REACT[kind].stars, kind, {dx: s.dx, dy: s.dy, vx, vy, sign: s.sign});
       return;
     }

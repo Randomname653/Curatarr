@@ -6,6 +6,28 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Curatarr on your phone: an installable app with a real mobile layout.**
+- Installable (PWA): a manifest, home-screen icons and a service worker. Open Curatarr
+  over https (or on localhost) and the browser offers "Install app"; on iPhone the
+  drawer's Install button shows the Add-to-Home-Screen steps. The app shell opens when
+  the server is out of reach; API answers are never cached.
+- Below 768px a bottom tab bar replaces the hunt for the hamburger: Chat, For you
+  (Recommendations), Swipe, Library (a sheet with TV Shows / Movies / Music) and More
+  (the full drawer, with a dot when something there needs you).
+- Gestures: swipe in from the left edge to open the drawer, pull down at the top of a
+  view to refresh it, tap the active tab to scroll back to the top.
+- Swipe on a phone fills the screen between the topbar and the tab bar: the card and
+  all six reactions fit without scrolling, the exact-star row is a 5×2 grid of big
+  buttons, and every decision gives a short vibration (Android; a double pulse for
+  Loved, off with reduced motion). Fix: the reaction buttons, the exact stars and the
+  glow around a dragged card now show their reaction colour; a default colour later in
+  the stylesheet had overridden it.
+- Dialogs open as bottom sheets, toasts sit above the tab bar, tabs scroll sideways,
+  Settings' sub-navigation becomes a chip row, the chat input grows with your text and
+  uses icon buttons, and every edge is padded for the notch and home indicator.
+- The notification count appears on the installed app's icon, and the topbar says
+  "offline" while the phone has no network.
+
 **Chat no longer waits on background work or on reloading the model.**
 - A chat message goes ahead of every queued background job (recommendations, proactive
   messages, chat openers, principle learning). If one of those is already generating, it

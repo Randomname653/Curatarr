@@ -23,8 +23,10 @@ import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLi
 import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
+import { initMobile, installApp, openLibrarySheet, toggleTopbarSearch } from './mobile.js';
 
 export function init() {
+initMobile();
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
@@ -139,6 +141,7 @@ const actions = {
   handleSpotifyDrop,
   hideOnError,
   hideOnboarding,
+  installApp,
   kbDismissFinding,
   kbFixMatch,
   kbIgnore,
@@ -154,6 +157,7 @@ const actions = {
   loadDepsStatus,
   loadModelUpdates,
   openModelUpdates,
+  openLibrarySheet,
   startModelCompare,
   rerunModelCompare,
   decideModelUpdate,
@@ -268,6 +272,7 @@ const actions = {
   loadUnreadMessages,
   togglePitcherWrap,
   toggleSidebar,
+  toggleTopbarSearch,
   toggleUser,
   toggleWhy,
   topbarSearch,

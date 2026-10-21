@@ -139,6 +139,15 @@ export function showView(name, btn, o = {}) {
   document.querySelectorAll('.sb-item').forEach(b => { b.classList.remove('active'); b.removeAttribute('aria-current'); });
   const item = document.querySelector(`.sb-item[data-view="${CSS.escape(name)}"]`);
   if (item) { item.classList.add('active'); item.setAttribute('aria-current', 'page'); }
+  // The phone tab bar: the tab that lists this view, else "More" (the drawer).
+  let tabbed = false;
+  document.querySelectorAll('#mobile-tabbar .mt-item').forEach(t => {
+    const on = (t.dataset.views || '').split(' ').includes(name);
+    tabbed ||= on;
+    t.classList.toggle('active', on);
+    if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+  });
+  if (!tabbed) document.getElementById('mt-more')?.classList.add('active');
   // Clear all views — remove active class AND reset any inline display styles
   document.querySelectorAll('.view').forEach(v => {
     v.classList.remove('active');
