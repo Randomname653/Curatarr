@@ -315,6 +315,8 @@ def _migrate_columns() -> None:
         ("series_editions",       "files_disc",          "INTEGER"),
         ("series_editions",       "anidb_disc_censored", "BOOLEAN DEFAULT 0"),
         ("series_editions",       "anidb_tags",          "VARCHAR(200)"),
+        # Swipe "Want to watch" (2026-10-21): a not-seen answer with intent.
+        ("swipe_ratings",         "want",                "BOOLEAN DEFAULT 0"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model

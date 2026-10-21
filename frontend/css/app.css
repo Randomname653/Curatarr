@@ -289,11 +289,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .swipe-meter { flex: 0 1 160px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; }
 .swipe-meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, var(--amber), var(--amber2)); }
 .swipe-stamp { position: absolute; z-index: 4; padding: 6px 16px; border: 4px solid var(--c); border-radius: 10px; color: var(--c); background: color-mix(in srgb, var(--bg) 55%, transparent); font-size: clamp(22px, 2.6vw, 38px); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; opacity: 0; pointer-events: none; transition: opacity .08s linear; }
-.swipe-stamp[data-dir="right"] { top: 28px; left: 28px; transform: rotate(-14deg); }
-.swipe-stamp[data-dir="left"] { top: 28px; right: 28px; transform: rotate(14deg); }
-.swipe-stamp[data-dir="up"] { bottom: 70px; left: 50%; transform: translateX(-50%) rotate(-6deg); }
-.swipe-stamp[data-dir="down"] { top: 28px; left: 50%; transform: translateX(-50%) rotate(6deg); }
-.swipe-stamp[data-dir="none"] { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-8deg); }
+.swipe-stamp[data-pos="right"] { top: 28px; left: 28px; transform: rotate(-14deg); }
+.swipe-stamp[data-pos="left"] { top: 28px; right: 28px; transform: rotate(14deg); }
+.swipe-stamp[data-pos="up"] { bottom: 70px; left: 50%; transform: translateX(-50%) rotate(-6deg); }
+.swipe-stamp[data-pos="down"] { top: 28px; left: 50%; transform: translateX(-50%) rotate(6deg); }
+.swipe-stamp[data-pos="none"] { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-8deg); }
 .swipe-note { position: absolute; z-index: 6; top: -14px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--bg3); border: 1px solid var(--border2); box-shadow: 0 8px 24px rgba(0,0,0,.4); white-space: nowrap; animation: swipe-note 2.6s ease both; }
 .swipe-note svg { width: 13px; height: 13px; color: var(--loved); fill: currentColor; }
 .swipe-done { max-width: 460px; padding: 24px; text-align: center; color: var(--text2); font-size: 13px; }
@@ -306,10 +306,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .swipe-react { --c: var(--text2); display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--text3); font: inherit; font-size: 11px; cursor: pointer; }
 .swipe-react-ic { display: flex; align-items: center; justify-content: center; width: 58px; height: 58px; border-radius: 50%; color: var(--c); background: var(--bg2); border: 2px solid color-mix(in srgb, var(--c) 45%, var(--border)); box-shadow: 0 6px 18px rgba(0,0,0,.35); transition: transform .18s cubic-bezier(.3,1.6,.5,1), background .15s, box-shadow .2s; }
 .swipe-react-ic svg { width: 24px; height: 24px; }
-.swipe-react[data-kind="liked"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 66px; height: 66px; }
+.swipe-react[data-kind="want"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 66px; height: 66px; }
 .swipe-react[data-kind="loved"] .swipe-react-ic svg { fill: currentColor; }
-.swipe-react-exact .swipe-react-ic { width: 44px; height: 44px; }
-.swipe-react-exact .swipe-react-ic svg { width: 18px; height: 18px; }
+/* the two groups - not seen | seen - read apart without a label */
+.swipe-react[data-kind="disliked"] { margin-left: 18px; position: relative; }
+.swipe-react[data-kind="disliked"]::before { content: ''; position: absolute; left: -17px; top: 14px; bottom: 26px; width: 1px; background: var(--border2); }
 .swipe-react:hover .swipe-react-ic, .swipe-react:focus-visible .swipe-react-ic { transform: translateY(-2px) scale(1.06); background: color-mix(in srgb, var(--c) 14%, var(--bg2)); }
 .swipe-react:hover, .swipe-react.is-leaning { color: var(--c); }
 .swipe-react.is-leaning .swipe-react-ic { transform: scale(1.16); background: color-mix(in srgb, var(--c) 22%, var(--bg2)); box-shadow: 0 0 24px color-mix(in srgb, var(--c) 45%, transparent); }
@@ -325,12 +326,13 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 /* reaction colours, shared by chips, buttons, stamps and the card glow — after
    those components: .swipe-card / .swipe-react / .swipe-star set a default --c
    at the same specificity, and the later rule wins */
-[data-kind="notseen"], [data-lean="notseen"], .swipe-stamp[data-dir="left"] { --c: #8f9bb3; }
-[data-kind="disliked"], [data-lean="disliked"], .swipe-stamp[data-dir="down"] { --c: var(--danger-fg); }
-[data-kind="meh"], [data-lean="meh"], .swipe-stamp[data-dir="none"] { --c: var(--amber); }
-[data-kind="liked"], [data-lean="liked"], .swipe-stamp[data-dir="right"] { --c: var(--success); }
-[data-kind="loved"], [data-lean="loved"], .swipe-stamp[data-dir="up"] { --c: var(--loved); }
-[data-kind="seen"], [data-kind="exact"] { --c: var(--info); }
+[data-kind="notseen"], [data-lean="notseen"] { --c: #8f9bb3; }
+[data-kind="want"], [data-lean="want"] { --c: var(--info); }
+[data-kind="disliked"], [data-lean="disliked"] { --c: var(--danger-fg); }
+[data-kind="meh"], [data-lean="meh"] { --c: var(--amber); }
+[data-kind="liked"], [data-lean="liked"] { --c: var(--success); }
+[data-kind="loved"], [data-lean="loved"] { --c: var(--loved); }
+[data-kind="seen"] { --c: var(--text2); }
 
 @keyframes swipe-rise { from { opacity: 0; transform: translateY(60px) scale(.85); } }
 @keyframes swipe-slide-in { from { opacity: 0; transform: translateY(-6px); } }
@@ -364,7 +366,9 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
   .swipe-people { display: none; }
   .swipe-reactions { gap: 10px; }
   .swipe-react-ic { width: 50px; height: 50px; }
-  .swipe-react[data-kind="liked"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 58px; height: 58px; }
+  .swipe-react[data-kind="want"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 58px; height: 58px; }
+  .swipe-react[data-kind="disliked"] { margin-left: 10px; }
+  .swipe-react[data-kind="disliked"]::before { left: -9px; top: 10px; bottom: 10px; }
   .swipe-react-l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 

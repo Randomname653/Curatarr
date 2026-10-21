@@ -395,6 +395,17 @@ it while the next one rises. Buttons and keys play the same motion.
   stack; a ring counts the answers to the next taste refresh and turns
   green when it starts.
 
+**Swipe: Want to watch.** Most cards are titles you haven't seen, and "Not
+seen" threw away whether one interested you. "Want to watch" now sits next
+to it and puts the title on your own Plex watchlist (the same write chat
+makes for "I want to watch that"; the card says if plex.tv found no clear
+match). It is a plan, not a verdict, so it doesn't touch your taste profile.
+The two unseen answers get the two easy swipes (← not seen, → want to
+watch; ↑ loved and ↓ disliked as before; Liked is a tap or L). Exact stars
+moved off the button row to a long press on a seen reaction (or keys 1-0),
+so the row stays at six. Only seen answers count toward the next taste
+refresh, and a full stack loads its posters in one round.
+
 **Fewer random memories on deletion cards.** "Matches something you said
 you value" no longer shows a memory that only stood out of a tight cluster
 of unrelated ones (a car-nostalgia note on a French comedy). An

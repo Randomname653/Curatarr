@@ -520,7 +520,9 @@ class SwipeRating(Base):
     library title (anywhere - Netflix, cinema, a friend's place), and if so,
     how many stars out of 10. Seen-and-rated titles join the user's taste
     vector (taste_engine via services/swipe.load_swipe_entries); "not seen"
-    only keeps the title out of the next stack.
+    only keeps the title out of the next stack. ``want`` (not seen, wants to
+    watch it) is intent, not experience: it never reaches the taste vector,
+    the router puts the title on the user's plex.tv watchlist.
 
     ``doc_id`` is the title's vector-store id ({service}:{arr id} or a Plex
     ratingKey) - the key its enriched profile is cached under."""
@@ -533,6 +535,7 @@ class SwipeRating(Base):
     title      = Column(String(512), nullable=True)
     seen       = Column(Boolean, nullable=False)
     stars      = Column(Integer, nullable=True)               # 1-10, only when seen
+    want       = Column(Boolean, nullable=False, default=False)  # only when not seen
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

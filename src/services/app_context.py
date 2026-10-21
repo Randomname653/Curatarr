@@ -75,9 +75,12 @@ APP_MAP_BLOCK = (
     "cards an '+ Add' button (admin) that adds the title to the right "
     "arr).\n"
     "- 'Swipe': titles near the user's taste that they have not played in "
-    "Plex, one card at a time; 'Not seen' moves on, 'Seen it' asks for 1-10 "
-    "stars. Seen-and-rated answers shape their taste profile - the way to "
-    "teach it what they watched elsewhere (Netflix, cinema).\n"
+    "Plex, one card at a time. Not seen: 'Not seen' moves on, 'Want to "
+    "watch' also puts the title on their own Plex watchlist. Seen: "
+    "Disliked / Meh / Liked / Loved, or exact 1-10 stars ('Seen it - how "
+    "good'). Seen-and-rated answers shape their taste profile - the way to "
+    "teach it what they watched elsewhere (Netflix, cinema); 'Want to "
+    "watch' does not, it is a plan, not a verdict.\n"
     "- 'Deletions' (admin): your deletion proposals, each marked 'Cut' or "
     "'Your call' with a 'Why?' that lists the strongest signals in its "
     "deletion score, and each with a 'Delete' "
@@ -185,6 +188,7 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Recommendations",
     "Swipe",
     "Not seen",
+    "Want to watch",
     "Seen it",
     "Search your library…",
     "+ Add",
