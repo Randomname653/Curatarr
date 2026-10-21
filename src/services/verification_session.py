@@ -212,12 +212,14 @@ def _verification_questions(user_id: int) -> list:
                 "context": {"media_type": "music"},
             })
 
-        # 4. Binge sessions (series watched 3+ eps in one day)
-        from sqlalchemy import cast, Date
+        # 4. Binge sessions (series watched 3+ eps in one day). date(), not
+        # CAST(... AS DATE): SQLite casts a timestamp to its YEAR (2026), so
+        # the old query grouped by year and the Date column choked on the int.
+        day = _func.date(WatchHistoryEntry.viewed_at)
         binge_sessions = db.query(
             WatchHistoryEntry.series_title,
             WatchHistoryEntry.media_type,
-            cast(WatchHistoryEntry.viewed_at, Date).label("day"),
+            day.label("day"),
             _func.count(WatchHistoryEntry.id).label("eps"),
         ).filter(
             WatchHistoryEntry.user_id == user_id,
@@ -227,7 +229,7 @@ def _verification_questions(user_id: int) -> list:
         ).group_by(
             WatchHistoryEntry.series_title,
             WatchHistoryEntry.media_type,
-            cast(WatchHistoryEntry.viewed_at, Date),
+            day,
         ).having(_func.count(WatchHistoryEntry.id) >= 3).order_by(
             _func.count(WatchHistoryEntry.id).desc()
         ).limit(3).all()
