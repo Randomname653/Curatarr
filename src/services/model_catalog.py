@@ -266,6 +266,27 @@ GPU_BANDWIDTH_GBPS = {
 }
 
 
+# How each curator the matrix hands out judges one example title for a
+# FICTIONAL owner (tests/benchmarks/hwbench/examples.py; the full comparison
+# is docs/CURATOR_EXAMPLES.md). The wizard shows it next to the package.
+EXAMPLES_PATH = Path(__file__).resolve().parent / "curator_examples.json"
+
+
+def load_examples(path: Path = EXAMPLES_PATH) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def model_example(model: str, examples: dict | None = None) -> dict | None:
+    ex = examples if examples is not None else load_examples()
+    if not ex or model not in (ex.get("models") or {}):
+        return None
+    return {"title": ex.get("title"), "setup": ex.get("setup"), "law": ex.get("law"),
+            "owner": ex.get("owner"), **ex["models"][model]}
+
+
 def load_matrix(path: Path = MATRIX_PATH) -> dict | None:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -343,4 +364,5 @@ def hardware_package(vram_gb: float | None, gpu_name: str | None = None,
     if installed is not None:
         norm = {m.split(":", 1)[0] if m.endswith(":latest") else m for m in installed}
         out["recommended"]["installed"] = rec["model"] in norm
+    out["example"] = model_example(rec["model"])
     return out

@@ -106,6 +106,48 @@ buzzwords) keeps it interesting as a possible grammar-forced facts harvester.
 
 ---
 
+## October 2026: a curator for every card size
+
+The August decision assumed a 24 GB card, which locks out most people. The
+hardware-matrix bench (`tests/benchmarks/hwbench/`) measures what each
+candidate needs and delivers on smaller cards, and the setup wizard reads
+the result (`src/services/model_matrix.json`) to recommend one package per
+card: model, profile, context, KV-cache setting, and the speed it ran at.
+
+**How a smaller card is measured.** On the 4090, llama.cpp's own `--fit`
+target is set so the model splits its layers exactly as it would on an
+8 GB or 12 GB card; the share on the GPU comes from llama-server's own log,
+not from `/api/ps`, which under-reports the newer gemma4 format. One real
+16 GB card (an RTX PRO 2000 on a NAS) calibrated the result: it writes at
+0.39–0.50× the 4090's speed across 13 models.
+
+**How quality is judged.** Not by agreement with the production model — a
+new model may be right where the old one is wrong. Every judge verdict's
+reasoning is scored on faith, law, logic, judgment and clarity, and every
+card note on the August rubric (60 / 40). Within 1.5 points the faster
+package wins, unless the best model fits the card fully and comfortably;
+a package over 20 s per verdict is only an alternative.
+
+| Card | Curator | Writing | Per verdict | System RAM |
+|---|---|---|---|---|
+| 24 GB | gemma4:31b-it-qat | 43 tok/s | 7.3 s | 6 GB |
+| 8–20 GB | gemma4:26b-a4b-it-qat (MoE), q8 KV | 42–160 tok/s | 2–8 s | 6–16 GB |
+| 6 GB | gemma4:26b-a4b-it-qat | 35 tok/s | 10 s | 18 GB |
+| 4 GB | gemma4:26b-a4b-it-qat, q8 KV | 15 tok/s | 19.5 s | 19 GB |
+
+The MoE keeps working when most of it runs on the CPU because only about
+4 B of its parameters are active per token. A host with too little RAM for
+it gets **gemma4:e4b-it-qat** instead (about 150 tok/s fully on a 6–12 GB
+card, 6 GB of RAM). After the bake, the wizard's mini-bench runs the chosen
+curator through two real verdicts and one card note on the user's own
+machine and says plainly if it is slower than the bench promised.
+
+**How these curators argue:** [`CURATOR_EXAMPLES.md`](CURATOR_EXAMPLES.md)
+puts all three through the same five titles for a fictional owner — the
+clear cases, the gray zones, and where they still miss.
+
+---
+
 ## Context-window cost on a 24 GB card
 
 `tests/benchmarks/num_ctx_bench.py`, results in

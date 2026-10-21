@@ -707,6 +707,22 @@ def cmd_record_scores(args) -> None:
         print(rid, agg)
 
 
+def cmd_examples(args) -> None:
+    """Argumentation examples for the setup's curators (hwbench/examples.py)."""
+    from . import examples
+    review = json.loads(examples.REVIEW.read_text(encoding="utf-8")) if examples.REVIEW.exists() else {}
+    if args.render:
+        run_doc = json.loads((examples.DATA / "run.json").read_text(encoding="utf-8"))
+    else:
+        from src.services.model_catalog import load_matrix
+        todo = examples.matrix_models(load_matrix() or {})
+        if args.only:
+            todo = [m for m in todo if m["model"] in args.only.split(",")]
+        run_doc = examples.run(todo, log=log)
+    print("docs   ->", examples.render_docs(run_doc, review))
+    print("wizard ->", examples.export_wizard(run_doc))
+
+
 def main() -> None:
     sys.path.insert(0, str(REPO))
     os.chdir(REPO)
@@ -751,6 +767,9 @@ def main() -> None:
     p = sub.add_parser("score-sheets")
     p.add_argument("--refs", required=True); p.add_argument("--kind", default="mono", choices=["mono", "chat"])
     p.add_argument("--profile", default="")
+    p = sub.add_parser("examples")
+    p.add_argument("--render", action="store_true", help="re-render docs + wizard from the last run, no GPU")
+    p.add_argument("--only", default="", help="comma list of models (default: the matrix's curators)")
     p = sub.add_parser("record-scores")
     p.add_argument("--csv", nargs="+", required=True); p.add_argument("--scorer", default="claude")
     args = ap.parse_args()
@@ -759,7 +778,8 @@ def main() -> None:
         # and the cells of one remote stay under one name run after run.
         args.remote_host = httpx.URL(args.remote).host or "remote"
     {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "matrix": cmd_matrix,
-     "score-sheets": cmd_score_sheets, "record-scores": cmd_record_scores}[args.cmd](args)
+     "score-sheets": cmd_score_sheets, "record-scores": cmd_record_scores,
+     "examples": cmd_examples}[args.cmd](args)
 
 
 if __name__ == "__main__":

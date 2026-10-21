@@ -185,6 +185,25 @@ _r8 = hardware_package(4.0, None, set(), matrix=_mx4, ram_gb=8.0)
 check("RAM: nothing fits -> keep the recommendation but warn",
       _r8["recommended"]["model"] == "gemma4:26b-a4b-it-qat"
       and _r8["ram_fallback"]["instead_of"] is None and _r8["ram_fallback"]["host_gb"] == 8.0)
+from src.services.model_catalog import load_examples, model_example  # noqa: E402
+_ex = {"title": "Flatmates (2009, invented)", "setup": "s", "law": "l", "owner": "Jane Doe (fictional)",
+       "models": {"gemma4:e4b-it-qat": {"verdict": "HARD_KEEP", "verdict_words": "Keep",
+                                       "protecting_pillar": "HOUSEHOLD", "reason": "Sam watched it.",
+                                       "note": "n"}}}
+check("example: a model with one gets title, owner and its own verdict",
+      model_example("gemma4:e4b-it-qat", _ex)["protecting_pillar"] == "HOUSEHOLD"
+      and model_example("gemma4:e4b-it-qat", _ex)["owner"].endswith("(fictional)"))
+check("example: a model without one gets None",
+      model_example("gemma4:31b", _ex) is None and model_example("x", {}) is None)
+_shipped_ex = load_examples()
+_mxs = load_matrix()
+if _mxs and _shipped_ex:
+    _need = {(_row.get("recommended") or {}).get("model") for _row in (_mxs.get("tiers") or {}).values()} - {None}
+    for _m in sorted(_need):
+        check(f"shipped example: the matrix's {_m} has one", _m in (_shipped_ex.get("models") or {}))
+    check("shipped example: the owner is the fictional one", "fictional" in (_shipped_ex.get("owner") or ""))
+check("the wizard renders the example next to the package",
+      "pkg.example" in _frontend_everything() and "CURATOR_EXAMPLES.md" in _frontend_everything())
 check("the wizard sends the host RAM and names the fallback",
       "ram_gb: state.setupData.ram_gb" in _frontend_everything()
       and "ram_fallback" in _frontend_everything())

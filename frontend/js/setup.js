@@ -370,11 +370,18 @@ export function renderHardwarePackage(pkg) {
     : rf.instead_of
       ? `<div class="t-amber test-status">${SVG_WARN} ${esc(rf.instead_of)} would need ~${esc(rf.needs_gb)} GB of system RAM on this card (this host has ${esc(rf.host_gb)} GB) — recommending ${esc(r.model)} instead.</div>`
       : `<div class="t-amber test-status">${SVG_WARN} This package needs ~${esc(rf.needs_gb)} GB of system RAM; this host has ${esc(rf.host_gb)} GB. Expect swapping.</div>`;
+  // How this curator argues, on one fictional example (docs/CURATOR_EXAMPLES.md has all of them).
+  const sample = pkg.example;
+  const example = !sample ? '' : `<details class="fs-12"><summary>How ${esc(r.model)} judges — an example</summary>`
+    + `<div class="t3">${esc(sample.title)} · owner: ${esc(sample.owner)}. ${esc(sample.setup)}</div>`
+    + `<div><b>${esc(sample.verdict_words || sample.verdict)}</b> (${esc(sample.protecting_pillar)}): ${esc(sample.reason)}</div>`
+    + (sample.note ? `<blockquote class="t2">${esc(sample.note)}</blockquote>` : '')
+    + `<div class="t3">All examples, including where the models miss: docs/CURATOR_EXAMPLES.md</div></details>`;
   return ramNote + `<div class="test-status">Bench result for ${pkg.tier_gb} GB: <b>${esc(r.model)}</b>`
     + `${r.installed ? ' (installed)' : ''} — ${speed}; judge ~${ex.judge_s ?? '?'} s per title;`
     + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${ex.gpu_share_pct} % on the GPU, rest in RAM` : ''}.</div>`
     + `<div class="t3 fs-12">Curatarr .env: ${esc(env.join(' · '))}`
-    + (srv.length ? ` — Ollama server: ${esc(srv.join(' · '))}` : '') + `</div>`;
+    + (srv.length ? ` — Ollama server: ${esc(srv.join(' · '))}` : '') + `</div>` + example;
 }
 
 export function renderRecSelect(id, entries, installed) {
