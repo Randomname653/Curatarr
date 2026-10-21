@@ -264,12 +264,98 @@ TARGET_CUTS, JUDGE_CAP = 10, 60
 DELETION_RUN_SUMMARY: dict[str, dict] = {}
 
 
+# ── Household taste (2026-10-21) ─────────────────────────────────────────────
+# The taste term measured distance from the OWNER's history only: a series
+# another household member would enjoy, but has not watched yet, read as
+# 80 points of "far from your watch history". A title close to a member's
+# taste now loses part of those points - how much grows with the size of that
+# member's profile, so a thin profile barely moves anything - and a strong fit
+# reaches the judge as a household argument. Never a floor: only an actual
+# watch protects a title outright (pillars._household_claim).
+HOUSEHOLD_TASTE_MAX_DAMPING = 0.5
+HOUSEHOLD_TASTE_FULL_ITEMS = 20
+HOUSEHOLD_TASTE_STRONG_FIT = 0.9
+
+
+def _taste_comparators(blob: dict):
+    """(unit taste vectors, item -> comparable unit vector) in ONE user's own
+    space: centered by that blob's corpus mean, like the owner's cosine."""
+    mean = None
+    if blob.get("corpus_mean") and _normalize_vec(blob["corpus_mean"]) is not None:
+        mean = np.asarray(blob["corpus_mean"], dtype=float)
+
+    def cmp(vec):
+        vn = _normalize_vec(vec)
+        if vn is None or mean is None:
+            return vn
+        if vn.shape != mean.shape:
+            return None
+        c = vn - mean
+        n = np.linalg.norm(c)
+        return c / n if n > 1e-12 else None
+
+    sources = [c.get("embedding") for c in (blob.get("cluster_centroids") or [])
+               if isinstance(c, dict)] or [blob.get("embedding")]
+    return [v for v in (cmp(s) for s in sources if s) if v is not None], cmp
+
+
+def _load_household_tastes(owner_id: int, category: str) -> list[dict]:
+    """Every OTHER active user's taste profile for this category that can be
+    scored against: calibrated anchors, at least one embedded title."""
+    out: list[dict] = []
+    with get_db_session() as db:
+        rows = (db.query(User.plex_username, EncryptedTasteVector.encrypted_blob)
+                .join(User, User.id == EncryptedTasteVector.user_id)
+                .filter(EncryptedTasteVector.media_category == category,
+                        EncryptedTasteVector.user_id != owner_id,
+                        User.is_active == True)  # noqa: E712
+                .all())
+    for name, raw in rows:
+        try:
+            blob = json.loads(raw or "")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(blob, dict) or blob.get("version") == 1:
+            continue
+        items = blob.get("embedding_items") or 0
+        items = items if isinstance(items, int) else len(items)
+        try:
+            lo, hi = float(blob["cal_p10"]), float(blob["cal_p90"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if items <= 0 or not (math.isfinite(lo) and math.isfinite(hi)) or hi - lo <= 1e-3:
+            continue
+        tastes, cmp = _taste_comparators(blob)
+        if tastes:
+            out.append({"name": name or "another user", "tastes": tastes, "cmp": cmp,
+                        "anchors": (lo, hi), "items": items})
+    return out
+
+
+def _household_fits(item_vec, household: list[dict]) -> list[tuple]:
+    """[(name, fit 0-1, damping weight)] of each member for one item."""
+    out = []
+    for h in household:
+        iv = h["cmp"](item_vec)
+        if iv is None:
+            continue
+        cos = max(float(np.dot(t, iv)) for t in h["tastes"])
+        if not math.isfinite(cos):
+            continue
+        fit = 1.0 - _cosine_to_mismatch(cos, *h["anchors"])
+        weight = HOUSEHOLD_TASTE_MAX_DAMPING * min(1.0, h["items"] / HOUSEHOLD_TASTE_FULL_ITEMS)
+        out.append((h["name"], fit, weight))
+    return out
+
+
 def deletion_score_factors(*, mismatch: float, taste_src: str, size_pts: float,
                            size_gb: float, size_ratio: float | None,
                            rating: float | None, rating_swing: float,
                            user_rating: float | None, user_rating_swing: float,
                            feedback_swing: float, drop_penalty: float,
                            play_prot: float, plays: int = 0,
+                           household_taste_pts: float = 0.0,
+                           household_name: str | None = None,
                            keep_value_pts: float = 0.0,
                            considerations: list | None = None) -> list[dict]:
     """The deletion score taken apart into the terms that built it, each with
@@ -310,6 +396,8 @@ def deletion_score_factors(*, mismatch: float, taste_src: str, size_pts: float,
         "You said you didn't like it" if feedback_swing > 0 else "You said you liked it")
     add("dropped", drop_penalty, "Similar to titles you stopped watching")
     add("plays", -play_prot, f"You've played it {plays} times")
+    add("household_taste", -household_taste_pts,
+        f"Close to {household_name or 'another household member'}'s taste")
     if keep_value_pts:
         what = ""
         for c in considerations or []:
@@ -1695,7 +1783,14 @@ async def generate_deletion_proposals(
                 guard_failures.append("Plex artist ratings")
                 logger.warning("[deletions] artist-rating preload failed: %s", e,
                                exc_info=True)
+        try:
+            household_tastes = _load_household_tastes(user_id, category)
+        except Exception as e:
+            logger.warning("[deletions] %s: household taste profiles unreadable - "
+                           "scored on the owner's taste alone: %r", category, e)
+            household_tastes = []
         return {
+            "household_tastes": household_tastes,
             "guard_failures": guard_failures,
             "taste_unreadable": taste_unreadable,
             "lang_directive_str": lang_directive_str,
@@ -1742,6 +1837,10 @@ async def generate_deletion_proposals(
     curator_positioned = _ctx["curator_positioned"]
     recent_watched = _ctx["recent_watched"]
     user_rating_by_artist = _ctx["user_rating_by_artist"]
+    household_tastes = _ctx.get("household_tastes") or []
+    if household_tastes:
+        logger.info("[deletions] %s: household taste from %s", category,
+                    ", ".join(f"{h['name']} ({h['items']} titles)" for h in household_tastes))
     taste_degraded = ("scored without the " + " and ".join(_ctx["taste_unreadable"])
                       + " — the stored taste profile could not be read; the "
                       "next taste rebuild rewrites it"
@@ -1982,10 +2081,13 @@ async def generate_deletion_proposals(
         if drop_cos is not None and not math.isfinite(drop_cos):
             drop_cos = None
 
+        hh_fits = _household_fits(item_vec, household_tastes) if (
+            item_vec is not None and household_tastes) else []
         prelim.append({
             "item": item,
             "cosine": cosine,
             "drop_cos": drop_cos,
+            "hh_fits": hh_fits,
             "size_gb": size_gb,
             "rating": effective_rating,
             "rating_breakdown": rating_breakdown,
@@ -2172,7 +2274,16 @@ async def generate_deletion_proposals(
             play_prot = _play_protection(_pl)
             if play_prot >= 10.0:
                 _play_protected.append((_it.get("title"), _pl, round(play_prot, 1)))
-        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing + drop_penalty - play_prot
+        # Household taste: only against the owner's EMBEDDING mismatch (the
+        # members' fit is an embedding measure too).
+        hh_pts, hh_name = 0.0, None
+        if taste_src == "embedding" and p.get("hh_fits"):
+            _n, _fit, _w = max(p["hh_fits"], key=lambda f: f[1] * f[2])
+            hh_pts, hh_name = mismatch * 80 * _w * _fit, _n
+            _sn, _sfit, _ = max(p["hh_fits"], key=lambda f: f[1])
+            if _sfit >= HOUSEHOLD_TASTE_STRONG_FIT:
+                p["item"]["_household_taste"] = {"name": _sn, "fit": round(_sfit, 2)}
+        del_score = mismatch * 80 + size_pts - rating_swing - user_rating_swing + feedback_swing + drop_penalty - play_prot - hh_pts
         if del_score > SHORTLIST_SCORE:
             scored_candidates.append({
                 "item": p["item"],
@@ -2188,6 +2299,7 @@ async def generate_deletion_proposals(
                     feedback_swing=feedback_swing, drop_penalty=drop_penalty,
                     play_prot=play_prot,
                     plays=(_pl if category == "music" else 0),
+                    household_taste_pts=hh_pts, household_name=hh_name,
                 ),
                 "mismatch": mismatch,
                 "taste_source": taste_src,   # embedding / genre / none
