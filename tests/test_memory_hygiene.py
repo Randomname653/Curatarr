@@ -16,6 +16,7 @@ Found in the 2026-10 vector/memory audit:
 """
 import asyncio
 import json
+import math
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -207,6 +208,35 @@ check("a lone shared GENRE word no longer generalises a memory", genre_only not 
 check("two shared genre words still count", two_genres in ids)
 check("a superseded memory is never a consideration",
       all("every partner pick" not in c["content"] for c in cons))
+
+# ── keep-considerations: the embedding path has an absolute floor ────────────
+# 2026-10-21: a K.I.T.T. nostalgia memory matched Cat's Eyes at cos 0.27. It
+# stood out of a tight cluster of unrelated memories, but it was noise.
+
+
+def at(c):
+    return [c, math.sqrt(1 - c * c), 0.0]
+
+
+PROFILE = "Cafe Story — Comedy — three sisters run a cafe"
+NOSTALGIA = "The user enjoyed the nostalgia of a talking car."
+
+uid = next_user()
+noise = add(NOSTALGIA, at(0.30))
+for _ in range(5):
+    add("Filler note about the weather.", at(0.15))
+cons = asyncio.run(em.retrieve_considerations(uid, PROFILE, media_category="show", top_k=3))
+check("a keep memory that only stands out of a tight cluster is noise (cos 0.30, relative bar 0.26)",
+      noise not in {c["id"] for c in cons})
+
+uid = next_user()
+real = add(NOSTALGIA, at(0.40))
+for _ in range(5):
+    add("Filler note about the weather.", at(0.15))
+cons = asyncio.run(em.retrieve_considerations(uid, PROFILE, media_category="show", top_k=3))
+check("a real embedding match above the floor still counts", real in {c["id"] for c in cons})
+check("the floor sits above the measured noise (p99 0.335) and below real matches (0.35+)",
+      0.335 < em.CONSIDERATION_EMBED_FLOOR < 0.35)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
