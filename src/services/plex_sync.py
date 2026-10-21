@@ -496,6 +496,17 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     logger.info("In-progress items: %d", len(in_progress_entries))
     all_entries.extend(in_progress_entries)
 
+    # Household members' plays never show in the admin-token listings above.
+    member_backfill = False
+    try:
+        _member_entries, member_backfill = await _member_history_entries(
+            plex_url, headers, lib_configs, last_sync_ts, all_entries)
+        all_entries.extend(_member_entries)
+    except Exception as e:
+        member_backfill = False
+        logger.warning("Plex sync: household members' plays not fetched (%s) - "
+                       "retried next sync", e)
+
 
     if not all_entries:
         msg = "No new watched items"
@@ -695,13 +706,19 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 # admin (current Plex API limitation — fixed once the play
                 # completes and shows up in /status/sessions/history/all).
                 is_in_progress = entry.get("_in_progress", False)
-                account_id = None
-                if not is_in_progress:
+                account_id = entry.get("_account_id")
+                if account_id is None and not is_in_progress:
                     account_id = _resolve_account_for_event(rating_key, int(viewed_at_ts))
 
                 user = None
                 if account_id is not None:
-                    user = resolved_account_map.get(str(account_id))
+                    user = (resolved_account_map.get(str(account_id))
+                            or plex_id_to_user.get(str(account_id)))
+                if user is None and entry.get("_account_id") is not None:
+                    # A member's own history row whose account is no Curatarr
+                    # user: never parked on the admin.
+                    skipped += 1
+                    continue
                 if user is None:
                     # Either no history row matched (in-progress / cleared history)
                     # or the accountID resolves to a Plex user who hasn't logged
@@ -901,6 +918,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
             db.commit()
 
     await asyncio.to_thread(_write_entries)
+    if member_backfill:
+        await run_write(set_state, MEMBER_BACKFILL_KEY, "1")
 
     logger.info(
         "Plex sync done: %d new entries, %d skipped, %d resumed-view merges, "
@@ -1095,6 +1114,112 @@ def _process_rec_watch_hits(hits: list[dict]) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ADMIN ACTIONS — re-attribute existing watch history + drop orphan rows
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── Household members' plays ─────────────────────────────────────────────────
+#
+# /library/sections/{key}/all?viewCount>>0 answers for the TOKEN's account: the
+# admin's. A title only a household member watched never shows up there, so
+# none of their plays reached watch_history (2026-10-21: 27 plays of one member
+# since January, 14 of them "Free Rein", which the judge then proposed to CUT
+# as unwatched - the household floor had nothing to go on). Their plays come
+# from /status/sessions/history/all, filtered per account, instead.
+MEMBER_BACKFILL_KEY = "member_history_backfilled"
+
+
+def _member_entry(ev: dict, lib_configs: dict, account_id: int) -> Optional[dict]:
+    """One history event as a sync entry (the shape the section listing
+    yields), or None for a library Curatarr does not follow."""
+    rk, vts = ev.get("ratingKey"), ev.get("viewedAt")
+    if not rk or vts is None:
+        return None
+    sec = lib_configs.get(str(ev.get("librarySectionID", "")))
+    if not sec or sec[0] == "ignore":
+        return None
+    gp = str(ev.get("grandparentKey") or "")
+    return {
+        "ratingKey": str(rk),
+        "lastViewedAt": int(vts),
+        "viewedAt": int(vts),
+        "title": ev.get("title", ""),
+        "grandparentTitle": ev.get("grandparentTitle"),
+        "parentIndex": ev.get("parentIndex"),
+        "index": ev.get("index"),
+        "grandparentRatingKey": gp.rsplit("/", 1)[-1] if gp else None,
+        "type": ev.get("type"),
+        "_category": sec[0],
+        "_library_title": sec[2],
+        "_account_id": int(account_id),
+    }
+
+
+async def _member_history_entries(plex_url: str, headers: dict, lib_configs: dict,
+                                  last_sync_ts: Optional[int],
+                                  section_entries: list) -> tuple[list, bool]:
+    """(entries, backfilled): the plays of every non-admin Curatarr user's Plex
+    account since the last sync, or their whole history on the first run
+    (``backfilled`` True then, so the caller records it). A play the section
+    listing already carries (same ratingKey within 90 s) is left to it."""
+    def _members() -> list:
+        with get_db_session() as db:
+            return [(str(u.plex_user_id or ""), (u.plex_username or "").lower())
+                    for u in db.query(User).filter(User.is_admin == False).all()]  # noqa: E712
+
+    members = await run_read(_members)
+    if not members:
+        return [], False
+    backfill = (await run_read(get_state, MEMBER_BACKFILL_KEY)) != "1"
+    since = None if backfill else last_sync_ts
+
+    jheaders = {**headers, "Accept": "application/json"}
+    account_ids: set = {pid for pid, _ in members if pid.isdigit() and pid != "1"}
+    names = {name for _, name in members if name}
+    async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
+        r = await client.get(f"{plex_url}/accounts", headers=jheaders)
+        if r.status_code == 200:
+            accs = (r.json().get("MediaContainer", {}) or {}).get("Account") or []
+            for a in accs if isinstance(accs, list) else [accs]:
+                aid = str(a.get("id", ""))
+                if aid != "1" and (a.get("name") or "").strip().lower() in names:
+                    account_ids.add(aid)
+
+        listed: dict = {}
+        for e in section_entries:
+            ts = e.get("lastViewedAt") or e.get("viewedAt")
+            if e.get("ratingKey") and ts:
+                listed.setdefault(str(e["ratingKey"]), []).append(int(ts))
+
+        out: list = []
+        for aid in sorted(account_ids):
+            start = 0
+            while True:
+                params = {"accountID": aid, "sort": "viewedAt:desc"}
+                if since:
+                    params["viewedAt>>"] = str(since - 60)
+                r = await client.get(
+                    f"{plex_url}/status/sessions/history/all",
+                    headers={**jheaders, "X-Plex-Container-Start": str(start),
+                             "X-Plex-Container-Size": "500"},
+                    params=params)
+                if r.status_code != 200:
+                    raise RuntimeError(f"history of account {aid}: HTTP {r.status_code}")
+                items = (r.json().get("MediaContainer", {}) or {}).get("Metadata") or []
+                for ev in items:
+                    if str(ev.get("accountID", aid)) != aid:
+                        continue        # a server that ignores the filter
+                    entry = _member_entry(ev, lib_configs, int(aid))
+                    if entry is None:
+                        continue
+                    if any(abs(t - entry["viewedAt"]) <= 90
+                           for t in listed.get(entry["ratingKey"], ())):
+                        continue
+                    out.append(entry)
+                if len(items) < 500:
+                    break
+                start += 500
+    logger.info("Plex sync: %d household-member play(s) from %d account(s)%s",
+                len(out), len(account_ids), " (first full backfill)" if backfill else "")
+    return out, backfill
+
 
 async def _fetch_plex_history_lookup(
     plex_url: str,

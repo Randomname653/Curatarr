@@ -335,6 +335,15 @@ and GHSA-494j-54xm-rwp3 (fixed in 3.14.4). Curatarr uses aiohttp only as the
 client for the arrs, never as a server, so the request-timeout and request
 flooding findings did not reach it; the update keeps the dependency scan green.
 
+**A household member's plays reach watch history.** The Plex sync listed
+watched items with the admin's token, and Plex answers "watched" for the
+token's account: a title only a member watched never showed up, so none of
+their plays reached Curatarr and the household rule could not protect what
+only they watch (a 14-episode show was proposed as a Cut). Members' plays
+now come from their own Plex play history - the whole history on the first
+sync, incrementally after that; accounts without a Curatarr login are never
+filed under the owner.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex
