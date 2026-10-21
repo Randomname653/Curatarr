@@ -83,9 +83,12 @@ export async function newChat() {
 export async function correctChatAnchor() {
   const btn = document.getElementById('recheck-btn');
   if (!btn || btn.disabled) return;
-  const original = btn.textContent;
+  // The label span only: the button also carries its icon (phones show it alone).
+  const label = btn.querySelector('.btn-label') || btn;
+  const original = label.textContent;
   btn.disabled = true;
-  btn.textContent = 'clearing…';
+  btn.classList.add('busy');
+  label.textContent = 'clearing…';
   try {
     const r = await api('/api/chat/correct-anchor', 'POST', { thread_id: activeThreadId() });
     // Inject a small system note into the chat so the user sees what happened
@@ -104,7 +107,8 @@ export async function correctChatAnchor() {
     toast('Re-fetch failed: ' + _errMsg(e), 'danger');
   } finally {
     btn.disabled = false;
-    btn.textContent = original;
+    btn.classList.remove('busy');
+    label.textContent = original;
   }
 }
 

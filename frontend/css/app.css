@@ -83,12 +83,20 @@
   --info-dim: rgba(91,141,238,.12);
   --info-line: rgba(91,141,238,.25);
   --success: #3ddc97;
+  --loved: #ff5c8a;
+  --loved-fg: #ff8fae;
+  --loved-dim: rgba(255,92,138,.13);
+  --loved-line: rgba(255,92,138,.35);
   --success-dim: rgba(61,220,151,.1);
   --info: #5b8dee;
   --radius: 8px;
   --radius-lg: 12px;
   --sidebar-w: 220px;
   --sidebar-w-collapsed: 56px;
+  /* Phone chrome: the topbar grows by the notch / status bar when the app
+     runs full screen (viewport-fit=cover), the tab bar by the home indicator. */
+  --topbar-h: calc(46px + env(safe-area-inset-top, 0px));
+  --tabbar-h: 58px;
 }
 /* Slim dark scrollbars — the stock ones break the dark surface on Windows */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -96,10 +104,15 @@
 ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 5px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--border2); }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+/* The viewport's own overscroll (pull-to-reload, edge-swipe Back) belongs to
+   the root element: the app has its own pull-to-refresh and drawer swipe. */
+html { overscroll-behavior: none; }
+body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 
 /* ── TOPBAR ── */
-#topbar { height: 46px; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 12px; flex-shrink: 0; z-index: 10; }
+#topbar { height: var(--topbar-h); background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); gap: 12px; flex-shrink: 0; z-index: 10; }
+#tb-search-btn { display: none; background: none; border: none; color: var(--text2); padding: 6px; border-radius: var(--radius); cursor: pointer; }
+#tb-search-btn:hover { color: var(--amber); }
 #sb-hamburger { display: none; background: none; border: none; color: var(--text2); padding: 6px; margin-right: 2px; border-radius: var(--radius); cursor: pointer; }
 #sb-hamburger:hover { color: var(--amber); }
 #logo { font-size: 15px; font-weight: 700; color: var(--amber); letter-spacing: .5px; margin-right: 4px; }
@@ -167,7 +180,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
      the Recommendations view's own (identical) search box instead. */
   #topbar-search-form { display: none; }
   #sidebar, #sidebar.collapsed {
-    position: fixed; top: 46px; bottom: 0; left: 0; z-index: 30;
+    position: fixed; top: var(--topbar-h); bottom: 0; left: 0; z-index: 30;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     width: min(80vw, 260px);
     transform: translateX(-100%);
     transition: transform .2s ease;
@@ -180,34 +194,178 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
   #sidebar.collapsed .sb-pulse-dot, #sidebar.collapsed #tasks-badge, #sidebar.collapsed #kb-badge { display: flex !important; }
   #sb-collapse-toggle { display: none; }
   #sb-backdrop.show {
-    display: block; position: fixed; inset: 46px 0 0 0; z-index: 25;
-    background: rgba(0,0,0,.5);
+    display: block; position: fixed; inset: var(--topbar-h) 0 0 0; z-index: 25;
+    background: rgba(0,0,0,.5); backdrop-filter: blur(2px); animation: fadeIn .2s ease both;
   }
   .view-body { padding: 14px 16px; }
   .tbl-wrap { overflow-x: auto; }
   .view .select-bar { margin: 12px -16px -14px; padding: 10px 16px; bottom: -14px; }
 }
 
-/* ── SWIPE ── one card at a time; the drag lean tints the border. */
-.swipe-stage { max-width: 760px; }
-.swipe-card { display: flex; gap: 18px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; touch-action: pan-y; user-select: none; cursor: grab; transition: transform .15s ease, border-color .15s ease; }
-.swipe-card.dragging { cursor: grabbing; transition: none; }
-.swipe-card.lean-right { border-color: var(--success); }
-.swipe-card.lean-left { border-color: var(--danger-fg); }
-.swipe-poster { width: 160px; height: 240px; object-fit: cover; border-radius: 6px; flex-shrink: 0; pointer-events: none; }
-.swipe-poster-ph { display: flex; align-items: center; justify-content: center; background: var(--bg3); color: var(--text3); font-size: 48px; }
-.swipe-body { min-width: 0; flex: 1; }
-.swipe-title { font-size: 18px; font-weight: 600; color: var(--text); }
-.swipe-synopsis { color: var(--text2); font-size: 13px; line-height: 1.55; margin: 10px 0; }
-.swipe-actions { display: flex; gap: 10px; margin-top: 14px; }
-.swipe-actions .btn { flex: 1; padding-top: 12px; padding-bottom: 12px; font-size: 14px; }
-.swipe-stars { margin-top: 12px; }
-.swipe-star { min-width: 36px; }
-.swipe-hint { margin-left: auto; }
-@media (max-width: 768px) {
-  .swipe-card { flex-direction: column; align-items: center; }
-  .swipe-poster { width: 200px; height: 300px; }
-  .swipe-hint { display: none; }
+/* ── SWIPE ── a deck of large cards between two rails. The top card follows
+   the pointer; --lean-a (0..1, set from script) grows the stamp and the glow
+   in the colour of the reaction it is leaning toward. Cards below the top sit
+   one step back each (data-depth) and move up with a transition. */
+.swipe-body-wrap { position: relative; padding: 18px 24px; }
+.swipe-ambient { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.swipe-ambient::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(26,29,35,.55) 0%, var(--bg) 92%); }
+.swipe-ambient-layer { position: absolute; inset: -80px; background-size: cover; background-position: center; filter: blur(70px) saturate(1.4); opacity: 0; transform: scale(1.1); transition: opacity .7s ease; }
+.swipe-ambient-layer.on { opacity: .42; }
+.swipe-layout { position: relative; z-index: 1; display: grid; grid-template-columns: 230px minmax(0, 1fr) 250px; grid-template-areas: "left center right"; gap: 28px; align-items: start; max-width: 1680px; margin: 0 auto; }
+.swipe-rail { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; }
+.swipe-rail-left { grid-area: left; }
+.swipe-rail-right { grid-area: right; }
+.swipe-center { grid-area: center; position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.swipe-tabs { margin-bottom: 0; flex-wrap: nowrap; }
+.swipe-tabs .cat-tab { flex: 1; justify-content: center; padding-left: 6px; padding-right: 6px; }
+.swipe-panel { background: rgba(33,37,46,.72); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px; backdrop-filter: blur(8px); }
+.swipe-panel-h { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); margin-bottom: 10px; }
+#swipe-progress { display: flex; align-items: center; gap: 12px; }
+#swipe-progress.is-refreshing { border-color: var(--success-line); }
+#swipe-progress.is-refreshing .swipe-ring { animation: swipe-pulse 1.2s ease 2; }
+.swipe-ring { position: relative; width: 56px; height: 56px; flex-shrink: 0; }
+.swipe-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.swipe-ring circle { fill: none; stroke-width: 3.2; }
+.swipe-ring-bg { stroke: var(--bg3); }
+.swipe-ring-fg { stroke: var(--amber); stroke-linecap: round; stroke-dasharray: 0 100; transition: stroke-dasharray .5s ease, stroke .3s; }
+.is-refreshing .swipe-ring-fg { stroke: var(--success); }
+.swipe-ring span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text); }
+.swipe-progress-t { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text3); line-height: 1.35; }
+.swipe-progress-t b { color: var(--text); font-size: 13px; }
+.swipe-session-n { font-size: 12px; color: var(--text3); margin-bottom: 8px; }
+.swipe-session-n b { font-size: 22px; color: var(--text); margin-right: 4px; }
+.swipe-session-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.swipe-chip { --c: var(--text3); display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); flex-shrink: 0; }
+.swipe-chip svg { width: 12px; height: 12px; }
+.swipe-keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 11px; color: var(--text3); margin: 0; }
+.swipe-keys dt { font-family: ui-monospace, monospace; color: var(--text2); background: var(--bg3); border: 1px solid var(--border2); border-radius: 4px; padding: 0 5px; text-align: center; min-width: 26px; }
+.swipe-keys dd { margin: 0; align-self: center; }
+.swipe-recent { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.swipe-recent li { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text2); min-width: 0; }
+.swipe-recent li.is-new { animation: swipe-slide-in .35s ease both; }
+.swipe-recent img, .swipe-recent-ph { width: 30px; height: 45px; border-radius: 4px; object-fit: cover; background: var(--bg3); flex-shrink: 0; }
+.swipe-recent-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swipe-recent-empty { color: var(--text3); }
+
+.swipe-deck { position: relative; container-type: size; width: min(100%, 1000px); height: clamp(440px, calc(100vh - 300px), 780px); padding-bottom: 34px; }
+.swipe-deck-msg { position: absolute; inset: 0 0 34px; display: flex; align-items: center; justify-content: center; background: rgba(33,37,46,.6); border: 1px dashed var(--border2); border-radius: 18px; }
+.swipe-card { --c: transparent; --lean-a: 0; position: absolute; inset: 0 0 34px; display: grid; grid-template-columns: auto minmax(0, 1fr); background: var(--bg2); border: 1px solid var(--border2); border-radius: 18px; overflow: hidden; user-select: none; touch-action: none; cursor: grab; transform-origin: 50% 85%;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) calc(var(--lean-a) * 100%), transparent), 0 0 calc(var(--lean-a) * 60px) color-mix(in srgb, var(--c) calc(var(--lean-a) * 45%), transparent), 0 26px 60px rgba(0,0,0,.5);
+  transition: transform .34s cubic-bezier(.2,.9,.3,1.12), opacity .3s ease, box-shadow .2s ease; }
+.swipe-card[data-depth="1"] { transform: translateY(17px) scale(.955); opacity: .75; }
+.swipe-card[data-depth="2"] { transform: translateY(34px) scale(.91); opacity: .4; }
+.swipe-card[data-depth="0"] { z-index: 3; }
+.swipe-card[data-depth="1"] { z-index: 2; }
+.swipe-card[data-depth="2"] { z-index: 1; }
+.swipe-card[data-depth]:not([data-depth="0"]) { pointer-events: none; }
+.swipe-card[data-depth]:not([data-depth="0"]) .swipe-info > * { opacity: .5; }
+.swipe-card.is-new { animation: swipe-rise .4s ease both; }
+.swipe-card.dragging { cursor: grabbing; transition: box-shadow .2s ease; }
+.swipe-card.springing { transition: transform .42s cubic-bezier(.25,1.6,.4,1), box-shadow .3s ease; }
+.swipe-card.is-leaving { z-index: 5; pointer-events: none; transition: transform .46s cubic-bezier(.3,.55,.35,1), opacity .46s ease .06s, box-shadow .2s; }
+.swipe-card.no-anim { transition: none; }
+.swipe-poster-wrap { position: relative; height: 100%; width: min(calc(100cqh * 2 / 3), 55cqw); background: var(--bg3); }
+.swipe-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; }
+.swipe-poster-ph { display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 72px; font-weight: 700; background: linear-gradient(135deg, var(--bg3), var(--bg2)); }
+.swipe-info { display: flex; flex-direction: column; justify-content: safe center; gap: 12px; padding: 26px 28px; min-width: 0; overflow-y: auto; }
+.swipe-title { font-size: clamp(22px, 2.2vw, 32px); font-weight: 700; color: var(--text); line-height: 1.15; letter-spacing: -.01em; }
+.swipe-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); }
+.swipe-dot { color: var(--text3); }
+.swipe-cr { border: 1px solid var(--border2); border-radius: 3px; padding: 0 5px; font-size: 11px; }
+.swipe-because { font-size: 12px; color: var(--text3); }
+.swipe-because b { color: var(--amber2); font-weight: 600; }
+.swipe-ribbon { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--loved-fg); background: var(--loved-dim); border: 1px solid var(--loved-line); }
+.swipe-ribbon svg { width: 13px; height: 13px; fill: currentColor; }
+.swipe-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.swipe-tags .is-yours { border-color: var(--amber-line); color: var(--amber2); background: var(--amber-dim); }
+.swipe-tags .is-yours::before { content: '●'; font-size: 7px; margin-right: 5px; }
+.swipe-synopsis { color: var(--text2); font-size: 14px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.swipe-synopsis.open { -webkit-line-clamp: unset; cursor: text; user-select: text; }
+.swipe-people { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0; }
+.swipe-people dt { color: var(--text3); }
+.swipe-people dd { margin: 0; color: var(--text2); }
+.swipe-fit { margin-top: 6px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text3); }
+.swipe-fit b { color: var(--text); font-size: 13px; }
+.swipe-meter { flex: 0 1 160px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; }
+.swipe-meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, var(--amber), var(--amber2)); }
+.swipe-stamp { position: absolute; z-index: 4; padding: 6px 16px; border: 4px solid var(--c); border-radius: 10px; color: var(--c); background: color-mix(in srgb, var(--bg) 55%, transparent); font-size: clamp(22px, 2.6vw, 38px); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; opacity: 0; pointer-events: none; transition: opacity .08s linear; }
+.swipe-stamp[data-dir="right"] { top: 28px; left: 28px; transform: rotate(-14deg); }
+.swipe-stamp[data-dir="left"] { top: 28px; right: 28px; transform: rotate(14deg); }
+.swipe-stamp[data-dir="up"] { bottom: 70px; left: 50%; transform: translateX(-50%) rotate(-6deg); }
+.swipe-stamp[data-dir="down"] { top: 28px; left: 50%; transform: translateX(-50%) rotate(6deg); }
+.swipe-stamp[data-dir="none"] { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-8deg); }
+.swipe-note { position: absolute; z-index: 6; top: -14px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--bg3); border: 1px solid var(--border2); box-shadow: 0 8px 24px rgba(0,0,0,.4); white-space: nowrap; animation: swipe-note 2.6s ease both; }
+.swipe-note svg { width: 13px; height: 13px; color: var(--loved); fill: currentColor; }
+.swipe-done { max-width: 460px; padding: 24px; text-align: center; color: var(--text2); font-size: 13px; }
+.swipe-done h2 { font-size: 18px; color: var(--text); margin: 10px 0 6px; }
+.swipe-done-ic svg { width: 40px; height: 40px; color: var(--amber); }
+.swipe-done-cta { justify-content: center; margin-top: 14px; }
+.swipe-is-empty .swipe-reactions { visibility: hidden; }
+
+.swipe-reactions { display: flex; align-items: flex-end; justify-content: center; gap: 14px; margin-top: 4px; }
+.swipe-react { --c: var(--text2); display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--text3); font: inherit; font-size: 11px; cursor: pointer; }
+.swipe-react-ic { display: flex; align-items: center; justify-content: center; width: 58px; height: 58px; border-radius: 50%; color: var(--c); background: var(--bg2); border: 2px solid color-mix(in srgb, var(--c) 45%, var(--border)); box-shadow: 0 6px 18px rgba(0,0,0,.35); transition: transform .18s cubic-bezier(.3,1.6,.5,1), background .15s, box-shadow .2s; }
+.swipe-react-ic svg { width: 24px; height: 24px; }
+.swipe-react[data-kind="liked"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 66px; height: 66px; }
+.swipe-react[data-kind="loved"] .swipe-react-ic svg { fill: currentColor; }
+.swipe-react-exact .swipe-react-ic { width: 44px; height: 44px; }
+.swipe-react-exact .swipe-react-ic svg { width: 18px; height: 18px; }
+.swipe-react:hover .swipe-react-ic, .swipe-react:focus-visible .swipe-react-ic { transform: translateY(-2px) scale(1.06); background: color-mix(in srgb, var(--c) 14%, var(--bg2)); }
+.swipe-react:hover, .swipe-react.is-leaning { color: var(--c); }
+.swipe-react.is-leaning .swipe-react-ic { transform: scale(1.16); background: color-mix(in srgb, var(--c) 22%, var(--bg2)); box-shadow: 0 0 24px color-mix(in srgb, var(--c) 45%, transparent); }
+.swipe-react.is-hit .swipe-react-ic { animation: swipe-hit .38s ease; }
+.swipe-react[aria-expanded="true"] .swipe-react-ic { background: color-mix(in srgb, var(--c) 20%, var(--bg2)); }
+/* the exact-star row floats over the bottom of the card, above the buttons */
+.swipe-exact { position: absolute; z-index: 8; bottom: 96px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); padding: 14px 16px; background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-lg); box-shadow: 0 18px 50px rgba(0,0,0,.55); animation: swipe-pop .2s ease both; }
+.swipe-exact-h { font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+.swipe-exact-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.swipe-star { --c: var(--text2); min-width: 38px; height: 38px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--c) 40%, var(--border)); background: var(--bg3); color: var(--c); font: inherit; font-weight: 700; cursor: pointer; transition: transform .12s, background .12s; }
+.swipe-star:hover, .swipe-star:focus-visible { transform: translateY(-2px); background: color-mix(in srgb, var(--c) 18%, var(--bg3)); }
+
+/* reaction colours, shared by chips, buttons, stamps and the card glow — after
+   those components: .swipe-card / .swipe-react / .swipe-star set a default --c
+   at the same specificity, and the later rule wins */
+[data-kind="notseen"], [data-lean="notseen"], .swipe-stamp[data-dir="left"] { --c: #8f9bb3; }
+[data-kind="disliked"], [data-lean="disliked"], .swipe-stamp[data-dir="down"] { --c: var(--danger-fg); }
+[data-kind="meh"], [data-lean="meh"], .swipe-stamp[data-dir="none"] { --c: var(--amber); }
+[data-kind="liked"], [data-lean="liked"], .swipe-stamp[data-dir="right"] { --c: var(--success); }
+[data-kind="loved"], [data-lean="loved"], .swipe-stamp[data-dir="up"] { --c: var(--loved); }
+[data-kind="seen"], [data-kind="exact"] { --c: var(--info); }
+
+@keyframes swipe-rise { from { opacity: 0; transform: translateY(60px) scale(.85); } }
+@keyframes swipe-slide-in { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes swipe-pop { from { opacity: 0; transform: translate(-50%, 8px); } }
+@keyframes swipe-hit { 40% { transform: scale(1.25); } }
+@keyframes swipe-pulse { 50% { transform: scale(1.12); } }
+@keyframes swipe-note { 0% { opacity: 0; transform: translate(-50%, 8px); } 12%, 82% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -6px); } }
+
+/* Mid widths: one rail, the "just rated" panel under the progress. */
+@media (max-width: 1360px) {
+  .swipe-layout { grid-template-columns: 220px minmax(0, 1fr); grid-template-areas: "left center" "right center"; }
+  .swipe-rail-right { position: static; }
+}
+/* Narrow: one column; the card turns into a poster with the facts over it. */
+@media (max-width: 900px) {
+  .swipe-body-wrap { padding: 12px 12px 20px; }
+  .swipe-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "left" "center" "right"; gap: 14px; }
+  .swipe-rail { position: static; }
+  .swipe-rail-left { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .swipe-rail-left .swipe-tabs { grid-column: 1 / -1; }
+  .swipe-keys, #swipe-stats { display: none; }
+  .swipe-panel { padding: 10px 12px; }
+  .swipe-ring { width: 44px; height: 44px; }
+  .swipe-deck { height: clamp(460px, calc(100vh - 330px), 680px); max-width: 480px; }
+  .swipe-card { grid-template-columns: 1fr; }
+  .swipe-poster-wrap { position: absolute; inset: 0; width: auto; height: auto; }
+  .swipe-exact { bottom: 74px; }
+  .swipe-star { min-width: 34px; height: 40px; }
+  .swipe-info { position: relative; z-index: 1; align-self: end; gap: 8px; padding: 70px 16px 16px; max-height: 100%; background: linear-gradient(180deg, transparent 0%, rgba(20,22,27,.88) 70px, rgba(20,22,27,.96) 100%); }
+  .swipe-synopsis { -webkit-line-clamp: 3; font-size: 13px; }
+  .swipe-people { display: none; }
+  .swipe-reactions { gap: 10px; }
+  .swipe-react-ic { width: 50px; height: 50px; }
+  .swipe-react[data-kind="liked"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 58px; height: 58px; }
+  .swipe-react-l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 
 /* ── CONTENT ── */
@@ -316,7 +474,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
   to   { opacity: 1; transform: translateY(0); }
 }
 #chat-input-area { padding: 12px 24px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-shrink: 0; }
-#chat-input { flex: 1; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; resize: none; height: 44px; font-family: inherit; }
+#chat-input { flex: 1; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; resize: none; height: 44px; min-height: 44px; max-height: 160px; font-family: inherit; line-height: 1.45; }
+/* Chat buttons carry an icon and a label: desktop shows the label (as it
+   always did), phones the icon alone — the aria-label names it either way. */
+#chat-input-area .btn-icon { display: none; }
+#chat-input-area button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 #chat-input:focus-visible { outline: none; border-color: var(--amber); }
 #send-btn { background: var(--amber); color: #000; border: none; padding: 10px 18px; border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
 #send-btn:hover { background: var(--amber2); }
@@ -452,6 +614,9 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
 .modal.danger .modal-foot .btn-danger:not(:disabled) { background: var(--danger-fill); border-color: var(--danger-fill); color: #fff; }
 .modal.danger .modal-foot .btn-danger:not(:disabled):hover { filter: brightness(.9); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
+/* Quiet secondary action (Swipe's Undo / Seen, no rating): text-weight, no fill */
+.btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-ghost:hover { color: var(--amber); border-color: var(--amber-line); }
 
 /* ── FORMS ── */
 .form-group { margin-bottom: 16px; }
@@ -749,3 +914,182 @@ select option { background: var(--bg2); }
 .why-pts.to-delete { color: var(--danger-fg); }
 .why-pts.to-keep { color: var(--success); }
 @media (pointer: coarse) { .btn-why { min-height: 44px; padding: 4px 12px; } }
+
+/* ══ MOBILE APP SHELL ════════════════════════════════════════════════════════
+   Phones (≤768px) get an app, not a shrunken desktop: a bottom tab bar in
+   thumb reach (Chat · For you · Swipe · Library · More), dialogs as bottom
+   sheets, horizontally scrolling tabs, pull-to-refresh, and every edge padded
+   for the notch and home indicator. Same tokens, same amber — only the
+   arrangement changes. Behaviour lives in js/mobile.js. */
+#mobile-tabbar { display: none; }
+#ptr { display: none; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes ptrSpin { from { transform: translate(-50%, 18px) rotate(0); } to { transform: translate(-50%, 18px) rotate(360deg); } }
+
+/* Library sheet (tab bar → Library) and the iOS install steps */
+.lib-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.lib-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg3); color: var(--text); text-decoration: none; transition: border-color .15s, transform .1s; }
+.lib-tile svg { color: var(--amber); }
+.lib-tile:hover, .lib-tile.active { border-color: var(--amber); }
+.lib-tile:active { transform: scale(.96); }
+.lib-tile-label { font-size: 13px; font-weight: 600; }
+.lib-tile-sub { font-size: 11px; color: var(--text3); }
+.install-steps { padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+.install-steps li::marker { color: var(--amber); font-weight: 700; }
+.sb-footer .pwa-install { border-color: var(--amber-line); color: var(--amber); }
+.sb-footer .pwa-install:hover { border-color: var(--amber); color: var(--amber2); }
+
+/* Offline fallback page (offline.html, served by the service worker) */
+.offline-page { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
+.offline-page p { max-width: 380px; }
+.offline-mark { border-radius: 22px; box-shadow: 0 8px 30px var(--amber-dim); }
+
+@media (max-width: 768px) {
+  /* Topbar: avatar only, search folds into an icon and opens across the bar */
+  #user-name { display: none; }
+  #user-pill { padding: 3px; border-radius: 50%; }
+  #user-pill .avatar { width: 28px; height: 28px; font-size: 12px; }
+  #logo span { display: none; }
+  #tb-search-btn { display: block; }
+  body.search-open #logo, body.search-open .tb-spacer, body.search-open #tb-search-btn,
+  body.search-open #game-indicator { display: none !important; }
+  body.search-open #topbar-search-form { display: flex; flex: 1; width: auto; animation: fadeIn .15s ease both; }
+  body.is-offline #logo::after { content: 'offline'; margin-left: 8px; font-size: 10px; font-weight: 600; color: var(--danger-fg); border: 1px solid var(--danger-line); border-radius: 10px; padding: 1px 7px; vertical-align: 2px; letter-spacing: 0; }
+
+  /* Bottom tab bar — in the body's flex column, so content ends above it
+     and nothing (select bars, chat input) has to dodge a fixed overlay */
+  #mobile-tabbar {
+    display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; flex-shrink: 0; z-index: 20;
+    height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+    padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    background: var(--bg-veil); border-top: 1px solid var(--border);
+    backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  }
+  .mt-item { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; height: var(--tabbar-h); background: none; border: none; font: inherit; font-size: 10.5px; font-weight: 500; color: var(--text3); text-decoration: none; cursor: pointer; transition: color .15s; }
+  .mt-item svg { transition: transform .2s cubic-bezier(.3,1.6,.5,1); }
+  .mt-item.active { color: var(--amber); }
+  .mt-item.active svg { transform: translateY(-1px) scale(1.08); }
+  .mt-item.active::before { content: ''; position: absolute; top: 0; left: 30%; right: 30%; height: 2px; border-radius: 0 0 2px 2px; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+  .mt-item:active svg { transform: scale(.88); }
+  /* Swipe is the playful one: a raised amber button in the middle */
+  .mt-swipe .mt-fab { display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; margin-top: -16px; border-radius: 16px; background: linear-gradient(145deg, var(--amber2), var(--amber)); color: #000; box-shadow: 0 6px 18px var(--amber-line), 0 0 0 4px var(--bg); transition: transform .2s cubic-bezier(.3,1.6,.5,1); }
+  .mt-swipe.active .mt-fab { transform: rotate(-6deg) scale(1.05); }
+  .mt-swipe:active .mt-fab { transform: scale(.9); }
+  .mt-swipe.active::before { display: none; }
+  .mt-dot { position: absolute; top: 9px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+  /* Keyboard up: the tab bar steps aside so the input keeps the space */
+  body:has(#chat-input:focus) #mobile-tabbar, body:has(.view-body textarea:focus) #mobile-tabbar,
+  body:has(.view-body input:not([type=checkbox]):not([type=radio]):focus) #mobile-tabbar { display: none; }
+
+  /* Views: a soft entrance, tighter header, momentum scrolling that stays inside */
+  .view.active { animation: viewIn .22s ease; }
+  .view-header { padding: 14px max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); }
+  .view-header h1 { font-size: 20px; font-weight: 700; }
+  .view-header p { font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .view-body, #messages { overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  .view-body { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+  /* Tabs scroll sideways like an app's segmented header instead of wrapping into three rows */
+  .cat-tabs, .arr-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; margin-left: -16px; margin-right: -16px; padding: 0 16px; margin-bottom: 14px; }
+  .cat-tabs::-webkit-scrollbar, .arr-tabs::-webkit-scrollbar { display: none; }
+  .cat-tab, .arr-tab { flex-shrink: 0; scroll-snap-align: start; white-space: nowrap; }
+
+  /* Toolbars: controls share the row; search inputs take what is left */
+  .toolbar { gap: 6px; }
+  .toolbar-right { margin-left: 0; width: 100%; }
+  .toolbar-right .input[type="text"], .toolbar-right input:not([type]), .toolbar .w-220, .toolbar .w-200 { flex: 1; width: auto; min-width: 0; }
+  .grid-cards { grid-template-columns: 1fr; }
+  .stat-row { flex-wrap: wrap; }
+  .stat-box { flex: 1 1 calc(50% - 6px); }
+  .col-wide { min-width: 0; }
+
+  /* Settings: the sub-nav becomes a scrolling chip row above the pane */
+  .settings-shell { gap: 12px; }
+  .settings-nav { flex: 1 1 100%; flex-direction: row; overflow-x: auto; scrollbar-width: none; padding: 6px; }
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-tab { width: auto; flex-shrink: 0; white-space: nowrap; }
+
+  /* Chat: wider bubbles, icon buttons, input padded for the home indicator */
+  #messages { padding: 16px 14px; }
+  .msg { max-width: 88%; font-size: 14px; }
+  .msg.user { border-radius: 18px 18px 4px 18px; }
+  .msg.assistant { border-radius: 18px 18px 18px 4px; }
+  #chat-input-area { padding: 8px max(10px, env(safe-area-inset-right, 0px)) 18px max(10px, env(safe-area-inset-left, 0px)); gap: 6px; align-items: flex-end; background: var(--bg2); }
+  #chat-input-area .btn-icon { display: block; }
+  #chat-input-area .btn-label { display: none; }
+  #new-chat-btn, #recheck-btn { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+  #recheck-btn.busy .btn-icon { animation: ptrSpinIcon .8s linear infinite; }
+  #chat-input { border-radius: 22px; padding: 11px 16px; min-height: 44px; height: 44px; }
+  #send-btn { width: 48px; height: 44px; min-height: 44px; padding: 0; border-radius: 22px; }
+  #send-btn:disabled { opacity: .5; }
+  #suggested-prompts { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: -14px; margin-right: -14px; padding: 0 14px 4px; }
+  #suggested-prompts::-webkit-scrollbar { display: none; }
+  .sp-chip { flex-shrink: 0; white-space: nowrap; }
+  .discuss-banner { flex-wrap: wrap; }
+
+  /* Dialogs become bottom sheets with a grab handle */
+  #modal-root { align-items: flex-end; padding: 0; backdrop-filter: blur(3px); }
+  #modal-root .modal, #modal-root .modal.narrow, #modal-root .modal.wide { max-width: none; max-height: 88dvh; border-radius: 18px 18px 0 0; border-bottom: none; padding-bottom: env(safe-area-inset-bottom, 0px); animation: sheetUp .28s cubic-bezier(.2,.9,.3,1) both; }
+  #modal-root .modal::before { content: ''; display: block; width: 38px; height: 4px; border-radius: 2px; background: var(--border2); margin: 8px auto 0; flex-shrink: 0; }
+  .modal-head { padding: 10px 18px 12px; }
+  .modal-foot .btn { flex: 1; }
+
+  /* Toasts: full width above the tab bar */
+  #toast-stack { left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 12px); max-width: none; }
+  .toast { border-radius: var(--radius-lg); animation: sheetUp .25s cubic-bezier(.2,.9,.3,1); }
+
+  /* Notifications: a sheet hanging from the topbar */
+  #msg-panel { left: 8px; right: 8px; top: calc(var(--topbar-h) + 6px); width: auto; max-height: 70dvh; overflow-y: auto; border-radius: var(--radius-lg); }
+  #msg-panel.open { animation: viewIn .18s ease both; }
+
+  /* Overlays: setup, onboarding, sign-in fit the phone */
+  #setup-box, .dialog-box-520 { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  .setup-steps { overflow-x: auto; padding-left: 16px; padding-right: 16px; }
+  .setup-step-dot { min-width: 64px; }
+  .setup-body, .setup-nav, #setup-box .setup-header, .box-head, .pad-24-28 { padding-left: 18px; padding-right: 18px; }
+  #pin-box { width: calc(100vw - 32px); max-width: 340px; padding: 20px; }
+  #pin-box .pin-code { font-size: 30px; letter-spacing: 6px; }
+
+  /* Pull-to-refresh: an amber disc that follows the pull and spins on release */
+  #content { position: relative; }
+  #ptr { display: flex; position: absolute; top: 0; left: 50%; z-index: 15; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg3); border: 1px solid var(--border2); color: var(--text2); box-shadow: 0 4px 14px rgba(0,0,0,.4); pointer-events: none; opacity: 0;
+    --pull: 0; transform: translate(-50%, calc(var(--pull) * 1px - 40px)) rotate(calc(var(--pull) * 4deg)); transition: opacity .15s; }
+  #ptr.show { opacity: 1; }
+  #ptr.armed { color: #000; background: var(--amber); border-color: var(--amber); }
+  #ptr.spinning { color: #000; background: var(--amber); border-color: var(--amber); animation: ptrSpin .6s linear infinite; }
+
+  /* Swipe on a phone: the deck owns the screen between topbar and tab bar.
+     The view header and the session panel step aside, tabs + taste progress
+     share one row, and the card height is what is left after the reaction
+     row — so every answer is a thumb away without scrolling. */
+  #swipe-view .view-header { display: none; }
+  #swipe-view .swipe-body-wrap { padding: 8px 10px 16px; }
+  #swipe-view .swipe-layout { gap: 10px; }
+  #swipe-view .swipe-rail-left { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+  #swipe-view .swipe-rail-left .swipe-tabs { grid-column: auto; margin: 0; padding: 0; }
+  #swipe-view .swipe-rail-left > .swipe-panel:not(#swipe-progress) { display: none; }
+  #swipe-view #swipe-progress { padding: 4px 8px 4px 4px; gap: 8px; border-radius: 999px; }
+  #swipe-view #swipe-progress .swipe-ring { width: 34px; height: 34px; }
+  #swipe-view #swipe-progress .swipe-ring span { font-size: 10px; }
+  #swipe-view .swipe-progress-t span { display: none; }
+  #swipe-view .swipe-progress-t b { font-size: 12px; white-space: nowrap; }
+  #swipe-view .swipe-deck { max-width: none; height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-bottom, 0px) - 160px); min-height: 360px; padding-bottom: 26px; }
+  #swipe-view .swipe-card, #swipe-view .swipe-deck-msg { inset: 0 0 26px; border-radius: 22px; }
+  #swipe-view .swipe-stamp { font-size: 24px; }
+  #swipe-view .swipe-reactions { gap: 8px; margin-top: 2px; }
+  #swipe-view .swipe-exact { bottom: 70px; width: calc(100% - 8px); }
+  #swipe-view .swipe-exact-row { display: grid; grid-template-columns: repeat(5, 1fr); }
+  #swipe-view .swipe-star { min-width: 0; height: 46px; font-size: 16px; border-radius: 12px; }
+  #swipe-view .swipe-react:active .swipe-react-ic { transform: scale(.9); }
+}
+@keyframes ptrSpinIcon { to { transform: rotate(360deg); } }
+
+/* Press feedback on touch: things you tap give a little */
+@media (pointer: coarse) {
+  .btn:active:not(:disabled), .chip:active, .sp-chip:active, .cat-tab:active, .sb-item:active, .menu-item:active { transform: scale(.97); }
+  .glow-interactive:hover { transform: none; }
+}
+/* Installed and running full screen: the drawer footer clears the home indicator */
+body.standalone .sb-footer { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }

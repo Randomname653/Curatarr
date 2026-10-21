@@ -2,8 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- viewport-fit=cover: the app draws under the notch / home indicator and
+     pads itself with env(safe-area-inset-*); resizes-content: the on-screen
+     keyboard shrinks the layout (chat input stays in view) instead of
+     overlaying it. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Curatarr</title>
+<!-- Installable app (PWA): manifest + service worker (js/mobile.js registers
+     /sw.js). theme-color is the topbar surface, so the status bar blends in. -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#21252e">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Curatarr">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <!-- Favicon: inline SVG data-URI — no extra file, no static mount, zero
      external requests. "Curation eye" in the arr-family vocabulary
      (transparent background, free-standing geometric vector): a segmented
@@ -91,6 +105,10 @@
     <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <input id="topbar-search" type="text" placeholder="Search your library…" aria-label="Search your library" title="Search your library (Ctrl+K)">
   </form>
+  <!-- Phones: the search box folds into this button and opens across the topbar -->
+  <button id="tb-search-btn" data-action="toggleTopbarSearch" title="Search your library" aria-label="Search your library" aria-controls="topbar-search-form">
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  </button>
   <div id="game-indicator" title="Game running — AI paused; metadata still updates in the background">
     <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>
     <span id="game-indicator-label">Game mode</span>
@@ -187,6 +205,12 @@
     </div>
    </div>
     <div class="sb-footer">
+      <!-- Shown only when the browser offers installation (or on iOS Safari,
+           where it opens the Add-to-Home-Screen steps) — js/mobile.js -->
+      <button id="pwa-install" class="pwa-install" data-action="installApp" title="Install Curatarr as an app" hidden>
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v7m-3-3 3 3 3-3"/></svg>
+        <span class="sb-text">Install app</span>
+      </button>
       <button data-action="logout" title="Sign out" aria-label="Sign out">
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         <span class="sb-text">Sign out</span>
@@ -199,6 +223,10 @@
   </nav>
 
   <div id="content">
+    <!-- Pull-to-refresh indicator (phones): js/mobile.js moves and arms it -->
+    <div id="ptr" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+    </div>
 
     <!-- CHAT -->
     <div class="view active" id="chat-view">
@@ -228,10 +256,11 @@
         </div>
       </div>
       <div id="chat-input-area">
-        <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat">+ New</button>
-        <button id="recheck-btn" data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata">Re-fetch</button>
-        <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" data-on-keydown="handleKey" data-args='["$event"]'></textarea>
-        <button id="send-btn" data-action="sendMessage" aria-label="Send message">Send</button>
+        <!-- Icon + label: phones show the icon alone (aria-label carries the name) -->
+        <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label">New</span></button>
+        <button id="recheck-btn" data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label">Re-fetch</span></button>
+        <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" data-on-keydown="handleKey" data-args='["$event"]' enterkeyhint="send" rows="1"></textarea>
+        <button id="send-btn" data-action="sendMessage" aria-label="Send message"><svg class="btn-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span class="btn-label">Send</span></button>
       </div>
     </div>
 
@@ -294,10 +323,36 @@
         <h1 tabindex="-1">Swipe</h1>
         <p>Titles near your taste that you haven't played in Plex. Seen one somewhere else? Rate it - every answer sharpens your taste profile.</p>
       </div>
-      <div class="view-body">
-        <div class="cat-tabs" id="swipe-tabs"></div>
-        <div class="fs-12 t3 mb-8" id="swipe-stats" aria-live="polite"></div>
-        <div id="swipe-card" class="swipe-stage"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
+      <div class="view-body swipe-body-wrap">
+        <div class="swipe-ambient" aria-hidden="true"><div class="swipe-ambient-layer"></div><div class="swipe-ambient-layer"></div></div>
+        <div class="swipe-layout">
+          <aside class="swipe-rail swipe-rail-left" aria-label="Swipe progress">
+            <div class="cat-tabs swipe-tabs" id="swipe-tabs"></div>
+            <div class="swipe-panel" id="swipe-progress"></div>
+            <div class="swipe-panel">
+              <div class="swipe-panel-h">This session</div>
+              <div class="swipe-session" id="swipe-session"></div>
+            </div>
+            <div class="fs-11 t3" id="swipe-stats" aria-live="polite"></div>
+            <dl class="swipe-keys" aria-label="Keyboard shortcuts">
+              <dt>←</dt><dd>Not seen</dd><dt>↓</dt><dd>Disliked</dd><dt>M</dt><dd>Meh</dd>
+              <dt>→</dt><dd>Liked</dd><dt>↑</dt><dd>Loved</dd><dt>1-0</dt><dd>Exact stars</dd><dt>U</dt><dd>Undo</dd>
+            </dl>
+          </aside>
+          <section class="swipe-center" aria-label="Title to rate">
+            <div class="swipe-deck" id="swipe-deck"><div class="swipe-deck-msg"><p class="loading" role="status">Loading…</p></div></div>
+            <div class="swipe-reactions" id="swipe-reactions" role="group" aria-label="Your answer"></div>
+            <div class="swipe-exact" id="swipe-exact" hidden></div>
+          </section>
+          <aside class="swipe-rail swipe-rail-right" aria-label="Just rated">
+            <div class="swipe-panel">
+              <div class="row swipe-panel-h">Just rated
+                <button class="btn btn-ghost btn-sm ml-auto" data-action="swipeUndo" aria-keyshortcuts="U">Undo</button></div>
+              <ol class="swipe-recent" id="swipe-recent"></ol>
+            </div>
+          </aside>
+        </div>
+        <div class="sr-only" id="swipe-live" role="status" aria-live="polite"></div>
       </div>
     </div>
 
@@ -777,6 +832,35 @@
 
   </div>
 </div>
+
+<!-- MOBILE TAB BAR (≤768px): the thumb-reach shortcuts to the everyday views;
+     everything else stays in the drawer behind "More". nav.showView marks the
+     tab whose data-views names the view on screen. -->
+<nav id="mobile-tabbar" aria-label="Quick navigation">
+  <a class="mt-item" href="#chat" data-views="chat">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <span>Chat</span>
+  </a>
+  <a class="mt-item" href="#recs" data-views="recs" aria-label="Recommendations">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+    <span>For you</span>
+  </a>
+  <a class="mt-item mt-swipe" href="#swipe" data-views="swipe">
+    <span class="mt-fab">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 12h6M12 9l3 3-3 3"/></svg>
+    </span>
+    <span>Swipe</span>
+  </a>
+  <button type="button" class="mt-item" data-views="arr-sonarr arr-radarr arr-lidarr" data-action="openLibrarySheet" aria-haspopup="dialog">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+    <span>Library</span>
+  </button>
+  <button type="button" class="mt-item" id="mt-more" data-views="" data-action="toggleMobileSidebar" aria-label="More: all views and settings">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+    <span>More</span>
+    <span class="mt-dot" id="mt-more-dot" hidden></span>
+  </button>
+</nav>
 
 <script type="module" src="/js/app.js"></script>
 </html>

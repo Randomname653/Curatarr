@@ -32,17 +32,11 @@ class SwipeAnswer(BaseModel):
     stars: Optional[int] = Field(default=None, ge=1, le=10)
 
 
-@router.get("/next")
-async def next_cards(category: str = Query("show"), n: int = Query(8, ge=1, le=20),
-                     user: User = Depends(get_current_user)):
-    """The next cards for this user, nearest to their taste first. Empty with
-    a reason when there is no taste profile for the category yet."""
-    cat = _category(category)
-    uid = user.id
-    cards = await sw.next_cards(uid, cat, n)
-    if not cards:
-        return {"cards": [], "reason": "no_taste"
-                if not await run_read(sw._taste_queries, uid, cat) else "done"}
+def _skip_ids(skip: str) -> set:
+    return {d for d in (skip or "").split(",") if d.strip()}
+
+
+async def _posters(cards: list, cat: str) -> None:
     from src.routers.recommendations import _fetch_tmdb
     sem = asyncio.Semaphore(4)
 
@@ -58,6 +52,30 @@ async def next_cards(category: str = Query("show"), n: int = Query(8, ge=1, le=2
             if not c.get("synopsis") and synopsis:
                 c["synopsis"] = synopsis[:600]
     await asyncio.gather(*(_poster(c) for c in cards))
+
+
+@router.get("/next")
+async def next_cards(category: str = Query("show"), n: int = Query(8, ge=1, le=20),
+                     seed: Optional[str] = Query(None, max_length=128),
+                     skip: str = Query("", max_length=4000),
+                     user: User = Depends(get_current_user)):
+    """The next cards for this user, nearest to their taste first. Empty with
+    a reason when there is no taste profile for the category yet.
+
+    ``seed``: a doc id the user just loved - the cards are its nearest
+    unanswered neighbours instead (empty, no reason, when it has none).
+    ``skip``: comma-separated doc ids already waiting in the client's stack."""
+    cat = _category(category)
+    uid = user.id
+    if seed:
+        cards = await sw.chain_cards(uid, cat, seed, min(n, 5), _skip_ids(skip))
+        await _posters(cards, cat)
+        return {"cards": cards}
+    cards = await sw.next_cards(uid, cat, n, _skip_ids(skip))
+    if not cards:
+        return {"cards": [], "reason": "no_taste"
+                if not await run_read(sw._taste_queries, uid, cat) else "done"}
+    await _posters(cards, cat)
     return {"cards": cards}
 
 
@@ -78,7 +96,8 @@ async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
         from src.services.taste_engine import compute_all_taste_vectors
         track_task(compute_all_taste_vectors(uid, [cat], skip_summaries=True),
                    name=f"swipe_taste_rebuild_{cat}")
-    return {"ok": True, "taste_rebuild": rebuild}
+    return {"ok": True, "taste_rebuild": rebuild,
+            "since_rebuild": 0 if rebuild else count, "rebuild_every": sw.REBUILD_EVERY}
 
 
 @router.post("/undo")
@@ -93,6 +112,8 @@ async def undo(category: str = Query(...), user: User = Depends(get_current_user
 
 @router.get("/stats")
 def swipe_stats(user: User = Depends(get_current_user)):
-    """Answers per category for this user. A plain def: FastAPI runs it on a
-    worker thread, so the read stays off the event loop."""
-    return {"stats": sw.stats(user.id)}
+    """Answers per category for this user, and how far each is from its next
+    taste rebuild. A plain def: FastAPI runs it on a worker thread, so the
+    read stays off the event loop."""
+    return {"stats": sw.stats(user.id), "since_rebuild": sw.since_rebuild(user.id),
+            "rebuild_every": sw.REBUILD_EVERY}

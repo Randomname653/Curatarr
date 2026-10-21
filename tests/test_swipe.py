@@ -65,7 +65,13 @@ with fake_session() as db:
     db.add(User(id=1, plex_user_id="1", plex_username="owner", is_admin=True, is_active=True))
     db.add(EncryptedTasteVector(user_id=1, media_category="show", salt="",
                                 encrypted_blob=json.dumps({"embedding": [1.0, 0.0],
-                                                           "cluster_centroids": []})))
+                                                           "cluster_centroids": [],
+                                                           "genre_affinity": {"Drama": 1.0, "Comedy": 0.1},
+                                                           "theme_affinity": {"island": 0.5}})))
+    db.add(EncryptedTasteVector(user_id=1, media_category="movie", salt="",
+                                encrypted_blob=json.dumps({"embedding": [1.0, 0.0], "cluster_centroids": [
+                                    {"embedding": [1.0, 0.0], "top_titles": ["Heat", "Ronin"]},
+                                    {"embedding": [0.0, 1.0], "top_titles": ["Amélie"]}]})))
     db.add(WatchHistoryEntry(user_id=1, plex_user_id="1", plex_item_id="555", title="Pilot",
                              series_title="Watched Show", media_type="show",
                              viewed_at=__import__("datetime").datetime(2026, 10, 1)))
@@ -82,8 +88,22 @@ queries_seen = []
 
 
 class FakeChroma:
+    def get_by_id(self, doc_id):
+        return {"id": doc_id, "embedding": [0.5, 0.5], "metadata": {"title": "Loved One"}} \
+            if doc_id == "seed" else None
+
     def query(self, query_embeddings, n_results, where=None):
         queries_seen.append((query_embeddings, where))
+        if len(query_embeddings) == 2:        # the movie profile: two clusters
+            return {"ids": [["m1", "m2"], ["m2", "m3"]],
+                    "distances": [[0.1, 0.4], [0.2, 0.3]],
+                    "metadatas": [[{"title": "Crime One"}, {"title": "Whimsy"}],
+                                  [{"title": "Whimsy"}, {"title": "Odd One"}]]}
+        if query_embeddings == [[0.5, 0.5]]:  # a chain from a loved title
+            return {"ids": [["seed", "sonarr:1", "c1", "c2"]],
+                    "distances": [[0.0, 0.1, 0.15, 0.2]],
+                    "metadatas": [[{"title": "Loved One"}, {"title": "Near One"},
+                                   {"title": "Kin One", "genres": "Drama"}, {"title": "Kin Two"}]]}
         return {"ids": [["sonarr:1", "555", "sonarr:2", "sonarr:3", "9001"]],
                 "distances": [[0.10, 0.05, 0.20, 0.30, 0.25]],
                 "metadatas": [[{"title": "Near One", "year": 2020, "genres": "Drama, Mystery", "themes": "Island"},
@@ -98,7 +118,9 @@ async def _run_chroma(fn, *a, **kw):
 
 cw.get_chroma_db = lambda: FakeChroma()
 cw.run_chroma = _run_chroma
-sw._profile_bits = lambda cat, ids: {i: (f"About {i}", None) for i in ids}
+sw._profile_bits = lambda cat, ids: {i: {"synopsis": f"About {i}", "tmdb_id": None,
+                                         "mood": ["Tense"], "director": [], "runtime_min": None}
+                                     for i in ids}
 
 with fake_session() as db:
     db.add(SwipeRating(user_id=1, category="show", doc_id="sonarr:2", title="Answered Show", seen=False))
@@ -110,6 +132,22 @@ check("the card carries year, tags, fit and synopsis",
       cards[0]["year"] == 2020 and cards[0]["genres"] == ["Drama", "Mystery"]
       and cards[0]["themes"] == ["Island"] and cards[0]["fit"] == 0.9
       and cards[0]["synopsis"] == "About sonarr:1")
+check("details carry only the facts the profile has", cards[0]["details"] == {"mood": ["Tense"]})
+check("tags the profile favours are marked as yours, weak ones not",
+      cards[0]["yours"] == ["Drama", "Island"] and cards[1]["yours"] == [])
+check("one average taste vector names no cluster", cards[0]["because"] == [])
+check("titles waiting in the client's stack are skipped",
+      [c["title"] for c in asyncio.run(sw.next_cards(1, "show", 5, {"sonarr:1"}))] == ["Far One"])
+mc = asyncio.run(sw.next_cards(1, "movie", 5))
+check("each card names the taste cluster it sits nearest",
+      [(c["title"], c["because"]) for c in mc]
+      == [("Crime One", ["Heat", "Ronin"]), ("Whimsy", ["Amélie"]), ("Odd One", ["Amélie"])])
+chain = asyncio.run(sw.chain_cards(1, "show", "seed", 3))
+check("a loved title chains its nearest unanswered neighbours, itself and the stack's answered titles left out",
+      [c["title"] for c in chain] == ["Near One", "Kin One", "Kin Two"]
+      and all(c["chain_from"] == "Loved One" and c["fit"] is None for c in chain)
+      and chain[1]["yours"] == ["Drama"])
+check("a seed without a vector chains nothing", asyncio.run(sw.chain_cards(1, "show", "nope", 3)) == [])
 check("the vector store is asked with the user's taste, filtered to the category",
       queries_seen and queries_seen[0][0] == [[1.0, 0.0]] and queries_seen[0][1] == cw.domain_where("show"))
 check("no taste profile, no cards", asyncio.run(sw.next_cards(1, "anime", 5)) == [])
@@ -123,6 +161,7 @@ with fake_session() as db:
 check("answers are stored per title, a new answer replaces the old",
       rows == {"sonarr:2": (False, None), "sonarr:1": (True, 10), "sonarr:3": (True, None)})
 check("the counter towards the next taste rebuild grows per answer", (n1, n2, n3) == (1, 2, 3))
+check("the counter is readable per category", sw.since_rebuild(1) == {"movie": 0, "show": 3, "anime": 0})
 st = sw.stats(1)["show"]
 check("counts: seen, rated, not seen", st == {"seen": 2, "not_seen": 1, "rated": 1})
 
@@ -168,6 +207,7 @@ async def _answer():
 r = asyncio.run(_answer())
 check("the tenth answer starts a background taste rebuild without LLM summaries",
       r["taste_rebuild"] is True and rebuilds == [(1, ["show"], True)]
+      and r["since_rebuild"] == 0 and r["rebuild_every"] == sw.REBUILD_EVERY
       and state["swipe_since_rebuild:1:show"] == "0")
 try:
     asyncio.run(rs.answer(rs.SwipeAnswer(category="show", doc_id="x", seen=False, stars=5), user=user))

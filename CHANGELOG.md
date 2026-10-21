@@ -6,6 +6,28 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Curatarr on your phone: an installable app with a real mobile layout.**
+- Installable (PWA): a manifest, home-screen icons and a service worker. Open Curatarr
+  over https (or on localhost) and the browser offers "Install app"; on iPhone the
+  drawer's Install button shows the Add-to-Home-Screen steps. The app shell opens when
+  the server is out of reach; API answers are never cached.
+- Below 768px a bottom tab bar replaces the hunt for the hamburger: Chat, For you
+  (Recommendations), Swipe, Library (a sheet with TV Shows / Movies / Music) and More
+  (the full drawer, with a dot when something there needs you).
+- Gestures: swipe in from the left edge to open the drawer, pull down at the top of a
+  view to refresh it, tap the active tab to scroll back to the top.
+- Swipe on a phone fills the screen between the topbar and the tab bar: the card and
+  all six reactions fit without scrolling, the exact-star row is a 5×2 grid of big
+  buttons, and every decision gives a short vibration (Android; a double pulse for
+  Loved, off with reduced motion). Fix: the reaction buttons, the exact stars and the
+  glow around a dragged card now show their reaction colour; a default colour later in
+  the stylesheet had overridden it.
+- Dialogs open as bottom sheets, toasts sit above the tab bar, tabs scroll sideways,
+  Settings' sub-navigation becomes a chip row, the chat input grows with your text and
+  uses icon buttons, and every edge is padded for the notch and home indicator.
+- The notification count appears on the installed app's icon, and the topbar says
+  "offline" while the phone has no network.
+
 **Chat no longer waits on background work or on reloading the model.**
 - A chat message goes ahead of every queued background job (recommendations, proactive
   messages, chat openers, principle learning). If one of those is already generating, it
@@ -351,6 +373,27 @@ profile (10 stars pull it toward the title, 1 star pushes it away), so
 what you watched on Netflix or in the cinema finally counts. Every ten
 answers rebuild that category's profile in the background. Keyboard
 (N, S, 1-9/0, U to undo) and drag gestures on phones.
+
+**Swipe, the real thing.** The view now uses the whole screen: a large
+card (poster at two thirds of its height, facts beside it) on a deck of the
+next two, a blurred copy of the poster behind everything, your progress on
+the left and what you just rated on the right. Five reactions replace the
+row of ten numbers - Not seen, Disliked, Meh, Liked, Loved (stars 2 / 5 / 7
+/ 10 in the same store, so the taste weights are unchanged); exact stars
+are still one key (1-0) or the Exact button away. Drag in four directions
+(← not seen, → liked, ↑ loved, ↓ disliked) or flick: the card tilts from
+where you grabbed it, a stamp and a glow grow toward the decision, phones
+buzz at the point of no return, and the card flies off the way you threw
+it while the next one rises. Buttons and keys play the same motion.
+- Each card says why it is there: the taste cluster it sits nearest ("Near
+  your taste for Heat, Ronin"), the genres and themes your profile favours
+  marked in amber, and the enriched profile's facts - runtime or seasons,
+  content rating, score, Rotten Tomatoes, director, cast, mood.
+- Loving a title pulls its nearest unanswered neighbours to the front of the
+  stack ("Because you loved ...").
+- Undo flies the card back in from where it left instead of reloading the
+  stack; a ring counts the answers to the next taste refresh and turns
+  green when it starts.
 
 **Fewer random memories on deletion cards.** "Matches something you said
 you value" no longer shows a memory that only stood out of a tight cluster

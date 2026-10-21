@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#21252e">
+<title>Curatarr — offline</title>
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="offline-page">
+  <!-- Served by the service worker when neither the server nor a cached
+       shell answers. No script: the CSP allows none inline, and a reload
+       is all there is to do. -->
+  <img src="/icons/icon-192.png" alt="" width="96" height="96" class="offline-mark">
+  <h1 class="fs-22 fw-700 t-amber">Curatarr is out of reach</h1>
+  <p class="t2 fs-14 lh-16">Your phone can't reach the Curatarr server right now. Check that you are on your home network (or VPN) and that the server is running.</p>
+  <a class="btn btn-primary pad-12-28 no-underline" href="/">Try again</a>
+</body>
+</html>

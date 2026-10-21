@@ -16,15 +16,17 @@ import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
 import { loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { loadReport, writeYearlyReview } from './report.js';
-import { loadSwipe, swipeCategory, swipeNotSeen, swipeSeen, swipeStars, swipeUndo } from './swipe.js';
+import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
 import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
+import { initMobile, installApp, openLibrarySheet, toggleTopbarSearch } from './mobile.js';
 
 export function init() {
+initMobile();
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
@@ -139,6 +141,7 @@ const actions = {
   handleSpotifyDrop,
   hideOnError,
   hideOnboarding,
+  installApp,
   kbDismissFinding,
   kbFixMatch,
   kbIgnore,
@@ -154,6 +157,7 @@ const actions = {
   loadDepsStatus,
   loadModelUpdates,
   openModelUpdates,
+  openLibrarySheet,
   startModelCompare,
   rerunModelCompare,
   decideModelUpdate,
@@ -174,8 +178,8 @@ const actions = {
   loadRecs,
   loadSwipe,
   swipeCategory,
-  swipeNotSeen,
-  swipeSeen,
+  swipeExact,
+  swipeReact,
   swipeStars,
   swipeUndo,
   loadReport,
@@ -268,6 +272,7 @@ const actions = {
   loadUnreadMessages,
   togglePitcherWrap,
   toggleSidebar,
+  toggleTopbarSearch,
   toggleUser,
   toggleWhy,
   topbarSearch,
