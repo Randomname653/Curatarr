@@ -352,6 +352,13 @@ what you watched on Netflix or in the cinema finally counts. Every ten
 answers rebuild that category's profile in the background. Keyboard
 (N, S, 1-9/0, U to undo) and drag gestures on phones.
 
+**Fewer random memories on deletion cards.** "Matches something you said
+you value" no longer shows a memory that only stood out of a tight cluster
+of unrelated ones (a car-nostalgia note on a French comedy). An
+embedding-only match now needs a cosine of at least 0.34. That is just
+above the measured noise, and real matches sit at 0.35 and up. Matches
+on a shared word work as before.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

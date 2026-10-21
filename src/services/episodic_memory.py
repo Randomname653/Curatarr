@@ -684,6 +684,14 @@ async def retrieve_memories(
 
 # ── PER-ITEM "KEEP / VALUE" CONSIDERATIONS ────────────────────────────────────
 
+# The lowest cosine an embedding-only match may have, whatever the cluster
+# looks like. Measured 2026-10-21 over 120 deletion candidates x every memory
+# (nomic, query vs document side): mean 0.205, p99 0.335. Real matches sat at
+# 0.35-0.48 (Knight Rider <-> a K.I.T.T. memory 0.39); the false ones the relative
+# test let through sat at 0.27-0.30 (that same memory on Cat's Eyes). The
+# lexical path keeps its own, lower bar: a shared concept the embedding misses.
+CONSIDERATION_EMBED_FLOOR = 0.34
+
 # A memory leans "keep / value" if it carries one of these and none of the
 # negatives. Kept deliberately broad so it generalises to ANY feedback the user
 # gives (not just the franchise/partner/cultural pillars), which is the whole
@@ -774,6 +782,8 @@ async def retrieve_considerations(
     the baseline of all the user's memories. That keeps the franchise memory for
     a franchise item while rejecting an unrelated high-importance memory that
     merely shares the cluster — importance must not masquerade as relevance.
+    The relative test alone still let noise through when nothing matched, so
+    an embedding-only match must also clear CONSIDERATION_EMBED_FLOOR.
     """
     if not item_profile or not item_profile.strip():
         return []
@@ -915,8 +925,10 @@ def _score_considerations(item_emb: list, item_profile: str, loaded: dict,
     vals = [s[0] for s in sims]
     mean = sum(vals) / len(vals)
     std = math.sqrt(sum((s - mean) ** 2 for s in vals) / len(vals))
-    # An embedding match must sit clearly above the cluster to count.
-    threshold = mean + max(0.08, std)
+    # An embedding match must sit clearly above the cluster to count - and
+    # above the noise floor: when nothing truly matches, the least-unrelated
+    # memory still stands out of a tight cluster.
+    threshold = max(mean + max(0.08, std), CONSIDERATION_EMBED_FLOOR)
     item_tokens = _consideration_tokens(item_profile)
 
     keep = loaded["keep"]
