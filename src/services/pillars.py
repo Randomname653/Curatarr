@@ -648,6 +648,15 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         other_block += "".join(
             f"\n  - {scrub_untrusted(n)}: asked the curator to KEEP this title"
             for n in keeps)
+    # Taste, not a watch (recommendations_engine, HOUSEHOLD_TASTE_STRONG_FIT):
+    # a reason the household may want it - weaker than any line above, never
+    # the household floor.
+    ht = item.get("_household_taste")
+    if isinstance(ht, dict) and ht.get("name"):
+        flags["household_taste_fit"] = ht.get("fit")
+        other_block += (f"\n  - {scrub_untrusted(ht['name'])}: has NOT watched it, but their "
+                        f"viewing profile matches it closely (taste fit {ht.get('fit')}) - "
+                        "a household reason to keep it, weaker than an actual watch.")
 
     # ── ACCLAIM / METADATA (verified data — cache-first, no LLM) ──
     verified_text = ""
