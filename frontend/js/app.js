@@ -16,6 +16,7 @@ import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
 import { loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { loadReport, writeYearlyReview } from './report.js';
+import { loadSwipe, swipeCategory, swipeNotSeen, swipeSeen, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
@@ -171,6 +172,12 @@ const actions = {
   loadProfilesOnEnter,
   loadReclassify,
   loadRecs,
+  loadSwipe,
+  swipeCategory,
+  swipeNotSeen,
+  swipeSeen,
+  swipeStars,
+  swipeUndo,
   loadReport,
   loadTaskHistory,
   loadUsers,

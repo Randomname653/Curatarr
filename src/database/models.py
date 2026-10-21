@@ -515,6 +515,32 @@ class CuratorResolutionLog(Base):
     )
 
 
+class SwipeRating(Base):
+    """One answer from the Swipe view (2026-10-21): has the user seen this
+    library title (anywhere - Netflix, cinema, a friend's place), and if so,
+    how many stars out of 10. Seen-and-rated titles join the user's taste
+    vector (taste_engine via services/swipe.load_swipe_entries); "not seen"
+    only keeps the title out of the next stack.
+
+    ``doc_id`` is the title's vector-store id ({service}:{arr id} or a Plex
+    ratingKey) - the key its enriched profile is cached under."""
+    __tablename__ = "swipe_ratings"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    category   = Column(String(16), nullable=False)          # movie | show | anime
+    doc_id     = Column(String(128), nullable=False)
+    title      = Column(String(512), nullable=True)
+    seen       = Column(Boolean, nullable=False)
+    stars      = Column(Integer, nullable=True)               # 1-10, only when seen
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "category", "doc_id", name="uq_swipe_user_cat_doc"),
+    )
+
+
 class PlexRating(Base):
     """User-set Plex star ratings (1-5 ★), captured from PlexAmp / Plex Web.
 
