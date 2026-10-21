@@ -294,10 +294,36 @@
         <h1 tabindex="-1">Swipe</h1>
         <p>Titles near your taste that you haven't played in Plex. Seen one somewhere else? Rate it - every answer sharpens your taste profile.</p>
       </div>
-      <div class="view-body">
-        <div class="cat-tabs" id="swipe-tabs"></div>
-        <div class="fs-12 t3 mb-8" id="swipe-stats" aria-live="polite"></div>
-        <div id="swipe-card" class="swipe-stage"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
+      <div class="view-body swipe-body-wrap">
+        <div class="swipe-ambient" aria-hidden="true"><div class="swipe-ambient-layer"></div><div class="swipe-ambient-layer"></div></div>
+        <div class="swipe-layout">
+          <aside class="swipe-rail swipe-rail-left" aria-label="Swipe progress">
+            <div class="cat-tabs swipe-tabs" id="swipe-tabs"></div>
+            <div class="swipe-panel" id="swipe-progress"></div>
+            <div class="swipe-panel">
+              <div class="swipe-panel-h">This session</div>
+              <div class="swipe-session" id="swipe-session"></div>
+            </div>
+            <div class="fs-11 t3" id="swipe-stats" aria-live="polite"></div>
+            <dl class="swipe-keys" aria-label="Keyboard shortcuts">
+              <dt>←</dt><dd>Not seen</dd><dt>↓</dt><dd>Disliked</dd><dt>M</dt><dd>Meh</dd>
+              <dt>→</dt><dd>Liked</dd><dt>↑</dt><dd>Loved</dd><dt>1-0</dt><dd>Exact stars</dd><dt>U</dt><dd>Undo</dd>
+            </dl>
+          </aside>
+          <section class="swipe-center" aria-label="Title to rate">
+            <div class="swipe-deck" id="swipe-deck"><div class="swipe-deck-msg"><p class="loading" role="status">Loading…</p></div></div>
+            <div class="swipe-reactions" id="swipe-reactions" role="group" aria-label="Your answer"></div>
+            <div class="swipe-exact" id="swipe-exact" hidden></div>
+          </section>
+          <aside class="swipe-rail swipe-rail-right" aria-label="Just rated">
+            <div class="swipe-panel">
+              <div class="row swipe-panel-h">Just rated
+                <button class="btn btn-ghost btn-sm ml-auto" data-action="swipeUndo" aria-keyshortcuts="U">Undo</button></div>
+              <ol class="swipe-recent" id="swipe-recent"></ol>
+            </div>
+          </aside>
+        </div>
+        <div class="sr-only" id="swipe-live" role="status" aria-live="polite"></div>
       </div>
     </div>
 

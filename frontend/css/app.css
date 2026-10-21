@@ -188,26 +188,168 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
   .view .select-bar { margin: 12px -16px -14px; padding: 10px 16px; bottom: -14px; }
 }
 
-/* ── SWIPE ── one card at a time; the drag lean tints the border. */
-.swipe-stage { max-width: 760px; }
-.swipe-card { display: flex; gap: 18px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; touch-action: pan-y; user-select: none; cursor: grab; transition: transform .15s ease, border-color .15s ease; }
-.swipe-card.dragging { cursor: grabbing; transition: none; }
-.swipe-card.lean-right { border-color: var(--success); }
-.swipe-card.lean-left { border-color: var(--danger-fg); }
-.swipe-poster { width: 160px; height: 240px; object-fit: cover; border-radius: 6px; flex-shrink: 0; pointer-events: none; }
-.swipe-poster-ph { display: flex; align-items: center; justify-content: center; background: var(--bg3); color: var(--text3); font-size: 48px; }
-.swipe-body { min-width: 0; flex: 1; }
-.swipe-title { font-size: 18px; font-weight: 600; color: var(--text); }
-.swipe-synopsis { color: var(--text2); font-size: 13px; line-height: 1.55; margin: 10px 0; }
-.swipe-actions { display: flex; gap: 10px; margin-top: 14px; }
-.swipe-actions .btn { flex: 1; padding-top: 12px; padding-bottom: 12px; font-size: 14px; }
-.swipe-stars { margin-top: 12px; }
-.swipe-star { min-width: 36px; }
-.swipe-hint { margin-left: auto; }
-@media (max-width: 768px) {
-  .swipe-card { flex-direction: column; align-items: center; }
-  .swipe-poster { width: 200px; height: 300px; }
-  .swipe-hint { display: none; }
+/* ── SWIPE ── a deck of large cards between two rails. The top card follows
+   the pointer; --lean-a (0..1, set from script) grows the stamp and the glow
+   in the colour of the reaction it is leaning toward. Cards below the top sit
+   one step back each (data-depth) and move up with a transition. */
+.swipe-body-wrap { position: relative; padding: 18px 24px; }
+.swipe-ambient { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.swipe-ambient::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(26,29,35,.55) 0%, var(--bg) 92%); }
+.swipe-ambient-layer { position: absolute; inset: -80px; background-size: cover; background-position: center; filter: blur(70px) saturate(1.4); opacity: 0; transform: scale(1.1); transition: opacity .7s ease; }
+.swipe-ambient-layer.on { opacity: .42; }
+.swipe-layout { position: relative; z-index: 1; display: grid; grid-template-columns: 230px minmax(0, 1fr) 250px; grid-template-areas: "left center right"; gap: 28px; align-items: start; max-width: 1680px; margin: 0 auto; }
+.swipe-rail { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; }
+.swipe-rail-left { grid-area: left; }
+.swipe-rail-right { grid-area: right; }
+.swipe-center { grid-area: center; position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.swipe-tabs { margin-bottom: 0; flex-wrap: nowrap; }
+.swipe-tabs .cat-tab { flex: 1; justify-content: center; padding-left: 6px; padding-right: 6px; }
+.swipe-panel { background: rgba(33,37,46,.72); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px; backdrop-filter: blur(8px); }
+.swipe-panel-h { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); margin-bottom: 10px; }
+#swipe-progress { display: flex; align-items: center; gap: 12px; }
+#swipe-progress.is-refreshing { border-color: var(--success-line); }
+#swipe-progress.is-refreshing .swipe-ring { animation: swipe-pulse 1.2s ease 2; }
+.swipe-ring { position: relative; width: 56px; height: 56px; flex-shrink: 0; }
+.swipe-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.swipe-ring circle { fill: none; stroke-width: 3.2; }
+.swipe-ring-bg { stroke: var(--bg3); }
+.swipe-ring-fg { stroke: var(--amber); stroke-linecap: round; stroke-dasharray: 0 100; transition: stroke-dasharray .5s ease, stroke .3s; }
+.is-refreshing .swipe-ring-fg { stroke: var(--success); }
+.swipe-ring span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text); }
+.swipe-progress-t { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text3); line-height: 1.35; }
+.swipe-progress-t b { color: var(--text); font-size: 13px; }
+.swipe-session-n { font-size: 12px; color: var(--text3); margin-bottom: 8px; }
+.swipe-session-n b { font-size: 22px; color: var(--text); margin-right: 4px; }
+.swipe-session-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.swipe-chip { --c: var(--text3); display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); flex-shrink: 0; }
+.swipe-chip svg { width: 12px; height: 12px; }
+.swipe-keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 11px; color: var(--text3); margin: 0; }
+.swipe-keys dt { font-family: ui-monospace, monospace; color: var(--text2); background: var(--bg3); border: 1px solid var(--border2); border-radius: 4px; padding: 0 5px; text-align: center; min-width: 26px; }
+.swipe-keys dd { margin: 0; align-self: center; }
+.swipe-recent { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.swipe-recent li { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text2); min-width: 0; }
+.swipe-recent li.is-new { animation: swipe-slide-in .35s ease both; }
+.swipe-recent img, .swipe-recent-ph { width: 30px; height: 45px; border-radius: 4px; object-fit: cover; background: var(--bg3); flex-shrink: 0; }
+.swipe-recent-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swipe-recent-empty { color: var(--text3); }
+
+/* reaction colours, shared by chips, buttons, stamps and the card glow */
+[data-kind="notseen"], [data-lean="notseen"], .swipe-stamp[data-dir="left"] { --c: #8f9bb3; }
+[data-kind="disliked"], [data-lean="disliked"], .swipe-stamp[data-dir="down"] { --c: var(--danger-fg); }
+[data-kind="meh"], [data-lean="meh"], .swipe-stamp[data-dir="none"] { --c: var(--amber); }
+[data-kind="liked"], [data-lean="liked"], .swipe-stamp[data-dir="right"] { --c: var(--success); }
+[data-kind="loved"], [data-lean="loved"], .swipe-stamp[data-dir="up"] { --c: #ff5c8a; }
+[data-kind="seen"], [data-kind="exact"] { --c: var(--info); }
+
+.swipe-deck { position: relative; container-type: size; width: min(100%, 1000px); height: clamp(440px, calc(100vh - 300px), 780px); padding-bottom: 34px; }
+.swipe-deck-msg { position: absolute; inset: 0 0 34px; display: flex; align-items: center; justify-content: center; background: rgba(33,37,46,.6); border: 1px dashed var(--border2); border-radius: 18px; }
+.swipe-card { --c: transparent; --lean-a: 0; position: absolute; inset: 0 0 34px; display: grid; grid-template-columns: auto minmax(0, 1fr); background: var(--bg2); border: 1px solid var(--border2); border-radius: 18px; overflow: hidden; user-select: none; touch-action: none; cursor: grab; transform-origin: 50% 85%;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) calc(var(--lean-a) * 100%), transparent), 0 0 calc(var(--lean-a) * 60px) color-mix(in srgb, var(--c) calc(var(--lean-a) * 45%), transparent), 0 26px 60px rgba(0,0,0,.5);
+  transition: transform .34s cubic-bezier(.2,.9,.3,1.12), opacity .3s ease, box-shadow .2s ease; }
+.swipe-card[data-depth="1"] { transform: translateY(17px) scale(.955); opacity: .75; }
+.swipe-card[data-depth="2"] { transform: translateY(34px) scale(.91); opacity: .4; }
+.swipe-card[data-depth="0"] { z-index: 3; }
+.swipe-card[data-depth="1"] { z-index: 2; }
+.swipe-card[data-depth="2"] { z-index: 1; }
+.swipe-card[data-depth]:not([data-depth="0"]) { pointer-events: none; }
+.swipe-card[data-depth]:not([data-depth="0"]) .swipe-info > * { opacity: .5; }
+.swipe-card.is-new { animation: swipe-rise .4s ease both; }
+.swipe-card.dragging { cursor: grabbing; transition: box-shadow .2s ease; }
+.swipe-card.springing { transition: transform .42s cubic-bezier(.25,1.6,.4,1), box-shadow .3s ease; }
+.swipe-card.is-leaving { z-index: 5; pointer-events: none; transition: transform .46s cubic-bezier(.3,.55,.35,1), opacity .46s ease .06s, box-shadow .2s; }
+.swipe-card.no-anim { transition: none; }
+.swipe-poster-wrap { position: relative; height: 100%; width: min(calc(100cqh * 2 / 3), 55cqw); background: var(--bg3); }
+.swipe-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; }
+.swipe-poster-ph { display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 72px; font-weight: 700; background: linear-gradient(135deg, var(--bg3), var(--bg2)); }
+.swipe-info { display: flex; flex-direction: column; justify-content: safe center; gap: 12px; padding: 26px 28px; min-width: 0; overflow-y: auto; }
+.swipe-title { font-size: clamp(22px, 2.2vw, 32px); font-weight: 700; color: var(--text); line-height: 1.15; letter-spacing: -.01em; }
+.swipe-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); }
+.swipe-dot { color: var(--text3); }
+.swipe-cr { border: 1px solid var(--border2); border-radius: 3px; padding: 0 5px; font-size: 11px; }
+.swipe-because { font-size: 12px; color: var(--text3); }
+.swipe-because b { color: var(--amber2); font-weight: 600; }
+.swipe-ribbon { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: #ff8fae; background: rgba(255,92,138,.13); border: 1px solid rgba(255,92,138,.35); }
+.swipe-ribbon svg { width: 13px; height: 13px; fill: currentColor; }
+.swipe-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.swipe-tags .is-yours { border-color: var(--amber-line); color: var(--amber2); background: var(--amber-dim); }
+.swipe-tags .is-yours::before { content: '●'; font-size: 7px; margin-right: 5px; }
+.swipe-synopsis { color: var(--text2); font-size: 14px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.swipe-synopsis.open { -webkit-line-clamp: unset; cursor: text; user-select: text; }
+.swipe-people { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0; }
+.swipe-people dt { color: var(--text3); }
+.swipe-people dd { margin: 0; color: var(--text2); }
+.swipe-fit { margin-top: 6px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text3); }
+.swipe-fit b { color: var(--text); font-size: 13px; }
+.swipe-meter { flex: 0 1 160px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; }
+.swipe-meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, var(--amber), var(--amber2)); }
+.swipe-stamp { position: absolute; z-index: 4; padding: 6px 16px; border: 4px solid var(--c); border-radius: 10px; color: var(--c); background: color-mix(in srgb, var(--bg) 55%, transparent); font-size: clamp(22px, 2.6vw, 38px); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; opacity: 0; pointer-events: none; transition: opacity .08s linear; }
+.swipe-stamp[data-dir="right"] { top: 28px; left: 28px; transform: rotate(-14deg); }
+.swipe-stamp[data-dir="left"] { top: 28px; right: 28px; transform: rotate(14deg); }
+.swipe-stamp[data-dir="up"] { bottom: 70px; left: 50%; transform: translateX(-50%) rotate(-6deg); }
+.swipe-stamp[data-dir="down"] { top: 28px; left: 50%; transform: translateX(-50%) rotate(6deg); }
+.swipe-stamp[data-dir="none"] { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-8deg); }
+.swipe-note { position: absolute; z-index: 6; top: -14px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--bg3); border: 1px solid var(--border2); box-shadow: 0 8px 24px rgba(0,0,0,.4); white-space: nowrap; animation: swipe-note 2.6s ease both; }
+.swipe-note svg { width: 13px; height: 13px; color: #ff5c8a; fill: currentColor; }
+.swipe-done { max-width: 460px; padding: 24px; text-align: center; color: var(--text2); font-size: 13px; }
+.swipe-done h2 { font-size: 18px; color: var(--text); margin: 10px 0 6px; }
+.swipe-done-ic svg { width: 40px; height: 40px; color: var(--amber); }
+.swipe-done-cta { justify-content: center; margin-top: 14px; }
+.swipe-is-empty .swipe-reactions { visibility: hidden; }
+
+.swipe-reactions { display: flex; align-items: flex-end; justify-content: center; gap: 14px; margin-top: 4px; }
+.swipe-react { --c: var(--text2); display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--text3); font: inherit; font-size: 11px; cursor: pointer; }
+.swipe-react-ic { display: flex; align-items: center; justify-content: center; width: 58px; height: 58px; border-radius: 50%; color: var(--c); background: var(--bg2); border: 2px solid color-mix(in srgb, var(--c) 45%, var(--border)); box-shadow: 0 6px 18px rgba(0,0,0,.35); transition: transform .18s cubic-bezier(.3,1.6,.5,1), background .15s, box-shadow .2s; }
+.swipe-react-ic svg { width: 24px; height: 24px; }
+.swipe-react[data-kind="liked"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 66px; height: 66px; }
+.swipe-react[data-kind="loved"] .swipe-react-ic svg { fill: currentColor; }
+.swipe-react-exact .swipe-react-ic { width: 44px; height: 44px; }
+.swipe-react-exact .swipe-react-ic svg { width: 18px; height: 18px; }
+.swipe-react:hover .swipe-react-ic, .swipe-react:focus-visible .swipe-react-ic { transform: translateY(-2px) scale(1.06); background: color-mix(in srgb, var(--c) 14%, var(--bg2)); }
+.swipe-react:hover, .swipe-react.is-leaning { color: var(--c); }
+.swipe-react.is-leaning .swipe-react-ic { transform: scale(1.16); background: color-mix(in srgb, var(--c) 22%, var(--bg2)); box-shadow: 0 0 24px color-mix(in srgb, var(--c) 45%, transparent); }
+.swipe-react.is-hit .swipe-react-ic { animation: swipe-hit .38s ease; }
+.swipe-react[aria-expanded="true"] .swipe-react-ic { background: color-mix(in srgb, var(--c) 20%, var(--bg2)); }
+/* the exact-star row floats over the bottom of the card, above the buttons */
+.swipe-exact { position: absolute; z-index: 8; bottom: 96px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); padding: 14px 16px; background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-lg); box-shadow: 0 18px 50px rgba(0,0,0,.55); animation: swipe-pop .2s ease both; }
+.swipe-exact-h { font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+.swipe-exact-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.swipe-star { --c: var(--text2); min-width: 38px; height: 38px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--c) 40%, var(--border)); background: var(--bg3); color: var(--c); font: inherit; font-weight: 700; cursor: pointer; transition: transform .12s, background .12s; }
+.swipe-star:hover, .swipe-star:focus-visible { transform: translateY(-2px); background: color-mix(in srgb, var(--c) 18%, var(--bg3)); }
+
+@keyframes swipe-rise { from { opacity: 0; transform: translateY(60px) scale(.85); } }
+@keyframes swipe-slide-in { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes swipe-pop { from { opacity: 0; transform: translate(-50%, 8px); } }
+@keyframes swipe-hit { 40% { transform: scale(1.25); } }
+@keyframes swipe-pulse { 50% { transform: scale(1.12); } }
+@keyframes swipe-note { 0% { opacity: 0; transform: translate(-50%, 8px); } 12%, 82% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -6px); } }
+
+/* Mid widths: one rail, the "just rated" panel under the progress. */
+@media (max-width: 1360px) {
+  .swipe-layout { grid-template-columns: 220px minmax(0, 1fr); grid-template-areas: "left center" "right center"; }
+  .swipe-rail-right { position: static; }
+}
+/* Narrow: one column; the card turns into a poster with the facts over it. */
+@media (max-width: 900px) {
+  .swipe-body-wrap { padding: 12px 12px 20px; }
+  .swipe-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "left" "center" "right"; gap: 14px; }
+  .swipe-rail { position: static; }
+  .swipe-rail-left { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .swipe-rail-left .swipe-tabs { grid-column: 1 / -1; }
+  .swipe-keys, #swipe-stats { display: none; }
+  .swipe-panel { padding: 10px 12px; }
+  .swipe-ring { width: 44px; height: 44px; }
+  .swipe-deck { height: clamp(460px, calc(100vh - 330px), 680px); max-width: 480px; }
+  .swipe-card { grid-template-columns: 1fr; }
+  .swipe-poster-wrap { position: absolute; inset: 0; width: auto; height: auto; }
+  .swipe-exact { bottom: 74px; }
+  .swipe-star { min-width: 34px; height: 40px; }
+  .swipe-info { position: relative; z-index: 1; align-self: end; gap: 8px; padding: 70px 16px 16px; max-height: 100%; background: linear-gradient(180deg, transparent 0%, rgba(20,22,27,.88) 70px, rgba(20,22,27,.96) 100%); }
+  .swipe-synopsis { -webkit-line-clamp: 3; font-size: 13px; }
+  .swipe-people { display: none; }
+  .swipe-reactions { gap: 10px; }
+  .swipe-react-ic { width: 50px; height: 50px; }
+  .swipe-react[data-kind="liked"] .swipe-react-ic, .swipe-react[data-kind="loved"] .swipe-react-ic { width: 58px; height: 58px; }
+  .swipe-react-l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 
 /* ── CONTENT ── */

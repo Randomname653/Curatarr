@@ -352,6 +352,27 @@ what you watched on Netflix or in the cinema finally counts. Every ten
 answers rebuild that category's profile in the background. Keyboard
 (N, S, 1-9/0, U to undo) and drag gestures on phones.
 
+**Swipe, the real thing.** The view now uses the whole screen: a large
+card (poster at two thirds of its height, facts beside it) on a deck of the
+next two, a blurred copy of the poster behind everything, your progress on
+the left and what you just rated on the right. Five reactions replace the
+row of ten numbers - Not seen, Disliked, Meh, Liked, Loved (stars 2 / 5 / 7
+/ 10 in the same store, so the taste weights are unchanged); exact stars
+are still one key (1-0) or the Exact button away. Drag in four directions
+(← not seen, → liked, ↑ loved, ↓ disliked) or flick: the card tilts from
+where you grabbed it, a stamp and a glow grow toward the decision, phones
+buzz at the point of no return, and the card flies off the way you threw
+it while the next one rises. Buttons and keys play the same motion.
+- Each card says why it is there: the taste cluster it sits nearest ("Near
+  your taste for Heat, Ronin"), the genres and themes your profile favours
+  marked in amber, and the enriched profile's facts - runtime or seasons,
+  content rating, score, Rotten Tomatoes, director, cast, mood.
+- Loving a title pulls its nearest unanswered neighbours to the front of the
+  stack ("Because you loved ...").
+- Undo flies the card back in from where it left instead of reloading the
+  stack; a ring counts the answers to the next taste refresh and turns
+  green when it starts.
+
 **Fewer random memories on deletion cards.** "Matches something you said
 you value" no longer shows a memory that only stood out of a tight cluster
 of unrelated ones (a car-nostalgia note on a French comedy). An
