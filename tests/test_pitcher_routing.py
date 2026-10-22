@@ -13,6 +13,7 @@ Covers the load-bearing guarantees:
   - wiring: pillars/engine pass the model through; config has the settings.
 """
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -182,7 +183,7 @@ check("pillar branch: gate acquire + re-acquire carry exclusive_model",
       eng.count("exclusive_model=pitch_model") >= 3)
 check("judge + monologue run on the pitch model",
       "adjudicate(ev[\"facts\"], model=pitch_model" in eng
-      and "model=pitch_model,\n                        lang_directive" in eng)
+      and re.search(r"write_monologue\(\s*ev\[\"facts\"\], verdict, model=pitch_model,\s*lang_directive", eng))
 check("run-end eager evict is guarded", eng.count("evict_if_resident(pitch_model)") == 2)
 check("_call_llm override only for pitches",
       eng.count("model_override=pitch_model") == 2)

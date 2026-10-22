@@ -499,6 +499,15 @@ timeout:
 - a chat reply that has not started is answered on the NAS, one that has
   started ends with a note and is not saved
 
+While the PC is free, a deletion run goes three times deeper, so the
+proposals last while it is off.
+
+**Deletion verdicts are not paid for twice.** A verdict is stored under a
+fingerprint of everything that decides it: the evidence, the principles,
+the bake and its weights, the host's profile. The next run reuses it while
+nothing changed, does not count it against its cap, and reaches further
+down the list. Outages are never stored. Pitches are kept per language.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

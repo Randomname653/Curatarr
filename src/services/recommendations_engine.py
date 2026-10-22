@@ -257,6 +257,20 @@ SIZE_PTS_CAP = 25.0
 # titles. Learned keep-considerations are scored for the same JUDGE_CAP
 # slice — they used to stop at 30, so ranks 31-60 were judged without them.
 TARGET_CUTS, JUDGE_CAP = 10, 60
+# Split install (NAS + gaming PC): a run happens only while the PC is free,
+# so it builds a RESERVE - this many times deeper - that lasts while the PC
+# is off. Stored verdicts (services/verdict_cache) cost no model call and do
+# not count against the cap, up to REUSE_FACTOR x the cap per run.
+RESERVE_FACTOR = 3
+REUSE_FACTOR = 2
+
+
+def _run_caps() -> tuple:
+    """(target cuts, judge cap) for this run: the reserve on a split install."""
+    from src.services.ollama_hosts import split
+    if split():
+        return TARGET_CUTS * RESERVE_FACTOR, JUDGE_CAP * RESERVE_FACTOR
+    return TARGET_CUTS, JUDGE_CAP
 
 # The last pillar-judging run per category, for the Deletions view's run
 # banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
@@ -1491,6 +1505,9 @@ async def generate_deletion_proposals(
 
     import math
 
+    # The reserve on a split install, the classic 10 / 60 otherwise.
+    target_cuts, judge_cap = _run_caps()
+
     # Plex user-rating hard-protect line (Pass 82c, see the music preload below).
     HARD_PROTECT_THRESHOLD = 8.0      # Plex 0-10 scale; 8.0 = 4 stars
 
@@ -2345,7 +2362,11 @@ async def generate_deletion_proposals(
     # their keep-value deductions.
     from src.services.episodic_memory import retrieve_considerations_many
     _CONSIDER_CAP = 45.0
-    _consider_slice = scored_candidates[:JUDGE_CAP]
+    # The run's REACH: reused verdicts let it walk past judge_cap (up to
+    # REUSE_FACTOR x more), and every title it can reach gets its
+    # keep-value scored - the same slice bug the comment above describes.
+    _reach = judge_cap * (1 + REUSE_FACTOR)
+    _consider_slice = scored_candidates[:_reach]
     _profiles = []
     for cand in _consider_slice:
         it = cand["item"]
@@ -2437,6 +2458,9 @@ async def generate_deletion_proposals(
         _msg(f"{category}: waiting for the gaming PC")
         return []
     pitch_model = await resolve_pitcher_model(judge_host.url)
+    from src.services import verdict_cache
+    # Stored verdicts are valid only for these exact weights.
+    pitch_digest = await verdict_cache.bake_digest(judge_host.url, pitch_model)
     _msg(f"{category}: deletion run model: {pitch_model}")
     logger.info("[deletions] %s: run model = %s on %s (%s profile)", category,
                 pitch_model, judge_host.url, judge_host.profile)
@@ -2459,6 +2483,7 @@ async def generate_deletion_proposals(
             _record_deletion_run(category, stopped=_lane_why, degraded=taste_degraded)
             return []
         judged = 0
+        reused = 0                # verdicts taken from verdict_cache
         thin_skipped = 0
         misfiled_skipped = 0
         unchecked_skipped = 0
@@ -2493,7 +2518,7 @@ async def generate_deletion_proposals(
             from src.services.reception import topup_reception
             from src.services.wikidata import topup_wikidata
             from src.services.subtitle_signals import topup_subtitle_metrics
-            _warm_slice = scored_candidates[:JUDGE_CAP]
+            _warm_slice = scored_candidates[:judge_cap]
             _wc = Counter()
 
             def _ids_of(_it):
@@ -2597,7 +2622,8 @@ async def generate_deletion_proposals(
         _ev_ahead: dict = {}
         try:
             for _ci, cand in enumerate(scored_candidates):
-                if len(final_proposals) >= TARGET_CUTS or judged >= JUDGE_CAP:
+                if (len(final_proposals) >= target_cuts or judged >= judge_cap
+                        or _ci >= _reach):
                     break
                 # YIELD between verdicts: a funnel run holds the gate for many
                 # minutes; an interactive chat queued behind it should get the
@@ -2635,7 +2661,7 @@ async def generate_deletion_proposals(
                 item = cand["item"]
                 judged += 1
                 _msg(f"{category}: pillar-judging {judged} "
-                     f"({len(final_proposals)}/{TARGET_CUTS} flagged) — "
+                     f"({len(final_proposals)}/{target_cuts} flagged) — "
                      f"{(item.get('title') or '?')[:50]}")
                 try:
                     # No session passed: build_evidence reads the DB in a short
@@ -2738,10 +2764,23 @@ async def generate_deletion_proposals(
                                        "principles could not be read",
                                        category, item.get("title"))
                         continue
-                    verdict = await adjudicate(ev["facts"], model=pitch_model,
-                                               skip_priority=True,
-                                               law_extra=ev.get("law_extra", ""),
-                                               host=judge_host)
+                    # A verdict the model already gave on these exact inputs
+                    # is reused: same answer, no GPU. It does not spend the
+                    # cap (up to REUSE_FACTOR x the cap), so a run reaches
+                    # further down the ranking - the reserve.
+                    _vkey = verdict_cache.key(ev["facts"], ev.get("law_extra", ""),
+                                              pitch_model, pitch_digest, judge_host)
+                    verdict = await asyncio.to_thread(verdict_cache.get_verdict, _vkey)
+                    if verdict is not None:
+                        reused += 1
+                        if reused <= judge_cap * REUSE_FACTOR:
+                            judged -= 1
+                    else:
+                        verdict = await adjudicate(ev["facts"], model=pitch_model,
+                                                   skip_priority=True,
+                                                   law_extra=ev.get("law_extra", ""),
+                                                   host=judge_host)
+                        await asyncio.to_thread(verdict_cache.put_verdict, _vkey, verdict)
                 except Exception as e:
                     # adjudicate never raises by contract; this is a bug guard.
                     logger.warning("[deletions] pillar judge failed for %r: %s",
@@ -2793,10 +2832,15 @@ async def generate_deletion_proposals(
                         await wait_quiet(_YIELD_QUIET_S)
                         await curator_start(_gate_label, exclusive_model=pitch_model)
                         _holds_gate = True
-                    pitch = await write_monologue(
-                        ev["facts"], verdict, model=pitch_model,
-                        lang_directive=lang_directive_str, skip_priority=True,
-                        host=judge_host)
+                    _variant = f"{lang_directive_str}|{verdict.get('_guard') or ''}"
+                    pitch = await asyncio.to_thread(verdict_cache.get_pitch, _vkey, _variant)
+                    if not pitch:
+                        pitch = await write_monologue(
+                            ev["facts"], verdict, model=pitch_model,
+                            lang_directive=lang_directive_str, skip_priority=True,
+                            host=judge_host)
+                        await asyncio.to_thread(verdict_cache.put_pitch, _vkey, _variant,
+                                                pitch or "")
                     if not pitch or not pitch.strip():
                         pitch = ("Curatarr flagged this title but couldn't write its "
                                  "reasoning. Use Discuss to ask why.")
@@ -2854,6 +2898,7 @@ async def generate_deletion_proposals(
                 curator_done()
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged"
+             + (f" ({reused} unchanged since the last run, verdict reused)" if reused else "")
              + (f" ({thin_skipped} skipped: not yet enriched)" if thin_skipped else "")
              + (f" ({misfiled_skipped} skipped: profile is another work)"
                 if misfiled_skipped else "")

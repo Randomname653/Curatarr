@@ -249,10 +249,12 @@ got = run([item("Fit", 40, TASTE), item("Far", 4, FAR)])
 check("NaN corpus mean no longer shortlists a fitting title", "Fit" not in got)
 check("…and a far title still scores as far", "Far" in got)
 
-# keep-considerations reach the judge's whole range
-got = run([item(f"Far {i}", 4, FAR) for i in range(70)])
-check(f"considerations scored for JUDGE_CAP={eng.JUDGE_CAP} candidates (was 30)",
-      len(considered) == eng.JUDGE_CAP == 60)
+# keep-considerations reach the judge's whole range: the cap, plus the
+# titles reused verdicts let the run walk past (2026-10-22, verdict cache)
+_reach = eng.JUDGE_CAP * (1 + eng.REUSE_FACTOR)
+got = run([item(f"Far {i}", 4, FAR) for i in range(_reach + 20)])
+check(f"considerations scored for the run's reach, {_reach} candidates (was 30, then 60)",
+      len(considered) == _reach == 180)
 
 # genre fallback band [0.3, 0.6]
 seed_taste(genres={"Drama": 1.0})
