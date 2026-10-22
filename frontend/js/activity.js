@@ -272,7 +272,7 @@ export function _renderTaskHistory(r) {
   }
   entries.sort((a,b) => (b[1].at||'').localeCompare(a[1].at||''));
   // The task table: relative time in the cell, the absolute one in its tooltip.
-  el.innerHTML = `<div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Task</th><th>Status</th><th>Last run</th><th class="t-right">Duration</th></tr></thead><tbody>
+  el.innerHTML = `<div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Task</th><th>Status</th><th>Last run</th><th class="t-right">Duration</th></tr></thead><tbody>
     ${entries.map(([cat, run]) => `<tr>
       <td class="cell-primary"><div class="b">${esc(run.name || cat)}</div>${run.message ? `<div class="maxw-520 ellipsis fs-11 t3" title="${escAttr(run.message)}">${esc(run.message)}</div>` : ''}</td>
       <td><span class="badge ${STATUS_BADGE[run.status] || 'muted'} badge-sm">${esc(run.status || '')}</span></td>

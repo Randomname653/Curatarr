@@ -42,8 +42,15 @@ artist = {"id": 3, "artistName": "Band", "images": [
     {"coverType": "cover", "remoteUrl": "https://assets.fanart.tv/fanart/music/x.jpg"}]}
 check("an artist without a poster falls back to its cover",
       lib._flatten_arr_item("lidarr", artist, None)["poster"] == "https://assets.fanart.tv/fanart/music/x.jpg")
-check("no images, no poster (the Plex music index)",
+check("no images and no profile, no poster (the Plex music index)",
       lib._flatten_arr_item("lidarr", {"id": "9", "artistName": "Plex"}, None)["poster"] == "")
+check("a Plex-index artist whose profile knows its Deezer id gets Deezer's picture",
+      lib._flatten_arr_item("lidarr", {"id": "9", "artistName": "Plex"}, {"bio": "b", "deezer_id": "1424821"})["poster"]
+      == "https://api.deezer.com/artist/1424821/image?size=big")
+check("a junk Deezer id is no picture",
+      lib._flatten_arr_item("lidarr", {"id": "9", "artistName": "Plex"}, {"deezer_id": "abc"})["poster"] == "")
+check("an arr's own artwork still wins over Deezer",
+      lib._flatten_arr_item("lidarr", artist, {"deezer_id": 5})["poster"] == "https://assets.fanart.tv/fanart/music/x.jpg")
 
 html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
 bar = re.search(r'<nav id="mobile-tabbar".*?</nav>', html, re.S).group(0)

@@ -199,7 +199,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
       </div>
       <div class="section-body">
         <div class="scroll-x tbl-wrap">
-          <table class="tbl stack"><thead><tr>
+          <table class="tbl tbl-cards"><thead><tr>
             <th>Library</th>
             <th class="t-right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
             <th class="t-right" title="Full profile written (including provisional fast-pass profiles)">Enriched</th>
@@ -222,7 +222,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
     <div class="items-stretch row">
       <section class="minw-280 section grow">
         <div class="section-head"><h3>Watch-history tracking</h3><span class="section-hint" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages">own set, not part of the percentages</span></div>
-        <div class="section-body"><div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
+        <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
       </section>
       <section class="minw-280 section grow">
         <div class="section-head"><h3>Storage</h3><span class="section-hint">enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</span>
@@ -243,7 +243,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const mpEl = document.getElementById('music-phases');
   if (mpEl) mpEl.innerHTML = `<section class="section">
     <div class="section-head"><h3>Coverage</h3><span class="section-hint">where the imported plays stand</span></div>
-    <div class="section-body"><div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
+    <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
       ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
       ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
       ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
@@ -261,7 +261,7 @@ export async function loadCacheInventory(btn) {
        <td class="t-right">${c.mb}</td></tr>`).join('');
     const cov = r.coverage;
     document.getElementById('cache-inventory').innerHTML = `
-      <div class="mt-8 tbl-wrap"><table class="tbl stack">
+      <div class="mt-8 tbl-wrap"><table class="tbl tbl-cards">
         <thead><tr><th>Source class</th><th class="t-right">Rows</th>
           <th class="t-right">Live</th>
           <th class="t-right" title="Expired — unreadable through the cache API. Kept only where the stale row is still the last record (raw/prefetch of deleted media); the raw-cache refresh task re-pulls what matters.">Stale</th>

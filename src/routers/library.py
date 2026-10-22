@@ -386,6 +386,18 @@ def _arr_poster(item: dict) -> str:
     return ""
 
 
+def _deezer_artist_picture(enrich: dict | None) -> str:
+    """An artist's picture when no arr has one (the Plex music index carries
+    no images since Lidarr went off): the artist profile's Deezer id, from
+    SoulSync. Deezer's /artist/{id}/image redirects to its CDN; both hosts
+    are on the image proxy's list, which checks every hop. '' without an id."""
+    try:
+        deezer_id = int((enrich or {}).get("deezer_id") or 0)
+    except (TypeError, ValueError):
+        return ""
+    return f"https://api.deezer.com/artist/{deezer_id}/image?size=big" if deezer_id > 0 else ""
+
+
 def _flatten_arr_item(svc: str, item: dict, enrich: dict | None) -> dict:
     """Normalise an arr-side record into a single item shape the Synopsis
     Browser frontend expects.
@@ -440,7 +452,7 @@ def _flatten_arr_item(svc: str, item: dict, enrich: dict | None) -> dict:
             "album_count":     (item.get("statistics") or {}).get("albumCount", 0),
         }
 
-    out["poster"] = _arr_poster(item)
+    out["poster"] = _arr_poster(item) or _deezer_artist_picture(enrich)
 
     # Enrichment status from our cache
     if enrich:

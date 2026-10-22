@@ -22,11 +22,12 @@ export function _renderReclassify(res) {
   let html = '';
   for (const [label, items, mode] of sections) {
     if (!items || !items.length) continue;
-    const all = mode === 'fix' ? `<label class="chip row-end"><input type="checkbox" ${actOn('change', 'rcToggleSection', EL)}> select all</label>` : '';
-    html += `<div class="list-head"><span>${label}</span><span class="fw-400 fs-12 t3">${items.length}</span>${all}</div>`;
-    html += '<div class="grid-cards">';
+    // One .section per group, like every other view: heading + count, the
+    // group's own "Select all" at the right, the cards in its body.
+    const all = mode === 'fix' ? `<div class="section-actions"><label class="chip"><input type="checkbox" ${actOn('change', 'rcToggleSection', EL)}> Select all</label></div>` : '';
+    html += `<section class="section"><div class="section-head"><h3>${label}<span class="badge muted badge-sm">${items.length}</span></h3>${all}</div><div class="section-body"><div class="grid-cards">`;
     for (const it of items) html += reclassifyCard(it, mode);
-    html += '</div>';
+    html += '</div></div></section>';
   }
   el.innerHTML = html || emptyHtml('Everything is correctly filed and configured.', null, null, {good: true});
   updateReclassifyCount();
@@ -104,8 +105,8 @@ export function rcPickUncertain(btn, dir) {
 }
 
 export function rcToggleSection(master) {
-  const grid = master.closest('.list-head').nextElementSibling;
-  if (grid) grid.querySelectorAll('.rc-cb').forEach(cb => { cb.checked = master.checked; });
+  const section = master.closest('.section');
+  if (section) section.querySelectorAll('.rc-cb').forEach(cb => { cb.checked = master.checked; });
   updateReclassifyCount();
 }
 
@@ -122,7 +123,7 @@ export function updateReclassifyCount() {
 export function rcClearSelection() {
   document.querySelectorAll('#reclassify-content .rc-cb:checked').forEach(cb => { cb.checked = false; if (cb.dataset.fa !== undefined) cb.dataset.fix = ''; });
   document.querySelectorAll('#reclassify-content .rc-dir.active').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('#reclassify-content .list-head input[type=checkbox]').forEach(m => { m.checked = false; });
+  document.querySelectorAll('#reclassify-content .section-actions input[type=checkbox]').forEach(m => { m.checked = false; });
   updateReclassifyCount();
 }
 

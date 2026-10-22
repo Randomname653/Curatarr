@@ -128,7 +128,7 @@ export async function loadDepsStatus(btn) {
     const pinsHtml = d.clean
       ? `<div class="empty good">All ${d.pins} pinned packages match requirements.txt.</div>`
       : `<div class="banner warn"><span class="banner-icon">!</span><div class="banner-text">${rows.length} of ${d.pins} pinned packages differ. In the Curatarr folder, with this interpreter, run <code class="mono">${esc(d.command)}</code> and restart. start.bat and the tray launcher do this on their own at the next start.</div></div>
-         <div class="tbl-wrap mt-8"><table class="tbl stack"><thead><tr><th>Package</th><th>Installed</th><th>Pinned</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+         <div class="tbl-wrap mt-8"><table class="tbl tbl-cards"><thead><tr><th>Package</th><th>Installed</th><th>Pinned</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
          <p class="fs-12 t3 mt-8">Interpreter: <span class="mono">${esc(d.interpreter)}</span></p>`;
     // The tested install (lock/requirements.txt): what the pins pull in, at
     // the versions the battery ran with. The launchers reconcile at start.
@@ -143,7 +143,7 @@ export async function loadDepsStatus(btn) {
       : L.clean
         ? `<p class="fs-12 t3 mt-8">Tested install: all ${L.packages} packages in lock/requirements.txt match this interpreter.</p>`
         : `<div class="banner warn mt-8"><span class="banner-icon">!</span><div class="banner-text">${lockRows.length} package(s) differ from the tested install (lock/requirements.txt). start.bat and the tray launcher reconcile this at the next start, never lowering anything; by hand: <code class="mono">${esc(L.command)}</code>.</div></div>
-           <div class="tbl-wrap mt-8"><table class="tbl stack"><thead><tr><th>Package</th><th>Installed</th><th>Lock</th><th>Next start</th></tr></thead><tbody>${lockRows.join('')}</tbody></table></div>`;
+           <div class="tbl-wrap mt-8"><table class="tbl tbl-cards"><thead><tr><th>Package</th><th>Installed</th><th>Lock</th><th>Next start</th></tr></thead><tbody>${lockRows.join('')}</tbody></table></div>`;
     box.innerHTML = pinsHtml + lockHtml;
   } catch (e) {
     box.innerHTML = `<p class="t-danger fs-12">Could not read the dependency report: ${esc(e.message || e)}</p>`;
@@ -452,7 +452,7 @@ function _muCompare(role, c, run, err) {
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
   return _muEval(role, c.evaluation, c.facts_rebuilt, run, err, s) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
     ${s.timings_contaminated ? `<p class="fs-12 t-amber mt-8">The per-title times were taken while another model shared the card${s.remeasured_clean ? '; tok/s, VRAM and GPU share below were measured again with each side alone' : ''}.</p>` : ''}
-    <div class="tbl-wrap mt-8"><table class="tbl stack"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
+    <div class="tbl-wrap mt-8"><table class="tbl tbl-cards"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
       ${row('Judge, s per title', 'judge_s')}${row('Card note, s per title', 'monologue_s')}${row('Generation, tok/s', 'gen_tok_s')}
       ${s.speed_unstable ? `<tr><td colspan="3" class="fs-12 t-amber">Speed was unstable on this machine (reads old ${esc(String(s.gen_tok_s_reads?.old))}, new ${esc(String(s.gen_tok_s_reads?.new))} tok/s) — not used for the recommendation.</td></tr>` : ''}
       ${row(`VRAM, GB${s.vram_source ? ` (${[...new Set(Object.values(s.vram_source))].join(' / ')})` : ''}`, 'vram_gb')}${row('On the GPU, %', 'gpu_share_pct')}${row('Card note, words', 'monologue_words')}

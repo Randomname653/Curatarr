@@ -450,7 +450,7 @@ export async function renderOnboardingStep(step) {
 
     body.innerHTML = `
       <div class="mb-20 tbl-wrap">
-        <table class="tbl stack"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
+        <table class="tbl tbl-cards"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
         ${state.discoverSections.map(s=>`<tr>
           <td class="cell-primary fw-500">${esc(s.title)}</td>
           <td class="t3 fs-12">${esc(s.type)}</td>

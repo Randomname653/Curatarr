@@ -127,7 +127,7 @@ export async function checkOrphans(btn) {
     el.innerHTML = `
       <div class="banner warn"><div class="banner-text">Found ${sections.reduce((s,x)=>s+x.count,0)} entries from ${sections.length} removed libraries. Assign each to a category to import them into your taste profile.</div></div>
       <div class="tbl-wrap mb-12">
-        <table class="tbl stack">
+        <table class="tbl tbl-cards">
           <thead><tr><th>Section ID</th><th>Entries</th><th>Sample titles</th><th>Assign to</th></tr></thead>
           <tbody>
           ${sections.map(s=>`<tr>

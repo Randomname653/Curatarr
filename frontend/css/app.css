@@ -1224,6 +1224,13 @@ body {
 }
 .card.has-tint:hover, .card.has-tint:focus-within { --tint-a: 20%; }
 
+/* Native checkboxes and radios take the accent too (the switch and the
+   segmented control have their own look); inside a section a row card sits
+   one step lighter so it reads as a row, not a second panel. */
+:root { accent-color: var(--amber); }
+.section .rc-card { background: var(--bg3); box-shadow: var(--specular); }
+.rc-card .rc-cb { width: 16px; height: 16px; }
+
 /* Calm poster cards: the pitch leads, Keep / Discuss / More rest a step back
    until the card is hovered or focused, Delete stays at full strength */
 .poster-card .quote-text { font-size: var(--fs-md); line-height: 1.6; max-width: var(--measure); color: var(--text); border-left: 2px solid var(--amber-line); padding-left: 12px; }
@@ -1272,14 +1279,20 @@ input.switch:focus-visible { outline: 2px solid var(--amber); outline-offset: 2p
 @keyframes vt-in { from { opacity: 0; transform: translateY(8px); } }
 html.vt .view.active { animation: none; }
 
-/* Chat: bubbles keep a readable measure, the user's own words are a warm
-   tint instead of a solid amber slab, the composer floats as glass, and a
-   pill offers the way down when a reply grows below the fold. */
+/* Chat: one centred conversation column (--chat-col) on a wide screen —
+   the log keeps its full width so its scrollbar stays at the edge, the
+   padding brings the bubbles in. Bubbles keep a readable measure, the
+   user's own words are a warm tint instead of a solid amber slab, the
+   composer floats as glass in the same column, and a pill offers the way
+   down when a reply grows below the fold. */
+:root { --chat-col: 860px; }
+#messages { padding-left: max(24px, calc((100% - var(--chat-col)) / 2)); padding-right: max(24px, calc((100% - var(--chat-col)) / 2)); }
 .msg { font-size: var(--fs-md); line-height: 1.65; }
-.msg.assistant { max-width: min(72%, var(--measure)); border-color: var(--hairline); box-shadow: var(--specular), var(--shadow-1); }
-.msg.user { background: color-mix(in srgb, var(--amber) 18%, var(--bg3)); color: var(--text); border: 1px solid var(--amber-line); font-weight: 450; max-width: min(72%, var(--measure)); }
+.msg.assistant { max-width: min(88%, var(--measure)); border-color: var(--hairline); box-shadow: var(--specular), var(--shadow-1); }
+.msg.user { background: color-mix(in srgb, var(--amber) 18%, var(--bg3)); color: var(--text); border: 1px solid var(--amber-line); font-weight: 450; max-width: min(80%, var(--measure)); }
 #chat-view { position: relative; }
-#chat-input-area { margin: 0 16px 14px; border: 1px solid var(--hairline-strong); border-radius: 26px; padding: 6px; align-items: flex-end;
+.discuss-banner { padding-left: max(16px, calc((100% - var(--chat-col)) / 2)); padding-right: max(16px, calc((100% - var(--chat-col)) / 2)); }
+#chat-input-area { margin: 0 max(16px, calc((100% - var(--chat-col)) / 2)) 14px; border: 1px solid var(--hairline-strong); border-radius: 26px; padding: 6px; align-items: flex-end;
   background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--specular), var(--shadow-2); }
 #chat-input { background: transparent; border-color: transparent; border-radius: 20px; }
 #chat-input:focus-visible { border-color: transparent; }
@@ -1290,20 +1303,20 @@ html.vt .view.active { animation: none; }
   background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-2); animation: jumpIn var(--dur-2) var(--ease-spring) both; }
 @keyframes jumpIn { from { opacity: 0; transform: translate(-50%, 8px); } }
 
-/* Phones: tables turn into stacked rows (class="tbl stack"; ui.labelTables
+/* Phones: tables turn into stacked rows (class="tbl tbl-cards"; ui.labelTables
    copies each column's header into its cells' data-label) */
 @media (max-width: 640px) {
-  .tbl.stack thead { display: none; }
-  .tbl.stack, .tbl.stack tbody, .tbl.stack tr, .tbl.stack td { display: block; width: 100%; }
-  .tbl.stack tr { padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
-  .tbl.stack tr:last-child { border-bottom: none; }
-  .tbl.stack td { border: none; padding: 3px 0; display: flex; align-items: center; gap: 12px; justify-content: space-between; min-height: 28px; text-align: right; }
-  .tbl.stack td[data-label]::before { content: attr(data-label); color: var(--text3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; text-align: left; }
-  .tbl.stack td.cell-primary { font-weight: 600; font-size: var(--fs-md); justify-content: flex-start; text-align: left; display: block; padding-bottom: 6px; }
-  .tbl.stack td.cell-primary::before { display: none; }
-  .tbl.stack td:empty { display: none; }
-  .tbl.stack tr:hover td { background: none; }
-  .scroll-x:has(> .tbl.stack) { overflow-x: visible; }
+  .tbl.tbl-cards thead { display: none; }
+  .tbl.tbl-cards, .tbl.tbl-cards tbody, .tbl.tbl-cards tr, .tbl.tbl-cards td { display: block; width: 100%; }
+  .tbl.tbl-cards tr { padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
+  .tbl.tbl-cards tr:last-child { border-bottom: none; }
+  .tbl.tbl-cards td { border: none; padding: 3px 0; display: flex; align-items: center; gap: 12px; justify-content: space-between; min-height: 28px; text-align: right; }
+  .tbl.tbl-cards td[data-label]::before { content: attr(data-label); color: var(--text3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; text-align: left; }
+  .tbl.tbl-cards td.cell-primary { font-weight: 600; font-size: var(--fs-md); justify-content: flex-start; text-align: left; display: block; padding-bottom: 6px; }
+  .tbl.tbl-cards td.cell-primary::before { display: none; }
+  .tbl.tbl-cards td:empty { display: none; }
+  .tbl.tbl-cards tr:hover td { background: none; }
+  .scroll-x:has(> .tbl.tbl-cards) { overflow-x: visible; }
 }
 
 /* Phones: the tab bar floats as a glass dock, sheets are glass and spring in,
@@ -1327,6 +1340,8 @@ html.vt .view.active { animation: none; }
   .modal-head { touch-action: none; cursor: grab; }
   .why-panel { margin-left: -4px; margin-right: -4px; border-radius: 14px; }
   .msg.assistant, .msg.user { max-width: 88%; }
+  #messages { padding: 16px 14px; }
+  .discuss-banner { padding-left: 14px; padding-right: 14px; }
   #chat-input-area { margin: 0 8px 8px; border-radius: 24px; padding: 5px; background: var(--glass); }
   #chat-input-area button { flex-shrink: 0; }
   #jump-latest { bottom: 76px; }

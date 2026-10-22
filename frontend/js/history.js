@@ -139,7 +139,7 @@ export function renderRecent(entries, category) {
   const label = CAT_LABELS[category]||category;
   document.getElementById('recent-history').innerHTML=`
     <div class="eyebrow mb-8">Recent ${label}</div>
-    <div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Title</th><th>Genre</th><th>Date</th></tr></thead><tbody>
+    <div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Title</th><th>Genre</th><th>Date</th></tr></thead><tbody>
     ${entries.slice(0,50).map(e=>{
       let title=e.title;
       if(e.media_type==='music'&&e.series_title) title=`${e.title} — ${e.series_title}`;

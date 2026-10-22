@@ -25,6 +25,12 @@ Condensed release history, newest first.
   turn into stacked rows instead of scrolling sideways.
 - Settings: on/off options are switches, the vibration level is a segmented control,
   and vibration now also marks sends, Why? toggles, destructive confirms and errors.
+- Fixes after the first look: tables are full width again on desktop (their phone
+  class collided with an existing layout utility), chat sits in one centred column on
+  wide screens, Reclassify uses the same sections as every other view, and every
+  checkbox is amber.
+- Music artists in the library show their Deezer picture again (from the SoulSync
+  profile's Deezer id; the Plex music index has no images since Lidarr went off).
 
 **Curatarr on your phone: an installable app with a real mobile layout.**
 - Installable (PWA): a manifest, home-screen icons and a service worker. Open Curatarr

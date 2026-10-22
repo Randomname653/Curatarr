@@ -523,14 +523,14 @@ export function hydrateStyles(root = document) {
     delete el.dataset.style;   // applied once; a re-render brings a fresh value
   }
 }
-// Phones show a .tbl.stack as stacked rows, each cell captioned by its
+// Phones show a .tbl.tbl-cards as stacked rows, each cell captioned by its
 // column: the caption is the <th> above it, copied into data-label here so
 // a template states each heading once and the two can never drift apart.
 // A cell that already names itself, the .cell-primary title and a colspan
 // row keep what they have.
 export function labelTables(root = document) {
-  const tables = root.querySelectorAll ? Array.from(root.querySelectorAll('table.tbl.stack')) : [];
-  if (root.matches && root.matches('table.tbl.stack')) tables.unshift(root);
+  const tables = root.querySelectorAll ? Array.from(root.querySelectorAll('table.tbl.tbl-cards')) : [];
+  if (root.matches && root.matches('table.tbl.tbl-cards')) tables.unshift(root);
   for (const t of tables) {
     const heads = Array.from(t.querySelectorAll('thead th'), th => th.textContent.trim());
     for (const tr of t.querySelectorAll('tbody tr')) {
