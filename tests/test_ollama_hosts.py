@@ -88,7 +88,6 @@ MANAGEMENT = {
     "src/services/setup_wizard.py",      # shows the configured endpoint
     "src/services/model_updates.py",     # registry checks, test bakes, rollback
     "src/services/model_check.py",       # "does the curator fit this card"
-    "src/services/llm_priority.py",      # what is loaded, evict to make room
     "src/services/process_monitor.py",   # game mode: what is loaded, unload all
 }
 direct = sorted(f for f, text in src_files.items()

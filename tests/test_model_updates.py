@@ -568,7 +568,7 @@ async def fake_arr():
     return list(LIB)
 
 
-async def fake_evidence(item, user_id, cat, db=None):
+async def fake_evidence(item, user_id, cat, db=None, host=None):
     return {"facts": f"FACTS {item['title']}", "flags": {}, "law_extra": ""}
 
 

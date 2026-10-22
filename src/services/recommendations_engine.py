@@ -2422,11 +2422,20 @@ async def generate_deletion_proposals(
     # visibly, not silently EVALUATE every candidate) and logged so the task
     # monitor shows which bake produced the pitches.
     from src.services.llm_priority import resolve_pitcher_model
-    pitch_model = await resolve_pitcher_model()
+    from src.services.ollama_hosts import PcUnavailable
     # The host, like the bake, is resolved ONCE per run: the evidence is
     # budgeted for its window and constitution, and verdict and pitch must
-    # come from the same machine.
-    judge_host = host_for("judge")
+    # come from the same machine - the one the bake is looked up on.
+    try:
+        judge_host = host_for("judge")
+    except PcUnavailable as e:
+        # Split install: deletion verdicts wait for the gaming PC, never
+        # the NAS's small model. The callers check judge_ready() first;
+        # this catches a PC that left in between. Nothing is written.
+        logger.info("[deletions] %s: %s - run deferred", category, e)
+        _msg(f"{category}: waiting for the gaming PC")
+        return []
+    pitch_model = await resolve_pitcher_model(judge_host.url)
     _msg(f"{category}: deletion run model: {pitch_model}")
     logger.info("[deletions] %s: run model = %s on %s (%s profile)", category,
                 pitch_model, judge_host.url, judge_host.profile)

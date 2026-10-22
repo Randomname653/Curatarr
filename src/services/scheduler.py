@@ -168,6 +168,20 @@ async def job_game_watcher():
                             ", ".join(unloaded))
         except Exception as e:
             logger.warning("[game watcher] VRAM eviction failed: %s", e)
+    # Split install: the gaming PC is a host of its own. A game there takes
+    # it out of the routing (pc_host.busy, judged every poll); what Curatarr
+    # left loaded on its card goes too.
+    from src.services import pc_host
+    from src.services.ollama_hosts import pc_host as pc_ollama
+    _pc = pc_ollama()
+    if _pc is not None and pc_host.available() and pc_host.busy():
+        try:
+            unloaded = await unload_llm_models(_pc.url)
+            if unloaded:
+                logger.info("[game watcher] PC busy (%s) — evicted from its VRAM: %s",
+                            pc_host.status().get("busy_reason"), ", ".join(unloaded))
+        except Exception as e:
+            logger.warning("[game watcher] PC VRAM eviction failed: %s", e)
     try:
         # The lane is a switch, so it gets watched like the game flag: one
         # reading per tick, persisted for the UI and logged on every change,
@@ -602,6 +616,12 @@ async def job_arr_sync():
         # for the wait — the custodian retries every tick, and a game
         # evening would otherwise leave one skipped card per 30 minutes.
         logger.info("[scheduler] ARR sync waits: game running, VRAM stays with the game")
+        return False
+    # Split install: deletion verdicts run on the gaming PC only. While it is
+    # off or busy the run waits - due, no card - like it waits for a game.
+    from src.services.ollama_hosts import judge_ready
+    if not judge_ready():
+        logger.info("[scheduler] ARR sync waits: the gaming PC is off or busy")
         return False
     task = task_monitor.create(name="ARR Sync", category="arr_sync")
     task_monitor.start(task)

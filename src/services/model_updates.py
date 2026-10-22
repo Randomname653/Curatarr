@@ -29,6 +29,7 @@ new weights would mean re-embedding the whole library.
 """
 from __future__ import annotations
 
+import dataclasses
 import asyncio
 import difflib
 import json
@@ -42,6 +43,7 @@ import httpx
 
 from src.database.runner import run_read, run_write
 from src.services.http_client import tls_context
+from src.services.ollama_hosts import main_host
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +363,10 @@ async def sample_evidence(user_id: int, n: int = SAMPLE_TITLES, *,
         if len(out) >= n:
             break
         try:
-            ev = await pillars.build_evidence(it, user_id, it.get("category") or "movie")
+            # Budgeted for the host whose models this test manages (the
+            # main one), not wherever the routing would judge right now.
+            ev = await pillars.build_evidence(it, user_id, it.get("category") or "movie",
+                                              host=main_host())
         except Exception as e:  # one broken title must not end the test
             logger.info("[model update] evidence for %r failed: %s", it.get("title"), e)
             continue
@@ -377,16 +382,19 @@ async def _run_side(endpoint: str, model: str, sample: list[dict], lang: str) ->
     from src.services.llm_priority import extend_bulk_hold
     from src.services.llm_utils import curator_options
     await _alone(endpoint, model)
+    # The endpoint under test, with the main host's profile: the sample's
+    # facts were budgeted for it.
+    host = dataclasses.replace(main_host(), url=endpoint.rstrip("/"))
     rows = []
     for s in sample:
         extend_bulk_hold(900)
         t0 = time.perf_counter()
         v = await pillars.adjudicate(s["facts"], model=model, skip_priority=True,
-                                     law_extra=s["law_extra"])
+                                     law_extra=s["law_extra"], host=host)
         j = time.perf_counter() - t0
         t0 = time.perf_counter()
         text = "" if v.get("_error_kind") else await pillars.write_monologue(
-            s["facts"], v, model=model, lang_directive=lang, skip_priority=True)
+            s["facts"], v, model=model, lang_directive=lang, skip_priority=True, host=host)
         rows.append({"title": s["title"], "verdict": v.get("verdict"),
                      "pillar": v.get("protecting_pillar"), "error": v.get("_error_kind"),
                      "judge_s": round(j, 1), "monologue": text,
@@ -727,7 +735,7 @@ async def _refill_facts(comparison: dict, user_id: int) -> None:
         if it:
             try:
                 facts[title] = (await pillars.build_evidence(
-                    it, user_id, it.get("category") or "movie"))["facts"]
+                    it, user_id, it.get("category") or "movie", host=main_host()))["facts"]
             except Exception as e:
                 logger.info("[model eval] facts for %r: %s", title, e)
     comparison["facts_rebuilt"] = True

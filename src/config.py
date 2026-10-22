@@ -298,6 +298,16 @@ class Settings(BaseSettings):
     PC_AGENT_PORT: int = 11435
     PC_AGENT_NOTIFY_URL: str = ""
     PC_AGENT_URL: str = ""
+    # The PC's Ollama as a SECOND host (services/ollama_hosts.py). Set, and
+    # with the agent reporting, chat / background curator work / enrichment
+    # run on the PC while it is on and free, and on OLLAMA_ENDPOINT (the NAS)
+    # otherwise; deletion runs wait for the PC; embeddings stay on
+    # OLLAMA_ENDPOINT. The PC's card has its own profile (LLM_PROFILE,
+    # CURATOR_NUM_CTX, CURATOR_NUM_GPU describe OLLAMA_ENDPOINT's).
+    OLLAMA_PC_ENDPOINT: str = ""
+    PC_LLM_PROFILE: str = "large"
+    PC_CURATOR_NUM_CTX: int = 0
+    PC_CURATOR_NUM_GPU: int = 99
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to
