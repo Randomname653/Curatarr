@@ -23,10 +23,49 @@ const _el = id => document.getElementById(id);
 let _installEvt = null;
 
 // Short taps of the vibration motor (Android; iOS has no web API for it).
-// Silent under reduced motion — a buzz is motion too.
+// Silent under reduced motion — a buzz is motion too. The web API knows no
+// strength, only duration, so the device setting (Settings → Account →
+// This device) scales length: Light is one pulse at half length (a double
+// pulse collapses to its longest half), Full plays the pattern as written.
+const HAPTIC_KEY = 'curatarr_haptics';
+const HAPTIC_LEVELS = ['off', 'light', 'full'];
+
+export function hapticLevel() {
+  try {
+    const v = localStorage.getItem(HAPTIC_KEY);
+    return HAPTIC_LEVELS.includes(v) ? v : 'light';
+  } catch (_) {
+    return 'light';
+  }
+}
+
 export function haptic(pattern = 8) {
   if (REDUCED_MQ.matches || !navigator.vibrate) return;
+  const level = hapticLevel();
+  if (level === 'off') return;
+  if (level === 'light') {
+    const pulses = Array.isArray(pattern) ? pattern.filter((_, i) => i % 2 === 0) : [pattern];
+    pattern = Math.max(4, Math.round(Math.max(...pulses) / 2));
+  }
   try { navigator.vibrate(pattern); } catch (_) {}
+}
+
+// The radio group in Settings → Account; the new level buzzes once so the
+// choice can be felt right away.
+export function setHapticLevel(input) {
+  const v = input?.value;
+  if (!HAPTIC_LEVELS.includes(v)) return;
+  try { localStorage.setItem(HAPTIC_KEY, v); } catch (_) { /* private mode: this session only */ }
+  _syncHapticChoice();
+  haptic(14);
+}
+
+function _syncHapticChoice() {
+  const level = hapticLevel();
+  for (const r of document.querySelectorAll('input[name="haptics"]')) {
+    r.checked = r.value === level;
+    r.closest('.chip')?.classList.toggle('active', r.checked);
+  }
 }
 
 export function isStandalone() {
@@ -280,4 +319,5 @@ export function initMobile() {
   _bindAutogrow();
   _bindBreakpoint();
   _syncChatPlaceholder();
+  _syncHapticChoice();
 }

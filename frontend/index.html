@@ -705,6 +705,18 @@
                 </div>
               </section>
               <section class="section">
+                <div class="section-head"><h3>This device</h3><span class="section-hint">Saved in this browser only.</span></div>
+                <div class="section-body">
+                  <div class="row" role="radiogroup" aria-labelledby="haptics-label">
+                    <span class="fs-13" id="haptics-label">Vibration</span>
+                    <label class="chip" for="haptics-off"><input type="radio" name="haptics" id="haptics-off" value="off" data-on-change="setHapticLevel" data-args='["$el"]'> Off</label>
+                    <label class="chip" for="haptics-light"><input type="radio" name="haptics" id="haptics-light" value="light" data-on-change="setHapticLevel" data-args='["$el"]'> Light</label>
+                    <label class="chip" for="haptics-full"><input type="radio" name="haptics" id="haptics-full" value="full" data-on-change="setHapticLevel" data-args='["$el"]'> Full</label>
+                  </div>
+                  <div class="fs-12 t3 mt-4">Android phones; iPhones don't let web apps vibrate. Off under reduced motion either way.</div>
+                </div>
+              </section>
+              <section class="section">
                 <div class="section-head"><h3>Session</h3><span class="section-hint">Ends your session on every device.</span>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="logout">Sign out everywhere</button></div></div>
               </section>

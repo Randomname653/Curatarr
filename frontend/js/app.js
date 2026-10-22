@@ -23,7 +23,7 @@ import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLi
 import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
-import { initMobile, installApp, openLibrarySheet, toggleTopbarSearch } from './mobile.js';
+import { initMobile, installApp, openLibrarySheet, setHapticLevel, toggleTopbarSearch } from './mobile.js';
 
 export function init() {
 initMobile();
@@ -158,6 +158,7 @@ const actions = {
   loadModelUpdates,
   openModelUpdates,
   openLibrarySheet,
+  setHapticLevel,
   startModelCompare,
   rerunModelCompare,
   decideModelUpdate,

@@ -406,6 +406,11 @@ moved off the button row to a long press on a seen reaction (or keys 1-0),
 so the row stays at six. Only seen answers count toward the next taste
 refresh, and a full stack loads its posters in one round.
 
+**Vibration you can turn down.** Settings → Account → This device:
+Off, Light (the new default: one pulse at half length) or Full. Saved in
+this browser only; Android phones, iPhones don't let web apps vibrate.
+The swipe card also drags from its text now, not only from the poster.
+
 **Fewer random memories on deletion cards.** "Matches something you said
 you value" no longer shows a memory that only stood out of a tight cluster
 of unrelated ones (a car-nostalgia note on a French comedy). An
