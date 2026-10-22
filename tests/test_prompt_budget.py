@@ -317,11 +317,12 @@ check("build_models --check prints the warning", "curator_fit_warning()" in bm)
 chat = (ROOT / "src/routers/chat.py").read_text(encoding="utf-8")
 check("the chat fits its messages before streaming",
       chat.index("fit_messages(messages, budget_for(chat_host.num_ctx, chat_predict))")
-      < re.search(r'"messages": messages,\n\s*"stream": True', chat).start())
+      < re.search(r'"messages": _msgs,\n\s*"stream": True', chat).start())
 check("the answer's room shrinks with the window of the host the turn goes to",
       "return min(4096, host.num_ctx // 4)" in chat
       and "chat_predict = _chat_predict(chat_host)" in chat
-      and "num_predict=chat_predict" in chat)
+      and "num_predict=_predict" in chat
+      and "_predict = _chat_predict(_fallback)" in chat)
 cp = (ROOT / "src/services/curator_principles.py").read_text(encoding="utf-8")
 check("principle extraction keeps the newest turns of a long debate",
       cp.index("keep_tail(convo") < cp.index('_curator_json(_EXTRACT_SYS, "DEBATE:\\n" + convo'))

@@ -491,7 +491,13 @@ enrichment run there with the PC's own profile. Otherwise they run on the
 main host (the NAS, small profile). Deletion runs wait for the PC instead
 of judging with the small model, and embeddings stay on the main host. A
 game on the PC takes it out within seconds and evicts Curatarr's models
-from its card.
+from its card. A call on the PC ends within a second of it leaving (a
+shutdown, a power cut or a game) instead of hanging until a 5-10 minute
+timeout:
+- a verdict counts as an outage and decides nothing
+- an enrichment item stays due
+- a chat reply that has not started is answered on the NAS, one that has
+  started ends with a note and is not saved
 
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves

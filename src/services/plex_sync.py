@@ -17,6 +17,7 @@ import httpx
 
 from src.config import settings
 from src.services.ollama_hosts import ollama_for
+from src.services.pc_guard import ollama_client
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.services.app_state import (get_datetime, set_datetime, get_state, set_state,
@@ -2049,7 +2050,7 @@ CRITICAL RULES (YOU MUST OBEY):
                 # set reloaded the 8B at the curator's 16k window, and the
                 # missing keep_alive cut the curator's 1h residency to 5m.
                 async def _post(model=model):
-                    async with httpx.AsyncClient(verify=tls_context(), timeout=420) as client:
+                    async with ollama_client(timeout=420) as client:
                         return await client.post(
                             f"{ollama_url}/api/chat",
                             json={

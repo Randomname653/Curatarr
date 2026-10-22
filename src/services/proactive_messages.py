@@ -40,6 +40,7 @@ from src.database.models import (
 )
 from src.config import settings
 from src.services.ollama_hosts import host_for
+from src.services.pc_guard import ollama_client
 from src.services.llm_utils import strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
 from src.services.series_progress import (
     compute_watch_progress,
@@ -1646,7 +1647,7 @@ async def generate_proactive_message(
             if not model:
                 continue
             try:
-                async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
+                async with ollama_client(timeout=60) as client:
                     resp = await client.post(
                         f"{host.url}/api/chat",
                         json={

@@ -487,7 +487,8 @@ _UID = 515151
 
 @contextmanager
 def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=False,
-                heartbeat=None, think_tags=None, queue_forever=False, header_delay=0.0):
+                heartbeat=None, think_tags=None, queue_forever=False, header_delay=0.0,
+                fail_first=None, fail_mid=None):
     import httpx
     from sqlalchemy.pool import StaticPool
     import src.database.connection as conn
@@ -531,6 +532,8 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
     async def body():
         for i, line in enumerate(lines):
             await asyncio.sleep(first_delay if i == 0 else delay)
+            if i == 1 and fail_mid is not None:
+                raise fail_mid
             yield (json.dumps(line) + "\n").encode()
 
     class Body(httpx.AsyncByteStream):
@@ -539,6 +542,10 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
                 yield chunk
 
     async def handler(request):
+        events.append(("request", str(request.url),
+                       json.loads(request.content).get("options", {}).get("num_ctx")))
+        if fail_first is not None and sum(1 for e in events if e[0] == "request") == 1:
+            fail_first(request)
         # Ollama sends its headers with the first token: a load or a long
         # prompt eval happens before the response even starts.
         await asyncio.sleep(header_delay)
@@ -692,6 +699,53 @@ def test_a_disconnect_while_ollama_has_not_answered_releases_everything():
         _cancel_after(rig, lambda f: f == ": keepalive\n\n")
         assert "curator_done" in rig.events, "the curator slot stayed held"
         assert rig.rows() == [] and not rig.busy()
+
+
+def _two_hosts():
+    """The PC (large, 16k) answers the chat role until the test says it left."""
+    import src.routers.chat as chat
+    from src.services.ollama_hosts import OllamaHost
+    pc = OllamaHost(url="http://pc:11434", profile="large", num_ctx=16384, gpu={"num_gpu": 99})
+    nas = OllamaHost(url="http://nas:30068", profile="small", num_ctx=8192, gpu={})
+    current = [pc]
+    saved = chat.host_for
+    chat.host_for = lambda role: current[0]
+    return pc, nas, current, lambda: setattr(chat, "host_for", saved)
+
+
+def test_the_pc_leaving_before_the_first_word_retries_on_the_main_host():
+    from src.services.pc_guard import PcLost
+    pc, nas, current, restore = _two_hosts()
+
+    def leave(request):
+        current[0] = nas                      # the routing now answers the NAS
+        raise PcLost("the gaming PC stopped taking work", request=request)
+    try:
+        with _stream_rig(_OK, fail_first=leave) as rig:
+            _, frames = _frames(rig)
+            reqs = [e for e in rig.events if isinstance(e, tuple) and e[0] == "request"]
+            assert [r[1] for r in reqs] == ["http://pc:11434/api/chat", "http://nas:30068/api/chat"], reqs
+            assert reqs[1][2] == 8192, "the retry carries the NAS's window"
+            assert any("answering on the NAS" in f for f in frames), frames
+            assert _tokens(frames) == "Hello there"
+            assert rig.rows()[-1] == ("assistant", "Hello there"), "the retried reply is saved"
+    finally:
+        restore()
+
+
+def test_the_pc_leaving_mid_reply_ends_the_turn_unsaved():
+    from src.services.pc_guard import PcLost
+    pc, nas, current, restore = _two_hosts()
+    try:
+        with _stream_rig(_OK, fail_mid=PcLost("gone")) as rig:
+            _, frames = _frames(rig)
+            reqs = [e for e in rig.events if isinstance(e, tuple) and e[0] == "request"]
+            assert len(reqs) == 1, "no retry once words went out"
+            assert any("went away in the middle of this reply" in f for f in frames), frames
+            assert rig.rows() == [], "half a reply is never saved"
+            assert frames[-1] == 'data: {"done": true}\n\n'
+    finally:
+        restore()
 
 
 def test_a_think_block_keeps_the_stream_alive():

@@ -26,6 +26,7 @@ TIMEOUT_S = 3.0
 
 _state: dict = {"available": False, "draining": False, "misses": 0, "busy": False,
                 "busy_reason": "", "snapshot": None, "seen_at": 0.0, "changed_at": 0.0,
+                "generation": 0,
                 "reason": "never polled"}
 
 
@@ -55,11 +56,28 @@ def busy() -> bool:
     return bool(_state["busy"])
 
 
+def _taking_work() -> bool:
+    return bool(_state["available"] and not _state["draining"] and not _state["busy"])
+
+
+def generation() -> int:
+    """Counts the times the PC STOPPED taking work (gone, draining, busy).
+    A call on the PC that sees it change was cut off (services/pc_guard)."""
+    return int(_state["generation"])
+
+
+def _note_lost(was_taking: bool) -> None:
+    if was_taking and not _taking_work():
+        _state["generation"] += 1
+
+
 def set_busy(value: bool, reason: str = "") -> None:
+    was = _taking_work()
     if bool(value) != _state["busy"]:
         logger.info("[pc] %s", f"busy ({reason}) - no new work for its card" if value
                     else "free again")
     _state.update(busy=bool(value), busy_reason=reason if value else "")
+    _note_lost(was)
 
 
 def snapshot() -> Optional[dict]:
@@ -75,11 +93,13 @@ def status() -> dict:
 
 
 def _set(available: bool, reason: str, *, draining: bool = False) -> None:
+    was = _taking_work()
     if available != _state["available"] or draining != _state["draining"]:
         _state["changed_at"] = time.time()
         logger.info("[pc] %s (%s)", "available" if available
                     else ("draining - no new work" if draining else "unavailable"), reason)
     _state.update(available=available, draining=draining, reason=reason)
+    _note_lost(was)
     if not available:
         _state["snapshot"] = None
 

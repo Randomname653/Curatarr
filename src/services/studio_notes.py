@@ -28,6 +28,7 @@ import httpx
 
 from src.config import settings
 from src.services.ollama_hosts import ollama_for
+from src.services.pc_guard import ollama_client
 from src.services.llm_utils import (clean_llm_text, ollama_options,
                                     strip_think_tags, SUMMARIZER_KEEP_ALIVE)
 from src.services.enrichment_state import log_topup_failure
@@ -140,7 +141,7 @@ async def _condense(studio: str, extract: str,
         if not model:
             continue
         try:
-            async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
+            async with ollama_client(timeout=120) as client:
                 r = await client.post(f"{ollama_for("enrich")}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system",

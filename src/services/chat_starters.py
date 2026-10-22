@@ -48,6 +48,7 @@ import httpx
 
 from src.config import settings
 from src.services.ollama_hosts import host_for
+from src.services.pc_guard import ollama_client
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import ChatStarter, WatchHistoryEntry
@@ -284,7 +285,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             if not model:
                 continue
             try:
-                async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
+                async with ollama_client(timeout=90) as client:
                     resp = await client.post(
                         f"{host.url}/api/chat",
                         json={
