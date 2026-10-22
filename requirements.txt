@@ -40,4 +40,4 @@ apscheduler==3.11.3
 
 # Tray launcher (curatarr_tray.pyw — background app, no console)
 pystray==0.19.5
-pillow==12.3.0
+pillow==13.0.0

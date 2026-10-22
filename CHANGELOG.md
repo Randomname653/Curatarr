@@ -356,6 +356,9 @@ are picked up by the audit's re-enrichment.
 and GHSA-494j-54xm-rwp3 (fixed in 3.14.4). Curatarr uses aiohttp only as the
 client for the arrs, never as a server, so the request-timeout and request
 flooding findings did not reach it; the update keeps the dependency scan green.
+Pillow 13.0.0 fixes 38 advisories in 12.3.0. Curatarr only draws the tray
+icon with it, which renders unchanged. certifi moves to 2026.10.19, and the
+OpenTelemetry family (via ChromaDB) to 1.45.1, all for their advisories.
 
 **A household member's plays reach watch history.** The Plex sync listed
 watched items with the admin's token, and Plex answers "watched" for the
