@@ -143,7 +143,7 @@ def snapshot() -> dict:
             "subset_40": [c[0] for c in CASES]}
 
 
-def run(model_list: list[dict], log=print) -> dict:
+def run(model_list: list[dict], log=print, keep_others: bool = False) -> dict:
     DATA.mkdir(parents=True, exist_ok=True)
     snap = DATA / "janedoe_snapshot.json"
     snap.write_text(json.dumps(snapshot(), ensure_ascii=False, indent=1), encoding="utf-8")
@@ -180,6 +180,11 @@ def run(model_list: list[dict], log=print) -> dict:
                 if (out_dir / "monologue.jsonl").exists() else {}
             results.append({**m, "answers": {k: _answer(judge[k], notes.get(k)) for k in judge}})
             log(f"  {', '.join(f'{k.split(':')[1]}={a['verdict']}' for k, a in results[-1]['answers'].items())}")
+    if keep_others and (DATA / "run.json").exists():
+        # A partial run (--only) replaces its own models and keeps the rest in place.
+        fresh = {r["model"]: r for r in results}
+        old = json.loads((DATA / "run.json").read_text(encoding="utf-8"))["models"]
+        results = [fresh.pop(r["model"], r) for r in old] + list(fresh.values())
     run_doc = {"generated": datetime.now().isoformat(timespec="seconds"), "models": results}
     (DATA / "run.json").write_text(json.dumps(run_doc, ensure_ascii=False, indent=1), encoding="utf-8")
     return run_doc

@@ -718,7 +718,7 @@ def cmd_examples(args) -> None:
         todo = examples.matrix_models(load_matrix() or {})
         if args.only:
             todo = [m for m in todo if m["model"] in args.only.split(",")]
-        run_doc = examples.run(todo, log=log)
+        run_doc = examples.run(todo, log=log, keep_others=bool(args.only))
     print("docs   ->", examples.render_docs(run_doc, review))
     print("wizard ->", examples.export_wizard(run_doc))
 

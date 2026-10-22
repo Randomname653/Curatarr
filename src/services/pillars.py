@@ -1163,6 +1163,26 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
 
 _TECH_CLASS = re.compile(r"^TECH: .*\((bloated|normal|lean)\)\s*$", re.M)
 _SIGNAL_WORD = re.compile(r"\bsignal", re.I)
+_WORD = re.compile(r"[a-z0-9]{3,}")
+_SIGNAL_ECHO_MIN = 2
+_ECHO_STOP = frozenset(
+    "the and with for from that this these those she her his him they them their its was are "
+    "has have had not but all any who what even one ones want wants keep keeps keeping kept "
+    "owner owners title film show series said told".split())
+
+
+def _rests_on_signal(ego: str, facts: str) -> bool:
+    """Does the ego finding rest on an OWNER SIGNAL line? Either it names the
+    signal, or it repeats the signal's own words - at least two that the
+    OWNER TASTE line does not have (e4b's "keeping low-budget 90s horror"
+    never said "signal")."""
+    if _SIGNAL_WORD.search(ego):
+        return True
+    lines = (facts or "").splitlines()
+    signal = {w for ln in lines if ln.startswith("OWNER SIGNAL:") for w in _WORD.findall(ln.lower())}
+    taste = {w for ln in lines if ln.startswith("OWNER TASTE:") for w in _WORD.findall(ln.lower())}
+    echo = set(_WORD.findall(ego.lower())) & (signal - taste - _ECHO_STOP)
+    return len(echo) >= _SIGNAL_ECHO_MIN
 
 
 def _fact_guards(out: dict, facts: str) -> dict:
@@ -1191,7 +1211,7 @@ def _fact_guards(out: dict, facts: str) -> dict:
         guards.append("outlier_unflagged")
     if (verdict in ("HARD_KEEP", "KEEP_WITH_FLAG") and out.get("protecting_pillar") == "EGO"
             and "OWNER SIGNAL" in (facts or "")
-            and _SIGNAL_WORD.search(out.get("pillar_0_ego") or "")):
+            and _rests_on_signal(out.get("pillar_0_ego") or "", facts)):
         out["verdict"], out["protecting_pillar"] = "STAGNANT", "NONE"
         guards.append("signal_forced_keep")
     if guards:

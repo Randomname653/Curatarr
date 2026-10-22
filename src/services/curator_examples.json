@@ -1,0 +1,30 @@
+{
+ "generated": "2026-10-22T17:54:32",
+ "title": "Flatmates (2009, invented)",
+ "setup": "A sitcom Jane does not like. Sam, who lives with her, has watched 34 of 36 episodes. Normal file (0.94x).",
+ "law": "Keep, because Sam watches it (Household) - whatever Jane's taste says.",
+ "owner": "Jane Doe (fictional)",
+ "models": {
+  "gemma4:26b-a4b-it-qat": {
+   "verdict": "HARD_KEEP",
+   "verdict_words": "Keep",
+   "protecting_pillar": "HOUSEHOLD",
+   "reason": "Sam has completed 34 of the 36 episodes, triggering protection for the title's existence.",
+   "note": "This series relies heavily on established sitcom tropes and rhythmic running gags to navigate the mundane friction of shared living and office life. While its structure is undeniably formulaic, the chemistry of the ensemble provides a consistent, light-hearted energy that Sam found worth following nearly to the end."
+  },
+  "gemma4:e4b-it-qat": {
+   "verdict": "HARD_KEEP",
+   "verdict_words": "Keep",
+   "protecting_pillar": "HOUSEHOLD",
+   "reason": "Sam genuinely engaged with the series by completing 34 episodes.",
+   "note": "This series operates as a steady, low-stakes observation on domestic friction, using a shared living space as a pressure cooker for predictable, amiable interactions. It is a deliberately unchallenging construction of character dynamics, leaning into established comedic rhythms rather than aiming for structural innovation. If you find satisfaction in comfortably predictable interpersonal friction, this delivers it with competent, if uninspired, execution."
+  },
+  "gemma4:31b-it-qat": {
+   "verdict": "HARD_KEEP",
+   "verdict_words": "Keep",
+   "protecting_pillar": "HOUSEHOLD",
+   "reason": "Sam has completed 34 of 36 episodes, triggering the highest pillar of protection.",
+   "note": "A formulaic but cozy exercise in ensemble chemistry and repetitive gags. It trades narrative ambition for the rhythmic comfort of shared domesticity and mundane office life. Keep it for the effortless rapport between the cast."
+  }
+ }
+}

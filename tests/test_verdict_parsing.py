@@ -143,6 +143,16 @@ check("an EGO keep that argues from taste alone stays",
           {**ego_keep, "pillar_0_ego": "Slow-burn horror executed with real craft, exactly her taste."}, SIGNAL))
 check("a keep protected by a higher pillar is never touched by the signal guard",
       pillars._fact_guards({**ego_keep, "protecting_pillar": "CUSTODIAN"}, SIGNAL)["verdict"] == "HARD_KEEP")
+JANE = ("OWNER TASTE: Jane Doe likes slow-burn horror and sharp social satire.\n"
+        "OWNER SIGNAL: Jane wants to keep the low-budget 90s horror she grew up with, even the clumsy ones.")
+g = pillars._fact_guards({**ego_keep, "pillar_0_ego": "The owner's taste aligns with keeping "
+                          "low-budget 90s horror, which supports keeping this title."}, JANE)
+check("an ego finding that repeats the signal's words without naming it is caught too (e4b, 2026-10-22)",
+      g["verdict"] == "STAGNANT" and g["_guards"] == ["signal_forced_keep"])
+check("words the taste line shares with the signal, and filler words, are no echo",
+      "_guards" not in pillars._fact_guards(
+          {**ego_keep, "pillar_0_ego": "Jane wants slow-burn horror and this keeps the tension with craft."},
+          JANE))
 check("without an OWNER SIGNAL line the word alone changes nothing",
       pillars._fact_guards(dict(ego_keep), NORMAL)["verdict"] == "HARD_KEEP")
 
