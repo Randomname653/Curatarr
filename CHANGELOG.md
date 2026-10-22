@@ -411,6 +411,13 @@ refuse everything. The LAN address is never checked, so local use never
 depends on Cloudflare. A Plex login started on the public name returns
 there.
 
+**Sign-in on phones, and slow first tokens.** After a Plex sign-in, the
+tab plex.tv sends back no longer shows the login again. It reloads
+signed in as soon as the other tab finishes. A chat reply whose first
+token takes longer than 45 s (model load, long prompt) is no longer
+dropped as "the connection went quiet": the keepalive now also runs
+while Ollama has not answered at all.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

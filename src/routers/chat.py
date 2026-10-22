@@ -9,7 +9,7 @@ import logging
 import re
 import weakref
 from collections import OrderedDict
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -2738,6 +2738,16 @@ _HEARTBEAT_S = 15.0
 _HEARTBEAT = object()
 
 
+@asynccontextmanager
+async def _closing_response(resp):
+    """What ``client.stream()`` does around a response sent with
+    ``stream=True``: hand it out, close it however the block ends."""
+    try:
+        yield resp
+    finally:
+        await resp.aclose()
+
+
 async def _lines_with_heartbeat(lines, every: float):
     """Yield the lines of ``lines``, and ``_HEARTBEAT`` whenever none came
     in ``every`` seconds. The pending read is never abandoned on a
@@ -3621,7 +3631,7 @@ FORMATTING RULES:
                 # the response can take 5-10 minutes. We'd rather wait it out
                 # than 504 the user mid-stream when their model has spilled.
                 async with httpx.AsyncClient(verify=tls_context(), timeout=600) as client:
-                    async with client.stream(
+                    request = client.build_request(
                         "POST",
                         f"{ollama_url}/api/chat",
                         json={
@@ -3637,7 +3647,26 @@ FORMATTING RULES:
                             # _CHAT_PREDICT shrinks with a smaller window.
                             **curator_options(temperature=0.7, num_predict=_CHAT_PREDICT),
                         },
-                    ) as resp:
+                    )
+                    # Ollama sends its response headers with the first token,
+                    # so a cold load or a long prompt eval happens BEFORE
+                    # client.stream() returns - and the heartbeat below never
+                    # ran there: 46 s of silence and the client's 45 s idle
+                    # watchdog dropped the reply (2026-10-22).
+                    sending = asyncio.ensure_future(client.send(request, stream=True))
+                    try:
+                        while not sending.done():
+                            await asyncio.wait({sending}, timeout=_HEARTBEAT_S)
+                            if not sending.done():
+                                yield ": keepalive\n\n"
+                                last_emit = loop.time()
+                    except BaseException:
+                        if not sending.done():
+                            sending.cancel()
+                        elif not sending.cancelled() and sending.exception() is None:
+                            await sending.result().aclose()
+                        raise
+                    async with _closing_response(sending.result()) as resp:
                         if resp.status_code != 200:
                             # A missing model or a crashed runner answers with
                             # one {"error": …} line and no "done" — it used to
