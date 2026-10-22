@@ -223,8 +223,10 @@ def render_docs(run_doc: dict, review: dict, path: Path = DOCS) -> Path:
     names = [m["model"] for m in run_doc["models"]]
     L = ["# How the curator judges", "",
          "The curators the setup recommends, judging the same five titles for a **fictional** owner, "
-         "Jane Doe. Every verdict below comes from the production judge and card note, word for word; "
-         "only the review lines are written by a person after reading the run.", "",
+         "Jane Doe. Every finding and card note below is the model's own, word for word. The verdict is "
+         "the production judge's after its fact guards - the checks in code that correct a verdict the "
+         "facts contradict - and every correction is marked. Only the review lines are written by a "
+         "person after reading the run.", "",
          f"Generated {run_doc['generated'][:10]} by `python -m tests.benchmarks.hwbench.run examples`.", "",
          "**Jane Doe** (invented) likes slow-burn horror and sharp social satire, values economical, "
          "well-crafted filmmaking, and has little patience for formulaic sequels or long sitcoms. "
@@ -233,9 +235,10 @@ def render_docs(run_doc: dict, review: dict, path: Path = DOCS) -> Path:
          "- **The clear cases agree.** The landmark stays, the weak sequel goes, and the sitcom Sam watches "
          "stays although Jane dislikes it: the constitution ranks what the household watches and what is "
          "objectively significant above the owner's taste.",
-         "- **The gray zones do not always agree, and each model argues its own way through them.** The "
-         "standard is whether the reasoning holds together and follows the law, not whether two models "
-         "reach the same verdict.",
+         "- **The same verdict can rest on different reasoning.** In the gray zones each model argues its "
+         "own way - Harbor Light is kept by all three, but not on the same pillar. The standard is whether "
+         "the reasoning holds together and follows the law, not whether two models reach the same verdict: "
+         "on a harder title they may not, and either can be right.",
          "- **A failed answer never deletes anything.** A verdict that fails validation twice becomes "
          "EVALUATE: neither proposed nor protected.",
          "- **The curator learns.** When the owner disagrees with a verdict and talks it through, Curatarr "

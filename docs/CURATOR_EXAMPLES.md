@@ -1,6 +1,6 @@
 # How the curator judges
 
-The curators the setup recommends, judging the same five titles for a **fictional** owner, Jane Doe. Every verdict below comes from the production judge and card note, word for word; only the review lines are written by a person after reading the run.
+The curators the setup recommends, judging the same five titles for a **fictional** owner, Jane Doe. Every finding and card note below is the model's own, word for word. The verdict is the production judge's after its fact guards - the checks in code that correct a verdict the facts contradict - and every correction is marked. Only the review lines are written by a person after reading the run.
 
 Generated 2026-10-22 by `python -m tests.benchmarks.hwbench.run examples`.
 
@@ -9,7 +9,7 @@ Generated 2026-10-22 by `python -m tests.benchmarks.hwbench.run examples`.
 ## What to look for
 
 - **The clear cases agree.** The landmark stays, the weak sequel goes, and the sitcom Sam watches stays although Jane dislikes it: the constitution ranks what the household watches and what is objectively significant above the owner's taste.
-- **The gray zones do not always agree, and each model argues its own way through them.** The standard is whether the reasoning holds together and follows the law, not whether two models reach the same verdict.
+- **The same verdict can rest on different reasoning.** In the gray zones each model argues its own way - Harbor Light is kept by all three, but not on the same pillar. The standard is whether the reasoning holds together and follows the law, not whether two models reach the same verdict: on a harder title they may not, and either can be right.
 - **A failed answer never deletes anything.** A verdict that fails validation twice becomes EVALUATE: neither proposed nor protected.
 - **The curator learns.** When the owner disagrees with a verdict and talks it through, Curatarr extracts a principle from the conversation, checks that it is new, and appends it to the judge's law. From the next run every model judges with it.
 
