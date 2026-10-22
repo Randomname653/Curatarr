@@ -478,6 +478,13 @@ CI builds and starts it on every PR, and every push to `main` publishes it.
 outside (`OLLAMA_ENDPOINT`). `CURATARR_ENV_FILE` moves the `.env` on any
 install.
 
+**The gaming PC reports itself.** With Curatarr on a NAS, the PC's tray
+runs a small agent (`PC_AGENT_TOKEN`) that reports its programs and GPU, so
+game detection keeps protecting the PC. The NAS polls it every 5 s. A PC
+that shuts down says so at once, and one that stops answering for two polls
+counts as gone. No work is sent to it then, and no eviction is attempted on
+it.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

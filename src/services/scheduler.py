@@ -141,7 +141,7 @@ async def job_game_watcher():
     is just one cheap GET.
     """
     from src.database.runner import run_write
-    from src.services.process_monitor import is_game_running, unload_llm_models
+    from src.services.process_monitor import is_game_running, pc_unreachable, unload_llm_models
     from src.services.app_state import set_states_if_changed
     from src.services.llm_lane import status as lane_status
     # Both readings block: nvidia-smi (up to 4 s), a synchronous GET of
@@ -158,7 +158,9 @@ async def job_game_watcher():
     # reading and the flag write in one try with a DEBUG except, so a failing
     # UI-only lane probe or a locked database switched game-mode enforcement
     # off, silently, every 30 s.
-    if running:
+    # A PC that is off holds nothing to evict - and asking it every 30 s
+    # would only log a failure each time.
+    if running and not pc_unreachable():
         try:
             unloaded = await unload_llm_models()
             if unloaded:
@@ -311,6 +313,20 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=30,
     )
+    from src.services import pc_host
+    if pc_host.configured():
+        # The gaming PC's agent: seconds, not the watcher's 30, so a PC that
+        # goes away stops getting work before a request would time out.
+        scheduler.add_job(
+            pc_host.poll_once,
+            IntervalTrigger(seconds=pc_host.POLL_S),
+            id="pc_agent_poll",
+            name="PC agent poll",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=pc_host.POLL_S,
+        )
 
     scheduler.start()
     logger.info("Scheduler started: data_custodian(30min tick, debt-based — "

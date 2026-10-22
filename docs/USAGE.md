@@ -177,9 +177,18 @@ Apps → Custom App → Install via YAML.
   runs it. If that is a Windows PC, Ollama only listens on localhost by
   default. Set `OLLAMA_HOST=0.0.0.0:11434` for it, and allow port 11434 in the
   firewall for the server's address only: Ollama has no login of its own.
-- **Game detection and the GPU checks see the machine Curatarr runs on.**
-  In a container that machine is the NAS, not the gaming PC. The models are
-  not evicted while you play until the PC can report that itself.
+- **Game detection and the GPU checks** see the machine Curatarr runs on,
+  unless the gaming PC reports itself:
+  - **Set up the agent.** Set the same `PC_AGENT_TOKEN` (16+ characters) in
+    both `.env` files. On the PC, also set `PC_AGENT_NOTIFY_URL` to this
+    Curatarr's LAN address. On the NAS, set `PC_AGENT_URL=http://<pc>:11435`.
+  - **Firewall:** allow port 11435 on the PC for the NAS only.
+  - **What it does:** the PC's tray starts an agent that reports its programs
+    and GPU, and the NAS polls it every 5 s. A game on the PC then evicts the
+    models there as before.
+  - **When the PC goes away:** a PC that is shutting down says so at once. A
+    PC that stops answering for two polls counts as gone. Either way, nothing
+    is sent to it any more.
 - **Moving an existing install:** stop the old one, then copy its `data/`
   folder and its `.env` into the volume. Never run two instances against the
   same Plex and arrs.

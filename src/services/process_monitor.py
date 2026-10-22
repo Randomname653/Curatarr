@@ -305,25 +305,64 @@ def gpu_pressure_reason() -> str:
 _last_game = {"running": False}
 
 
+# ── the PC agent (NAS move, 2026-10-22) ──────────────────────────────────────
+# With a PC agent configured (services/pc_host), the machine that games and
+# lends its card is the PC, not the one Curatarr runs on: the process list
+# and the GPU reading come from the agent's last report instead.
+_LOCAL = object()
+
+
+def _pc_report():
+    """The PC agent's last report when one is configured (None while the PC
+    is unavailable), else _LOCAL - read this machine."""
+    from src.services import pc_host
+    if not pc_host.configured():
+        return _LOCAL
+    return pc_host.snapshot()
+
+
+def _smi_from_report(gpu):
+    """The agent's GPU field as _nvidia_smi_read would have returned it."""
+    if isinstance(gpu, (list, tuple)) and len(gpu) == 3:
+        return tuple(gpu)
+    return {"missing": SMI_MISSING, "timeout": SMI_TIMEOUT}.get(gpu, SMI_ERROR)
+
+
+def pc_unreachable() -> bool:
+    """A PC agent is configured and the PC is not answering (off, asleep,
+    shutting down). The game watcher then has nothing to evict."""
+    from src.services import pc_host
+    return pc_host.configured() and not pc_host.available()
+
+
 def game_process_running() -> bool:
     """A known game or launcher process is running. Split out of
     is_game_running so the LLM lane can tell the two causes apart: a game
     owns the whole box (the CPU lane stays off), a GPU-hungry batch job
     owns only the card (summariser work moves to the processor). On the
-    event loop: the last verdict, never a process walk (see _on_loop)."""
+    event loop: the last verdict, never a process walk (see _on_loop).
+    With a PC agent: the PC's processes (an unavailable PC runs no game)."""
     if _on_loop():
         return _last_game["running"]
-    running = _probe_game_process()
+    pc = _pc_report()
+    if pc is _LOCAL:
+        running = _probe_game_process()
+    else:
+        targets = _game_targets()
+        running = bool(pc) and any((p.get("name") or "").lower() in targets
+                                   for p in pc.get("processes") or [])
     _last_game["running"] = running
     return running
 
 
-def _probe_game_process() -> bool:
+def _game_targets() -> frozenset:
+    """Launcher signals, the owner's classified games and EXTRA_GAME_PROCESSES,
+    lower-case, cached 60 s."""
     import time
     from src.database.connection import get_db_session
     from src.database.models import GameProcess
 
-    global _cached_targets, _cached_time, _cached_game_pid
+    global _cached_targets, _cached_time
     now = time.time()
 
     # Refresh cache every 60 seconds
@@ -354,7 +393,12 @@ def _probe_game_process() -> bool:
         _cached_targets = frozenset(targets)
         _cached_time = now
 
-    targets = _cached_targets
+    return _cached_targets
+
+
+def _probe_game_process() -> bool:
+    global _cached_game_pid
+    targets = _game_targets()
 
     # ⚡ Bolt: Fast path - avoid iterating running processes if we have no targets
     if not targets:
@@ -389,7 +433,18 @@ def is_game_running() -> bool:
     """Return True when a known game or game-launcher signal is detected, or
     when something other than Ollama has been holding the GPU. Off the loop
     both probes run (no short circuit), so the verdicts the loop reads stay
-    fresh for each cause."""
+    fresh for each cause.
+
+    With a PC agent both read the PC's report. No report (the PC is off,
+    asleep or shutting down) fails closed, like an unreadable game flag:
+    nobody can say that card is free."""
+    pc = _pc_report()
+    if pc is not _LOCAL:
+        if pc is None:
+            return True
+        pressed = gpu_pressure(smi=lambda: _smi_from_report(pc.get("gpu")))
+        game = game_process_running()
+        return pressed or game
     pressed = gpu_pressure()
     game = game_process_running()
     return pressed or game
@@ -544,6 +599,23 @@ def get_unknown_processes() -> list[dict]:
     seen: set[str] = set()
     skipped: set[str] = set()
     unknown: list[dict] = []
+    pc = _pc_report()
+    if pc is not _LOCAL:
+        # The PC's programs, from its agent (rss already in MB there).
+        for p in (pc or {}).get("processes") or []:
+            name = p.get("name") or ""
+            nl = name.lower()
+            if (not nl or nl in known or nl in seen or nl in skipped
+                    or not nl.endswith(".exe")):
+                continue
+            if _NEVER_ASK.search(nl) or process_family(nl) in ignored_families:
+                skipped.add(nl)
+                continue
+            if (p.get("rss_mb") or 0) * 1024 * 1024 < min_rss:
+                continue
+            seen.add(nl)
+            unknown.append({"name": name, "pid": None})
+        return unknown
     try:
         # No "exe" in the attrs: the loop filters on the NAME alone, and
         # resolving each process's executable path is an extra OS call per
