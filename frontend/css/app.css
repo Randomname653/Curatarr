@@ -1138,3 +1138,196 @@ select option { background: var(--bg2); }
 }
 /* Installed and running full screen: the drawer footer clears the home indicator */
 body.standalone .sb-footer { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+
+/* ══ LIGHT, NOT LINES (2026-10 tactile pass) ═════════════════════════════════
+   Surfaces are lit from above instead of outlined: a hairline edge, a faint
+   specular top line and layered soft shadows give three depths (resting
+   panels, hovered panels, dialogs). One spring curve for everything that
+   moves. Posters shimmer until they arrive and fade in, and a card borrows
+   its poster's colour as a faint ambient light. Last in the file on purpose:
+   it refines the rules above, and repeats its phone overrides at the end. */
+@property --tint-a { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+:root {
+  --hairline: rgba(255,255,255,.06);
+  --hairline-strong: rgba(255,255,255,.1);
+  --specular: inset 0 1px 0 rgba(255,255,255,.045);
+  --shadow-1: 0 1px 2px rgba(0,0,0,.28), 0 2px 10px rgba(0,0,0,.16);
+  --shadow-2: 0 2px 4px rgba(0,0,0,.24), 0 10px 28px rgba(0,0,0,.30);
+  --shadow-3: 0 6px 12px rgba(0,0,0,.30), 0 28px 70px rgba(0,0,0,.48);
+  --glass: color-mix(in srgb, var(--bg2) 76%, transparent);
+  --glass-blur: saturate(1.5) blur(18px);
+  --ease-spring: cubic-bezier(.22,1,.36,1);
+  --dur-1: .12s; --dur-2: .22s; --dur-3: .38s;
+  --fs-xs: 11px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
+  --measure: 65ch;
+  --radius-poster: 10px;
+}
+/* The canvas: a faint amber light from the top left, a darker far corner */
+body {
+  background:
+    radial-gradient(1100px 620px at 12% -12%, color-mix(in srgb, var(--amber) 7%, transparent), transparent 62%),
+    radial-gradient(900px 700px at 110% 110%, rgba(0,0,0,.35), transparent 60%),
+    var(--bg);
+}
+#topbar, #sidebar { background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border-color: var(--hairline); }
+.sb-footer { border-top-color: var(--hairline); }
+
+.card, .section, .cur-section, .panel-item, .tbl-wrap, .stat-box, .why-panel {
+  border-color: var(--hairline);
+  box-shadow: var(--specular), var(--shadow-1);
+  transition: box-shadow var(--dur-2) var(--ease-spring), border-color var(--dur-2);
+}
+/* Hover lifts by light, not by transform: a transform would make each card a
+   stacking context and an open "More" menu could slide under the next card. */
+@media (hover: hover) {
+  .card:hover, .panel-item:hover { border-color: var(--hairline-strong); box-shadow: var(--specular), var(--shadow-2); }
+}
+.tbl th, .tbl td { border-bottom-color: var(--hairline); }
+.modal { border-color: var(--hairline-strong); box-shadow: var(--specular), var(--shadow-3); animation: modalIn var(--dur-3) var(--ease-spring) both; }
+.modal-head, .modal-foot { border-color: var(--hairline); }
+#modal-root { background: rgba(8,9,12,.62); backdrop-filter: blur(6px) saturate(1.2); -webkit-backdrop-filter: blur(6px) saturate(1.2); }
+@keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.96); } }
+.toast { border-color: var(--hairline-strong); box-shadow: var(--specular), var(--shadow-2); }
+
+/* Type: one scale; headings read as headings, numbers sit in columns */
+.view-header h1 { font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.01em; }
+.section-head h3, .card h3 { font-size: var(--fs-md); letter-spacing: -.005em; }
+.stat-box .num { font-size: var(--fs-2xl); font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.stat-box .lbl { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--text3); }
+
+/* Press physics on every pointer, not only touch */
+.btn, .chip, .sp-chip, .cat-tab, .arr-tab, .sb-item, .menu-item, .settings-tab, #send-btn, #new-chat-btn, #recheck-btn {
+  transition: transform var(--dur-1) var(--ease-spring), background-color var(--dur-2), border-color var(--dur-2), color var(--dur-2), filter var(--dur-2), opacity var(--dur-2);
+}
+.btn:active:not(:disabled), .chip:active, .sp-chip:active, .cat-tab:active, .arr-tab:active, .sb-item:active,
+.menu-item:active, .settings-tab:active, #send-btn:active:not(:disabled), #new-chat-btn:active, #recheck-btn:active:not(:disabled) { transform: scale(.97); filter: brightness(.94); }
+
+/* Posters: shimmer until the image lands (ui.posterLoaded), then fade in.
+   A failed image (hideOnError) marks the frame .is-broken: the shimmer stops
+   and the frame stays as a quiet placeholder instead of a gap. */
+.glow-interactive { border-radius: var(--radius-poster); box-shadow: var(--shadow-2);
+  background: linear-gradient(100deg, var(--bg3) 35%, color-mix(in srgb, var(--bg3) 82%, var(--text3)) 50%, var(--bg3) 65%) 0 0 / 220% 100%;
+  animation: shimmer 1.3s linear infinite; }
+.glow-interactive.is-music { border-radius: 50%; }
+.glow-interactive:has(img.is-loaded), .glow-interactive:has(.poster-ph), .glow-interactive.is-broken { animation: none; background: var(--bg3); }
+.glow-interactive img.poster-img { opacity: 0; transition: opacity var(--dur-3) ease, filter var(--dur-2); }
+.glow-interactive img.poster-img.is-loaded { opacity: 1; }
+@keyframes shimmer { to { background-position: -220% 0; } }
+@media (hover: hover) {
+  .glow-interactive:hover { box-shadow: 0 10px 30px color-mix(in srgb, var(--poster-tint, var(--amber)) 45%, transparent); transform: translateY(-2px) scale(1.01); }
+}
+/* Ambient bleed: posterLoaded sets --poster-tint (the image's average colour)
+   and .has-tint on the card; the light warms up while the card is hovered. */
+.card.has-tint {
+  background-image: radial-gradient(520px 320px at 87px 42%, color-mix(in srgb, var(--poster-tint) var(--tint-a), transparent), transparent 70%);
+  --tint-a: 9%; transition: --tint-a var(--dur-3) ease, box-shadow var(--dur-2) var(--ease-spring), border-color var(--dur-2);
+}
+.card.has-tint:hover, .card.has-tint:focus-within { --tint-a: 20%; }
+
+/* Calm poster cards: the pitch leads, Keep / Discuss / More rest a step back
+   until the card is hovered or focused, Delete stays at full strength */
+.poster-card .quote-text { font-size: var(--fs-md); line-height: 1.6; max-width: var(--measure); color: var(--text); border-left: 2px solid var(--amber-line); padding-left: 12px; }
+@media (hover: hover) {
+  .poster-card .panel-actions > .btn-secondary, .poster-card .panel-actions > .menu { opacity: .72; }
+  .card:hover .poster-card .panel-actions > *, .card:focus-within .poster-card .panel-actions > * { opacity: 1; }
+  .card:hover .poster-card .panel-actions > :nth-child(2) { transition-delay: 30ms; }
+  .card:hover .poster-card .panel-actions > :nth-child(3) { transition-delay: 60ms; }
+}
+/* An empty note is one quiet dashed line until it is used */
+.del-comment { transition: height var(--dur-2) var(--ease-spring), background-color var(--dur-2), border-color var(--dur-2); }
+.del-comment:placeholder-shown:not(:focus) { height: 34px; min-height: 34px; resize: none; background: transparent; border-style: dashed; border-color: var(--border2); }
+.meta-quiet { font-size: var(--fs-xs); color: var(--text3); letter-spacing: .02em; }
+.meta-quiet b { color: var(--text2); font-weight: 600; }
+
+/* Switches: a checkbox that is a setting looks like one */
+input.switch { appearance: none; -webkit-appearance: none; flex-shrink: 0; width: 40px; height: 24px; margin: 0; border-radius: 12px; background: var(--bg3); border: 1px solid var(--border2); position: relative; cursor: pointer; transition: background-color var(--dur-2), border-color var(--dur-2); }
+input.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text2); box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: transform var(--dur-2) var(--ease-spring), background-color var(--dur-2); }
+input.switch:checked { background: var(--amber); border-color: var(--amber); }
+input.switch:checked::after { transform: translateX(16px); background: #fff; }
+input.switch:disabled { opacity: .5; cursor: progress; }
+input.switch:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+/* A preference row: label (and its hint) left, the control right */
+.pref-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 0; border-bottom: 1px solid var(--hairline); cursor: pointer; }
+.pref-row:last-child { border-bottom: none; }
+.pref-row .pref-text { flex: 1; min-width: 0; font-size: 13px; color: var(--text); }
+.pref-row .pref-text small { display: block; font-size: var(--fs-xs); color: var(--text3); margin-top: 2px; }
+/* Segmented control: one choice out of a few (radio inputs, visually hidden) */
+.segmented { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--bg3); border: 1px solid var(--hairline-strong); box-shadow: inset 0 1px 2px rgba(0,0,0,.25); }
+.segmented label { position: relative; padding: 5px 14px; border-radius: 7px; font-size: 12.5px; color: var(--text2); cursor: pointer; transition: background-color var(--dur-2), color var(--dur-2), box-shadow var(--dur-2); }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented label:hover { color: var(--text); }
+.segmented label:has(input:checked) { background: var(--bg2); color: var(--amber); box-shadow: var(--specular), 0 1px 4px rgba(0,0,0,.35); }
+.segmented label:has(input:focus-visible) { outline: 2px solid var(--amber); outline-offset: 1px; }
+@media (pointer: coarse) { .segmented label { min-height: 40px; display: inline-flex; align-items: center; } }
+
+/* Connection status: a dot before the words, a slow ring while it is up */
+.test-status.ok::before, .test-status.err::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.test-status.ok::before { animation: ring 2.4s var(--ease-spring) infinite; }
+@keyframes ring { 0% { box-shadow: 0 0 0 0 var(--success-line); } 70%, 100% { box-shadow: 0 0 0 7px transparent; } }
+
+/* View changes: a short crossfade + rise (ui.withTransition) */
+::view-transition-old(root) { animation: vt-out .16s ease both; }
+::view-transition-new(root) { animation: vt-in var(--dur-2) var(--ease-spring) both; }
+@keyframes vt-out { to { opacity: 0; } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(8px); } }
+html.vt .view.active { animation: none; }
+
+/* Chat: bubbles keep a readable measure, the user's own words are a warm
+   tint instead of a solid amber slab, the composer floats as glass, and a
+   pill offers the way down when a reply grows below the fold. */
+.msg { font-size: var(--fs-md); line-height: 1.65; }
+.msg.assistant { max-width: min(72%, var(--measure)); border-color: var(--hairline); box-shadow: var(--specular), var(--shadow-1); }
+.msg.user { background: color-mix(in srgb, var(--amber) 18%, var(--bg3)); color: var(--text); border: 1px solid var(--amber-line); font-weight: 450; max-width: min(72%, var(--measure)); }
+#chat-view { position: relative; }
+#chat-input-area { margin: 0 16px 14px; border: 1px solid var(--hairline-strong); border-radius: 26px; padding: 6px; align-items: flex-end;
+  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--specular), var(--shadow-2); }
+#chat-input { background: transparent; border-color: transparent; border-radius: 20px; }
+#chat-input:focus-visible { border-color: transparent; }
+#chat-input-area:focus-within { border-color: var(--amber-line); }
+#send-btn { border-radius: 20px; box-shadow: 0 4px 14px var(--amber-line); }
+#new-chat-btn, #recheck-btn { border-radius: 20px; border-color: var(--hairline-strong); }
+#jump-latest { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 6; border-radius: 999px; padding: 6px 14px;
+  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-2); animation: jumpIn var(--dur-2) var(--ease-spring) both; }
+@keyframes jumpIn { from { opacity: 0; transform: translate(-50%, 8px); } }
+
+/* Phones: tables turn into stacked rows (class="tbl stack"; ui.labelTables
+   copies each column's header into its cells' data-label) */
+@media (max-width: 640px) {
+  .tbl.stack thead { display: none; }
+  .tbl.stack, .tbl.stack tbody, .tbl.stack tr, .tbl.stack td { display: block; width: 100%; }
+  .tbl.stack tr { padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
+  .tbl.stack tr:last-child { border-bottom: none; }
+  .tbl.stack td { border: none; padding: 3px 0; display: flex; align-items: center; gap: 12px; justify-content: space-between; min-height: 28px; text-align: right; }
+  .tbl.stack td[data-label]::before { content: attr(data-label); color: var(--text3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; text-align: left; }
+  .tbl.stack td.cell-primary { font-weight: 600; font-size: var(--fs-md); justify-content: flex-start; text-align: left; display: block; padding-bottom: 6px; }
+  .tbl.stack td.cell-primary::before { display: none; }
+  .tbl.stack td:empty { display: none; }
+  .tbl.stack tr:hover td { background: none; }
+  .scroll-x:has(> .tbl.stack) { overflow-x: visible; }
+}
+
+/* Phones: the tab bar floats as a glass dock, sheets are glass and spring in,
+   and the chat keeps its full width */
+@media (max-width: 768px) {
+  #mobile-tabbar {
+    margin: 0 10px max(8px, env(safe-area-inset-bottom, 0px)); padding: 0 4px;
+    height: var(--tabbar-h); border: 1px solid var(--hairline-strong); border-radius: 22px;
+    background: var(--glass); box-shadow: var(--specular), var(--shadow-3);
+  }
+  .mt-item.active::before { top: auto; bottom: 6px; left: 44%; right: 44%; height: 4px; border-radius: 2px; }
+  .mt-center .mt-fab { box-shadow: 0 6px 18px var(--amber-line); }
+  #toast-stack { bottom: calc(var(--tabbar-h) + max(8px, env(safe-area-inset-bottom, 0px)) + 12px); }
+  #swipe-view .swipe-deck { height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - max(8px, env(safe-area-inset-bottom, 0px)) - 160px); }
+  #modal-root .modal { background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+    box-shadow: var(--specular), var(--shadow-3); animation: sheetUp var(--dur-3) var(--ease-spring) both; }
+  #modal-root .modal::before { width: 42px; height: 5px; background: var(--hairline-strong); }
+  #modal-root .modal.dragged { animation: none; }
+  #modal-root .modal.dragging { transition: none; }
+  #modal-root .modal.settling { transition: transform var(--dur-2) var(--ease-spring); }
+  .modal-head { touch-action: none; cursor: grab; }
+  .why-panel { margin-left: -4px; margin-right: -4px; border-radius: 14px; }
+  .msg.assistant, .msg.user { max-width: 88%; }
+  #chat-input-area { margin: 0 8px 8px; border-radius: 24px; padding: 5px; background: var(--glass); }
+  #chat-input-area button { flex-shrink: 0; }
+  #jump-latest { bottom: 76px; }
+}

@@ -2,7 +2,7 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, EL, _errHtml, _errMsg, act, esc, setStatus, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, setStatus, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 export async function recomputeTaste(statusId = null) {
@@ -50,9 +50,11 @@ export async function syncHistory(force = false, statusId = null) {
 export function _renderHistoryStats(s) {
   const tv = s.taste_vector;
   const coverageOk = tv.covers_all || !tv.computed;
+  // The synced count counts up from what was on screen (0 the first time).
+  const shown = document.querySelector('#history-stats [data-count]')?.textContent || '0';
   document.getElementById('history-stats').innerHTML=`
     <div class="stat-row">
-      <div class="stat-box"><div class="num">${s.watch_history_entries.toLocaleString()}</div><div class="lbl">Entries synced</div></div>
+      <div class="stat-box"><div class="num" data-count>${esc(shown)}</div><div class="lbl">Entries synced</div></div>
       <div class="stat-box">
         <div class="num ${coverageOk ? 't-amber' : 't-danger'}">${tv.watch_count?.toLocaleString()||0}</div>
         <div class="lbl">In taste profile ${coverageOk?'':'<span class="t-amber">— outdated</span>'}</div>
@@ -60,6 +62,7 @@ export function _renderHistoryStats(s) {
       <div class="stat-box"><div class="fs-16 num">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
     </div>
     ${tv.note?`<div class="error-box">${esc(tv.note)}</div>`:''}`;
+  countTo(document.querySelector('#history-stats [data-count]'), s.watch_history_entries);
 }
 
 // Only the stats tile above goes through the SWR cache -- the taste-tabs /
@@ -136,12 +139,12 @@ export function renderRecent(entries, category) {
   const label = CAT_LABELS[category]||category;
   document.getElementById('recent-history').innerHTML=`
     <div class="eyebrow mb-8">Recent ${label}</div>
-    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Title</th><th>Genre</th><th>Date</th></tr></thead><tbody>
+    <div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Title</th><th>Genre</th><th>Date</th></tr></thead><tbody>
     ${entries.slice(0,50).map(e=>{
       let title=e.title;
       if(e.media_type==='music'&&e.series_title) title=`${e.title} — ${e.series_title}`;
       else if((e.media_type==='anime'||e.media_type==='show')&&e.series_title) title=`${e.series_title}: ${e.title}`;
-      return `<tr><td>${esc(title)}</td><td><span class="t3 fs-12">${esc((e.genres||'').split(',')[0])}</span></td><td class="t3 fs-12 nowrap">${(e.viewed_at||'').slice(0,10)}</td></tr>`;
+      return `<tr><td class="cell-primary">${esc(title)}</td><td><span class="t3 fs-12">${esc((e.genres||'').split(',')[0])}</span></td><td class="t3 fs-12 nowrap">${(e.viewed_at||'').slice(0,10)}</td></tr>`;
     }).join('')}
     </tbody></table></div>`;
 }

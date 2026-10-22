@@ -6,9 +6,9 @@ import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelR
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, toast, trapFocus } from './ui.js';
+import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, posterLoaded, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
-import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
+import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzoneOver, dropzoneLeave, openSpotifyPicker, onSpotifyFile } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
@@ -148,6 +148,8 @@ const actions = {
   handleKey,
   handleSpotifyDrop,
   hideOnError,
+  posterLoaded,
+  jumpLatest,
   hideOnboarding,
   installApp,
   kbDismissFinding,
@@ -334,9 +336,9 @@ document.addEventListener('click', e => {
   });
 });
 
-['toggle', 'blur', 'error'].forEach(evt => {
+['toggle', 'blur', 'error', 'load'].forEach(evt => {
   document.addEventListener(evt, e => {
-    // toggle, blur and error do not bubble: listen in the capture phase at the
+    // toggle, blur, error and load do not bubble: listen in the capture phase at the
     // document and resolve the element from the event target as usual.
     const target = e.target;
     if (target && target.closest) {

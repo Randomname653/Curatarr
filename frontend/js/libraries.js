@@ -127,11 +127,11 @@ export async function checkOrphans(btn) {
     el.innerHTML = `
       <div class="banner warn"><div class="banner-text">Found ${sections.reduce((s,x)=>s+x.count,0)} entries from ${sections.length} removed libraries. Assign each to a category to import them into your taste profile.</div></div>
       <div class="tbl-wrap mb-12">
-        <table class="tbl">
+        <table class="tbl stack">
           <thead><tr><th>Section ID</th><th>Entries</th><th>Sample titles</th><th>Assign to</th></tr></thead>
           <tbody>
           ${sections.map(s=>`<tr>
-            <td class="mono t3">${esc(s.section_id)}</td>
+            <td class="cell-primary mono t3">${esc(s.section_id)}</td>
             <td>${s.count}</td>
             <td class="fs-12 t2">${s.sample_titles.slice(0,4).map(esc).join(' · ')}</td>
             <td><select id="orphan-cat-${s.section_id}" class="input" aria-label="Category for this history">

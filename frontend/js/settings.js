@@ -1,5 +1,5 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, setStatus, toast, trackDirty } from './ui.js';
 import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
@@ -122,28 +122,28 @@ export async function loadDepsStatus(btn) {
   try {
     const d = await api('/api/system/dependencies');
     const rows = [
-      ...d.missing.map(m => `<tr><td>${esc(m.name)}</td><td class="t-danger">not installed</td><td>${esc(m.pinned)}</td></tr>`),
-      ...d.drift.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.pinned)}</td></tr>`),
+      ...d.missing.map(m => `<tr><td class="cell-primary">${esc(m.name)}</td><td class="t-danger">not installed</td><td>${esc(m.pinned)}</td></tr>`),
+      ...d.drift.map(m => `<tr><td class="cell-primary">${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.pinned)}</td></tr>`),
     ];
     const pinsHtml = d.clean
       ? `<div class="empty good">All ${d.pins} pinned packages match requirements.txt.</div>`
       : `<div class="banner warn"><span class="banner-icon">!</span><div class="banner-text">${rows.length} of ${d.pins} pinned packages differ. In the Curatarr folder, with this interpreter, run <code class="mono">${esc(d.command)}</code> and restart. start.bat and the tray launcher do this on their own at the next start.</div></div>
-         <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th>Package</th><th>Installed</th><th>Pinned</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+         <div class="tbl-wrap mt-8"><table class="tbl stack"><thead><tr><th>Package</th><th>Installed</th><th>Pinned</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
          <p class="fs-12 t3 mt-8">Interpreter: <span class="mono">${esc(d.interpreter)}</span></p>`;
     // The tested install (lock/requirements.txt): what the pins pull in, at
     // the versions the battery ran with. The launchers reconcile at start.
     const L = d.lock || {};
     const lockRows = [
-      ...(L.below || []).map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.locked)}</td><td>raised to the lock</td></tr>`),
-      ...(L.above || []).map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.locked)}</td><td>lock follows</td></tr>`),
-      ...(L.unlocked || []).map(n => `<tr><td>${esc(n)}</td><td>installed</td><td>not listed</td><td>added to the lock</td></tr>`),
+      ...(L.below || []).map(m => `<tr><td class="cell-primary">${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.locked)}</td><td>raised to the lock</td></tr>`),
+      ...(L.above || []).map(m => `<tr><td class="cell-primary">${esc(m.name)}</td><td>${esc(m.installed)}</td><td>${esc(m.locked)}</td><td>lock follows</td></tr>`),
+      ...(L.unlocked || []).map(n => `<tr><td class="cell-primary">${esc(n)}</td><td>installed</td><td>not listed</td><td>added to the lock</td></tr>`),
     ];
     const lockHtml = L.error
       ? `<p class="fs-12 t3 mt-8">Tested install: ${esc(L.error)}</p>`
       : L.clean
         ? `<p class="fs-12 t3 mt-8">Tested install: all ${L.packages} packages in lock/requirements.txt match this interpreter.</p>`
         : `<div class="banner warn mt-8"><span class="banner-icon">!</span><div class="banner-text">${lockRows.length} package(s) differ from the tested install (lock/requirements.txt). start.bat and the tray launcher reconcile this at the next start, never lowering anything; by hand: <code class="mono">${esc(L.command)}</code>.</div></div>
-           <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th>Package</th><th>Installed</th><th>Lock</th><th>Next start</th></tr></thead><tbody>${lockRows.join('')}</tbody></table></div>`;
+           <div class="tbl-wrap mt-8"><table class="tbl stack"><thead><tr><th>Package</th><th>Installed</th><th>Lock</th><th>Next start</th></tr></thead><tbody>${lockRows.join('')}</tbody></table></div>`;
     box.innerHTML = pinsHtml + lockHtml;
   } catch (e) {
     box.innerHTML = `<p class="t-danger fs-12">Could not read the dependency report: ${esc(e.message || e)}</p>`;
@@ -224,7 +224,7 @@ export function renderIntegrationCard(card, cfg) {
   const rows = card.fields.map(f => {
     const cur = cfg[f.id];
     if (f.toggle) {
-      return `<label class="my-8 row fs-13"><input type="checkbox" id="int-${f.id}" ${cur ? 'checked' : ''}> ${esc(f.label)}</label>`;
+      return `<label class="pref-row" for="int-${f.id}"><span class="pref-text">${esc(f.label)}</span><input type="checkbox" class="switch" id="int-${f.id}" ${cur ? 'checked' : ''}></label>`;
     }
     if (f.secret) {
       const isSet = !!(cur && cur.set);
@@ -357,25 +357,21 @@ export async function loadNotificationPreferences() {
 
 export async function _setNotifPref(toggle) {
   const wantEnabled = toggle.checked;
-  const chip = toggle.closest('.chip'), label = chip.querySelector('span');
   toggle.disabled = true;
-  chip.classList.toggle('active', wantEnabled);
-  label.textContent = wantEnabled ? 'on' : 'off';
+  haptic('light');
   try {
     await api('/api/users/me/notification-preferences', 'POST', {trigger_type: toggle.dataset.triggerType, enabled: wantEnabled});
     toast('Saved', 'success');
   } catch (e) {
     // Roll back the visual state if the server rejected the change.
     toggle.checked = !wantEnabled;
-    chip.classList.toggle('active', toggle.checked);
-    label.textContent = toggle.checked ? 'on' : 'off';
     toast(_errMsg(e), 'danger');
   } finally {
     toggle.disabled = false;
   }
 }
 
-// One row per trigger; the on/off chip saves immediately (the only pane
+// One row per trigger; the switch saves immediately (the only pane
 // without a Save button — a toggle is its own commit).
 export function renderNotificationPreferences(triggers) {
   const host = document.getElementById('notif-prefs');
@@ -384,7 +380,7 @@ export function renderNotificationPreferences(triggers) {
   host.innerHTML = triggers.map(t => `<div class="panel-item">
     <div class="panel-item-head">
       <div class="grow"><div class="panel-item-title">${esc(t.label || t.type)}</div><div class="mt-2 panel-item-sub">${esc(t.description || '')}</div></div>
-      <label class="chip${t.enabled ? ' active' : ''}"><input type="checkbox" ${t.enabled ? 'checked' : ''} data-trigger-type="${escAttr(t.type)}" ${actOn('change', '_setNotifPref', EL)}> <span>${t.enabled ? 'on' : 'off'}</span></label>
+      <input type="checkbox" class="switch" ${t.enabled ? 'checked' : ''} aria-label="${escAttr(t.label || t.type)}" data-trigger-type="${escAttr(t.type)}" ${actOn('change', '_setNotifPref', EL)}>
     </div>
   </div>`).join('');
 }
@@ -447,7 +443,7 @@ const _muTime = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: '2-digi
 
 function _muCompare(role, c, run, err) {
   const s = c.summary;
-  const row = (label, k, unit = '') => `<tr><td>${esc(label)}</td><td>${esc(String(s[k]?.old ?? '–'))}${unit}</td><td>${esc(String(s[k]?.new ?? '–'))}${unit}</td></tr>`;
+  const row = (label, k, unit = '') => `<tr><td class="cell-primary">${esc(label)}</td><td>${esc(String(s[k]?.old ?? '–'))}${unit}</td><td>${esc(String(s[k]?.new ?? '–'))}${unit}</td></tr>`;
   const changes = s.verdict_changes.length
     ? `<ul class="fs-12 mt-8">${s.verdict_changes.map(v => `<li>${esc(v.title)}: ${esc(v.old)} → ${esc(v.new)}</li>`).join('')}</ul>` : '';
   const pairs = c.pairs.map(p => `<div class="mt-8"><div class="fw-500 fs-12">${esc(p.title)} — ${esc(p.old_verdict || '?')} / ${esc(p.new_verdict || '?')}</div>
@@ -456,7 +452,7 @@ function _muCompare(role, c, run, err) {
       <div class="fs-12 t3">old: ${esc(p.old || '—')}</div><div class="fs-12">new: ${esc(p.new || '—')}</div></div>`).join('');
   return _muEval(role, c.evaluation, c.facts_rebuilt, run, err, s) + `<p class="fs-12 mt-8">${s.verdicts_same} of ${s.verdicts_compared} verdicts unchanged · wording ${s.wording_similarity_pct ?? '?'} % alike · chat ${s.chat_similarity_pct ?? '?'} % alike · failures old ${s.failures.old}, new ${s.failures.new}</p>${changes}
     ${s.timings_contaminated ? `<p class="fs-12 t-amber mt-8">The per-title times were taken while another model shared the card${s.remeasured_clean ? '; tok/s, VRAM and GPU share below were measured again with each side alone' : ''}.</p>` : ''}
-    <div class="tbl-wrap mt-8"><table class="tbl"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
+    <div class="tbl-wrap mt-8"><table class="tbl stack"><thead><tr><th></th><th>Pinned</th><th>New</th></tr></thead><tbody>
       ${row('Judge, s per title', 'judge_s')}${row('Card note, s per title', 'monologue_s')}${row('Generation, tok/s', 'gen_tok_s')}
       ${s.speed_unstable ? `<tr><td colspan="3" class="fs-12 t-amber">Speed was unstable on this machine (reads old ${esc(String(s.gen_tok_s_reads?.old))}, new ${esc(String(s.gen_tok_s_reads?.new))} tok/s) — not used for the recommendation.</td></tr>` : ''}
       ${row(`VRAM, GB${s.vram_source ? ` (${[...new Set(Object.values(s.vram_source))].join(' / ')})` : ''}`, 'vram_gb')}${row('On the GPU, %', 'gpu_share_pct')}${row('Card note, words', 'monologue_words')}

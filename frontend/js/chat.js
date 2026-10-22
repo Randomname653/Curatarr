@@ -1,5 +1,5 @@
 // ── CHAT ──────────────────────────────────────────────────────────────────────
-import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, proxyImg, renderMarkdown, toast } from './ui.js';
+import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, haptic, proxyImg, renderMarkdown, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { _updateKbBadge } from './kb.js';
@@ -101,7 +101,7 @@ export async function correctChatAnchor() {
         ? `${r.message || `Cleared cache for '${r.title}'. Your next question will re-fetch fresh metadata.`}`
         : `${r.reason || 'No active topic to clear yet.'}`;
       msgs.appendChild(note);
-      msgs.scrollTop = msgs.scrollHeight;
+      _follow(msgs, true);
     }
   } catch (e) {
     toast('Re-fetch failed: ' + _errMsg(e), 'danger');
@@ -174,6 +174,37 @@ function _statusTicker(bubble) {
   };
 }
 
+// The log follows a growing reply only while the reader is at the bottom;
+// scrolled up to reread, they keep their place and a "New reply" pill
+// offers the way down. force: the reader's own message always lands in view.
+const NEAR_BOTTOM_PX = 96;
+function _atBottom(msgs) { return msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < NEAR_BOTTOM_PX; }
+export function _follow(msgs, force = false, wasAtBottom = null) {
+  if (!msgs) return;
+  const pill = document.getElementById('jump-latest');
+  if (force || (wasAtBottom ?? _atBottom(msgs))) {
+    msgs.scrollTop = msgs.scrollHeight;
+    if (pill) pill.hidden = true;
+  } else if (pill) {
+    pill.hidden = false;
+  }
+}
+export function jumpLatest() {
+  const msgs = document.getElementById('messages');
+  if (!msgs) return;
+  msgs.scrollTo({top: msgs.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+  document.getElementById('jump-latest').hidden = true;
+}
+let _pillBound = false;
+function _bindJumpPill(msgs) {
+  if (_pillBound || !msgs) return;
+  _pillBound = true;
+  msgs.addEventListener('scroll', () => {
+    const pill = document.getElementById('jump-latest');
+    if (pill && !pill.hidden && _atBottom(msgs)) pill.hidden = true;
+  }, {passive: true});
+}
+
 export async function sendMessage() {
   if (_busyStreaming()) return;
   const inp = document.getElementById('chat-input');
@@ -182,7 +213,9 @@ export async function sendMessage() {
   inp.value = ''; inp.style.height = 'auto';
   inp.disabled = btn.disabled = true;
   ['glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
+  haptic('medium');
   addMsg(text, 'user');
+  _follow(document.getElementById('messages'), true);
   const bubble = addThinkingMsg();
 
   // Pass 27: state.pendingDiscussContext is STICKY — it stays until the user
@@ -204,7 +237,11 @@ export async function sendMessage() {
   // time, so per-token rendering grew quadratically with its length.
   const paint = () => {
     rafId = 0;
-    if (full !== painted && bubble.isConnected) { bubble.innerHTML = renderMarkdown(full); painted = full; }
+    if (full !== painted && bubble.isConnected) {
+      const msgs = bubble.parentElement, stick = msgs ? _atBottom(msgs) : false;
+      bubble.innerHTML = renderMarkdown(full); painted = full;
+      _follow(msgs, false, stick);
+    }
   };
 
   try {
@@ -502,7 +539,7 @@ export function addMsg(text,role) {
   const div = document.createElement('div'); div.className='msg '+role;
   div.textContent=text;
   const msgs = document.getElementById('messages');
-  msgs.appendChild(div); msgs.scrollTop=msgs.scrollHeight;
+  const stick = _atBottom(msgs); msgs.appendChild(div); _bindJumpPill(msgs); _follow(msgs, false, stick);
   return div;
 }
 
@@ -514,8 +551,9 @@ export function addThinkingMsg() {
   div.className = 'msg assistant';
   div.innerHTML = '<div class="thinking-dots" role="img" aria-label="Thinking"><span></span><span></span><span></span></div>';
   const msgs = document.getElementById('messages');
+  const stick = _atBottom(msgs);
   msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+  _follow(msgs, false, stick);
   return div;
 }
 
@@ -591,7 +629,7 @@ async function _showThread(tid, opener) {
     if (history === null) msgs.appendChild(_historyErrorRow(() => _showThread(tid, opener)));
     else for (const m of history) msgs.appendChild(_historyBubble(m));
   });
-  msgs.scrollTop = msgs.scrollHeight;
+  _follow(msgs, true);
   return true;
 }
 
@@ -626,7 +664,7 @@ export async function restoreChatHistory() {
     msgs.querySelector('.msg.assistant')?.remove();
     for (const m of history) msgs.insertBefore(_historyBubble(m), anchor);
   });
-  msgs.scrollTop = msgs.scrollHeight;
+  _follow(msgs, true);
 }
 
 // ── DISCUSS IN CHAT ───────────────────────────────────────────────────────────
@@ -805,7 +843,7 @@ export async function exitDiscussion() {
     note.className = 'msg system';
     note.textContent = 'Exited the discussion thread. The next message is free chat.';
     msgs.appendChild(note);
-    msgs.scrollTop = msgs.scrollHeight;
+    _follow(msgs, true);
   }
 }
 

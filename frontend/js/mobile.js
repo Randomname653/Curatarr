@@ -5,7 +5,7 @@
 // (edge-swipe drawer, pull-to-refresh, tap the active tab to scroll up).
 // Layout itself is CSS (the ≤768px block in app.css); this file only adds
 // behaviour, and every piece is a no-op where the browser lacks the API.
-import { act, openModal, toast } from './ui.js';
+import { HAPTIC_LEVELS, act, activeDialog, closeModal, haptic, hapticLevel, openModal, setHapticPref, toast } from './ui.js';
 import { showView, toggleMobileSidebar } from './nav.js';
 import { state } from './state.js';
 
@@ -22,50 +22,23 @@ const _isPhone = () => PHONE_MQ.matches;
 const _el = id => document.getElementById(id);
 let _installEvt = null;
 
-// Short taps of the vibration motor (Android; iOS has no web API for it).
-// Silent under reduced motion — a buzz is motion too. The web API knows no
-// strength, only duration, so the device setting (Settings → Account →
-// This device) scales length: Light is one pulse at half length (a double
-// pulse collapses to its longest half), Full plays the pattern as written.
-const HAPTIC_KEY = 'curatarr_haptics';
-const HAPTIC_LEVELS = ['off', 'light', 'full'];
+// The vibration motor lives in ui.js (toast and confirmDialog buzz too);
+// swipe.js keeps importing it from here.
+export { haptic };
 
-export function hapticLevel() {
-  try {
-    const v = localStorage.getItem(HAPTIC_KEY);
-    return HAPTIC_LEVELS.includes(v) ? v : 'light';
-  } catch (_) {
-    return 'light';
-  }
-}
-
-export function haptic(pattern = 8) {
-  if (REDUCED_MQ.matches || !navigator.vibrate) return;
-  const level = hapticLevel();
-  if (level === 'off') return;
-  if (level === 'light') {
-    const pulses = Array.isArray(pattern) ? pattern.filter((_, i) => i % 2 === 0) : [pattern];
-    pattern = Math.max(4, Math.round(Math.max(...pulses) / 2));
-  }
-  try { navigator.vibrate(pattern); } catch (_) {}
-}
-
-// The radio group in Settings → Account; the new level buzzes once so the
-// choice can be felt right away.
+// The segmented control in Settings → Account; the new level buzzes once so
+// the choice can be felt right away.
 export function setHapticLevel(input) {
   const v = input?.value;
   if (!HAPTIC_LEVELS.includes(v)) return;
-  try { localStorage.setItem(HAPTIC_KEY, v); } catch (_) { /* private mode: this session only */ }
+  setHapticPref(v);
   _syncHapticChoice();
-  haptic(14);
+  haptic('medium');
 }
 
 function _syncHapticChoice() {
   const level = hapticLevel();
-  for (const r of document.querySelectorAll('input[name="haptics"]')) {
-    r.checked = r.value === level;
-    r.closest('.chip')?.classList.toggle('active', r.checked);
-  }
+  for (const r of document.querySelectorAll('input[name="haptics"]')) r.checked = r.value === level;
 }
 
 export function isStandalone() {
@@ -257,6 +230,51 @@ function _bindTabBar() {
   });
 }
 
+// A bottom sheet follows a downward drag on its head and closes past
+// SHEET_CLOSE_PX or on a quick flick; a short drag springs back. Pointer
+// events, so a mouse in a narrow window drags it too. Only the head starts a
+// drag: the body keeps its own scrolling.
+const SHEET_CLOSE_PX = 90;
+const SHEET_FLICK = 0.5;     // px per ms
+function _bindSheetDrag() {
+  let drag = null;
+  document.addEventListener('pointerdown', e => {
+    if (!_isPhone() || e.button !== 0) return;
+    const head = e.target.closest('#modal-root .modal-head');
+    if (!head || e.target.closest('button, a, input, select, textarea')) return;
+    const sheet = head.closest('.modal');
+    if (sheet !== activeDialog()) return;
+    drag = {sheet, y0: e.clientY, t0: e.timeStamp, dy: 0, id: e.pointerId};
+    // .dragged for good: the entrance animation holds transform with fill
+    // `both` and would override the drag, then replay once it ends
+    sheet.classList.add('dragging', 'dragged');
+    sheet.classList.remove('settling');
+    head.setPointerCapture?.(e.pointerId);
+  });
+  document.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.dy = Math.max(0, e.clientY - drag.y0);
+    drag.sheet.style.transform = `translateY(${drag.dy}px)`;
+  });
+  const end = e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const {sheet, dy, t0} = drag;
+    drag = null;
+    sheet.classList.remove('dragging');
+    const speed = dy / Math.max(1, e.timeStamp - t0);
+    if (e.type === 'pointerup' && (dy > SHEET_CLOSE_PX || (dy > 24 && speed > SHEET_FLICK))) {
+      haptic('light');
+      closeModal();
+      return;
+    }
+    sheet.classList.add('settling');
+    sheet.style.transform = '';
+    sheet.addEventListener('transitionend', () => sheet.classList.remove('settling'), {once: true});
+  };
+  document.addEventListener('pointerup', end);
+  document.addEventListener('pointercancel', end);
+}
+
 // Chat input grows with what is typed (up to the CSS max-height).
 function _bindAutogrow() {
   document.addEventListener('input', e => {
@@ -295,6 +313,7 @@ export function initMobile() {
   _bindDrawerSwipe();
   _bindPullToRefresh();
   _bindTabBar();
+  _bindSheetDrag();
   _bindAutogrow();
   _bindBreakpoint();
   _syncChatPlaceholder();

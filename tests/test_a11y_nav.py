@@ -213,6 +213,9 @@ const cls = () => { const s = new Set(); return {add: c => s.add(c), remove: c =
 const views = {};
 for (const v of ['chat', 'deletions', 'enrich', 'settings', 'recs', 'arr-sonarr', 'arr-lidarr', 'demo']) views[v + '-view'] = {id: v + '-view', classList: cls(), style: {}, querySelector: () => null};
 const chrome = {sidebar: {classList: cls()}, 'sb-backdrop': {classList: cls()}};
+// ui.js motion helpers: the swap runs at once, no vibration motor here
+const withTransition = fn => (fn(), Promise.resolve());
+const haptic = () => {};
 const tabs = (key, ids) => ids.map(id => ({dataset: {[key]: id}}));
 globalThis.document = {
   getElementById: id => views[id] || chrome[id] || null,

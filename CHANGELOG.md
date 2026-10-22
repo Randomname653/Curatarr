@@ -6,6 +6,26 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Light instead of lines: a calmer, more tactile interface.**
+- Panels, cards and dialogs are lit from above (a hairline edge, a faint top highlight,
+  soft layered shadows) instead of outlined; the topbar and sidebar are frosted glass,
+  and the canvas carries a faint amber light. One type scale and one spring curve.
+- Posters shimmer until they arrive and fade in; a failed one stays a quiet placeholder.
+  A card picks up its poster's colour as a soft ambient light, stronger on hover.
+- Deletion cards lead with the curator's pitch; the size reads "frees 4.2 GB" (or MB/TB),
+  Keep / Discuss / More rest a step back until the card is hovered, and an empty note
+  is one dashed line until you use it.
+- Buttons, chips and tabs give a little when pressed on every device, and switching
+  views crossfades where the browser supports View Transitions.
+- Chat: your own messages are a warm tint instead of a solid amber block, replies keep a
+  readable line length, the input floats as a glass bar, and a reply growing below the
+  fold no longer yanks you down while you reread: a "New reply" pill offers the way.
+- Phones: the tab bar floats as a glass dock, sheets can be dragged down to close, and
+  the tables in Activity, History, Knowledge Base, Libraries, Settings, Users and setup
+  turn into stacked rows instead of scrolling sideways.
+- Settings: on/off options are switches, the vibration level is a segmented control,
+  and vibration now also marks sends, Why? toggles, destructive confirms and errors.
+
 **Curatarr on your phone: an installable app with a real mobile layout.**
 - Installable (PWA): a manifest, home-screen icons and a service worker. Open Curatarr
   over https (or on localhost) and the browser offers "Install app"; on iPhone the

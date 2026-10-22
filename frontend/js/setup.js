@@ -450,9 +450,9 @@ export async function renderOnboardingStep(step) {
 
     body.innerHTML = `
       <div class="mb-20 tbl-wrap">
-        <table class="tbl"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
+        <table class="tbl stack"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
         ${state.discoverSections.map(s=>`<tr>
-          <td class="fw-500">${esc(s.title)}</td>
+          <td class="cell-primary fw-500">${esc(s.title)}</td>
           <td class="t3 fs-12">${esc(s.type)}</td>
           <td><select class="field-sm" id="ob-libcat-${s.key}" aria-label="Select category for library">
             ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${o}</option>`).join('')}

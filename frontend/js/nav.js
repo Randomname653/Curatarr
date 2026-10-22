@@ -10,6 +10,7 @@ import { loadDeletions } from './deletions.js';
 import { arrActiveTab, loadArrPage } from './arr.js';
 import { loadReclassify } from './reclassify.js';
 import { loadReport } from './report.js';
+import { haptic, withTransition } from './ui.js';
 export function toggleSidebar() {
   const collapsed = document.getElementById('sidebar').classList.toggle('collapsed');
   localStorage.setItem('curatarr_sidebar_collapsed', collapsed ? '1' : '0');
@@ -148,13 +149,19 @@ export function showView(name, btn, o = {}) {
     if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
   });
   if (!tabbed) document.getElementById('mt-more')?.classList.add('active');
-  // Clear all views — remove active class AND reset any inline display styles
-  document.querySelectorAll('.view').forEach(v => {
-    v.classList.remove('active');
-    v.style.display = '';  // clear inline style so CSS .view / .view.active takes over
-  });
+  // Clear all views — remove active class AND reset any inline display styles.
+  // A real change of view crossfades (View Transitions where the browser has
+  // them); re-showing the current one swaps in place.
   const el = document.getElementById(name + '-view');
-  if (el) el.classList.add('active');
+  const swap = () => {
+    document.querySelectorAll('.view').forEach(v => {
+      v.classList.remove('active');
+      v.style.display = '';  // clear inline style so CSS .view / .view.active takes over
+    });
+    if (el) el.classList.add('active');
+  };
+  const swapped = el && !el.classList.contains('active') ? withTransition(swap) : (swap(), Promise.resolve());
+  if (btn) haptic('light');
   if (name==='history') loadHistoryStatus();
   if (name==='tasks') loadTaskHistory();
   if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(state.currentRecsCategory); } }
@@ -169,7 +176,8 @@ export function showView(name, btn, o = {}) {
   // Keyboard and screen-reader users land on the new view's heading, not
   // back at the top of the sidebar. Only for navigation the owner asked for;
   // the first render after sign-in leaves focus where it is.
-  if (o.focus) el?.querySelector('h1')?.focus({preventScroll: true});
+  // (after the swap: inside a view transition it lands a frame later)
+  if (o.focus) swapped.then(() => el?.querySelector('h1')?.focus({preventScroll: true}));
 }
 
 // History's "Plex libraries" button: the mapping lives in Settings now.

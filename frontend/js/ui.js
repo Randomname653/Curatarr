@@ -21,6 +21,81 @@ export const SVG_X = '<svg class="icon-inline" width="13" height="13" viewBox="0
 export const SVG_TRASH = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
 export const SVG_STAR = '<svg class="icon-inline" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>';
 
+// ── TOUCH FEEDBACK ──────────────────────────────────────────────────────────
+// Short taps of the vibration motor (Android; iOS has no web API for it).
+// Silent under reduced motion — a buzz is motion too. The web API knows no
+// strength, only duration, so the device setting (Settings → Account →
+// This device, mobile.setHapticLevel) scales length: Light is one pulse at
+// half length (a double pulse collapses to its longest half), Full plays the
+// pattern as written. Here and not in mobile.js because toast() and
+// confirmDialog() buzz too; mobile.js re-exports it.
+const REDUCED_MQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+const HAPTIC_KEY = 'curatarr_haptics';
+export const HAPTIC_LEVELS = ['off', 'light', 'full'];
+// The named feels: a tap (tabs, toggles, opening a disclosure), a confirm
+// (sending, adopting), a warning (a destructive confirm, an error).
+const HAPTIC_KINDS = {tick: 6, light: 8, medium: 15, warn: [20, 40, 30]};
+
+export function hapticLevel() {
+  try {
+    const v = localStorage.getItem(HAPTIC_KEY);
+    return HAPTIC_LEVELS.includes(v) ? v : 'light';
+  } catch (_) {
+    return 'light';
+  }
+}
+
+export function setHapticPref(level) {
+  try { localStorage.setItem(HAPTIC_KEY, level); } catch (_) { /* private mode: this session only */ }
+}
+
+export function haptic(pattern = 'light') {
+  if (REDUCED_MQ.matches || !navigator.vibrate) return;
+  const level = hapticLevel();
+  if (level === 'off') return;
+  if (typeof pattern === 'string') pattern = HAPTIC_KINDS[pattern] ?? HAPTIC_KINDS.light;
+  if (level === 'light') {
+    const pulses = Array.isArray(pattern) ? pattern.filter((_, i) => i % 2 === 0) : [pattern];
+    pattern = Math.max(4, Math.round(Math.max(...pulses) / 2));
+  }
+  try { navigator.vibrate(pattern); } catch (_) {}
+}
+
+// ── MOTION ──────────────────────────────────────────────────────────────────
+// Swap what is on screen inside a View Transition where the browser has one
+// (a crossfade + rise, see app.css); a plain call elsewhere and under
+// reduced motion. Without the API fn runs synchronously; with it, a frame
+// later — the returned promise settles once fn has run, either way.
+export function withTransition(fn) {
+  if (!document.startViewTransition || REDUCED_MQ.matches || document.hidden) { fn(); return Promise.resolve(); }
+  const root = document.documentElement;
+  root.classList.add('vt');
+  try {
+    const t = document.startViewTransition(fn);
+    t.finished.finally(() => root.classList.remove('vt'));
+    return t.updateCallbackDone.catch(() => {});
+  } catch (_) {
+    root.classList.remove('vt');
+    fn();
+    return Promise.resolve();
+  }
+}
+
+// A number that counts up to n instead of jumping (stat boxes). Ease-out
+// over ms; reduced motion and an unchanged value write it straight away.
+export function countTo(el, n, ms = 600) {
+  if (!el) return;
+  const from = parseInt(el.textContent.replace(/\D/g, ''), 10) || 0;
+  if (from === n || REDUCED_MQ.matches || document.hidden) { el.textContent = n.toLocaleString(); return; }
+  const t0 = performance.now();
+  const step = t => {
+    const p = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - p, 4);
+    el.textContent = Math.round(from + (n - from) * e).toLocaleString();
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 // A failed api() call throws the raw response body as e.message -- for a
 // FastAPI error that's a JSON blob like {"detail":"..."}. Pull the human
 // part out instead of dumping that JSON straight into the UI.
@@ -62,7 +137,35 @@ export function _posterImg(url, w, h, isMusic) {
     ? ['w185', 'w342', 'w500', 'w780'].map(sz => `${esc(proxyImg(url.replace(sizeMatch[1], sz)))} ${sz.slice(1)}w`).join(', ')
     : '';
   const srcsetAttr = srcset ? ` srcset="${srcset}" sizes="${w}px"` : '';
-  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" class="poster-img" data-style="width:${w}px;height:${h}px;border-radius:${radius}" ${actOn('error', 'hideOnError', EL)}>`;
+  return `<img src="${esc(proxyImg(url))}"${srcsetAttr} alt="" class="poster-img" loading="lazy" decoding="async" data-style="width:${w}px;height:${h}px;border-radius:${radius}" ${actOn('load', 'posterLoaded', EL)} ${actOn('error', 'hideOnError', EL)}>`;
+}
+
+// A poster arrived: fade it in (its frame stops shimmering, see app.css) and
+// lend the card its average colour as an ambient light. One 8×8 canvas for
+// every poster — a grid of cards must not allocate a 2D context each. The
+// posters come through proxyImg (same origin), so the canvas is readable; a
+// foreign one taints it, getImageData throws, and the card stays untinted.
+let _tintCtx = null;
+export function posterLoaded(img) {
+  if (!img || img.classList.contains('is-loaded')) return;
+  img.classList.add('is-loaded');
+  const card = img.closest('.card');
+  if (!card || img.naturalWidth < 2) return;
+  try {
+    if (!_tintCtx) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 8;
+      _tintCtx = c.getContext('2d', {willReadFrequently: true});
+    }
+    _tintCtx.clearRect(0, 0, 8, 8);
+    _tintCtx.drawImage(img, 0, 0, 8, 8);
+    const d = _tintCtx.getImageData(0, 0, 8, 8).data;
+    let r = 0, g = 0, b = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+    const n = d.length / 4;
+    card.style.setProperty('--poster-tint', `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`);
+    card.classList.add('has-tint');
+  } catch (_) { /* tainted or undecodable: no tint */ }
 }
 
 // ── UI GRAMMAR HELPERS ──────────────────────────────────────────────────────
@@ -94,6 +197,7 @@ export function toast(text, kind = 'info', opts = {}) {
   _toastRecent.set(key, now);
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
+  if (kind === 'danger') haptic('warn');
   el.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
   el.setAttribute('aria-live', kind === 'danger' ? 'assertive' : 'polite');
   el.innerHTML = (opts.actions?.length ? '' : '<button type="button" class="toast-close" aria-label="Dismiss">×</button>') +
@@ -227,7 +331,7 @@ export function confirmDialog(o = {}) {
     });
     const okBtn = document.getElementById('confirm-ok');
     document.getElementById('confirm-cancel').onclick = () => finish(false);
-    okBtn.onclick = () => finish(true);
+    okBtn.onclick = () => { if (o.danger) haptic('warn'); finish(true); };
     document.getElementById('confirm-reason')?.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !okBtn.disabled) finish(true); });
     if (o.countdown) {
       let s = o.countdown;
@@ -419,9 +523,41 @@ export function hydrateStyles(root = document) {
     delete el.dataset.style;   // applied once; a re-render brings a fresh value
   }
 }
+// Phones show a .tbl.stack as stacked rows, each cell captioned by its
+// column: the caption is the <th> above it, copied into data-label here so
+// a template states each heading once and the two can never drift apart.
+// A cell that already names itself, the .cell-primary title and a colspan
+// row keep what they have.
+export function labelTables(root = document) {
+  const tables = root.querySelectorAll ? Array.from(root.querySelectorAll('table.tbl.stack')) : [];
+  if (root.matches && root.matches('table.tbl.stack')) tables.unshift(root);
+  for (const t of tables) {
+    const heads = Array.from(t.querySelectorAll('thead th'), th => th.textContent.trim());
+    for (const tr of t.querySelectorAll('tbody tr')) {
+      Array.from(tr.children).forEach((td, i) => {
+        if (td.colSpan > 1 || td.classList.contains('cell-primary') || td.hasAttribute('data-label') || !heads[i]) return;
+        td.setAttribute('data-label', heads[i]);
+      });
+    }
+  }
+}
+
+// A poster already in the cache can finish before its load listener sees
+// it; anything inserted complete is marked loaded here so none sits at
+// opacity 0.
+function _settleCachedPosters(root) {
+  const imgs = root.querySelectorAll ? root.querySelectorAll('img.poster-img:not(.is-loaded)') : [];
+  for (const img of imgs) if (img.complete && img.naturalWidth > 0) posterLoaded(img);
+}
+
 if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
   new MutationObserver(muts => {
-    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) hydrateStyles(n);
+    for (const m of muts) for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      hydrateStyles(n);
+      labelTables(n);
+      _settleCachedPosters(n);
+    }
   }).observe(document.documentElement, {childList: true, subtree: true});
 }
 
@@ -500,5 +636,9 @@ export function keyActivate(event, el) {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); el.click(); }
 }
 
-// A poster whose image failed to load disappears instead of showing the broken-image glyph.
-export function hideOnError(el) { el.style.display = 'none'; }
+// A poster whose image failed to load disappears instead of showing the
+// broken-image glyph; its frame stops shimmering and stays a placeholder.
+export function hideOnError(el) {
+  el.style.display = 'none';
+  el.closest('.glow-interactive')?.classList.add('is-broken');
+}

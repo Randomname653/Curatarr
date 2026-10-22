@@ -98,6 +98,7 @@ const _errMsg = e => { try { const j = JSON.parse(e?.message || ''); if (j?.deta
 const _errHtml = (e, retry) => `<p class="load-err">Couldn't load — ${esc(_errMsg(e))}</p>` + (retry ? `<button ${retry}>Retry</button>` : '');
 const SVG_WARN = '<svg/>';
 const EL = '$el';
+const haptic = () => {};
 """
 
 

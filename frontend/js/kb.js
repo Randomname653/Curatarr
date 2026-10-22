@@ -156,7 +156,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
     const pct = d.downloaded ? Math.round(100 * done / d.downloaded) : 0;
     const cell = keys => `<td class="t-right">${num(keys.reduce((a, k) => a + n(k), 0), cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</td>`;
     return `<tr>
-      <td>${esc(CAT_LABELS[cat] || cat)}</td>
+      <td class="cell-primary">${esc(CAT_LABELS[cat] || cat)}</td>
       <td class="t-right">${d.downloaded.toLocaleString()} <span class="t3">/ ${d.arr_total.toLocaleString()}</span></td>
       <td class="t-right">${num(done, cat, 'enriched,enriched_provisional', defs.enriched, 't-success b')} <span class="t3">${pct}%</span></td>
       ${cell(['enriched_dead'])}${cell(['rule_based', 'awaiting_llm'])}${cell(['retry_due'])}${cell(['not_found'])}${cell(['queued', 'processing_error'])}${cell(['ignored'])}${cell(['never_processed'])}
@@ -184,7 +184,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
 
   const wh = o.watch_history_only || {};
   const whRows = order.filter(c => wh[c]).map(c =>
-    `<tr><td>${esc(CAT_LABELS[c] || c)}</td><td class="t-right">${wh[c].rows.toLocaleString()}</td><td class="t-right">${wh[c].enriched.toLocaleString()}</td><td class="t-right t3">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
+    `<tr><td class="cell-primary">${esc(CAT_LABELS[c] || c)}</td><td class="t-right">${wh[c].rows.toLocaleString()}</td><td class="t-right">${wh[c].enriched.toLocaleString()}</td><td class="t-right t3">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
   const st = o.storage || {};
 
   document.getElementById('enrich-overview').innerHTML = `
@@ -199,7 +199,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
       </div>
       <div class="section-body">
         <div class="scroll-x tbl-wrap">
-          <table class="tbl"><thead><tr>
+          <table class="tbl stack"><thead><tr>
             <th>Library</th>
             <th class="t-right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
             <th class="t-right" title="Full profile written (including provisional fast-pass profiles)">Enriched</th>
@@ -222,7 +222,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
     <div class="items-stretch row">
       <section class="minw-280 section grow">
         <div class="section-head"><h3>Watch-history tracking</h3><span class="section-hint" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages">own set, not part of the percentages</span></div>
-        <div class="section-body"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
+        <div class="section-body"><div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
       </section>
       <section class="minw-280 section grow">
         <div class="section-head"><h3>Storage</h3><span class="section-hint">enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</span>
@@ -233,7 +233,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
 
   // The Spotify phases live on the Music-pipeline tab, fed by the same payload.
   const mp = o.music_pipeline || {};
-  const phase = (label, pp, def) => pp ? `<tr><td title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+  const phase = (label, pp, def) => pp ? `<tr><td class="cell-primary" title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
   // A queue that never empties used to read as a stuck bar. MusicBrainz
   // simply does not know every artist a Spotify export carries, and those
   // names are parked with a growing backoff rather than re-queried nightly.
@@ -243,7 +243,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const mpEl = document.getElementById('music-phases');
   if (mpEl) mpEl.innerHTML = `<section class="section">
     <div class="section-head"><h3>Coverage</h3><span class="section-hint">where the imported plays stand</span></div>
-    <div class="section-body"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
+    <div class="section-body"><div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
       ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
       ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
       ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
@@ -255,13 +255,13 @@ export async function loadCacheInventory(btn) {
   try {
     const r = await api('/api/enrichment/cache-inventory');
     const rows = r.classes.map(c =>
-      `<tr><td>${esc(c.name)}</td><td class="t-right">${c.rows.toLocaleString()}</td>
+      `<tr><td class="cell-primary">${esc(c.name)}</td><td class="t-right">${c.rows.toLocaleString()}</td>
        <td class="t-right">${c.live.toLocaleString()}</td>
        <td class="t-right t3">${c.expired.toLocaleString()}</td>
        <td class="t-right">${c.mb}</td></tr>`).join('');
     const cov = r.coverage;
     document.getElementById('cache-inventory').innerHTML = `
-      <div class="mt-8 tbl-wrap"><table class="tbl">
+      <div class="mt-8 tbl-wrap"><table class="tbl stack">
         <thead><tr><th>Source class</th><th class="t-right">Rows</th>
           <th class="t-right">Live</th>
           <th class="t-right" title="Expired — unreadable through the cache API. Kept only where the stale row is still the last record (raw/prefetch of deleted media); the raw-cache refresh task re-pulls what matters.">Stale</th>

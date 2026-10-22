@@ -255,6 +255,7 @@
           <button class="sp-chip" data-action="fillPrompt" data-args='["What does my watch history say about my taste?"]'>What does my watch history say about my taste?</button>
         </div>
       </div>
+      <button type="button" class="btn btn-secondary btn-sm" id="jump-latest" data-action="jumpLatest" hidden>New reply ↓</button>
       <div id="chat-input-area">
         <!-- Icon + label: phones show the icon alone (aria-label carries the name) -->
         <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label">New</span></button>
@@ -496,10 +497,10 @@
             <div class="section-body">
               <div class="row mb-8">
                 <span class="fs-12 t3">Libraries:</span>
-                <label class="row fs-13" for="enrich-cat-music"><input type="checkbox" id="enrich-cat-music" checked> Music</label>
-                <label class="row fs-13" for="enrich-cat-movie"><input type="checkbox" id="enrich-cat-movie" checked> Movies</label>
-                <label class="row fs-13" for="enrich-cat-show"><input type="checkbox" id="enrich-cat-show" checked> TV Shows</label>
-                <label class="row fs-13" for="enrich-cat-anime"><input type="checkbox" id="enrich-cat-anime" checked> Anime</label>
+                <label class="row fs-13" for="enrich-cat-music"><input type="checkbox" class="switch" id="enrich-cat-music" checked> Music</label>
+                <label class="row fs-13" for="enrich-cat-movie"><input type="checkbox" class="switch" id="enrich-cat-movie" checked> Movies</label>
+                <label class="row fs-13" for="enrich-cat-show"><input type="checkbox" class="switch" id="enrich-cat-show" checked> TV Shows</label>
+                <label class="row fs-13" for="enrich-cat-anime"><input type="checkbox" class="switch" id="enrich-cat-anime" checked> Anime</label>
               </div>
               <div class="row mb-12">
                 <span class="fs-12 t3">Source:</span>
@@ -707,13 +708,14 @@
               <section class="section">
                 <div class="section-head"><h3>This device</h3><span class="section-hint">Saved in this browser only.</span></div>
                 <div class="section-body">
-                  <div class="row" role="radiogroup" aria-labelledby="haptics-label">
-                    <span class="fs-13" id="haptics-label">Vibration</span>
-                    <label class="chip" for="haptics-off"><input type="radio" name="haptics" id="haptics-off" value="off" data-on-change="setHapticLevel" data-args='["$el"]'> Off</label>
-                    <label class="chip" for="haptics-light"><input type="radio" name="haptics" id="haptics-light" value="light" data-on-change="setHapticLevel" data-args='["$el"]'> Light</label>
-                    <label class="chip" for="haptics-full"><input type="radio" name="haptics" id="haptics-full" value="full" data-on-change="setHapticLevel" data-args='["$el"]'> Full</label>
+                  <div class="pref-row">
+                    <span class="pref-text" id="haptics-label">Vibration<small>Taps, sends and warnings. Android phones; iPhones don't let web apps vibrate. Off under reduced motion either way.</small></span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="haptics-label">
+                      <label for="haptics-off"><input type="radio" name="haptics" id="haptics-off" value="off" data-on-change="setHapticLevel" data-args='["$el"]'>Off</label>
+                      <label for="haptics-light"><input type="radio" name="haptics" id="haptics-light" value="light" data-on-change="setHapticLevel" data-args='["$el"]'>Light</label>
+                      <label for="haptics-full"><input type="radio" name="haptics" id="haptics-full" value="full" data-on-change="setHapticLevel" data-args='["$el"]'>Full</label>
+                    </div>
                   </div>
-                  <div class="fs-12 t3 mt-4">Android phones; iPhones don't let web apps vibrate. Off under reduced motion either way.</div>
                 </div>
               </section>
               <section class="section">

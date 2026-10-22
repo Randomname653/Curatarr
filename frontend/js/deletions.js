@@ -5,12 +5,21 @@
 // Invalidated whenever a targeted single-category analysis runs (because that
 // category's slice would then be out of sync with the stored full list).
 // Moved state._delProposalsAll to state
-import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast } from './ui.js';
+import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, haptic, _errHtml, _errMsg, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast } from './ui.js';
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { tabToHash } from './nav.js';
+
+// Disk space in the unit a person would say: 820 MB, 4.2 GB, 37 GB, 1.3 TB.
+function _fmtSize(gb) {
+  gb = Number(gb);
+  if (!gb) return '';
+  if (gb >= 1000) return `${(gb / 1000).toFixed(1)} TB`;
+  if (gb < 1) return `${Math.round(gb * 1024)} MB`;
+  return `${gb.toFixed(gb < 10 ? 1 : 0)} GB`;
+}
 
 // Pass 17: small badge showing "added Xd ago" when the proposal has a
 // recent file-import timestamp. Threshold of 30 days keeps the badge
@@ -74,6 +83,7 @@ export function toggleWhy(btn) {
   const open = btn.getAttribute('aria-expanded') !== 'true';
   btn.setAttribute('aria-expanded', String(open));
   panel.hidden = !open;
+  haptic('light');
 }
 // Escape closes an open Why? panel when focus is on its button or inside it,
 // and puts focus back on the button. One delegated listener for every card.
@@ -152,10 +162,10 @@ export function _renderDeletionProposals(proposals) {
               </div>
             </div>
             ${_whyPanel(p)}
-            <div class="fs-12 t3 mt-4">${esc(p.service||'')} · ${p.size_gb||0} GB</div>
+            <div class="quote-text mt-8">${esc(p.pitch||p.reason||'')}</div>
+            <div class="meta-quiet mt-8">${esc(p.service||'')}${p.size_gb ? ` · frees <b>${_fmtSize(p.size_gb)}</b>` : ''}</div>
             ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(p.synopsis)}</div>` : ''}
-            <div class="quote-text italic t2 mt-8">"${esc(p.pitch||p.reason||'')}"</div>
             ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Parked: the arr was unreachable, its index drifted, or the last attempt's outcome is unconfirmed. Retry delete checks again before it deletes anything.</div>` : ''}
             <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" ${actOn('blur', 'saveComment', p.id)} ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}>${esc(p.user_comment||'')}</textarea>
             <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? 'Note saved.' : ''}</div>
