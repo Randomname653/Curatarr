@@ -215,5 +215,14 @@ src_main = (ROOT / "src/main.py").read_text(encoding="utf-8")
 check("main.py installs the check inside the Host allow-list",
       src_main.index("CloudflareAccessMiddleware, hosts=") < src_main.index("HostAllowListMiddleware, allowed_hosts="))
 
+# ── the PWA behind Access ───────────────────────────────────────────────────
+# Browsers fetch the manifest without cookies unless told otherwise; Access
+# then serves its login page and the install falls back to a letter icon.
+import re  # noqa: E402
+index = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+link = re.search(r'<link rel="manifest"[^>]*>', index)
+check("the manifest is fetched with the Access cookie (crossorigin=use-credentials)",
+      link and 'crossorigin="use-credentials"' in link.group(0))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
