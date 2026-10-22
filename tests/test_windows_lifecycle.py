@@ -137,8 +137,10 @@ if sys.platform != "win32":
     check("off Windows the hook is a quiet no-op",
           tray._install_endsession_hook(lambda: None, threading.Thread()) is None)
 ts = (ROOT / "src/tray_app.py").read_text(encoding="utf-8")
-check("the tray installs it next to the server thread",
-      "_install_endsession_hook(_initiate_stop, server_thread)" in ts)
+check("the tray installs it next to the server thread (stopping for good: the PC "
+      "agent's shutdown notice first, then the graceful stop)",
+      "_install_endsession_hook(_stop_for_good, server_thread)" in ts
+      and ts.index("agent.announce_shutdown()") < ts.index("_initiate_stop()\n", ts.index("def _stop_for_good")))
 check("top-level window, not message-only (HWND_MESSAGE misses session broadcasts)",
       "HWND_MESSAGE" not in ts and "CreateWindowExW(0, wc.lpszClassName" in ts)
 

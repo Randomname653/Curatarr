@@ -287,6 +287,18 @@ class Settings(BaseSettings):
     CF_ACCESS_TEAM_DOMAIN: str = ""
     CF_ACCESS_AUD: str = ""
 
+    # ── The gaming PC as a second machine (src/pc_agent.py, services/pc_host.py)
+    # Curatarr on a NAS borrows the PC's card. The PC's tray runs an agent
+    # that reports its processes and GPU, so game detection keeps working.
+    # Both sides share PC_AGENT_TOKEN (16+ characters).
+    # On the PC:   PC_AGENT_TOKEN, PC_AGENT_PORT, PC_AGENT_NOTIFY_URL (this
+    #              Curatarr's LAN address, for the shutdown notice).
+    # On the NAS:  PC_AGENT_TOKEN, PC_AGENT_URL (http://<pc>:<port>).
+    PC_AGENT_TOKEN: Optional[SecretStr] = None
+    PC_AGENT_PORT: int = 11435
+    PC_AGENT_NOTIFY_URL: str = ""
+    PC_AGENT_URL: str = ""
+
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to
     # 0.0.0.0 (see start.bat) so /api/docs is reachable from the LAN

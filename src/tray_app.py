@@ -400,6 +400,18 @@ def main() -> None:
 
     shutdown_bridge.register(_initiate_stop)
 
+    # The PC agent (src/pc_agent.py): reports this PC's processes and GPU to
+    # a Curatarr on the NAS. Only with PC_AGENT_TOKEN set; None otherwise.
+    from src import pc_agent
+    agent = pc_agent.start_from_settings(settings)
+
+    def _stop_for_good():
+        """The PC (or the tray) is going away, not restarting: tell the NAS
+        first, then stop."""
+        if agent is not None:
+            agent.announce_shutdown()
+        _initiate_stop()
+
     icon = pystray.Icon(
         "curatarr", _draw_eye(64), "Curatarr",
         menu=pystray.Menu(
@@ -414,7 +426,7 @@ def main() -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart",
                              lambda: (restart_requested.set(), _initiate_stop())),
-            pystray.MenuItem("Shutdown", lambda: _initiate_stop()),
+            pystray.MenuItem("Shutdown", lambda: _stop_for_good()),
         ),
     )
 
@@ -441,7 +453,7 @@ def main() -> None:
 
     server_thread = threading.Thread(target=_serve, name="curatarr-uvicorn")
     server_thread.start()
-    _install_endsession_hook(_initiate_stop, server_thread)
+    _install_endsession_hook(_stop_for_good, server_thread)
 
     if ollama_warning:
         # notify shortly after the icon is up (setup runs on icon.run)
@@ -459,6 +471,8 @@ def main() -> None:
     # icon stopped (worker finally / user quit) → wind down
     server.should_exit = True
     server_thread.join(timeout=25)
+    if agent is not None:
+        agent.stop()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(mutex)   # BEFORE any re-exec
 
