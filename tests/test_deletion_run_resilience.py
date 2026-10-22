@@ -139,7 +139,7 @@ def _handler(request):
     return httpx.Response(200, json={"message": {"content": "A sharp note."}})
 
 
-httpx.AsyncClient = lambda **kw: _Real(transport=httpx.MockTransport(_handler), **kw)
+httpx.AsyncClient = lambda **kw: _Real(**{**kw, "transport": httpx.MockTransport(_handler)})
 try:
     floored = {"verdict": "STAGNANT", "_guard": "household_floor", "_guard_detail": "Ana",
                "pillar_0_ego": "x", "protecting_pillar": "NONE"}

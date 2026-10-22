@@ -21,6 +21,7 @@ from src.services.llm_utils import (
 )
 from src.config import settings as _cfg
 from src.services.ollama_hosts import host_for
+from src.services.pc_guard import PcLost, ollama_client
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -578,8 +579,7 @@ async def _extract_entity_llm(normalized_query: str) -> str:
     try:
         async with curator_priority("chat: identifying the title", priority=INTERACTIVE):
             host = host_for("chat")
-            async with httpx.AsyncClient(verify=tls_context(),
-                                         timeout=_ENTITY_TIMEOUT_S) as client:
+            async with ollama_client(timeout=_ENTITY_TIMEOUT_S) as client:
                 r = await client.post(
                     f"{host.url}/api/chat",
                     json=curator_payload(
@@ -1413,7 +1413,7 @@ async def warm_curator(user: User = Depends(get_current_user)):
                 # Empty messages: Ollama loads the model and returns.
                 host = host_for("chat")
                 payload = curator_payload([], temperature=0.7, num_predict=1, host=host)
-                async with httpx.AsyncClient(verify=tls_context(), timeout=300) as client:
+                async with ollama_client(timeout=300) as client:
                     await client.post(f"{host.url}/api/chat", json=payload)
             logger.info("[chat] curator warmed ahead of the user's message")
         except Exception as e:  # noqa: BLE001 - speculative; the turn loads it anyway
@@ -3638,98 +3638,128 @@ FORMATTING RULES:
                 # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
                 # the response can take 5-10 minutes. We'd rather wait it out
                 # than 504 the user mid-stream when their model has spilled.
-                async with httpx.AsyncClient(verify=tls_context(), timeout=600) as client:
-                    request = client.build_request(
-                        "POST",
-                        f"{ollama_url}/api/chat",
-                        json={
-                            "model": curator_model,
-                            "messages": messages,
-                            "stream": True,
-                            "keep_alive": CURATOR_KEEP_ALIVE,
-                            # 2048 cut long, in-flight monologues off mid-sentence
-                            # (the "hoarding" critique stopped at "...The Godfather").
-                            # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
-                            # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
-                            # input tokens — the 33.5k-char Kill la Kill turn fits.
-                            # chat_predict shrinks with a smaller window.
-                            **curator_options(temperature=0.7, num_predict=chat_predict,
-                                              host=chat_host),
-                        },
-                    )
-                    # Ollama sends its response headers with the first token,
-                    # so a cold load or a long prompt eval happens BEFORE
-                    # client.stream() returns - and the heartbeat below never
-                    # ran there: 46 s of silence and the client's 45 s idle
-                    # watchdog dropped the reply (2026-10-22).
-                    sending = asyncio.ensure_future(client.send(request, stream=True))
+                # One retry on the main host when the gaming PC goes away
+                # (shutdown, power, a game) BEFORE the reply has a word in it:
+                # services/pc_guard cuts the call off and raises PcLost. Once
+                # tokens went out, the turn ends with a note instead - a reply
+                # cannot be continued by another model.
+                _host, _url, _predict, _msgs = chat_host, ollama_url, chat_predict, messages
+                _attempt = 0
+                while True:
                     try:
-                        while not sending.done():
-                            await asyncio.wait({sending}, timeout=_HEARTBEAT_S)
-                            if not sending.done():
-                                yield ": keepalive\n\n"
-                                last_emit = loop.time()
-                    except BaseException:
-                        if not sending.done():
-                            sending.cancel()
-                        elif not sending.cancelled() and sending.exception() is None:
-                            await sending.result().aclose()
-                        raise
-                    async with _closing_response(sending.result()) as resp:
-                        if resp.status_code != 200:
-                            # A missing model or a crashed runner answers with
-                            # one {"error": …} line and no "done" — it used to
-                            # read as an empty reply, "(no response)".
-                            _body = (await resp.aread())[:500]
-                            logger.error("[chat] Ollama answered %s: %r",
-                                         resp.status_code, _body)
-                            error_text = ("Error: the curator could not start this reply. "
-                                          "The server log has the details.")
-                        else:
-                            # The heartbeat keeps running until the end, not
-                            # just until the slot is ours: a cold load of the
-                            # 20 GB model or a full 16k-token prompt eval can
-                            # take minutes before the first line, and a <think>
-                            # block streams lines the client never sees.
-                            paced = _lines_with_heartbeat(resp.aiter_lines(), _HEARTBEAT_S)
-                            async with aclosing(paced) as lines:
-                                async for line in lines:
-                                    if loop.time() - last_emit >= _HEARTBEAT_S:
+                        async with ollama_client(timeout=600) as client:
+                            request = client.build_request(
+                                "POST",
+                                f"{_url}/api/chat",
+                                json={
+                                    "model": curator_model,
+                                    "messages": _msgs,
+                                    "stream": True,
+                                    "keep_alive": CURATOR_KEEP_ALIVE,
+                                    # 2048 cut long, in-flight monologues off mid-sentence
+                                    # (the "hoarding" critique stopped at "...The Godfather").
+                                    # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
+                                    # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
+                                    # input tokens — the 33.5k-char Kill la Kill turn fits.
+                                    # chat_predict shrinks with a smaller window.
+                                    **curator_options(temperature=0.7, num_predict=_predict,
+                                                      host=_host),
+                                },
+                            )
+                            # Ollama sends its response headers with the first token,
+                            # so a cold load or a long prompt eval happens BEFORE
+                            # client.stream() returns - and the heartbeat below never
+                            # ran there: 46 s of silence and the client's 45 s idle
+                            # watchdog dropped the reply (2026-10-22).
+                            sending = asyncio.ensure_future(client.send(request, stream=True))
+                            try:
+                                while not sending.done():
+                                    await asyncio.wait({sending}, timeout=_HEARTBEAT_S)
+                                    if not sending.done():
                                         yield ": keepalive\n\n"
                                         last_emit = loop.time()
-                                    if line is _HEARTBEAT or not line:
-                                        continue
-                                    try:
-                                        chunk = json.loads(line)
-                                    except json.JSONDecodeError:
-                                        continue
-                                    raw_token = chunk.get("message", {}).get("content", "")
-                                    if raw_token:
-                                        # Emit any pending VRAM-fallback warning ONCE,
-                                        # right before the first user-visible token.
-                                        if not health_warned and health_task.done():
+                            except BaseException:
+                                if not sending.done():
+                                    sending.cancel()
+                                elif not sending.cancelled() and sending.exception() is None:
+                                    await sending.result().aclose()
+                                raise
+                            async with _closing_response(sending.result()) as resp:
+                                if resp.status_code != 200:
+                                    # A missing model or a crashed runner answers with
+                                    # one {"error": …} line and no "done" — it used to
+                                    # read as an empty reply, "(no response)".
+                                    _body = (await resp.aread())[:500]
+                                    logger.error("[chat] Ollama answered %s: %r",
+                                                 resp.status_code, _body)
+                                    error_text = ("Error: the curator could not start this reply. "
+                                                  "The server log has the details.")
+                                else:
+                                    # The heartbeat keeps running until the end, not
+                                    # just until the slot is ours: a cold load of the
+                                    # 20 GB model or a full 16k-token prompt eval can
+                                    # take minutes before the first line, and a <think>
+                                    # block streams lines the client never sees.
+                                    paced = _lines_with_heartbeat(resp.aiter_lines(), _HEARTBEAT_S)
+                                    async with aclosing(paced) as lines:
+                                        async for line in lines:
+                                            if loop.time() - last_emit >= _HEARTBEAT_S:
+                                                yield ": keepalive\n\n"
+                                                last_emit = loop.time()
+                                            if line is _HEARTBEAT or not line:
+                                                continue
                                             try:
-                                                h = health_task.result()
-                                                if h.get("message"):
-                                                    logger.warning(
-                                                        "[chat] VRAM fallback detected: %s%% on CPU",
-                                                        h.get("cpu_pct"),
-                                                    )
-                                                    yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
-                                            except Exception:  # noqa: BLE001 - VRAM hint is cosmetic; the reply streams anyway
-                                                pass
-                                            health_warned = True
+                                                chunk = json.loads(line)
+                                            except json.JSONDecodeError:
+                                                continue
+                                            raw_token = chunk.get("message", {}).get("content", "")
+                                            if raw_token:
+                                                # Emit any pending VRAM-fallback warning ONCE,
+                                                # right before the first user-visible token.
+                                                if not health_warned and health_task.done():
+                                                    try:
+                                                        h = health_task.result()
+                                                        if h.get("message"):
+                                                            logger.warning(
+                                                                "[chat] VRAM fallback detected: %s%% on CPU",
+                                                                h.get("cpu_pct"),
+                                                            )
+                                                            yield f"data: {json.dumps({'warning': h['message'], 'severity': h.get('severity', 'moderate')})}\n\n"
+                                                    except Exception:  # noqa: BLE001 - VRAM hint is cosmetic; the reply streams anyway
+                                                        pass
+                                                    health_warned = True
 
-                                        full_response += raw_token
-                                        token = think_filter.feed(raw_token)
-                                        if token:
-                                            yield f"data: {json.dumps({'token': token})}\n\n"
-                                            last_emit = loop.time()
-                                    if chunk.get("done"):
-                                        remainder = think_filter.flush()
-                                        if remainder:
-                                            yield f"data: {json.dumps({'token': remainder})}\n\n"
-                                        break
+                                                full_response += raw_token
+                                                token = think_filter.feed(raw_token)
+                                                if token:
+                                                    yield f"data: {json.dumps({'token': token})}\n\n"
+                                                    last_emit = loop.time()
+                                            if chunk.get("done"):
+                                                remainder = think_filter.flush()
+                                                if remainder:
+                                                    yield f"data: {json.dumps({'token': remainder})}\n\n"
+                                                break
+                        break
+                    except PcLost:
+                        _attempt += 1
+                        _fallback = host_for("chat")
+                        if full_response or _attempt > 1 or _fallback.url == _url:
+                            raise
+                        logger.info("[chat] the gaming PC went away before the reply "
+                                    "started - answering on %s", _fallback.url)
+                        yield f"data: {json.dumps({'status': 'The gaming PC went away - answering on the NAS…'})}\n\n"
+                        last_emit = loop.time()
+                        from src.services.prompt_budget import budget_for as _bf, fit_messages as _fm
+                        _host, _url = _fallback, _fallback.url
+                        _predict = _chat_predict(_fallback)
+                        _msgs, _ = _fm(messages, _bf(_fallback.num_ctx, _predict))
+
+            except PcLost:
+                # Mid-reply, or a second loss: the turn is not saved.
+                logger.info("[chat] the gaming PC went away mid-reply (%d chars)",
+                            len(full_response))
+                error_text = ("The gaming PC went away in the middle of this reply. "
+                              "Send it again - Curatarr answers on the NAS now.")
 
             except httpx.ConnectError:
                 error_text = (f"Ollama not reachable at {ollama_url}. Make sure Ollama is "

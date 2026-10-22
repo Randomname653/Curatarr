@@ -22,6 +22,7 @@ import numpy as np
 
 from src.config import settings
 from src.services.ollama_hosts import host_for
+from src.services.pc_guard import ollama_client
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE, seasonal_context
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
@@ -758,7 +759,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]
         for model in dict.fromkeys(m for m in chain if m):
             try:
-                async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
+                async with ollama_client(timeout=120) as client:
                     r = await client.post(
                         f"{host.url}/api/chat",
                         json={

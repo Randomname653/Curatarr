@@ -40,6 +40,7 @@ from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
 from src.database.runner import run_read
 from src.services.llm_utils import curator_payload
 from src.services.http_client import tls_context
+from src.services.pc_guard import ollama_client
 from src.services.ollama_hosts import host_for
 
 logger = logging.getLogger(__name__)
@@ -1383,7 +1384,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
                               temperature=0.7, num_predict=500, host=host)
 
     async def _post():
-        async with httpx.AsyncClient(verify=tls_context(), timeout=_JUDGE_TIMEOUT) as client:
+        async with ollama_client(timeout=_JUDGE_TIMEOUT) as client:
             resp = await client.post(f"{host.url}/api/chat", json=payload)
         resp.raise_for_status()
         return resp

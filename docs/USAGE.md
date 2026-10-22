@@ -203,6 +203,12 @@ Apps → Custom App → Install via YAML.
     one host.
   - **Without the agent the PC is never used,** because nobody could say
     that it is on or that nobody is playing.
+  - **The PC leaving mid-work** (shutdown, power cut or a game) cuts its
+    calls off within a second instead of after a 5-10 minute timeout:
+    - A verdict counts as an outage and decides nothing.
+    - An enrichment item stays due.
+    - A chat reply that has not started yet is answered on the NAS. One that
+      has started ends with a note and is not saved.
 - **Moving an existing install:** stop the old one, then copy its `data/`
   folder and its `.env` into the volume. Never run two instances against the
   same Plex and arrs.

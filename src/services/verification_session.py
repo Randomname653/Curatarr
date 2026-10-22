@@ -28,6 +28,7 @@ from src.database.models import (
 )
 from src.config import settings
 from src.services.ollama_hosts import ollama_for
+from src.services.pc_guard import ollama_client
 from src.services.episodic_memory import write_memory
 from src.services.llm_utils import (
     clean_llm_text, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE,
@@ -434,7 +435,7 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
     from src.services.llm_priority import make_room_for_summarizer
     await make_room_for_summarizer()
     try:
-        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
+        async with ollama_client(timeout=30) as client:
             r = await client.post(
                 f"{ollama_for("enrich")}/api/chat",
                 json={
@@ -532,7 +533,7 @@ Output as JSON only: {{"answers_question": true, "sentiment": "...", "key_insigh
     from src.services.llm_priority import make_room_for_summarizer
     await make_room_for_summarizer()
     try:
-        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
+        async with ollama_client(timeout=30) as client:
             r = await client.post(
                 f"{ollama_for("enrich")}/api/chat",
                 json={

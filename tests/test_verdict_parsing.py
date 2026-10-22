@@ -249,7 +249,8 @@ le.post_chat = _real_post_chat
 
 
 def with_transport(handler):
-    le.httpx.AsyncClient = lambda **kw: _RealClient(transport=httpx.MockTransport(handler), **kw)
+    le.httpx.AsyncClient = lambda **kw: _RealClient(
+        **{**kw, "transport": httpx.MockTransport(handler)})
 
 
 def call():
