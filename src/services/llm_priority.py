@@ -279,11 +279,12 @@ async def loaded_models() -> Optional[list[dict]]:
     and evict_others evicted nothing — reopening the VRAM race.
     """
     global _ps_failing
-    from src.config import settings
     err = None
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
-            r = await client.get(f"{settings.effective_ollama}/api/ps")
+            # The ACTIVE host: the PC while it takes work, else this
+            # install's Ollama - where the next curator call will run.
+            r = await client.get(f"{ollama_for('curator')}/api/ps")
         if r.status_code == 200:
             _ps_failing = False
             return r.json().get("models", [])
@@ -316,11 +317,10 @@ async def _evict_model(model_name: str, timeout: float = 8.0) -> bool:
     False if we timed out (callers may proceed anyway — better to risk a
     CPU-fallback warning than to block the user forever).
     """
-    from src.config import settings
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
             await client.post(
-                f"{settings.effective_ollama}/api/generate",
+                f"{ollama_for('curator')}/api/generate",
                 json={"model": model_name, "keep_alive": 0},
             )
     except httpx.HTTPError as e:
@@ -543,9 +543,10 @@ async def evict_if_resident(model_name: str) -> None:
         await _evict_model(model_name)
 
 
-async def resolve_pitcher_model() -> str:
+async def resolve_pitcher_model(url: str = None) -> str:
     """The model a deletion run should use: PITCHER_MODEL when configured
-    AND installed, else the curator bake.
+    AND installed - on ``url``, the host the run judges on - else the
+    curator bake.
 
     The install probe (one /api/tags GET per run) is mandatory, not
     defensive polish: pillars.adjudicate swallows ALL exceptions into a
@@ -560,7 +561,7 @@ async def resolve_pitcher_model() -> str:
         return fallback
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
-            r = await client.get(f"{ollama_for("judge")}/api/tags")
+            r = await client.get(f"{url or ollama_for('judge')}/api/tags")
         if r.status_code == 200:
             names = [m.get("name", "") or m.get("model", "")
                      for m in r.json().get("models", [])]

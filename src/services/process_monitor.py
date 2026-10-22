@@ -202,13 +202,14 @@ def _note_smi(state: str, detail: str = "") -> None:
         logger.info("[gpu] nvidia-smi readable again")
 
 
-def _ollama_loaded_models() -> "list | None":
-    """The model names Ollama holds in VRAM (/api/ps); None when it does not answer."""
+def _ollama_loaded_models(url: "str | None" = None) -> "list | None":
+    """The model names Ollama holds in VRAM (/api/ps) - this install's
+    Ollama, or the one at ``url``; None when it does not answer."""
     # httpx, not urllib.request: the latter also opens file:// and ftp://
     # (Bandit B310), and the unload path below already uses httpx anyway.
     import httpx
     try:
-        r = httpx.get(f"{settings.effective_ollama}/api/ps", timeout=2)
+        r = httpx.get(f"{url or settings.effective_ollama}/api/ps", timeout=2)
         r.raise_for_status()
         return [m.get("name") for m in (r.json().get("models") or [])]
     except (httpx.HTTPError, ValueError, AttributeError):
@@ -242,45 +243,53 @@ def _on_loop() -> bool:
     return asyncio._get_running_loop() is not None
 
 
-def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
+def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None,
+                 cache: "dict | None" = None) -> bool:
     """True when the GPU has been saturated for _GPU_HOLD_S by something that
-    is not Ollama. ``smi`` / ``ps`` are injectable for tests. On the event
+    is not Ollama. ``smi`` / ``ps`` are injectable for tests - and carry the
+    PC agent's reading. ``cache``: the hold state of another card (the PC's,
+    pc_busy) so its verdict never mixes with this machine's. On the event
     loop: the last verdict, never a probe (see _on_loop)."""
     import time
     global _gpu_unavailable_until
+    local = cache is None
+    c = _gpu_cache if local else cache
     if not getattr(settings, "GPU_PRESSURE_GATE", True):
         return False
     now = time.time() if now is None else now
     injected = smi is not None or ps is not None
     if not injected and _on_loop():
-        return _gpu_cache["busy"]
-    if not injected and now - _gpu_cache["at"] < _GPU_CACHE_S:
-        return _gpu_cache["busy"]
+        return c["busy"]
+    if not injected and now - c["at"] < _GPU_CACHE_S:
+        return c["busy"]
     if not injected and now < _gpu_unavailable_until:
         return False
     stats = (smi or _nvidia_smi_read)()
     if stats is SMI_MISSING or stats == SMI_ERROR:
-        _note_smi("missing" if stats is SMI_MISSING else "error")
-        _gpu_unavailable_until = now + 600
-        _gpu_cache.update(at=now, busy=False, since=0.0, reason="")
+        if local:
+            _note_smi("missing" if stats is SMI_MISSING else "error")
+            _gpu_unavailable_until = now + 600
+        c.update(at=now, busy=False, since=0.0, reason="")
         return False
     if stats == SMI_TIMEOUT:
         # Fails closed for this tick, through the same hold as a reading:
         # a saturated card is when the query is slowest.
-        _note_smi("timeout")
+        if local:
+            _note_smi("timeout")
         used = total = util = None
         pressed = True
     else:
         used, total, util = stats
         # [N/A] utilization (some cards never report it) used to disable the
         # gate for good; free memory still decides then.
-        _note_smi("ok" if util is not None else "util_unknown",
-                  f"{used}/{total} MB" if util is None else "")
+        if local:
+            _note_smi("ok" if util is not None else "util_unknown",
+                      f"{used}/{total} MB" if util is None else "")
         pressed = ((util is not None and util >= _GPU_UTIL_BUSY)
                    or (used is not None and total is not None and (total - used) < _GPU_FREE_MB_MIN))
     if pressed and (ps or _ollama_loaded_models)():
         pressed = False                       # Ollama's own work: that is us
-    since = _gpu_cache["since"] or now if pressed else 0.0
+    since = c["since"] or now if pressed else 0.0
     busy = pressed and now - since >= _GPU_HOLD_S
     if not busy:
         reason = ""
@@ -289,9 +298,10 @@ def gpu_pressure(*, smi=None, ps=None, now: "float | None" = None) -> bool:
     else:
         mem = f"{used:.0f}/{total:.0f} MB" if used is not None and total is not None else "memory n/a"
         reason = f"{mem}, {util:.0f} %" if util is not None else mem
-    if busy != _gpu_cache["busy"]:
-        logger.info("[gpu] %s", f"held by another process ({reason}) — LLM work yields" if busy else "free again")
-    _gpu_cache.update(at=now, busy=busy, since=since, reason=reason)
+    if busy != c["busy"]:
+        logger.info("[%s] %s", "gpu" if local else "pc gpu",
+                    f"held by another process ({reason}) — LLM work yields" if busy else "free again")
+    c.update(at=now, busy=busy, since=since, reason=reason)
     return busy
 
 
@@ -314,11 +324,40 @@ _LOCAL = object()
 
 def _pc_report():
     """The PC agent's last report when one is configured (None while the PC
-    is unavailable), else _LOCAL - read this machine."""
+    is unavailable), else _LOCAL - read this machine.
+
+    On a SPLIT install (OLLAMA_PC_ENDPOINT set) the PC is a host of its own:
+    this machine's game flag reads this machine, and the PC is judged by
+    pc_busy() for the routing (services/ollama_hosts)."""
     from src.services import pc_host
-    if not pc_host.configured():
+    from src.services.ollama_hosts import split
+    if not pc_host.configured() or split():
         return _LOCAL
     return pc_host.snapshot()
+
+
+_pc_gpu_cache = {"at": 0.0, "busy": False, "since": 0.0, "reason": ""}
+
+
+def pc_busy(report: "dict | None") -> "tuple[bool, str]":
+    """(busy, why) for the gaming PC on a split install, from its agent's
+    report: a classified game runs there, or something other than Ollama
+    holds its card for _GPU_HOLD_S. No report fails closed."""
+    if not report:
+        return True, "no report from the PC"
+    from src.services.ollama_hosts import pc_host
+    targets = _game_targets()
+    game = next((p.get("name") for p in report.get("processes") or []
+                 if (p.get("name") or "").lower() in targets), None)
+    pc = pc_host()
+    pressed = gpu_pressure(smi=lambda: _smi_from_report(report.get("gpu")),
+                           ps=lambda: _ollama_loaded_models(pc.url if pc else None),
+                           cache=_pc_gpu_cache)
+    if game:
+        return True, f"{game} running"
+    if pressed:
+        return True, f"card held: {_pc_gpu_cache.get('reason') or 'busy'}"
+    return False, ""
 
 
 def _smi_from_report(gpu):
@@ -329,10 +368,13 @@ def _smi_from_report(gpu):
 
 
 def pc_unreachable() -> bool:
-    """A PC agent is configured and the PC is not answering (off, asleep,
-    shutting down). The game watcher then has nothing to evict."""
+    """This install's only Ollama is the PC's (agent configured, not split)
+    and the PC is not answering (off, asleep, shutting down): the game
+    watcher then has nothing to evict. On a split install this machine's
+    own Ollama is always there to evict from."""
     from src.services import pc_host
-    return pc_host.configured() and not pc_host.available()
+    from src.services.ollama_hosts import split
+    return pc_host.configured() and not split() and not pc_host.available()
 
 
 def game_process_running() -> bool:
@@ -471,7 +513,7 @@ async def _our_models() -> list[str]:
     ) if m))
 
 
-async def unload_llm_models() -> list[str]:
+async def unload_llm_models(url: "str | None" = None) -> list[str]:
     """
     Evict Curatarr's models from VRAM (Ollama keep_alive=0).
 
@@ -484,10 +526,12 @@ async def unload_llm_models() -> list[str]:
     zero unload calls. If the ps probe itself fails, we fall back to an
     unconditional unload — better than leaving VRAM occupied.
 
-    Returns the model names that were actually unloaded.
+    ``url``: another host's Ollama (the gaming PC on a split install);
+    default this install's. Returns the model names that were actually
+    unloaded.
     """
     import httpx
-    ollama_url = settings.effective_ollama
+    ollama_url = url or settings.effective_ollama
     ours = await _our_models()
     unloaded: list[str] = []
     async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:

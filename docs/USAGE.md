@@ -189,6 +189,20 @@ Apps → Custom App → Install via YAML.
   - **When the PC goes away:** a PC that is shutting down says so at once. A
     PC that stops answering for two polls counts as gone. Either way, nothing
     is sent to it any more.
+- **Two machines.** With the agent set up, `OLLAMA_PC_ENDPOINT` makes the
+  PC's card a second host:
+  - **While the PC is on and nobody plays:** chat, background curator work
+    and enrichment run there, with the PC's own profile (`PC_LLM_PROFILE`,
+    default large).
+  - **Otherwise:** they run on `OLLAMA_ENDPOINT`, typically the NAS with
+    `LLM_PROFILE=small`.
+  - **Deletion runs wait for the PC.** Their verdicts never come from the
+    small model. The existing proposals stay, and approving or rejecting them
+    needs no model.
+  - **Embeddings always stay on `OLLAMA_ENDPOINT`.** Every vector comes from
+    one host.
+  - **Without the agent the PC is never used,** because nobody could say
+    that it is on or that nobody is playing.
 - **Moving an existing install:** stop the old one, then copy its `data/`
   folder and its `.env` into the volume. Never run two instances against the
   same Plex and arrs.

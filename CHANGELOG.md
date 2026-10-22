@@ -485,6 +485,14 @@ that shuts down says so at once, and one that stops answering for two polls
 counts as gone. No work is sent to it then, and no eviction is attempted on
 it.
 
+**Two machines.** `OLLAMA_PC_ENDPOINT` adds the PC's card as a second
+host. While the PC is on and free, chat, background curator work and
+enrichment run there with the PC's own profile. Otherwise they run on the
+main host (the NAS, small profile). Deletion runs wait for the PC instead
+of judging with the small model, and embeddings stay on the main host. A
+game on the PC takes it out within seconds and evicts Curatarr's models
+from its card.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

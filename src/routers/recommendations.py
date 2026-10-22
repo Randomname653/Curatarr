@@ -1039,6 +1039,13 @@ async def get_deletion_proposals(
     # Analyze and the custodian's ARR scan ran CONCURRENTLY — two full judge
     # runs interleaving call-by-call on the LLM gate (double wall clock), and
     # the later batch superseding the earlier one's freshly written proposals.
+    from src.services.ollama_hosts import judge_ready
+    if not judge_ready():
+        # Split install: verdicts come from the gaming PC's card only.
+        return {"proposals": [], "total_gb": 0,
+                "message": ("Deletion analysis runs on the gaming PC, and it is off, "
+                            "busy or shutting down right now. The existing proposals "
+                            "stay; run the analysis again when the PC is free.")}
     from src.services.app_state import acquire_state_lock, release_state_lock
     if not await run_write(acquire_state_lock, "deletion_run"):
         return {"proposals": [], "total_gb": 0,

@@ -24,8 +24,9 @@ POLL_S = 5
 MISSES_DOWN = 2
 TIMEOUT_S = 3.0
 
-_state: dict = {"available": False, "draining": False, "misses": 0,
-                "snapshot": None, "seen_at": 0.0, "changed_at": 0.0, "reason": "never polled"}
+_state: dict = {"available": False, "draining": False, "misses": 0, "busy": False,
+                "busy_reason": "", "snapshot": None, "seen_at": 0.0, "changed_at": 0.0,
+                "reason": "never polled"}
 
 
 def _settings():
@@ -48,6 +49,19 @@ def available() -> bool:
     return bool(_state["available"])
 
 
+def busy() -> bool:
+    """A game runs on the PC or something else holds its card (judged on
+    the NAS from the PC's report, every poll - process_monitor.pc_busy)."""
+    return bool(_state["busy"])
+
+
+def set_busy(value: bool, reason: str = "") -> None:
+    if bool(value) != _state["busy"]:
+        logger.info("[pc] %s", f"busy ({reason}) - no new work for its card" if value
+                    else "free again")
+    _state.update(busy=bool(value), busy_reason=reason if value else "")
+
+
 def snapshot() -> Optional[dict]:
     """The PC's last report while it is available, else None."""
     return _state["snapshot"] if _state["available"] else None
@@ -55,7 +69,8 @@ def snapshot() -> Optional[dict]:
 
 def status() -> dict:
     """For the UI and the logs: available / draining / since when / why."""
-    return {k: _state[k] for k in ("available", "draining", "seen_at", "changed_at", "reason")} | {
+    return {k: _state[k] for k in ("available", "draining", "busy", "busy_reason", "seen_at",
+                                   "changed_at", "reason")} | {
         "configured": configured()}
 
 
@@ -103,6 +118,18 @@ async def poll_once(fetch=None) -> None:
         record(None, f"{type(e).__name__}: {e}"[:200])
         return
     record(report)
+    # Split install: is the PC gaming? Judged here, every poll, so a game
+    # that starts takes the PC out of the routing within seconds.
+    from src.services.ollama_hosts import split
+    if available() and split():
+        import asyncio
+        from src.services.process_monitor import pc_busy
+        try:
+            value, why = await asyncio.to_thread(pc_busy, report)
+        except Exception as e:  # noqa: BLE001 - fails closed: no verdict, no work for the PC
+            logger.warning("[pc] busy check failed: %s", e)
+            value, why = True, "busy check failed"
+        set_busy(value, why)
 
 
 async def _fetch(url: str, tok: str) -> dict:

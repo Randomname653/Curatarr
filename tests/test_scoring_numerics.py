@@ -164,7 +164,7 @@ async def _run_chroma(fn, *a, **k):
     return fn(*a, **k)
 
 
-async def _pitcher():
+async def _pitcher(url=None):
     return "test-model"
 
 
