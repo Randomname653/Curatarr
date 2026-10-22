@@ -9,8 +9,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Curatarr</title>
 <!-- Installable app (PWA): manifest + service worker (js/mobile.js registers
-     /sw.js). theme-color is the topbar surface, so the status bar blends in. -->
-<link rel="manifest" href="/manifest.json">
+     /sw.js). theme-color is the topbar surface, so the status bar blends in.
+     use-credentials: browsers fetch the manifest WITHOUT cookies otherwise,
+     and behind Cloudflare Access that answers with the login page - the
+     install fell back to a letter "C" instead of the icon (2026-10-22). -->
+<link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
 <meta name="theme-color" content="#21252e">
 <meta name="color-scheme" content="dark">
 <meta name="mobile-web-app-capable" content="yes">
