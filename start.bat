@@ -69,14 +69,19 @@ REM summarizer, the embedding model of the stored profile (not the .env
 REM default - a hardcoded nomic-embed-text probe here cried "missing" on an
 REM install running v2-moe), the pitcher when enabled. build_models.py
 REM --check returns 0 = all present, 1 = some missing (built below),
-REM 2 = Ollama not answering (nothing can be said, so nothing is pulled).
+REM 2 = Ollama not answering (nothing can be said, so nothing is pulled),
+REM 3 = the embedding weights differ from the stored vectors' (no build fixes it).
 echo Checking Ollama models...
 set "_MODELS_RC=0"
 "!PY!" build_models.py --check
 if errorlevel 1 set "_MODELS_RC=1"
 if errorlevel 2 set "_MODELS_RC=2"
+if errorlevel 3 set "_MODELS_RC=3"
 if "%_MODELS_RC%"=="2" (
     echo  [WARN] Ollama is not answering - model check skipped. The app checks again at startup.
+)
+if "%_MODELS_RC%"=="3" (
+    echo  [WARN] The embedding model's weights differ from the ones the library was embedded with - see above.
 )
 if "%_MODELS_RC%"=="1" (
     echo.

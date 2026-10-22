@@ -115,6 +115,23 @@ def set_profile(profile: dict) -> None:
                 profile.get("prefixes"))
 
 
+def record_digest(digest: str) -> None:
+    """Note which weights the stored vectors come from (the Ollama digest of
+    the profile's model). Model, prefixes and collection stay as they are,
+    so nothing is flipped. model_check.embedding_identity compares a host's
+    copy against it - the guard for a move to another machine."""
+    from src.services.app_state import set_state
+    if not digest:
+        return
+    prof = dict(get_profile())
+    prof["digest"] = digest
+    set_state(PROFILE_KEY, json.dumps(prof))
+    with _profile_lock:
+        _profile_gen[0] += 1
+        _profile_cache["value"] = None
+    logger.info("[embed] stored vectors are %s %s", prof.get("model"), digest[:12])
+
+
 def _l2(vec: list) -> Optional[list]:
     if not vec:
         return None

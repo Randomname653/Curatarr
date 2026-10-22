@@ -109,3 +109,113 @@ def curator_fit_warning() -> str:
     model = settings.CURATOR_MODEL
     size = sizes.get(model) or sizes.get(f"{model}:latest")
     return vram_fit_warning(model, size, smi[1], CURATOR_NUM_CTX)
+
+
+# ── Per host: the NAS and the gaming PC (2026-10-22, NAS move phase 2) ──────
+# A split install runs the same bake NAMES on two machines, each built from a
+# base that fits its card (build_models.py --host main|pc). The checks go
+# over HTTP: the container on the NAS has no ollama binary to ask.
+
+def host_plan(which: str = "main") -> dict:
+    """What host ``which`` ("main" = OLLAMA_ENDPOINT, "pc" = OLLAMA_PC_ENDPOINT)
+    is meant to run: its url and curator window, the bases to bake from, and
+    the model names the runtime will ask it for. On a split install the
+    pitcher lives on the PC only (deletion runs wait for it) and only the
+    main host embeds."""
+    from src.config import settings
+    from src.services import ollama_hosts
+    try:
+        from src.services.embed_service import effective_embedding_model
+        emb = effective_embedding_model()
+    except Exception:  # noqa: BLE001 - no profile yet (fresh install, tests)
+        emb = settings.EMBEDDING_MODEL
+    pitcher_on = bool((settings.PITCHER_MODEL or "").strip())
+    split = ollama_hosts.split()
+    if which == "pc":
+        pc = ollama_hosts.pc_host()
+        if pc is None:
+            raise ValueError("no OLLAMA_PC_ENDPOINT configured")
+        plan = {"url": pc.url, "num_ctx": pc.num_ctx,
+                "curator": settings.PC_BASE_CURATOR_MODEL,
+                "summarizer": settings.PC_BASE_SUMMARIZER_MODEL,
+                "pitcher": settings.PC_BASE_PITCHER_MODEL if pitcher_on else None,
+                "embedding": None}
+    else:
+        main = ollama_hosts.main_host()
+        plan = {"url": main.url, "num_ctx": main.num_ctx,
+                "curator": settings.BASE_CURATOR_MODEL,
+                "summarizer": settings.BASE_SUMMARIZER_MODEL,
+                "pitcher": settings.BASE_PITCHER_MODEL if (pitcher_on and not split) else None,
+                "embedding": emb}
+    bakes = [settings.CURATOR_MODEL, settings.SUMMARIZER_MODEL]
+    if plan["pitcher"]:
+        bakes.append(settings.PITCHER_MODEL.strip())
+    if plan["embedding"]:
+        bakes.append(plan["embedding"])
+    plan["models"] = list(dict.fromkeys(m.strip() for m in bakes if m and m.strip()))
+    return plan
+
+
+def host_tags(url: str, get=None) -> Optional[dict]:
+    """{model name: digest} on the Ollama at ``url`` ("x:latest" also as
+    "x"); None when it does not answer."""
+    import httpx
+    get = get or httpx.get
+    try:
+        r = get(f"{url.rstrip('/')}/api/tags", timeout=5)
+        r.raise_for_status()
+        models = r.json().get("models") or []
+    except Exception:  # noqa: BLE001 - "does not answer" is the answer
+        return None
+    out = {}
+    for m in models:
+        name = m.get("name") or m.get("model") or ""
+        out[name] = str(m.get("digest") or "")
+        if name.endswith(":latest"):
+            out.setdefault(name[:-len(":latest")], out[name])
+    return out
+
+
+def missing_on(url: str, models: List[str], get=None) -> Optional[List[str]]:
+    tags = host_tags(url, get)
+    if tags is None:
+        return None
+    return [m for m in models if m not in tags and f"{m}:latest" not in tags]
+
+
+def embedding_identity(get=None) -> dict:
+    """The embedding model's weights on the main host against the ones the
+    stored vectors were made with (the profile's ``digest``). Vectors from
+    other weights do not compare, even under the same name - the check the
+    NAS move needs before its first embedding.
+
+    status: "match" | "mismatch" | "unrecorded" (no digest stored yet) |
+    "missing" (not on the host) | "unreachable"."""
+    from src.services.embed_service import effective_embedding_model, get_profile
+    from src.services.ollama_hosts import main_host
+    model = effective_embedding_model()
+    recorded = str(get_profile().get("digest") or "")
+    tags = host_tags(main_host().url, get)
+    if tags is None:
+        status, digest = "unreachable", None
+    else:
+        digest = tags.get(model) or tags.get(f"{model}:latest")
+        if not digest:
+            status = "missing"
+        elif not recorded:
+            status = "unrecorded"
+        else:
+            status = "match" if digest == recorded else "mismatch"
+    return {"model": model, "recorded": recorded, "host": digest, "status": status}
+
+
+def record_embedding_digest(get=None) -> dict:
+    """embedding_identity, after storing the main host's digest when none is
+    recorded yet - the install the vectors were made on. Run it on the old
+    machine before a move (build_models.py --check does)."""
+    ident = embedding_identity(get)
+    if ident["status"] == "unrecorded":
+        from src.services.embed_service import record_digest
+        record_digest(ident["host"])
+        ident = {**ident, "recorded": ident["host"], "status": "match"}
+    return ident

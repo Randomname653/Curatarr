@@ -215,8 +215,11 @@ check("write_env persists the pitcher keys with live-settings fallback",
       "PITCHER_MODEL={config.get('pitcher_model'" in sw)
 
 bm = (root / "build_models.py").read_text(encoding="utf-8")
+_mc = (root / "src/services/model_check.py").read_text(encoding="utf-8")
 check("build_models gates the pitcher on PITCHER_MODEL, not the base",
-      "settings.PITCHER_MODEL or \"\").strip() else None" in bm)
+      'plan["pitcher"]' in bm
+      and 'pitcher_on = bool((settings.PITCHER_MODEL or "").strip())' in _mc
+      and "settings.BASE_PITCHER_MODEL if (pitcher_on and not split) else None" in _mc)
 
 st = (root / "tests/pillar_json_stresstest.py").read_text(encoding="utf-8")
 check("stresstest gate includes the pitcher bake", '"curatarr-pitcher"' in st)

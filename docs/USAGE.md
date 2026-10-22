@@ -203,6 +203,21 @@ Apps → Custom App → Install via YAML.
     one host.
   - **Without the agent the PC is never used,** because nobody could say
     that it is on or that nobody is playing.
+  - **Build the bakes on each machine.** The names are the same on both;
+    each is built from a base that fits its card:
+    - `python build_models.py --host main` builds from `BASE_*`, with the
+      embedder.
+    - `python build_models.py --host pc` builds from `PC_BASE_*`, with the
+      pitcher.
+    - `python build_models.py --suggest 16` prints the bench's package for a
+      16 GB card: base, profile, window and the Ollama server settings.
+    - `python build_models.py --check` checks both machines over HTTP (it
+      works in the container).
+  - **Moving the embedder.** The first `--check` records which embedding
+    weights the stored vectors were made with. Run it on the old machine
+    before a move. On the new one it reports a mismatch if the same model
+    name carries other weights, because vectors from those would not compare
+    with the stored ones.
   - **The PC leaving mid-work** (shutdown, power cut or a game) cuts its
     calls off within a second instead of after a 5-10 minute timeout:
     - A verdict counts as an outage and decides nothing.
