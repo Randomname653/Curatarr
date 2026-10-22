@@ -25,6 +25,7 @@ from typing import Optional, Any
 import httpx
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.cache.metadata_cache import MetadataCache, write_fields
 from src.database.runner import run_read, run_write
 from src.services.enrichment_state import (
@@ -997,7 +998,7 @@ async def fetch_significance(
     prompt = _SIGNIFICANCE_PROMPT.format(title=title, extract=scrub_untrusted(extract))
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
-            r = await client.post(f"{settings.effective_ollama}/api/chat", json={
+            r = await client.post(f"{ollama_for("enrich")}/api/chat", json={
                 "model": SUMMARIZER_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
@@ -3495,7 +3496,7 @@ async def _summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
@@ -3546,7 +3547,7 @@ async def _summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
                 try:
                     async with httpx.AsyncClient(verify=tls_context(), timeout=120) as _c2:
                         _r2 = await _c2.post(
-                            f"{settings.effective_ollama}/api/chat",
+                            f"{ollama_for("enrich")}/api/chat",
                             json={
                                 "model": SUMMARIZER_MODEL,
                                 "messages": [{"role": "user", "content": _override}],

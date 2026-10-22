@@ -30,6 +30,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.services.llm_utils import (clean_llm_text, ollama_options,
                                     strip_think_tags, SUMMARIZER_KEEP_ALIVE)
 
@@ -231,7 +232,7 @@ async def _condense(prompt: str) -> Optional[str]:
             continue
         try:
             async with httpx.AsyncClient(verify=tls_context(), timeout=150) as client:
-                r = await client.post(f"{settings.effective_ollama}/api/chat", json={
+                r = await client.post(f"{ollama_for("enrich")}/api/chat", json={
                     "model": model,
                     "messages": [{"role": "system", "content": _CONDENSE_SYS},
                                  {"role": "user", "content": prompt}],

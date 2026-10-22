@@ -27,6 +27,7 @@ from src.database.models import (
     ProactiveMessage, EpisodicMemory
 )
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.services.episodic_memory import write_memory
 from src.services.llm_utils import (
     clean_llm_text, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE,
@@ -435,7 +436,7 @@ Output ONLY the question text — no quotes, no labels, no explanation."""
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL or settings.BASE_SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
@@ -533,7 +534,7 @@ Output as JSON only: {{"answers_question": true, "sentiment": "...", "key_insigh
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL or settings.BASE_SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],

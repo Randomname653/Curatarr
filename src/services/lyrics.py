@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.database.loop_guard import sqlite_connect
 from src.services.http_client import tls_context
 
@@ -728,7 +729,7 @@ async def _call_summarizer(prompt: str) -> Optional[dict]:
     model = getattr(settings, "SUMMARIZER_MODEL", None) or settings.BASE_SUMMARIZER_MODEL
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=180) as c:
-            r = await c.post(f"{settings.effective_ollama}/api/chat",
+            r = await c.post(f"{ollama_for("enrich")}/api/chat",
                              json={"model": model, "messages": [{"role": "user", "content": prompt}],
                                    "stream": False, **ollama_options(temperature=0.1, num_predict=900)})
     except Exception as e:

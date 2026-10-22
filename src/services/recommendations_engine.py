@@ -21,6 +21,7 @@ import httpx
 import numpy as np
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE, seasonal_context
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
@@ -756,7 +757,7 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             try:
                 async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
                     r = await client.post(
-                        f"{settings.effective_ollama}/api/chat",
+                        f"{ollama_for("judge" if model_override else "curator")}/api/chat",
                         json={
                             "model": model,
                             "messages": [{"role": "user", "content": prompt}],

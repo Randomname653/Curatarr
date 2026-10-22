@@ -40,6 +40,7 @@ from src.services.household import is_admin_user
 from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.services.llm_utils import clean_llm_text, parse_llm_json, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE
 from src.services.http_client import tls_context
 
@@ -469,7 +470,7 @@ Output ONLY a JSON block:
         try:
             async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
                 r = await client.post(
-                    f"{settings.effective_ollama}/api/chat",
+                    f"{ollama_for("enrich")}/api/chat",
                     json={
                         "model": settings.SUMMARIZER_MODEL,
                         "messages": [{"role": "user", "content": prompt}],
@@ -1048,7 +1049,7 @@ async def _run_memory_extraction(
         # 14GB, 30s clipped legitimate slow runs as ReadTimeout.
         async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
@@ -2224,7 +2225,7 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
         async def _post() -> dict:
             async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
                 r = await client.post(
-                    f"{settings.effective_ollama}/api/chat",
+                    f"{ollama_for("chat")}/api/chat",
                     json=curator_payload(
                         [{"role": "system", "content": _PROTECTION_SYSTEM},
                          {"role": "user", "content": prompt}],
@@ -2248,7 +2249,7 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
         # Timeout 20s → 90s (Pass 14.13).
         async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("chat")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
@@ -2687,7 +2688,7 @@ Output ONLY valid JSON:
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=20) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
@@ -2799,7 +2800,7 @@ USER MESSAGES:
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],

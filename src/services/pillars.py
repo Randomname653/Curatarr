@@ -40,6 +40,7 @@ from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
 from src.database.runner import run_read
 from src.services.llm_utils import CURATOR_NUM_CTX, curator_payload
 from src.services.http_client import tls_context
+from src.services.ollama_hosts import ollama_for
 
 logger = logging.getLogger(__name__)
 
@@ -1106,7 +1107,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
                               seed=7, repeat_penalty=1.0)
 
     async def _ask() -> Verdict:
-        data = await post_chat(settings.effective_ollama, payload,
+        data = await post_chat(ollama_for("judge"), payload,
                                read_timeout=_JUDGE_TIMEOUT)
         return _parse_verdict((data.get("message") or {}).get("content", "") or "")
 
@@ -1369,7 +1370,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
     async def _post():
         async with httpx.AsyncClient(verify=tls_context(), timeout=_JUDGE_TIMEOUT) as client:
             resp = await client.post(
-                f"{settings.effective_ollama}/api/chat", json=payload)
+                f"{ollama_for("judge")}/api/chat", json=payload)
         resp.raise_for_status()
         return resp
     async def _generate() -> str:

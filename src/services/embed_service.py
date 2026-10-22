@@ -37,6 +37,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -129,7 +130,7 @@ async def _post_embed(model: str, inputs: list, num_ctx: int) -> list:
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
             r = await client.post(
-                f"{settings.effective_ollama}/api/embed",
+                f"{ollama_for("embed")}/api/embed",
                 json={"model": model, "input": inputs,
                       "keep_alive": "2m",
                       "options": {"num_gpu": 0, "num_ctx": num_ctx}},
@@ -193,7 +194,7 @@ async def evict_embedder(profile: dict = None) -> None:
     prof = profile or get_profile()
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=15) as c:
-            await c.post(f"{settings.effective_ollama}/api/embed",
+            await c.post(f"{ollama_for("embed")}/api/embed",
                          json={"model": prof["model"], "input": "unload",
                                "keep_alive": 0})
     except httpx.HTTPError as e:

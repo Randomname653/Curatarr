@@ -36,6 +36,7 @@ from typing import Optional
 
 import httpx
 from src.services.http_client import tls_context
+from src.services.ollama_hosts import ollama_for
 
 logger = logging.getLogger(__name__)
 
@@ -559,7 +560,7 @@ async def resolve_pitcher_model() -> str:
         return fallback
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=5) as client:
-            r = await client.get(f"{settings.effective_ollama}/api/tags")
+            r = await client.get(f"{ollama_for("judge")}/api/tags")
         if r.status_code == 200:
             names = [m.get("name", "") or m.get("model", "")
                      for m in r.json().get("models", [])]

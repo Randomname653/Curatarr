@@ -39,6 +39,7 @@ from src.database.models import (
     WatchHistoryEntry, ProactiveMessage, TasteVectorEntry, User, ConversationMessage
 )
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.services.llm_utils import strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
 from src.services.series_progress import (
     compute_watch_progress,
@@ -1646,7 +1647,7 @@ async def generate_proactive_message(
             try:
                 async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
                     resp = await client.post(
-                        f"{settings.effective_ollama}/api/chat",
+                        f"{ollama_for("curator")}/api/chat",
                         json={
                             "model": model,
                             "messages": [
