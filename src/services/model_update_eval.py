@@ -79,7 +79,7 @@ def guards(summary: dict) -> list[str]:
 def _new_is_a(key: str) -> bool:
     """Which side is A for the first read — seeded by the title, so a
     re-run is reproducible and NEW is not always in the same slot."""
-    return hashlib.sha1(key.encode("utf-8")).digest()[0] % 2 == 0
+    return hashlib.sha1(key.encode("utf-8"), usedforsecurity=False).digest()[0] % 2 == 0
 
 
 def _side(text: str, verdict: str | None) -> str:
