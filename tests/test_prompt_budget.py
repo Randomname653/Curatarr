@@ -165,39 +165,39 @@ me.fetch_wikipedia_summary = _long_wiki
 ss.subtitle_facts = lambda *a, **k: ""
 sn.tech_profile_for = lambda **k: None
 
-_orig_ctx = pillars.CURATOR_NUM_CTX
-pillars.CURATOR_NUM_CTX = 4096
+# A host with a 4k window: the budget is the JUDGING host's, not a global.
+import dataclasses  # noqa: E402
+from src.services.ollama_hosts import host_for  # noqa: E402
+short = dataclasses.replace(host_for("judge"), num_ctx=4096)
+ev = asyncio.run(pillars.build_evidence({"title": "Tokyo Story", "year": 1953}, 1, "movie",
+                                        host=short))
+room = pb.budget_for(4096, pillars._JUDGE_PREDICT_REPAIR + pillars._REPAIR_TURN_TOKENS,
+                     pillars.judge_system_prompt("", short.profile))
+check("on a short window the facts are trimmed, and say so", ev["trimmed"] != [], ev["trimmed"])
+check("...to the room left by the judge's system prompt and a repair turn",
+      est_tokens(ev["facts"]) <= room, (est_tokens(ev["facts"]), room))
+check("...keeping the title and the household line",
+      "TITLE: Tokyo Story" in ev["facts"] and "Ana" in ev["facts"])
+check("...with fences balanced",
+      ev["facts"].count("<<<UNTRUSTED_SOURCE:") == ev["facts"].count("<<<END_UNTRUSTED_SOURCE>>>"))
+check("the household claim survives budgeting", ev["flags"]["household_claim"] == "Ana")
+
+# Pre-flight: a caller that skipped build_evidence's budget is refused
+# before Ollama can truncate the constitution away.
+import src.services.llm_errors as le
+calls = []
+
+async def _never(*a, **k):
+    calls.append(1)
+    raise AssertionError("must not be called")
+_real_post = le.post_chat
+le.post_chat = _never
 try:
-    ev = asyncio.run(pillars.build_evidence({"title": "Tokyo Story", "year": 1953}, 1, "movie"))
-    room = pb.budget_for(4096, pillars._JUDGE_PREDICT_REPAIR + pillars._REPAIR_TURN_TOKENS,
-                         pillars.judge_system_prompt(""))
-    check("on a short window the facts are trimmed, and say so", ev["trimmed"] != [], ev["trimmed"])
-    check("...to the room left by the judge's system prompt and a repair turn",
-          est_tokens(ev["facts"]) <= room, (est_tokens(ev["facts"]), room))
-    check("...keeping the title and the household line",
-          "TITLE: Tokyo Story" in ev["facts"] and "Ana" in ev["facts"])
-    check("...with fences balanced",
-          ev["facts"].count("<<<UNTRUSTED_SOURCE:") == ev["facts"].count("<<<END_UNTRUSTED_SOURCE>>>"))
-    check("the household claim survives budgeting", ev["flags"]["household_claim"] == "Ana")
-
-    # Pre-flight: a caller that skipped build_evidence's budget is refused
-    # before Ollama can truncate the constitution away.
-    import src.services.llm_errors as le
-    calls = []
-
-    async def _never(*a, **k):
-        calls.append(1)
-        raise AssertionError("must not be called")
-    _real_post = le.post_chat
-    le.post_chat = _never
-    try:
-        out = asyncio.run(pillars.adjudicate("x" * 40000, skip_priority=True))
-    finally:
-        le.post_chat = _real_post
-    check("an oversized prompt is CONTEXT_OVERFLOW before any call",
-          out["_error_kind"] == "context_overflow" and calls == [])
+    out = asyncio.run(pillars.adjudicate("x" * 40000, skip_priority=True, host=short))
 finally:
-    pillars.CURATOR_NUM_CTX = _orig_ctx
+    le.post_chat = _real_post
+check("an oversized prompt is CONTEXT_OVERFLOW before any call",
+      out["_error_kind"] == "context_overflow" and calls == [])
 
 # ── profile: context, constitution, placement ───────────────────────────────
 
@@ -316,11 +316,12 @@ check("build_models --check prints the warning", "curator_fit_warning()" in bm)
 
 chat = (ROOT / "src/routers/chat.py").read_text(encoding="utf-8")
 check("the chat fits its messages before streaming",
-      chat.index("fit_messages(messages, budget_for(CURATOR_NUM_CTX, _CHAT_PREDICT))")
+      chat.index("fit_messages(messages, budget_for(chat_host.num_ctx, chat_predict))")
       < re.search(r'"messages": messages,\n\s*"stream": True', chat).start())
-check("the answer's room shrinks with the window",
-      "_CHAT_PREDICT = min(4096, CURATOR_NUM_CTX // 4)" in chat
-      and "num_predict=_CHAT_PREDICT" in chat)
+check("the answer's room shrinks with the window of the host the turn goes to",
+      "return min(4096, host.num_ctx // 4)" in chat
+      and "chat_predict = _chat_predict(chat_host)" in chat
+      and "num_predict=chat_predict" in chat)
 cp = (ROOT / "src/services/curator_principles.py").read_text(encoding="utf-8")
 check("principle extraction keeps the newest turns of a long debate",
       cp.index("keep_tail(convo") < cp.index('_curator_json(_EXTRACT_SYS, "DEBATE:\\n" + convo'))

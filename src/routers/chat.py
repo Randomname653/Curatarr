@@ -15,12 +15,12 @@ from typing import AsyncGenerator
 
 from src.services.llm_utils import (
     ThinkTagStreamFilter, clean_llm_text, strip_think_tags,
-    curator_options, CURATOR_NUM_CTX,
+    curator_options,
     CURATOR_KEEP_ALIVE,
     detect_user_language, language_directive,
 )
 from src.config import settings as _cfg
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,8 +47,9 @@ _HISTORY_CHAR_BUDGET = 8000         # hard char budget for history (context diet
 _ASSISTANT_CLIP = 700               # clip OLD assistant monologues to this many chars
 # Room for the answer: 4096 on the 16k window (a 2048 cap cut long monologues
 # off mid-sentence), a quarter of a smaller window (LLM_PROFILE=small, 8k) so
-# the prompt keeps the rest.
-_CHAT_PREDICT = min(4096, CURATOR_NUM_CTX // 4)
+# the prompt keeps the rest. Per host: the PC and the NAS run different windows.
+def _chat_predict(host) -> int:
+    return min(4096, host.num_ctx // 4)
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -576,14 +577,15 @@ async def _extract_entity_llm(normalized_query: str) -> str:
         return ""
     try:
         async with curator_priority("chat: identifying the title", priority=INTERACTIVE):
+            host = host_for("chat")
             async with httpx.AsyncClient(verify=tls_context(),
                                          timeout=_ENTITY_TIMEOUT_S) as client:
                 r = await client.post(
-                    f"{ollama_for("chat")}/api/chat",
+                    f"{host.url}/api/chat",
                     json=curator_payload(
                         [{"role": "system", "content": _ENTITY_SYSTEM},
                          {"role": "user", "content": normalized_query}],
-                        temperature=0.0, num_predict=80, fmt=_ENTITY_SCHEMA),
+                        temperature=0.0, num_predict=80, fmt=_ENTITY_SCHEMA, host=host),
                 )
         if r.status_code == 200:
             return r.json().get("message", {}).get("content", "").strip()
@@ -1409,9 +1411,10 @@ async def warm_curator(user: User = Depends(get_current_user)):
                 return
             async with lp.curator_priority("warming up", priority=lp.INTERACTIVE):
                 # Empty messages: Ollama loads the model and returns.
-                payload = curator_payload([], temperature=0.7, num_predict=1)
+                host = host_for("chat")
+                payload = curator_payload([], temperature=0.7, num_predict=1, host=host)
                 async with httpx.AsyncClient(verify=tls_context(), timeout=300) as client:
-                    await client.post(f"{ollama_for("chat")}/api/chat", json=payload)
+                    await client.post(f"{host.url}/api/chat", json=payload)
             logger.info("[chat] curator warmed ahead of the user's message")
         except Exception as e:  # noqa: BLE001 - speculative; the turn loads it anyway
             logger.debug("[chat] curator warm-up failed: %s", e)
@@ -2931,7 +2934,11 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                                 _rl, thread_id: str) -> StreamingResponse:
     """send_message body, run while CHAT_IN_FLIGHT is held for the user.
     Returns a response whose generator releases the guard when it ends."""
-    ollama_url = ollama_for("chat")
+    # One host for the whole turn: its window budgets the history and the
+    # answer, its url takes the request.
+    chat_host = host_for("chat")
+    ollama_url = chat_host.url
+    chat_predict = _chat_predict(chat_host)
 
     # 1. CONTEXT PRE-LOADING & METADATA FETCHING
     active_title = ""
@@ -3496,10 +3503,10 @@ FORMATTING RULES:
     # the front, which is the system prompt. The oldest turns go first; the
     # system prompt and this message always stay.
     from src.services.prompt_budget import budget_for, fit_messages
-    messages, _dropped = fit_messages(messages, budget_for(CURATOR_NUM_CTX, _CHAT_PREDICT))
+    messages, _dropped = fit_messages(messages, budget_for(chat_host.num_ctx, chat_predict))
     if _dropped:
         logger.info("[chat] dropped the %d oldest history message(s) to fit the "
-                    "%d-token window", _dropped, CURATOR_NUM_CTX)
+                    "%d-token window", _dropped, chat_host.num_ctx)
 
     # 4. The user turn is NOT saved here: _persist_turn writes it together
     # with the reply once the stream has finished. A turn that never got its
@@ -3617,13 +3624,13 @@ FORMATTING RULES:
                                  if m.get("role") == "system")
                 _hist_chars = _prompt_chars - _sys_chars
                 _prompt_tokens = sum(est_tokens(m.get("content") or "") for m in messages)
-                if _prompt_tokens > (CURATOR_NUM_CTX - _CHAT_PREDICT) * 0.9:
+                if _prompt_tokens > (chat_host.num_ctx - chat_predict) * 0.9:
                     logger.warning(
                         "[chat] prompt size %d chars (~%d tokens; system=%d, "
                         "history+user=%d) — near the %d-token window minus %d "
                         "predict; expect squeezed generation",
                         _prompt_chars, _prompt_tokens, _sys_chars, _hist_chars,
-                        CURATOR_NUM_CTX, _CHAT_PREDICT)
+                        chat_host.num_ctx, chat_predict)
                 else:
                     logger.info("[chat] prompt size: %d chars (system=%d, history+user=%d)",
                                 _prompt_chars, _sys_chars, _hist_chars)
@@ -3645,8 +3652,9 @@ FORMATTING RULES:
                             # 4096 output + CURATOR_NUM_CTX=16384 window (benchmarked
                             # 2026-07-08: 100% GPU with nomic resident) leaves ~12k
                             # input tokens — the 33.5k-char Kill la Kill turn fits.
-                            # _CHAT_PREDICT shrinks with a smaller window.
-                            **curator_options(temperature=0.7, num_predict=_CHAT_PREDICT),
+                            # chat_predict shrinks with a smaller window.
+                            **curator_options(temperature=0.7, num_predict=chat_predict,
+                                              host=chat_host),
                         },
                     )
                     # Ollama sends its response headers with the first token,

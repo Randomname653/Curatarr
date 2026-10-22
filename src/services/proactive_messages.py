@@ -39,7 +39,7 @@ from src.database.models import (
     WatchHistoryEntry, ProactiveMessage, TasteVectorEntry, User, ConversationMessage
 )
 from src.config import settings
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for
 from src.services.llm_utils import strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE
 from src.services.series_progress import (
     compute_watch_progress,
@@ -1641,13 +1641,14 @@ async def generate_proactive_message(
     from src.services.llm_priority import background_curator_call
 
     async def _generate() -> Optional[str]:
+        host = host_for("curator")
         for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
             if not model:
                 continue
             try:
                 async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
                     resp = await client.post(
-                        f"{ollama_for("curator")}/api/chat",
+                        f"{host.url}/api/chat",
                         json={
                             "model": model,
                             "messages": [
@@ -1658,7 +1659,7 @@ async def generate_proactive_message(
                             ],
                             "stream": False,
                             "keep_alive": CURATOR_KEEP_ALIVE,
-                            **curator_options(temperature=0.85, num_predict=800),
+                            **curator_options(temperature=0.85, num_predict=800, host=host),
                         },
                     )
                 if resp.status_code == 200:

@@ -110,7 +110,7 @@ cp._thread_text = lambda user_id, thread_id: ("USER: a\n\nCURATOR: b", 6)
 _sent: dict = {}
 
 
-async def _fake_curator(system, user, schema, num_predict=800):
+async def _fake_curator(system, user, schema, num_predict=800, host=None):
     if system == cp._EXTRACT_SYS:
         return {"principles": [
             {"principle": "Slow films stay only when the craft carries them.",
@@ -142,7 +142,7 @@ check("capturing never touches the contradicted rule", get(old_rule).status == "
 # ── adopting it in the review chat supersedes the old rule ───────────────────
 
 
-async def _adopt(system, user, schema, num_predict=800):
+async def _adopt(system, user, schema, num_predict=800, host=None):
     return {"decision": "adopt", "revised_text": ""}
 
 

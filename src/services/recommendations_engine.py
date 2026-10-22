@@ -21,7 +21,7 @@ import httpx
 import numpy as np
 
 from src.config import settings
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE, seasonal_context
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
@@ -741,7 +741,7 @@ CATEGORY_LABELS = {
 
 
 async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = False,
-                    model_override: Optional[str] = None) -> Optional[str]:
+                    model_override: Optional[str] = None, host=None) -> Optional[str]:
     """Call curator model, fall back to base model. Signals enrichment to pause.
 
     Pass skip_priority=True when the caller manages the curator lifecycle itself
@@ -749,7 +749,10 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
     model_override prepends a specific bake to the fallback chain — used ONLY
     by the legacy deletion-pitch call sites for the two-bake split; discovery,
     collections and the yearly review pass nothing and stay on the curator.
+    ``host``: the deletion run passes the host it resolved for the whole run.
     """
+    host = host or host_for("judge" if model_override else "curator")
+
     async def _chain() -> Optional[str]:
         chain = ([model_override] if model_override else []) + [
             settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]
@@ -757,13 +760,14 @@ async def _call_llm(prompt: str, max_tokens: int = 800, skip_priority: bool = Fa
             try:
                 async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
                     r = await client.post(
-                        f"{ollama_for("judge" if model_override else "curator")}/api/chat",
+                        f"{host.url}/api/chat",
                         json={
                             "model": model,
                             "messages": [{"role": "user", "content": prompt}],
                             "stream": False,
                             "keep_alive": CURATOR_KEEP_ALIVE,
-                            **curator_options(temperature=0.7, num_predict=max_tokens),
+                            **curator_options(temperature=0.7, num_predict=max_tokens,
+                                              host=host),
                         },
                     )
                 if r.status_code == 200:
@@ -2419,8 +2423,13 @@ async def generate_deletion_proposals(
     # monitor shows which bake produced the pitches.
     from src.services.llm_priority import resolve_pitcher_model
     pitch_model = await resolve_pitcher_model()
+    # The host, like the bake, is resolved ONCE per run: the evidence is
+    # budgeted for its window and constitution, and verdict and pitch must
+    # come from the same machine.
+    judge_host = host_for("judge")
     _msg(f"{category}: deletion run model: {pitch_model}")
-    logger.info("[deletions] %s: run model = %s", category, pitch_model)
+    logger.info("[deletions] %s: run model = %s on %s (%s profile)", category,
+                pitch_model, judge_host.url, judge_host.profile)
 
     if getattr(settings, "PILLARS_ENABLED", False):
         from collections import Counter
@@ -2623,7 +2632,8 @@ async def generate_deletion_proposals(
                     # session of its own and closes it before its network calls.
                     _pre = _ev_ahead.pop(_ci, None)
                     ev = await (_pre if _pre is not None
-                                else build_evidence(item, user_id, category))
+                                else build_evidence(item, user_id, category,
+                                                    host=judge_host))
                 except Exception as e:
                     # Our code, not the model: no LLM call was made, so it
                     # neither counts as judged nor resets the outage streak.
@@ -2644,7 +2654,8 @@ async def generate_deletion_proposals(
                     if (consecutive_outages == 0 and _nx < len(scored_candidates)
                             and _nx not in _ev_ahead):
                         _ev_ahead[_nx] = asyncio.ensure_future(build_evidence(
-                            scored_candidates[_nx]["item"], user_id, category))
+                            scored_candidates[_nx]["item"], user_id, category,
+                            host=judge_host))
                     # THIN-EVIDENCE GATE: no enrichment, no Wikipedia — only
                     # the arr synopsis stub. Judging that produces confident
                     # confabulation (the They Will Kill You / Buffaloed
@@ -2719,7 +2730,8 @@ async def generate_deletion_proposals(
                         continue
                     verdict = await adjudicate(ev["facts"], model=pitch_model,
                                                skip_priority=True,
-                                               law_extra=ev.get("law_extra", ""))
+                                               law_extra=ev.get("law_extra", ""),
+                                               host=judge_host)
                 except Exception as e:
                     # adjudicate never raises by contract; this is a bug guard.
                     logger.warning("[deletions] pillar judge failed for %r: %s",
@@ -2773,7 +2785,8 @@ async def generate_deletion_proposals(
                         _holds_gate = True
                     pitch = await write_monologue(
                         ev["facts"], verdict, model=pitch_model,
-                        lang_directive=lang_directive_str, skip_priority=True)
+                        lang_directive=lang_directive_str, skip_priority=True,
+                        host=judge_host)
                     if not pitch or not pitch.strip():
                         pitch = ("Curatarr flagged this title but couldn't write its "
                                  "reasoning. Use Discuss to ask why.")
@@ -3147,7 +3160,7 @@ CRITICAL RULES AND GUARDRAILS:
 10. RESPECT ACCLAIM — TASTE-FIT, NOT QUALITY: If the data shows strong acclaim (high RT / Metacritic, major awards, a documented milestone), you MUST acknowledge it, and the deletion is a pure TASTE-FIT call — never a quality verdict. Frame it honestly: "acclaimed / well-made, but not your lane — it's X, you want Y." NEVER label a highly-rated or award-winning title "narrative wallpaper", "flaccid", "worthless", or low-effort: calling a 97%-rated, multi-award film garbage is a factual error that wrecks your credibility. A work can be excellent AND a poor fit for THIS user — say exactly that."""
 
             pitch = await _call_llm(prompt, skip_priority=True,
-                                    model_override=pitch_model)
+                                    model_override=pitch_model, host=judge_host)
             # Pass 51: empty-pitch guard. ``_call_llm`` returns None on an
             # HTTP / timeout failure and "" when the model emitted nothing
             # but <think> tags (stripped out by strip_think_tags). Either
@@ -3161,7 +3174,7 @@ CRITICAL RULES AND GUARDRAILS:
                     "[deletions] empty pitch for %r — retrying once", item.get("title"),
                 )
                 pitch = await _call_llm(prompt, skip_priority=True,
-                                        model_override=pitch_model)
+                                        model_override=pitch_model, host=judge_host)
             if not pitch or not pitch.strip():
                 logger.warning(
                     "[deletions] pitch still empty for %r — using honest fallback",

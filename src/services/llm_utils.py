@@ -316,9 +316,15 @@ def curator_gpu() -> dict:
     return {} if n < 0 else {"num_gpu": n}
 
 
-def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
+def curator_options(temperature: float = 0.7, num_predict: int = 1024, *,
+                    host=None, **extra) -> dict:
     """ollama_options for CURATOR calls — pins the shared num_ctx so chat,
-    judge, proactive and principle calls all reuse one resident instance."""
+    judge, proactive and principle calls all reuse one resident instance.
+    ``host`` (ollama_hosts.OllamaHost): the window and placement of the host
+    the call goes to; without one, this process's defaults (the only host
+    until a second is configured)."""
+    num_ctx = host.num_ctx if host is not None else CURATOR_NUM_CTX
+    gpu = host.gpu if host is not None else curator_gpu()
     # num_gpu is pinned here: the curator never takes the CPU lane. 19.9 GB
     # of weights at the summariser's measured 5.9 tok/s is tens of minutes
     # for one reply — the callers check llm_lane.curator_available() and wait
@@ -326,13 +332,13 @@ def curator_options(temperature: float = 0.7, num_predict: int = 1024, **extra) 
     # placement, so the curator's is laid over it (or, with CURATOR_NUM_GPU
     # = -1, that placement is removed and Ollama decides).
     opts = ollama_options(temperature, num_predict,
-                          **{"num_ctx": CURATOR_NUM_CTX, **curator_gpu(), **extra})
+                          **{"num_ctx": num_ctx, **gpu, **extra})
     # num_thread is a RUNNER option — a change reloads the model. The CPU
     # lane's thread budget is the summariser's; the curator never runs there,
     # and the hand-built curator payloads never sent one, so neither does this.
     if "num_thread" not in extra:
         opts["options"].pop("num_thread", None)
-    if "num_gpu" not in curator_gpu() and "num_gpu" not in extra:
+    if "num_gpu" not in gpu and "num_gpu" not in extra:
         opts["options"].pop("num_gpu", None)
     return opts
 
@@ -375,7 +381,7 @@ def keep_alive_for(model: str) -> str:
 
 def curator_payload(messages: list, *, model: str = None, temperature: float = 0.7,
                     num_predict: int = 1024, fmt=None, stream: bool = False,
-                    **extra) -> dict:
+                    host=None, **extra) -> dict:
     """THE curator request body. Model, keep_alive and the runner options come
     from one place, so no call site can shorten the curator's residency (Ollama
     applies the LAST request's keep_alive: the judge's "10m" and the taste
@@ -384,7 +390,7 @@ def curator_payload(messages: list, *, model: str = None, temperature: float = 0
     from src.config import settings
     p = {"model": model or settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL,
          "messages": messages, "stream": stream, "keep_alive": CURATOR_KEEP_ALIVE,
-         **curator_options(temperature, num_predict, **extra)}
+         **curator_options(temperature, num_predict, host=host, **extra)}
     if fmt is not None:
         p["format"] = fmt
     return p

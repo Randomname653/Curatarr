@@ -217,8 +217,10 @@ def test_the_wiring():
     utils = (_ROOT / "src/services/llm_utils.py").read_text(encoding="utf-8")
     assert "**placement(SUMMARIZER), **extra" in utils
     # The curator's placement is settings.CURATOR_NUM_GPU (default 99, all
-    # layers), applied over the summariser placement ollama_options set.
-    assert '"num_ctx": CURATOR_NUM_CTX, **curator_gpu(), **extra' in utils
+    # layers), applied over the summariser placement ollama_options set -
+    # or the placement of the host the call goes to (ollama_hosts).
+    assert "gpu = host.gpu if host is not None else curator_gpu()" in utils
+    assert '"num_ctx": num_ctx, **gpu, **extra' in utils
 
     pm = (_ROOT / "src/services/process_monitor.py").read_text(encoding="utf-8")
     assert "def game_process_running() -> bool:" in pm and "def gpu_pressure_reason() -> str:" in pm

@@ -339,7 +339,7 @@ check("entity extraction runs on the curator, never queueing behind the gate",
 check("the chat turn takes the gate as INTERACTIVE",
       'curator_start("chat", priority=INTERACTIVE)' in chat_src)
 check("the warm-up loads with the shared curator payload",
-      "curator_payload([], temperature=0.7, num_predict=1)" in chat_src)
+      "curator_payload([], temperature=0.7, num_predict=1, host=host)" in chat_src)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

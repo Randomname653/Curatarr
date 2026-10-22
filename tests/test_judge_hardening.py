@@ -14,6 +14,7 @@ Each block reproduces a failure found in the 2026-10 pipeline audit:
 * the Wikipedia fallback reached the judge unfenced.
 """
 import asyncio
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -214,7 +215,7 @@ loop = eng.split("watch_unknown_skipped = 0")[1].split("return final_proposals")
 check("the loop defers unreadable watch data BEFORE any judge call",
       loop.index('get("household_unknown")') < loop.index("await adjudicate("))
 check("the loop no longer holds a session across build_evidence",
-      "build_evidence(item, user_id, category)" in loop
+      re.search(r"build_evidence\(item, user_id, category,\s*host=judge_host\)", loop)
       and "user_id, category, db" not in loop and "_jdb" not in loop)
 check("deferred titles land in the run summary",
       "+ watch_unknown_skipped)" in loop)
