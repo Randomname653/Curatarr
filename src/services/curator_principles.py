@@ -41,6 +41,7 @@ from datetime import datetime
 import httpx
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import CuratorPrinciple
@@ -147,7 +148,7 @@ async def _curator_json(system: str, user: str, schema: dict,
 
     async def _post() -> dict:
         async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
-            r = await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
+            r = await client.post(f"{ollama_for("curator")}/api/chat", json=payload)
         r.raise_for_status()
         return r.json()
 

@@ -20,6 +20,7 @@ from src.services.llm_utils import (
     detect_user_language, language_directive,
 )
 from src.config import settings as _cfg
+from src.services.ollama_hosts import ollama_for
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -578,7 +579,7 @@ async def _extract_entity_llm(normalized_query: str) -> str:
             async with httpx.AsyncClient(verify=tls_context(),
                                          timeout=_ENTITY_TIMEOUT_S) as client:
                 r = await client.post(
-                    f"{_cfg.effective_ollama}/api/chat",
+                    f"{ollama_for("chat")}/api/chat",
                     json=curator_payload(
                         [{"role": "system", "content": _ENTITY_SYSTEM},
                          {"role": "user", "content": normalized_query}],
@@ -1410,7 +1411,7 @@ async def warm_curator(user: User = Depends(get_current_user)):
                 # Empty messages: Ollama loads the model and returns.
                 payload = curator_payload([], temperature=0.7, num_predict=1)
                 async with httpx.AsyncClient(verify=tls_context(), timeout=300) as client:
-                    await client.post(f"{settings.effective_ollama}/api/chat", json=payload)
+                    await client.post(f"{ollama_for("chat")}/api/chat", json=payload)
             logger.info("[chat] curator warmed ahead of the user's message")
         except Exception as e:  # noqa: BLE001 - speculative; the turn loads it anyway
             logger.debug("[chat] curator warm-up failed: %s", e)
@@ -2930,7 +2931,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                                 _rl, thread_id: str) -> StreamingResponse:
     """send_message body, run while CHAT_IN_FLIGHT is held for the user.
     Returns a response whose generator releases the guard when it ends."""
-    ollama_url = settings.effective_ollama
+    ollama_url = ollama_for("chat")
 
     # 1. CONTEXT PRE-LOADING & METADATA FETCHING
     active_title = ""

@@ -16,6 +16,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.services.app_state import (get_datetime, set_datetime, get_state, set_state,
@@ -2001,7 +2002,7 @@ CRITICAL RULES (YOU MUST OBEY):
 """
 
     try:
-        ollama_url = settings.effective_ollama
+        ollama_url = ollama_for("curator")
 
         # CURATOR (27B) first: the taste summary is the justification base
         # for every pitch, every judge verdict (OWNER TASTE line) and the

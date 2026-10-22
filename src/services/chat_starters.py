@@ -47,6 +47,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
+from src.services.ollama_hosts import ollama_for
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import ChatStarter, WatchHistoryEntry
@@ -284,7 +285,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             try:
                 async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
                     resp = await client.post(
-                        f"{settings.effective_ollama}/api/chat",
+                        f"{ollama_for("curator")}/api/chat",
                         json={
                             "model": model,
                             "messages": [{"role": "user", "content": prompt}],
