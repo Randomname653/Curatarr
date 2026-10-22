@@ -1,0 +1,22 @@
+# Curatarr on a NAS / server. On TrueNAS SCALE: Apps -> Discover Apps ->
+# Custom App -> "Install via YAML" and paste this (adjust the two marked lines).
+#
+# Ollama is NOT in here: point OLLAMA_ENDPOINT (setup wizard, or .env in the
+# data volume) at a machine that runs it, e.g. the gaming PC on the LAN.
+services:
+  curatarr:
+    image: ghcr.io/randomname653/curatarr:latest
+    container_name: curatarr
+    restart: unless-stopped
+    ports:
+      # host:container - pick a free host port (TrueNAS apps live in 30xxx).
+      - "30800:8000"
+    volumes:
+      # ADJUST: a dataset owned by the apps user (568:568). Holds the database,
+      # ChromaDB, logs, caches, backups and the .env with every token.
+      - /mnt/POOL/apps/curatarr:/app/data
+    environment:
+      TZ: Europe/Berlin
+    # The image runs as 568:568 (TrueNAS "apps"); set user: to another uid if
+    # the dataset belongs to someone else.
+    stop_grace_period: 30s

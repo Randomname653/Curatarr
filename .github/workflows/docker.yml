@@ -1,0 +1,56 @@
+name: docker
+
+# Builds the container image on every PR and push, starts it and waits for
+# the app to answer (a first-run instance: no .env, no data). A push to main
+# then publishes it as ghcr.io/randomname653/curatarr:latest (+ :sha-<commit>).
+# Plain docker CLI on the runner: no third-party actions to pin or trust.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # GHCR push, used on main only (PRs never log in)
+    env:
+      IMAGE: ghcr.io/randomname653/curatarr
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build
+        run: docker build --pull -t curatarr:ci .
+
+      - name: Smoke test (starts, answers, runs as the apps user)
+        run: |
+          docker run -d --name curatarr -p 8000:8000 curatarr:ci
+          for i in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/ || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          docker logs curatarr | tail -n 40
+          test "$code" = "200"
+          test "$(docker exec curatarr id -u)" = "568"
+          test "$(docker exec curatarr printenv CURATARR_ENV_FILE)" = "/app/data/.env"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/setup/status)
+          echo "setup status: $code"; test "$code" = "200"
+
+      - name: Publish to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}   # via env, never interpolated into the script
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          short="${GITHUB_SHA::7}"
+          docker tag curatarr:ci "$IMAGE:latest"
+          docker tag curatarr:ci "$IMAGE:sha-$short"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:sha-$short"

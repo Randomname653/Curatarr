@@ -16,6 +16,7 @@ without creating a cycle — services import config, never the other way.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -26,10 +27,19 @@ def app_root() -> Path:
     return Path(__file__).resolve().parents[1]         # repo root (parent of src/)
 
 
+def env_file(root: Path, environ=os.environ) -> Path:
+    """``CURATARR_ENV_FILE`` when set, else ``<root>/.env``. The container
+    sets it to a path inside the data volume: the wizard writes .env with
+    an atomic replace, which a bind-mounted single file cannot take, and a
+    file in the image itself is gone with the next update."""
+    override = (environ.get("CURATARR_ENV_FILE") or "").strip()
+    return Path(override) if override else root / ".env"
+
+
 ROOT: Path = app_root()
 DATA_DIR: Path = ROOT / "data"
 LOG_DIR: Path = DATA_DIR / "logs"
-ENV_FILE: Path = ROOT / ".env"
+ENV_FILE: Path = env_file(ROOT)
 
 
 def frontend_root() -> Path:

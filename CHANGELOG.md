@@ -470,6 +470,14 @@ token takes longer than 45 s (model load, long prompt) is no longer
 dropped as "the connection went quiet": the keepalive now also runs
 while Ollama has not answered at all.
 
+**Container image.** `ghcr.io/randomname653/curatarr` is built from the
+hash-checked lock on a digest-pinned Python 3.12 base. It runs as a non-root
+user and keeps everything, the `.env` included, in one `/app/data` volume.
+CI builds and starts it on every PR, and every push to `main` publishes it.
+`deploy/docker-compose.yml` is ready for a TrueNAS custom app. Ollama stays
+outside (`OLLAMA_ENDPOINT`). `CURATARR_ENV_FILE` moves the `.env` on any
+install.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex
