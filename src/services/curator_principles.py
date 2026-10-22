@@ -35,13 +35,13 @@ import json
 import logging
 import re
 
-from src.services.llm_utils import CURATOR_NUM_CTX, curator_payload
+from src.services.llm_utils import curator_payload
 from datetime import datetime
 
 import httpx
 
 from src.config import settings
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import CuratorPrinciple
@@ -126,7 +126,7 @@ _NOVELTY_SCHEMA = {
 # ── LLM PLUMBING ─────────────────────────────────────────────────────────────
 
 async def _curator_json(system: str, user: str, schema: dict,
-                        num_predict: int = 800) -> dict:
+                        num_predict: int = 800, host=None) -> dict:
     """One format-forced JSON call to the curator model, persona overridden by
     the neutral ``system`` prompt.
 
@@ -139,16 +139,17 @@ async def _curator_json(system: str, user: str, schema: dict,
     every caller logs and skips the run (fail closed: background learning
     never takes the GPU from a live chat)."""
     from src.services.llm_priority import background_curator_call
+    host = host or host_for("curator")
     payload = curator_payload(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         temperature=0.1, num_predict=num_predict, fmt=schema,
         # repeat_penalty 1.0: constrained JSON repeats its own punctuation and
         # key prefixes by construction (see pillars.adjudicate).
-        repeat_penalty=1.0)
+        repeat_penalty=1.0, host=host)
 
     async def _post() -> dict:
         async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as client:
-            r = await client.post(f"{ollama_for("curator")}/api/chat", json=payload)
+            r = await client.post(f"{host.url}/api/chat", json=payload)
         r.raise_for_status()
         return r.json()
 
@@ -353,11 +354,14 @@ async def capture_principles_from_thread(user_id: int, thread_id: str,
     # — the extraction rules went first. Keep the newest turns instead: what
     # a debate ends on is what the owner endorsed.
     from src.services.prompt_budget import budget_for, keep_tail
-    convo = keep_tail(convo, budget_for(CURATOR_NUM_CTX, 700, _EXTRACT_SYS) - 8)
+    # Budgeted for the host that extracts: its window, not this process's default.
+    host = host_for("curator")
+    convo = keep_tail(convo, budget_for(host.num_ctx, 700, _EXTRACT_SYS) - 8)
 
     # 1 — extract (both sides, user-endorsed only)
     try:
-        ex = await _curator_json(_EXTRACT_SYS, "DEBATE:\n" + convo, _EXTRACT_SCHEMA, 700)
+        ex = await _curator_json(_EXTRACT_SYS, "DEBATE:\n" + convo, _EXTRACT_SCHEMA, 700,
+                                 host=host)
     except Exception as e:
         logger.warning("[principles] extract failed for %s: %s", thread_id, e)
         return []

@@ -38,9 +38,9 @@ from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field,
                       ValidationError, field_validator, model_validator)
 
 from src.database.runner import run_read
-from src.services.llm_utils import CURATOR_NUM_CTX, curator_payload
+from src.services.llm_utils import curator_payload
 from src.services.http_client import tls_context
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +110,15 @@ VERDICT: a protected title is HARD_KEEP, or KEEP_WITH_FLAG when it is also a cle
 protecting_pillar: the step that protected it (HOUSEHOLD, CUSTODIAN, RESONANCE or EGO) for HARD_KEEP and KEEP_WITH_FLAG; NONE for CUT, STAGNANT and EVALUATE. Each pillar field: ONE short sentence about THIS title. Fill every field."""
 
 
-def judge_system_prompt(law_extra: str = "") -> str:
-    """The judge's system message: the constitution for this LLM_PROFILE,
-    the untrusted-data rule (which names the fence markers the evidence
-    uses), and any learned principles. build_evidence budgets the facts
-    against exactly this text."""
+def judge_system_prompt(law_extra: str = "", profile: str = None) -> str:
+    """The judge's system message: the constitution for the profile of the
+    host that judges (``profile``; default this process's LLM_PROFILE), the
+    untrusted-data rule (which names the fence markers the evidence uses),
+    and any learned principles. build_evidence budgets the facts against
+    exactly this text."""
     from src.services.llm_utils import UNTRUSTED_RULE, llm_profile
-    law = PILLAR_CONSTITUTION_COMPACT if llm_profile() == "small" else PILLAR_CONSTITUTION
+    law = (PILLAR_CONSTITUTION_COMPACT if (profile or llm_profile()) == "small"
+           else PILLAR_CONSTITUTION)
     return law + "\n\n" + UNTRUSTED_RULE + (f"\n\n{law_extra}" if law_extra else "")
 
 
@@ -504,8 +506,13 @@ def _profile_is_another_work(item: dict, vd: dict) -> bool:
     return bool(ay and py and abs(ay - py) > 1)
 
 
-async def build_evidence(item: dict, user_id: int, category: str, db=None) -> dict:
+async def build_evidence(item: dict, user_id: int, category: str, db=None,
+                         host=None) -> dict:
     """Assemble the full FACTS block + cheap flags for ONE title. Makes NO verdict.
+
+    ``host``: the Ollama host that will judge (ollama_hosts.host_for("judge")
+    when omitted). The facts are budgeted for ITS window and constitution, so
+    the deletion run passes the host it resolved once for the whole run.
 
     Returns ``{"title": str, "facts": str, "flags": dict}`` where ``facts`` is the
     prompt-ready evidence the judge consumes (same shape the constitution was
@@ -523,6 +530,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
     session, including how long its transaction stays open.
     """
     from src.services.llm_utils import fence_untrusted, scrub_untrusted
+    host = host or host_for("judge")
     title = item.get("title") or "Unknown"
     year = item.get("year") or "—"
     genres = item.get("genres")
@@ -991,11 +999,11 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None) -> di
         Section("tech", f"TECH: {tech_line}\n" if tech_line
                         else "TECH: no technical profile on record.\n", 4),
         Section("dialogue", dialogue_line, 5),
-    ], budget_for(CURATOR_NUM_CTX, _JUDGE_PREDICT_REPAIR + _REPAIR_TURN_TOKENS,
-                  judge_system_prompt(law_extra)))
+    ], budget_for(host.num_ctx, _JUDGE_PREDICT_REPAIR + _REPAIR_TURN_TOKENS,
+                  judge_system_prompt(law_extra, host.profile)))
     if trimmed:
         logger.info("[pillars] %r: facts trimmed to fit the %d-token window: %s",
-                    title, CURATOR_NUM_CTX, ", ".join(trimmed))
+                    title, host.num_ctx, ", ".join(trimmed))
     return {"title": title, "facts": facts.strip(), "flags": flags,
             "law_extra": law_extra, "trimmed": trimmed}
 
@@ -1069,7 +1077,8 @@ def _repair_message(err) -> str:
 
 
 async def adjudicate(evidence_facts: str, *, model: str = None,
-                     skip_priority: bool = False, law_extra: str = "") -> dict:
+                     skip_priority: bool = False, law_extra: str = "",
+                     host=None) -> dict:
     """STAGE 1 — the structured verdict. Constitution + evidence + forced schema.
 
     temperature 0 (determinism by construction, not luck); the JSON shape is
@@ -1084,15 +1093,19 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
     protected) carrying ``_error`` and ``_error_kind`` (an llm_errors
     LLMFailure value), so the run can tell an outage from a real EVALUATE.
     A verdict that needed the repair turn carries ``_repaired``.
+
+    ``host``: where to judge (default ``host_for("judge")``) - the same host
+    build_evidence budgeted the facts for.
     """
     from src.config import settings
     from src.services.llm_errors import LLMCallError, LLMFailure, REPAIRABLE, post_chat
     from src.services.llm_priority import curator_priority
     from src.services.prompt_budget import est_tokens
 
+    host = host or host_for("judge")
     model = model or settings.CURATOR_MODEL
     messages = [
-        {"role": "system", "content": judge_system_prompt(law_extra)},
+        {"role": "system", "content": judge_system_prompt(law_extra, host.profile)},
         {"role": "user", "content": "FACTS:\n" + evidence_facts},
     ]
     # curator_payload: the runner options (num_ctx, num_gpu) and keep_alive of
@@ -1104,10 +1117,10 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
     # seed pins the rest.
     payload = curator_payload(messages, model=model, temperature=0.0,
                               num_predict=_JUDGE_PREDICT, fmt=VERDICT_SCHEMA,
-                              seed=7, repeat_penalty=1.0)
+                              seed=7, repeat_penalty=1.0, host=host)
 
     async def _ask() -> Verdict:
-        data = await post_chat(ollama_for("judge"), payload,
+        data = await post_chat(host.url, payload,
                                read_timeout=_JUDGE_TIMEOUT)
         return _parse_verdict((data.get("message") or {}).get("content", "") or "")
 
@@ -1116,7 +1129,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         # constitution) and answer anyway. build_evidence budgets the facts,
         # so this fires only for a caller that did not.
         need = sum(est_tokens(m["content"]) for m in messages) + 64
-        room = CURATOR_NUM_CTX - _JUDGE_PREDICT
+        room = host.num_ctx - _JUDGE_PREDICT
         if need > room:
             raise LLMCallError(LLMFailure.CONTEXT_OVERFLOW,
                                f"~{need} prompt tokens for {room} of room")
@@ -1318,7 +1331,7 @@ def _monologue_violations(text: str, verdict_kind: str) -> list:
 
 async def write_monologue(evidence_facts: str, verdict: dict, *,
                           lang_directive: str = "", model: str = None,
-                          skip_priority: bool = False) -> str:
+                          skip_priority: bool = False, host=None) -> str:
     """STAGE 2 (LAZY) — the bissige user-facing prose. Persona model, higher
     temperature, NO schema. Call this ONLY for titles actually shown in the UI,
     so the expensive creative pass never runs on the whole candidate pool.
@@ -1327,12 +1340,14 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
     here (curatarr-curator — or curatarr-pitcher on a two-bake-split
     deletion run; both bake the same CURATOR_SYSTEM_PROMPT), whereas
     adjudicate() overrides it with the neutral constitution. Same model
-    within a run, two framings."""
+    within a run, two framings - and the same host (``host``, default
+    ``host_for("judge")``)."""
     import httpx
     from src.config import settings
     from src.services.llm_priority import curator_priority
     from src.services.llm_utils import clean_llm_text
 
+    host = host or host_for("judge")
     model = model or settings.CURATOR_MODEL
     v = verdict.get("verdict")
     # Bitrate is the DOWNSCALE axis — mentioned ONLY for KEEP_WITH_FLAG; a CUT
@@ -1365,12 +1380,11 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
     # RELOADED the 20 GB model twice per candidate — the VRAM sawtooth
     # the owner caught in Task Manager. curator_payload pins it.
     payload = curator_payload([{"role": "user", "content": prompt}], model=model,
-                              temperature=0.7, num_predict=500)
+                              temperature=0.7, num_predict=500, host=host)
 
     async def _post():
         async with httpx.AsyncClient(verify=tls_context(), timeout=_JUDGE_TIMEOUT) as client:
-            resp = await client.post(
-                f"{ollama_for("judge")}/api/chat", json=payload)
+            resp = await client.post(f"{host.url}/api/chat", json=payload)
         resp.raise_for_status()
         return resp
     async def _generate() -> str:
@@ -1414,12 +1428,13 @@ async def judge(item: dict, user_id: int, category: str, db=None, *,
     Returns ``{title, facts, flags, verdict}`` (+ ``monologue`` when requested).
     The verdict dict carries the structured pillar CoT — log it to
     curator_resolution_log for an audit trail of WHY each title was kept/cut."""
-    ev = await build_evidence(item, user_id, category, db)
+    host = host_for("judge")       # one host for evidence, verdict and prose
+    ev = await build_evidence(item, user_id, category, db, host=host)
     verdict = await adjudicate(ev["facts"], skip_priority=skip_priority,
-                               law_extra=ev.get("law_extra", ""))
+                               law_extra=ev.get("law_extra", ""), host=host)
     out = {**ev, "verdict": verdict}
     if with_monologue:
         out["monologue"] = await write_monologue(
             ev["facts"], verdict, lang_directive=lang_directive,
-            skip_priority=skip_priority)
+            skip_priority=skip_priority, host=host)
     return out

@@ -652,7 +652,7 @@ def test_principles_novelty_failure_fails_closed():
 
     calls = []
 
-    async def _cj(system, user, schema, num_predict=800):
+    async def _cj(system, user, schema, num_predict=800, host=None):
         calls.append(system)
         if len(calls) == 1:
             return {"principles": [{"principle": "Keep comfort rewatches.", "basis": "user"}]}

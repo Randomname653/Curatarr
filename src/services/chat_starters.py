@@ -47,7 +47,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import ChatStarter, WatchHistoryEntry
@@ -279,19 +279,20 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
     from src.services.llm_priority import background_curator_call
 
     async def _generate() -> str | None:
+        host = host_for("curator")
         for model in [settings.CURATOR_MODEL, settings.BASE_CURATOR_MODEL]:
             if not model:
                 continue
             try:
                 async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
                     resp = await client.post(
-                        f"{ollama_for("curator")}/api/chat",
+                        f"{host.url}/api/chat",
                         json={
                             "model": model,
                             "messages": [{"role": "user", "content": prompt}],
                             "stream": False,
                             "keep_alive": CURATOR_KEEP_ALIVE,
-                            **curator_options(temperature=0.9, num_predict=900),
+                            **curator_options(temperature=0.9, num_predict=900, host=host),
                         },
                     )
                 if resp.status_code == 200:

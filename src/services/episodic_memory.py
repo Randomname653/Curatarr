@@ -40,7 +40,7 @@ from src.services.household import is_admin_user
 from src.database.models import EpisodicMemory, EncryptedTasteVector
 from src.services.taste_vectors import merge_feedback_into_vector
 from src.config import settings
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for, ollama_for
 from src.services.llm_utils import clean_llm_text, parse_llm_json, strip_think_tags, ollama_options, SUMMARIZER_KEEP_ALIVE
 from src.services.http_client import tls_context
 
@@ -2222,14 +2222,16 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
     if resident:
         from src.services.llm_utils import curator_payload
 
+        host = host_for("chat")
+
         async def _post() -> dict:
             async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
                 r = await client.post(
-                    f"{ollama_for("chat")}/api/chat",
+                    f"{host.url}/api/chat",
                     json=curator_payload(
                         [{"role": "system", "content": _PROTECTION_SYSTEM},
                          {"role": "user", "content": prompt}],
-                        temperature=0.1, num_predict=700))
+                        temperature=0.1, num_predict=700, host=host))
             r.raise_for_status()
             return r.json()
         try:
