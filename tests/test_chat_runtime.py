@@ -487,7 +487,7 @@ _UID = 515151
 
 @contextmanager
 def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=False,
-                heartbeat=None, think_tags=None, queue_forever=False):
+                heartbeat=None, think_tags=None, queue_forever=False, header_delay=0.0):
     import httpx
     from sqlalchemy.pool import StaticPool
     import src.database.connection as conn
@@ -538,7 +538,10 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
             async for chunk in body():
                 yield chunk
 
-    def handler(request):
+    async def handler(request):
+        # Ollama sends its headers with the first token: a load or a long
+        # prompt eval happens before the response even starts.
+        await asyncio.sleep(header_delay)
         if connect_error:
             raise httpx.ConnectError("refused", request=request)
         if status != 200:
@@ -671,6 +674,24 @@ def test_a_cold_load_keeps_the_stream_alive():
         first_token = next(i for i, f in enumerate(frames) if '"token"' in f)
         assert ": keepalive\n\n" in frames[:first_token], frames
         assert _tokens(frames) == "Hello there"
+
+
+def test_waiting_for_ollamas_headers_keeps_the_stream_alive():
+    # 2026-10-22: Ollama answers with headers only once the first token is
+    # ready. The heartbeat ran inside the response only, so 46 s of prompt
+    # eval were silent and the client's 45 s watchdog dropped the reply.
+    with _stream_rig(_OK, header_delay=0.35, heartbeat=0.05) as rig:
+        _, frames = _frames(rig)
+        first_token = next(i for i, f in enumerate(frames) if '"token"' in f)
+        assert frames[:first_token].count(": keepalive\n\n") >= 3, frames
+        assert _tokens(frames) == "Hello there"
+
+
+def test_a_disconnect_while_ollama_has_not_answered_releases_everything():
+    with _stream_rig(_OK, header_delay=5.0, heartbeat=0.05) as rig:
+        _cancel_after(rig, lambda f: f == ": keepalive\n\n")
+        assert "curator_done" in rig.events, "the curator slot stayed held"
+        assert rig.rows() == [] and not rig.busy()
 
 
 def test_a_think_block_keeps_the_stream_alive():

@@ -121,3 +121,14 @@ def test_poster_bytes_are_cached_as_the_immutables_they_are():
     src = (_ROOT / "src" / "routers" / "image_proxy.py").read_text(encoding="utf-8")
     assert "max-age=31536000, immutable" in src
     assert "max-age=86400" not in src
+
+
+def test_a_sign_in_in_another_tab_reloads_the_signed_out_tab():
+    """On a phone the user sees the tab plex.tv sends back, not the one that
+    polled the PIN to completion - it showed the login again (2026-10-22)."""
+    js = (_ROOT / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+    i = js.index("window.addEventListener('storage'")
+    handler = js[i:js.index("});", i)]
+    assert "ev.key === 'curatarr_token'" in handler and "ev.newValue" in handler
+    assert "!state.token" in handler        # a refresh while signed in is ignored
+    assert "location.reload()" in handler

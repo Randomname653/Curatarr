@@ -78,6 +78,14 @@ window.onload = async () => {
 };
 // Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
 window.addEventListener('hashchange', () => routeFromHash());
+// A Plex sign-in completes in the tab that started it, but plex.tv sends
+// its own tab back here, and on a phone that is the tab the user sees: it
+// showed the login again (2026-10-22). Another tab storing a token while
+// this one is signed out = signed in now; a token refresh while signed in
+// changes nothing here.
+window.addEventListener('storage', ev => {
+  if (ev.key === 'curatarr_token' && ev.newValue && !state.token) location.reload();
+});
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Tab') { trapFocus(ev, activeDialog()); return; }
   if (ev.key !== 'Escape') return;
