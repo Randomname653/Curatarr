@@ -119,6 +119,8 @@ export function setUser(u) {
     // Admin-only chrome: the sidebar's Curate section, the admin Settings
     // tabs, inline admin actions (e.g. Force sync) — let CSS decide layout
     document.querySelectorAll('.admin-action-row').forEach(el => el.hidden = false);
+    // ...and what a member gets in their place (the phone tab bar's History)
+    document.querySelectorAll('.member-only-row').forEach(el => el.hidden = true);
   }
   document.getElementById('auth-overlay').classList.add('hidden');
   loadUnreadMessages();

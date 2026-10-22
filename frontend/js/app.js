@@ -1,5 +1,5 @@
 import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdate, evaluateModelUpdate, loadDepsStatus, loadIntegrations, loadModelUpdates, loadNotificationPreferences, openModelUpdates, openSettingsPane, reattributeHistory, rebuildModels, rerunModelCompare, saveIntegrations, showSettingsAccount, startModelCompare, testIntegration } from './settings.js';
-import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
+import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, openLibraryItem, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
 import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
@@ -23,7 +23,7 @@ import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLi
 import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
-import { initMobile, installApp, openLibrarySheet, setHapticLevel, toggleTopbarSearch } from './mobile.js';
+import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
 
 export function init() {
 initMobile();
@@ -157,7 +157,6 @@ const actions = {
   loadDepsStatus,
   loadModelUpdates,
   openModelUpdates,
-  openLibrarySheet,
   setHapticLevel,
   startModelCompare,
   rerunModelCompare,
@@ -227,6 +226,7 @@ const actions = {
   removeWish,
   renderSpotifyBacklog,
   renderSynopsisBrowser,
+  openLibraryItem,
   renderWanted,
   respondToMessage,
   retryOnboardingStep,

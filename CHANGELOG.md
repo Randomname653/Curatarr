@@ -411,6 +411,19 @@ Off, Light (the new default: one pulse at half length) or Full. Saved in
 this browser only; Android phones, iPhones don't let web apps vibrate.
 The swipe card also drags from its text now, not only from the poster.
 
+**The curator in the middle.** The phone tab bar is For you · Swipe ·
+Chat · Deletions (members: History) · More, with Chat as the raised
+button; Swipe is an ordinary tab now. Library and Report moved into the
+drawer, and the drawer has one way in: More (or a swipe from the left
+edge) - the second menu button at the top left is gone.
+
+**A library you can browse.** TV Shows, Movies and Music are a poster
+grid now, on the desktop as on the phone: title, year and size under each
+poster, a small amber dot where the synopsis is missing or still raw.
+Tapping a title opens its details - synopsis, size, added, status, and for
+admins the root folder and Re-enrich (Metadata / Summary / Both), which
+used to sit as a menu on every row. Search comes first in the toolbar.
+
 **Fewer random memories on deletion cards.** "Matches something you said
 you value" no longer shows a memory that only stood out of a tight cluster
 of unrelated ones (a car-nostalgia note on a French comedy). An

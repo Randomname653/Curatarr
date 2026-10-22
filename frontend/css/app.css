@@ -175,7 +175,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
    hamburger button, closes on backdrop click or on picking a view. The
    desktop expand/collapse toggle doesn't apply here so it's hidden too. */
 @media (max-width: 768px) {
-  #sb-hamburger { display: block; }
+  /* No hamburger: "More" in the tab bar (and a swipe from the left edge)
+     opens the drawer - one way in, within thumb reach. */
   /* Topbar's too tight for the search box + hamburger both — reachable via
      the Recommendations view's own (identical) search box instead. */
   #topbar-search-form { display: none; }
@@ -394,6 +395,49 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .arr-setup-banner { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; text-align: center; margin: 20px 0; }
 .arr-setup-banner h3 { margin: 0 0 8px; font-size: 15px; }
 .arr-setup-banner p { color: var(--text3); font-size: 13px; margin: 0 0 16px; }
+
+/* ── LIBRARY BROWSER ── a poster grid like a media app's; the admin side of a
+   title (enrichment state, root folder, Re-enrich) waits in its detail sheet.
+   A card only carries an amber dot when its synopsis is missing or raw. */
+.lib-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.lib-search { position: relative; flex: 0 1 420px; display: flex; align-items: center; }
+.lib-search svg { position: absolute; left: 10px; color: var(--text3); pointer-events: none; }
+.lib-search .input { width: 100%; padding-left: 32px; }
+.lib-refresh { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: var(--radius); color: var(--text3); }
+.lib-refresh:hover, .lib-refresh:focus-visible { color: var(--amber); }
+.lib-count { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.lib-count b { color: var(--text2); }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 16px; }
+.lib-card { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lib-poster { position: relative; display: block; aspect-ratio: 2 / 3; border-radius: var(--radius); overflow: hidden; background: var(--bg3); box-shadow: 0 6px 18px rgba(0,0,0,.35); transition: transform .18s ease, box-shadow .18s ease; }
+.is-music .lib-poster { aspect-ratio: 1; border-radius: 50%; }
+.lib-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+img.lib-img { z-index: 1; }
+.lib-ph { display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 700; color: var(--text3); background: linear-gradient(135deg, var(--bg3), var(--bg2)); }
+.lib-card:hover .lib-poster, .lib-card:focus-visible .lib-poster { transform: translateY(-3px); box-shadow: 0 0 0 2px var(--amber), 0 12px 26px rgba(0,0,0,.45); }
+.lib-card:active .lib-poster { transform: scale(.97); }
+.lib-flag { position: absolute; z-index: 2; top: 8px; right: 8px; width: 10px; height: 10px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 2px var(--bg2); }
+.is-music .lib-flag { top: 12%; right: 12%; }
+.lib-card-t { margin-top: 5px; font-size: 13px; font-weight: 600; line-height: 1.3; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lib-card-m { font-size: 11px; color: var(--text3); }
+.is-music .lib-card-t, .is-music .lib-card-m { text-align: center; }
+.lib-detail { display: flex; gap: 16px; align-items: flex-start; }
+.lib-detail-poster { position: relative; flex: 0 0 120px; aspect-ratio: 2 / 3; border-radius: var(--radius); overflow: hidden; background: var(--bg3); }
+.lib-detail.is-music .lib-detail-poster { aspect-ratio: 1; border-radius: 50%; }
+.lib-detail .lib-ph { font-size: 36px; }
+.lib-detail-facts { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.lib-root { word-break: break-all; }
+.lib-detail-syn { margin-top: 14px; font-size: 13px; line-height: 1.6; color: var(--text2); }
+.lib-detail-h { margin: 16px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); }
+@media (max-width: 768px) {
+  .lib-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 10px; }
+  /* search on its own row; sort, filter and refresh share the next one */
+  .lib-search { flex: 1 1 100%; }
+  .lib-sort { flex: 1 1 0; min-width: 0; }
+  .lib-toolbar .chip, .lib-refresh { flex: 0 0 auto; }
+  .lib-ph { font-size: 28px; }
+  .lib-card-t { font-size: 12px; }
+}
 
 /* ── TABS — one look for category tabs, arr-page tabs and sub-views inside a view ── */
 .cat-tabs, .arr-tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -937,13 +981,6 @@ select option { background: var(--bg2); }
 @keyframes ptrSpin { from { transform: translate(-50%, 18px) rotate(0); } to { transform: translate(-50%, 18px) rotate(360deg); } }
 
 /* Library sheet (tab bar → Library) and the iOS install steps */
-.lib-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.lib-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg3); color: var(--text); text-decoration: none; transition: border-color .15s, transform .1s; }
-.lib-tile svg { color: var(--amber); }
-.lib-tile:hover, .lib-tile.active { border-color: var(--amber); }
-.lib-tile:active { transform: scale(.96); }
-.lib-tile-label { font-size: 13px; font-weight: 600; }
-.lib-tile-sub { font-size: 11px; color: var(--text3); }
 .install-steps { padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
 .install-steps li::marker { color: var(--amber); font-weight: 700; }
 .sb-footer .pwa-install { border-color: var(--amber-line); color: var(--amber); }
@@ -981,11 +1018,11 @@ select option { background: var(--bg2); }
   .mt-item.active svg { transform: translateY(-1px) scale(1.08); }
   .mt-item.active::before { content: ''; position: absolute; top: 0; left: 30%; right: 30%; height: 2px; border-radius: 0 0 2px 2px; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
   .mt-item:active svg { transform: scale(.88); }
-  /* Swipe is the playful one: a raised amber button in the middle */
-  .mt-swipe .mt-fab { display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; margin-top: -16px; border-radius: 16px; background: linear-gradient(145deg, var(--amber2), var(--amber)); color: #000; box-shadow: 0 6px 18px var(--amber-line), 0 0 0 4px var(--bg); transition: transform .2s cubic-bezier(.3,1.6,.5,1); }
-  .mt-swipe.active .mt-fab { transform: rotate(-6deg) scale(1.05); }
-  .mt-swipe:active .mt-fab { transform: scale(.9); }
-  .mt-swipe.active::before { display: none; }
+  /* The curator sits in the middle: a raised amber button */
+  .mt-center .mt-fab { display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; margin-top: -16px; border-radius: 16px; background: linear-gradient(145deg, var(--amber2), var(--amber)); color: #000; box-shadow: 0 6px 18px var(--amber-line), 0 0 0 4px var(--bg); transition: transform .2s cubic-bezier(.3,1.6,.5,1); }
+  .mt-center.active .mt-fab { transform: scale(1.05); }
+  .mt-center:active .mt-fab { transform: scale(.9); }
+  .mt-center.active::before { display: none; }
   .mt-dot { position: absolute; top: 9px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px var(--amber); }
   /* Keyboard up: the tab bar steps aside so the input keeps the space */
   body:has(#chat-input:focus) #mobile-tabbar, body:has(.view-body textarea:focus) #mobile-tabbar,

@@ -846,28 +846,34 @@
   </div>
 </div>
 
-<!-- MOBILE TAB BAR (≤768px): the thumb-reach shortcuts to the everyday views;
-     everything else stays in the drawer behind "More". nav.showView marks the
-     tab whose data-views names the view on screen. -->
+<!-- MOBILE TAB BAR (≤768px): the thumb-reach shortcuts to the everyday views,
+     the curator in the middle; everything else (Library, Report, ...) stays in
+     the drawer behind "More". Admins get Deletions, members History & Taste
+     (auth.setUser). nav.showView marks the tab whose data-views names the view
+     on screen. -->
 <nav id="mobile-tabbar" aria-label="Quick navigation">
-  <a class="mt-item" href="#chat" data-views="chat">
-    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-    <span>Chat</span>
-  </a>
   <a class="mt-item" href="#recs" data-views="recs" aria-label="Recommendations">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
     <span>For you</span>
   </a>
-  <a class="mt-item mt-swipe" href="#swipe" data-views="swipe">
-    <span class="mt-fab">
-      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 12h6M12 9l3 3-3 3"/></svg>
-    </span>
+  <a class="mt-item" href="#swipe" data-views="swipe">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 12h6M12 9l3 3-3 3"/></svg>
     <span>Swipe</span>
   </a>
-  <button type="button" class="mt-item" data-views="arr-sonarr arr-radarr arr-lidarr" data-action="openLibrarySheet" aria-haspopup="dialog">
-    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-    <span>Library</span>
-  </button>
+  <a class="mt-item mt-center" href="#chat" data-views="chat">
+    <span class="mt-fab">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    </span>
+    <span>Chat</span>
+  </a>
+  <a class="mt-item admin-action-row" hidden href="#deletions" data-views="deletions">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    <span>Deletions</span>
+  </a>
+  <a class="mt-item member-only-row" href="#history" data-views="history" aria-label="History &amp; Taste">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    <span>History</span>
+  </a>
   <button type="button" class="mt-item" id="mt-more" data-views="" data-action="toggleMobileSidebar" aria-label="More: all views and settings">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
     <span>More</span>

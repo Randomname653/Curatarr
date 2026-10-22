@@ -373,6 +373,19 @@ def library_set_defaults(
 
 # ── Pass 16d: Synopsis Browser (items list + enrichment status + re-enrich) ──
 
+def _arr_poster(item: dict) -> str:
+    """The arr's poster as a REMOTE url (TVDB / fanart.tv / TMDB - hosts the
+    image proxy serves); the arr-local /MediaCover path would need the arr
+    itself reachable from the browser. Lidarr: the artist's poster or
+    cover. '' when there is none (the Plex music index has no images)."""
+    images = item.get("images") or []
+    for kind in ("poster", "cover"):
+        for img in images:
+            if img.get("coverType") == kind and str(img.get("remoteUrl") or "").startswith("http"):
+                return img["remoteUrl"]
+    return ""
+
+
 def _flatten_arr_item(svc: str, item: dict, enrich: dict | None) -> dict:
     """Normalise an arr-side record into a single item shape the Synopsis
     Browser frontend expects.
@@ -426,6 +439,8 @@ def _flatten_arr_item(svc: str, item: dict, enrich: dict | None) -> dict:
             "tags":            item.get("tags") or [],
             "album_count":     (item.get("statistics") or {}).get("albumCount", 0),
         }
+
+    out["poster"] = _arr_poster(item)
 
     # Enrichment status from our cache
     if enrich:

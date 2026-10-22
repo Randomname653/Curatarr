@@ -128,27 +128,6 @@ export async function installApp() {
   });
 }
 
-// ── Library sheet (the tab bar's "Library") ─────────────────────────────────
-const LIB_TILES = [
-  ['arr-sonarr', 'TV Shows', 'Sonarr', '<rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/>'],
-  ['arr-radarr', 'Movies', 'Radarr', '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>'],
-  ['arr-lidarr', 'Music', 'Lidarr', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'],
-];
-export function openLibrarySheet() {
-  haptic();
-  const here = document.querySelector('.view.active')?.id;
-  openModal({
-    title: 'Library',
-    size: 'narrow sheet',
-    body: `<div class="lib-tiles">${LIB_TILES.map(([view, label, app, icon]) => `
-        <a class="lib-tile${here === view + '-view' ? ' active' : ''}" href="#${view}" ${act('closeModal')}>
-          <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">${icon}</svg>
-          <span class="lib-tile-label">${label}</span>
-          <span class="lib-tile-sub">${app}</span>
-        </a>`).join('')}</div>`,
-  });
-}
-
 // ── Topbar search on phones ─────────────────────────────────────────────────
 export function toggleTopbarSearch(force) {
   const open = typeof force === 'boolean' ? force : !document.body.classList.contains('search-open');
