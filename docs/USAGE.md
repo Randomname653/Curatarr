@@ -209,6 +209,15 @@ Apps → Custom App → Install via YAML.
     - An enrichment item stays due.
     - A chat reply that has not started yet is answered on the NAS. One that
       has started ends with a note and is not saved.
+  - **A reserve of deletion proposals.** While the PC is free, a deletion run
+    goes three times deeper (30 proposals, 180 new verdicts per category).
+    The proposals last while the PC is off.
+- **Verdicts are not paid for twice** (every install). A deletion verdict is
+  stored with a fingerprint of everything it rests on: the evidence, the
+  principles, the bake and its weights, the judging card's profile. While
+  none of that changes, the next run reuses it instead of asking the model
+  again, and walks further down the list instead. A new play, rating,
+  household watch, principle or model update means a fresh verdict.
 - **Moving an existing install:** stop the old one, then copy its `data/`
   folder and its `.env` into the volume. Never run two instances against the
   same Plex and arrs.
