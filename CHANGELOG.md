@@ -395,6 +395,35 @@ it while the next one rises. Buttons and keys play the same motion.
   stack; a ring counts the answers to the next taste refresh and turns
   green when it starts.
 
+**Swipe: Want to watch.** Most cards are titles you haven't seen, and "Not
+seen" threw away whether one interested you. "Want to watch" now sits next
+to it and puts the title on your own Plex watchlist (the same write chat
+makes for "I want to watch that"; the card says if plex.tv found no clear
+match). It is a plan, not a verdict, so it doesn't touch your taste profile.
+The two unseen answers get the two easy swipes (← not seen, → want to
+watch; ↑ loved and ↓ disliked as before; Liked is a tap or L). Exact stars
+moved off the button row to a long press on a seen reaction (or keys 1-0),
+so the row stays at six. Only seen answers count toward the next taste
+refresh, and a full stack loads its posters in one round.
+
+**Vibration you can turn down.** Settings → Account → This device:
+Off, Light (the new default: one pulse at half length) or Full. Saved in
+this browser only; Android phones, iPhones don't let web apps vibrate.
+The swipe card also drags from its text now, not only from the poster.
+
+**The curator in the middle.** The phone tab bar is For you · Swipe ·
+Chat · Deletions (members: History) · More, with Chat as the raised
+button; Swipe is an ordinary tab now. Library and Report moved into the
+drawer, and the drawer has one way in: More (or a swipe from the left
+edge) - the second menu button at the top left is gone.
+
+**A library you can browse.** TV Shows, Movies and Music are a poster
+grid now, on the desktop as on the phone: title, year and size under each
+poster, a small amber dot where the synopsis is missing or still raw.
+Tapping a title opens its details - synopsis, size, added, status, and for
+admins the root folder and Re-enrich (Metadata / Summary / Both), which
+used to sit as a menu on every row. Search comes first in the toolbar.
+
 **Fewer random memories on deletion cards.** "Matches something you said
 you value" no longer shows a memory that only stood out of a tight cluster
 of unrelated ones (a car-nostalgia note on a French comedy). An

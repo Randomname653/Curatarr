@@ -1,8 +1,10 @@
 // ── Swipe: rate titles near your taste, one card at a time ──────────────────
 // Library titles closest to the user's taste vector that they have neither
-// played in Plex nor answered yet (services/swipe.py). Five reactions: Not
-// seen, Disliked, Meh, Liked, Loved - the last four are stars 2 / 5 / 7 / 10
-// in the same answer store, and exact stars 1-10 stay one key away.
+// played in Plex nor answered yet (services/swipe.py). Six reactions in two
+// groups: not seen (Not seen, Want to watch) and seen (Disliked, Meh, Liked,
+// Loved = stars 2 / 5 / 7 / 10 in the same answer store). Exact stars 1-10
+// are a long-press on a seen reaction, or keys 1-0 / S. Most cards are
+// unseen, so the two unseen answers own the two easy swipes.
 //
 // The deck: the top card follows the pointer (tilt from where it was
 // grabbed, a stamp and a glow growing toward the decision), a drag past the
@@ -11,8 +13,10 @@
 // same flight. A loved title chains a few of its nearest neighbours into
 // the stack; undo flies the last card back in from where it left.
 //
-// Gestures: ← not seen, → liked, ↑ loved, ↓ disliked (Meh is a button / M).
-// Keys: ← N not seen · ↓ D disliked · M meh · → L liked · ↑ F loved ·
+// Gestures: ← not seen, → want to watch, ↑ loved, ↓ disliked (Meh and
+// Liked are buttons / M, L).
+// Keys: ← N not seen · → W want to watch · ↓ D disliked · M meh · L liked ·
+// ↑ F loved ·
 // 1-9, 0 exact stars · S exact-star row · Enter seen without stars (row
 // open) · U / Backspace undo · Esc closes the star row.
 import { api } from './api.js';
@@ -21,20 +25,24 @@ import { haptic } from './mobile.js';
 
 const CATS = [['movie', 'Movies'], ['show', 'TV Shows'], ['anime', 'Anime']];
 const REACT = {
-  notseen:  {label: 'Not seen', stamp: 'Not seen', dir: 'left',  stars: null, keys: 'N ArrowLeft'},
-  disliked: {label: 'Disliked', stamp: 'Nope',     dir: 'down',  stars: 2,    keys: 'D ArrowDown'},
-  meh:      {label: 'Meh',      stamp: 'Meh',      dir: null,    stars: 5,    keys: 'M'},
-  liked:    {label: 'Liked',    stamp: 'Liked',    dir: 'right', stars: 7,    keys: 'L ArrowRight'},
-  loved:    {label: 'Loved',    stamp: 'Loved',    dir: 'up',    stars: 10,   keys: 'F ArrowUp'},
+  notseen:  {label: 'Not seen',      stamp: 'Not seen', dir: 'left',  stars: null, keys: 'N ArrowLeft'},
+  want:     {label: 'Want to watch', stamp: 'Want it',  dir: 'right', stars: null, keys: 'W ArrowRight'},
+  disliked: {label: 'Disliked',      stamp: 'Nope',     dir: 'down',  stars: 2,    keys: 'D ArrowDown'},
+  meh:      {label: 'Meh',           stamp: 'Meh',      dir: null,    stars: 5,    keys: 'M'},
+  liked:    {label: 'Liked',         stamp: 'Liked',    dir: null,    stars: 7,    keys: 'L'},
+  loved:    {label: 'Loved',         stamp: 'Loved',    dir: 'up',    stars: 10,   keys: 'F ArrowUp'},
 };
-const ORDER = ['notseen', 'disliked', 'meh', 'liked', 'loved'];
-const DIR_REACT = {left: 'notseen', down: 'disliked', right: 'liked', up: 'loved'};
-const KEY_REACT = {arrowleft: 'notseen', n: 'notseen', arrowdown: 'disliked', d: 'disliked', m: 'meh',
-                   arrowright: 'liked', l: 'liked', arrowup: 'loved', f: 'loved'};
+const ORDER = ['notseen', 'want', 'disliked', 'meh', 'liked', 'loved'];
+const UNSEEN = new Set(['notseen', 'want']);
+const DIR_REACT = {left: 'notseen', right: 'want', down: 'disliked', up: 'loved'};
+const KEY_REACT = {arrowleft: 'notseen', n: 'notseen', arrowright: 'want', w: 'want', arrowdown: 'disliked',
+                   d: 'disliked', m: 'meh', l: 'liked', arrowup: 'loved', f: 'loved'};
+const LONG_PRESS_MS = 450;    // hold a seen reaction this long for exact stars
 const _SVG = p => `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const ICON = {
   notseen: _SVG('<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24M1 1l22 22"/>'),
   disliked: _SVG('<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zM17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>'),
+  want: _SVG('<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'),
   meh: _SVG('<circle cx="12" cy="12" r="10"/><path d="M8 15h8M9 9h.01M15 9h.01"/>'),
   liked: _SVG('<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>'),
   loved: _SVG('<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>'),
@@ -47,7 +55,7 @@ const FLICK_MIN_PX = 36;
 const DECK_DEPTH = 3;
 // A decision you can feel (Android; silent under reduced motion): loved
 // gets a double pulse, everything else one short tap.
-const BUZZ = {notseen: 10, disliked: 14, meh: 8, liked: 14, loved: [12, 50, 18], seen: 10};
+const BUZZ = {notseen: 10, want: 12, disliked: 14, meh: 8, liked: 14, loved: [12, 50, 18], seen: 10};
 
 let _cat = 'show';
 let _queue = [];
@@ -56,7 +64,8 @@ let _loading = 0;             // the _gen a fill is running for, 0 when idle
 let _keysBound = false;
 let _exactOpen = false;
 let _undoing = false;
-let _history = [];            // [{card, cat, kind, seen, stars}] this session, oldest first
+let _watchlistWarned = false;  // a failed watchlist write is said once per session, not on every card
+let _history = [];            // [{card, cat, kind, seen, stars, want}] this session, oldest first
 let _progress = {since: 0, every: 10};
 let _ambIdx = 0, _ambUrl = null;
 let _uid = 0;
@@ -65,8 +74,8 @@ function _el(id) { return document.getElementById(id); }
 function _active() { return !!_el('swipe-view')?.classList.contains('active'); }
 function _top() { return _el('swipe-deck')?.querySelector('.swipe-card[data-depth="0"]:not(.is-leaving)'); }
 
-export function reactionOf(seen, stars) {
-  if (!seen) return 'notseen';
+export function reactionOf(seen, stars, want) {
+  if (!seen) return want ? 'want' : 'notseen';
   if (stars == null) return 'seen';
   return stars <= 3 ? 'disliked' : stars <= 6 ? 'meh' : stars <= 8 ? 'liked' : 'loved';
 }
@@ -109,13 +118,32 @@ function _renderReactions() {
   el.innerHTML = ORDER.map(k => {
     const r = REACT[k];
     const hint = r.keys.split(' ').map(x => x.replace('Arrow', '')).join(' / ');
-    return `<button class="swipe-react" data-kind="${k}" ${act('swipeReact', k)}
-              aria-keyshortcuts="${r.keys}" title="${esc(r.label)} (${esc(hint)})">
+    const exact = UNSEEN.has(k) ? '' : ' · hold for exact stars';
+    return `<button class="swipe-react" data-kind="${k}" data-group="${UNSEEN.has(k) ? 'unseen' : 'seen'}"
+              ${act('swipeReact', k)} aria-keyshortcuts="${r.keys}" title="${esc(r.label)} (${esc(hint)})${exact}">
               <span class="swipe-react-ic">${ICON[k]}</span><span class="swipe-react-l">${esc(r.label)}</span></button>`;
-  }).join('') +
-    `<button class="swipe-react swipe-react-exact" data-kind="exact" ${act('swipeExact')} aria-keyshortcuts="S"
-       aria-expanded="false" aria-controls="swipe-exact" title="Seen it - rate in exact stars (S, or keys 1-0)">
-       <span class="swipe-react-ic">${ICON.star}</span><span class="swipe-react-l">Exact</span></button>`;
+  }).join('');
+  _bindLongPress(el);
+}
+
+// Hold a seen reaction (Disliked ... Loved) for the exact-star row; the
+// click that ends the hold is swallowed so it doesn't answer as well.
+function _bindLongPress(el) {
+  if (el._longPress) return;
+  el._longPress = true;
+  let timer = null, fired = false;
+  el.addEventListener('pointerdown', e => {
+    const b = e.target.closest('.swipe-react[data-group="seen"]');
+    if (!b || e.button !== 0) return;
+    fired = false;
+    clearTimeout(timer);
+    timer = setTimeout(() => { fired = true; haptic(8); if (!_exactOpen) swipeExact(); }, LONG_PRESS_MS);
+  });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) el.addEventListener(ev, () => clearTimeout(timer));
+  el.addEventListener('click', e => {
+    if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  el.addEventListener('contextmenu', e => { if (e.target.closest('.swipe-react')) e.preventDefault(); });
 }
 
 async function _loadStats() {
@@ -130,6 +158,7 @@ async function _loadStats() {
     const total = (s.seen || 0) + (s.not_seen || 0);
     if (el) el.textContent = total
       ? `All time here: ${total} answered · ${s.seen || 0} seen (${s.rated || 0} rated) · ${s.not_seen || 0} not seen`
+        + (s.want ? ` (${s.want} want to watch)` : '')
       : 'Nothing answered here yet.';
   } catch (e) {
     if (el) el.textContent = `Couldn't load your counts - ${_errMsg(e)}`;
@@ -150,14 +179,14 @@ function _renderProgress(refreshing) {
     </div>
     <div class="swipe-progress-t">${refreshing
       ? '<b>Refreshing your taste</b><span>Your answers are being folded in.</span>'
-      : `<b>${every - since} to go</b><span>until your taste profile refreshes</span>`}</div>`;
+      : `<b>${every - since} to go</b><span>seen-it answers until your taste profile refreshes</span>`}</div>`;
   el.querySelector('.swipe-ring-fg')?.style.setProperty('stroke-dasharray', `${Math.round(frac * 100)} 100`);
 }
 
 function _renderSession() {
   const el = _el('swipe-session');
   if (!el) return;
-  const n = {notseen: 0, disliked: 0, meh: 0, liked: 0, loved: 0, seen: 0};
+  const n = {notseen: 0, want: 0, disliked: 0, meh: 0, liked: 0, loved: 0, seen: 0};
   for (const h of _history) n[h.kind] += 1;
   const total = _history.length;
   el.innerHTML = total
@@ -368,8 +397,8 @@ function _cardNode(c) {
       <div class="swipe-fit"><span>${c.chain_from ? `Like ${esc(c.chain_from)}` : 'Taste fit'}</span>
         <span class="swipe-meter"><i></i></span><b>${pct}%</b></div>
     </div>
-    ${['left', 'right', 'up', 'down', 'none'].map(dir =>
-      `<div class="swipe-stamp" data-dir="${dir}" aria-hidden="true">${esc(REACT[dir === 'none' ? 'meh' : DIR_REACT[dir]].stamp)}</div>`).join('')}`;
+    ${ORDER.map(k =>
+      `<div class="swipe-stamp" data-kind="${k}" data-pos="${REACT[k].dir || 'none'}" aria-hidden="true">${esc(REACT[k].stamp)}</div>`).join('')}`;
   n.querySelector('.swipe-meter i')?.style.setProperty('width', `${pct}%`);
   const img = n.querySelector('img.swipe-poster');
   img?.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('div'),
@@ -384,7 +413,7 @@ function _cardNode(c) {
 // ── reactions ──────────────────────────────────────────────────────────────
 export function swipeReact(kind) {
   if (!REACT[kind] || !_queue.length) return;
-  return _submit(kind !== 'notseen', REACT[kind].stars, kind);
+  return _submit(!UNSEEN.has(kind), REACT[kind].stars, kind);
 }
 
 export function swipeStars(n) {
@@ -409,7 +438,6 @@ export function swipeExact() {
     <div class="row mt-8"><button class="btn btn-ghost btn-sm" ${act('swipeStars', null)}>Seen, no rating (Enter)</button>
       <button class="btn btn-ghost btn-sm ml-auto" ${act('swipeExact')}>Close (Esc)</button></div>`;
   el.hidden = false;
-  _el('swipe-reactions')?.querySelector('[data-kind="exact"]')?.setAttribute('aria-expanded', 'true');
   el.querySelector('.swipe-star')?.focus();
 }
 
@@ -417,11 +445,10 @@ function _closeExact() {
   _exactOpen = false;
   const el = _el('swipe-exact');
   if (el) { el.hidden = true; el.innerHTML = ''; }
-  _el('swipe-reactions')?.querySelector('[data-kind="exact"]')?.setAttribute('aria-expanded', 'false');
 }
 
 function _flash(kind) {
-  const b = _el('swipe-reactions')?.querySelector(`[data-kind="${kind === 'seen' ? 'exact' : kind}"]`);
+  const b = _el('swipe-reactions')?.querySelector(`[data-kind="${kind}"]`);
   if (!b) return;
   b.classList.remove('is-hit');
   void b.offsetWidth;            // restart the pulse
@@ -438,15 +465,18 @@ async function _submit(seen, stars, kind, gesture) {
   _queue.shift();
   _layout();
   _flash(kind);
-  const entry = {card: c, cat, kind, seen, stars};
+  const want = kind === 'want';
+  const entry = {card: c, cat, kind, seen, stars, want};
   _history.push(entry);
   _renderRecent();
   _renderSession();
   _say(`${kind === 'seen' ? 'Seen' : REACT[kind].label}${seen && stars != null ? `, ${stars} of 10` : ''}: ${c.title}`);
-  if (_queue.length <= DECK_DEPTH) _fill();
+  // refill two cards early: a stack of eight with posters takes a moment
+  if (_queue.length <= DECK_DEPTH + 2) _fill();
   let r;
   try {
-    r = await api('/api/swipe/answer', 'POST', {category: cat, doc_id: c.doc_id, title: c.title, seen, stars});
+    r = await api('/api/swipe/answer', 'POST',
+                  {category: cat, doc_id: c.doc_id, title: c.title, seen, stars, want, year: c.year || null});
   } catch (e) {
     _history = _history.filter(h => h !== entry);
     if (gen === _gen) {
@@ -466,6 +496,14 @@ async function _submit(seen, stars, kind, gesture) {
     setTimeout(() => { if (gen === _gen) _renderProgress(); }, 4000);
   } else {
     _renderProgress();
+  }
+  if (r.watchlist?.ok) {
+    _note(`${ICON.want}<span><b>${esc(c.title)}</b> is on your Plex watchlist</span>`);
+  } else if (r.watchlist && !_watchlistWarned) {
+    _watchlistWarned = true;
+    toast(`Saved as Want to watch, but not added to your Plex watchlist - ${r.watchlist.error || 'no match on plex.tv'}`, 'info');
+  } else if (r.watchlist) {
+    _say(`Saved as Want to watch; ${c.title} is not on your Plex watchlist.`);
   }
   if (kind === 'loved') _chain(c, gen);
 }
@@ -509,8 +547,10 @@ export async function swipeUndo() {
     }
     _renderRecent();
     _renderSession();
-    _say(`Took back your answer for ${u.title || 'that title'}.`);
-    _note(`<span>Took back <b>${esc(u.title || 'that title')}</b></span>`);
+    // the plex.tv watchlist entry stays: it may have been there before
+    const kept = u.want ? ' - it stays on your Plex watchlist' : '';
+    _say(`Took back your answer for ${u.title || 'that title'}${kept}.`);
+    _note(`<span>Took back <b>${esc(u.title || 'that title')}</b>${esc(kept)}</span>`);
   } catch (e) {
     toast(e.message && e.message.includes('Nothing to undo') ? 'Nothing to undo here.' : `Couldn't undo - ${_errMsg(e)}`,
           'info');
@@ -545,12 +585,11 @@ function _along(dir, x, y) {
 }
 
 // Stamp, glow and the matching reaction button grow with p (0..1).
-function _lean(node, dir, p) {
-  const kind = dir === 'none' ? 'meh' : DIR_REACT[dir];
+function _lean(node, kind, p) {
   node.dataset.lean = kind || '';
-  node.style.setProperty('--lean-a', String(dir ? p : 0));
+  node.style.setProperty('--lean-a', String(kind ? p : 0));
   for (const s of node.querySelectorAll('.swipe-stamp')) {
-    s.style.setProperty('opacity', s.dataset.dir === dir ? String(p) : '0');
+    s.style.setProperty('opacity', s.dataset.kind === kind ? String(p) : '0');
   }
   for (const b of _el('swipe-reactions')?.querySelectorAll('.swipe-react') || []) {
     b.classList.toggle('is-leaning', !!kind && b.dataset.kind === kind && p > 0.15);
@@ -580,7 +619,7 @@ function _bindDrag(node) {
     node.style.transform = `translate(${st.dx}px, ${st.dy}px) rotate(${st.dx * 0.05 * st.sign}deg)`;
     const dir = _dirOf(st.dx, st.dy);
     const p = Math.min(1, _along(dir, st.dx, st.dy) / DRAG_DECIDE_PX);
-    _lean(node, dir, p);
+    _lean(node, dir ? DIR_REACT[dir] : null, p);
     if (p >= 1 && !st.armed) haptic(8);      // one tick as the card crosses the threshold
     st.armed = p >= 1;
   });
@@ -596,7 +635,7 @@ function _bindDrag(node) {
     const along = _along(dir, s.dx, s.dy);
     if (dir && (along >= DRAG_DECIDE_PX || (_along(dir, vx, vy) > FLICK_PX_MS && along > FLICK_MIN_PX))) {
       const kind = DIR_REACT[dir];
-      _submit(kind !== 'notseen', REACT[kind].stars, kind, {dx: s.dx, dy: s.dy, vx, vy, sign: s.sign});
+      _submit(!UNSEEN.has(kind), REACT[kind].stars, kind, {dx: s.dx, dy: s.dy, vx, vy, sign: s.sign});
       return;
     }
     node.classList.add('springing');       // back to the deck with a little overshoot
@@ -617,7 +656,7 @@ function _flyOut(node, kind, g) {
   node.classList.add('is-leaving');
   node.inert = true;
   node.removeAttribute('aria-labelledby');
-  if (REACT[kind]) _lean(node, dir || 'none', 1);
+  if (REACT[kind]) _lean(node, kind, 1);
   else _lean(node, null, 0);     // seen without stars: no stamp says that
   for (const b of _el('swipe-reactions')?.querySelectorAll('.is-leaning') || []) b.classList.remove('is-leaning');
   const x0 = g?.dx || 0, y0 = g?.dy || 0, sign = g?.sign || 1;

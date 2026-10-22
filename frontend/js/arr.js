@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, setStatus, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, openModal, proxyImg, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView, tabToHash } from './nav.js';
 const ARR_TABS = {
@@ -200,28 +200,30 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
     ? `<span class="badge amber badge-sm" title="${esc(svc)} unreachable: ${esc(ci.stale_error || 'connection failed')} — showing cache from ${ageStr}">stale ${ageStr}</span>`
     : '';
 
-  // Toolbar: the count left, the view controls right.
+  st.items = data.items || [];
+  const SEARCH_IC = '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const REFRESH_IC = '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
+  // Search first (the one control everyone uses), then sort, the filter and
+  // a quiet refresh; the count and cache state sit under it.
   const toolbar = `
-    <div class="toolbar">
-      <span class="fs-12 t2"><b>${data.total}</b> items</span>
-      ${cacheBadge}
-      <div class="toolbar-right">
-        <label for="arr-sort-${svc}-${tabId}" class="fs-12 t3">Sort</label>
-        <select id="arr-sort-${svc}-${tabId}" class="input" ${actOn('change', 'onBrowserSort', svc, tabId, EL)}>
-          <option value="size_desc"            ${st.sort === 'size_desc' ? 'selected' : ''}>Size ↓ (biggest first)</option>
-          <option value="size_asc"             ${st.sort === 'size_asc' ? 'selected' : ''}>Size ↑ (smallest first)</option>
-          <option value="added_desc"           ${st.sort === 'added_desc' ? 'selected' : ''}>Recently added</option>
-          <option value="added_asc"            ${st.sort === 'added_asc' ? 'selected' : ''}>Oldest added</option>
-          <option value="synopsis_updated_asc" ${st.sort === 'synopsis_updated_asc' ? 'selected' : ''}>Synopsis: oldest first</option>
-          <option value="title_asc"            ${st.sort === 'title_asc' ? 'selected' : ''}>Title A→Z</option>
-        </select>
-        <label class="chip${st.needs_enrichment ? ' active' : ''}" title="Only items without a synopsis or with raw metadata still awaiting the polish">
-          <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} ${actOn('change', 'onBrowserFilter', svc, tabId, EL)}> Needs enrichment</label>
-        <input type="text" id="arr-search-${svc}-${tabId}" class="w-200 input" aria-label="Search items" value="${escAttr(st.search || '')}"
-               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', svc, tabId, EL)}>
-        <button type="button" class="btn btn-secondary btn-sm" ${act('renderSynopsisBrowser', svc, tabId, {forceRefresh: true})} title="Bypass the 15-min cache and re-fetch from ${esc(svc)}">Refresh</button>
-      </div>
+    <div class="lib-toolbar">
+      <label class="lib-search">${SEARCH_IC}
+        <input type="search" id="arr-search-${svc}-${tabId}" class="input" aria-label="Search titles" value="${escAttr(st.search || '')}"
+               placeholder="Search title…" ${actOn('input', 'onBrowserSearch', svc, tabId, EL)}></label>
+      <select id="arr-sort-${svc}-${tabId}" class="input lib-sort" aria-label="Sort" ${actOn('change', 'onBrowserSort', svc, tabId, EL)}>
+        <option value="size_desc"            ${st.sort === 'size_desc' ? 'selected' : ''}>Biggest first</option>
+        <option value="size_asc"             ${st.sort === 'size_asc' ? 'selected' : ''}>Smallest first</option>
+        <option value="added_desc"           ${st.sort === 'added_desc' ? 'selected' : ''}>Recently added</option>
+        <option value="added_asc"            ${st.sort === 'added_asc' ? 'selected' : ''}>Oldest added</option>
+        <option value="synopsis_updated_asc" ${st.sort === 'synopsis_updated_asc' ? 'selected' : ''}>Synopsis: oldest first</option>
+        <option value="title_asc"            ${st.sort === 'title_asc' ? 'selected' : ''}>Title A→Z</option>
+      </select>
+      <label class="chip${st.needs_enrichment ? ' active' : ''}" title="Only items without a synopsis or with raw metadata still awaiting the polish">
+        <input type="checkbox" ${st.needs_enrichment ? 'checked' : ''} ${actOn('change', 'onBrowserFilter', svc, tabId, EL)}> Needs enrichment</label>
+      <button type="button" class="btn-plain lib-refresh" ${act('renderSynopsisBrowser', svc, tabId, {forceRefresh: true})}
+              title="Re-fetch from ${esc(svc)} (skips the 15-min cache)" aria-label="Refresh from ${esc(svc)}">${REFRESH_IC}</button>
     </div>
+    <div class="lib-count fs-12 t3"><b>${data.total}</b> ${data.total === 1 ? 'title' : 'titles'} ${cacheBadge}</div>
   `;
 
   if (!data.items || data.items.length === 0) {
@@ -229,44 +231,77 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
     return;
   }
 
-  // Item rows
-  const rows = data.items.map(it => renderArrItemRow(svc, it)).join('');
-  contentEl.innerHTML = toolbar + `<div class="arr-item-list">${rows}</div>`;
+  const cards = data.items.map((it, i) => renderArrItemCard(svc, tabId, it, i)).join('');
+  contentEl.innerHTML = toolbar + `<div class="lib-grid${svc === 'lidarr' ? ' is-music' : ''}">${cards}</div>`;
 }
 
-export function renderArrItemRow(svc, item) {
-  const sizeMB = (item.size_on_disk || 0) / (1024 * 1024);
-  const sizeStr = sizeMB > 1024
-    ? `${(sizeMB / 1024).toFixed(1)} GB`
-    : sizeMB > 0
-      ? `${sizeMB.toFixed(0)} MB`
-      : '—';
-  const addedStr = item.added
-    ? new Date(item.added).toLocaleDateString()
-    : '—';
-  const enrichedBadge = item.has_enrichment
-    ? ((item.enrichment_source || '').startsWith('raw')
-        ? '<span class="badge amber badge-sm">raw metadata · awaiting polish</span>'
-        : `<span class="badge success badge-sm">enriched · ${esc(item.enrichment_source || 'cache')}</span>`)
-    : '<span class="badge amber badge-sm">no synopsis</span>';
+function _sizeStr(bytes) {
+  const mb = (bytes || 0) / (1024 * 1024);
+  return mb > 1024 ? `${(mb / 1024).toFixed(1)} GB` : mb > 0 ? `${mb.toFixed(0)} MB` : '';
+}
 
-  // One row, one Re-enrich menu (metadata / summary / both) at the row end.
+// Enrichment is the admin's business: a card only carries a small dot when
+// something is missing, the words live in the detail sheet.
+function _enrichState(item) {
+  if (!item.has_enrichment) return {cls: 'amber', label: 'No synopsis yet'};
+  if ((item.enrichment_source || '').startsWith('raw')) return {cls: 'amber', label: 'Raw metadata, awaiting the polish'};
+  return {cls: 'success', label: `Enriched · ${item.enrichment_source || 'cache'}`};
+}
+
+function _libPoster(item, cls) {
+  const initial = esc((item.title || '?').trim().slice(0, 1).toUpperCase() || '?');
+  return item.poster
+    ? `<img class="${cls}" src="${esc(proxyImg(item.poster))}" alt="" loading="lazy" decoding="async" ${actOn('error', 'hideOnError', EL)}><span class="${cls} lib-ph" aria-hidden="true">${initial}</span>`
+    : `<span class="${cls} lib-ph" aria-hidden="true">${initial}</span>`;
+}
+
+export function renderArrItemCard(svc, tabId, item, idx) {
+  const meta = [item.year, _sizeStr(item.size_on_disk)].filter(Boolean).join(' · ');
+  const en = _enrichState(item);
   return `
-    <div class="panel-item">
-      <div class="panel-item-head">
-        <div class="fs-14 panel-item-title">${esc(item.title || '(untitled)')}${item.year ? `<span class="t3 fs-12">(${item.year})</span>` : ''}${enrichedBadge}</div>
-        <div class="panel-actions">${menuHtml([
-          {label: 'Metadata — re-fetch from TMDB / AniList / MusicBrainz', action: act('reEnrich', svc, item.id, 'metadata')},
-          {label: 'Summary — re-run the LLM on the existing data', action: act('reEnrich', svc, item.id, 'summary')},
-          {label: 'Both', action: act('reEnrich', svc, item.id, 'both')},
-        ], 'Re-enrich')}</div>
+    <button type="button" class="lib-card" ${act('openLibraryItem', svc, tabId, idx)}>
+      <span class="lib-poster">${_libPoster(item, 'lib-img')}
+        ${en.cls === 'amber' ? `<span class="lib-flag" title="${esc(en.label)}"><span class="sr-only">${esc(en.label)}</span></span>` : ''}</span>
+      <span class="lib-card-t">${esc(item.title || '(untitled)')}</span>
+      ${meta ? `<span class="lib-card-m">${esc(meta)}</span>` : ''}
+    </button>`;
+}
+
+// One title in full: poster, facts, synopsis - and, for admins, the
+// Re-enrich actions that used to sit on every row.
+export function openLibraryItem(svc, tabId, idx) {
+  const item = (_arrBrowserState[svc + ':' + tabId]?.items || [])[idx];
+  if (!item) return;
+  const en = _enrichState(item);
+  const isAdmin = !!state.currentUser?.is_admin;
+  const facts = [
+    item.year,
+    _sizeStr(item.size_on_disk),
+    item.album_count ? `${item.album_count} album${item.album_count === 1 ? '' : 's'}` : '',
+    item.added ? `added ${new Date(item.added).toLocaleDateString()}` : '',
+    item.status,
+  ].filter(Boolean).map(f => esc(String(f))).join(' · ');
+  openModal({
+    title: item.title || '(untitled)',
+    size: 'narrow',
+    body: `
+      <div class="lib-detail${svc === 'lidarr' ? ' is-music' : ''}">
+        <span class="lib-detail-poster">${_libPoster(item, 'lib-img')}</span>
+        <div class="lib-detail-facts">
+          ${facts ? `<div class="fs-13 t2">${facts}</div>` : ''}
+          <span class="badge ${en.cls} badge-sm">${esc(en.label)}</span>
+          ${item.root_folder ? `<code class="fs-11 t3 lib-root">${esc(item.root_folder)}</code>` : ''}
+        </div>
       </div>
-      <div class="panel-item-meta mt-4">${sizeStr} · added ${addedStr}${item.root_folder ? ` · <code class="fs-10">${esc(item.root_folder)}</code>` : ''}${item.status ? ` · ${esc(item.status)}` : ''}</div>
-      ${item.synopsis
-        ? `<div class="panel-item-sub">${esc(item.synopsis)}</div>`
-        : '<div class="italic panel-item-sub">No synopsis on file — Re-enrich fetches one.</div>'}
-    </div>
-  `;
+      <p class="lib-detail-syn">${item.synopsis ? esc(item.synopsis) : '<span class="italic t3">No synopsis on file yet.</span>'}</p>
+      ${isAdmin ? `
+        <div class="lib-detail-h">Re-enrich</div>
+        <div class="row">
+          <button type="button" class="btn btn-secondary btn-sm" ${act('reEnrich', svc, item.id, 'metadata')} title="Re-fetch from TMDB / AniList / MusicBrainz">Metadata</button>
+          <button type="button" class="btn btn-secondary btn-sm" ${act('reEnrich', svc, item.id, 'summary')} title="Re-run the curator's write-up on the data on file">Summary</button>
+          <button type="button" class="btn btn-secondary btn-sm" ${act('reEnrich', svc, item.id, 'both')}>Both</button>
+        </div>` : ''}`,
+  });
 }
 
 export function setBrowserSort(svc, tabId, sort) {

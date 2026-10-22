@@ -30,6 +30,8 @@ class SwipeAnswer(BaseModel):
     title: str = Field(default="", max_length=512)
     seen: bool
     stars: Optional[int] = Field(default=None, ge=1, le=10)
+    want: bool = False                     # not seen, wants to watch it
+    year: Optional[int] = Field(default=None, ge=1870, le=2100)   # disambiguates the watchlist match
 
 
 def _skip_ids(skip: str) -> set:
@@ -38,7 +40,9 @@ def _skip_ids(skip: str) -> set:
 
 async def _posters(cards: list, cat: str) -> None:
     from src.routers.recommendations import _fetch_tmdb
-    sem = asyncio.Semaphore(4)
+    # One round for a full stack (n <= 8): the live log had /next at
+    # 0.6-1.5 s with two rounds of TMDB round-trips behind a limit of 4.
+    sem = asyncio.Semaphore(8)
 
     async def _poster(c):
         async with sem:
@@ -81,14 +85,18 @@ async def next_cards(category: str = Query("show"), n: int = Query(8, ge=1, le=2
 
 @router.post("/answer")
 async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
-    """Store one answer. Every REBUILD_EVERY answers in a category rebuild
-    that category's taste vector in the background (no LLM summaries)."""
+    """Store one answer. Every REBUILD_EVERY seen answers in a category
+    rebuild that category's taste vector in the background (no LLM
+    summaries). A want-to-watch answer also goes on the user's plex.tv
+    watchlist; the response says whether that worked."""
     cat = _category(body.category)
     if not body.seen and body.stars is not None:
         raise HTTPException(status_code=400, detail="Stars only go with 'seen'")
+    if body.seen and body.want:
+        raise HTTPException(status_code=400, detail="'Want to watch' only goes with 'not seen'")
     uid = user.id
     count = await run_write(sw.save_answer, uid, cat, body.doc_id, body.title,
-                            body.seen, body.stars)
+                            body.seen, body.stars, body.want)
     rebuild = count >= sw.REBUILD_EVERY
     if rebuild:
         await run_write(sw.reset_rebuild_counter, uid, cat)
@@ -96,8 +104,19 @@ async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
         from src.services.taste_engine import compute_all_taste_vectors
         track_task(compute_all_taste_vectors(uid, [cat], skip_summaries=True),
                    name=f"swipe_taste_rebuild_{cat}")
-    return {"ok": True, "taste_rebuild": rebuild,
-            "since_rebuild": 0 if rebuild else count, "rebuild_every": sw.REBUILD_EVERY}
+    out = {"ok": True, "taste_rebuild": rebuild,
+           "since_rebuild": 0 if rebuild else count, "rebuild_every": sw.REBUILD_EVERY}
+    if body.want and body.title:
+        # The same write chat makes for "I want to watch X": the user's own
+        # plex.tv watchlist, so it shows in their Plex apps. Never raises;
+        # the answer is stored either way and the card says what happened.
+        from src.services.plex_watchlist import add_to_watchlist
+        res = await add_to_watchlist(uid, body.title, year=body.year, media_type=cat)
+        if not res.get("ok"):
+            logger.info("[swipe] %r not added to the watchlist: %s", body.title, res.get("error"))
+        out["watchlist"] = {"ok": bool(res.get("ok")), "matched": res.get("matched"),
+                            "error": res.get("error")}
+    return out
 
 
 @router.post("/undo")

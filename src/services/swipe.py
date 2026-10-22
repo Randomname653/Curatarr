@@ -16,8 +16,12 @@ A seen-and-rated title joins the next taste rebuild as a weighted entry
 (``load_swipe_entries``): 10 stars pull the vector toward it, 1 star pushes
 it away like an abandoned series, "seen" without stars counts mildly in
 favour. "Not seen" carries no taste signal; it keeps the title out of the
-next stack. Every REBUILD_EVERY answers in a category rebuild that
-category's vector in the background, without LLM summaries.
+next stack. "Want to watch" is "not seen" with intent: still no taste
+signal - the stack is built from the taste vector, so wanting its own
+nearest titles would only pull the vector toward itself - but the router
+puts the title on the user's plex.tv watchlist. Every REBUILD_EVERY seen
+answers in a category rebuild that category's vector in the background,
+without LLM summaries.
 """
 import json
 import logging
@@ -281,9 +285,12 @@ def since_rebuild(user_id: int) -> dict:
 
 
 def save_answer(user_id: int, category: str, doc_id: str, title: str,
-                seen: bool, stars: Optional[int]) -> int:
-    """Store (or replace) one answer; returns the user's answers in this
-    category since the last taste rebuild it triggered."""
+                seen: bool, stars: Optional[int], want: bool = False) -> int:
+    """Store (or replace) one answer; returns the user's SEEN answers in
+    this category since the last taste rebuild it triggered. Not-seen and
+    want-to-watch answers carry no taste signal, so they don't bring a
+    rebuild closer (they are ~96% of the answers: rebuilding on them
+    re-ran the profile on nothing new)."""
     from src.database.connection import get_db_session
     from src.database.models import SwipeRating
     from src.services.app_state import get_state, set_state
@@ -296,11 +303,14 @@ def save_answer(user_id: int, category: str, doc_id: str, title: str,
                    SwipeRating.doc_id == doc_id).delete(synchronize_session=False))
         db.add(SwipeRating(user_id=user_id, category=category, doc_id=doc_id,
                            title=(title or "")[:512], seen=bool(seen),
-                           stars=int(stars) if (seen and stars is not None) else None))
+                           stars=int(stars) if (seen and stars is not None) else None,
+                           want=bool(want) and not seen))
         db.commit()
     key = f"swipe_since_rebuild:{user_id}:{category}"
-    count = int(get_state(key) or 0) + 1
-    set_state(key, str(count))
+    count = int(get_state(key) or 0)
+    if seen:
+        count += 1
+        set_state(key, str(count))
     return count
 
 
@@ -319,27 +329,32 @@ def undo_last(user_id: int, category: str) -> Optional[dict]:
                .order_by(SwipeRating.id.desc()).first())
         if row is None:
             return None
-        out = {"doc_id": row.doc_id, "title": row.title, "seen": row.seen, "stars": row.stars}
+        out = {"doc_id": row.doc_id, "title": row.title, "seen": row.seen, "stars": row.stars,
+               "want": bool(row.want)}
         db.delete(row)
         db.commit()
     return out
 
 
 def stats(user_id: int) -> dict:
-    """{category: {"seen": n, "not_seen": n, "rated": n}}."""
+    """{category: {"seen": n, "not_seen": n, "rated": n, "want": n}};
+    "want" answers are counted in "not_seen" too."""
     from sqlalchemy import func
     from src.database.connection import get_db_session
     from src.database.models import SwipeRating as S
-    out = {c: {"seen": 0, "not_seen": 0, "rated": 0} for c in SWIPE_CATEGORIES}
+    out = {c: {"seen": 0, "not_seen": 0, "rated": 0, "want": 0} for c in SWIPE_CATEGORIES}
     with get_db_session() as db:
-        for cat, seen, rated, n in (db.query(S.category, S.seen, S.stars.isnot(None), func.count(S.id))
-                                    .filter(S.user_id == user_id)
-                                    .group_by(S.category, S.seen, S.stars.isnot(None))):
+        for cat, seen, rated, want, n in (
+                db.query(S.category, S.seen, S.stars.isnot(None), S.want, func.count(S.id))
+                .filter(S.user_id == user_id)
+                .group_by(S.category, S.seen, S.stars.isnot(None), S.want)):
             if cat not in out:
                 continue
             out[cat]["seen" if seen else "not_seen"] += n
             if seen and rated:
                 out[cat]["rated"] += n
+            if want and not seen:
+                out[cat]["want"] += n
     return out
 
 

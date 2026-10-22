@@ -23,10 +23,49 @@ const _el = id => document.getElementById(id);
 let _installEvt = null;
 
 // Short taps of the vibration motor (Android; iOS has no web API for it).
-// Silent under reduced motion — a buzz is motion too.
+// Silent under reduced motion — a buzz is motion too. The web API knows no
+// strength, only duration, so the device setting (Settings → Account →
+// This device) scales length: Light is one pulse at half length (a double
+// pulse collapses to its longest half), Full plays the pattern as written.
+const HAPTIC_KEY = 'curatarr_haptics';
+const HAPTIC_LEVELS = ['off', 'light', 'full'];
+
+export function hapticLevel() {
+  try {
+    const v = localStorage.getItem(HAPTIC_KEY);
+    return HAPTIC_LEVELS.includes(v) ? v : 'light';
+  } catch (_) {
+    return 'light';
+  }
+}
+
 export function haptic(pattern = 8) {
   if (REDUCED_MQ.matches || !navigator.vibrate) return;
+  const level = hapticLevel();
+  if (level === 'off') return;
+  if (level === 'light') {
+    const pulses = Array.isArray(pattern) ? pattern.filter((_, i) => i % 2 === 0) : [pattern];
+    pattern = Math.max(4, Math.round(Math.max(...pulses) / 2));
+  }
   try { navigator.vibrate(pattern); } catch (_) {}
+}
+
+// The radio group in Settings → Account; the new level buzzes once so the
+// choice can be felt right away.
+export function setHapticLevel(input) {
+  const v = input?.value;
+  if (!HAPTIC_LEVELS.includes(v)) return;
+  try { localStorage.setItem(HAPTIC_KEY, v); } catch (_) { /* private mode: this session only */ }
+  _syncHapticChoice();
+  haptic(14);
+}
+
+function _syncHapticChoice() {
+  const level = hapticLevel();
+  for (const r of document.querySelectorAll('input[name="haptics"]')) {
+    r.checked = r.value === level;
+    r.closest('.chip')?.classList.toggle('active', r.checked);
+  }
 }
 
 export function isStandalone() {
@@ -86,27 +125,6 @@ export async function installApp() {
         <li>Tap <b>Add</b> — Curatarr opens full screen from its icon.</li>
       </ol>`,
     foot: `<button class="btn btn-primary w-full" ${act('closeModal')}>Got it</button>`,
-  });
-}
-
-// ── Library sheet (the tab bar's "Library") ─────────────────────────────────
-const LIB_TILES = [
-  ['arr-sonarr', 'TV Shows', 'Sonarr', '<rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/>'],
-  ['arr-radarr', 'Movies', 'Radarr', '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>'],
-  ['arr-lidarr', 'Music', 'Lidarr', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'],
-];
-export function openLibrarySheet() {
-  haptic();
-  const here = document.querySelector('.view.active')?.id;
-  openModal({
-    title: 'Library',
-    size: 'narrow sheet',
-    body: `<div class="lib-tiles">${LIB_TILES.map(([view, label, app, icon]) => `
-        <a class="lib-tile${here === view + '-view' ? ' active' : ''}" href="#${view}" ${act('closeModal')}>
-          <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">${icon}</svg>
-          <span class="lib-tile-label">${label}</span>
-          <span class="lib-tile-sub">${app}</span>
-        </a>`).join('')}</div>`,
   });
 }
 
@@ -280,4 +298,5 @@ export function initMobile() {
   _bindAutogrow();
   _bindBreakpoint();
   _syncChatPlaceholder();
+  _syncHapticChoice();
 }

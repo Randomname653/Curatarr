@@ -163,7 +163,7 @@ check("answers are stored per title, a new answer replaces the old",
 check("the counter towards the next taste rebuild grows per answer", (n1, n2, n3) == (1, 2, 3))
 check("the counter is readable per category", sw.since_rebuild(1) == {"movie": 0, "show": 3, "anime": 0})
 st = sw.stats(1)["show"]
-check("counts: seen, rated, not seen", st == {"seen": 2, "not_seen": 1, "rated": 1})
+check("counts: seen, rated, not seen", st == {"seen": 2, "not_seen": 1, "rated": 1, "want": 0})
 
 entries = sw.load_swipe_entries(1, "show")
 check("seen answers become weighted taste entries keyed by the doc id",
@@ -171,6 +171,20 @@ check("seen answers become weighted taste entries keyed by the doc id",
       == [("sonarr:1", round(sw.star_weight(True, 10), 2)), ("sonarr:3", sw.SWIPE_SEEN_UNRATED_WEIGHT)])
 check("...shaped like a watch entry of the category",
       all(e["media_type"] == "show" and e["series_title"] is None for _, e in entries))
+
+sw.save_answer(1, "movie", "m9", "Wanted", False, None, want=True)
+sw.save_answer(1, "movie", "m8", "Seen Anyway", True, 8, want=True)   # want never rides on seen
+with fake_session() as db:
+    wants = {r.doc_id: r.want for r in db.query(SwipeRating).filter_by(user_id=1, category="movie")}
+check("'want to watch' is stored on a not-seen answer only", wants == {"m9": True, "m8": False})
+check("only seen answers bring the next taste rebuild closer", sw.since_rebuild(1)["movie"] == 1)
+check("want counts as not seen, and on its own",
+      sw.stats(1)["movie"] == {"seen": 1, "not_seen": 1, "rated": 1, "want": 1})
+check("want carries no taste signal",
+      [e["plex_item_id"] for _, e in sw.load_swipe_entries(1, "movie")] == ["m8"])
+u = sw.undo_last(1, "movie")
+check("undo reports the answer it took back", u["doc_id"] == "m8" and u["want"] is False)
+check("...and the want answer before it", sw.undo_last(1, "movie")["want"] is True)
 
 last = sw.undo_last(1, "show")
 check("undo takes back the latest answer", last and last["doc_id"] == "sonarr:1"
@@ -209,6 +223,32 @@ check("the tenth answer starts a background taste rebuild without LLM summaries"
       r["taste_rebuild"] is True and rebuilds == [(1, ["show"], True)]
       and r["since_rebuild"] == 0 and r["rebuild_every"] == sw.REBUILD_EVERY
       and state["swipe_since_rebuild:1:show"] == "0")
+import src.services.plex_watchlist as pw  # noqa: E402
+added = []
+
+
+async def _fake_watchlist(uid, title, year=None, media_type=None):
+    added.append((uid, title, year, media_type))
+    return {"ok": True, "matched": f"{title} ({year})"} if title != "Nowhere" else \
+        {"ok": False, "error": "no unambiguous Discover match for 'Nowhere'"}
+
+pw.add_to_watchlist = _fake_watchlist
+r = asyncio.run(rs.answer(rs.SwipeAnswer(category="anime", doc_id="a1", title="Frieren", year=2023,
+                                         seen=False, want=True), user=user))
+check("want to watch puts the title on the user's plex.tv watchlist",
+      added == [(1, "Frieren", 2023, "anime")] and r["watchlist"]["ok"] is True)
+r = asyncio.run(rs.answer(rs.SwipeAnswer(category="anime", doc_id="a2", title="Nowhere",
+                                         seen=False, want=True), user=user))
+check("a failed watchlist write is reported, the answer still stands",
+      r["ok"] is True and r["watchlist"]["ok"] is False and "Discover" in r["watchlist"]["error"])
+r = asyncio.run(rs.answer(rs.SwipeAnswer(category="anime", doc_id="a3", title="Plain",
+                                         seen=False), user=user))
+check("a plain 'not seen' touches no watchlist", "watchlist" not in r and len(added) == 2)
+try:
+    asyncio.run(rs.answer(rs.SwipeAnswer(category="show", doc_id="x", seen=True, want=True), user=user))
+    check("'want to watch' with 'seen' is refused", False)
+except Exception as e:
+    check("'want to watch' with 'seen' is refused", getattr(e, "status_code", None) == 400)
 try:
     asyncio.run(rs.answer(rs.SwipeAnswer(category="show", doc_id="x", seen=False, stars=5), user=user))
     check("stars without 'seen' are refused", False)
@@ -224,6 +264,14 @@ except Exception as e:
 tsrc = (ROOT / "src/services/taste_engine.py").read_text(encoding="utf-8")
 check("the taste rebuild adds swipe answers before embedding",
       tsrc.index("load_swipe_entries, user_id, category") < tsrc.index("# Count how many need fresh embeddings"))
+
+# ── the card drags from anywhere on it ──────────────────────────────────────
+import re  # noqa: E402
+css = (ROOT / "frontend/css/app.css").read_text(encoding="utf-8")
+info = re.search(r"^\.swipe-info \{[^}]*\}", css, re.M)
+check("the scrollable text panel keeps touch-action none (a touch on the text used to "
+      "pan it and cancel the card drag)",
+      info is not None and "overflow-y: auto" in info.group(0) and "touch-action: none" in info.group(0))
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
