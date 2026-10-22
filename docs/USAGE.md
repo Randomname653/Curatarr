@@ -164,6 +164,28 @@ locks as the in-app pipeline, so they cannot collide with it.
   to `EXTRA_GAME_PROCESSES`; the models are evicted from VRAM while they
   run.
 
+## Running in a container (NAS, server)
+
+Every push to `main` publishes `ghcr.io/randomname653/curatarr:latest`.
+`deploy/docker-compose.yml` runs it. On TrueNAS SCALE, paste the file under
+Apps → Custom App → Install via YAML.
+
+- **One volume.** Mount it at `/app/data`. The database, ChromaDB, logs,
+  caches, backups and the `.env` (every token) all live there. The container
+  runs as uid 568 (TrueNAS "apps"), so that user must own the dataset.
+- **Ollama is not in the image.** Point `OLLAMA_ENDPOINT` at a machine that
+  runs it. If that is a Windows PC, Ollama only listens on localhost by
+  default. Set `OLLAMA_HOST=0.0.0.0:11434` for it, and allow port 11434 in the
+  firewall for the server's address only: Ollama has no login of its own.
+- **Game detection and the GPU checks see the machine Curatarr runs on.**
+  In a container that machine is the NAS, not the gaming PC. The models are
+  not evicted while you play until the PC can report that itself.
+- **Moving an existing install:** stop the old one, then copy its `data/`
+  folder and its `.env` into the volume. Never run two instances against the
+  same Plex and arrs.
+- **Updates** come with a new image (pull and redeploy). The in-app restart
+  exits the process, and `restart: unless-stopped` brings it back.
+
 ---
 
 ## Troubleshooting

@@ -1,0 +1,21 @@
+# Only what the Dockerfile copies matters, but the build context is sent
+# whole: keep data, secrets and the local venv out of it.
+.git
+.github
+.claude
+.env
+.env.*
+!.env.example
+data/
+venv/
+.venv/
+**/__pycache__/
+*.pyc
+*.zip
+*.exe
+spotify_data/
+tests/
+docs/
+scripts/
+DEVLOG.md
+benchmark_results_*.txt
