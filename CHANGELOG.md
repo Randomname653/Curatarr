@@ -402,6 +402,15 @@ embedding-only match now needs a cosine of at least 0.34. That is just
 above the measured noise, and real matches sit at 0.35 and up. Matches
 on a shared word work as before.
 
+**Cloudflare Access at the origin.** Publishing Curatarr under a public
+name through Cloudflare and a reverse proxy no longer depends on nobody
+finding the proxy directly. Requests under a `CF_ACCESS_HOSTS` name must
+carry a valid Cloudflare Access token (RS256, the team's keys, the app's
+audience), or they get a 403. Without team or audience set, those names
+refuse everything. The LAN address is never checked, so local use never
+depends on Cloudflare. A Plex login started on the public name returns
+there.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

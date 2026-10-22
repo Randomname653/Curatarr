@@ -423,14 +423,24 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 # Slow-request telemetry: logs any endpoint taking >300ms to response
 # start, so "the page feels slow" can be answered from the log instead of
 # guessed at. Time-to-first-byte, so SSE streams don't count as slow.
-from src.middleware import (HostAllowListMiddleware, SecurityHeadersMiddleware,
-                            SlowRequestLogMiddleware, TokenRefreshMiddleware,
-                            parse_allowed_hosts)
+from src.middleware import (CloudflareAccessMiddleware, HostAllowListMiddleware,
+                            SecurityHeadersMiddleware, SlowRequestLogMiddleware,
+                            TokenRefreshMiddleware, parse_allowed_hosts)
 app.add_middleware(SlowRequestLogMiddleware)
 
 # Sliding sessions: a used session never expires mid-click; an idle one
 # dies after 7 days. See TokenRefreshMiddleware.
 app.add_middleware(TokenRefreshMiddleware)
+
+# Opt-in Cloudflare Access check on the public names: outside the token
+# refresh and every route, inside the Host check. The LAN names pass.
+app.add_middleware(CloudflareAccessMiddleware, hosts=settings.CF_ACCESS_HOSTS,
+                   team=settings.CF_ACCESS_TEAM_DOMAIN, aud=settings.CF_ACCESS_AUD)
+if settings.CF_ACCESS_HOSTS.strip():
+    logger.info("CF_ACCESS_HOSTS: %s need a Cloudflare Access token%s",
+                settings.CF_ACCESS_HOSTS,
+                "" if settings.CF_ACCESS_TEAM_DOMAIN and settings.CF_ACCESS_AUD
+                else " - team/audience NOT set, every request there is refused")
 
 # Opt-in ALLOWED_HOSTS (DNS rebinding): outside the token refresh, CORS and
 # every route, so a refused Host reaches neither auth nor the static files;

@@ -101,6 +101,19 @@ because no default list can know the IP, hostname or proxy name an install
 is reached by — turning it on with the wrong list would cut off every LAN
 browser on upgrade.
 
+Publishing Curatarr under a public name through Cloudflare Access and a
+reverse proxy leaves one gap: the proxy answers anyone who connects to the
+home IP directly and sends the public name, and Access never sees them.
+`CF_ACCESS_HOSTS` closes it. A request under a listed name must carry the
+token Access stamps on what it let through (`Cf-Access-Jwt-Assertion`). The
+token is RS256, signed by the team's published keys, for this application's
+audience, and unexpired. Anything else gets 403 before auth or the UI. The
+signature check needs no extra package: it is one modular exponentiation,
+compared byte for byte with the only valid PKCS#1 v1.5 encoding. A listed
+name without `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` refuses everything.
+LAN names are never checked, so local use keeps working when Cloudflare or
+the internet is down (2026-10-22).
+
 ## Connection tests and service addresses
 
 Plex, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:
