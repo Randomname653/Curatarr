@@ -265,5 +265,13 @@ tsrc = (ROOT / "src/services/taste_engine.py").read_text(encoding="utf-8")
 check("the taste rebuild adds swipe answers before embedding",
       tsrc.index("load_swipe_entries, user_id, category") < tsrc.index("# Count how many need fresh embeddings"))
 
+# ── the card drags from anywhere on it ──────────────────────────────────────
+import re  # noqa: E402
+css = (ROOT / "frontend/css/app.css").read_text(encoding="utf-8")
+info = re.search(r"^\.swipe-info \{[^}]*\}", css, re.M)
+check("the scrollable text panel keeps touch-action none (a touch on the text used to "
+      "pan it and cancel the card drag)",
+      info is not None and "overflow-y: auto" in info.group(0) and "touch-action: none" in info.group(0))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -267,7 +267,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .swipe-poster-wrap { position: relative; height: 100%; width: min(calc(100cqh * 2 / 3), 55cqw); background: var(--bg3); }
 .swipe-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; }
 .swipe-poster-ph { display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 72px; font-weight: 700; background: linear-gradient(135deg, var(--bg3), var(--bg2)); }
-.swipe-info { display: flex; flex-direction: column; justify-content: safe center; gap: 12px; padding: 26px 28px; min-width: 0; overflow-y: auto; }
+/* overflow-y makes this a scroll container, and touch-action only reaches up
+   to the nearest one: without its own `none` a touch on the text panned it and
+   cancelled the card drag. An opened synopsis gets its vertical scroll back. */
+.swipe-info { display: flex; flex-direction: column; justify-content: safe center; gap: 12px; padding: 26px 28px; min-width: 0; overflow-y: auto; touch-action: none; }
+.swipe-info:has(.swipe-synopsis.open) { touch-action: pan-y; }
 .swipe-title { font-size: clamp(22px, 2.2vw, 32px); font-weight: 700; color: var(--text); line-height: 1.15; letter-spacing: -.01em; }
 .swipe-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); }
 .swipe-dot { color: var(--text3); }
