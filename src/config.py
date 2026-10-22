@@ -278,6 +278,14 @@ class Settings(BaseSettings):
     # Empty = no Host check. A default list would lock out every install
     # reached by IP, hostname or proxy name. Loopback names always pass.
     ALLOWED_HOSTS: str = ""
+    # Cloudflare Access at the origin (services/cf_access.py): requests under
+    # these public names (comma-separated, "*.example.com" allowed) must carry
+    # a valid Access token, so the reverse proxy can't be reached around
+    # Cloudflare. Team = "<team>.cloudflareaccess.com", AUD = the Access
+    # application's audience tag. LAN names are never checked.
+    CF_ACCESS_HOSTS: str = ""
+    CF_ACCESS_TEAM_DOMAIN: str = ""
+    CF_ACCESS_AUD: str = ""
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to

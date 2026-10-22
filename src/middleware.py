@@ -253,3 +253,61 @@ class HostAllowListMiddleware:
                     "headers": [(b"content-type", b"text/plain; charset=utf-8"),
                                 (b"content-length", str(len(body)).encode())]})
         await send({"type": "http.response.body", "body": body})
+
+
+_cf_warned = {"at": float("-inf")}
+
+
+class CloudflareAccessMiddleware:
+    """Opt-in Cloudflare Access check for the public names (``CF_ACCESS_HOSTS``).
+
+    A request under such a name must carry a valid Access token
+    (services/cf_access.py); one that reached the reverse proxy around
+    Cloudflare carries none and is answered 403 before auth, the API or the
+    static files see it. Every other Host - the LAN address, the PC's name,
+    localhost - passes untouched, so the local route never depends on
+    Cloudflare. A public name without team or audience configured fails
+    closed. Pure ASGI like the others.
+    """
+
+    def __init__(self, app, hosts: str = "", team: str = "", aud: str = ""):
+        from src.services.cf_access import parse_hosts
+        self.app = app
+        self.hosts = parse_hosts(hosts)
+        self.team = (team or "").strip().lower().removeprefix("https://").rstrip("/")
+        self.aud = (aud or "").strip()
+
+    async def __call__(self, scope, receive, send):
+        if not self.hosts or scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        from src.services import cf_access
+        raw = next((v for k, v in scope.get("headers", []) if k == b"host"), b"")
+        if not cf_access.host_matches(host_without_port(raw.decode("latin-1")), self.hosts):
+            await self.app(scope, receive, send)
+            return
+        token = next((v for k, v in scope.get("headers", []) if k == cf_access.JWT_HEADER),
+                     b"").decode("latin-1").strip()
+        if not (self.team and self.aud):
+            why = "CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD not set"
+        elif not token:
+            why = "no Access token (request did not come through Cloudflare Access)"
+        else:
+            keys = await cf_access.team_keys(self.team, cf_access.token_kid(token))
+            why = cf_access.verify_token(token, keys, self.team, self.aud)
+        if why is None:
+            await self.app(scope, receive, send)
+            return
+        now = time.monotonic()
+        if now - _cf_warned["at"] > 60:      # a scanner must not flood the log
+            _cf_warned["at"] = now
+            logger.warning("[cf-access] refused %s %s - %s",
+                           scope.get("method", "WS"), scope.get("path", "?"), why)
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        body = b"Cloudflare Access required"
+        await send({"type": "http.response.start", "status": 403,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                                (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})

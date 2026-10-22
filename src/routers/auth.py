@@ -353,6 +353,19 @@ def _check_pin_binding(pin_id: int, nonce: str) -> str:
     return entry[1]
 
 
+def _plex_forward_url(request: Request) -> str:
+    """Where plex.tv sends the login tab back to: the public https name when
+    the request came in under one (CF_ACCESS_HOSTS), else PLEX_REDIRECT_URI,
+    the LAN address. Only a configured name is echoed - never a Host the
+    client made up."""
+    from src.middleware import host_without_port
+    from src.services.cf_access import host_matches, parse_hosts
+    host = host_without_port(request.headers.get("host") or "")
+    if host and host_matches(host, parse_hosts(settings.CF_ACCESS_HOSTS)):
+        return f"https://{host}"
+    return str(settings.PLEX_REDIRECT_URI)
+
+
 @router.post("/plex/pin")
 async def request_plex_pin(request: Request):
     """Step 1 – Request a fresh PIN from Plex."""
@@ -377,7 +390,7 @@ async def request_plex_pin(request: Request):
     code = data["code"]
     auth_url = (
         f"https://app.plex.tv/auth#?clientID={client_id}"
-        f"&code={code}&forwardUrl={settings.PLEX_REDIRECT_URI}"
+        f"&code={code}&forwardUrl={_plex_forward_url(request)}"
     )
     return {"pin_id": pin_id, "code": code, "auth_url": auth_url,
             "nonce": _bind_pin(pin_id, client_id)}
