@@ -79,11 +79,6 @@ app. What the first days of that setup still have to show:
   (October → horror, December → cozy) — one context line, rotates
   automatically.
 
-**Curation reporting**
-- Curation report + yearly review expansion: watch stats, discovery
-  follow-up verdicts, taste drift over the year, biggest additions —
-  the "household year in media" the current report only sketches.
-
 **Taste engine stage 3**
 - Per-facet taste centroids (the multi-centroid machinery exists) for
   deletion scoring and recommendations.

@@ -288,7 +288,8 @@ def facts_hash(facts: dict) -> str:
     time of computation and anything decorative attached afterwards."""
     core = {k: v for k, v in facts.items()
             if k not in ("generated_at", "facts_hash", "drift", "posters")}
-    return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()
+    return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode(),
+                        usedforsecurity=False).hexdigest()
 
 
 # ── tempo & rhythm ──────────────────────────────────────────────────────────
