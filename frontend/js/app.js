@@ -24,6 +24,7 @@ import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
+import { showUpdateInfo } from './version.js';
 
 export function init() {
 initMobile();
@@ -259,6 +260,7 @@ const actions = {
   showLibrariesForce,
   showSettingsAccount,
   showTasteTab,
+  showUpdateInfo,
   shutdownServer,
   skipMessage,
   startArrPreEnrich,

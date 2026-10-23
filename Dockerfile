@@ -38,6 +38,17 @@ COPY build_models.py ./
 RUN mkdir -p /app/data && chown -R 568:568 /app/data
 USER 568:568
 
+# The commit this image was built from (the docker workflow passes it), for
+# the version under the sidebar and the "Update available" check. Late in
+# the file: a new commit only rebuilds these few layers.
+ARG CURATARR_BUILD_SHA=""
+ARG CURATARR_BUILD_DATE=""
+ENV CURATARR_BUILD_SHA=$CURATARR_BUILD_SHA \
+    CURATARR_BUILD_DATE=$CURATARR_BUILD_DATE
+LABEL org.opencontainers.image.revision=$CURATARR_BUILD_SHA \
+      org.opencontainers.image.created=$CURATARR_BUILD_DATE \
+      org.opencontainers.image.source="https://github.com/Randomname653/Curatarr"
+
 VOLUME ["/app/data"]
 EXPOSE 8000
 

@@ -25,7 +25,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build
-        run: docker build --pull -t curatarr:ci .
+        run: |
+          docker build --pull -t curatarr:ci \
+            --build-arg CURATARR_BUILD_SHA="$GITHUB_SHA" \
+            --build-arg CURATARR_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
 
       - name: Smoke test (starts, answers, runs as the apps user)
         run: |
@@ -39,6 +42,7 @@ jobs:
           test "$code" = "200"
           test "$(docker exec curatarr id -u)" = "568"
           test "$(docker exec curatarr printenv CURATARR_ENV_FILE)" = "/app/data/.env"
+          test "$(docker exec curatarr printenv CURATARR_BUILD_SHA)" = "$GITHUB_SHA"
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/setup/status)
           echo "setup status: $code"; test "$code" = "200"
 
