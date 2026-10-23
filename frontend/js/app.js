@@ -340,11 +340,11 @@ document.addEventListener('click', e => {
   document.addEventListener(evt, e => {
     // toggle, blur, error and load do not bubble: listen in the capture phase at the
     // document and resolve the element from the event target as usual.
+    // Not delegated: each fires on the element itself, so only that element's
+    // own handler runs — a <details> nested in a data-on-toggle section (a
+    // protection's "Why it's protected") must not re-load the section.
     const target = e.target;
-    if (target && target.closest) {
-      const el = target.closest(`[data-on-${evt}]`);
-      if (el) dispatchAction(el, `data-on-${evt}`, e);
-    }
+    if (target && target.matches && target.matches(`[data-on-${evt}]`)) dispatchAction(target, `data-on-${evt}`, e);
   }, true);
 });
 

@@ -29,6 +29,14 @@ Condensed release history, newest first.
   class collided with an existing layout utility), chat sits in one centred column on
   wide screens, Reclassify uses the same sections as every other view, and every
   checkbox is amber.
+- Knowledge Base overview: one card per library (share enriched as a number and a
+  meter, only the open states that are not zero, what they wait for) instead of a
+  13-column table; storage as tiles. Curation: protections read as titles with
+  plain badges (Protected, Keep · downscale, Asked in chat); the pillar reasoning
+  folds away under "Why it's protected". Fix: opening that fold re-loaded the
+  whole section. Report: a twelve-month column chart and even stat tiles.
+  Swipe on a desktop keeps card and rails together in the middle, folds the
+  keyboard legend, and shows a soft placeholder for a title without a poster.
 - Music artists in the library show their Deezer picture again (from the SoulSync
   profile's Deezer id; the Plex music index has no images since Lidarr went off).
 

@@ -45,7 +45,8 @@ CEILINGS = {
     # the only place a style may still be assembled in a template.
     'style= in JS templates': 0,
     'style= in static markup': 0,
-    'data-style= in JS templates': 8,
+    # 8 -> 7 (2026-10-23): the Report's two bar styles became one fill helper.
+    'data-style= in JS templates': 7,
 }
 
 

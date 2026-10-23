@@ -1346,3 +1346,96 @@ html.vt .view.active { animation: none; }
   #chat-input-area button { flex-shrink: 0; }
   #jump-latest { bottom: 76px; }
 }
+
+/* A link styled as a button never shows a link's underline */
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* ── Knowledge Base overview: one card per library ── the share of
+   downloaded items with a full profile as a big number and a meter, the
+   open states as chips (only the ones that are not zero), what they wait
+   for, and the raw-layer counts quietly at the foot. */
+.kb-lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.kb-lib { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--radius-lg); background: var(--bg3); border: 1px solid var(--hairline); box-shadow: var(--specular); }
+.kb-lib-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.kb-lib-head h4 { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.kb-lib-pct { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--text3); }
+.kb-lib-pct b { font-size: 30px; font-weight: 650; color: var(--amber); letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+.kb-lib.is-done .kb-lib-pct b { color: var(--success); }
+.kb-meter { appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 6px; border: none; border-radius: 3px; background: var(--bg2); overflow: hidden; }
+.kb-meter::-webkit-progress-bar { background: var(--bg2); border-radius: 3px; }
+.kb-meter::-webkit-progress-value { background: linear-gradient(90deg, var(--amber), var(--amber2)); border-radius: 3px; }
+.kb-meter::-moz-progress-bar { background: linear-gradient(90deg, var(--amber), var(--amber2)); border-radius: 3px; }
+.kb-lib.is-done .kb-meter::-webkit-progress-value { background: var(--success); }
+.kb-lib.is-done .kb-meter::-moz-progress-bar { background: var(--success); }
+.kb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; color: var(--text3); background: var(--bg2); border: 1px solid var(--hairline-strong); }
+.kb-chip .link-num { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.kb-lib-wait { font-size: 12px; color: var(--text3); line-height: 1.5; }
+.kb-lib-foot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 14px; padding-top: 10px; border-top: 1px solid var(--hairline); font-size: 11px; color: var(--text3); }
+.kb-lib-foot b { color: var(--text2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.kb-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.kb-pair > .section { margin-bottom: 0; }
+.kb-store { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.kb-store-tile { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--radius); background: var(--bg3); border: 1px solid var(--hairline); }
+.kb-store-tile b { font-size: 20px; font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+.kb-store-tile span { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text3); }
+
+/* ── Curation: a protection's pillar reasoning, folded until asked for ── */
+.pillar-why { margin-top: 6px; }
+.pillar-why > summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); cursor: pointer; list-style: none; user-select: none; }
+.pillar-why > summary::-webkit-details-marker { display: none; }
+.pillar-why > summary::before { content: '▸'; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
+.pillar-why[open] > summary::before { transform: rotate(90deg); }
+.pillar-why > summary:hover { color: var(--amber); }
+.pillar-list { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 7px 14px; margin: 10px 0 2px; max-width: 120ch; font-size: 12.5px; line-height: 1.55; }
+.pillar-list dt { padding-top: 2px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text3); }
+.pillar-list dd { margin: 0; color: var(--text2); }
+
+/* ── Report: twelve month columns, the debate split, the yearly review ── */
+.rep-chart { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; align-items: end; height: 210px; padding-top: 6px; }
+.rep-col { display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; }
+.rep-col-gb { min-height: 14px; font-size: 10px; color: var(--success); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rep-col-bar { flex: 1; width: min(100%, 34px); display: flex; flex-direction: column-reverse; border-radius: 6px 6px 2px 2px; overflow: hidden; background: color-mix(in srgb, var(--bg3) 55%, transparent); }
+.rep-col-bar i { display: block; flex-shrink: 0; height: var(--v); }
+.rep-col-del { background: linear-gradient(180deg, var(--amber2), var(--amber)); }
+.rep-col-kept { background: var(--border2); }
+.rep-col-n { min-height: 14px; font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.rep-col-m { font-size: 11px; color: var(--text3); }
+.rep-legend { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 11px; color: var(--text3); }
+.rep-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-left: 10px; }
+.rep-key:first-child { margin-left: 0; }
+.rep-key.is-del { background: var(--amber); }
+.rep-key.is-kept { background: var(--border2); }
+.rep-split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--amber); }
+.rep-split > i { display: block; }
+.rep-split-consensus { width: var(--v); background: var(--border2); }
+.rep-split-override { flex: 1; }
+#report-content .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+#report-content .stat-box { min-width: 0; }
+.rep-narrative { max-width: var(--measure); font-size: var(--fs-md); line-height: 1.75; color: var(--text2); white-space: pre-line; }
+@media (max-width: 640px) {
+  .rep-chart { gap: 4px; height: 170px; }
+  .rep-col-gb, .rep-col-n { display: none; }
+  .kb-store { grid-template-columns: 1fr; }
+}
+
+/* ── Swipe on a desktop: the card and its rails stay one group in the
+   middle instead of spreading to the window's edges, the deck is a size a
+   poster fills, a title without a poster shows a soft placeholder rather
+   than a giant letter, and the keyboard legend folds away. */
+@media (min-width: 1361px) {
+  .swipe-layout { grid-template-columns: 220px minmax(0, 880px) 240px; justify-content: center; max-width: none; gap: 36px; }
+}
+@media (min-width: 901px) {
+  .swipe-deck { width: min(100%, 880px); height: clamp(420px, calc(100vh - 340px), 620px); }
+  .swipe-info { padding: 28px 32px; }
+}
+.swipe-poster-ph { font-size: clamp(40px, 9cqh, 84px); color: color-mix(in srgb, var(--text3) 55%, transparent);
+  background: radial-gradient(120% 80% at 30% 15%, color-mix(in srgb, var(--amber) 9%, var(--bg3)), var(--bg2) 72%); }
+.swipe-keys-box > summary { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); cursor: pointer; list-style: none; display: inline-flex; gap: 6px; align-items: center; }
+.swipe-keys-box > summary::-webkit-details-marker { display: none; }
+.swipe-keys-box > summary::before { content: '▸'; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
+.swipe-keys-box[open] > summary::before { transform: rotate(90deg); }
+.swipe-keys-box > summary:hover { color: var(--text2); }
+.swipe-keys-box .swipe-keys { margin-top: 10px; }
+@media (max-width: 900px) { .swipe-keys-box { display: none; } }
