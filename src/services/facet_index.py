@@ -16,6 +16,7 @@ truncate embeddings_for_domain's 30k-cap calibration pass (music alone
 is 16k docs), and double count the two id-prefix coverage UIs.
 """
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -66,29 +67,36 @@ async def _write_facets(doc_id: str, title: str, domain: str,
         from src.services.embed_service import embed_documents, get_profile
         from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
         chroma = get_chroma_db()
-        # Delete-first even when the new theme set is empty: a re-enriched
-        # title whose themes vanished must not keep stale facet points.
-        await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
+        # A title whose themes vanished must not keep stale facet points, and
+        # a failed embed leaves it WITHOUT facets rather than with stale
+        # ones: both clear first. The normal rewrite replaces in place
+        # (facets_replace) - delete + add burned a new HNSW slot per point.
         if not phrases:
+            await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
             return 0
-        if vec_map is not None:
-            lookup = dict(vec_map)
-            missing = [p for p in phrases if not lookup.get(p)]
-            if missing:
-                mv = await embed_documents(missing)
-                lookup.update({p: v for p, v in zip(missing, mv) if v})
-            pairs = [(p, lookup[p]) for p in phrases if lookup.get(p)]
-        else:
-            vecs = await embed_documents(phrases)
-            pairs = [(p, v) for p, v in zip(phrases, vecs) if v]
+        try:
+            if vec_map is not None:
+                lookup = dict(vec_map)
+                missing = [p for p in phrases if not lookup.get(p)]
+                if missing:
+                    mv = await embed_documents(missing)
+                    lookup.update({p: v for p, v in zip(missing, mv) if v})
+                pairs = [(p, lookup[p]) for p in phrases if lookup.get(p)]
+            else:
+                vecs = await embed_documents(phrases)
+                pairs = [(p, v) for p, v in zip(phrases, vecs) if v]
+        except Exception:
+            await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
+            raise
         if not pairs:
+            await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
             return 0
         # emb_model stamp (external eval catch): without it a profile
         # rollback would probe v1 queries against v2 facet points with no
         # way to tell the spaces apart.
         emb_model = get_profile().get("model") or ""
         ok = await run_chroma(
-            chroma.facets_add,
+            chroma.facets_replace, str(doc_id),
             documents=[p for p, _ in pairs],
             embeddings=[v for _, v in pairs],
             metadatas=[{"parent": str(doc_id), "title": title or "",
@@ -137,6 +145,70 @@ async def facet_probe(constraint_vecs: list, domain: str = None,
     for rec in out.values():
         rec["hits"] = len(rec["sims"])
     return out
+
+
+# A facet index whose dead share passes this is rebuilt (see
+# ChromaDBWrapper.facets_compact_*). Needs a few thousand points to matter.
+COMPACT_DEAD_SHARE = 0.25
+_COMPACT_MIN_LIVE = 5000
+
+
+async def compact_facets_if_needed(task=None) -> bool:
+    """Rebuild the facet HNSW index when deleted points hold a quarter or
+    more of its slots. The whole index sits in RAM, dead slots included.
+    True when nothing is left to do, False when a try failed (the custodian
+    backs off and retries). One-shot for a store the old writer inflated;
+    afterwards a no-op check of one small file."""
+    import os
+    if os.environ.get("CURATARR_FACET_COMPACT", "1") == "0":
+        # A rebuilt graph answers a little differently (measured recall@20
+        # against exact search 0.81, from 0.89 on the grown index) for 450 MB
+        # less memory; this switches the trade off.
+        return True
+    from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
+    chroma = get_chroma_db()
+    stats = await run_chroma(chroma.facets_slot_stats)
+    if not stats:
+        return True
+    slots, live = stats
+    if live < _COMPACT_MIN_LIVE or slots <= 0 or (slots - live) / slots < COMPACT_DEAD_SHARE:
+        return True
+    logger.info("[facets] compacting the index: %d live points in %d slots (%.0f%% dead)",
+                live, slots, 100 * (slots - live) / slots)
+    if not await run_chroma(chroma.facets_compact_begin):
+        return False
+
+    def _report(done: int, message: str) -> None:
+        if task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor
+            task_monitor.update(task, processed=min(done, live), total=live, message=message)
+        except Exception:  # noqa: BLE001 - the progress card only; the rebuild is unaffected
+            pass
+
+    try:
+        pages = 0
+        while True:
+            _report(pages * 2000, f"copying {live:,} facet points into a compact index")
+            if await run_chroma(chroma.facets_compact_step):
+                break
+            pages += 1
+            await asyncio.sleep(0)    # other Chroma calls queue between pages
+    except Exception as e:
+        logger.warning("[facets] compaction copy failed: %s", e)
+        await run_chroma(chroma.facets_compact_abort)
+        return False
+    _report(live, "checking the copy and swapping it in")
+    res = await run_chroma(chroma.facets_compact_finish)
+    if res.get("ok"):
+        # The old index is still resident (deleted collections stay loaded):
+        # a fresh client is what returns the memory.
+        await run_chroma(chroma.release_indexes)
+        logger.info("[facets] index compacted: %d points, %d slots freed",
+                    res["after"], slots - res["after"])
+        return True
+    return False
 
 
 def backfill_done() -> bool:

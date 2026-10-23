@@ -119,7 +119,7 @@ from src.services import facet_index as fi  # noqa: E402
 calls.clear()
 asyncio.run(fi.write_facets("d1", "Film", "movie", "Drama", ["grief", "family"]))
 check("the facet index deletes and adds off the loop thread",
-      _off_loop({"facets_delete_by_parent", "facets_add"}))
+      _off_loop({"facets_delete_by_parent", "facets_replace"}))
 
 from src.services import media_enricher as me  # noqa: E402
 

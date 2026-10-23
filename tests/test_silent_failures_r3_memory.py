@@ -475,6 +475,9 @@ def test_facet_backfill_failed_write_keeps_cursor():
             self.added.append(ids)
             return True
 
+        def facets_replace(self, parent_id, documents, embeddings, metadatas, ids):
+            return self.facets_add(documents, embeddings, metadatas, ids)
+
         def facets_count(self):
             return len(self.added)
 

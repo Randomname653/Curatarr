@@ -6,6 +6,23 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Memory: the container held 4 GB of anonymous heap; the measured owners are smaller now.**
+The NAS view (3.3 GB, then 4.1 GB after a few hours) was real heap, not page cache. Measured
+on a copy of the real data: the facet index rewrote a title with delete + add, and Chroma never
+reuses a deleted slot, so 333k slots held 199k live points in a 1.2 GB resident index. Titles
+are now replaced in place (an unchanged id keeps its slot), and a weekly `facet_compact` task
+rebuilds an index whose dead share passes a quarter (200 s on the real store, queries stay
+served, writes made during the copy are replayed) and then opens a fresh client, which is what
+returns the old index's memory (1.3 GB of indexes became 0.85 GB; the rebuilt graph's recall
+against exact search is 0.81 where the grown one had 0.89, and `CURATARR_FACET_COMPACT=0` skips
+the rebuild). Every pooled SQLite connection held up to 64 MB of page cache
+next to the OS cache: 8 MB now (12 warm connections: 840 MB down to ~100 MB, a 0.6 s bulk read
+gets 0.3 s slower). The enrichment cycle loaded all 384k plays as ORM entities (722 MB peak)
+to dedupe them to 18k titles: it streams columns and dedupes while reading (12 MB peak). The
+taste rebuild shares equal strings between its play rows and reads enrichment profiles a chunk
+at a time (peak 730 to 277 MB). The arr library cache drops fields nothing reads (about 26 MB
+for Sonarr and Radarr, 88 MB if Lidarr is on). Tests: `tests/test_ram_footprint.py`.
+
 **Light instead of lines: a calmer, more tactile interface.**
 - Panels, cards and dialogs are lit from above (a hairline edge, a faint top highlight,
   soft layered shadows) instead of outlined; the topbar and sidebar are frosted glass,
