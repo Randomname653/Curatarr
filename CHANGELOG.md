@@ -508,6 +508,16 @@ the bake and its weights, the host's profile. The next run reuses it while
 nothing changed, does not count it against its cap, and reaches further
 down the list. Outages are never stored. Pitches are kept per language.
 
+**Bakes per machine.** `build_models.py --host main|pc` builds the same
+bake names on either machine, from a base that fits its card (`BASE_*` /
+`PC_BASE_*`) and with that machine's window. On a split install the
+pitcher goes to the PC only and the embedder to the main host only.
+`--suggest <GB>` prints the bench's package for a card. `--check` covers
+both machines over HTTP (it works in the container) and records which
+embedding weights the stored vectors come from. A host where the same
+model name carries other weights is reported before it can write vectors
+that do not compare.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

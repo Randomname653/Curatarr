@@ -308,6 +308,12 @@ class Settings(BaseSettings):
     PC_LLM_PROFILE: str = "large"
     PC_CURATOR_NUM_CTX: int = 0
     PC_CURATOR_NUM_GPU: int = 99
+    # The bases the PC's bakes are built from (python build_models.py --host
+    # pc). BASE_* describe OLLAMA_ENDPOINT's. The bake NAMES are the same on
+    # both hosts, so the routing only ever picks a machine.
+    PC_BASE_CURATOR_MODEL: str = "gemma4:31b"
+    PC_BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"
+    PC_BASE_PITCHER_MODEL: str = "qwen3.8:27b"
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to

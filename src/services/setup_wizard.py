@@ -866,13 +866,20 @@ async def pull_ollama_model(ollama_endpoint: str, model_name: str) -> bool:
 async def build_ollama_models(ollama_endpoint: str,
                                base_curator: str,
                                base_summarizer: str,
-                               base_pitcher: str = None) -> dict:
+                               base_pitcher: str = None,
+                               num_ctx: int = None,
+                               with_embedding: bool = True) -> dict:
     """
     Create curatarr-curator and curatarr-summarizer via Ollama /api/create —
     plus curatarr-pitcher when *base_pitcher* is given (two-bake split: the
     deletion-run bake; same CURATOR_SYSTEM_PROMPT, different base). The
     pitcher is strictly optional: its pull/create failure never blocks the
     curator/summarizer builds.
+
+    ``num_ctx``: the curator window to bake - the window of the host the
+    bakes are for (ollama_hosts); default this process's. ``with_embedding``:
+    pull the embedding model too - on a split install only the main host
+    embeds.
     Returns {curator: ok/error, summarizer: ok/error[, pitcher: ok/error]}
     """
     results = {}
@@ -893,7 +900,7 @@ async def build_ollama_models(ollama_endpoint: str,
         embed_model = (effective_embedding_model() or "").strip()
     except Exception:
         embed_model = (_settings.EMBEDDING_MODEL or "").strip()
-    if embed_model:
+    if embed_model and with_embedding:
         if await model_exists(ollama_endpoint, embed_model):
             _safe_print(f"  ✓  {embed_model} already present — skipping pull", flush=True)
             results["embedding"] = True
@@ -922,6 +929,7 @@ async def build_ollama_models(ollama_endpoint: str,
     # whole model at the other size. The summariser's calls never pass
     # num_ctx and run on its baked 8192, as before.
     from src.services.llm_utils import CURATOR_NUM_CTX
+    curator_ctx = int(num_ctx or CURATOR_NUM_CTX)
 
     async def create_model(name: str, base_model: str, system_prompt: str,
                            num_ctx: int = 8192) -> bool:
@@ -974,7 +982,7 @@ async def build_ollama_models(ollama_endpoint: str,
 
     logger.info("Building curatarr-curator from %s...", base_curator)
     results["curator"] = await create_model(
-        "curatarr-curator", base_curator, CURATOR_SYSTEM_PROMPT, CURATOR_NUM_CTX
+        "curatarr-curator", base_curator, CURATOR_SYSTEM_PROMPT, curator_ctx
     )
 
     logger.info("Building curatarr-summarizer from %s...", base_summarizer)
@@ -998,7 +1006,7 @@ async def build_ollama_models(ollama_endpoint: str,
         if pulled:
             logger.info("Building curatarr-pitcher from %s...", base_pitcher)
             results["pitcher"] = await create_model(
-                "curatarr-pitcher", base_pitcher, CURATOR_SYSTEM_PROMPT, CURATOR_NUM_CTX
+                "curatarr-pitcher", base_pitcher, CURATOR_SYSTEM_PROMPT, curator_ctx
             )
         else:
             results["pitcher"] = False

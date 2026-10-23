@@ -79,7 +79,7 @@ def test_the_launchers_share_the_list():
     assert "from src.services.model_check import missing_models" in tray
     assert '"ollama", "show"' not in tray, "the tray no longer keeps its own probe"
     builder = (_ROOT / "build_models.py").read_text(encoding="utf-8")
-    assert '"--check" in sys.argv' in builder and "def check(" in builder
+    assert 'add_argument("--check"' in builder and "def check(" in builder
 
 
 if __name__ == "__main__":
