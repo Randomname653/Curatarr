@@ -43,11 +43,11 @@ INSTALLED: list = []     # names /api/tags would report
 TAGS_RAISES = False
 
 
-async def fake_loaded_models():
+async def fake_loaded_models(url=None):
     return [{"name": n} for n in RESIDENT]
 
 
-async def fake_evict_model(name, timeout=8.0):
+async def fake_evict_model(name, timeout=8.0, url=None):
     EVICTED.append(name)
     return True
 
@@ -184,7 +184,8 @@ check("pillar branch: gate acquire + re-acquire carry exclusive_model",
 check("judge + monologue run on the pitch model",
       "adjudicate(ev[\"facts\"], model=pitch_model" in eng
       and re.search(r"write_monologue\(\s*ev\[\"facts\"\], verdict, model=pitch_model,\s*lang_directive", eng))
-check("run-end eager evict is guarded", eng.count("evict_if_resident(pitch_model)") == 2)
+check("run-end eager evict is guarded, on the run's own card",
+      eng.count("evict_if_resident(pitch_model, url=_run_lane.url)") == 2)
 check("_call_llm override only for pitches",
       eng.count("model_override=pitch_model") == 2)
 

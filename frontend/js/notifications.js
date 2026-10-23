@@ -37,7 +37,7 @@ export async function loadUnreadMessages(seen) {
     // The Settings bubble in the sidebar: what waits for an admin decision.
     // A failed read keeps the last count: zeroing it hid a pending
     // model-update decision whenever this one call failed.
-    if (sysOk) setBadge('settings-badge', sys.needs_action || 0);
+    if (sysOk) setBadge('settings-badge', sys.settings_action ?? sys.needs_action ?? 0);
     const badge = document.getElementById('msg-badge');
     const total = (r.total || 0) + principles.length + (sys.needs_action || 0);
     badge.textContent = total;
@@ -49,11 +49,13 @@ export async function loadUnreadMessages(seen) {
       html += `<div class="mp-section">System</div>`;
       html += sys.items.map(n => {
         const run = n.action && SYS_ACTIONS[n.action.key];
+        const run2 = n.secondary && SYS_ACTIONS[n.secondary.key];
         const tone = n.severity === 'danger' ? 'danger' : n.severity === 'warn' ? 'amber' : 'muted';
         return `<div class="cursor-default msg-item">
           <div class="mi-text"><span class="fs-10 mr-4 badge ${tone}">${esc(n.kind.replace('_', ' '))}</span><b>${esc(n.title)}</b></div>
           <div class="fs-12 t2 mt-4">${esc(n.text)}</div>
-          ${run ? `<div class="flex gap-8 mt-10"><button class="flex-1 btn btn-primary btn-sm" ${run()}>${esc(n.action.label)}</button></div>` : ''}
+          ${run ? `<div class="flex gap-8 mt-10"><button class="flex-1 btn btn-primary btn-sm" ${run(n.action)}>${esc(n.action.label)}</button>${
+            run2 ? `<button class="flex-1 btn btn-secondary btn-sm" ${run2(n.secondary)}>${esc(n.secondary.label)}</button>` : ''}</div>` : ''}
         </div>`;
       }).join('');
     }
@@ -100,9 +102,12 @@ export async function loadUnreadMessages(seen) {
 }
 
 // The only handlers a system notification may trigger, by the key the
-// server sends. Literal act() calls, so the handler registry stays checkable.
+// server sends. Literal act() calls, so the handler registry stays checkable;
+// ``a.arg`` is data (act() escapes it), never a name to call.
 const SYS_ACTIONS = {
   model_updates: () => act('openModelUpdates'),
+  game_yes: a => act('answerGameQuestion', a.arg, true),
+  game_no: a => act('answerGameQuestion', a.arg, false),
 };
 
 // Bell → chat: review a learned principle WITH the curator. The backend gets

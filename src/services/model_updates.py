@@ -277,7 +277,7 @@ async def _alone(endpoint: str, model: str) -> None:
         for m in r.json().get("models") or []:
             name = m.get("name") or m.get("model")
             if name and not _same(name, model):
-                await _evict_model(name)
+                await _evict_model(name, url=endpoint)
     except (httpx.HTTPError, ValueError):
         pass
 
@@ -477,7 +477,7 @@ async def measure(endpoint: str, model: str, probes: int = 3) -> dict:
     await _alone(endpoint, model)
     before = None
     if _is_local(endpoint):
-        await _evict_model(model)
+        await _evict_model(model, url=endpoint)
         before = await _smi_settled()
     speed = await _speed(endpoint, model, probes)
     res = await _residency(endpoint, model)
@@ -698,13 +698,13 @@ async def _compare(role, row, endpoint, user_id, pinned, msg) -> dict:
             return language_directive(detect_user_language(user_id, db))
 
     lang = await run_read(_lang)
-    async with curator_priority("model update test", exclusive_model=bake):
+    async with curator_priority("model update test", exclusive_model=bake, url=endpoint):
         msg(f"running the current {base} on {len(sample)} titles")
         old = await _run_side(endpoint, bake, sample, lang)
-        await evict_if_resident(bake)
+        await evict_if_resident(bake, url=endpoint)
         msg(f"running the new {base} on the same titles")
         new = await _run_side(endpoint, TEST_BAKE, sample, lang)
-        await evict_if_resident(TEST_BAKE)
+        await evict_if_resident(TEST_BAKE, url=endpoint)
     result = {"remote": row["remote"], "new_weights": new_digest, "pinned_as": pinned,
               "at": _now(), "summary": summarize(old, new), "old": old, "new": new,
               # The judge (model_update_eval) checks both sides against these.
@@ -769,7 +769,7 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
     await _refill_facts(cmp_, user_id)
     from src.services.llm_priority import release_bulk_hold
     try:
-        async with curator_priority("model update review", exclusive_model=judge):
+        async with curator_priority("model update review", exclusive_model=judge, url=endpoint):
             # Speed and VRAM again, each side alone on the card: the test's
             # own figures may have been taken next to another model.
             if task is not None:
@@ -787,7 +787,7 @@ async def run_evaluation(role: str, user_id: int, task=None) -> dict:
                     (cmp_.get(side) or {}).get("clean", False) for side in ("old", "new")))
             await _alone(endpoint, judge)
             ev = await evaluate(cmp_, endpoint, judge)
-            await evict_if_resident(judge)
+            await evict_if_resident(judge, url=endpoint)
     finally:
         release_bulk_hold()
     ev["at"] = _now()

@@ -1,6 +1,7 @@
 // ── GAME PROCESS MONITOR ──────────────────────────────────────────────────────
 import { _errMsg, toast } from './ui.js';
 import { api } from './api.js';
+import { loadUnreadMessages } from './notifications.js';
 const _shownProcesses = new Set();   // names already shown in a toast this session
 let   _processPollTimer = null;
 
@@ -22,6 +23,13 @@ export async function _classifyProcess(name, isGame) {
     toast(`Could not save the answer for ${name} — try again.`, 'danger');
     return false;   // keeps the question on screen
   }
+}
+
+// The same question from the bell (services/notifications.py): it stays
+// there until answered, for an admin who was not looking when it ran.
+export async function answerGameQuestion(name, isGame) {
+  _shownProcesses.add(String(name).toLowerCase());     // no toast for it after this
+  if (await _classifyProcess(name, isGame)) loadUnreadMessages();
 }
 
 // What the badge says per lane — the watcher records the state every 30 s

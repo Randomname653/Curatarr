@@ -25,6 +25,7 @@ import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
 import { showUpdateInfo } from './version.js';
+import { answerGameQuestion } from './game.js';
 
 export function init() {
 initMobile();
@@ -110,6 +111,7 @@ const actions = {
   _setNotifPref,
   addArrItem,
   addBacklogArtist,
+  answerGameQuestion,
   approveDelete,
   auditRequeueEnrichments,
   blurOnCtrlEnter,

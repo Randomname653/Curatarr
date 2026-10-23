@@ -558,6 +558,25 @@ says how to update. The compose file carries `pull_policy: always` as an
 option (commented out): with it, TrueNAS's Edit → Save pulls the new image.
 `UPDATE_CHECK=false` turns the check off.
 
+**Both cards at once.** On a split install the NAS's card runs enrichment
+while the PC's runs chat, background curator work and the deletion run. The
+model queue is now one queue per host: a chat on the PC no longer pauses
+enrichment on the NAS, and a deletion run on the PC no longer waits behind
+a taste summary on the NAS. On one card everything waits as before. A caller
+queued for the PC when a game starts moves to the NAS's queue; the deletion
+run stays queued for the PC. `ENRICH_ON_PC=true` sends enrichment to the PC
+while it is free.
+
+**New games are caught by what they do to the card.** The PC agent reports
+each program's share of the card's 3D engine (what Task Manager's GPU column
+shows). An unclassified program that draws 30 % or more for about 10 seconds
+takes the PC out at once. Before, a game nobody had classified waited out
+the 45-second GPU-pressure hold. Ollama's own runners and programs answered
+"not a game" never count. The "is this a game?" question is about the PC's
+programs again: a split install had been asking about the NAS container's.
+It now also waits in the bell until answered, card-drawing programs first.
+The PC's checkout needs this version for the agent's new reading.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

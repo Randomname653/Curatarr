@@ -8,6 +8,7 @@ agent runs on the PC (started by the tray) and reports the raw readings:
 
     GET /status   ->  {"v": 1, "time": ..., "processes": [{"name", "rss_mb"}],
                         "gpu": [used_mb, total_mb, util] | "missing" | "timeout" | "error",
+                        "gpu_procs": [{"name", "pct"}],   # 3D-engine share per program
                         "shutting_down": bool}
 
 It decides nothing. Which process is a game, and whether the card is held,
@@ -101,12 +102,17 @@ class Agent:
 
     def __init__(self, token: str, *, processes: Callable[[], list] = _process_list,
                  gpu: Callable[[], object] = _gpu_reading, notify_url: str = "",
-                 post: Optional[Callable[[str, dict, str], None]] = None):
+                 post: Optional[Callable[[str, dict, str], None]] = None,
+                 gpu_procs: Optional[Callable[[], list]] = None):
         if not token or len(token) < 16:
             raise ValueError("PC_AGENT_TOKEN must be set (16+ characters)")
         self.token = token
         self._processes = processes
         self._gpu = gpu
+        if gpu_procs is None:
+            from src.gpu_engine import Sampler
+            gpu_procs = Sampler().sample
+        self._gpu_procs = gpu_procs
         self.notify_url = (notify_url or "").rstrip("/")
         self._post = post or _post_json
         self.shutting_down = False
@@ -126,8 +132,13 @@ class Agent:
         except Exception as e:  # noqa: BLE001 - same for nvidia-smi
             logger.warning("[agent] GPU reading failed: %s", e)
             gpu = "error"
+        try:
+            gpu_procs = self._gpu_procs()
+        except Exception as e:  # noqa: BLE001 - and for the engine counters
+            logger.warning("[agent] per-program GPU reading failed: %s", e)
+            gpu_procs = []
         return {"v": AGENT_VERSION, "time": time.time(), "processes": procs,
-                "gpu": gpu, "shutting_down": self.shutting_down}
+                "gpu": gpu, "gpu_procs": gpu_procs, "shutting_down": self.shutting_down}
 
     def announce_shutdown(self) -> None:
         """Mark the PC as going away and tell Curatarr at once. Never raises

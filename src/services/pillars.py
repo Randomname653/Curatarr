@@ -1157,7 +1157,7 @@ async def adjudicate(evidence_facts: str, *, model: str = None,
         if skip_priority:
             verdict, repaired = await _run()
         else:
-            async with curator_priority("pillar verdict", exclusive_model=model):
+            async with curator_priority("pillar verdict", exclusive_model=model, role="judge"):
                 verdict, repaired = await _run()
         out = _fact_guards(verdict.model_dump(), evidence_facts)
         if repaired:
@@ -1392,7 +1392,7 @@ async def write_monologue(evidence_facts: str, verdict: dict, *,
         if skip_priority:
             r = await _post()
         else:
-            async with curator_priority("pillar monologue", exclusive_model=model):
+            async with curator_priority("pillar monologue", exclusive_model=model, role="judge"):
                 r = await _post()
         return clean_llm_text((r.json().get("message") or {}).get("content", "") or "")
 

@@ -108,9 +108,9 @@ EV = "_ev_ahead.pop(_ci"
 check("a closed lane is seen BEFORE the warm-up (which can load the summariser)",
       block.index("_judge_lane()") < block.index("PRE-JUDGE SIGNIFICANCE WARM-UP"))
 check("...and before the gate is taken",
-      block.index("_judge_lane()") < block.index("await curator_start(_gate_label"))
+      block.index("_judge_lane()") < block.index("= await curator_start(_gate_label"))
 check("the loop re-checks after yielding to a chat, before the next verdict",
-      loop.index("if gate_contested():") < loop.index("_judge_lane()")
+      loop.index("if gate_contested(_run_lane):") < loop.index("_judge_lane()")
       < loop.index(EV))
 check("the outage breaker is checked before any new work",
       loop.index("consecutive_outages >= _OUTAGE_STOP_AFTER") < loop.index(EV))

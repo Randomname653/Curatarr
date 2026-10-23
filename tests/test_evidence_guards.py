@@ -390,8 +390,8 @@ _lp = (Path(__file__).resolve().parents[1]
        / "src/services/llm_priority.py").read_text(encoding="utf-8")
 check("a shutdown hand exists that cancels the timer and evicts now",
       "async def shutdown_evict" in _lp
-      and "_curator_evict_task.cancel()" in
-          _lp.split("async def shutdown_evict")[1][:900])
+      and "ln.evict_task.cancel()" in
+          _lp.split("async def shutdown_evict")[1][:1600])
 check("...and the lifespan teardown actually calls it",
       "await shutdown_evict()" in
       (Path(__file__).resolve().parents[1] / "src/main.py").read_text(encoding="utf-8"))

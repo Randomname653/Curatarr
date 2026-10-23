@@ -2215,15 +2215,14 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
     no curator is resident does it take the summariser, after making room.
     """
     from src.services import llm_priority as lp
+    host = host_for("chat")
     try:
-        resident = await lp.curator_resident()
+        resident = await lp.curator_resident(host.url)
     except Exception as e:  # noqa: BLE001 - residency is a routing hint only
         logger.debug("[protection] residency probe failed: %s", e)
         resident = False
     if resident:
         from src.services.llm_utils import curator_payload
-
-        host = host_for("chat")
 
         async def _post() -> dict:
             async with ollama_client(timeout=90) as client:
@@ -2236,7 +2235,8 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
             r.raise_for_status()
             return r.json()
         try:
-            data = await lp.background_curator_call("protection check", _post, quiet_s=3)
+            data = await lp.background_curator_call("protection check", _post, quiet_s=3,
+                                                    role="chat")
             return strip_think_tags((data.get("message") or {}).get("content", "").strip())
         except Exception as e:
             logger.error("💥 [PROTECTION CHECK ERROR] (curator): %s: %s",
@@ -2249,10 +2249,11 @@ async def _call_protection_classifier(prompt: str) -> Optional[str]:
         logger.warning("[protection] curator priority wait failed: %s", e)
 
     try:
-        # Timeout 20s → 90s (Pass 14.13).
+        # Timeout 20s → 90s (Pass 14.13). The summariser runs where
+        # enrichment does (on a split install the NAS, next to its queue).
         async with ollama_client(timeout=90) as client:
             r = await client.post(
-                f"{ollama_for("chat")}/api/chat",
+                f"{ollama_for("enrich")}/api/chat",
                 json={
                     "model": settings.SUMMARIZER_MODEL,
                     "messages": [{"role": "user", "content": prompt}],

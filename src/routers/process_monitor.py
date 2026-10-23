@@ -49,6 +49,8 @@ def _forget_process_views() -> None:
     invalidate_process_cache()
     get_unknown_processes.invalidate()
     game_status.invalidate()
+    from src.services.notifications import forget_game_questions
+    forget_game_questions()
 
 
 @router.post("/classify")

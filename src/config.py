@@ -308,6 +308,9 @@ class Settings(BaseSettings):
     # OLLAMA_ENDPOINT. The PC's card has its own profile (LLM_PROFILE,
     # CURATOR_NUM_CTX, CURATOR_NUM_GPU describe OLLAMA_ENDPOINT's).
     OLLAMA_PC_ENDPOINT: str = ""
+    # Enrichment (the summariser) stays on OLLAMA_ENDPOINT's card so both
+    # cards work at once; true sends it to the PC while that one is free.
+    ENRICH_ON_PC: bool = False
     PC_LLM_PROFILE: str = "large"
     PC_CURATOR_NUM_CTX: int = 0
     PC_CURATOR_NUM_GPU: int = 99
