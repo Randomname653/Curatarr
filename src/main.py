@@ -200,6 +200,11 @@ async def lifespan(app: FastAPI):
     if settings.is_configured:
         from src.services.vector_reconcile import boot_drift_check
         track_task(boot_drift_check(), name="vector_drift_check")
+        if settings.AUTO_BUILD_MODELS:
+            # The container's start.bat step: missing bakes are pulled and
+            # built in the background while the server already answers.
+            from src.services.model_autobuild import ensure_main_models
+            track_task(ensure_main_models(), name="model_autobuild")
 
     if not settings.is_configured:
         logger.warning("Curatarr is not configured yet. Open http://localhost:%d to run setup.", settings.PORT)

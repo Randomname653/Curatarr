@@ -314,6 +314,10 @@ class Settings(BaseSettings):
     # The bases the PC's bakes are built from (python build_models.py --host
     # pc). BASE_* describe OLLAMA_ENDPOINT's. The bake NAMES are the same on
     # both hosts, so the routing only ever picks a machine.
+    # The container builds its main host's missing models itself, in the
+    # background after start (services/model_autobuild.py); the Dockerfile
+    # sets it. On the desktop start.bat does that before the server starts.
+    AUTO_BUILD_MODELS: bool = False
     PC_BASE_CURATOR_MODEL: str = "gemma4:31b"
     PC_BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"
     PC_BASE_PITCHER_MODEL: str = "qwen3.8:27b"

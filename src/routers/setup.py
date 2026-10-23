@@ -373,15 +373,16 @@ async def build_models_endpoint(
     _gate=Depends(require_admin_or_first_run),
 ):
     """Build curatarr-curator and curatarr-summarizer Ollama models
-    (plus curatarr-pitcher when the two-bake split is enabled)."""
-    from src.config import settings
+    (plus curatarr-pitcher when the two-bake split is enabled) on THIS
+    install's Ollama - the plan build_models.py --host main follows: on a
+    split install no pitcher here (it lives on the gaming PC), and the
+    host's own curator window."""
+    from src.services.model_check import host_plan
+    plan = await asyncio.to_thread(host_plan, "main")
     results = await build_ollama_models(
-        settings.effective_ollama,
-        settings.BASE_CURATOR_MODEL,
-        settings.BASE_SUMMARIZER_MODEL,
-        base_pitcher=(settings.BASE_PITCHER_MODEL
-                      if (settings.PITCHER_MODEL or "").strip() else None),
-    )
+        plan["url"], plan["curator"], plan["summarizer"],
+        base_pitcher=plan["pitcher"], num_ctx=plan["num_ctx"],
+        with_embedding=bool(plan["embedding"]), embed_model=plan["embedding"])
     return {
         "curator": results.get("curator", False),
         "summarizer": results.get("summarizer", False),

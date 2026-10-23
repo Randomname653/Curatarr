@@ -868,7 +868,8 @@ async def build_ollama_models(ollama_endpoint: str,
                                base_summarizer: str,
                                base_pitcher: str = None,
                                num_ctx: int = None,
-                               with_embedding: bool = True) -> dict:
+                               with_embedding: bool = True,
+                               embed_model: str = None) -> dict:
     """
     Create curatarr-curator and curatarr-summarizer via Ollama /api/create —
     plus curatarr-pitcher when *base_pitcher* is given (two-bake split: the
@@ -879,7 +880,8 @@ async def build_ollama_models(ollama_endpoint: str,
     ``num_ctx``: the curator window to bake - the window of the host the
     bakes are for (ollama_hosts); default this process's. ``with_embedding``:
     pull the embedding model too - on a split install only the main host
-    embeds.
+    embeds. ``embed_model``: which one (default: the stored profile's - a
+    database read, so callers on the event loop pass it).
     Returns {curator: ok/error, summarizer: ok/error[, pitcher: ok/error]}
     """
     results = {}
@@ -895,11 +897,14 @@ async def build_ollama_models(ollama_endpoint: str,
     from src.config import settings as _settings
     # Ensure the model the runtime ACTUALLY uses (stored profile — v2-moe
     # after the migration; settings default on a fresh install).
-    try:
-        from src.services.embed_service import effective_embedding_model
-        embed_model = (effective_embedding_model() or "").strip()
-    except Exception:
-        embed_model = (_settings.EMBEDDING_MODEL or "").strip()
+    if embed_model:
+        embed_model = embed_model.strip()
+    else:
+        try:
+            from src.services.embed_service import effective_embedding_model
+            embed_model = (effective_embedding_model() or "").strip()
+        except Exception:
+            embed_model = (_settings.EMBEDDING_MODEL or "").strip()
     if embed_model and with_embedding:
         if await model_exists(ollama_endpoint, embed_model):
             _safe_print(f"  ✓  {embed_model} already present — skipping pull", flush=True)
