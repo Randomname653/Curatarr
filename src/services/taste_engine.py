@@ -748,11 +748,22 @@ def _load_watch_entries(user_id: int, category: Optional[str]) -> list:
             W.duration_ms, W.view_offset_ms, W.completed, W.viewed_at)
     names = ("plex_item_id", "title", "series_title", "media_type", "genres",
              "duration_ms", "view_offset_ms", "completed", "viewed_at")
+    # 350k plays are ~18k distinct tracks: sqlite hands back a NEW str per
+    # cell, so the same title/genres text was held once per play. Equal
+    # strings share one object (382k music plays: 236 MB -> 142 MB).
+    memo: dict = {}
+    share = memo.setdefault
+    text_cols = frozenset(("plex_item_id", "title", "series_title", "media_type", "genres"))
+    out: list = []
     with get_db_session() as db:
         q = db.query(*cols).filter(W.user_id == user_id)
         if category:
             q = q.filter(W.media_type == category)
-        return [dict(zip(names, row)) for row in q.order_by(W.viewed_at.desc())]
+        q = q.order_by(W.viewed_at.desc()).execution_options(yield_per=5000)
+        for row in q:
+            out.append({n: (share(v, v) if n in text_cols and isinstance(v, str) else v)
+                        for n, v in zip(names, row)})
+    return out
 
 
 def _bulk_profile_tags(cache_keys: list) -> dict:
@@ -760,15 +771,21 @@ def _bulk_profile_tags(cache_keys: list) -> dict:
     enrichment profile — one batched cache read (blocking; run it in a
     thread). Keeps three short lists per title instead of whole profiles."""
     from src.cache.metadata_cache import MetadataCache
-    with MetadataCache() as cache:
-        found = cache.get_cache_many(cache_keys)
+    # One key per play means ~380k keys for ~18k titles, and every profile
+    # in one get_cache_many call was parsed and held at once (a 370 MB
+    # peak). Distinct keys, a thousand at a time, each chunk cut down to its
+    # three lists before the next is read.
+    keys = list(dict.fromkeys(k for k in cache_keys if k))
     out = {}
-    for k, entry in found.items():
-        prof = (entry or {}).get("response") or {}
-        if not isinstance(prof, dict):
-            continue
-        out[k] = (list(prof.get("genres") or []), list(prof.get("themes") or []),
-                  list(prof.get("mood") or []))
+    with MetadataCache() as cache:
+        for i in range(0, len(keys), 1000):
+            found = cache.get_cache_many(keys[i:i + 1000])
+            for k, entry in found.items():
+                prof = (entry or {}).get("response") or {}
+                if not isinstance(prof, dict):
+                    continue
+                out[k] = (list(prof.get("genres") or []), list(prof.get("themes") or []),
+                          list(prof.get("mood") or []))
     return out
 
 
@@ -842,7 +859,7 @@ async def compute_taste_vector_for_user(
     # of plays). Only the three tag lists the counters need are kept.
     _tags_by_key = await asyncio.to_thread(
         _bulk_profile_tags,
-        [f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}" for e in entries])
+        (f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}" for e in entries))
 
     _miss_logged = False
     for idx, e in enumerate(entries):
