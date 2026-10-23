@@ -65,7 +65,7 @@ def test_admin_views_sit_in_the_admin_section_and_the_guard():
     curate = side.split('<div class="sb-section admin-action-row" hidden>')[1].split('<div class="sb-section">')[0]
     in_section = set(re.findall(r'data-view="([\w-]+)"', curate))
     guarded = set(re.findall(r"'([\w-]+)'", NAV.split("const ADMIN_VIEWS = [")[1].split("]")[0]))
-    assert in_section == guarded == {"deletions", "curation", "reclassify", "report"}, (in_section, guarded)
+    assert in_section == guarded == {"deletions", "curation", "reclassify"}, (in_section, guarded)
     assert "history.replaceState(null, '', '#chat')" in NAV, "a non-admin on an admin hash must land on Chat"
 
 

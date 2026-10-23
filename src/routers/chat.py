@@ -1451,6 +1451,8 @@ def _thread_id_for(ctx) -> str:
         return f"principle:{ctx.principle_id}"
     if kind == "starter" and getattr(ctx, "starter_id", None):
         return f"starter:{ctx.starter_id}"
+    if kind == "wrapup" and getattr(ctx, "wrapup_scope", None) and getattr(ctx, "wrapup_period", None):
+        return f"wrapup:{ctx.wrapup_scope}:{ctx.wrapup_period}"[:64]
     if kind == "watched_title":
         # One thread per WORK, not per episode: clicking S2E5 tonight and
         # S2E6 tomorrow continues the same conversation. tmdb_id when the
@@ -2641,6 +2643,23 @@ async def _build_discuss_context_block(
         logger.info("💉 [PRINCIPLE REVIEW CONTEXT] #%d (%s) injected",
                     prin.id, prin.novelty or "new")
         return block, "", domain
+
+    # ── Wrap-up discussion ("Ask your wrap-up") ─────────────────────────────
+    # The user's own stored wrap-up, rendered as the same numbered fact sheet
+    # the story was written from, so follow-up answers stay on verified
+    # numbers instead of the model's memory of the page.
+    if kind == "wrapup" and getattr(ctx, "wrapup_scope", None) and getattr(ctx, "wrapup_period", None):
+        from src.services.wrapup_story import wrapup_discussion_block
+        from src.services.wrapup_store import load as _load_wrapup
+        row = await run_read(_load_wrapup, user_id, ctx.wrapup_scope, ctx.wrapup_period)
+        if not row or not row.get("facts"):
+            logger.info("Discuss context: wrapup %s/%s not found for user %d",
+                        ctx.wrapup_scope, ctx.wrapup_period, user_id)
+            return "", "", domain
+        block = wrapup_discussion_block(row["facts"], row.get("story"))
+        logger.info("💉 [WRAPUP CONTEXT] %s/%s injected", ctx.wrapup_scope, ctx.wrapup_period)
+        return block, "", (ctx.wrapup_scope if ctx.wrapup_scope in ("movie", "show", "anime", "music")
+                           else domain)
 
     # ── No usable kind+id → silently ignore (no fake-assistant pollution) ───
     return "", "", domain

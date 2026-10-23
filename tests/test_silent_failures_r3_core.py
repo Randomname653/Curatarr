@@ -140,7 +140,8 @@ def test_memo_runs_sync_bodies_off_the_loop():
 # Route handlers that may stay async without awaiting anything: they hand a
 # coroutine to the running loop (create_task / track_task), which a
 # threadpool thread does not have.
-_LOOP_BOUND = {"start_embedding_migration", "compare", "evaluate", "bulk_approve_deletions"}
+_LOOP_BOUND = {"start_embedding_migration", "compare", "evaluate", "bulk_approve_deletions",
+               "start_wrapup"}
 
 
 def test_no_await_free_async_route_handlers():

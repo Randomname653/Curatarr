@@ -575,3 +575,81 @@ async def push_user_music_playlist(user) -> dict:
                 user.plex_username, MUSIC_PLAYLIST_TITLE, len(keys),
                 (meta or {}).get("leafCount"))
     return {"pushed": ["music"]}
+
+
+# ── WRAP-UP ───────────────────────────────────────────────────────────────────
+# "Your period on Plex" (PlayStation Wrap-Up's playlist, everyone's top-songs
+# list): the titles a wrap-up is about, one tap from the page. Video: a film
+# is its own key, a series its user's next unwatched episode (a series key
+# expands to every episode). Music: the top tracks, matched by title AND
+# artist so a common track name never lands another artist's song.
+
+WRAPUP_PLAYLIST_PREFIX = "Curatarr Wrap-Up · "
+_MAX_WRAPUP_ITEMS = 12
+
+
+async def resolve_track_key(track: str, artist: str, sections: Optional[list[str]] = None) -> Optional[str]:
+    token = _owner_token()
+    if not token or not track:
+        return None
+    if sections is None:
+        sections = await run_read(_section_keys, "music")
+    want = (artist or "").casefold()
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
+        for sec in sections:
+            r = await c.get(f"{_base()}/library/sections/{sec}/all", headers=_headers(token),
+                            params={"type": "10", "title": track})
+            if r.status_code != 200:
+                raise RuntimeError(f"section {sec} track search HTTP {r.status_code}")
+            for m in (r.json().get("MediaContainer") or {}).get("Metadata") or []:
+                if not want or (m.get("grandparentTitle") or "").casefold() == want:
+                    return str(m.get("ratingKey"))
+    return None
+
+
+async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: list[dict]) -> dict:
+    """Create (or replace) the user's wrap-up playlist(s). ``videos``:
+    [{title, media_type}], ``tracks``: [{track, artist}]. Returns
+    {"pushed": [{title, items}], "missing": [title…]} or {"skipped": reason}."""
+    if not user.plex_token:
+        return {"skipped": "no_token"}
+    if not await get_machine_identifier():
+        raise RuntimeError("Plex machineIdentifier unavailable")
+    title = WRAPUP_PLAYLIST_PREFIX + label
+    pushed, missing = [], []
+
+    video_keys = []
+    sections = {}
+    for v in videos[:_MAX_WRAPUP_ITEMS]:
+        cat = v.get("media_type")
+        if cat not in _VIDEO_TYPE:
+            continue
+        if cat not in sections:
+            sections[cat] = await run_read(_section_keys, cat)
+        key = await resolve_video_key(v["title"], cat, sections=sections[cat])
+        if key and cat in ("show", "anime"):
+            key = await first_unwatched_episode_key(user.plex_token, key)
+        if key:
+            video_keys.append(key)
+        else:
+            missing.append(v["title"])
+    track_keys = []
+    music_sections = await run_read(_section_keys, "music") if tracks else []
+    for t in tracks[:_MAX_WRAPUP_ITEMS]:
+        key = await resolve_track_key(t["track"], t.get("artist"), sections=music_sections)
+        if key:
+            track_keys.append(key)
+        else:
+            missing.append(t["track"])
+
+    for kind, keys, suffix in (("video", video_keys, ""), ("audio", track_keys, " · Music")):
+        if not keys:
+            continue
+        name = title + (suffix if video_keys and track_keys else "")
+        for pl in await list_playlists(user.plex_token, kind):
+            if pl.get("title") == name:
+                await delete_playlist(user.plex_token, str(pl.get("ratingKey")))
+        meta = await create_playlist(user.plex_token, name, keys, playlist_type=kind)
+        pushed.append({"title": name, "items": int((meta or {}).get("leafCount") or len(keys))})
+        logger.info("[playlists] %s: pushed wrap-up '%s' (%d items)", user.plex_username, name, len(keys))
+    return {"pushed": pushed, "missing": missing}

@@ -61,15 +61,19 @@ check("stats router registered at /api/stats",
       'prefix="/api/stats"' in main)
 
 st = (root / "src/routers/stats.py").read_text(encoding="utf-8")
-check("both endpoints admin-gated", st.count("require_admin") >= 3)
-check("narrative cached per user+year", "curation_narrative:" in st)
+check("the ledger endpoint is admin-gated", st.count("require_admin") >= 2)
+check("the yearly paragraph is gone (the Wrap-Up story replaced it)",
+      "curation_narrative:" not in st and "/curation/narrative" not in st)
+cs = (root / "src/services/curation_stats.py").read_text(encoding="utf-8")
+check("watch hours are played time, not item length", "played_ms_sql" in cs)
 
 html = _frontend_everything()
-check("'report' is in the admin view gate",
-      "'report'" in html.split("const ADMIN_VIEWS = [")[1].split("]")[0])
-for frag in ["report-view", "loadReport", "writeYearlyReview",
-             "Stubbornness Index", "_repBar"]:
+check("the Report folded into the Wrap-Up: no 'report' admin view",
+      "'report'" not in html.split("const ADMIN_VIEWS = [")[1].split("]")[0]
+      and "report: 'wrapup'" in html)
+for frag in ["wrapup-view", "renderLedger", "Stubbornness Index", "_repBar"]:
     check(f"frontend has {frag}", frag in html)
+check("no yearly-review button left", "writeYearlyReview" not in html)
 check("no chart library referenced",
       "chart.js" not in html.lower() and "echarts" not in html.lower())
 

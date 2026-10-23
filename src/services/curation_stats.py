@@ -123,9 +123,13 @@ def build_curation_stats(user_id: int, months: int = 12) -> dict:
                 })
 
         # Watch hours per category per month
+        # PLAYED time (wrapup_facts.played_ms_sql): summing duration_ms
+        # counted a ten-minute abandon as the whole film and Spotify plays and
+        # imported history (no duration) as nothing.
+        from src.services.wrapup_facts import played_ms_sql
         watch = (db.query(func.strftime("%Y-%m", WatchHistoryEntry.viewed_at),
                           WatchHistoryEntry.media_type,
-                          func.sum(WatchHistoryEntry.duration_ms))
+                          func.sum(played_ms_sql(WatchHistoryEntry)))
                  .filter(WatchHistoryEntry.user_id == user_id,
                          WatchHistoryEntry.viewed_at >= cutoff)
                  .group_by(func.strftime("%Y-%m", WatchHistoryEntry.viewed_at),

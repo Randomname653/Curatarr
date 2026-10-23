@@ -1443,3 +1443,175 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .swipe-keys-box > summary:hover { color: var(--text2); }
 .swipe-keys-box .swipe-keys { margin-top: 10px; }
 @media (max-width: 900px) { .swipe-keys-box { display: none; } }
+
+/* ── Wrap-Up: hero persona, bento tiles, chapter cards, snapshot ─────────
+   One accent (amber), the #1 title's poster as the hero's light
+   (posterLoaded → --poster-tint on the .card), glass tiles on the
+   elevation tokens. Computed widths ride --v from data-style. */
+.wu-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 18px; }
+.wu-chips, .wu-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.wu-chip, .wu-tab { border: 1px solid var(--hairline-strong); background: var(--glass); color: var(--text2);
+  border-radius: 999px; padding: 6px 12px; font-size: var(--fs-sm); cursor: pointer;
+  transition: background var(--dur-2), color var(--dur-2), border-color var(--dur-2); }
+.wu-chip-sm { padding: 3px 10px; font-size: var(--fs-xs); }
+.wu-chip:hover, .wu-tab:hover { color: var(--text); border-color: var(--border2); }
+.wu-chip.is-on, .wu-tab.is-on { background: var(--amber); border-color: var(--amber); color: #000; }
+.wu-snap-btn { margin-left: auto; }
+
+.wu-hero { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center;
+  padding: 28px; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-3), var(--specular); }
+.wu-hero.has-tint { background-image: radial-gradient(700px 420px at 18% 40%,
+  color-mix(in srgb, var(--poster-tint) 26%, transparent), transparent 72%); }
+.wu-hero-art .poster-img, .wu-hero-art .poster-ph { border-radius: var(--radius-poster); box-shadow: var(--shadow-2); }
+.wu-eyebrow { font-size: var(--fs-xs); letter-spacing: .14em; text-transform: uppercase; color: var(--amber); }
+.wu-arch { font-size: clamp(30px, 5.4vw, 56px); line-height: 1.02; font-weight: 800; letter-spacing: -.02em; margin: 8px 0 10px; }
+.wu-sub { font-size: var(--fs-lg); color: var(--text2); max-width: var(--measure); margin: 0; }
+.wu-share-line { font-style: italic; color: var(--text2); margin: 10px 0 0; }
+.wu-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.wu-badge { font-size: var(--fs-xs); letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--amber-line, var(--border2)); color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+.wu-hero-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.wu-hero.is-reveal .wu-arch { animation: wu-rise var(--dur-3) var(--ease-spring) both; }
+.wu-hero.is-reveal .wu-sub, .wu-hero.is-reveal .wu-badges { animation: wu-rise var(--dur-3) var(--ease-spring) .12s both; }
+@keyframes wu-rise { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } }
+
+.wu-quiz-q { font-size: var(--fs-2xl); margin: 8px 0 14px; }
+.wu-quiz { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.wu-quiz-opt { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px; border-radius: var(--radius-lg);
+  background: var(--glass); border: 1px solid var(--hairline); color: var(--text); cursor: pointer; font-size: var(--fs-sm);
+  transition: transform var(--dur-2) var(--ease-spring), border-color var(--dur-2); }
+.wu-quiz-opt:hover, .wu-quiz-opt:focus-visible { transform: translateY(-2px); border-color: var(--amber); }
+
+.wu-bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 18px 0 26px; grid-auto-flow: dense; }
+.wu-tile { background: var(--glass); backdrop-filter: var(--glass-blur); border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg); padding: 16px 18px; box-shadow: var(--shadow-1), var(--specular); min-width: 0; }
+.wu-span-hours { grid-column: span 4; grid-row: span 2; }
+.wu-span-split, .wu-span-clusters, .wu-span-cal { grid-column: span 4; }
+.wu-span-poster, .wu-span-purge { grid-column: span 3; }
+.wu-span-sm { grid-column: span 2; }
+.wu-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.wu-tile-lbl { font-size: var(--fs-xs); letter-spacing: .1em; text-transform: uppercase; color: var(--text3); }
+.wu-tile-share { background: none; border: 0; color: var(--text3); cursor: pointer; padding: 2px; border-radius: 6px; opacity: .6; }
+.wu-tile-share:hover, .wu-tile-share:focus-visible { color: var(--amber); opacity: 1; }
+.wu-tile-title { font-weight: 700; font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.wu-big { font-size: clamp(30px, 4vw, 46px); font-weight: 800; color: var(--amber); line-height: 1; font-variant-numeric: tabular-nums; }
+.wu-unit { font-size: .42em; font-weight: 600; margin-left: 4px; color: var(--text2); }
+.wu-meta { font-size: var(--fs-sm); color: var(--text2); margin-top: 6px; }
+.wu-pairline { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-sm); color: var(--text2); margin-top: 4px; }
+.wu-pairline b { font-size: var(--fs-xl); color: var(--text); font-variant-numeric: tabular-nums; }
+.wu-pairline span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+.wu-clock { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; height: 92px; align-items: end; margin: 16px 0 2px; }
+.wu-hr { height: 100%; display: flex; align-items: end; }
+.wu-hr-fill { display: block; width: 100%; height: var(--v); min-height: 2px; border-radius: 3px 3px 1px 1px;
+  background: color-mix(in srgb, var(--amber) 35%, transparent); }
+.wu-hr.is-peak .wu-hr-fill { background: var(--amber); }
+.wu-clock-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--text3); }
+
+.wu-split { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--bg3); margin: 10px 0; }
+.wu-split-hb, .wu-split-cf { display: block; width: var(--v); }
+.wu-split-hb { background: var(--amber); }
+.wu-split-cf { background: color-mix(in srgb, var(--amber) 40%, var(--bg3)); }
+.wu-split-ot { flex: 1; }
+.wu-split-legend { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; font-size: var(--fs-sm); color: var(--text2); }
+
+.wu-poster-tile { display: flex; gap: 14px; align-items: center; }
+.wu-poster-body { min-width: 0; }
+.wu-vs { display: flex; gap: 18px; margin-top: 8px; font-size: var(--fs-sm); color: var(--text2); }
+.wu-vs b { display: block; font-size: var(--fs-2xl); color: var(--amber); }
+.wu-vs span + span b { color: var(--text2); }
+.wu-list { margin: 0; padding-left: 18px; font-size: var(--fs-sm); }
+.wu-list li { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
+.wu-list li b { color: var(--text2); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.wu-decades { display: flex; gap: 4px; align-items: end; height: 46px; margin-top: 10px; }
+.wu-decades span { flex: 1; display: flex; flex-direction: column; justify-content: end; height: 100%; }
+.wu-dec-fill { display: block; height: var(--v); min-height: 2px; background: var(--amber); border-radius: 2px; }
+.wu-decades em { font-style: normal; font-size: 10px; color: var(--text3); text-align: center; margin-top: 3px; }
+
+.wu-cal { display: grid; grid-template-columns: repeat(auto-fill, 12px); gap: 3px; margin-top: 10px; }
+.wu-cal-day { width: 12px; height: 12px; border-radius: 3px; background: var(--bg3); }
+.wu-cal-day.is-on { background: var(--amber); }
+
+.wu-cluster { display: grid; grid-template-columns: minmax(0, 1.4fr) 2fr auto; gap: 10px; align-items: center; margin: 6px 0; }
+.wu-cl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wu-cl-bar { height: 8px; background: var(--bg3); border-radius: 999px; overflow: hidden; }
+.wu-cl-fill { display: block; height: 100%; width: var(--v); background: var(--amber); }
+.wu-cl-trend { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text2); }
+.wu-cl-trend.is-rising { color: var(--amber); }
+
+.wu-chapters { display: grid; gap: 14px; }
+.wu-chapter { display: grid; grid-template-columns: 200px 1fr; gap: 22px; padding: 20px; border-radius: var(--radius-lg); }
+.wu-fan { position: relative; height: 140px; }
+.wu-fan-item { position: absolute; top: 0; transition: transform var(--dur-2) var(--ease-spring); }
+.wu-fan-item:nth-child(1) { left: 0; transform: rotate(-6deg); }
+.wu-fan-item:nth-child(2) { left: 36px; transform: rotate(-2deg); }
+.wu-fan-item:nth-child(3) { left: 72px; transform: rotate(2deg); }
+.wu-fan-item:nth-child(4) { left: 108px; transform: rotate(6deg); }
+@media (hover: hover) { .wu-chapter:hover .wu-fan-item { transform: rotate(0) translateY(-3px); } }
+.wu-ch-n { font-size: var(--fs-xs); letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
+.wu-ch-title { font-size: var(--fs-xl); margin: 4px 0; }
+.wu-ch-kicker { color: var(--text2); font-size: var(--fs-sm); }
+.wu-ch-text { margin: 10px 0 12px; max-width: var(--measure); line-height: 1.55; }
+
+.wu-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+.wu-roast, .wu-toast { border-radius: var(--radius-lg); padding: 18px; border: 1px solid var(--hairline); background: var(--glass); }
+.wu-roast p, .wu-toast p { margin: 6px 0 0; line-height: 1.5; }
+.wu-roast { border-left: 3px solid var(--text3); }
+.wu-toast { border-left: 3px solid var(--amber); }
+.wu-hook { display: flex; gap: 16px; align-items: center; padding: 18px; border-radius: var(--radius-lg); margin-top: 14px; }
+.wu-hook p { margin: 6px 0 10px; }
+.wu-note { color: var(--text3); font-size: var(--fs-sm); margin: 12px 0; }
+.wu-empty { padding: 28px; border-radius: var(--radius-lg); max-width: 560px; }
+.wu-empty-title { margin: 0 0 8px; }
+.wu-ledger { margin-top: 28px; }
+
+.wu-ticker { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 0; margin: 0; font-size: var(--fs-sm); color: var(--text3); }
+.wu-ticker li.is-done { color: var(--text2); }
+.wu-ticker li.is-done::before { content: '✓ '; color: var(--amber); }
+.wu-ticker li.is-now { color: var(--amber); animation: wu-pulse 1.4s ease-in-out infinite; }
+@keyframes wu-pulse { 50% { opacity: .45; } }
+
+.wu-snap-layouts { justify-content: center; margin-bottom: 12px; }
+.wu-snap { max-width: 420px; aspect-ratio: 9 / 16; margin: 0 auto; padding: 28px 24px; display: flex; flex-direction: column;
+  gap: 14px; border-radius: 22px; box-shadow: var(--shadow-3), var(--specular);
+  background: radial-gradient(500px 360px at 20% 0%, color-mix(in srgb, var(--amber) 16%, transparent), transparent 70%), var(--bg2); }
+.wu-snap .wu-arch { font-size: 38px; }
+.wu-snap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.wu-num-static { font-size: 26px; font-weight: 800; color: var(--amber); font-variant-numeric: tabular-nums; }
+/* Five posters always fit the card: _posterImg writes a fixed px size from
+   script, so the grid cell has to win over it. */
+.wu-snap-posters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.wu-snap-posters > .poster-img, .wu-snap-posters > .poster-ph { width: 100% !important; height: auto !important; aspect-ratio: 2 / 3; object-fit: cover; }
+.wu-snap-top { margin: 0; padding-left: 18px; color: var(--text2); font-size: var(--fs-sm); }
+.wu-snap .btn { margin-top: auto; align-self: flex-start; }
+.wu-lineup { text-align: center; align-items: center; justify-content: center; text-transform: uppercase;
+  background: radial-gradient(420px 300px at 50% 0%, color-mix(in srgb, var(--amber) 22%, transparent), transparent 70%),
+              repeating-linear-gradient(135deg, transparent 0 22px, color-mix(in srgb, var(--amber) 4%, transparent) 22px 24px), var(--bg2); }
+.wu-lu-head { font-size: clamp(34px, 9vw, 48px); font-weight: 900; line-height: .95; letter-spacing: -.01em; color: var(--amber); overflow-wrap: anywhere; }
+.wu-lu-rest { display: flex; flex-direction: column; gap: 4px; font-size: 22px; font-weight: 800; }
+.wu-lu-small { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: var(--fs-sm); color: var(--text2); letter-spacing: .06em; }
+.wu-lu-foot { font-size: var(--fs-xs); letter-spacing: .14em; color: var(--text3); border-top: 1px solid var(--hairline-strong); padding-top: 10px; }
+.wu-lineup .btn { align-self: center; }
+
+@media (max-width: 900px) {
+  .wu-bento { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .wu-span-hours, .wu-span-split, .wu-span-clusters, .wu-span-cal { grid-column: span 4; }
+  .wu-span-poster, .wu-span-purge, .wu-span-sm { grid-column: span 2; }
+}
+@media (max-width: 640px) {
+  .wu-hero { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
+  /* The poster yields to the type but stays loaded (visually hidden, not
+     display:none), so posterLoaded still lends the hero its tint. */
+  .wu-hero-art { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .wu-quiz { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wu-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .wu-span-hours, .wu-span-split, .wu-span-clusters, .wu-span-cal, .wu-span-poster, .wu-span-purge { grid-column: span 2; grid-row: auto; }
+  .wu-span-sm { grid-column: span 1; }
+  .wu-tile { padding: 14px; }
+  .wu-chapter { grid-template-columns: 1fr; }
+  .wu-fan { height: 132px; }
+  .wu-pair { grid-template-columns: 1fr; }
+  .wu-snap { aspect-ratio: auto; min-height: 78vh; }
+  .wu-snap-btn { margin-left: 0; }
+}
