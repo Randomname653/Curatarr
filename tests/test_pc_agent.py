@@ -168,7 +168,7 @@ check("without an agent configured, this machine is read as before",
 # ── wiring ──────────────────────────────────────────────────────────────────
 tray = (ROOT / "src/tray_app.py").read_text(encoding="utf-8")
 check("the tray starts the agent and announces a real shutdown (menu, Windows logoff)",
-      "pc_agent.start_from_settings(settings)" in tray
+      "pc_agent.start_from_settings(settings, on_updated=_restart_after_update)" in tray
       and 'pystray.MenuItem("Shutdown", lambda: _stop_for_good())' in tray
       and "_install_endsession_hook(_stop_for_good, server_thread)" in tray)
 sched = (ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")

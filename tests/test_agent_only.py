@@ -67,7 +67,7 @@ check("the tray branches to agent-only before it checks or opens Curatarr's port
 check("agent-only starts no server and opens no database",
       "uvicorn" not in agent_only and "src.main" not in agent_only and "get_db_session" not in agent_only)
 check("...it starts the agent, or exits saying why",
-      "pc_agent.start_from_settings(settings)" in agent_only and "sys.exit(1)" in agent_only)
+      "pc_agent.start_from_settings(settings, on_updated=_restart_after_update)" in agent_only and "sys.exit(1)" in agent_only)
 check("...a logoff, a shutdown or Quit tells the NAS first",
       "_install_endsession_hook(_stop_for_good, nothing)" in agent_only
       and agent_only.index("agent.announce_shutdown()") < agent_only.index("icon.stop()")
