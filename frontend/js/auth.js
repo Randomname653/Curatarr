@@ -10,6 +10,7 @@ import { loadGlancePanel, loadLastPlayed, loadStarters, restoreChatHistory } fro
 import { startTaskStream, stopTaskStream } from './activity.js';
 import { startProcessMonitor } from './game.js';
 import { routeFromHash } from './nav.js';
+import { loadVersion } from './version.js';
 
 
 // The poll used to ignore every answer but ok / 429 / 403: a plex.tv outage
@@ -124,6 +125,7 @@ export function setUser(u) {
   }
   document.getElementById('auth-overlay').classList.add('hidden');
   loadUnreadMessages();
+  loadVersion();
   // Notifications arrive while the app is open (principles are captured in the
   // background AFTER a debate ends) — without a poll the bell stayed frozen at
   // its boot-time state and new shadow principles never surfaced for review.

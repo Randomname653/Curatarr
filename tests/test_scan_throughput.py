@@ -226,7 +226,7 @@ check("the next candidate's evidence starts before this verdict's judge call",
       loop.index("_ev_ahead[_nx] = asyncio.ensure_future(build_evidence(")
       < loop.index("await adjudicate("))
 check("tasks built ahead are cancelled and reaped before the gate is released",
-      loop.index("_t.cancel()") < loop.index("curator_done()\n        _msg(")
+      loop.index("_t.cancel()") < loop.index("curator_done(lane=_run_lane)\n        _msg(")
       and "return_exceptions=True" in loop)
 
 print(f"\n{PASS} passed, {FAIL} failed")

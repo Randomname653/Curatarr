@@ -13,9 +13,14 @@ what the routing decides on:
     role       PC on and free     PC off, asleep, shutting down or gaming
     chat       PC                 OLLAMA_ENDPOINT (the NAS)
     curator    PC                 NAS
-    enrich     PC                 NAS
     judge      PC                 raises PcUnavailable - deletion runs wait
+    enrich     NAS, always (ENRICH_ON_PC=true: PC when free, else NAS)
     embed      NAS, always - one host for every vector, so stored and new compare
+
+Both cards work at once (2026-10-23): enrichment keeps the NAS's card busy
+while chat, background curator work and the deletion run use the PC's.
+llm_priority keeps one queue per host, so work waits only for work on the
+same card.
 
 "The PC" exists only with OLLAMA_PC_ENDPOINT set AND its agent reporting
 (PC_AGENT_URL, services/pc_host): without the agent nobody can say the PC is
@@ -116,13 +121,22 @@ def pc_usable() -> bool:
     return pc.configured() and pc.available() and not pc.busy()
 
 
+def _main_only(role: str) -> bool:
+    if role in MAIN_ONLY:
+        return True
+    if role == "enrich":
+        from src.config import settings
+        return not getattr(settings, "ENRICH_ON_PC", False)
+    return False
+
+
 def host_for(role: str) -> OllamaHost:
     """The Ollama host for ``role`` now (see the table above). Raises
     PcUnavailable for a PC-only role while the PC cannot take it."""
     if role not in ROLES:
         raise ValueError(f"unknown Ollama role {role!r} (one of {', '.join(ROLES)})")
     pc = pc_host()
-    if pc is None or role in MAIN_ONLY:
+    if pc is None or _main_only(role):
         return main_host()
     if pc_usable():
         return pc

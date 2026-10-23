@@ -308,6 +308,9 @@ class Settings(BaseSettings):
     # OLLAMA_ENDPOINT. The PC's card has its own profile (LLM_PROFILE,
     # CURATOR_NUM_CTX, CURATOR_NUM_GPU describe OLLAMA_ENDPOINT's).
     OLLAMA_PC_ENDPOINT: str = ""
+    # Enrichment (the summariser) stays on OLLAMA_ENDPOINT's card so both
+    # cards work at once; true sends it to the PC while that one is free.
+    ENRICH_ON_PC: bool = False
     PC_LLM_PROFILE: str = "large"
     PC_CURATOR_NUM_CTX: int = 0
     PC_CURATOR_NUM_GPU: int = 99
@@ -321,6 +324,9 @@ class Settings(BaseSettings):
     PC_BASE_CURATOR_MODEL: str = "gemma4:31b"
     PC_BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"
     PC_BASE_PITCHER_MODEL: str = "qwen3.8:27b"
+    # Ask GitHub (anonymously, every 6 h) whether a newer build is published;
+    # admins then see "Update available" under the sidebar (services/update_check.py).
+    UPDATE_CHECK: bool = True
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to

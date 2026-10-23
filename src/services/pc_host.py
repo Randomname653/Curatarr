@@ -36,14 +36,14 @@ def _settings():
 
 
 def token() -> str:
-    t = _settings().PC_AGENT_TOKEN
+    t = getattr(_settings(), "PC_AGENT_TOKEN", None)
     t = t.get_secret_value() if hasattr(t, "get_secret_value") else (t or "")
     return str(t).strip()
 
 
 def configured() -> bool:
     """A PC agent is set up: its URL and the shared token."""
-    return bool((_settings().PC_AGENT_URL or "").strip() and token())
+    return bool((getattr(_settings(), "PC_AGENT_URL", "") or "").strip() and token())
 
 
 def available() -> bool:

@@ -290,7 +290,7 @@ async def _serve_like_fastapi():
 check("the handler is a plain def", not inspect.iscoroutinefunction(system_notifications_route))
 out, sites = guarded(_serve_like_fastapi)
 check("served off the loop with the same shape",
-      sites == [] and isinstance(out, dict) and set(out) == {"items", "needs_action"}
+      sites == [] and isinstance(out, dict) and set(out) == {"items", "needs_action", "settings_action"}
       and any(i["kind"] == "model_update" for i in out["items"]))
 
 print(f"\n{PASS} passed, {FAIL} failed")

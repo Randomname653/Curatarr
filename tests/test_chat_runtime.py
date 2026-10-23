@@ -32,15 +32,7 @@ def _src(rel: str) -> str:
 
 def _fresh_gate():
     """Module state bound to the loop asyncio.run() is about to create."""
-    lp._gpu_gate = None
-    lp._event = None
-    lp._active = 0
-    lp._gate_owner = ""
-    lp._gate_waiters = 0
-    lp._curator_evict_task = None
-    lp._holder_prios.clear()
-    lp._preemptible.clear()
-    lp._preempted.clear()
+    lp._reset_lanes()
     lp._last_interactive = 0.0
 
 
@@ -66,7 +58,7 @@ def test_a_cancel_during_eviction_releases_the_gpu_slot():
     orig = lp.evict_others
     stuck = {"entered": False}
 
-    async def slow_evict(target):
+    async def slow_evict(target, url=None):
         stuck["entered"] = True
         await asyncio.Event().wait()          # a /api/ps that never answers
 
@@ -85,16 +77,16 @@ def test_a_cancel_during_eviction_releases_the_gpu_slot():
         except asyncio.CancelledError:
             pass
         assert not lp.curator_busy(), "the slot leaked to a dead chat stream"
-        assert lp._active == 0 and lp._get_event().is_set(), \
+        assert lp.lane().active == 0 and lp.lane().event().is_set(), \
             "enrichment must resume once nobody holds the curator"
         # The next request gets the GPU instead of queueing for ever.
-        async def fast_evict(target):
+        async def fast_evict(target, url=None):
             return None
         lp.evict_others = fast_evict
         await asyncio.wait_for(lp.curator_start("chat retry"), timeout=1.0)
         lp.curator_done()
-        if lp._curator_evict_task:
-            lp._curator_evict_task.cancel()
+        if lp.lane().evict_task:
+            lp.lane().evict_task.cancel()
 
     try:
         asyncio.run(scenario())
@@ -106,7 +98,7 @@ def test_a_cancel_during_eviction_releases_the_gpu_slot():
 def test_an_eviction_error_releases_the_slot_and_propagates():
     orig = lp.evict_others
 
-    async def broken_evict(target):
+    async def broken_evict(target, url=None):
         raise RuntimeError("ollama down")
 
     async def scenario():
@@ -117,9 +109,9 @@ def test_an_eviction_error_releases_the_slot_and_propagates():
             raise AssertionError("the error must reach the caller")
         except RuntimeError:
             pass
-        assert not lp.curator_busy() and lp._active == 0
-        if lp._curator_evict_task:
-            lp._curator_evict_task.cancel()
+        assert not lp.curator_busy() and lp.lane().active == 0
+        if lp.lane().evict_task:
+            lp.lane().evict_task.cancel()
 
     try:
         asyncio.run(scenario())
@@ -134,21 +126,21 @@ def test_the_funnel_only_releases_a_slot_it_holds():
     src = _src("src/services/recommendations_engine.py")
     start = src.index('_gate_label = f"deletion scan: {category}"')
     block = src[start:src.index("return final_proposals", start)]
-    y = block.index("if gate_contested():")
+    y = block.index("if gate_contested(_run_lane):")
     yield_part = block[y:block.index("item = cand[\"item\"]", y)]
-    assert yield_part.index("_holds_gate = False") < yield_part.index("curator_done()") \
+    assert yield_part.index("_holds_gate = False") < yield_part.index("curator_done(lane=_run_lane)") \
         < yield_part.index("await curator_start") < yield_part.index("_holds_gate = True"), \
         "drop the flag before releasing, raise it only once re-acquired"
     fin = block[block.rindex("finally:"):]
     assert "if _holds_gate:" in fin
-    assert fin.index("if _holds_gate:") < fin.index("curator_done()")
+    assert fin.index("if _holds_gate:") < fin.index("curator_done(lane=_run_lane)")
 
     # What the flag prevents: a done() without holding frees someone else's
     # slot, letting a third caller onto the GPU next to the current holder.
     async def scenario():
         _fresh_gate()
 
-        async def noop(target):
+        async def noop(target, url=None):
             return None
         orig = lp.evict_others
         lp.evict_others = noop
@@ -158,8 +150,8 @@ def test_the_funnel_only_releases_a_slot_it_holds():
             assert not lp.curator_busy(), "the stray release freed the chat's slot"
         finally:
             lp.evict_others = orig
-            if lp._curator_evict_task:
-                lp._curator_evict_task.cancel()
+            if lp.lane().evict_task:
+                lp.lane().evict_task.cancel()
 
     asyncio.run(scenario())
     _fresh_gate()
@@ -525,8 +517,9 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
             except asyncio.CancelledError:
                 events.append("curator_start cancelled")
                 raise
+        return lp.lane()        # the lane the turn holds
 
-    async def health(model):
+    async def health(model, url=None):
         return {}
 
     async def body():
@@ -571,7 +564,7 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
         (chat, "_schedule_post_turn", lambda *a: events.append("post_turn")),
         (em, "retrieve_memories", empty),
         (lp, "curator_start", curator_start),
-        (lp, "curator_done", lambda: events.append("curator_done")),
+        (lp, "curator_done", lambda **k: events.append("curator_done")),
         (lp, "curator_busy", lambda: False),
         (lp, "check_curator_vram_health", health),
         (httpx, "AsyncClient",

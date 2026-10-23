@@ -730,7 +730,7 @@ def test_loaded_models_unknown_on_failure():
 
     evicted = []
 
-    async def _none():
+    async def _none(url=None):
         return None
 
     async def _ev(name, timeout=8.0):

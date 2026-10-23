@@ -7,9 +7,10 @@ built server-side from small providers, so adding a kind is one function
 and the frontend renders every kind the same way.
 
 An item: ``{"id", "kind", "severity": "info"|"warn"|"danger", "title",
-"text", "action": {"key", "label"} | None}``. ``action.key`` names a
-frontend handler from a fixed map (notifications.js SYS_ACTIONS) — the
-server never sends a function name to call.
+"text", "action": {"key", "label", "arg"?} | None, "secondary"?: {...}}``.
+``action.key`` names a frontend handler from a fixed map (notifications.js
+SYS_ACTIONS) — the server never sends a function name to call; ``arg`` is
+the one value that handler gets (data, escaped like any other).
 
 ``needs_action`` counts the items that wait for a decision; that number is
 the bell badge's share and the Settings bubble in the sidebar.
@@ -72,8 +73,52 @@ def _model_update_items() -> list[dict]:
     return items
 
 
+_GAME_Q_MAX = 3
+_game_q_cache: dict = {"at": 0.0, "items": []}
+
+
+def _game_question_items() -> list[dict]:
+    """The "is this a game?" question for the PC's unclassified programs, kept in the bell
+    until answered: the toast only reached an admin who had the app open
+    while the program ran. A program that drew on the card comes first and
+    says so - it keeps Curatarr off the PC until it is answered. Cached 30 s:
+    every open client polls the bell.
+
+    Only with a PC agent: the programs are the PC's, and the admin is
+    usually somewhere else (the NAS's app, a phone). On a desktop install
+    the toast comes up on the machine the program runs on."""
+    from src.services import pc_host
+    if not pc_host.configured():
+        return []
+    import time
+    now = time.monotonic()
+    if now - _game_q_cache["at"] < 30:
+        return _game_q_cache["items"]
+    from src.services.process_monitor import get_unknown_processes
+    items = []
+    for u in get_unknown_processes()[:_GAME_Q_MAX]:
+        name = u["name"]
+        items.append({"id": f"game-question:{name.lower()}", "kind": "game_question",
+                      "severity": "warn" if u.get("gpu") else "info",
+                      "title": f"Is {name} a game?",
+                      "text": ("It draws on the graphics card: Curatarr keeps its work off the "
+                               "PC while it runs. Your answer decides next time."
+                               if u.get("gpu") else
+                               "A large program on the PC. A game frees the card for it; "
+                               "anything else is never asked again."),
+                      "action": {"key": "game_yes", "label": "Yes, a game", "arg": name},
+                      "secondary": {"key": "game_no", "label": "Not a game", "arg": name}})
+    _game_q_cache.update(at=now, items=items)
+    return items
+
+
+def forget_game_questions() -> None:
+    """An answer came in: the next bell read asks again."""
+    _game_q_cache["at"] = 0.0
+
+
 # (provider, admin_only) — append new kinds here.
-PROVIDERS = [(_model_update_items, True)]
+PROVIDERS = [(_model_update_items, True), (_game_question_items, True)]
 
 
 def system_notifications(user) -> dict:
@@ -86,4 +131,8 @@ def system_notifications(user) -> dict:
         except Exception as e:   # one broken source must not empty the bell
             logger.warning("[notifications] %s failed: %s", provider.__name__, e)
     return {"items": items,
-            "needs_action": sum(1 for i in items if i.get("action"))}
+            "needs_action": sum(1 for i in items if i.get("action")),
+            # The sidebar's Settings bubble: decisions that live in Settings
+            # (a game question is answered right in the bell).
+            "settings_action": sum(1 for i in items
+                                   if i.get("action") and i["kind"] != "game_question")}
