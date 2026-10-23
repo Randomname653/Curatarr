@@ -395,6 +395,14 @@ async def _run_playlist_push(deep: bool = False, task=None) -> bool:
     return all_ok
 
 
+async def _run_wrapup_pregen(deep: bool = False, task=None) -> bool:
+    """Write the household's due wrap-ups ahead (services/wrapup_story): the
+    rolling month weekly, the year from 1 December, the closed year once
+    more in early January."""
+    from src.services.wrapup_story import pregenerate_all
+    return await pregenerate_all(task=task)
+
+
 async def _run_music_playlist_push(deep: bool = False, task=None) -> bool:
     """Push/refresh every active user's Curatarr-Recommended MUSIC playlist
     (one unheard album per recommended artist). Token-less users are
@@ -771,6 +779,10 @@ def _registry() -> list[Task]:
         # Plex reads/writes only — no LLM gate.
         Task("plex_music_playlist", "Curatarr music playlists", 168.0,
              _run_music_playlist_push, takes_task=True, after=("custodian_recs",)),
+        # Wrap-ups written ahead, so the page opens with the curator's story
+        # instead of a "write it" button. Curator work — waits for a game.
+        Task("wrapup_pregen", "Wrap-ups written ahead", 24.0,
+             _run_wrapup_pregen, needs_llm=True, takes_task=True),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,

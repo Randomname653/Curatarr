@@ -901,3 +901,35 @@ class MediaSizeNorm(Base):
     std          = Column(Float, nullable=True)
     sample_count = Column(Integer, default=0)
     computed_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Wrapup(Base):
+    """One wrap-up per (user, scope, period): the deterministic facts it was
+    built from (services/wrapup_facts) and — once the curator wrote it — the
+    validated story (services/wrapup_story).
+
+    ``facts_hash`` is the identity of the numbers. A story written for an
+    older hash is still shown, with a "numbers moved" badge, instead of being
+    thrown away. A closed period (a past calendar year) never recomputes its
+    facts, so its story is final. Replaces the app_state
+    ``curation_narrative:{user}:{year}`` key, which a January rewrite
+    overwrote in place."""
+    __tablename__ = "wrapups"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    scope        = Column(String(16), nullable=False)    # all / movie / show / anime / music
+    period_key   = Column(String(16), nullable=False)    # 30d / 6m / year:2026 / all
+    facts_json   = Column(Text, nullable=True)
+    facts_hash   = Column(String(40), nullable=True)
+    facts_at     = Column(DateTime, nullable=True)
+    story_json   = Column(Text, nullable=True)
+    story_hash   = Column(String(40), nullable=True)     # the facts_hash the story was written for
+    story_at     = Column(DateTime, nullable=True)
+    story_model  = Column(String(128), nullable=True)
+    story_source = Column(String(16), nullable=True)     # llm / llm_repaired / fallback
+    error        = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "scope", "period_key", name="uq_wrapup_user_scope_period"),
+    )

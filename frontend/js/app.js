@@ -15,7 +15,8 @@ import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, t
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
 import { loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
-import { loadReport, writeYearlyReview } from './report.js';
+import { renderLedger } from './report.js';
+import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, toggleWrapupSnapshot } from './wrapup.js';
 import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
@@ -195,7 +196,21 @@ const actions = {
   swipeReact,
   swipeStars,
   swipeUndo,
-  loadReport,
+  renderLedger,
+  loadWrapup,
+  answerWrapupQuiz,
+  askWrapup,
+  discussWrapupChapter,
+  discussWrapupHook,
+  generateWrapup,
+  pushWrapupPlaylist,
+  setWrapupLayout,
+  setWrapupPeriod,
+  setWrapupScope,
+  setWrapupYear,
+  shareWrapup,
+  shareWrapupTile,
+  toggleWrapupSnapshot,
   loadTaskHistory,
   loadUsers,
   logout,
@@ -295,7 +310,6 @@ const actions = {
   updateReclassifyCount,
   useStarter,
   wishArtist,
-  writeYearlyReview,
 };
 
 function dispatchAction(el, nameAttr, e) {

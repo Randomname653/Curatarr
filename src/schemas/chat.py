@@ -11,12 +11,17 @@ class DiscussContext(BaseModel):
     action) are kept Optional for short-term frontend backward compat but
     ignored when ``kind`` + the matching ID are present.
     """
-    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle" | "watched_title"
+    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle" | "watched_title" | "wrapup"
     type: Optional[str] = None         # alias spelling for `kind` (last-played contract uses it)
     proposal_id: Optional[int] = None  # FK → DeletionProposal.id
     message_id: Optional[int] = None   # FK → ProactiveMessage.id
     principle_id: Optional[int] = None # FK → CuratorPrinciple.id (learned-principle review)
     starter_id: Optional[int] = None   # FK → ChatStarter.id (curator-opened conversation)
+    # wrapup ("Ask your wrap-up"): which of the user's OWN wrap-ups — the
+    # backend loads its stored facts and story for this user, never the
+    # client's copy.
+    wrapup_scope: Optional[str] = None
+    wrapup_period: Optional[str] = None
 
     # watched_title (last-played strip click): hints for resolving the user's
     # OWN watch-history row. All optional — the backend anchors on the row it

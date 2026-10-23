@@ -188,7 +188,11 @@ src = {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8") for p in (R
 routed = sorted(f for f, t in src.items()
                 if re.search(r"(ollama_for|host_for)\(\s*\"(chat|curator|judge|enrich)", t)
                 or re.search(r"\bhost\.url\b|\b_url\b.*api/chat", t))
+# post_chat counts as guarded: it builds its client with ollama_client
+# (the check right below pins that), so a file whose only model call goes
+# through it is covered.
 unguarded = sorted(f for f in routed if "ollama_client(" not in src[f]
+                   and "post_chat(" not in src[f]
                    and f not in ("src/services/ollama_hosts.py",))
 check(f"every routed model call builds its client with ollama_client ({unguarded or 'all do'})",
       not unguarded)

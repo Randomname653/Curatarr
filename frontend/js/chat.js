@@ -800,6 +800,7 @@ export function _threadIdForContext(ctx) {
   if (kind === 'proactive_message' && ctx.message_id) return `proactive_message:${ctx.message_id}`;
   if (kind === 'principle' && ctx.principle_id) return `principle:${ctx.principle_id}`;
   if (kind === 'starter' && ctx.starter_id) return `starter:${ctx.starter_id}`;
+  if (kind === 'wrapup' && ctx.wrapup_scope && ctx.wrapup_period) return `wrapup:${ctx.wrapup_scope}:${ctx.wrapup_period}`.slice(0, 64);
   if (kind === 'watched_title') {
     if (ctx.tmdb_id) return `watched:tmdb:${ctx.tmdb_id}`;
     const t = (ctx.series_title || ctx.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');

@@ -6,6 +6,27 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Wrap-Up: every household member's own period in review (the Curation Report folded in).**
+A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year
+or all time, for everything or one medium. Every number is decided in code before the
+curator sees it (`services/wrapup_facts.py`): played hours (not item length — the old report
+counted a ten-minute abandon as the whole film and Spotify plays and imported history as
+nothing), the listening clock, the biggest day, the 48-hour binge, the comfort rewatch, the
+contrarian gem (your stars against the community's), the acclaimed title you walked away from,
+viewing age and decades, shortest vs longest, comebacks, genre drift against your own past,
+taste clusters, and the Curatarr side: GB freed, the one that came back, the titles you kept
+over the curator, the most debated, the dust collector. The curator then writes an archetype,
+two to four chapters, a roast and a toast and a look-ahead in a forced JSON shape; every title
+enters by reference and every number in its prose must already be in the facts, or the answer
+gets one repair turn and then a story built from the facts alone. Tiles render only when they
+are earned; under five plays the page says "not enough yet". A quiz before the reveal,
+"Ask about it" (a chat thread whose context is the same fact sheet), a Plex playlist of the
+period, a share card and a festival-lineup card, per-tile sharing. The custodian writes the
+rolling month ahead weekly, the year from 1 December and the closed year once more in early
+January. The owner's curation ledger (the old Report) is a section at the bottom; `#report`
+opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
+`docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
+
 **Memory: the container held 4 GB of anonymous heap; the measured owners are smaller now.**
 The NAS view (3.3 GB, then 4.1 GB after a few hours) was real heap, not page cache. Measured
 on a copy of the real data: the facet index rewrote a title with delete + add, and Chroma never

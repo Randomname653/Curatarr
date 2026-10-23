@@ -1,6 +1,10 @@
-// ── Curation Report (admin) ──────────────────────────────────────────────
-import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
-import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
+// ── Curation ledger (admin) ─────────────────────────────────────────────
+// The old Curation Report, now a section at the bottom of the owner's
+// Wrap-Up (wrapup.js): resolutions per month, the debate split, the
+// Stubbornness Index, taste evolution. The yearly paragraph is gone — the
+// curator writes the whole wrap-up now.
+import { _swrCache, _swrRun, api } from './api.js';
+import { _errHtml, act, emptyHtml, esc } from './ui.js';
 // The report's one computed style: a fill's share as --v (0-100 %). The
 // class says what it is and which way it grows (.rep-col-* is a column's
 // height, .rep-split-* a share of the debate bar); colours live in app.css.
@@ -12,18 +16,22 @@ const _monthShort = key => {
   return isNaN(dt.getTime()) ? key : dt.toLocaleString(undefined, {month: 'short'});
 };
 
-export async function loadReport() {
-  const el = document.getElementById('report-content');
-  if (!_swrCache.has('report')) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Crunching the curation ledger…</p>';
+let _ledgerEl = null;
+
+export async function renderLedger(el) {
+  _ledgerEl = el || _ledgerEl;
+  if (!_ledgerEl) return;
+  if (!_swrCache.has('report')) _ledgerEl.innerHTML = '<p class="loading" role="status" aria-live="polite">Crunching the curation ledger…</p>';
   try {
     await _swrRun('report', () => api('/api/stats/curation?months=12'), _renderReport);
   } catch (e) {
-    el.innerHTML = _errHtml(e, act('loadReport'));
+    _ledgerEl.innerHTML = _errHtml(e, act('renderLedger'));
   }
 }
 
 export function _renderReport(d) {
-  const el = document.getElementById('report-content');
+  const el = _ledgerEl;
+  if (!el || !el.isConnected) return;
   const t = d.totals || {};
   const resTotal = (t.consensus || 0) + (t.overrides || 0);
   const maxAct = Math.max(1, ...(d.months || []).map(m => m.deleted + m.kept));
@@ -84,28 +92,7 @@ export function _renderReport(d) {
         </div>`).join(''))
     : '';
 
-  const narrative = section('Yearly review', "in the curator's own words",
-    `<div id="report-narrative" class="rep-narrative">${d.narrative ? esc(d.narrative) : '<span class="t3">Not written yet.</span>'}</div>`,
-    `<button type="button" class="btn btn-secondary btn-sm" ${act('writeYearlyReview', EL)}>${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>`);
-
   el.innerHTML = tiles + resSplit +
     section('Monthly activity', 'resolutions · GB freed', monthRows || emptyHtml('No resolutions in the last twelve months.')) +
-    stubborn + taste + narrative;
-}
-
-export async function writeYearlyReview(btn) {
-  btnBusy(btn, 'Curator is writing…');
-  try {
-    const r = await api('/api/stats/curation/narrative', 'POST');
-    if (r.ok) {
-      document.getElementById('report-narrative').textContent = r.narrative;
-      _swrInvalidate('report'); // next visit re-fetches instead of flashing the pre-rewrite text
-      toast('Yearly review written', 'success');
-    } else {
-      toast(r.error || 'Curator unavailable', 'danger');
-    }
-  } catch (e) {
-    toast('Failed: ' + _errMsg(e).slice(0, 160), 'danger');
-  }
-  btnDone(btn, 'Rewrite yearly review');
+    stubborn + taste;
 }

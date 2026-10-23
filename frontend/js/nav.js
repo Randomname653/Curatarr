@@ -9,7 +9,7 @@ import { showKbTab } from './kb.js';
 import { loadDeletions } from './deletions.js';
 import { arrActiveTab, loadArrPage } from './arr.js';
 import { loadReclassify } from './reclassify.js';
-import { loadReport } from './report.js';
+import { loadWrapup } from './wrapup.js';
 import { haptic, withTransition } from './ui.js';
 export function toggleSidebar() {
   const collapsed = document.getElementById('sidebar').classList.toggle('collapsed');
@@ -59,7 +59,9 @@ export function topbarSearch(ev) {
 // routeFromHash() renders it. showView() called from code (a glance tile, a
 // discussion jumping to chat) pushes the hash itself — pushState fires no
 // hashchange, so nothing renders twice.
-const ADMIN_VIEWS = ['deletions', 'curation', 'reclassify', 'report'];
+const ADMIN_VIEWS = ['deletions', 'curation', 'reclassify'];
+// The Curation Report became every member's Wrap-Up; old #report links land there.
+const VIEW_ALIASES = {report: 'wrapup'};
 
 // ── IN-VIEW TABS ──────────────────────────────────────────────────────────────
 // A tab inside a view is part of the address the same way a Settings pane
@@ -114,7 +116,8 @@ registerTabRoute('recs', {open: openRecLane, current: () => state.currentRecsLan
 
 export function routeFromHash(o = {}) {
   if (!state.currentUser) return;            // the login screen owns the page
-  const [view, tab] = decodeURIComponent(location.hash.replace(/^#\/?/, '')).split('/');
+  let [view, tab] = decodeURIComponent(location.hash.replace(/^#\/?/, '')).split('/');
+  if (VIEW_ALIASES[view]) { view = VIEW_ALIASES[view]; history.replaceState(null, '', '#' + view); }
   const name = view && document.getElementById(view + '-view') ? view : 'chat';
   const current = document.querySelector('.view.active')?.id;
   const route = _tabRoutes()[name];
@@ -166,7 +169,7 @@ export function showView(name, btn, o = {}) {
   if (name==='tasks') loadTaskHistory();
   if (name==='recs') { if (_skipNextRecsLoad) { _skipNextRecsLoad = false; } else { loadRecs(state.currentRecsCategory); } }
   if (name==='reclassify') loadReclassify();
-  if (name==='report') loadReport();
+  if (name==='wrapup') loadWrapup();
   if (name==='swipe') loadSwipe();
   // Views with tabs (Settings, Deletions, Knowledge Base, the arr pages):
   // the tab the hash names, or the one already open. o.pane is the older

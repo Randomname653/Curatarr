@@ -1,8 +1,20 @@
 # Wrap-Up — Research, Audit & Flagship Redesign
 
-Status: **design, awaiting approval** (2026-10-23). No code from this document
-is in the tree yet; section 3 is the drop-in draft the implementation PRs
-will start from.
+Status: **implemented** (2026-10-23) on `claude/bold-johnson-w1warc` — all four
+rollout steps. The code in section 3 was the draft; the shipped versions live in
+`src/services/wrapup_facts.py`, `wrapup_story.py`, `wrapup_store.py`,
+`src/routers/wrapup.py`, `frontend/js/wrapup.js` and the `.wu-*` rules in
+`frontend/css/app.css`, and differ in detail (named below where it matters).
+
+Deviations from the draft:
+- No app_state lock for a running generation: the in-process task registry is
+  the claim (no await between check and create), so a crash leaves nothing stale.
+- Artwork is one `facts["posters"]` map (title → url), excluded from the facts hash.
+- The custodian checks daily (`wrapup_pregen`, 24 h) and writes only what is due.
+- The bento fill reuses the ledger's `_repBar` helper (the CSP ratchet counts
+  `data-style` templates).
+- Drift thresholds (0.15 / 0.35) are still first guesses; every measured value is
+  logged (`[wrapup] drift …`) for calibration.
 
 Decisions taken with the owner before this was written:
 
