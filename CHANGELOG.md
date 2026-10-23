@@ -548,6 +548,16 @@ named, never pulled onto it unasked. The Settings "build models" button now
 follows the same per-host plan, so it builds no pitcher on a split
 install's NAS.
 
+**Version and "Update available" under the sidebar.** The footer shows the
+version and the commit that runs (the image carries it, a checkout reads
+HEAD). For admins, Curatarr asks GitHub every 6 hours, anonymously,
+whether a newer build is published: the last successful image on main for
+a container, the newest main commit for a checkout. Only a build that is
+actually ahead counts, so a dev branch is never told to update. The hint
+says how to update. The compose file carries `pull_policy: always` as an
+option (commented out): with it, TrueNAS's Edit → Save pulls the new image.
+`UPDATE_CHECK=false` turns the check off.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

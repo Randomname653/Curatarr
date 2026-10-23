@@ -157,6 +157,10 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .sb-footer button:hover { border-color: var(--border2); color: var(--text); }
 .sb-footer button.t-danger:hover { border-color: var(--danger-fg); color: var(--danger-fg); }
 #sb-collapse-toggle:hover { border-color: var(--amber); color: var(--amber); }
+/* The build under the footer, and the admin's "Update available" (js/version.js) */
+.sb-footer button.sb-update { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+.sb-footer button.sb-update:hover { border-color: var(--amber); color: var(--amber); }
+.sb-version { font-size: 11px; color: var(--text3); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 /* Icon-rail mode — labels, section headers and live-status extras collapse
    away; the SVG + a native title="" tooltip carry the meaning instead. */
 #sidebar.collapsed { width: var(--sidebar-w-collapsed); }

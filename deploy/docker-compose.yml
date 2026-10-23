@@ -6,6 +6,13 @@
 services:
   curatarr:
     image: ghcr.io/randomname653/curatarr:latest
+    # OPTIONAL: uncomment to pull :latest on every deploy. Then "Update
+    # available" under the sidebar means: edit the app and save it again
+    # (TrueNAS), and the new image replaces the container; the data volume
+    # stays. Every redeploy then checks the registry (a small request when
+    # nothing changed), so it is off by default: update on your own terms
+    # with `docker pull ghcr.io/randomname653/curatarr:latest` and a redeploy.
+    # pull_policy: always
     container_name: curatarr
     restart: unless-stopped
     ports:

@@ -321,6 +321,9 @@ class Settings(BaseSettings):
     PC_BASE_CURATOR_MODEL: str = "gemma4:31b"
     PC_BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"
     PC_BASE_PITCHER_MODEL: str = "qwen3.8:27b"
+    # Ask GitHub (anonymously, every 6 h) whether a newer build is published;
+    # admins then see "Update available" under the sidebar (services/update_check.py).
+    UPDATE_CHECK: bool = True
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to

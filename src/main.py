@@ -526,6 +526,22 @@ def system_notifications_route(user=Depends(get_current_user)):
     return system_notifications(user)
 
 
+@app.get("/api/system/version")
+async def system_version(user=Depends(get_current_user)):
+    """The build under the sidebar (services/build_info.py). Admins also get
+    whether upstream has published a newer one (services/update_check.py):
+    the stored answer, with a background refresh when it is older than 6 h,
+    so this never waits on GitHub."""
+    from src.services import build_info, update_check
+    build = build_info.current()
+    out = dict(build)
+    if getattr(user, "is_admin", False):
+        state = await update_check.aload_state()
+        update_check.kick(build, state)
+        out["update"] = update_check.summarize(state, build)
+    return out
+
+
 @app.get("/api/system/dependencies", dependencies=_ADMIN_ONLY)
 def system_dependencies():
     """Pinned requirements vs. the interpreter that serves this request —
