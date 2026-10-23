@@ -173,7 +173,38 @@ def test_budget_and_unusable_answers():
     assert done is False and len(llm.prompts) == 2 and len(rep.calls) == 1, "one garbage answer, one profile, one left"
     assert len(ly.all_profiles(db)) == 1
     done = asyncio.run(ly.run_lyrics_profiles(db_path=db, call_llm=llm, repolish=rep, cache=cache, budget=2))
-    assert done is True and len(ly.all_profiles(db)) == 3, "the garbage one is retried, the third one done"
+    assert done is True and len(ly.all_profiles(db)) == 2, \
+        "the third one done; the garbage one waits out its backoff instead of taking a slot again"
+    from datetime import datetime, timedelta
+    later = datetime.utcnow() + timedelta(days=2)
+    done = asyncio.run(ly.run_lyrics_profiles(db_path=db, call_llm=llm, repolish=rep, cache=cache,
+                                              budget=2, now=later))
+    assert done is True and len(ly.all_profiles(db)) == 3, "past its backoff it is tried again, and succeeds"
+    assert ly._profile_failures(db) == {}, "a success clears the failure"
+    cache.close()
+
+
+def test_a_failing_artist_never_holds_the_line():
+    """Live 2026-10-23: ~20 artists failed EVERY tick, first in line each time
+    (a third of the 60-artist budget) - and the task could never report done."""
+    from datetime import datetime, timedelta
+    db = _seed("cooling", {"a1": ("One", [("A", 8)]), "a2": ("Two", [("A", 8)])})
+    cache = MetadataCache(cache_path=_TMP / "cooling-cache.db")
+    now = datetime.utcnow()
+    llm, rep = _LLM(["garbage", "garbage"]), _Repolish()
+    done = asyncio.run(ly.run_lyrics_profiles(db_path=db, call_llm=llm, repolish=rep, cache=cache, now=now))
+    assert done is True and len(llm.prompts) == 2, "both failed; nothing else is due, so the task is done"
+    fails = ly._profile_failures(db)
+    assert set(fails) == {"a1", "a2"} and fails["a1"]["attempts"] == 1
+    assert ly.eligible_artists(db, now + timedelta(hours=23)) == [], "a day of backoff after the first miss"
+    assert len(ly.eligible_artists(db, now + timedelta(days=1, minutes=1))) == 2
+    llm2 = _LLM(["garbage", _GOOD])
+    asyncio.run(ly.run_lyrics_profiles(db_path=db, call_llm=llm2, repolish=rep, cache=cache,
+                                       now=now + timedelta(days=1, minutes=1)))
+    fails = ly._profile_failures(db)
+    assert list(fails) == ["a1"] and fails["a1"]["attempts"] == 2, "the second miss doubles the wait"
+    assert ly._failure_backoff_days(2) == 2 and ly._failure_backoff_days(9) == ly._FAIL_BACKOFF_MAX_DAYS
+    assert ly.eligible_artists(db, now + timedelta(days=2, hours=12)) == []
     cache.close()
 
 

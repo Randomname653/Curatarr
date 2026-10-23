@@ -197,6 +197,62 @@ def _rebuild(entries: list[dict]) -> None:
         con.close()
 
 
+def anilist_for_title(title: str, year) -> Optional[int]:
+    """The AniList id of the ONE snapshot entry that carries ``title`` as a
+    name (title or synonym) within a year of ``year``; None when there is
+    none or more than one, or no year to check against. For the arr's
+    English titles AniList's search misses ("Ruin Explorers" is "Hikyou
+    Tanken Fam & Ihrlie", "Grenadier" is "Grenadier: Hohoemi no Senshi").
+    Deliberately not via AniDB: that id space drifts, and the crossref's
+    AniDB ids led to sequels and specials (measured 2026-10-23)."""
+    try:
+        year = int(year or 0)
+    except (TypeError, ValueError):
+        year = 0
+    name = _norm(title or "")
+    if not name or not year or not OFFLINE_DB_PATH.exists():
+        return None
+    try:
+        con = sqlite_connect(OFFLINE_DB_PATH)
+        try:
+            ids = {r[0] for r in con.execute(
+                "SELECT a.anilist FROM offline_names n JOIN offline_anime a ON a.id=n.anime_id "
+                "WHERE n.name=? AND a.anilist IS NOT NULL AND a.year BETWEEN ? AND ?",
+                (name, year - 1, year + 1))}
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 - no snapshot answer, the online search decides
+        logger.debug("[anime-offline] anilist_for_title(%r) failed: %s", title, e)
+        return None
+    return next(iter(ids)) if len(ids) == 1 else None
+
+
+def names_for(anilist_id) -> Optional[tuple]:
+    """(every normalised name - title and synonyms -, year) of one AniList
+    entry in the snapshot, or None when it is not there. For the audit's
+    wrong-entity check: "Heavenly Delusion" is one of "Tengoku Daimakyo"'s
+    names, and AniList's own title is often the romanised one."""
+    if not anilist_id or not OFFLINE_DB_PATH.exists():
+        return None
+    try:
+        con = sqlite_connect(OFFLINE_DB_PATH)
+        try:
+            row = con.execute("SELECT id, title, year FROM offline_anime WHERE anilist=?",
+                              (int(anilist_id),)).fetchone()
+            if row is None:
+                return None
+            names = {n for (n,) in con.execute(
+                "SELECT name FROM offline_names WHERE anime_id=?", (row[0],))}
+        finally:
+            con.close()
+        names.add(_norm(row[1] or ""))
+        names.discard("")
+        return frozenset(names), row[2]
+    except Exception as e:  # noqa: BLE001 - a missing snapshot only means "no second opinion"
+        logger.debug("[anime-offline] names_for(%s) failed: %s", anilist_id, e)
+        return None
+
+
 def lookup(*, anilist_id=None, mal_id=None, anidb_id=None,
            title: str = None, year: int = None, strict: bool = False) -> Optional[dict]:
     """Resolve one anime from the snapshot. Priority: anilist > mal >

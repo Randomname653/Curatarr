@@ -123,9 +123,17 @@ def _live_raw_entries(cache) -> list[dict]:
         except (ValueError, TypeError):
             continue
         title = raw.get("title")
-        # raw entries carry TMDB's vocabulary ("tv"); the rest of the app says
-        # "show". Normalising here keeps that detail out of four call sites.
-        mtype = {"tv": "show"}.get(raw.get("media_type"), raw.get("media_type"))
+        # The category the row is FILED under (raw:{category}:{id}) is what
+        # every top-up looks it up by. The row's own media_type is TMDB's
+        # vocabulary: an anime filed under raw:anime: says "tv", read as
+        # "show", and the top-up then searched raw:show: and never found it
+        # - 8 of the owner's wikidata titles stayed outstanding for good.
+        filed = (cache_key[3:] if cache_key.startswith("v2:") else cache_key).split(":", 2)
+        mtype = filed[1] if len(filed) == 3 and filed[1] in VIDEO else None
+        if mtype is None:
+            # raw entries carry TMDB's vocabulary ("tv"); the rest of the app
+            # says "show".
+            mtype = {"tv": "show"}.get(raw.get("media_type"), raw.get("media_type"))
         if not title or mtype not in VIDEO:
             continue
         key = (title, mtype)

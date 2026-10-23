@@ -231,26 +231,40 @@ async def topup_wikidata(
             id_keys.append(t40)
 
         def _targets(cache):
-            targets, imdb = [], imdb_id
+            # Every row of this title still unstamped. A stamped one is
+            # skipped, not a reason to stop: a title filed under two keys
+            # with one of them stamped returned here before ever writing the
+            # other - and coverage, which reads that other row, counted the
+            # title outstanding for good (48 of the owner's 56, 2026-10-23).
+            # A stamped sibling's answer is reused instead of asking again.
+            targets, imdb, known = [], imdb_id, None
             for k in id_keys:
                 hit = cache.get_cache(f"raw:{media_type}:{k}")
                 if not hit or not isinstance(hit.get("response"), dict):
                     continue
                 raw = hit["response"]
+                imdb = imdb or raw.get("imdb_id")
                 if (raw.get("wikidata_checked")
                         and raw.get("wikidata_v") == _LOGIC_VERSION):
-                    return None, None
-                imdb = imdb or raw.get("imdb_id")
+                    if known is None:
+                        known = raw.get("wikidata") or {}
+                    continue
                 targets.append((f"raw:{media_type}:{k}", raw))
-            return targets, imdb
+            if not targets:
+                return None, None, None
+            return targets, imdb, known
 
-        targets, imdb = await asyncio.to_thread(_on_cache, _targets)
-        if not targets or not imdb:
+        targets, imdb, known = await asyncio.to_thread(_on_cache, _targets)
+        if not targets:
             return False
-
-        facts = await fetch_wikidata_facts(imdb)
-        if facts is None:
-            return False          # transient — do not stamp, the walker retries
+        if known is not None:
+            facts = known         # a sibling row already holds the answer
+        else:
+            if not imdb:
+                return False
+            facts = await fetch_wikidata_facts(imdb)
+            if facts is None:
+                return False      # transient — do not stamp, the walker retries
 
         def _write(cache):
             added = False

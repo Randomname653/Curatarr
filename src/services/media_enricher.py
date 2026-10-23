@@ -3705,6 +3705,23 @@ def _rule_based_profile(m: dict) -> dict:
 
 # ── PRODUCER-CONSUMER SPLIT FUNCTIONS ────────────────────────────────────────
 
+async def _offline_anilist_id(title: str, year) -> Optional[int]:
+    """AniList id from the offline snapshot's names (anime_offline.
+    anilist_for_title) when nothing else gave one: the arr's English title
+    is often not what AniList's search knows. 9 of the owner's 19 "not found
+    in 2+ rounds" anime resolve this way, each to the right work."""
+    try:
+        from src.services.anime_offline import anilist_for_title
+        got = await asyncio.to_thread(anilist_for_title, title, year)
+    except Exception as e:  # noqa: BLE001 - a resolution hint; the search still runs
+        logger.debug("[anime-offline] lookup for %r failed: %s", title, e)
+        return None
+    if got:
+        logger.info("[anime-offline] %s (%s) -> AniList %s from the snapshot's names",
+                    title, year, got)
+    return got
+
+
 async def fetch_and_prepare_raw(
     title: str,
     media_type: str = "movie",
@@ -3946,6 +3963,8 @@ async def fetch_and_prepare_raw(
                 anilist_id = ids["anilist_id"]
         except Exception as e:
             log_topup_failure(logger, "[anime-lists]", tvdb_id, e)
+    if is_anime and not anilist_id:
+        anilist_id = await _offline_anilist_id(title, year) or anilist_id
 
     # Phase 2 #39: streaming-merge fetch.
     # All relevant per-source APIs fire IN PARALLEL via
@@ -4412,6 +4431,8 @@ async def enrich_media_item(
                 logger.debug("Resolved tvdb:%d → anilist:%d via anime-lists", tvdb_id, anilist_id)
         except Exception as e:
             log_topup_failure(logger, "[anime-lists]", tvdb_id, e)
+    if is_anime and not anilist_id:
+        anilist_id = await _offline_anilist_id(title, year) or anilist_id
 
     # ── MUSIC: fetch via MusicBrainz + Last.fm, then LLM-summarize ──────────
     if media_type == "music":
