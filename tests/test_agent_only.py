@@ -80,7 +80,7 @@ check("...and it warns when this PC's Ollama is not answering (the NAS needs it)
 # ── the runbook ─────────────────────────────────────────────────────────────
 doc = (ROOT / "docs" / "NAS_MOVE.md").read_text(encoding="utf-8")
 check("the runbook records the embedding weights before the move and checks them after",
-      doc.index("Record the embedding weights") < doc.index("Embedding weights match"))
+      doc.index("Record the embedding weights") < doc.lower().index("embedding weights match"))
 check("...stops the PC's Curatarr before copying, and keeps a copy to roll back to",
       doc.index("Stop Curatarr on the PC") < doc.index("Copy the *contents*")
       and "Rolling back" in doc)

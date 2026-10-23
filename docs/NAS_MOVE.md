@@ -67,19 +67,17 @@ port, `<token>` one random secret of 32+ characters. Generate it like this:
    and `PC_AGENT_NOTIFY_URL=http://<nas>:<port>`. Then start the tray
    (`start_tray.bat`) and keep "Start with Windows" on. The tray now runs
    only the agent; start.bat refuses to start a second Curatarr there.
-6. **Update the container** (pull the latest image, redeploy), then in its
-   shell:
+6. **Update the container** (pull the latest image, redeploy) and start it.
+   It builds the NAS's missing models by itself, in the background, while
+   the server already answers (`AUTO_BUILD_MODELS`, set in the image). Its
+   log shows `[models] missing on … - pulling and building now`, and later
+   `[models] … ready`. The first build downloads 20 GB and more.
 
-   ```bash
-   python build_models.py --host main
-   python build_models.py --check
-   ```
-
-   The first command pulls the NAS's bases and the embedding model and
-   builds the bakes there. The second must show both hosts' models present
-   and **"Embedding weights match"**. On a mismatch, stop: the NAS has
-   other weights under the same name, and new vectors would not compare
-   with the stored ones.
+   After that, the log must also say **"embedding weights match the stored
+   vectors"**. On `EMBEDDING WEIGHTS DIFFER`, stop: the NAS has other
+   weights under the same name, and new vectors would not compare with the
+   stored ones. `python build_models.py --check` in the container's shell
+   shows the same, for both hosts.
 7. **Start the container and watch its log.** Expect
    `[pc] available (agent answered)` and no errors.
    - Open `http://<nas>:<port>` and sign in.

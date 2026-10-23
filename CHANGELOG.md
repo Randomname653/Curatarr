@@ -539,6 +539,15 @@ that PC anyway refuses to run, so the same Plex and arrs are never
 synced twice. `docs/NAS_MOVE.md` walks the move step by step, rollback
 included.
 
+**The container builds its own models.** With `AUTO_BUILD_MODELS` (set in
+the image), the main host's missing bakes are pulled and built in the
+background after start, the step start.bat does on the desktop. The server
+answers at once. The log names what it builds and whether the embedding
+weights match the stored vectors. A gaming PC's missing bakes are only
+named, never pulled onto it unasked. The Settings "build models" button now
+follows the same per-host plan, so it builds no pitcher on a split
+install's NAS.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex
