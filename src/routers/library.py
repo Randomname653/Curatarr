@@ -1103,7 +1103,7 @@ def add_wish(req: WishRequest, user: User = Depends(get_current_user)):
         if dup:
             return {"ok": True, "id": dup.id, "already": True, "in_library": in_lib}
         if member:
-            open_n = q.filter(MusicWish.user_id == user.id).count()
+            open_n = q.filter(MusicWish.user_id == user.id).with_entities(func.count(MusicWish.id)).scalar() or 0
             if open_n >= _rl.MEMBER_OPEN_WISHES:
                 raise HTTPException(429, f"You have {open_n} open wishes — wait until some "
                                          "are fulfilled, or take one back")

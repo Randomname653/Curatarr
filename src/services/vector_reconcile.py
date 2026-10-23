@@ -298,11 +298,12 @@ async def boot_drift_check() -> None:
     from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
 
     def _enriched_count() -> int:
+        from sqlalchemy import func
         from src.database.connection import get_db_session
         from src.database.models import EnrichmentStatus as ES
         with get_db_session() as db:
-            return (db.query(ES.id).filter(ES.enriched == True,  # noqa: E712
-                                           ES.error.is_(None)).count())
+            return (db.query(func.count(ES.id)).filter(ES.enriched == True,  # noqa: E712
+                                                       ES.error.is_(None)).scalar() or 0)
     try:
         enriched = await run_read(_enriched_count)
         docs = await run_chroma(lambda: get_chroma_db().get_count())
