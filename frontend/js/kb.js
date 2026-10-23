@@ -149,37 +149,41 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const num = (v, cat, keys, tip, cls) => v
     ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" ${act('loadKbItems', cat, keys)}>${v.toLocaleString()}</button>`
     : `<span class="t3" title="${escAttr(tip)}">0</span>`;
-  const rows = order.filter(c => cats[c]).map(cat => {
-    const c = cats[cat], d = c.denominator, s = c.states;
-    const n = k => s[k] || 0;
-    const done = n('enriched') + n('enriched_provisional');
-    const pct = d.downloaded ? Math.round(100 * done / d.downloaded) : 0;
-    const cell = keys => `<td class="t-right">${num(keys.reduce((a, k) => a + n(k), 0), cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</td>`;
-    return `<tr>
-      <td class="cell-primary">${esc(CAT_LABELS[cat] || cat)}</td>
-      <td class="t-right">${d.downloaded.toLocaleString()} <span class="t3">/ ${d.arr_total.toLocaleString()}</span></td>
-      <td class="t-right">${num(done, cat, 'enriched,enriched_provisional', defs.enriched, 't-success b')} <span class="t3">${pct}%</span></td>
-      ${cell(['enriched_dead'])}${cell(['rule_based', 'awaiting_llm'])}${cell(['retry_due'])}${cell(['not_found'])}${cell(['queued', 'processing_error'])}${cell(['ignored'])}${cell(['never_processed'])}
-      <td class="t-right" title="Items with at least one vector-store entry (deduplicated by item identity)">${c.vectors.indexed.toLocaleString()}</td>
-      <td class="t-right" title="Live raw cache entries carrying Wikipedia significance">${c.wikipedia.significance_cached.toLocaleString()}</td>
-      <td class="t-right" title="Live raw cache entries with OMDb data (writer / awards / extended plot)">${c.omdb.covered.toLocaleString()}</td>
-    </tr>`;
-  }).join('');
-
-  // Why not 100 %: one honest line per library — done / ignored / open, and
-  // what the open rows are waiting for.
-  const openLines = order.filter(c => cats[c]).map(cat => {
+  // One card per library: how far enrichment got (a meter over the one
+  // denominator, downloaded arr items), the states still open as chips —
+  // only the ones that are not zero, each a door to its list — and what the
+  // open rows are waiting for. The raw-layer counts sit quietly at the foot.
+  const STATE_CHIPS = [['Dead', ['enriched_dead']], ['Partial', ['rule_based', 'awaiting_llm']],
+    ['Retry due', ['retry_due']], ['Not found', ['not_found']], ['Queued', ['queued', 'processing_error']],
+    ['Never', ['never_processed']], ['Ignored', ['ignored']]];
+  const cards = order.filter(c => cats[c]).map(cat => {
     const c = cats[cat], d = c.denominator, s = c.states, op = c.open || {};
     const n = k => s[k] || 0;
     const dl = d.downloaded || 0;
-    const done = n('enriched') + n('enriched_provisional'), ign = n('ignored');
-    const open = Math.max(0, dl - done - ign);
-    const p = v => dl ? Math.round(100 * v / dl) : 0;
-    const bits = [];
-    if (op.due_now) bits.push(`${op.due_now.toLocaleString()} due next run`);
-    if (op.waiting) bits.push(`${op.waiting.toLocaleString()} waiting on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
-    if (op.needs_attention) bits.push(`<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${op.needs_attention.toLocaleString()} need attention</button>`);
-    return `<div class="fs-11 t3"><b class="t2">${esc(CAT_LABELS[cat] || cat)}</b>: ${p(done)}% enriched · ${p(ign)}% ignored · ${p(open)}% open${bits.length ? ' — ' + bits.join(', ') : ''}</div>`;
+    const done = n('enriched') + n('enriched_provisional');
+    const pct = dl ? Math.round(100 * done / dl) : 0;
+    const chips = STATE_CHIPS.map(([label, keys]) => {
+      const v = keys.reduce((a, k) => a + n(k), 0);
+      return v ? `<span class="kb-chip">${label} ${num(v, cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</span>` : '';
+    }).join('');
+    const waits = [];
+    if (op.due_now) waits.push(`${op.due_now.toLocaleString()} due next run`);
+    if (op.waiting) waits.push(`${op.waiting.toLocaleString()} on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
+    const attnLink = op.needs_attention
+      ? `<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${op.needs_attention.toLocaleString()} need attention</button>` : '';
+    return `<article class="kb-lib${pct >= 95 ? ' is-done' : ''}">
+      <div class="kb-lib-head"><h4>${esc(CAT_LABELS[cat] || cat)}</h4>
+        <span class="fs-12 t3">${dl.toLocaleString()} of ${d.arr_total.toLocaleString()} downloaded</span></div>
+      <div class="kb-lib-pct"><b>${pct}%</b><span>enriched · ${num(done, cat, 'enriched,enriched_provisional', defs.enriched)}</span></div>
+      <progress class="kb-meter" max="100" value="${pct}" aria-label="${escAttr(`${CAT_LABELS[cat] || cat}: ${pct}% enriched`)}"></progress>
+      ${chips ? `<div class="kb-chips">${chips}</div>` : '<div class="kb-chips"><span class="fs-12 t3">Nothing open.</span></div>'}
+      ${waits.length || attnLink ? `<div class="kb-lib-wait">${waits.join(' · ')}${waits.length && attnLink ? ' · ' : ''}${attnLink}</div>` : ''}
+      <div class="kb-lib-foot">
+        <span title="Items with at least one vector-store entry (deduplicated by item identity)">Vectors <b>${c.vectors.indexed.toLocaleString()}</b></span>
+        <span title="Live raw cache entries carrying Wikipedia significance">Wikipedia <b>${c.wikipedia.significance_cached.toLocaleString()}</b></span>
+        <span title="Live raw cache entries with OMDb data (writer / awards / extended plot)">OMDb <b>${c.omdb.covered.toLocaleString()}</b></span>
+      </div>
+    </article>`;
   }).join('');
 
   const wh = o.watch_history_only || {};
@@ -187,10 +191,14 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
     `<tr><td class="cell-primary">${esc(CAT_LABELS[c] || c)}</td><td class="t-right">${wh[c].rows.toLocaleString()}</td><td class="t-right">${wh[c].enriched.toLocaleString()}</td><td class="t-right t3">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
   const st = o.storage || {};
 
+  const mb = v => (v || 0) >= 1024 ? `${((v || 0) / 1024).toFixed(1)} GB` : `${Math.round(v || 0)} MB`;
+  const store = [['Enrichment cache', st.enrichment_cache_mb], ['Main database', st.main_db_mb], ['Vectors', st.chromadb_mb]]
+    .map(([l, v]) => `<div class="kb-store-tile"><b>${mb(v)}</b><span>${l}</span></div>`).join('');
+
   document.getElementById('enrich-overview').innerHTML = `
     <section class="section">
       <div class="section-head"><h3>Library coverage</h3>
-        <span class="section-hint">One denominator per row: downloaded arr items. Hover a header for its definition, click a number for the list behind it.</span>
+        <span class="section-hint">Share of downloaded items with a full profile. Click a number for the list behind it.</span>
         <div class="section-actions">
           ${running ? '<span class="badge amber badge-sm">Enrichment running <span id="enrich-pct-live"></span></span>' : ''}
           ${running === null ? `<span class="badge muted badge-sm" title="${escAttr(`Couldn't read the enrichment status — ${statusErr || 'no answer'}. Checking again every 30 s.`)}">Status unknown</span>` : ''}
@@ -198,36 +206,19 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
         </div>
       </div>
       <div class="section-body">
-        <div class="scroll-x tbl-wrap">
-          <table class="tbl stack"><thead><tr>
-            <th>Library</th>
-            <th class="t-right" title="Downloaded items / total items in the ARR — the ONE denominator every state column sums to">Items</th>
-            <th class="t-right" title="Full profile written (including provisional fast-pass profiles)">Enriched</th>
-            <th class="t-right" title="Enriched flag set but the cached profile is gone">Dead</th>
-            <th class="t-right" title="Rule-based profile or LLM polish still pending">Partial</th>
-            <th class="t-right" title="Not found so far; waiting time over — the next run tries again">Retry due</th>
-            <th class="t-right" title="Every consulted source missed; waiting on the backoff">Not found</th>
-            <th class="t-right" title="Queued or crashed — processed on the next run">Queued</th>
-            <th class="t-right" title="Accepted by the owner as unenriched">Ignored</th>
-            <th class="t-right">Never</th>
-            <th class="t-right">Vectors</th>
-            <th class="t-right">Wikipedia</th>
-            <th class="t-right">OMDb</th>
-          </tr></thead><tbody>${rows}</tbody></table>
-        </div>
-        <div class="mt-8">${openLines}</div>
-        <p class="fs-11 t3 mt-8">Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
+        <div class="kb-lib-grid">${cards}</div>
+        <p class="fs-11 t3 mt-12">Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
       </div>
     </section>
-    <div class="items-stretch row">
-      <section class="minw-280 section grow">
+    <div class="kb-pair">
+      <section class="section">
         <div class="section-head"><h3>Watch-history tracking</h3><span class="section-hint" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages">own set, not part of the percentages</span></div>
-        <div class="section-body"><div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
+        <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
       </section>
-      <section class="minw-280 section grow">
-        <div class="section-head"><h3>Storage</h3><span class="section-hint">enrichment cache ${st.enrichment_cache_mb} MB · main db ${st.main_db_mb} MB · vectors ${st.chromadb_mb} MB · total ${st.total_mb} MB</span>
+      <section class="section">
+        <div class="section-head"><h3>Storage</h3><span class="section-hint">${mb(st.total_mb)} in all</span>
           <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('loadCacheInventory', EL)} title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button></div></div>
-        <div class="section-body"><div id="cache-inventory"></div></div>
+        <div class="section-body"><div class="kb-store">${store}</div><div id="cache-inventory"></div></div>
       </section>
     </div>`;
 
@@ -243,7 +234,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const mpEl = document.getElementById('music-phases');
   if (mpEl) mpEl.innerHTML = `<section class="section">
     <div class="section-head"><h3>Coverage</h3><span class="section-hint">where the imported plays stand</span></div>
-    <div class="section-body"><div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
+    <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
       ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
       ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
       ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
@@ -261,7 +252,7 @@ export async function loadCacheInventory(btn) {
        <td class="t-right">${c.mb}</td></tr>`).join('');
     const cov = r.coverage;
     document.getElementById('cache-inventory').innerHTML = `
-      <div class="mt-8 tbl-wrap"><table class="tbl stack">
+      <div class="mt-8 tbl-wrap"><table class="tbl tbl-cards">
         <thead><tr><th>Source class</th><th class="t-right">Rows</th>
           <th class="t-right">Live</th>
           <th class="t-right" title="Expired — unreadable through the cache API. Kept only where the stale row is still the last record (raw/prefetch of deleted media); the raw-cache refresh task re-pulls what matters.">Stale</th>

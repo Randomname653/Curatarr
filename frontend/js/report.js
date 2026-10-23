@@ -1,9 +1,16 @@
 // ── Curation Report (admin) ──────────────────────────────────────────────
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, emptyHtml, esc, toast } from './ui.js';
-export function _repBar(pct, color) {
-  return `<div class="bar-track"><div class="bar-fill" data-style="width:${Math.min(100, pct)}%;background:${color}"></div></div>`;
+// The report's one computed style: a fill's share as --v (0-100 %). The
+// class says what it is and which way it grows (.rep-col-* is a column's
+// height, .rep-split-* a share of the debate bar); colours live in app.css.
+export function _repBar(cls, pct) {
+  return `<i class="${cls}" data-style="--v:${Math.max(0, Math.min(100, pct))}%"></i>`;
 }
+const _monthShort = key => {
+  const dt = new Date(`${key}-01T00:00:00`);
+  return isNaN(dt.getTime()) ? key : dt.toLocaleString(undefined, {month: 'short'});
+};
 
 export async function loadReport() {
   const el = document.getElementById('report-content');
@@ -20,7 +27,6 @@ export function _renderReport(d) {
   const t = d.totals || {};
   const resTotal = (t.consensus || 0) + (t.overrides || 0);
   const maxAct = Math.max(1, ...(d.months || []).map(m => m.deleted + m.kept));
-  const maxGb = Math.max(1, ...(d.months || []).map(m => m.gb_freed || 0));
 
   const tiles = `
     <div class="flex-wrap stat-row">
@@ -31,22 +37,26 @@ export function _renderReport(d) {
         .map(([l, v]) => `<div class="minw-140 t-center stat-box"><div class="num">${esc(String(v))}</div><div class="lbl">${esc(l)}</div></div>`).join('')}
     </div>`;
 
-  const monthRows = (d.months || []).map(m => {
+  // Twelve columns, one per month: deleted (amber) stacked on kept (quiet),
+  // the height against the busiest month; GB freed sits above as a number.
+  const anyAct = (d.months || []).some(m => m.deleted + m.kept);
+  const monthRows = anyAct ? `<div class="rep-chart" role="img" aria-label="Resolutions per month">${(d.months || []).map(m => {
     const act = m.deleted + m.kept;
-    return `<div class="grid-row-4 fs-11 t3">
-      <span>${esc(m.month)}</span>
-      <div title="${m.deleted} deleted / ${m.kept} kept">${_repBar(100 * act / maxAct, 'var(--amber)')}</div>
-      <div title="${m.gb_freed} GB freed">${_repBar(100 * (m.gb_freed || 0) / maxGb, 'var(--success)')}</div>
-      <span>${act ? `${m.deleted} deleted · ${m.kept} kept` : ''}${m.gb_freed ? ` · ${m.gb_freed} GB` : ''}</span>
+    return `<div class="rep-col" title="${esc(m.month)}: ${m.deleted} deleted · ${m.kept} kept${m.gb_freed ? ` · ${m.gb_freed} GB freed` : ''}">
+      <span class="rep-col-gb">${m.gb_freed ? `${Math.round(m.gb_freed)} GB` : ''}</span>
+      <span class="rep-col-bar">${_repBar('rep-col-kept', 100 * m.kept / maxAct)}${_repBar('rep-col-del', 100 * m.deleted / maxAct)}</span>
+      <span class="rep-col-n">${act || ''}</span>
+      <span class="rep-col-m">${esc(_monthShort(m.month))}</span>
     </div>`;
-  }).join('');
+  }).join('')}</div>
+    <div class="rep-legend"><span class="rep-key is-del"></span>Deleted <span class="rep-key is-kept"></span>Kept after debate</div>` : '';
 
   const resSplit = resTotal ? `
     <div class="mb-12">
       <div class="fs-12 t2 mb-8">How debates ended: <b>${t.consensus} consensus</b> · <b class="t-amber">${t.overrides} overrides</b></div>
-      <div class="mt-0 h-10 flex progress-bar">
-        <div data-style="width:${Math.round(100 * t.consensus / resTotal)}%;background:var(--border2)"></div>
-        <div class="flex-1 bg-amber"></div>
+      <div class="rep-split">
+        ${_repBar('rep-split-consensus', 100 * t.consensus / resTotal)}
+        <i class="rep-split-override"></i>
       </div>
     </div>` : '';
 
@@ -75,7 +85,7 @@ export function _renderReport(d) {
     : '';
 
   const narrative = section('Yearly review', "in the curator's own words",
-    `<div id="report-narrative" class="lh-17 fs-13 t2">${d.narrative ? esc(d.narrative) : '<span class="t3">Not written yet.</span>'}</div>`,
+    `<div id="report-narrative" class="rep-narrative">${d.narrative ? esc(d.narrative) : '<span class="t3">Not written yet.</span>'}</div>`,
     `<button type="button" class="btn btn-secondary btn-sm" ${act('writeYearlyReview', EL)}>${d.narrative ? 'Rewrite' : 'Write'} yearly review</button>`);
 
   el.innerHTML = tiles + resSplit +

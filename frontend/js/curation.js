@@ -15,10 +15,10 @@ export async function loadJudgeProtections() {
     }
     el.innerHTML = rows.map(p => {
       const badge = p.source && p.source !== 'judge'
-        ? '<span class="badge amber">CHAT</span>'
+        ? '<span class="badge amber badge-sm">Asked in chat</span>'
         : (p.verdict === 'KEEP_WITH_FLAG'
-            ? '<span class="badge amber">KEEP · downscale</span>'
-            : '<span class="badge muted">HARD_KEEP</span>');
+            ? '<span class="badge amber badge-sm">Keep · downscale</span>'
+            : '<span class="badge muted badge-sm">Protected</span>');
       const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
       return `<div class="panel-item">
         <div class="panel-item-head">
@@ -29,12 +29,27 @@ export async function loadJudgeProtections() {
             ${p.arr_url ? `<a href="${esc(p.arr_url)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(p.title)} in ${esc(_arrLabel(p.category))}" class="btn btn-secondary btn-sm">Open in ${esc(_arrLabel(p.category))}</a>` : ''}
           </div>
         </div>
-        <div class="pre-line panel-item-sub">${esc(p.reason || '')}</div>
+        ${_pillarReason(p.reason)}
       </div>`;
     }).join('');
   } catch(e) {
     el.innerHTML = _errHtml(e);
   }
+}
+
+// The judge's reason is one line per pillar ("III Household — …", "Bitrate
+// — …"). Folded by default — a list of protections reads as titles, not as
+// walls of text — and unfolded into a two-column sheet: the pillar, then
+// what the judge found. A reason in another shape (a chat grant) stays prose.
+const PILLAR_LINE = /^\s*(?:(?:III|II|I|0)\s+)?(Household|Custodian|Resonance|Ego|Bitrate)\s+[—-]\s+(.+)$/;
+export function _pillarReason(reason) {
+  const text = String(reason || '').trim();
+  if (!text) return '';
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const parsed = lines.map(l => l.match(PILLAR_LINE));
+  if (!parsed.every(Boolean)) return `<div class="pre-line panel-item-sub">${esc(text)}</div>`;
+  return `<details class="pillar-why"><summary>Why it's protected</summary><dl class="pillar-list">${
+    parsed.map(m => `<dt>${esc(m[1])}</dt><dd>${esc(m[2])}</dd>`).join('')}</dl></details>`;
 }
 
 export async function liftProtection(id, btn) {
@@ -217,7 +232,7 @@ export async function condensePrinciples(btn) {
 }
 
 export function _arrLabel(category) {
-  return category === 'movie' ? 'radarr' : category === 'music' ? 'lidarr' : 'sonarr';
+  return category === 'movie' ? 'Radarr' : category === 'music' ? 'Lidarr' : 'Sonarr';
 }
 
 export async function loadDownscale() {

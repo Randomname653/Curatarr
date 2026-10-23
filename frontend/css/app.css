@@ -1224,6 +1224,13 @@ body {
 }
 .card.has-tint:hover, .card.has-tint:focus-within { --tint-a: 20%; }
 
+/* Native checkboxes and radios take the accent too (the switch and the
+   segmented control have their own look); inside a section a row card sits
+   one step lighter so it reads as a row, not a second panel. */
+:root { accent-color: var(--amber); }
+.section .rc-card { background: var(--bg3); box-shadow: var(--specular); }
+.rc-card .rc-cb { width: 16px; height: 16px; }
+
 /* Calm poster cards: the pitch leads, Keep / Discuss / More rest a step back
    until the card is hovered or focused, Delete stays at full strength */
 .poster-card .quote-text { font-size: var(--fs-md); line-height: 1.6; max-width: var(--measure); color: var(--text); border-left: 2px solid var(--amber-line); padding-left: 12px; }
@@ -1272,14 +1279,20 @@ input.switch:focus-visible { outline: 2px solid var(--amber); outline-offset: 2p
 @keyframes vt-in { from { opacity: 0; transform: translateY(8px); } }
 html.vt .view.active { animation: none; }
 
-/* Chat: bubbles keep a readable measure, the user's own words are a warm
-   tint instead of a solid amber slab, the composer floats as glass, and a
-   pill offers the way down when a reply grows below the fold. */
+/* Chat: one centred conversation column (--chat-col) on a wide screen —
+   the log keeps its full width so its scrollbar stays at the edge, the
+   padding brings the bubbles in. Bubbles keep a readable measure, the
+   user's own words are a warm tint instead of a solid amber slab, the
+   composer floats as glass in the same column, and a pill offers the way
+   down when a reply grows below the fold. */
+:root { --chat-col: 860px; }
+#messages { padding-left: max(24px, calc((100% - var(--chat-col)) / 2)); padding-right: max(24px, calc((100% - var(--chat-col)) / 2)); }
 .msg { font-size: var(--fs-md); line-height: 1.65; }
-.msg.assistant { max-width: min(72%, var(--measure)); border-color: var(--hairline); box-shadow: var(--specular), var(--shadow-1); }
-.msg.user { background: color-mix(in srgb, var(--amber) 18%, var(--bg3)); color: var(--text); border: 1px solid var(--amber-line); font-weight: 450; max-width: min(72%, var(--measure)); }
+.msg.assistant { max-width: min(88%, var(--measure)); border-color: var(--hairline); box-shadow: var(--specular), var(--shadow-1); }
+.msg.user { background: color-mix(in srgb, var(--amber) 18%, var(--bg3)); color: var(--text); border: 1px solid var(--amber-line); font-weight: 450; max-width: min(80%, var(--measure)); }
 #chat-view { position: relative; }
-#chat-input-area { margin: 0 16px 14px; border: 1px solid var(--hairline-strong); border-radius: 26px; padding: 6px; align-items: flex-end;
+.discuss-banner { padding-left: max(16px, calc((100% - var(--chat-col)) / 2)); padding-right: max(16px, calc((100% - var(--chat-col)) / 2)); }
+#chat-input-area { margin: 0 max(16px, calc((100% - var(--chat-col)) / 2)) 14px; border: 1px solid var(--hairline-strong); border-radius: 26px; padding: 6px; align-items: flex-end;
   background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--specular), var(--shadow-2); }
 #chat-input { background: transparent; border-color: transparent; border-radius: 20px; }
 #chat-input:focus-visible { border-color: transparent; }
@@ -1290,20 +1303,20 @@ html.vt .view.active { animation: none; }
   background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-2); animation: jumpIn var(--dur-2) var(--ease-spring) both; }
 @keyframes jumpIn { from { opacity: 0; transform: translate(-50%, 8px); } }
 
-/* Phones: tables turn into stacked rows (class="tbl stack"; ui.labelTables
+/* Phones: tables turn into stacked rows (class="tbl tbl-cards"; ui.labelTables
    copies each column's header into its cells' data-label) */
 @media (max-width: 640px) {
-  .tbl.stack thead { display: none; }
-  .tbl.stack, .tbl.stack tbody, .tbl.stack tr, .tbl.stack td { display: block; width: 100%; }
-  .tbl.stack tr { padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
-  .tbl.stack tr:last-child { border-bottom: none; }
-  .tbl.stack td { border: none; padding: 3px 0; display: flex; align-items: center; gap: 12px; justify-content: space-between; min-height: 28px; text-align: right; }
-  .tbl.stack td[data-label]::before { content: attr(data-label); color: var(--text3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; text-align: left; }
-  .tbl.stack td.cell-primary { font-weight: 600; font-size: var(--fs-md); justify-content: flex-start; text-align: left; display: block; padding-bottom: 6px; }
-  .tbl.stack td.cell-primary::before { display: none; }
-  .tbl.stack td:empty { display: none; }
-  .tbl.stack tr:hover td { background: none; }
-  .scroll-x:has(> .tbl.stack) { overflow-x: visible; }
+  .tbl.tbl-cards thead { display: none; }
+  .tbl.tbl-cards, .tbl.tbl-cards tbody, .tbl.tbl-cards tr, .tbl.tbl-cards td { display: block; width: 100%; }
+  .tbl.tbl-cards tr { padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
+  .tbl.tbl-cards tr:last-child { border-bottom: none; }
+  .tbl.tbl-cards td { border: none; padding: 3px 0; display: flex; align-items: center; gap: 12px; justify-content: space-between; min-height: 28px; text-align: right; }
+  .tbl.tbl-cards td[data-label]::before { content: attr(data-label); color: var(--text3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; text-align: left; }
+  .tbl.tbl-cards td.cell-primary { font-weight: 600; font-size: var(--fs-md); justify-content: flex-start; text-align: left; display: block; padding-bottom: 6px; }
+  .tbl.tbl-cards td.cell-primary::before { display: none; }
+  .tbl.tbl-cards td:empty { display: none; }
+  .tbl.tbl-cards tr:hover td { background: none; }
+  .scroll-x:has(> .tbl.tbl-cards) { overflow-x: visible; }
 }
 
 /* Phones: the tab bar floats as a glass dock, sheets are glass and spring in,
@@ -1327,7 +1340,102 @@ html.vt .view.active { animation: none; }
   .modal-head { touch-action: none; cursor: grab; }
   .why-panel { margin-left: -4px; margin-right: -4px; border-radius: 14px; }
   .msg.assistant, .msg.user { max-width: 88%; }
+  #messages { padding: 16px 14px; }
+  .discuss-banner { padding-left: 14px; padding-right: 14px; }
   #chat-input-area { margin: 0 8px 8px; border-radius: 24px; padding: 5px; background: var(--glass); }
   #chat-input-area button { flex-shrink: 0; }
   #jump-latest { bottom: 76px; }
 }
+
+/* A link styled as a button never shows a link's underline */
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* ── Knowledge Base overview: one card per library ── the share of
+   downloaded items with a full profile as a big number and a meter, the
+   open states as chips (only the ones that are not zero), what they wait
+   for, and the raw-layer counts quietly at the foot. */
+.kb-lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.kb-lib { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--radius-lg); background: var(--bg3); border: 1px solid var(--hairline); box-shadow: var(--specular); }
+.kb-lib-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.kb-lib-head h4 { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.kb-lib-pct { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--text3); }
+.kb-lib-pct b { font-size: 30px; font-weight: 650; color: var(--amber); letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+.kb-lib.is-done .kb-lib-pct b { color: var(--success); }
+.kb-meter { appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 6px; border: none; border-radius: 3px; background: var(--bg2); overflow: hidden; }
+.kb-meter::-webkit-progress-bar { background: var(--bg2); border-radius: 3px; }
+.kb-meter::-webkit-progress-value { background: linear-gradient(90deg, var(--amber), var(--amber2)); border-radius: 3px; }
+.kb-meter::-moz-progress-bar { background: linear-gradient(90deg, var(--amber), var(--amber2)); border-radius: 3px; }
+.kb-lib.is-done .kb-meter::-webkit-progress-value { background: var(--success); }
+.kb-lib.is-done .kb-meter::-moz-progress-bar { background: var(--success); }
+.kb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; color: var(--text3); background: var(--bg2); border: 1px solid var(--hairline-strong); }
+.kb-chip .link-num { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.kb-lib-wait { font-size: 12px; color: var(--text3); line-height: 1.5; }
+.kb-lib-foot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 14px; padding-top: 10px; border-top: 1px solid var(--hairline); font-size: 11px; color: var(--text3); }
+.kb-lib-foot b { color: var(--text2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.kb-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.kb-pair > .section { margin-bottom: 0; }
+.kb-store { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.kb-store-tile { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--radius); background: var(--bg3); border: 1px solid var(--hairline); }
+.kb-store-tile b { font-size: 20px; font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+.kb-store-tile span { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text3); }
+
+/* ── Curation: a protection's pillar reasoning, folded until asked for ── */
+.pillar-why { margin-top: 6px; }
+.pillar-why > summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); cursor: pointer; list-style: none; user-select: none; }
+.pillar-why > summary::-webkit-details-marker { display: none; }
+.pillar-why > summary::before { content: '▸'; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
+.pillar-why[open] > summary::before { transform: rotate(90deg); }
+.pillar-why > summary:hover { color: var(--amber); }
+.pillar-list { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 7px 14px; margin: 10px 0 2px; max-width: 120ch; font-size: 12.5px; line-height: 1.55; }
+.pillar-list dt { padding-top: 2px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text3); }
+.pillar-list dd { margin: 0; color: var(--text2); }
+
+/* ── Report: twelve month columns, the debate split, the yearly review ── */
+.rep-chart { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; align-items: end; height: 210px; padding-top: 6px; }
+.rep-col { display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; }
+.rep-col-gb { min-height: 14px; font-size: 10px; color: var(--success); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rep-col-bar { flex: 1; width: min(100%, 34px); display: flex; flex-direction: column-reverse; border-radius: 6px 6px 2px 2px; overflow: hidden; background: color-mix(in srgb, var(--bg3) 55%, transparent); }
+.rep-col-bar i { display: block; flex-shrink: 0; height: var(--v); }
+.rep-col-del { background: linear-gradient(180deg, var(--amber2), var(--amber)); }
+.rep-col-kept { background: var(--border2); }
+.rep-col-n { min-height: 14px; font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.rep-col-m { font-size: 11px; color: var(--text3); }
+.rep-legend { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 11px; color: var(--text3); }
+.rep-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-left: 10px; }
+.rep-key:first-child { margin-left: 0; }
+.rep-key.is-del { background: var(--amber); }
+.rep-key.is-kept { background: var(--border2); }
+.rep-split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--amber); }
+.rep-split > i { display: block; }
+.rep-split-consensus { width: var(--v); background: var(--border2); }
+.rep-split-override { flex: 1; }
+#report-content .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+#report-content .stat-box { min-width: 0; }
+.rep-narrative { max-width: var(--measure); font-size: var(--fs-md); line-height: 1.75; color: var(--text2); white-space: pre-line; }
+@media (max-width: 640px) {
+  .rep-chart { gap: 4px; height: 170px; }
+  .rep-col-gb, .rep-col-n { display: none; }
+  .kb-store { grid-template-columns: 1fr; }
+}
+
+/* ── Swipe on a desktop: the card and its rails stay one group in the
+   middle instead of spreading to the window's edges, the deck is a size a
+   poster fills, a title without a poster shows a soft placeholder rather
+   than a giant letter, and the keyboard legend folds away. */
+@media (min-width: 1361px) {
+  .swipe-layout { grid-template-columns: 220px minmax(0, 880px) 240px; justify-content: center; max-width: none; gap: 36px; }
+}
+@media (min-width: 901px) {
+  .swipe-deck { width: min(100%, 880px); height: clamp(420px, calc(100vh - 340px), 620px); }
+  .swipe-info { padding: 28px 32px; }
+}
+.swipe-poster-ph { font-size: clamp(40px, 9cqh, 84px); color: color-mix(in srgb, var(--text3) 55%, transparent);
+  background: radial-gradient(120% 80% at 30% 15%, color-mix(in srgb, var(--amber) 9%, var(--bg3)), var(--bg2) 72%); }
+.swipe-keys-box > summary { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); cursor: pointer; list-style: none; display: inline-flex; gap: 6px; align-items: center; }
+.swipe-keys-box > summary::-webkit-details-marker { display: none; }
+.swipe-keys-box > summary::before { content: '▸'; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
+.swipe-keys-box[open] > summary::before { transform: rotate(90deg); }
+.swipe-keys-box > summary:hover { color: var(--text2); }
+.swipe-keys-box .swipe-keys { margin-top: 10px; }
+@media (max-width: 900px) { .swipe-keys-box { display: none; } }

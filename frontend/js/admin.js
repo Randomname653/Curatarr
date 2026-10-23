@@ -5,7 +5,7 @@ import { _swrInvalidate, _swrRun, api } from './api.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
 export function _renderUsers(users) {
   const targets = document.querySelectorAll('.user-list-target');
-  const html = `<div class="tbl-wrap"><table class="tbl stack"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th class="t-right">Actions</th></tr></thead><tbody>
+  const html = `<div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th class="t-right">Actions</th></tr></thead><tbody>
     ${users.map(u=>`<tr>
       <td class="cell-primary">${esc(u.plex_username)}</td>
       <td><span class="badge ${u.is_admin?'amber':'muted'}">${u.is_admin?'admin':'user'}</span></td>
