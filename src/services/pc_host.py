@@ -85,11 +85,42 @@ def snapshot() -> Optional[dict]:
     return _state["snapshot"] if _state["available"] else None
 
 
+def build() -> Optional[dict]:
+    """The PC checkout's update state from its last report (src/self_update):
+    {"head", "latest", "behind", "can_update", "reason"}, or None (an older
+    agent, or the PC is not available)."""
+    snap = snapshot()
+    b = (snap or {}).get("build")
+    return b if isinstance(b, dict) else None
+
+
 def status() -> dict:
     """For the UI and the logs: available / draining / since when / why."""
     return {k: _state[k] for k in ("available", "draining", "busy", "busy_reason", "seen_at",
                                    "changed_at", "reason")} | {
-        "configured": configured()}
+        "configured": configured(), "build": build()}
+
+
+async def request_update(post=None) -> "tuple[int, dict]":
+    """Ask the agent to fast-forward its checkout and restart (POST /update).
+    (HTTP status, body); the agent decides whether it can. ``post(url, token)``
+    is injectable for tests."""
+    url = _settings().PC_AGENT_URL.rstrip("/") + "/update"
+    return await (post or _post_update)(url, token())
+
+
+async def _post_update(url: str, tok: str) -> "tuple[int, dict]":
+    import httpx
+    from src.pc_agent import TOKEN_HEADER
+    from src.services.http_client import tls_context
+    # A fetch plus a fast-forward: seconds, not the poll's 3 s.
+    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
+        r = await client.post(url, headers={TOKEN_HEADER: tok})
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    return r.status_code, body if isinstance(body, dict) else {}
 
 
 def _set(available: bool, reason: str, *, draining: bool = False) -> None:

@@ -117,8 +117,46 @@ def forget_game_questions() -> None:
     _game_q_cache["at"] = 0.0
 
 
+_pc_update_hidden = {"until": 0.0}
+_BELL_ONLY = frozenset({"game_question", "pc_update"})
+
+
+def _pc_update_items() -> list[dict]:
+    """The gaming PC runs an older Curatarr than main (its agent checks every
+    6 h and reports it). One click updates it; when it cannot fast-forward,
+    the bell says why and how instead."""
+    import time
+    from src.services import pc_host
+    if not pc_host.configured() or time.time() < _pc_update_hidden["until"]:
+        return []
+    b = pc_host.build()
+    if not b or not b.get("behind"):
+        return []
+    n = int(b["behind"])
+    behind = f"{n} commit{'s' if n != 1 else ''} behind main"
+    if b.get("can_update"):
+        return [{"id": f"pc-update:{(b.get('latest') or '')[:12]}", "kind": "pc_update",
+                 "severity": "warn", "title": "The gaming PC runs an older Curatarr",
+                 "text": f"It is {behind}. Updating restarts its agent: work on its card "
+                         f"moves to the NAS for a few seconds.",
+                 "action": {"key": "pc_update", "label": "Update the PC"}}]
+    return [{"id": f"pc-update:{(b.get('latest') or '')[:12]}", "kind": "pc_update",
+             "severity": "info", "title": "The gaming PC runs an older Curatarr",
+             "text": f"It is {behind}, and cannot update itself: {b.get('reason') or 'unknown'}. "
+                     f"Run git pull in its Curatarr folder.",
+             "action": None}]
+
+
+def forget_pc_update() -> None:
+    """An update was asked for: hide the item until the restarted agent has
+    reported (it re-checks on start)."""
+    import time
+    _pc_update_hidden["until"] = time.time() + 120
+
+
 # (provider, admin_only) — append new kinds here.
-PROVIDERS = [(_model_update_items, True), (_game_question_items, True)]
+PROVIDERS = [(_model_update_items, True), (_game_question_items, True),
+             (_pc_update_items, True)]
 
 
 def system_notifications(user) -> dict:
@@ -133,6 +171,6 @@ def system_notifications(user) -> dict:
     return {"items": items,
             "needs_action": sum(1 for i in items if i.get("action")),
             # The sidebar's Settings bubble: decisions that live in Settings
-            # (a game question is answered right in the bell).
+            # (a game question or the PC's update is answered in the bell).
             "settings_action": sum(1 for i in items
-                                   if i.get("action") and i["kind"] != "game_question")}
+                                   if i.get("action") and i["kind"] not in _BELL_ONLY)}
