@@ -24,7 +24,7 @@ import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
-import { showUpdateInfo } from './version.js';
+import { showUpdateInfo, updateGamingPc } from './version.js';
 import { answerGameQuestion } from './game.js';
 
 export function init() {
@@ -291,6 +291,7 @@ const actions = {
   toggleUser,
   toggleWhy,
   topbarSearch,
+  updateGamingPc,
   updateReclassifyCount,
   useStarter,
   wishArtist,

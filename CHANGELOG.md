@@ -577,6 +577,15 @@ programs again: a split install had been asking about the NAS container's.
 It now also waits in the bell until answered, card-drawing programs first.
 The PC's checkout needs this version for the agent's new reading.
 
+**The Windows install updates itself.** The tray has "Check for updates" and
+"Update now": a fast-forward of the checkout to main, then the usual restart
+(its preflight installs what the lock asks for). Nothing is merged or
+overwritten. A branch, local changes or local commits stop it, and the tray
+says why. The PC agent checks every 6 hours and reports where it stands, so
+the NAS's bell says when the gaming PC runs an older Curatarr. "Update the
+PC" there has the agent update and restart. The NAS sends only the token,
+and the agent fetches from its own origin.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

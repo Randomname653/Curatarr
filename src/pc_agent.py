@@ -9,7 +9,12 @@ agent runs on the PC (started by the tray) and reports the raw readings:
     GET /status   ->  {"v": 1, "time": ..., "processes": [{"name", "rss_mb"}],
                         "gpu": [used_mb, total_mb, util] | "missing" | "timeout" | "error",
                         "gpu_procs": [{"name", "pct"}],   # 3D-engine share per program
+                        "build": {"head", "latest", "behind", "can_update", "reason"} | null,
                         "shutting_down": bool}
+    POST /update  ->  fast-forward this checkout to origin/main (src/self_update)
+                      and restart the tray: {"ok", "updated", "from", "to", "reason"}.
+                      Takes no parameters - what to fetch and from where is
+                      this checkout's own origin, never the caller's.
 
 It decides nothing. Which process is a game, and whether the card is held,
 stays with Curatarr (services/process_monitor, with the owner's classified
@@ -103,7 +108,9 @@ class Agent:
     def __init__(self, token: str, *, processes: Callable[[], list] = _process_list,
                  gpu: Callable[[], object] = _gpu_reading, notify_url: str = "",
                  post: Optional[Callable[[str, dict, str], None]] = None,
-                 gpu_procs: Optional[Callable[[], list]] = None):
+                 gpu_procs: Optional[Callable[[], list]] = None,
+                 updates=None, apply_update: Optional[Callable[[], dict]] = None,
+                 on_updated: Optional[Callable[[dict], None]] = None):
         if not token or len(token) < 16:
             raise ValueError("PC_AGENT_TOKEN must be set (16+ characters)")
         self.token = token
@@ -113,6 +120,12 @@ class Agent:
             from src.gpu_engine import Sampler
             gpu_procs = Sampler().sample
         self._gpu_procs = gpu_procs
+        # Self-update (src/self_update): ``updates`` is a Checker for the
+        # report, ``on_updated`` restarts the tray after a fast-forward.
+        self._updates = updates
+        self._apply_update = apply_update
+        self._on_updated = on_updated
+        self._update_lock = threading.Lock()
         self.notify_url = (notify_url or "").rstrip("/")
         self._post = post or _post_json
         self.shutting_down = False
@@ -137,8 +150,37 @@ class Agent:
         except Exception as e:  # noqa: BLE001 - and for the engine counters
             logger.warning("[agent] per-program GPU reading failed: %s", e)
             gpu_procs = []
+        build = None
+        if self._updates is not None:
+            try:
+                build = self._updates.report()
+            except Exception as e:  # noqa: BLE001 - the update state is a hint, never fatal
+                logger.warning("[agent] update state unreadable: %s", e)
         return {"v": AGENT_VERSION, "time": time.time(), "processes": procs,
-                "gpu": gpu, "gpu_procs": gpu_procs, "shutting_down": self.shutting_down}
+                "gpu": gpu, "gpu_procs": gpu_procs, "build": build,
+                "shutting_down": self.shutting_down}
+
+    def update(self) -> "tuple[int, dict]":
+        """(HTTP status, body) for POST /update. One at a time; a restart
+        follows a fast-forward, a second later, after the answer is sent."""
+        if self._apply_update is None:
+            return 501, {"ok": False, "reason": "this agent cannot update itself"}
+        if self.shutting_down:
+            return 409, {"ok": False, "reason": "the PC is shutting down"}
+        if not self._update_lock.acquire(blocking=False):
+            return 409, {"ok": False, "reason": "an update is already running"}
+        try:
+            res = self._apply_update()
+        except Exception as e:  # noqa: BLE001 - reported to the caller
+            res = {"ok": False, "updated": False, "reason": f"update failed: {e}"[:200]}
+        finally:
+            self._update_lock.release()
+        if self._updates is not None:
+            self._updates.forget()
+        if res.get("updated") and self._on_updated is not None:
+            logger.info("[agent] updated to %s - restarting", (res.get("to") or "")[:7])
+            threading.Timer(1.0, self._on_updated, args=(res,)).start()
+        return 200, res
 
     def announce_shutdown(self) -> None:
         """Mark the PC as going away and tell Curatarr at once. Never raises
@@ -170,6 +212,14 @@ class Agent:
                 if not agent.authorized(self.headers.get(TOKEN_HEADER)):
                     return self._send(401, {"error": "token required"})
                 return self._send(200, agent.snapshot())
+
+            def do_POST(self):  # noqa: N802 - http.server's naming
+                if self.path.split("?", 1)[0] != "/update":
+                    return self._send(404, {"error": "not found"})
+                if not agent.authorized(self.headers.get(TOKEN_HEADER)):
+                    return self._send(401, {"error": "token required"})
+                code, body = agent.update()
+                return self._send(code, body)
 
             def _send(self, code: int, body: dict):
                 data = json.dumps(body).encode("utf-8")
@@ -206,15 +256,21 @@ def _post_json(url: str, body: dict, token: str) -> None:
         r.read()
 
 
-def start_from_settings(settings) -> Optional[Agent]:
+def start_from_settings(settings, on_updated: Optional[Callable[[dict], None]] = None
+                        ) -> Optional[Agent]:
     """The tray's entry: an agent when PC_AGENT_TOKEN is set, else None.
-    Never raises - the tray works without it."""
+    ``on_updated`` (the tray's restart) enables POST /update. Never raises -
+    the tray works without it."""
     token = (getattr(settings, "PC_AGENT_TOKEN", None) or "")
     token = token.get_secret_value() if hasattr(token, "get_secret_value") else str(token)
     if not token.strip():
         return None
     try:
-        agent = Agent(token.strip(), notify_url=getattr(settings, "PC_AGENT_NOTIFY_URL", "") or "")
+        from src import self_update
+        agent = Agent(token.strip(), notify_url=getattr(settings, "PC_AGENT_NOTIFY_URL", "") or "",
+                      updates=self_update.Checker(),
+                      apply_update=self_update.apply if on_updated else None,
+                      on_updated=on_updated)
         agent.serve(port=int(getattr(settings, "PC_AGENT_PORT", DEFAULT_PORT) or DEFAULT_PORT))
         return agent
     except Exception as e:  # noqa: BLE001 - a busy port or a short token must not stop the tray
